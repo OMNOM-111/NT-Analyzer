@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "source": "fallback",
+  "warning": "Группы инструментов определены эвристически, не импортированы из NinjaTrader. Чтобы переопределить — отредактируйте data/catalog/instrument_groups.json вручную.",
+  "generated_at_utc": "2026-04-28T00:00:00Z",
+  "groups": [
+    {
+      "group_name": "Micros",
+      "roots": ["MES", "MNQ", "MYM", "M2K", "MGC", "MCL", "M6A", "M6B", "M6E", "M6J", "MBT", "MET"]
+    },
+    {
+      "group_name": "Futures",
+      "roots": ["ES", "NQ", "YM", "RTY", "GC", "SI", "HG", "PL", "CL", "NG", "RB", "HO", "ZB", "ZN", "ZF", "ZT", "ZC", "ZS", "ZW", "ZL", "ZM", "HE", "LE", "GF", "KC", "CC", "CT", "SB", "OJ"]
+    },
+    {
+      "group_name": "Indexes",
+      "roots": ["ES", "NQ", "YM", "RTY", "MES", "MNQ", "MYM", "M2K", "VX"]
+    },
+    {
+      "group_name": "SP 500",
+      "roots": ["ES", "MES"]
+    },
+    {
+      "group_name": "NASDAQ 100",
+      "roots": ["NQ", "MNQ"]
+    },
+    {
+      "group_name": "DOW 30",
+      "roots": ["YM", "MYM"]
+    },
+    {
+      "group_name": "DAX 30",
+      "roots": ["FDAX", "FDXM"],
+      "note": "Eurex DAX futures (FDAX/FDXM). Empty if your NinjaTrader user data has no Eurex feed."
+    },
+    {
+      "group_name": "FOREX",
+      "roots": ["6A", "6B", "6C", "6E", "6J", "6N", "6S", "6M", "M6A", "M6B", "M6E", "M6J", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]
+    },
+    {
+      "group_name": "Cryptocurrency",
+      "roots": ["BTC", "MBT", "ETH", "MET", "BTCUSD", "ETHUSD"],
+      "note": "CME crypto futures (BTC/MBT/ETH/MET) plus spot pairs if loaded. Spot includes only BTCUSD/ETHUSD by exact symbol."
+    }
+  ]
+}

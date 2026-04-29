@@ -1,0 +1,11 @@
+{
+  "project_root": "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer",
+  "ninjatrader_user_dir": "C:\\Users\\dimon\\Documents\\NinjaTrader 8",
+  "poll_interval_ms": 1500,
+  "heartbeat_interval_ms": 5000,
+  "heartbeat_ttl_ms": 60000,
+  "rd_variant_preferred": "1_strategy_analyzer",
+  "rd_variant_fallback_allowed": false,
+  "enable_path_a_optimizer_runbacktest": false,
+  "enable_verbose_diagnostics": false
+}

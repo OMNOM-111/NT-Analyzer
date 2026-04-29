@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>NT-Analyzer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>NT-Analyzer <span class="muted">MVP-1</span></h1>
+  <div class="status-strip" id="run-status-strip">
+    <span class="status-chip" id="ss-nt">NinjaTrader: проверка…</span>
+    <span class="status-chip" id="ss-catalog" hidden></span>
+    <span class="status-chip warn" id="ss-stale" hidden>
+      <span id="ss-stale-text">Каталог стратегий устарел</span>
+      <button type="button" id="ss-stale-btn" class="chip-action">Обновить</button>
+    </span>
+    <span class="status-chip warn" id="ss-commission" hidden></span>
+  </div>
+  <div class="header-actions">
+    <button type="button" id="btn-instruments-toggle" class="hdr-btn" title="Показать/скрыть панель инструментов">Инструменты</button>
+    <button type="button" id="btn-diag" class="hdr-btn">Диагностика</button>
+    <span class="status-pill" id="health-pill">проверка…</span>
+  </div>
+</header>
+
+<div class="workbench" id="workbench">
+  <!-- ============== INSTRUMENT BROWSER (left) ============== -->
+  <aside class="instrument-sidebar" id="instrument-sidebar">
+    <div class="instrument-head">
+      <span>Инструменты</span>
+      <span style="display:flex;gap:4px;align-items:center;">
+        <span class="muted small" id="ib-count">0</span>
+        <button id="ib-add-all-btn" title="Добавить все видимые инструменты в корзину" style="background:#2a3340;color:#cfe1ff;border:1px solid #3a4150;border-radius:3px;padding:1px 7px;font-size:11px;cursor:pointer;">+ все</button>
+      </span>
+    </div>
+    <div class="instrument-controls">
+      <input id="ib-search" type="search" placeholder="Поиск: MES, ES, CL…" autocomplete="off" />
+      <select id="ib-group">
+        <option value="all">Все группы</option>
+      </select>
+      <div class="ib-toggles">
+        <label>Только актуальные <input type="checkbox" id="ib-only-current" checked></label>
+        <label>Показать все сроки <input type="checkbox" id="ib-show-all-expiries"></label>
+      </div>
+    </div>
+    <div class="instrument-table-wrap">
+      <table id="instrument-table" class="dense">
+        <thead>
+          <tr>
+            <th>Инструмент</th>
+            <th>Группа</th>
+            <th class="num">Шаг</th>
+            <th class="num">$/тик</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ib-tbody"></tbody>
+      </table>
+    </div>
+  </aside>
+
+  <!-- ============== WORKSPACE (center) ============== -->
+  <main class="workspace-main" id="workspace-main">
+
+    <!-- Reports panel: always visible at top of workspace. Listing all
+         batches and standalone jobs. Click a row -> detail loads below. -->
+    <section class="reports-panel" id="reports-panel">
+      <div class="reports-toolbar">
+        <span class="reports-title">Отчёты</span>
+        <div class="counts" id="jobs-counts"></div>
+        <div class="jobs-filter" id="jobs-filter">
+          <button type="button" data-filter="all"     class="active">все</button>
+          <button type="button" data-filter="running">в работе</button>
+          <button type="button" data-filter="done">готово</button>
+          <button type="button" data-filter="failed">ошибка</button>
+        </div>
+        <button type="button" id="jobs-refresh" class="reports-refresh">⟳</button>
+      </div>
+      <div class="reports-wrap">
+        <table id="jobs-table" class="dense reports-table">
+          <thead>
+            <tr>
+              <th class="col-rep-name">Имя / инструмент</th>
+              <th>Тип</th>
+              <th>Стратегия</th>
+              <th>Статус</th>
+              <th>Период</th>
+              <th>Создан</th>
+              <th>Финиш / HB</th>
+              <th class="col-num-compact">Сделок</th>
+              <th class="col-num-compact">Win %</th>
+              <th class="col-num-compact">Итог</th>
+              <th class="col-del"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div id="result-empty" class="result-empty" hidden>
+      <p>Выберите отчёт сверху или запустите бэктест в правой панели.</p>
+    </div>
+
+    <div id="result-content" class="result-content" hidden>
+      <!-- Top batch row: name + counts. -->
+      <div class="batch-bar" id="batch-bar" hidden>
+        <span class="batch-bar-name" id="batch-bar-name">—</span>
+        <span class="batch-bar-counts" id="batch-bar-counts"></span>
+        <button type="button" id="batch-refresh" class="batch-refresh"
+                title="Обновить статусы из очереди">⟳</button>
+      </div>
+
+      <!-- Top instruments table (always visible: 1 row for single, N for batch). -->
+      <div class="result-rows-wrap">
+        <table id="result-rows-table" class="dense result-rows">
+          <thead>
+            <tr>
+              <th class="col-instr">Инструмент</th>
+              <th class="col-strat">Стратегия</th>
+              <th class="num">Прибыль</th>
+              <th class="num">Убыток</th>
+              <th class="num">PF</th>
+              <th class="num">Просадка</th>
+              <th class="num">Сделок</th>
+              <th class="num">Win %</th>
+              <th class="col-status">Статус</th>
+              <th class="col-period">Период</th>
+              <th class="num">Итог</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Mode selector (Итоги / Анализ / График) -->
+      <div class="result-tabs" role="tablist">
+        <button type="button" class="rtab active" data-rtab="summary"
+                role="tab" aria-selected="true">Итоги</button>
+        <button type="button" class="rtab" data-rtab="analysis"
+                role="tab" aria-selected="false">Анализ</button>
+        <button type="button" class="rtab" data-rtab="chart"
+                role="tab" aria-selected="false">График</button>
+        <span class="active-job-pill" id="active-job-pill"></span>
+      </div>
+
+      <div class="result-modes">
+        <!-- ----- Итоги ----- -->
+        <section id="rtab-summary" class="rtab-pane active">
+          <div class="summary-grid">
+            <div class="summary-block summary-block-wide">
+              <h3>Performance Summary</h3>
+              <table class="perf-matrix" id="perf-matrix">
+                <thead>
+                  <tr><th></th><th>Все сделки</th><th>Long</th><th>Short</th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="summary-block">
+              <h3>Параметры запуска</h3>
+              <table class="kv">
+                <tr><th>Стратегия</th>      <td id="sm-strategy">—</td></tr>
+                <tr><th>Инструмент</th>     <td id="sm-instrument">—</td></tr>
+                <tr><th>Таймфрейм</th>      <td id="sm-timeframe">—</td></tr>
+                <tr><th>Период</th>         <td id="sm-period">—</td></tr>
+                <tr><th>Trading Hours</th>  <td id="sm-thours">—</td></tr>
+                <tr><th>Шаблон комиссии</th><td id="sm-commission">—</td></tr>
+                <tr><th>Параметры</th>      <td id="sm-params">—</td></tr>
+              </table>
+            </div>
+            <div class="summary-block">
+              <h3>Контроль</h3>
+              <table class="kv">
+                <tr><th>Запрошенный период</th> <td id="rc-period">—</td></tr>
+                <tr><th>Первая сделка</th>      <td id="rc-first">—</td></tr>
+                <tr><th>Последняя сделка</th>   <td id="rc-last">—</td></tr>
+                <tr><th>Период</th>
+                    <td><span id="rc-check" class="check-pill">—</span></td></tr>
+                <tr id="rc-manual-row" hidden>
+                    <th>Ручная сверка с NinjaTrader</th>
+                    <td><span id="rc-manual" class="check-pill muted">не выполнялась</span></td></tr>
+              </table>
+              <div class="actions">
+                <a id="raw-link" href="#" target="_blank" rel="noopener">Открыть raw result.json</a>
+              </div>
+            </div>
+          </div>
+          <div id="error-box" class="error-box" hidden></div>
+        </section>
+
+        <!-- ----- Анализ ----- -->
+        <section id="rtab-analysis" class="rtab-pane">
+          <div class="analysis-equity">
+            <h3>Кривая капитала <span class="muted" id="eq-note"></span></h3>
+            <canvas id="equity-canvas" width="900" height="180"></canvas>
+          </div>
+          <div class="analysis-toolbar">
+            <div class="seg" id="trades-side-filter">
+              <button type="button" class="active" data-side="all">Все</button>
+              <button type="button" data-side="long">Long</button>
+              <button type="button" data-side="short">Short</button>
+            </div>
+            <div class="seg" id="trades-pnl-filter">
+              <button type="button" class="active" data-pnl="all">Все</button>
+              <button type="button" data-pnl="winners">Прибыль</button>
+              <button type="button" data-pnl="losers">Убыток</button>
+            </div>
+            <div class="trades-summary" id="trades-summary"></div>
+            <div class="pager">
+              <button id="trades-prev" type="button">‹</button>
+              <span id="trades-range"></span>
+              <button id="trades-next" type="button">›</button>
+            </div>
+          </div>
+          <div class="trades-wrap">
+            <table id="trades-table" class="dense">
+              <thead>
+                <tr>
+                  <th>#</th><th>Сторона</th><th>Вход UTC</th><th class="num">Цена входа</th>
+                  <th>Выход UTC</th><th class="num">Цена выхода</th>
+                  <th class="num">Кол-во</th><th class="num">PnL $</th><th class="num">Тики</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ----- График ----- -->
+        <section id="rtab-chart" class="rtab-pane">
+          <div class="chart-toolbar">
+            <label><input type="checkbox" id="chart-show-entries" checked> Входы</label>
+            <label><input type="checkbox" id="chart-show-exits" checked> Выходы</label>
+            <label><input type="checkbox" id="chart-show-lines" checked> Линии сделок</label>
+            <label><input type="checkbox" id="chart-only-selected"> Только выбранную</label>
+            <label><input type="checkbox" id="chart-show-drawings" checked> Отрисовки стратегии</label>
+            <button type="button" id="chart-reset-view" class="chart-btn">
+              Сбросить вид</button>
+            <span class="muted" id="chart-info"></span>
+            <span class="muted chart-hint">Колесо — zoom, drag — pan</span>
+          </div>
+          <div id="chart-status" class="chart-status" hidden>Загрузка…</div>
+          <div id="chart-drawings-status" class="chart-status muted" hidden></div>
+          <div class="chart-wrap">
+            <canvas id="price-canvas" width="1100" height="420"></canvas>
+            <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+          </div>
+        </section>
+      </div>
+
+      <span id="result-job-id" hidden></span>
+    </div>
+  </main>
+
+  <!-- ============== SETTINGS SIDEBAR (right) ============== -->
+  <aside class="settings-sidebar" id="settings-sidebar">
+    <div class="sidebar-head">
+      <span class="sidebar-title">Настройки</span>
+    </div>
+
+    <div class="sidebar-scroll">
+      <form id="run-form" class="run-form">
+
+        <!-- 1. Главная -->
+        <details class="group" open>
+          <summary>Главная</summary>
+          <div class="group-body">
+            <label class="field">
+              <span class="lbl">Тип анализа</span>
+              <input type="text" value="Бэктест" disabled
+                     title="Только бэктест в MVP-1">
+            </label>
+            <label class="field">
+              <span class="lbl">Стратегия</span>
+              <select id="f-class" name="class_name" required></select>
+            </label>
+          </div>
+        </details>
+
+        <!-- 2. Свойства стратегии -->
+        <details class="group" open>
+          <summary>Свойства стратегии</summary>
+          <div class="group-body">
+            <div id="strategy-params" class="strategy-params">
+              <div class="hint">Параметры подгружаются после выбора стратегии.</div>
+            </div>
+          </div>
+        </details>
+
+        <!-- 3. Серии данных -->
+        <details class="group" open>
+          <summary>Серии данных</summary>
+          <div class="group-body">
+            <div class="field field-full">
+              <div class="basket-header">
+                <span class="lbl">Корзина инструментов
+                  <span class="basket-count-badge" id="basket-count-badge">0</span>
+                </span>
+                <div class="basket-controls">
+                  <span class="basket-mode" id="basket-mode-hint">Корзина пуста</span>
+                  <label class="basket-toggle" title="Показывать только актуальные контракты">
+                    <input type="checkbox" id="basket-only-current" checked>
+                    <span>Только актуальные</span>
+                  </label>
+                  <button type="button" class="basket-toggle-btn"
+                          id="basket-toggle-btn" title="Свернуть/развернуть">▼</button>
+                </div>
+              </div>
+              <div class="basket-widget basket-widget-compact" id="basket-widget">
+                <div class="basket-col basket-groups">
+                  <div class="basket-col-head">Группы</div>
+                  <div class="basket-col-body" id="basket-groups-list"></div>
+                </div>
+                <div class="basket-col basket-instr">
+                  <div class="basket-col-head">
+                    <span id="basket-instr-title">Инструменты</span>
+                    <button type="button" class="basket-add-all" id="basket-add-group"
+                            disabled title="Добавить всю группу в корзину">+ группа</button>
+                  </div>
+                  <input type="text" id="basket-instr-search"
+                         class="basket-search" placeholder="Поиск (MES, 6B, ES)…">
+                  <div class="basket-col-body" id="basket-instr-list"></div>
+                </div>
+                <div class="basket-col basket-selected">
+                  <div class="basket-col-head">
+                    <span>Выбрано
+                      (<span id="basket-count">0</span>)</span>
+                    <button type="button" class="basket-clear" id="basket-clear"
+                            title="Очистить корзину">×</button>
+                  </div>
+                  <div class="basket-col-body" id="basket-selected-list"></div>
+                </div>
+              </div>
+              <input type="hidden" id="f-instrument" name="instrument" value="">
+              <span class="hint" id="basket-hint">
+                По умолчанию: MES 06-26.
+              </span>
+            </div>
+
+            <label class="field">
+              <span class="lbl">Цена основана на</span>
+              <select disabled title="Fixed in MVP-1 (bridge uses Last)">
+                <option>Last</option>
+              </select>
+            </label>
+
+            <div class="row two">
+              <label class="field">
+                <span class="lbl">Таймфрейм</span>
+                <select id="f-tf-type" name="bars_period_type">
+                  <option>Minute</option><option>Second</option><option>Tick</option>
+                  <option>Day</option><option>Volume</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">Значение</span>
+                <input id="f-tf-value" name="bars_period_value" type="number"
+                       min="1" max="1440" value="1" required>
+              </label>
+            </div>
+            <div class="field">
+              <span class="lbl">Быстрый выбор</span>
+              <div class="presets" id="tf-presets"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- 4. Временные параметры -->
+        <details class="group" open>
+          <summary>Временные параметры</summary>
+          <div class="group-body">
+            <div class="row two">
+              <label class="field">
+                <span class="lbl">Начало периода</span>
+                <input id="f-from-date" type="date" value="2026-03-12" required>
+              </label>
+              <label class="field">
+                <span class="lbl">Дата окончания</span>
+                <input id="f-to-date" type="date" value="2026-04-24" required>
+              </label>
+            </div>
+            <div class="row two">
+              <label class="field">
+                <span class="lbl">Trading Hours</span>
+                <select id="f-thours" disabled
+                        title="Bridge: CME US Index Futures RTH в MVP-1">
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">Часовой пояс</span>
+                <select disabled title="Bridge всегда принимает UTC">
+                  <option>UTC</option>
+                </select>
+              </label>
+            </div>
+            <div class="row two">
+              <label class="field disabled">
+                <span class="lbl">Break at EOD</span>
+                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+              </label>
+              <label class="field disabled">
+                <span class="lbl">Exit on session close</span>
+                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <!-- 5. Комиссии и исполнение -->
+        <details class="group">
+          <summary>Комиссии и исполнение</summary>
+          <div class="group-body">
+            <div class="row two">
+              <label class="field">
+                <span class="lbl">Calculate</span>
+                <select id="f-calculate" disabled
+                        title="Зафиксировано в MVP-1 (OnBarClose)">
+                  <option>OnBarClose</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">Order Fill Resolution</span>
+                <select id="f-ofr" disabled
+                        title="Зафиксировано в MVP-1 (Standard)">
+                  <option>Standard</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span class="lbl">Шаблон комиссии</span>
+              <select id="f-commission-template"
+                      title="Только 'None' применяется bridge'ом в MVP-1"></select>
+              <span class="hint" id="f-commission-hint"></span>
+            </label>
+            <div class="row two">
+              <label class="field">
+                <span class="lbl">Slippage (ticks)</span>
+                <input id="f-slippage" type="number" min="0" max="100" value="0" disabled
+                       title="Зафиксировано в MVP-1 (0)">
+              </label>
+              <label class="field disabled">
+                <span class="lbl">Tick Replay</span>
+                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+              </label>
+            </div>
+            <label class="field disabled">
+              <span class="lbl">Include Trade History</span>
+              <input type="checkbox" checked disabled title="Всегда true в MVP-1">
+            </label>
+          </div>
+        </details>
+
+      </form>
+    </div>
+
+    <div class="sidebar-pinned">
+      <div id="active-run" class="active-run" hidden>
+        <div class="active-run-head">
+          <span class="active-run-title">Активный запуск</span>
+          <span class="active-run-status" id="active-run-status">—</span>
+        </div>
+        <div class="active-run-row">
+          <span class="ar-lbl">Стратегия</span>
+          <span class="ar-val" id="active-run-strategy">—</span>
+        </div>
+        <div class="active-run-row">
+          <span class="ar-lbl">Инструменты</span>
+          <span class="ar-val" id="active-run-instruments">—</span>
+        </div>
+        <div class="active-run-row">
+          <span class="ar-lbl">Период</span>
+          <span class="ar-val" id="active-run-period">—</span>
+        </div>
+        <div class="active-run-progress">
+          <div class="ar-progress-bar"><div id="active-run-bar"></div></div>
+          <span class="ar-progress-text" id="active-run-progress">—</span>
+        </div>
+        <div class="active-run-row">
+          <span class="ar-lbl">Идёт</span>
+          <span class="ar-val" id="active-run-elapsed">—</span>
+        </div>
+        <div class="active-run-hint" id="active-run-hint" hidden></div>
+      </div>
+      <div id="run-result" class="result-box" hidden></div>
+      <div class="pinned-buttons">
+        <button type="submit" form="run-form" id="run-submit" class="primary block">
+          Запустить бэктест
+        </button>
+        <button type="button" id="run-cancel" class="danger block" hidden>
+          Остановить
+        </button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ============== OVERLAY: Diagnostics ============== -->
+<div id="overlay-diag" class="overlay" hidden>
+  <div class="overlay-card">
+    <div class="overlay-head">
+      <h2>Диагностика</h2>
+      <button type="button" class="overlay-close" data-close="overlay-diag">×</button>
+    </div>
+    <div class="overlay-body">
+      <p>Backend: <code id="d-host">…</code></p>
+      <p>Project root: <code id="d-root">…</code></p>
+      <p>NinjaTrader.exe запущен: <span id="d-nt">…</span></p>
+      <p>NinjaTrader user dir: <code id="d-ntdir">…</code></p>
+      <h3>Каталог стратегий</h3>
+      <p id="d-catalog-status" class="muted">…</p>
+      <p>
+        <button id="d-catalog-refresh" type="button">Обновить каталог стратегий</button>
+        <span id="d-catalog-refresh-msg" class="muted"></span>
+      </p>
+      <h3>Bridge log tail</h3>
+      <pre id="d-log"></pre>
+      <button id="d-refresh" type="button">Обновить</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "schema_version": "0.1",
+  "job_id": "01J0000000000000000000POC1",
+  "created_at_utc": "2026-04-26T12:00:00Z",
+  "kind": "historical_backtest",
+
+  "strategy": {
+    "class_name": "SampleMACrossOver",
+    "source_file_hint": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+    "parameters": {}
+  },
+
+  "instrument": "MES 06-26",
+  "timeframe": {
+    "bars_period_type": "Minute",
+    "value": 1
+  },
+
+  "period": {
+    "from_utc": "2026-03-12T00:00:00Z",
+    "to_utc":   "2026-04-24T00:00:00Z"
+  },
+
+  "execution": {
+    "calculate": "OnBarClose",
+    "is_tick_replay": false,
+    "order_fill_resolution": "Standard",
+    "slippage_ticks": 0,
+    "commission": 0.0,
+    "session_template": "CME US Index Futures RTH",
+    "timezone": "UTC"
+  }
+}

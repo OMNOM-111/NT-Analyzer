@@ -1,0 +1,88 @@
+{
+  "schema_version": "0.1",
+  "job_id": "01J0000000000000000000POC1",
+  "run_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "started_at_utc":  "2026-04-26T12:00:01Z",
+  "finished_at_utc": "2026-04-26T12:00:46Z",
+  "duration_ms": 45123,
+
+  "source": {
+    "execution_source": "ninjatrader",
+    "ninjatrader_version": "8.1.4.1",
+    "addon_version": "0.1.0",
+    "rd_variant_used": "1_strategy_analyzer",
+    "ninjatrader_custom_dll_sha256": "sha256:placeholder"
+  },
+
+  "strategy_version": {
+    "source_file_sha256": "sha256:placeholder",
+    "source_file_mtime_utc": "2026-04-20T10:00:00Z"
+  },
+
+  "context": {
+    "strategy": {
+      "class_name": "SampleMACrossOver",
+      "resolved_source_file": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+      "source_file_sha256": "sha256:placeholder",
+      "ninjatrader_custom_dll_sha256": "sha256:placeholder",
+      "final_parameters": {
+        "Fast": 10,
+        "Slow": 25
+      }
+    },
+    "instrument": "MES 06-26",
+    "timeframe": { "bars_period_type": "Minute", "value": 1 },
+    "period": {
+      "from_utc": "2026-03-12T00:00:00Z",
+      "to_utc":   "2026-04-24T00:00:00Z"
+    },
+    "historical_data_fingerprint": {
+      "method": "placeholder",
+      "value": "sha256:placeholder",
+      "files": []
+    },
+    "execution": {
+      "calculate": "OnBarClose",
+      "is_tick_replay": false,
+      "order_fill_resolution": "Standard",
+      "slippage_ticks": 0,
+      "commission": 0.0,
+      "session_template": "CME US Index Futures RTH",
+      "timezone": "UTC"
+    }
+  },
+
+  "metrics": {
+    "trade_count": 12,
+    "winning_pct": 41.67,
+    "gross_profit": 1850.0,
+    "gross_loss": -1300.0,
+    "net_profit": 550.0,
+    "profit_factor": 1.42,
+    "max_drawdown": 425.0
+  },
+
+  "trades": [
+    {
+      "trade_no": 1,
+      "direction": "long",
+      "entry_time_utc": "2026-03-13T14:31:00Z",
+      "entry_price": 4825.25,
+      "exit_time_utc": "2026-03-13T15:42:00Z",
+      "exit_price": 4831.50,
+      "quantity": 1,
+      "pnl_currency": 312.5,
+      "pnl_ticks": 25
+    }
+  ],
+
+  "artifacts": {
+    "trades_file": "trades.json",
+    "equity_curve_file": null,
+    "drawdown_curve_file": null,
+    "logs_file": "ninjascript.log",
+    "raw_bridge_result_file": "raw.json"
+  },
+
+  "verification_warnings": []
+}

@@ -1,0 +1,36 @@
+# Local market data exports are large and machine-specific.
+/data/
+
+# Runtime queues, run artifacts, logs, and local backend output.
+/NT-Analyzer/jobs/**
+!/NT-Analyzer/jobs/
+!/NT-Analyzer/jobs/*/
+!/NT-Analyzer/jobs/*/.gitkeep
+/NT-Analyzer/data/batches/**
+/NT-Analyzer/data/commands/**
+/NT-Analyzer/data/catalog/*.json
+!/NT-Analyzer/data/catalog/instrument_groups.json
+/NT-Analyzer/data/last_job.txt
+/NT-Analyzer/data/*.log
+/NT-Analyzer/data/*.err
+/NT-Analyzer/*.log
+/NT-Analyzer/*.err
+/NT-Analyzer/*.out
+/NT-Analyzer/app/*.log
+
+# Build outputs and caches.
+**/bin/
+**/obj/
+**/__pycache__/
+*.pyc
+*.pdb
+*.dll
+
+# Local IDE/system files.
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+desktop.ini

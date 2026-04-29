@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NinjaTrader 8 Bridge AddOn.
+    Targets .NET Framework 4.8 (NinjaTrader 8 runtime requirement).
+    Deploy resulting NTAnalyzerBridge.dll into:
+      %USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\
+    (per the official NT8 Visual Studio AddOn workflow — NOT into bin\Custom\AddOns\).
+
+    Phase B (current): Variant 1 Strategy Analyzer runner via
+    Optimizer.RunBacktest reflection. See bridge/src/Execution/StrategyAnalyzerRunner.cs.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>NTAnalyzerBridge</AssemblyName>
+    <RootNamespace>NTAnalyzerBridge</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Platforms>AnyCPU</Platforms>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Version>0.1.0</Version>
+    <Description>NT-Analyzer Bridge AddOn (Phase B — Variant 1 Strategy Analyzer)</Description>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      NinjaTraderInstallDir = where the NinjaTrader 8 application is installed
+                              (engine DLLs: NinjaTrader.Core / .Gui, Newtonsoft.Json).
+      NinjaTraderUserDir    = %USERPROFILE%\Documents\NinjaTrader 8 by default,
+                              location of the user-compiled NinjaTrader.Custom.dll.
+      Override on the command line if either path differs on your machine, e.g.:
+        dotnet build -p:NinjaTraderInstallDir="D:\NT8\bin" -p:NinjaTraderUserDir="D:\NT8user"
+    -->
+    <NinjaTraderInstallDir Condition=" '$(NinjaTraderInstallDir)' == '' ">C:\Program Files\NinjaTrader 8\bin</NinjaTraderInstallDir>
+    <NinjaTraderUserDir Condition=" '$(NinjaTraderUserDir)' == '' ">$(USERPROFILE)\Documents\NinjaTrader 8</NinjaTraderUserDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="NinjaTrader.Core">
+      <HintPath>$(NinjaTraderInstallDir)\NinjaTrader.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NinjaTrader.Gui">
+      <HintPath>$(NinjaTraderInstallDir)\NinjaTrader.Gui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NinjaTrader.Custom">
+      <HintPath>$(NinjaTraderUserDir)\bin\Custom\NinjaTrader.Custom.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(NinjaTraderInstallDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+  </ItemGroup>
+
+</Project>
