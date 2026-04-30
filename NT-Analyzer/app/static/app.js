@@ -302,7 +302,16 @@ async function bootstrap() {
   document.getElementById("d-refresh").addEventListener("click", refreshDiagnostics);
   document.getElementById("d-catalog-refresh").addEventListener("click", () => triggerCatalogRefresh("diag"));
   document.getElementById("ss-stale-btn").addEventListener("click", (e) => { e.stopPropagation(); triggerCatalogRefresh("chip"); });
+  const btnRefMargins = document.getElementById("btn-refresh-margins");
+  if (btnRefMargins) btnRefMargins.addEventListener("click", triggerMarginsRefresh);
   document.getElementById("f-class").addEventListener("change", onStrategyChange);
+  ["f-starting-capital", "f-intraday-only"]
+    .forEach(id => {
+      const node = document.getElementById(id);
+      if (!node) return;
+      node.addEventListener("input", updateRiskProfilePanel);
+      node.addEventListener("change", updateRiskProfilePanel);
+    });
 
   // Jobs toolbar: status filter + Refresh button.
   document.querySelectorAll("#jobs-filter button").forEach(btn => {
@@ -328,6 +337,7 @@ async function bootstrap() {
 
   // If the workspace is empty (no submit yet this session), surface the
   // most recent reports so the operator has somewhere to click.
+  updateRiskProfilePanel();
   loadRecentReports();
 }
 
@@ -603,6 +613,7 @@ function renderBasket() {
   renderBasketSelected();
   renderBasketInstruments();   // re-render so the [+] buttons disable
   renderInstrumentBrowser();   // keep left sidebar +/✓ in sync
+  updateRiskProfilePanel();
 }
 
 // =====================================================================
@@ -1288,6 +1299,207 @@ function collectStrategyParameters() {
   return out;
 }
 
+// ---------------- account / risk profile ----------------------------------
+function inputNumber(id, fallback) {
+  const node = document.getElementById(id);
+  if (!node) return fallback;
+  const n = Number(node.value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function roundMoney(v) {
+  return Math.round((Number(v) || 0) * 100) / 100;
+}
+
+// Extract the futures root from a contract symbol.
+//   "MES 06-26" -> "MES", "MNQ 12-26" -> "MNQ", "ES" -> "ES",
+//   "EURUSD" -> "EURUSD" (no space => returned as-is).
+function rootFromInstrument(name) {
+  if (!name || typeof name !== "string") return "";
+  const i = name.indexOf(" ");
+  return (i === -1 ? name : name.slice(0, i)).toUpperCase();
+}
+
+function marginCatalogSymbols() {
+  const cat = (_catalog && _catalog.margin_catalog) || null;
+  if (!cat || !cat.symbols || typeof cat.symbols !== "object") return {};
+  return cat.symbols;
+}
+
+function marginCatalogSource() {
+  const cat = (_catalog && _catalog.margin_catalog) || {};
+  return {
+    broker:         String(cat.broker || ""),
+    source:         String(cat.source || ""),
+    fetched_at_utc: String(cat.fetched_at_utc || ""),
+  };
+}
+
+// Build the per-instrument margin map for the current basket given current
+// capital + intraday-only choice. Pure function; no DOM access except via
+// callers reading `_basket` and the risk-profile inputs.
+function buildInstrumentMargins(startingCapital, intradayOnly) {
+  const symbols = marginCatalogSymbols();
+  const out = {};
+  const marginType = intradayOnly ? "intraday" : "initial";
+  const marginField = intradayOnly ? "intraday_margin" : "initial_margin";
+  for (const inst of (_basket || [])) {
+    const root = rootFromInstrument(inst);
+    const rec = symbols[root] || null;
+    let margin = null;
+    if (rec && rec[marginField] != null && Number.isFinite(Number(rec[marginField]))) {
+      margin = roundMoney(Number(rec[marginField]));
+    }
+    let status = "unknown";
+    let maxC = null;
+    if (margin == null || margin <= 0) {
+      status = "unknown";
+    } else {
+      maxC = Math.floor(startingCapital / margin);
+      status = startingCapital >= margin ? "allowed" : "blocked";
+    }
+    out[inst] = {
+      root: root,
+      margin_type: marginType,
+      margin_per_contract: margin,
+      max_contracts_by_capital: maxC,
+      status: status,
+    };
+  }
+  return out;
+}
+
+function collectRiskProfile() {
+  const startingCapital = Math.max(0, inputNumber("f-starting-capital", 0));
+  const intradayOnly = document.getElementById("f-intraday-only")?.checked === true;
+  const instrumentMargins = buildInstrumentMargins(
+    roundMoney(startingCapital), intradayOnly);
+
+  return {
+    schema_version: "0.1",
+    mode: "informational",
+    currency: "USD",
+    starting_capital: roundMoney(startingCapital),
+    intraday_only: intradayOnly,
+    margin_source: marginCatalogSource(),
+    instrument_margins: instrumentMargins,
+    status: "informational_only",
+    status_text: "Risk Profile сохранён в запуске; стратегия пока не ограничивается.",
+  };
+}
+
+function updateRiskProfilePanel() {
+  const risk = collectRiskProfile();
+  const entries = Object.entries(risk.instrument_margins || {});
+  let allowed = 0, blocked = 0, unknown = 0;
+  for (const [, info] of entries) {
+    if (info.status === "allowed") allowed += 1;
+    else if (info.status === "blocked") blocked += 1;
+    else unknown += 1;
+  }
+  const setText2 = (id, txt) => {
+    const n = document.getElementById(id);
+    if (n) n.textContent = txt;
+  };
+  setText2("rp-sum-allowed",
+    entries.length ? `Можно: ${allowed}` : "Можно: —");
+  setText2("rp-sum-blocked",
+    entries.length ? `Недоступно: ${blocked}` : "Недоступно: —");
+  setText2("rp-sum-unknown",
+    entries.length ? `Нет данных: ${unknown}` : "Нет данных: —");
+
+  const list = document.getElementById("risk-profile-list");
+  if (list) {
+    list.replaceChildren();
+    for (const [inst, info] of entries) {
+      const li = document.createElement("li");
+      li.classList.add("rp-" + info.status);
+      const name = document.createElement("span");
+      name.className = "rp-name";
+      name.textContent = inst;
+      const meta = document.createElement("span");
+      meta.className = "rp-meta";
+      if (info.status === "unknown") {
+        meta.textContent = "unknown — no margin data";
+      } else {
+        const m = info.margin_per_contract;
+        const mx = info.max_contracts_by_capital;
+        meta.textContent = `${info.status} — margin ${m != null ? fmtMoney(m) : "—"} — max ${mx != null ? mx : "—"}`;
+      }
+      li.appendChild(name);
+      li.appendChild(meta);
+      list.appendChild(li);
+    }
+  }
+
+  const hint = document.getElementById("risk-profile-hint");
+  if (hint) {
+    const cat = (_catalog && _catalog.margin_catalog) || null;
+    if (!cat || cat.source === "missing" || !Object.keys(cat.symbols || {}).length) {
+      hint.textContent = "margins.json не загружен — рассчёт по марже недоступен. Профиль всё равно сохранится в запуске.";
+      hint.classList.add("warn");
+    } else {
+      hint.textContent = "Информационный профиль: сохраняется в запуске, но не меняет логику стратегии. Каталог маржи обновляется автоматически раз в сутки из NinjaTrader.";
+      hint.classList.remove("warn");
+    }
+  }
+
+  // Refresh-info line: source / fetched / last-error.
+  const refInfo = document.getElementById("risk-profile-refresh-info");
+  if (refInfo) {
+    const cat = (_catalog && _catalog.margin_catalog) || null;
+    const refresh = (cat && cat.refresh) || {};
+    const src = (cat && cat.source) || "—";
+    const fetched = (cat && cat.fetched_at_utc) || "";
+    const symCount = (cat && cat.symbols) ? Object.keys(cat.symbols).length : 0;
+    let txt = `источник: ${src}`;
+    if (symCount) txt += ` · символов: ${symCount}`;
+    if (fetched) txt += ` · обновлено: ${fetched}`;
+    if (refresh.last_error && !refresh.in_progress) {
+      txt += ` · ошибка авто-обновления: ${refresh.last_error}`;
+      refInfo.classList.add("warn");
+    } else {
+      refInfo.classList.remove("warn");
+    }
+    refInfo.textContent = txt;
+  }
+}
+
+async function triggerMarginsRefresh() {
+  const btn = document.getElementById("btn-refresh-margins");
+  const info = document.getElementById("risk-profile-refresh-info");
+  if (btn) { btn.disabled = true; btn.classList.add("busy"); }
+  const prevText = btn ? btn.textContent : "";
+  if (btn) btn.textContent = "Обновляем…";
+  if (info) info.textContent = "обновление маржи…";
+  try {
+    const r = await api.post("/api/margins/refresh", {});
+    if (r && r.ok) {
+      await loadCatalog();
+      updateRiskProfilePanel();
+    } else {
+      const err = (r && (r.error || r.reason)) || "не удалось обновить";
+      if (info) {
+        info.textContent = "ошибка обновления: " + err;
+        info.classList.add("warn");
+      }
+      alert("Не удалось обновить маржи: " + err);
+    }
+  } catch (e) {
+    if (info) {
+      info.textContent = "ошибка обновления: " + e.message;
+      info.classList.add("warn");
+    }
+    alert("Ошибка обновления маржи: " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("busy");
+      btn.textContent = prevText || "Обновить маржи";
+    }
+  }
+}
+
 // ---------------- run-job submission --------------------------------------
 // Submits either a single-instrument job (basket size = 1) or a batch (basket > 1).
 // The single-job path is preserved bit-for-bit so existing callers keep
@@ -1337,6 +1549,7 @@ async function onSubmitJob(ev) {
     from_utc:            fromDate ? `${fromDate}T00:00:00Z` : "",
     to_utc:              toDate   ? `${toDate}T00:00:00Z`   : "",
     parameters:          collectStrategyParameters(),
+    risk_profile:        collectRiskProfile(),
     commission_template: document.getElementById("f-commission-template").value,
     session_template:    document.getElementById("f-thours").value,
   };
@@ -1939,6 +2152,7 @@ async function setActiveJob(jobId, jobOpt) {
   setText("sm-commission",
     exec.commission_template || (exec.commission != null ? `commission=${exec.commission}` : "—"));
   renderStrategyParams(params);
+  renderRiskProfileSummary(riskProfileFromJob(job));
 
   // ---- Итоги: performance matrix (All / Long / Short) ---------------
   const metrics = (job.result && job.result.metrics) || {};
@@ -1974,6 +2188,68 @@ async function setActiveJob(jobId, jobOpt) {
 function setText(id, v) {
   const e = document.getElementById(id);
   if (e) e.textContent = (v === undefined || v === null || v === "") ? "—" : String(v);
+}
+
+function riskProfileFromJob(job) {
+  const rawJob = (job && job.job) || {};
+  const result = (job && (job.result || job.result_partial)) || {};
+  const ctx = result.context || {};
+  return ctx.risk_profile || rawJob.risk_profile || job?.risk_profile || null;
+}
+
+function renderRiskProfileSummary(risk) {
+  if (!risk) {
+    setText("sm-risk-capital", "—");
+    setText("sm-risk-mode", "NinjaTrader / unlimited");
+    setText("sm-risk-margin", "—");
+    setText("sm-risk-contracts", "—");
+    setText("sm-risk-status", "Профиль не задан");
+    return;
+  }
+  const mode = risk.mode === "informational"
+    ? "Информационный"
+    : (risk.mode || "—");
+  const sessionMode = risk.intraday_only ? "только внутридень" : "overnight разрешен";
+  setText("sm-risk-capital", fmtMoney(risk.starting_capital || 0));
+  setText("sm-risk-mode", `${mode}, ${sessionMode}`);
+
+  // Margin/contracts breakdown supports both the new schema
+  // (instrument_margins map keyed by contract symbol) and the legacy
+  // schema (margin_per_contract.{intraday,overnight,active}). Old jobs
+  // remain readable for back-compat.
+  const im = risk.instrument_margins;
+  if (im && typeof im === "object" && Object.keys(im).length) {
+    const entries = Object.entries(im);
+    let allowed = 0, blocked = 0, unknown = 0, marginSample = null, maxSample = null;
+    for (const [, info] of entries) {
+      if (info.status === "allowed") {
+        allowed += 1;
+        if (marginSample == null && info.margin_per_contract != null) {
+          marginSample = info.margin_per_contract;
+          maxSample = info.max_contracts_by_capital;
+        }
+      } else if (info.status === "blocked") {
+        blocked += 1;
+      } else {
+        unknown += 1;
+      }
+    }
+    const broker = (risk.margin_source && risk.margin_source.broker) || "catalog";
+    setText("sm-risk-margin",
+      marginSample != null
+        ? `${fmtMoney(marginSample)} / контракт (${broker})`
+        : `по каталогу (${broker})`);
+    setText("sm-risk-contracts",
+      `${entries.length} инстр.: ${allowed}/${blocked}/${unknown} (allowed/blocked/unknown)`);
+  } else {
+    const m = risk.margin_per_contract || {};
+    const active = m.active ?? (risk.intraday_only ? m.intraday : m.overnight);
+    setText("sm-risk-margin",
+      active != null ? `${fmtMoney(active)} / контракт (${risk.margin_model || "manual"})` : "—");
+    setText("sm-risk-contracts",
+      risk.max_contracts_by_capital == null ? "—" : `${risk.max_contracts_by_capital}`);
+  }
+  setText("sm-risk-status", risk.status_text || risk.status || "—");
 }
 
 // Render strategy parameters into #sm-params. Works for any strategy:
@@ -2469,18 +2745,25 @@ function drawEquityCurve() {
     ctx.fillStyle = "#666"; ctx.font = "12px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Сделок нет", W/2, H/2);
+    const note = document.getElementById("eq-note");
+    if (note) note.textContent = "";
     return;
   }
-  // Build cumulative curve.
+  // Build cumulative curve. With a risk profile, the curve is shifted by
+  // starting_capital but still compares gains/losses against the start line.
+  const risk = riskProfileFromJob(_resultJob);
+  const base = risk && Number.isFinite(Number(risk.starting_capital))
+    ? Number(risk.starting_capital)
+    : 0;
   const curve = new Array(_allTrades.length);
   let acc = 0, peak = -Infinity;
-  let lo = 0, hi = 0;
+  let lo = base, hi = base;
   for (let i = 0; i < _allTrades.length; i++) {
     acc += _allTrades[i].pnl_currency || 0;
-    curve[i] = acc;
-    if (acc > peak) peak = acc;
-    if (acc < lo)   lo = acc;
-    if (acc > hi)   hi = acc;
+    curve[i] = base + acc;
+    if (curve[i] > peak) peak = curve[i];
+    if (curve[i] < lo)   lo = curve[i];
+    if (curve[i] > hi)   hi = curve[i];
   }
   if (lo === hi) hi = lo + 1;
   const padL = 50, padR = 10, padT = 10, padB = 22;
@@ -2488,14 +2771,14 @@ function drawEquityCurve() {
   function x(i) { return padL + (i / Math.max(1, curve.length - 1)) * innerW; }
   function y(v) { return padT + innerH - ((v - lo) / (hi - lo)) * innerH; }
 
-  const y0 = y(0);
+  const yBase = y(base);
 
   function equityPathToBaseline() {
     ctx.beginPath();
     ctx.moveTo(x(0), y(curve[0]));
     for (let i = 1; i < curve.length; i++) ctx.lineTo(x(i), y(curve[i]));
-    ctx.lineTo(x(curve.length - 1), y0);
-    ctx.lineTo(x(0), y0);
+    ctx.lineTo(x(curve.length - 1), yBase);
+    ctx.lineTo(x(0), yBase);
     ctx.closePath();
   }
 
@@ -2516,10 +2799,10 @@ function drawEquityCurve() {
     ctx.stroke();
   }
 
-  // Fill area against zero: profit is green, drawdown/loss is red.
+  // Fill area against the start line: profit is green, drawdown/loss is red.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(padL, padT, innerW, Math.max(0, y0 - padT));
+  ctx.rect(padL, padT, innerW, Math.max(0, yBase - padT));
   ctx.clip();
   equityPathToBaseline();
   ctx.fillStyle = "rgba(45, 170, 75, 0.46)";
@@ -2528,7 +2811,7 @@ function drawEquityCurve() {
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(padL, y0, innerW, Math.max(0, padT + innerH - y0));
+  ctx.rect(padL, yBase, innerW, Math.max(0, padT + innerH - yBase));
   ctx.clip();
   equityPathToBaseline();
   ctx.fillStyle = "rgba(185, 24, 24, 0.50)";
@@ -2539,7 +2822,7 @@ function drawEquityCurve() {
   ctx.lineWidth = 1.6;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(padL, padT, innerW, Math.max(0, y0 - padT));
+  ctx.rect(padL, padT, innerW, Math.max(0, yBase - padT));
   ctx.clip();
   equityLinePath();
   ctx.strokeStyle = "#35d04d";
@@ -2548,30 +2831,33 @@ function drawEquityCurve() {
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(padL, y0, innerW, Math.max(0, padT + innerH - y0));
+  ctx.rect(padL, yBase, innerW, Math.max(0, padT + innerH - yBase));
   ctx.clip();
   equityLinePath();
   ctx.strokeStyle = "#ff2020";
   ctx.stroke();
   ctx.restore();
 
-  // Zero baseline.
+  // Starting-capital baseline.
   ctx.strokeStyle = "#2c3142";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(padL, y0);
-  ctx.lineTo(padL + innerW, y0);
+  ctx.moveTo(padL, yBase);
+  ctx.lineTo(padL + innerW, yBase);
   ctx.stroke();
   // Y-axis labels.
   ctx.fillStyle = "#6b7280"; ctx.font = "10px sans-serif";
   ctx.textAlign = "right";
   ctx.fillText("$" + fmtMoneyShort(hi), padL - 4, padT + 8);
-  ctx.fillText("$0", padL - 4, y0 + 3);
+  ctx.fillText("$" + fmtMoneyShort(base), padL - 4, yBase + 3);
   ctx.fillText("$" + fmtMoneyShort(lo), padL - 4, padT + innerH);
 
   // Footer note.
+  const finalEquity = base + acc;
   document.getElementById("eq-note").textContent =
-    `(${curve.length} сделок, итого ${fmtMoneySign(acc)})`;
+    base > 0
+      ? `(${curve.length} сделок, старт ${fmtMoney(base)}, итог ${fmtMoney(finalEquity)}, PnL ${fmtMoneySign(acc)})`
+      : `(${curve.length} сделок, итого ${fmtMoneySign(acc)})`;
 }
 function fmtMoneyShort(v) {
   if (Math.abs(v) >= 1000) return (v/1000).toFixed(1) + "k";

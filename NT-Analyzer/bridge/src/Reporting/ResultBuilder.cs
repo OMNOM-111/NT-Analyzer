@@ -38,6 +38,7 @@ namespace NTAnalyzerBridge.Reporting
             string instrument = (string)job["instrument"];
             JObject timeframe = (JObject)job["timeframe"];
             JObject period    = (JObject)job["period"];
+            JObject riskProfile = (JObject)job["risk_profile"];
             JObject execution = (JObject)job["execution"];
 
             // Build a "context" object that mirrors job context but with
@@ -55,6 +56,7 @@ namespace NTAnalyzerBridge.Reporting
                 ["instrument"] = instrument,
                 ["timeframe"]  = timeframe?.DeepClone() ?? new JObject(),
                 ["period"]     = period?.DeepClone() ?? new JObject(),
+                ["risk_profile"] = riskProfile?.DeepClone() ?? new JObject(),
                 ["historical_data_fingerprint"] = new JObject
                 {
                     ["method"] = "placeholder",

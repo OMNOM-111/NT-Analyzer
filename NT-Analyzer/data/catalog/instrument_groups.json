@@ -29,6 +29,10 @@
       "roots": ["YM", "MYM"]
     },
     {
+      "group_name": "Russell 2000",
+      "roots": ["RTY", "M2K"]
+    },
+    {
       "group_name": "DAX 30",
       "roots": ["FDAX", "FDXM"],
       "note": "Eurex DAX futures (FDAX/FDXM). Empty if your NinjaTrader user data has no Eurex feed."
@@ -41,6 +45,18 @@
       "group_name": "Cryptocurrency",
       "roots": ["BTC", "MBT", "ETH", "MET", "BTCUSD", "ETHUSD"],
       "note": "CME crypto futures (BTC/MBT/ETH/MET) plus spot pairs if loaded. Spot includes only BTCUSD/ETHUSD by exact symbol."
+    },
+    {
+      "group_name": "Metals",
+      "roots": ["GC", "MGC", "SI", "HG", "PL", "PA"]
+    },
+    {
+      "group_name": "Energies",
+      "roots": ["CL", "MCL", "NG", "RB", "HO"]
+    },
+    {
+      "group_name": "Treasuries & Bonds",
+      "roots": ["ZB", "ZN", "ZF", "ZT"]
     }
   ]
 }

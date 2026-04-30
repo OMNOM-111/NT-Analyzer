@@ -1,0 +1,32 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NT-Analyzer", "NT-Analyzer", "{1FE167EA-5F6A-5FB8-3FB8-2166197288D4}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "bridge", "bridge", "{4B4AD1AC-24D2-E676-0C2F-E6044FE195A7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NTAnalyzerBridge", "NT-Analyzer\bridge\NTAnalyzerBridge.csproj", "{8177262B-9D9D-D435-7BBC-F66C8A5885B2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8177262B-9D9D-D435-7BBC-F66C8A5885B2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8177262B-9D9D-D435-7BBC-F66C8A5885B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8177262B-9D9D-D435-7BBC-F66C8A5885B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8177262B-9D9D-D435-7BBC-F66C8A5885B2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{4B4AD1AC-24D2-E676-0C2F-E6044FE195A7} = {1FE167EA-5F6A-5FB8-3FB8-2166197288D4}
+		{8177262B-9D9D-D435-7BBC-F66C8A5885B2} = {4B4AD1AC-24D2-E676-0C2F-E6044FE195A7}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {27474DDB-5E82-4DC7-989F-D0689E5ED3EE}
+	EndGlobalSection
+EndGlobal

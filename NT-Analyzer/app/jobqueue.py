@@ -21,10 +21,12 @@ import shutil
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from . import marginrefresh  # informational margin catalog auto-refresh
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -117,6 +119,16 @@ def read_templates_catalog() -> Optional[Dict[str, Any]]:
     or None.
     """
     return _read_catalog_file("templates.json")
+
+
+def read_margins_catalog() -> Optional[Dict[str, Any]]:
+    """Returns parsed data/catalog/margins.json or None.
+
+    The margin catalog is a manually-seeded broker reference (NinjaTrader
+    futures intraday/overnight margins). It is informational only — bridge
+    execution and the validated baseline backtest path do not consume it.
+    """
+    return _read_catalog_file("margins.json")
 
 
 def read_instrument_groups_catalog() -> Optional[Dict[str, Any]]:
@@ -353,10 +365,18 @@ def build_catalog_response() -> Dict[str, Any]:
     """
     warnings: List[str] = []
 
+    # Lazy daily auto-refresh of the broker margin catalog. Non-blocking:
+    # spawns a background daemon thread if the file is older than ~24h.
+    try:
+        marginrefresh.maybe_daily_refresh()
+    except Exception:  # pragma: no cover — never fail catalog on this
+        pass
+
     strat_doc = read_strategies_catalog()
     instr_doc = read_instruments_catalog()
     tmpl_doc  = read_templates_catalog()
     grp_doc   = read_instrument_groups_catalog()
+    marg_doc  = read_margins_catalog()
 
     stale_info = catalog_staleness()
     if stale_info.get("stale") and stale_info.get("reason") == "dll_newer":
@@ -468,8 +488,72 @@ def build_catalog_response() -> Dict[str, Any]:
         },
         "instrument_groups": _build_instrument_groups_block(
             grp_doc, instruments, warnings),
+        "margin_catalog": _build_margin_catalog_block(marg_doc, warnings),
         "staleness": stale_info,
         "warnings": warnings,
+    }
+
+
+def _build_margin_catalog_block(
+    marg_doc: Optional[Dict[str, Any]],
+    warnings: List[str],
+) -> Dict[str, Any]:
+    """Project margins.json into the /api/catalog response.
+
+    The block is informational; if the file is missing or malformed we
+    return an empty catalog and a warning so the UI can still render.
+    The block also exposes the auto-refresh status so the UI can show
+    last fetch time / errors next to the "Refresh now" button.
+    """
+    refresh_status = marginrefresh.last_status()
+    if refresh_status.get("last_error") and not refresh_status.get("in_progress"):
+        warnings.append(
+            "Авто-обновление маржи не удалось: "
+            f"{refresh_status['last_error']}. "
+            "Используется предыдущий снимок margins.json."
+        )
+
+    if not isinstance(marg_doc, dict):
+        warnings.append(
+            "margins.json не найден — UI не сможет рассчитать "
+            "доступность инструментов по марже (Account / Risk Profile)."
+        )
+        return {
+            "schema_version": "0.1",
+            "broker": "",
+            "source": "missing",
+            "source_url": "",
+            "fetched_at_utc": "",
+            "notes": [],
+            "symbols": {},
+            "warning": "margins_catalog_missing",
+            "refresh": refresh_status,
+        }
+
+    symbols_in = marg_doc.get("symbols")
+    symbols_out: Dict[str, Any] = {}
+    if isinstance(symbols_in, dict):
+        for root, rec in symbols_in.items():
+            if not isinstance(root, str) or not isinstance(rec, dict):
+                continue
+            symbols_out[root.upper()] = {
+                "display_name":       str(rec.get("display_name") or ""),
+                "exchange":           str(rec.get("exchange") or ""),
+                "intraday_margin":    rec.get("intraday_margin"),
+                "initial_margin":     rec.get("initial_margin"),
+                "maintenance_margin": rec.get("maintenance_margin"),
+            }
+
+    return {
+        "schema_version": str(marg_doc.get("schema_version") or "0.1"),
+        "broker":         str(marg_doc.get("broker") or ""),
+        "source":         str(marg_doc.get("source") or ""),
+        "source_url":     str(marg_doc.get("source_url") or ""),
+        "fetched_at_utc": str(marg_doc.get("fetched_at_utc") or ""),
+        "notes":          [str(n) for n in (marg_doc.get("notes") or [])
+                           if isinstance(n, (str, int, float))],
+        "symbols":        symbols_out,
+        "refresh":        refresh_status,
     }
 
 
@@ -548,6 +632,7 @@ class CreateJobRequest:
     from_utc: str
     to_utc: str
     parameters: Dict[str, Any]
+    risk_profile: Dict[str, Any] = field(default_factory=dict)
     # execution defaults are validated/normalized below
     calculate: str = "OnBarClose"
     is_tick_replay: bool = False
@@ -570,6 +655,136 @@ class JobValidationError(ValueError):
 
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _money(v: Any, name: str, min_value: float = 0.0,
+           max_value: float = 100_000_000.0) -> float:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        raise JobValidationError(f"{name}: numeric value required")
+    if not (min_value <= n <= max_value):
+        raise JobValidationError(f"{name}: out of range {min_value}..{max_value}")
+    return round(n, 2)
+
+
+_RISK_STATUS_TEXT_INFORMATIONAL = (
+    "Risk Profile сохранён в запуске; стратегия пока не ограничивается."
+)
+
+
+def _normalize_risk_profile(profile: Any) -> Dict[str, Any]:
+    """Validate and normalize the optional informational account profile.
+
+    Schema v0.1 (margin-catalog era):
+        {
+          "schema_version": "0.1",
+          "mode": "informational",
+          "currency": "USD",
+          "starting_capital": 2000.0,
+          "intraday_only": true,
+          "margin_source": {"broker": "...", "source": "...", "fetched_at_utc": "..."},
+          "instrument_margins": {
+            "MES 06-26": {
+              "root": "MES",
+              "margin_type": "intraday",
+              "margin_per_contract": 50.0,
+              "max_contracts_by_capital": 40,
+              "status": "allowed" | "blocked" | "unknown"
+            }
+          },
+          "status": "informational_only",
+          "status_text": "..."
+        }
+
+    The bridge stores this block in `result.context.risk_profile` and does
+    NOT consume it for execution. The validated NinjaTrader Strategy Analyzer
+    backtest path is unchanged.
+
+    Legacy payloads (margin_per_contract.{intraday,overnight}) from older
+    builds are accepted for read-back compatibility but are not required:
+    the new UI never sends them.
+    """
+    if profile in (None, ""):
+        return {}
+    if not isinstance(profile, dict):
+        raise JobValidationError("risk_profile must be an object")
+
+    mode = str(profile.get("mode") or "informational")
+    if mode != "informational":
+        raise JobValidationError("risk_profile.mode unsupported")
+
+    currency = str(profile.get("currency") or "USD").upper()
+    if currency != "USD":
+        raise JobValidationError("risk_profile.currency must be USD")
+
+    starting = _money(profile.get("starting_capital", 0),
+                      "risk_profile.starting_capital")
+    intraday_only = bool(profile.get("intraday_only", True))
+
+    msrc = profile.get("margin_source") or {}
+    if not isinstance(msrc, dict):
+        raise JobValidationError("risk_profile.margin_source must be an object")
+    margin_source = {
+        "broker":         str(msrc.get("broker") or ""),
+        "source":         str(msrc.get("source") or ""),
+        "fetched_at_utc": str(msrc.get("fetched_at_utc") or ""),
+    }
+
+    raw_margins = profile.get("instrument_margins") or {}
+    if not isinstance(raw_margins, dict):
+        raise JobValidationError(
+            "risk_profile.instrument_margins must be an object")
+
+    allowed_status = ("allowed", "blocked", "unknown")
+    allowed_margin_type = ("intraday", "initial", "maintenance", "unknown")
+    instrument_margins: Dict[str, Any] = {}
+    for inst, info in raw_margins.items():
+        if not isinstance(inst, str) or not isinstance(info, dict):
+            continue
+        root = str(info.get("root") or inst.split(" ", 1)[0]).upper()
+        margin_type = str(info.get("margin_type") or
+                          ("intraday" if intraday_only else "initial"))
+        if margin_type not in allowed_margin_type:
+            margin_type = "unknown"
+        margin_val = info.get("margin_per_contract")
+        if margin_val is None:
+            margin_norm: Optional[float] = None
+        else:
+            margin_norm = _money(margin_val,
+                                 f"risk_profile.instrument_margins[{inst}].margin_per_contract")
+        max_c_raw = info.get("max_contracts_by_capital")
+        if max_c_raw is None:
+            max_c: Optional[int] = None
+        else:
+            try:
+                max_c = max(0, int(max_c_raw))
+            except (TypeError, ValueError):
+                raise JobValidationError(
+                    f"risk_profile.instrument_margins[{inst}].max_contracts_by_capital "
+                    "must be an integer or null")
+        status = str(info.get("status") or "unknown")
+        if status not in allowed_status:
+            status = "unknown"
+        instrument_margins[inst] = {
+            "root":                     root,
+            "margin_type":              margin_type,
+            "margin_per_contract":      margin_norm,
+            "max_contracts_by_capital": max_c,
+            "status":                   status,
+        }
+
+    return {
+        "schema_version":     "0.1",
+        "mode":               "informational",
+        "currency":           "USD",
+        "starting_capital":   starting,
+        "intraday_only":      intraday_only,
+        "margin_source":      margin_source,
+        "instrument_margins": instrument_margins,
+        "status":             "informational_only",
+        "status_text":        _RISK_STATUS_TEXT_INFORMATIONAL,
+    }
 
 
 def _validate(req: CreateJobRequest) -> None:
@@ -639,6 +854,7 @@ def _validate(req: CreateJobRequest) -> None:
             raise JobValidationError(f"parameter name not identifier-safe: {k}")
         if not isinstance(v, (int, float, bool, str)):
             raise JobValidationError(f"parameter '{k}': only int/float/bool/string allowed")
+    req.risk_profile = _normalize_risk_profile(req.risk_profile)
     if req.job_id is not None and not JOB_ID_PATTERN.match(req.job_id):
         raise JobValidationError("job_id contains forbidden characters")
 
@@ -676,6 +892,7 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
             "value": int(req.bars_period_value),
         },
         "period": {"from_utc": req.from_utc, "to_utc": req.to_utc},
+        "risk_profile": dict(req.risk_profile or {}),
         "execution": {
             "calculate": req.calculate,
             "is_tick_replay": bool(req.is_tick_replay),
@@ -1040,6 +1257,7 @@ class CreateBatchRequest:
     from_utc: str
     to_utc: str
     parameters: Dict[str, Any]
+    risk_profile: Dict[str, Any] = field(default_factory=dict)
     calculate: str = "OnBarClose"
     is_tick_replay: bool = False
     order_fill_resolution: str = "Standard"
@@ -1070,6 +1288,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
     if len(seen) > 50:
         raise JobValidationError("batch capped at 50 instruments")
 
+    risk_profile = _normalize_risk_profile(req.risk_profile)
     batch_id = req.batch_id or gen_batch_id("batch")
     if not BATCH_ID_PATTERN.match(batch_id):
         raise JobValidationError("batch_id contains forbidden characters")
@@ -1092,6 +1311,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             from_utc=req.from_utc,
             to_utc=req.to_utc,
             parameters=dict(req.parameters or {}),
+            risk_profile=dict(risk_profile),
             calculate=req.calculate,
             is_tick_replay=req.is_tick_replay,
             order_fill_resolution=req.order_fill_resolution,
@@ -1136,6 +1356,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             "value": int(req.bars_period_value),
         },
         "period": {"from_utc": req.from_utc, "to_utc": req.to_utc},
+        "risk_profile": dict(risk_profile),
         "execution": {
             "calculate": req.calculate,
             "is_tick_replay": bool(req.is_tick_replay),
@@ -1317,6 +1538,7 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
         "strategy": m.get("strategy"),
         "timeframe": m.get("timeframe"),
         "period":    m.get("period"),
+        "risk_profile": m.get("risk_profile"),
         "execution": m.get("execution"),
         "total":     m.get("total"),
         "counts":    m.get("counts"),

@@ -56,6 +56,33 @@
     "to_utc":   "2026-04-24T00:00:00Z"
   },
 
+  "risk_profile": {
+    // MVP-1: информационный профиль счёта. Он сохраняется в job/result,
+    // но не ограничивает NinjaTrader-прогон, пока стратегия явно не
+    // поддерживает общий RiskManager.
+    "schema_version": "0.1",
+    "mode": "informational",
+    "currency": "USD",
+    "starting_capital": 2000.0,
+    "intraday_only": true,
+    "margin_source": {
+      "broker": "NinjaTrader",
+      "source": "auto_refresh",
+      "fetched_at_utc": "2026-04-30T01:53:16Z"
+    },
+    "instrument_margins": {
+      "MES 06-26": {
+        "root": "MES",
+        "margin_type": "intraday",
+        "margin_per_contract": 50.0,
+        "max_contracts_by_capital": 40,
+        "status": "allowed"
+      }
+    },
+    "status": "informational_only",
+    "status_text": "Профиль сохранится в запуске; стратегия пока не ограничивается."
+  },
+
   "execution": {
     "calculate": "OnBarClose",          // OnBarClose | OnPriceChange | OnEachTick
     "is_tick_replay": false,
@@ -76,6 +103,9 @@
 - `source_file_hint` — **не доверенный** ввод. Bridge никогда не загружает код по этому пути,
   не компилирует его и не передаёт его в reflection. Реальный класс выбирается только
   из reflected whitelist `NinjaTrader.Custom.dll`. См. план, раздел 18.
+- `risk_profile` в MVP-1 является информационным контекстом счёта. Он обязан
+  сохраняться в истории запуска, но не должен менять NinjaTrader-compatible
+  backtest без явной поддержки RiskManager внутри стратегии.
 
 ---
 
@@ -118,6 +148,7 @@
     "instrument": "MES 06-26",
     "timeframe": { "bars_period_type": "Minute", "value": 1 },
     "period": { "from_utc": "...", "to_utc": "..." },
+    "risk_profile": { /* эхо risk_profile из job.json */ },
     "execution": { /* эхо execution из job.json */ },
 
     // Отпечаток исторических данных, использованных в прогоне.

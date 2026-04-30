@@ -173,6 +173,16 @@
               </table>
             </div>
             <div class="summary-block">
+              <h3>Счет и риск</h3>
+              <table class="kv">
+                <tr><th>Капитал</th>        <td id="sm-risk-capital">—</td></tr>
+                <tr><th>Режим</th>          <td id="sm-risk-mode">—</td></tr>
+                <tr><th>Маржа</th>          <td id="sm-risk-margin">—</td></tr>
+                <tr><th>Контракты</th>      <td id="sm-risk-contracts">—</td></tr>
+                <tr><th>Статус</th>         <td id="sm-risk-status">—</td></tr>
+              </table>
+            </div>
+            <div class="summary-block">
               <h3>Контроль</h3>
               <table class="kv">
                 <tr><th>Запрошенный период</th> <td id="rc-period">—</td></tr>
@@ -269,6 +279,40 @@
         <details class="group" open>
           <summary>Главная</summary>
           <div class="group-body">
+            <div class="risk-profile-panel">
+              <div class="risk-profile-head">
+                <span>Account / Risk Profile</span>
+                <span class="risk-profile-mode">info</span>
+              </div>
+              <label class="field">
+                <span class="lbl">Стартовый капитал, $</span>
+                <input id="f-starting-capital" type="number"
+                       min="0" max="100000000" step="100" value="2000">
+              </label>
+              <label class="risk-check">
+                <span>Только внутридень</span>
+                <input type="checkbox" id="f-intraday-only" checked>
+              </label>
+              <div class="risk-profile-summary" id="risk-profile-summary">
+                <span class="rp-allowed" id="rp-sum-allowed">Можно: —</span>
+                <span class="rp-blocked" id="rp-sum-blocked">Недоступно: —</span>
+                <span class="rp-unknown" id="rp-sum-unknown">Нет данных: —</span>
+              </div>
+              <ul class="risk-profile-list" id="risk-profile-list"></ul>
+              <div class="risk-profile-refresh">
+                <button type="button" id="btn-refresh-margins"
+                        class="btn-refresh-margins"
+                        title="Скачать актуальные маржи из NinjaTrader">
+                  Обновить маржи
+                </button>
+                <span id="risk-profile-refresh-info"
+                      class="risk-profile-refresh-info">источник: —</span>
+              </div>
+              <div class="hint" id="risk-profile-hint">
+                Информационный профиль: сохраняется в запуске, но не меняет логику стратегии.
+                Каталог маржи обновляется автоматически раз в сутки из NinjaTrader.
+              </div>
+            </div>
             <label class="field">
               <span class="lbl">Тип анализа</span>
               <input type="text" value="Бэктест" disabled

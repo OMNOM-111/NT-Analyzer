@@ -36,6 +36,29 @@
       "from_utc": "2026-03-12T00:00:00Z",
       "to_utc":   "2026-04-24T00:00:00Z"
     },
+    "risk_profile": {
+      "schema_version": "0.1",
+      "mode": "informational",
+      "currency": "USD",
+      "starting_capital": 2000.0,
+      "intraday_only": true,
+      "margin_source": {
+        "broker": "NinjaTrader",
+        "source": "auto_refresh",
+        "fetched_at_utc": "2026-04-30T01:53:16Z"
+      },
+      "instrument_margins": {
+        "MES 06-26": {
+          "root": "MES",
+          "margin_type": "intraday",
+          "margin_per_contract": 50.0,
+          "max_contracts_by_capital": 40,
+          "status": "allowed"
+        }
+      },
+      "status": "informational_only",
+      "status_text": "Профиль сохранится в запуске; стратегия пока не ограничивается."
+    },
     "historical_data_fingerprint": {
       "method": "placeholder",
       "value": "sha256:placeholder",

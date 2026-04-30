@@ -10,6 +10,11 @@
 /NT-Analyzer/data/commands/**
 /NT-Analyzer/data/catalog/*.json
 !/NT-Analyzer/data/catalog/instrument_groups.json
+!/NT-Analyzer/data/catalog/margins.json
+# Runtime artifacts of the margin refresher (atomic-write tmp, legacy backups)
+/NT-Analyzer/data/catalog/*.json.tmp
+/NT-Analyzer/data/catalog/*.json.bak
+/NT-Analyzer/docs/*.new
 /NT-Analyzer/data/last_job.txt
 /NT-Analyzer/data/*.log
 /NT-Analyzer/data/*.err
@@ -17,6 +22,7 @@
 /NT-Analyzer/*.err
 /NT-Analyzer/*.out
 /NT-Analyzer/app/*.log
+/NT-Analyzer/logs/
 
 # Build outputs and caches.
 **/bin/

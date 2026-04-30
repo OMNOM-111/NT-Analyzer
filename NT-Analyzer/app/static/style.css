@@ -358,6 +358,7 @@ details.group[open] > summary { border-bottom-color: #232732; }
   color: #7a8294; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
 }
 .run-form .field .hint { color: #6b7280; font-size: 11px; }
+.run-form .hint.warn { color: #e7b36b; }
 .run-form .field input[type="text"],
 .run-form .field input[type="number"],
 .run-form .field input[type="date"],
@@ -370,6 +371,77 @@ details.group[open] > summary { border-bottom-color: #232732; }
   background: #181b23; color: #6b7280; cursor: not-allowed;
 }
 .run-form .field.disabled .lbl { color: #555; }
+.risk-profile-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; border: 1px solid #2a3346; border-radius: 5px;
+  background: #111824;
+}
+.risk-profile-head {
+  display: flex; justify-content: space-between; align-items: center;
+  color: #d8e4f5; font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.risk-profile-mode {
+  color: #9fb3d4; background: #202b3d; border: 1px solid #33425c;
+  border-radius: 3px; padding: 1px 5px; font-size: 10px;
+}
+.risk-check {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; color: #c7cfdd; font-size: 12px;
+}
+.risk-check input { flex: 0 0 auto; }
+.risk-profile-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  color: #aebbd0; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.risk-profile-stats span {
+  background: #0f1115; border: 1px solid #263044; border-radius: 4px;
+  padding: 4px 6px; min-width: 0;
+}
+.risk-profile-summary {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px;
+  color: #aebbd0; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.risk-profile-summary span {
+  background: #0f1115; border: 1px solid #263044; border-radius: 4px;
+  padding: 3px 6px; text-align: center; min-width: 0;
+}
+.risk-profile-summary .rp-allowed { color: #8fd49b; border-color: #2d4a36; }
+.risk-profile-summary .rp-blocked { color: #e89090; border-color: #4a2d2d; }
+.risk-profile-summary .rp-unknown { color: #c9b27a; border-color: #4a3f2d; }
+.risk-profile-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 140px; overflow-y: auto;
+  font-size: 11px; color: #c7cfdd;
+  font-variant-numeric: tabular-nums;
+}
+.risk-profile-list li {
+  display: flex; justify-content: space-between; gap: 6px;
+  padding: 2px 6px; border: 1px solid #1d2433; border-radius: 3px;
+  background: #0f1115;
+}
+.risk-profile-list li.rp-allowed { border-color: #2d4a36; }
+.risk-profile-list li.rp-blocked { border-color: #4a2d2d; }
+.risk-profile-list li.rp-unknown { border-color: #4a3f2d; }
+.risk-profile-list .rp-name { color: #d8e4f5; }
+.risk-profile-list .rp-meta { color: #9fb3d4; }
+.risk-profile-refresh {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 6px; flex-wrap: wrap;
+}
+.btn-refresh-margins {
+  background: #1f2937; color: #d8e4f5;
+  border: 1px solid #2d3a4f; border-radius: 4px;
+  padding: 3px 9px; cursor: pointer; font-size: 12px;
+}
+.btn-refresh-margins:hover:not(:disabled) { background: #2a3850; }
+.btn-refresh-margins:disabled,
+.btn-refresh-margins.busy { opacity: 0.6; cursor: wait; }
+.risk-profile-refresh-info {
+  color: #8aa1c4; font-size: 11px; line-height: 1.3;
+}
+.risk-profile-refresh-info.warn { color: #e89090; }
 .run-form .presets { display: flex; flex-wrap: wrap; gap: 4px; }
 .run-form .presets button {
   background: #1f2330; color: #cfcfcf; border: 1px solid #2c3142;

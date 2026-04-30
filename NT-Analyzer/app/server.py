@@ -33,8 +33,10 @@ from typing import Any, Dict, Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import jobqueue  # type: ignore[no-redef]
+    from app import marginrefresh  # type: ignore[no-redef]
 else:
     from . import jobqueue
+    from . import marginrefresh
 
 
 HOST = "127.0.0.1"
@@ -373,9 +375,11 @@ class Handler(BaseHTTPRequestHandler):
         is_cancel_batch = (len(parts) == 4 and parts[0] == "api"
                            and parts[1] == "batches" and parts[3] == "cancel")
         is_catalog_refresh = (path == "/api/catalog/refresh")
+        is_margins_refresh = (path == "/api/margins/refresh")
 
         if not (path in ("/api/jobs", "/api/batches")
-                or is_cancel_job or is_cancel_batch or is_catalog_refresh):
+                or is_cancel_job or is_cancel_batch
+                or is_catalog_refresh or is_margins_refresh):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
@@ -385,6 +389,12 @@ class Handler(BaseHTTPRequestHandler):
         if is_catalog_refresh:
             out = jobqueue.request_catalog_refresh()
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.GATEWAY_TIMEOUT
+            self._json(status, out)
+            return
+
+        if is_margins_refresh:
+            out = marginrefresh.refresh_margins_now(trigger="manual")
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_GATEWAY
             self._json(status, out)
             return
 
@@ -436,6 +446,7 @@ class Handler(BaseHTTPRequestHandler):
                     from_utc=str(body.get("from_utc") or ""),
                     to_utc=str(body.get("to_utc") or ""),
                     parameters=body.get("parameters") or {},
+                    risk_profile=body.get("risk_profile") or {},
                     calculate=str(body.get("calculate") or "OnBarClose"),
                     is_tick_replay=bool(body.get("is_tick_replay") or False),
                     order_fill_resolution=str(body.get("order_fill_resolution") or "Standard"),
@@ -472,6 +483,7 @@ class Handler(BaseHTTPRequestHandler):
                 from_utc=str(body.get("from_utc") or ""),
                 to_utc=str(body.get("to_utc") or ""),
                 parameters=body.get("parameters") or {},
+                risk_profile=body.get("risk_profile") or {},
                 calculate=str(body.get("calculate") or "OnBarClose"),
                 is_tick_replay=bool(body.get("is_tick_replay") or False),
                 order_fill_resolution=str(body.get("order_fill_resolution") or "Standard"),
