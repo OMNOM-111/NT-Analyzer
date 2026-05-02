@@ -1654,14 +1654,16 @@ def ninjatrader_running() -> Optional[bool]:
         out = subprocess.run(
             [str(tasklist), "/FO", "CSV", "/NH"],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=4,
             startupinfo=startupinfo,
             creationflags=creationflags,
         )
         if out.returncode != 0:
             return None
-        haystack = (out.stdout or "").lower() + "\n" + (out.stderr or "").lower()
+        stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
+        stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
+        haystack = stdout.lower() + "\n" + stderr.lower()
         return "ninjatrader" in haystack
     except Exception:
         return None

@@ -27,7 +27,7 @@ namespace NTAnalyzerBridge.Runtime
     /// </summary>
     internal sealed class RuntimeTelemetryExporter
     {
-        public const string ExporterVersion = "1.0.0";
+        public const string ExporterVersion = "1.1.0";
         private const int   TickIntervalMs  = 5000;
 
         private readonly string _runtimeDir;
@@ -68,6 +68,7 @@ namespace NTAnalyzerBridge.Runtime
             try
             {
                 WriteHeartbeat();
+                WriteAccounts();
                 WriteStrategiesAndPositions();
             }
             catch (Exception ex)
@@ -90,6 +91,153 @@ namespace NTAnalyzerBridge.Runtime
             sb.Append("}");
             AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "heartbeat.json"),
                                     sb.ToString());
+        }
+
+        // ---------------- accounts ----------------------------------------
+
+        /// <summary>
+        /// Write a snapshot of NinjaTrader accounts to accounts.json so the
+        /// Trading Online UI can list them with cash/buying power and an
+        /// honest paper/live classification. Read-only — never controls.
+        /// </summary>
+        private void WriteAccounts()
+        {
+            var sb = new StringBuilder(1024);
+            sb.Append("{\"generated_at_utc\":").Append(JsStr(IsoNow()))
+              .Append(",\"exporter_version\":").Append(JsStr(ExporterVersion))
+              .Append(",\"accounts\":[");
+            int n = 0;
+            int liveCount = 0, paperCount = 0, playbackCount = 0, unknownCount = 0;
+            string topLevelNote = "";
+            try
+            {
+                foreach (var acc in SafeAllAccounts())
+                {
+                    if (acc == null) continue;
+                    string accName = SafeAccountName(acc);
+                    string accMode = ClassifyAccountMode(accName, acc);
+                    if (accMode == "live") liveCount++;
+                    else if (accMode == "paper") paperCount++;
+                    else if (accMode == "playback") playbackCount++;
+                    else unknownCount++;
+
+                    // Read each numeric value individually so partial provider
+                    // support doesn't drop the entire account record. Each null
+                    // is reported in availability_notes so the UI can explain
+                    // exactly which field NinjaTrader did not expose.
+                    double? cash    = SafeAccountValue(acc, "CashValue");
+                    double? bp      = SafeAccountValue(acc, "BuyingPower");
+                    double? nlv     = SafeAccountValue(acc, "NetLiquidation");
+                    double? rpnl    = SafeAccountValue(acc, "RealizedProfitLoss");
+                    double? upnl    = SafeAccountValue(acc, "UnrealizedProfitLoss");
+                    string ccy      = GetStringProp(acc, "Denomination");
+                    string connStat = GetStringProp(acc, "ConnectionStatus");
+
+                    var notes = new List<string>();
+                    if (cash    == null) notes.Add("cash_value");
+                    if (bp      == null) notes.Add("buying_power");
+                    if (nlv     == null) notes.Add("net_liquidation");
+                    if (rpnl    == null) notes.Add("realized_pnl");
+                    if (upnl    == null) notes.Add("unrealized_pnl");
+
+                    if (n > 0) sb.Append(",");
+                    sb.Append("{");
+                    AppendKv(sb, "account_name",      accName);                          Sep(sb);
+                    AppendKv(sb, "account_mode",      accMode);                          Sep(sb);
+                    AppendKv(sb, "cash_value",        cash);                             Sep(sb);
+                    AppendKv(sb, "buying_power",      bp);                               Sep(sb);
+                    AppendKv(sb, "net_liquidation",   nlv);                              Sep(sb);
+                    AppendKv(sb, "realized_pnl",      rpnl);                             Sep(sb);
+                    AppendKv(sb, "unrealized_pnl",    upnl);                             Sep(sb);
+                    AppendKv(sb, "currency",          ccy);                              Sep(sb);
+                    AppendKv(sb, "connection_status", connStat);                         Sep(sb);
+                    sb.Append("\"availability_notes\":").Append(SerializeStringList(notes));
+                    sb.Append("}");
+                    n++;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendError("accounts", ex);
+                topLevelNote = "exception_during_enumeration: " + (ex.Message ?? "");
+            }
+            sb.Append("],\"summary\":{");
+            AppendKv(sb, "total",    n);              Sep(sb);
+            AppendKv(sb, "live",     liveCount);      Sep(sb);
+            AppendKv(sb, "paper",    paperCount);     Sep(sb);
+            AppendKv(sb, "playback", playbackCount);  Sep(sb);
+            AppendKv(sb, "unknown",  unknownCount);
+            sb.Append("}");
+            if (!string.IsNullOrEmpty(topLevelNote))
+            {
+                sb.Append(",\"note\":").Append(JsStr(topLevelNote));
+            }
+            sb.Append("}");
+            // Always write — even on zero accounts — so the UI can stop showing
+            // the "bridge does not expose accounts.json" fallback message.
+            AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "accounts.json"),
+                                    sb.ToString());
+        }
+
+        private static string SerializeStringList(List<string> items)
+        {
+            if (items == null || items.Count == 0) return "[]";
+            var sb = new StringBuilder(64);
+            sb.Append("[");
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                sb.Append(JsStr(items[i] ?? ""));
+            }
+            sb.Append("]");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Read a numeric account value via NinjaTrader's
+        /// `Account.Get(AccountItem item, Currency)` reflection helper.
+        /// Returns null if the account does not expose the metric (not all
+        /// account providers do — the UI must tolerate nulls).
+        /// </summary>
+        private static double? SafeAccountValue(Account acc, string itemName)
+        {
+            try
+            {
+                var get = acc.GetType().GetMethod("Get",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (get == null) return null;
+                var paramsInfo = get.GetParameters();
+                if (paramsInfo.Length < 1) return null;
+                var itemType = paramsInfo[0].ParameterType;
+                if (!itemType.IsEnum) return null;
+                object itemEnum;
+                try { itemEnum = Enum.Parse(itemType, itemName); }
+                catch { return null; }
+                object result;
+                if (paramsInfo.Length == 1)
+                {
+                    result = get.Invoke(acc, new object[] { itemEnum });
+                }
+                else
+                {
+                    var ccyType = paramsInfo[1].ParameterType;
+                    object ccy = null;
+                    try
+                    {
+                        var denomProp = acc.GetType().GetProperty("Denomination");
+                        ccy = denomProp != null ? denomProp.GetValue(acc) : null;
+                    }
+                    catch { }
+                    if (ccy == null && ccyType.IsEnum)
+                    {
+                        try { ccy = Enum.GetValues(ccyType).GetValue(0); } catch { }
+                    }
+                    result = get.Invoke(acc, new object[] { itemEnum, ccy });
+                }
+                if (result == null) return null;
+                return Convert.ToDouble(result, CultureInfo.InvariantCulture);
+            }
+            catch { return null; }
         }
 
         // ---------------- strategies + positions ---------------------------
@@ -129,6 +277,13 @@ namespace NTAnalyzerBridge.Runtime
                     foreach (var strat in SafeStrategies(acc))
                     {
                         if (strat == null) continue;
+                        // Filter out ghost objects: Finalized/Terminated instances
+                        // are not visible in NinjaTrader Strategies tab and must
+                        // not appear in our telemetry as live rows.
+                        string stState = GetStringProp(strat, "State") ?? "";
+                        if (stState.Equals("Finalized", StringComparison.OrdinalIgnoreCase) ||
+                            stState.Equals("Terminated", StringComparison.OrdinalIgnoreCase))
+                            continue;
                         if (sCount > 0) strategiesJson.Append(",");
                         strategiesJson.Append(SerializeStrategy(strat, accName, accMode));
                         sCount++;
@@ -167,6 +322,13 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "state",            GetStringProp(strat, "State"));            Sep(sb);
             AppendKv(sb, "connection_status", GetStringProp(strat, "ConnectionStatus")); Sep(sb);
 
+            // Phase 1.A — primary data series / timeframe export.
+            // Surfaces "5 Minute" so the Trading Online UI can stop showing TF=—.
+            AppendKv(sb, "timeframe",         GetTimeframeString(strat));               Sep(sb);
+            AppendKv(sb, "bars_period_type",  GetTimeframeType(strat));                 Sep(sb);
+            AppendKv(sb, "bars_period_value", GetTimeframeValue(strat));                Sep(sb);
+            AppendKv(sb, "data_series_count", GetDataSeriesCount(strat));               Sep(sb);
+
             var pos = GetSubObject(strat, "Position");
             AppendKv(sb, "position_market_position", GetStringProp(pos, "MarketPosition")); Sep(sb);
             AppendKv(sb, "position_qty",     GetIntProp(pos, "Quantity"));              Sep(sb);
@@ -177,8 +339,15 @@ namespace NTAnalyzerBridge.Runtime
 
             var paramsDict = GatherStrategyParams(strat);
             string paramsJson = SerializeDict(paramsDict);
-            sb.Append("\"params\":").Append(paramsJson);                                 Sep(sb);
-            AppendKv(sb, "params_hash", Sha256.OfString(CanonicalParams(paramsDict)));
+            sb.Append("\"params\":").Append(paramsJson); Sep(sb);
+            AppendKv(sb, "params_hash", Sha256.OfString(CanonicalParams(paramsDict))); Sep(sb);
+            // Phase 19+: ID derived from runtime object identity so that two
+            // instances of the same class on the same account/instrument are
+            // distinguishable. Stable for the lifetime of the NinjaTrader
+            // process; changes when the strategy is re-added in the UI.
+            AppendKv(sb, "runtime_instance_id",
+                RuntimeInstanceIdUtil.Compute(strat, accName, strat.GetType().Name,
+                    GetInstrumentFullName(strat), GetStringProp(strat, "Name")));
             sb.Append("}");
             return sb.ToString();
         }
@@ -254,8 +423,18 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "timestamp_utc", IsoNow());                                Sep(sb);
             AppendKv(sb, "execution_id",  GetStringProp(ex, "ExecutionId"));        Sep(sb);
             AppendKv(sb, "account_name",  GetStringProp(GetSubObject(ex, "Account"), "Name")); Sep(sb);
-            AppendKv(sb, "strategy_id",   GetStrategyIdFromExecution(ex));          Sep(sb);
-            AppendKv(sb, "strategy_class", GetStringProp(GetSubObject(ex, "Order"), "FromEntrySignal")); Sep(sb);
+
+            // Phase 19: get strategy class/id from Order.Strategy directly when possible,
+            // fall back to FromEntrySignal (a signal name, not a class name).
+            var order = GetSubObject(ex, "Order");
+            var exStrat = GetSubObject(order, "Strategy");
+            string stratClass  = exStrat != null ? exStrat.GetType().Name
+                                                 : GetStringProp(order, "FromEntrySignal");
+            string stratId     = exStrat != null ? InferStrategyId(exStrat)
+                                                 : GetStrategyIdFromExecution(ex);
+
+            AppendKv(sb, "strategy_id",   stratId);                                 Sep(sb);
+            AppendKv(sb, "strategy_class", stratClass);                             Sep(sb);
             AppendKv(sb, "instrument",    GetInstrumentFullName(ex));               Sep(sb);
             AppendKv(sb, "market_position", GetStringProp(ex, "MarketPosition"));   Sep(sb);
             AppendKv(sb, "order_action",  GetStringProp(ex, "Order.OrderAction"));  Sep(sb);
@@ -434,6 +613,92 @@ namespace NTAnalyzerBridge.Runtime
             if (cls == "NTAMicroVwapGapMirrorPilot") return "ntamicrovwapgapmirrorpilot";
             if (cls == "NTAMicroVwapMeanRevertPilot") return "ntamicrovwapmeanrevertpilot";
             return cls.ToLowerInvariant();
+        }
+
+        // ---------------- timeframe / data series ---------------------------
+        // Phase 1.A: NinjaTrader Strategy doesn't always expose BarsPeriod
+        // directly during Configure/SetDefaults; it lives on
+        // BarsArray[0].BarsPeriod once data is loaded. We probe several
+        // shapes and stay null-safe so the exporter never throws.
+
+        private static object FindPrimaryBarsPeriod(object strat)
+        {
+            if (strat == null) return null;
+            try
+            {
+                // 1) BarsArray[0].BarsPeriod  (most reliable when data loaded)
+                var barsArray = SimpleGet(strat, "BarsArray") as System.Collections.IEnumerable;
+                if (barsArray != null)
+                {
+                    foreach (var b in barsArray)
+                    {
+                        if (b == null) continue;
+                        var bp = SimpleGet(b, "BarsPeriod");
+                        if (bp != null) return bp;
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                // 2) Strategy.BarsPeriod (primary series convenience accessor)
+                var bp = SimpleGet(strat, "BarsPeriod");
+                if (bp != null) return bp;
+            }
+            catch { }
+            try
+            {
+                // 3) BarsPeriods[0] (multi-series declarations before load)
+                var bps = SimpleGet(strat, "BarsPeriods") as System.Collections.IEnumerable;
+                if (bps != null)
+                {
+                    foreach (var b in bps)
+                    {
+                        if (b != null) return b;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string GetTimeframeType(object strat)
+        {
+            var bp = FindPrimaryBarsPeriod(strat);
+            return bp == null ? "" : (GetStringProp(bp, "BarsPeriodType") ?? "");
+        }
+
+        private static int GetTimeframeValue(object strat)
+        {
+            var bp = FindPrimaryBarsPeriod(strat);
+            return bp == null ? 0 : GetIntProp(bp, "Value");
+        }
+
+        private static string GetTimeframeString(object strat)
+        {
+            try
+            {
+                string type = GetTimeframeType(strat);
+                int value   = GetTimeframeValue(strat);
+                if (string.IsNullOrEmpty(type)) return "";
+                if (value <= 0) return type;
+                // NinjaTrader UI shows "5 Minute", "1 Hour", "1 Day" etc.
+                return value.ToString(CultureInfo.InvariantCulture) + " " + type;
+            }
+            catch { return ""; }
+        }
+
+        private static int GetDataSeriesCount(object strat)
+        {
+            try
+            {
+                var barsArray = SimpleGet(strat, "BarsArray") as System.Collections.IEnumerable;
+                if (barsArray == null) return 0;
+                int n = 0;
+                foreach (var b in barsArray) { if (b != null) n++; }
+                return n;
+            }
+            catch { return 0; }
         }
 
         private static string GetStrategyIdFromExecution(object ex)

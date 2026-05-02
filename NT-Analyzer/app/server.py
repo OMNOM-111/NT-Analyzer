@@ -472,9 +472,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, ops_runtime.health())
             return True
         if path == "/api/ops/runtime/strategies":
+            # Trading Online expects the bridge to be the source of truth.
+            # Always use merge_all_runtime_strategies() which iterates the raw
+            # bridge strategies.json — never adds fake registry-only entries.
+            sel_acct = (qs.get("selected_account")    or [None])[0]
+            sel_inst = (qs.get("selected_instrument") or [None])[0]
+            sel_tf   = (qs.get("selected_timeframe")  or [None])[0]
+            runtime_list = ops_runtime.merge_all_runtime_strategies(
+                selected_account=sel_acct,
+                selected_instrument=sel_inst,
+                selected_timeframe=sel_tf,
+            )
+            raw_list = ops_runtime.read_strategies_raw()
             self._json(HTTPStatus.OK, {
-                "strategies": ops_runtime.merge_all_strategies(),
-                "raw":        ops_runtime.read_strategies_raw(),
+                "strategies": runtime_list,
+                "raw":        raw_list,
+                "source":     "runtime_bridge",
+                "warnings":   [] if runtime_list else [
+                    "NinjaTrader bridge не видит активных strategy instances. "
+                    "Проверьте, что стратегия включена в NinjaTrader и bridge пересобран."
+                ],
             })
             return True
         if sub == "runtime" and len(parts) >= 4 and parts[3] == "strategies" and len(parts) == 5:
@@ -483,6 +500,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/ops/runtime/positions":
             self._json(HTTPStatus.OK, ops_runtime.read_positions())
+            return True
+        if path == "/api/ops/runtime/accounts":
+            self._json(HTTPStatus.OK, ops_runtime.read_accounts_with_source())
             return True
         if path == "/api/ops/runtime/executions":
             sid = (qs.get("strategy_id") or [None])[0]
@@ -516,6 +536,44 @@ class Handler(BaseHTTPRequestHandler):
             try: limit = int((qs.get("limit") or ["200"])[0])
             except ValueError: limit = 200
             self._json(HTTPStatus.OK, {"results": ops_runtime.read_command_results(limit)})
+            return True
+        if path == "/api/ops/runtime/command-status":
+            try: timeout = int((qs.get("timeout_sec") or ["30"])[0])
+            except ValueError: timeout = 30
+            cid = (qs.get("command_id") or [None])[0]
+            since = (qs.get("since_ts") or [None])[0]
+            if cid:
+                self._json(HTTPStatus.OK,
+                           ops_runtime.get_command_status(cid, timeout_sec=timeout))
+            else:
+                self._json(HTTPStatus.OK, {
+                    "statuses": ops_runtime.get_command_statuses_since(
+                        since_ts=since, timeout_sec=timeout),
+                })
+            return True
+        if path == "/api/ops/runtime/instruments":
+            # Returns per-root current/all instruments for the Trading Online selector.
+            # Each root entry has front_month (most recent), and all contracts.
+            from app.catalog import get_instruments  # type: ignore
+            try:
+                all_instr = get_instruments()
+            except Exception:
+                all_instr = []
+            root_map: dict = {}
+            for ins in all_instr:
+                root = str(ins.get("root") or ins.get("symbol","")[:3])
+                root_map.setdefault(root, []).append(ins)
+            result = []
+            for root, contracts in sorted(root_map.items()):
+                def _dl(c: dict) -> str:
+                    return str(c.get("data_last") or "")
+                contracts_sorted = sorted(contracts, key=_dl, reverse=True)
+                result.append({
+                    "root": root,
+                    "front_month": contracts_sorted[0] if contracts_sorted else None,
+                    "contracts": contracts_sorted,
+                })
+            self._json(HTTPStatus.OK, {"roots": result})
             return True
 
         # /api/ops/strategies/{id}[/sub]
@@ -585,6 +643,8 @@ class Handler(BaseHTTPRequestHandler):
                     class_name=str(body.get("class_name") or ""),
                     instrument=str(body.get("instrument") or ""),
                     contract_month=str(body.get("contract_month") or ""),
+                    timeframe=str(body.get("timeframe") or ""),
+                    runtime_instance_id=str(body.get("runtime_instance_id") or ""),
                     params=body.get("params") if isinstance(body.get("params"), dict) else None,
                 )
                 self._json(HTTPStatus.OK, out); return

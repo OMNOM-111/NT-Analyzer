@@ -9,7 +9,11 @@
 </head>
 <body>
 <header>
-  <h1>NT-Analyzer <span class="muted">MVP-1</span></h1>
+  <h1>NT-Analyzer <span class="muted">— Бэктестирование</span></h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/index.html" class="top-nav-link active">Бэктестирование</a>
+    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+  </nav>
   <div class="status-strip" id="run-status-strip">
     <span class="status-chip" id="ss-nt">NinjaTrader: проверка…</span>
     <span class="status-chip" id="ss-catalog" hidden></span>
@@ -18,6 +22,10 @@
       <button type="button" id="ss-stale-btn" class="chip-action">Обновить</button>
     </span>
     <span class="status-chip warn" id="ss-commission" hidden></span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+      <span class="status-chip" id="chip-market" title="Расписание CME equity futures (MES/ES): Вс 15:00 PT → Пт 14:00 PT, ежедневная пауза 14:00–15:00 PT.">Рынок: …</span>
+      <span class="status-chip" id="chip-clock" title="Текущее время по California (Pacific Time)">…</span>
+    </div>
   </div>
   <div class="header-actions">
     <button type="button" id="btn-instruments-toggle" class="hdr-btn" title="Показать/скрыть панель инструментов">Инструменты</button>
@@ -568,5 +576,6 @@
 </div>
 
 <script src="app.js?v=20260502-backtest-fix"></script>
+<script src="market_clock.js?v=20260502-hotfix5"></script>
 </body>
 </html>
