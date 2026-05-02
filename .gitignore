@@ -8,6 +8,8 @@
 !/NT-Analyzer/jobs/*/.gitkeep
 /NT-Analyzer/data/batches/**
 /NT-Analyzer/data/commands/**
+/NT-Analyzer/data/ops/**
+/NT-Analyzer/data/runtime/**
 /NT-Analyzer/data/catalog/*.json
 !/NT-Analyzer/data/catalog/instrument_groups.json
 !/NT-Analyzer/data/catalog/margins.json
@@ -23,6 +25,7 @@
 /NT-Analyzer/*.out
 /NT-Analyzer/app/*.log
 /NT-Analyzer/logs/
+/NT-Analyzer/_backup_before_restore_*/
 
 # Build outputs and caches.
 **/bin/

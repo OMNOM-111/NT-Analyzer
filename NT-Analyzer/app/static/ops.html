@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>Центр управления стратегиями — NT-Analyzer</title>
+<style>
+/* ===== Reset & base ===== */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font:13px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;background:#0f1115;color:#e6e6e6}
+a{color:#7ab4f5;text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;font:inherit}
+
+/* ===== Page grid: header / alarms / middle / bottom ===== */
+.scc-page{display:grid;grid-template-rows:48px auto 1fr 36vh;height:100vh;min-height:0}
+
+/* ===== Header ===== */
+.scc-header{
+  display:flex;align-items:center;gap:12px;
+  padding:0 16px;
+  background:#161922;border-bottom:1px solid #2a3340;
+  overflow:hidden
+}
+.scc-header h1{font-size:14px;font-weight:600;white-space:nowrap}
+.scc-header .muted{color:#7a8aa3;font-weight:400}
+.scc-chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:12px;
+  background:#1f2330;color:#cfcfcf;border:1px solid #2c3142;white-space:nowrap}
+.chip.ok{background:#14331f;color:#b9f5cd;border-color:#1f5135}
+.chip.bad{background:#331414;color:#ffb3b3;border-color:#5a1f1f}
+.chip.warn{background:#2a2316;color:#ffd6a5;border-color:#6a541e}
+.chip.info{background:#1a2a3e;color:#b3d4ff;border-color:#2a4a6a}
+.ml-auto{margin-left:auto}
+.hdr-link{background:#1f2330;color:#cfcfcf;border:1px solid #2c3142;border-radius:4px;
+  padding:4px 12px;font-size:12px;display:inline-block}
+.hdr-link:hover{background:#283047;text-decoration:none}
+
+/* ===== Alarm strip ===== */
+.alarm-strip{overflow:auto;max-height:80px}
+.alarm{padding:6px 16px;font-size:12px;display:flex;align-items:center;gap:8px}
+.alarm.red{background:#3a1010;color:#ff9e9e;border-bottom:1px solid #8b2020}
+.alarm.yellow{background:#2a2410;color:#ffd66e;border-bottom:1px solid #7a6010}
+.alarm b{font-weight:700}
+
+/* ===== Middle: left sidebar + right params ===== */
+.scc-middle{display:grid;grid-template-columns:260px 1fr;min-height:0;overflow:hidden}
+
+/* ===== Left sidebar: strategy list ===== */
+.scc-left{
+  border-right:1px solid #23262e;background:#13161c;
+  display:flex;flex-direction:column;overflow:hidden
+}
+.scc-left-head{
+  padding:8px 10px;font-size:11px;font-weight:600;color:#9ab;
+  border-bottom:1px solid #23262e;text-transform:uppercase;letter-spacing:.5px;
+  display:flex;align-items:center;gap:6px
+}
+.scc-left-body{overflow-y:auto;flex:1}
+.strat-item{
+  padding:8px 12px;cursor:pointer;border-bottom:1px solid #1d2028;
+  display:flex;flex-direction:column;gap:3px;
+  transition:background .12s
+}
+.strat-item:hover{background:#191c24}
+.strat-item.active{background:#1a2a3e;border-left:3px solid #3a7bd5}
+.strat-item .name{font-size:13px;font-weight:600}
+.strat-item .sub{font-size:11px;color:#7a8aa3}
+.strat-item .dot{
+  display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:#445;margin-right:4px;vertical-align:middle
+}
+.strat-item .dot.green{background:#24a348}
+.strat-item .dot.yellow{background:#c4941c}
+.strat-item .dot.red{background:#b83232}
+.strat-item .dot.gray{background:#445}
+
+/* ===== Right params panel ===== */
+.scc-right{
+  padding:12px 16px;overflow-y:auto;background:#0f1115
+}
+.scc-right .section{margin-bottom:14px}
+.scc-right .section-title{
+  font-size:11px;font-weight:600;color:#7a8aa3;text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:6px;padding-bottom:4px;
+  border-bottom:1px solid #23262e
+}
+.kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+.kv-field{display:flex;flex-direction:column;gap:2px}
+.kv-label{font-size:11px;color:#7a8aa3}
+.kv-val{font-size:13px;font-weight:500}
+.kv-val.mono{font-family:monospace;font-size:12px}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.paper{background:#14331f;color:#b9f5cd;border:1px solid #1f5135}
+.badge.live{background:#3a1010;color:#ffb3b3;border:1px solid #5a1f1f}
+.badge.unknown{background:#2a2316;color:#ffd6a5;border:1px solid #6a541e}
+
+/* locked params table */
+.params-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+.params-table th{text-align:left;padding:3px 6px;color:#7a8aa3;font-weight:600;border-bottom:1px solid #23262e}
+.params-table td{padding:3px 6px;border-bottom:1px solid #1a1d24;font-family:monospace;font-size:12px}
+.params-table tr.mismatch td{color:#ffb9b9;background:#2a1515}
+.params-table tr.ok td{color:#b9f5cd}
+.params-table .match-icon{margin-right:4px}
+
+/* buttons */
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.btn{border-radius:4px;padding:7px 16px;font-size:13px;border:1px solid;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:#1a4d2e;color:#b9f5cd;border-color:#2a6e40}
+.btn.primary:hover{background:#1f6b3b}
+.btn.danger{background:#4d1a1a;color:#ffb3b3;border-color:#7a2a2a}
+.btn.danger:hover{background:#6b1f1f}
+.btn.secondary{background:#1f2330;color:#cfcfcf;border-color:#2c3142}
+.btn.secondary:hover{background:#283047}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+
+/* alerts in params panel */
+.alert{padding:6px 10px;border-radius:4px;font-size:12px;margin:6px 0}
+.alert.red{background:#3a1010;color:#ff9e9e;border:1px solid #7a2020}
+.alert.yellow{background:#2a2410;color:#ffd66e;border:1px solid #7a6010}
+.alert.green{background:#103a1a;color:#b9f5cd;border:1px solid #207a40}
+.alert.info{background:#10203a;color:#b3d4ff;border:1px solid #204a7a}
+
+/* manual confirm flow */
+.manual-flow{background:#1a2230;border:1px solid #2a3340;border-radius:6px;padding:10px 12px;margin-top:8px}
+.manual-flow p{font-size:12px;margin-bottom:8px;color:#b0c0d8}
+.manual-flow ol{font-size:12px;color:#b0c0d8;padding-left:18px;margin-bottom:8px}
+.manual-flow ol li{margin-bottom:3px}
+
+/* ===== Bottom tabs ===== */
+.scc-bottom{
+  display:flex;flex-direction:column;min-height:0;
+  border-top:2px solid #2a3340;background:#0d1018
+}
+.tab-bar{
+  display:flex;border-bottom:1px solid #23262e;flex-shrink:0;
+  overflow-x:auto
+}
+.tab-btn{
+  background:none;border:none;color:#7a8aa3;padding:7px 14px;font-size:12px;
+  border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer
+}
+.tab-btn.active{color:#b3d4ff;border-bottom-color:#3a7bd5;background:#111622}
+.tab-btn:hover{color:#cfcfcf}
+.tab-content{flex:1;overflow-y:auto;padding:8px 12px;font-size:12px}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+
+/* generic table inside tabs */
+table.data{width:100%;border-collapse:collapse;font-size:12px}
+table.data th{background:#1a2230;color:#9ab;padding:4px 8px;text-align:left;font-weight:600;border-bottom:1px solid #2a3340;position:sticky;top:0}
+table.data td{padding:4px 8px;border-bottom:1px solid #1a1d24}
+table.data tr:hover td{background:#15192a}
+.mono{font-family:monospace}
+.muted{color:#7a8aa3}
+.small{font-size:11px}
+.empty{color:#7a8aa3;padding:16px;text-align:center;font-style:italic}
+</style>
+</head>
+<body>
+<div class="scc-page">
+
+  <!-- ===== HEADER ===== -->
+  <header class="scc-header">
+    <h1>Центр управления стратегиями <span class="muted">SCC v2</span></h1>
+    <div class="scc-chips" id="status-chips">
+      <span class="chip" id="chip-backend">Backend: ...</span>
+      <span class="chip" id="chip-nt">NT Runtime: ...</span>
+      <span class="chip bad" id="chip-live">🔒 LIVE: запрещён</span>
+      <span class="chip" id="chip-acct">Аккаунт: —</span>
+    </div>
+    <div class="ml-auto">
+      <a href="/ui/index.html" class="hdr-link">← К отчётам</a>
+    </div>
+  </header>
+
+  <!-- ===== ALARM STRIP ===== -->
+  <div id="alarm-strip" class="alarm-strip"></div>
+
+  <!-- ===== MIDDLE ===== -->
+  <div class="scc-middle">
+
+    <!-- Left: strategy list -->
+    <aside class="scc-left">
+      <div class="scc-left-head">
+        <span>Стратегии</span>
+        <span class="chip info" id="cnt-chip" style="margin-left:auto">0</span>
+      </div>
+      <div class="scc-left-body" id="strat-list"></div>
+    </aside>
+
+    <!-- Right: params + launch -->
+    <div class="scc-right" id="params-panel">
+      <div class="empty" id="params-empty">Выберите стратегию в списке слева.</div>
+      <div id="params-content" style="display:none"></div>
+    </div>
+
+  </div>
+
+  <!-- ===== BOTTOM TABS ===== -->
+  <div class="scc-bottom">
+    <div class="tab-bar" id="tab-bar">
+      <button class="tab-btn active" data-tab="runtime">Runtime</button>
+      <button class="tab-btn" data-tab="executions">Сделки</button>
+      <button class="tab-btn" data-tab="orders">Ордера</button>
+      <button class="tab-btn" data-tab="journal">Журнал</button>
+      <button class="tab-btn" data-tab="risk">Риск</button>
+      <button class="tab-btn" data-tab="commands">Команды</button>
+      <button class="tab-btn" data-tab="audit">Аудит</button>
+    </div>
+    <div class="tab-content">
+      <div class="tab-pane active" id="pane-runtime"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-executions"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-orders"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-journal"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-risk"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-commands"><div class="empty">Выберите стратегию.</div></div>
+      <div class="tab-pane" id="pane-audit"><div class="empty">Выберите стратегию.</div></div>
+    </div>
+  </div>
+
+</div>
+<script src="ops.js"></script>
+</body>
+</html>

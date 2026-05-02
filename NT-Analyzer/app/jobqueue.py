@@ -154,6 +154,39 @@ def _custom_dll_path() -> Path:
     return ninjatrader_user_dir() / "bin" / "Custom" / "NinjaTrader.Custom.dll"
 
 
+def _nt_strategies_dir() -> Path:
+    return ninjatrader_user_dir() / "bin" / "Custom" / "Strategies"
+
+
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _resolve_strategy_source_file(class_name: str,
+                                  catalog_source_file: Any = None) -> Optional[str]:
+    """Resolve the real .cs file from Custom/Strategies.
+
+    The bridge catalog can be stale after folders were archived or after a
+    zero-byte root stub existed. Prefer a non-empty catalog path, otherwise
+    fall back to Strategies/<Class>/<Class>.cs and then Strategies/<Class>.cs.
+    """
+    raw = str(catalog_source_file or "")
+    if raw and _nonempty_file(Path(raw)):
+        return raw
+
+    safe = str(class_name or "").strip()
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", safe):
+        return None
+    base = _nt_strategies_dir()
+    for candidate in (base / safe / f"{safe}.cs", base / f"{safe}.cs"):
+        if _nonempty_file(candidate):
+            return str(candidate)
+    return None
+
+
 def _safe_mtime(p: Path) -> Optional[float]:
     try:
         return p.stat().st_mtime if p.is_file() else None
@@ -349,6 +382,9 @@ def whitelisted_strategies() -> List[str]:
     if cat and isinstance(cat.get("strategies"), list):
         for s in cat["strategies"]:
             if isinstance(s, dict) and isinstance(s.get("class_name"), str):
+                sf = _resolve_strategy_source_file(s["class_name"], s.get("source_file"))
+                if not sf:
+                    continue
                 names.append(s["class_name"])
     if not names:
         names = list(_FALLBACK_STRATEGIES)
@@ -400,8 +436,27 @@ def build_catalog_response() -> Dict[str, Any]:
         } for name in _FALLBACK_STRATEGIES]
         strategies_generated_at = None
     else:
-        strategies = strat_doc.get("strategies") or []
+        raw_strategies = strat_doc.get("strategies") or []
         strategies_generated_at = strat_doc.get("generated_at_utc")
+        # Filter out ghost strategies: classes that exist in the compiled DLL
+        # but whose source file has been deleted (.cs absent → source_file="").
+        # Also filter out NT template stubs (source_file starts with "@").
+        strategies = []
+        for s in raw_strategies:
+            cls_name = s.get("class_name", "")
+            sf = _resolve_strategy_source_file(cls_name, s.get("source_file"))
+            if not sf:
+                warnings.append(
+                    f"Стратегия {cls_name} исключена из каталога: "
+                    "файл .cs удалён/архивирован, но класс ещё в DLL. "
+                    "Перекомпилируйте скрипты в NinjaTrader (Tools → Compile)."
+                )
+                continue
+            s = dict(s, source_file=sf)
+            if os.path.basename(sf).startswith("@"):
+                # Sample templates — keep but mark
+                s = dict(s, is_sample=True)
+            strategies.append(s)
 
     if instr_doc is None:
         warnings.append(
@@ -459,8 +514,8 @@ def build_catalog_response() -> Dict[str, Any]:
         "execution_defaults": {
             "calculate":             "OnBarClose",
             "is_tick_replay":        False,
-            "order_fill_resolution": "Standard",
-            "slippage_ticks":        0,
+            "order_fill_resolution": "High",
+            "slippage_ticks":        1,
             "commission":            0.0,
             "commission_template":   "None",
             "session_template":      "CME US Index Futures RTH",
@@ -636,13 +691,17 @@ class CreateJobRequest:
     # execution defaults are validated/normalized below
     calculate: str = "OnBarClose"
     is_tick_replay: bool = False
-    order_fill_resolution: str = "Standard"
-    slippage_ticks: int = 0
+    order_fill_resolution: str = "High"
+    slippage_ticks: int = 1
     commission: float = 0.0
     commission_template: str = "None"
     session_template: str = "CME US Index Futures RTH"
     timezone: str = "UTC"
     job_id: Optional[str] = None
+    # role gates the research-grade execution validator. Allowed:
+    #   "research" (default) — High fill, slip>=1, commission honest.
+    #   "smoke" / "debug"     — bypass research-grade checks.
+    role: str = "research"
     # Batch membership (set by create_batch). For standalone /api/jobs POST
     # these stay None and the job behaves exactly as before.
     batch_id: Optional[str] = None
@@ -787,6 +846,185 @@ def _normalize_risk_profile(profile: Any) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Risk Profile -> strategy.parameters bridge contract
+# ---------------------------------------------------------------------------
+# Phase 0 contract documented in:
+#   РАЗРАБОТКА СТРАТЕГИЙ/01_ПЛАН_СТРАТЕГИИ_NTAMicroVwapRiskPilot.md §3
+#
+# The bridge (StrategyAnalyzerRunner.ApplyStrategyParameters) only injects
+# job.strategy.parameters into NinjaScriptProperty fields. The raw
+# `risk_profile` block is preserved in result.context but never reaches the
+# strategy. To let strategies consume capital / margin / intraday flag, we
+# project the normalized Risk Profile into strategy.parameters under a fixed
+# whitelist of names. UI-generated zero/unknown placeholders are overwritten
+# by the normalized profile; real non-placeholder operator values are kept.
+RISK_PROFILE_PARAM_KEYS = (
+    "StartingCapital",
+    "IntradayOnly",
+    "ActiveMarginPerContract",
+    "MaxContractsByCapital",
+    "InstrumentStatus",
+    "MarginSourceBroker",
+)
+
+RESEARCH_ROUND_TURN_COMMISSION = 1.90
+
+LOCKED_B1_SHORTONLY_PARAMS: Dict[str, Any] = {
+    "StartingCapital": 2000.0,
+    "IntradayOnly": True,
+    "ActiveMarginPerContract": 50.0,
+    "MaxContractsByCapital": 40,
+    "InstrumentStatus": "allowed",
+    "MarginSourceBroker": "NinjaTrader",
+    "EnableLong": False,
+    "EnableShort": True,
+    "UseDailyBiasFilter": False,
+    "EmaFastPeriod": 50,
+    "EmaSlowPeriod": 200,
+    "TradeStartTime": 635,
+    "TradeEndTime": 700,
+    "MinStopTicks": 12,
+    "MaxStopTicks": 12,
+    "RewardRiskRatio": 3.5,
+    "RiskPerTradePct": 2.0,
+    "UserMaxContracts": 5,
+    "RoundTurnCommission": 1.90,
+    "SlippageTicks": 1,
+}
+
+
+def _strategy_parameter_names(class_name: str) -> set[str]:
+    """Return tunable NinjaScriptProperty names for class_name from catalog.
+
+    The bridge rejects unknown strategy.parameters. Backend-side injections
+    therefore must only add fields the concrete strategy actually exposes.
+    """
+    try:
+        cat = read_strategies_catalog() or {}
+    except Exception:
+        cat = {}
+    for s in cat.get("strategies") or []:
+        if not isinstance(s, dict) or s.get("class_name") != class_name:
+            continue
+        names: set[str] = set()
+        for p in s.get("parameters") or []:
+            if isinstance(p, dict) and isinstance(p.get("name"), str):
+                names.add(p["name"])
+        return names
+    return set()
+
+
+def _effective_round_turn_commission(req: "CreateJobRequest") -> float:
+    try:
+        rtc = float((req.parameters or {}).get("RoundTurnCommission", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        rtc = 0.0
+    return rtc if rtc >= RESEARCH_ROUND_TURN_COMMISSION else RESEARCH_ROUND_TURN_COMMISSION
+
+
+def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
+    """Inject honest accounting params only when the strategy exposes them.
+
+    For older/sample strategies that do not have RoundTurnCommission or
+    SlippageTicks properties, we keep those fields out of strategy.parameters
+    so the strict NinjaTrader bridge can still run the backtest. The honest
+    commission used for UI/report metrics is stored in execution instead.
+    """
+    if not isinstance(req.parameters, dict):
+        req.parameters = {}
+    exposed = _strategy_parameter_names(req.class_name)
+    if "RoundTurnCommission" in exposed:
+        try:
+            cur = float(req.parameters.get("RoundTurnCommission", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cur = 0.0
+        if cur < RESEARCH_ROUND_TURN_COMMISSION:
+            req.parameters["RoundTurnCommission"] = RESEARCH_ROUND_TURN_COMMISSION
+    if "SlippageTicks" in exposed:
+        try:
+            cur = int(req.parameters.get("SlippageTicks", 0) or 0)
+        except (TypeError, ValueError):
+            cur = 0
+        if cur < 1:
+            req.parameters["SlippageTicks"] = max(1, int(req.slippage_ticks))
+
+
+def _apply_locked_strategy_parameters(req: "CreateJobRequest") -> None:
+    """Enforce locked production/paper defaults for approved strategies."""
+    if req.class_name != "NTAMicroVwapRiskPilot":
+        return
+    if not isinstance(req.parameters, dict):
+        req.parameters = {}
+    req.parameters.update(LOCKED_B1_SHORTONLY_PARAMS)
+
+
+def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
+    """Project req.risk_profile -> req.parameters using RISK_PROFILE_PARAM_KEYS.
+
+    Safe defaults when the instrument is missing from instrument_margins:
+        ActiveMarginPerContract = 0.0
+        MaxContractsByCapital   = 0
+        InstrumentStatus        = "unknown"
+
+    The strategy is responsible for refusing to trade when these are unsafe
+    (status != "allowed", margin <= 0, max contracts < 1, capital <= 0).
+    """
+    rp = req.risk_profile or {}
+    if not isinstance(rp, dict) or not rp:
+        return
+    inst_map = rp.get("instrument_margins") or {}
+    inst_info = inst_map.get(req.instrument) if isinstance(inst_map, dict) else None
+    if not isinstance(inst_info, dict):
+        inst_info = {}
+
+    margin_val = inst_info.get("margin_per_contract")
+    max_c      = inst_info.get("max_contracts_by_capital")
+    status     = inst_info.get("status") or "unknown"
+    broker     = ""
+    msrc       = rp.get("margin_source")
+    if isinstance(msrc, dict):
+        broker = str(msrc.get("broker") or "")
+
+    derived: Dict[str, Any] = {
+        "StartingCapital":         float(rp.get("starting_capital") or 0.0),
+        "IntradayOnly":            bool(rp.get("intraday_only", True)),
+        "ActiveMarginPerContract": float(margin_val) if margin_val is not None else 0.0,
+        "MaxContractsByCapital":   int(max_c) if max_c is not None else 0,
+        "InstrumentStatus":        str(status),
+        "MarginSourceBroker":      str(broker),
+    }
+    if not isinstance(req.parameters, dict):
+        req.parameters = {}
+    exposed = _strategy_parameter_names(req.class_name)
+    for k in RISK_PROFILE_PARAM_KEYS:
+        if k not in exposed:
+            continue
+        if k not in req.parameters or _risk_profile_param_is_placeholder(k, req.parameters[k]):
+            req.parameters[k] = derived[k]
+
+
+def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
+    """Return True for empty UI defaults that should not block risk injection."""
+    if value is None:
+        return True
+    if key in ("StartingCapital", "ActiveMarginPerContract"):
+        try:
+            return float(value) <= 0
+        except (TypeError, ValueError):
+            return True
+    if key == "MaxContractsByCapital":
+        try:
+            return int(value) <= 0
+        except (TypeError, ValueError):
+            return True
+    if key == "InstrumentStatus":
+        return str(value or "").strip().lower() in ("", "unknown", "blocked")
+    if key == "MarginSourceBroker":
+        return str(value or "").strip() == ""
+    return False
+
+
 def _validate(req: CreateJobRequest) -> None:
     allowed = whitelisted_strategies()
     if req.class_name not in allowed:
@@ -858,9 +1096,76 @@ def _validate(req: CreateJobRequest) -> None:
     if req.job_id is not None and not JOB_ID_PATTERN.match(req.job_id):
         raise JobValidationError("job_id contains forbidden characters")
 
+    # ------------------------------------------------------------------
+    # Research-grade execution gate. Phase 12A (post-Phase-11 retraction).
+    # Any job tagged role="research" (default) MUST use realistic fill +
+    # explicit honest commission. Standard fill / slip=0 / no commission
+    # silently inflate edge by 3-5x; this gate prevents that ever again.
+    # role="smoke" or "debug" bypasses the gate but is recorded in job.json
+    # so post-hoc audits can exclude such runs from any acceptance verdict.
+    # ------------------------------------------------------------------
+    role = (getattr(req, "role", "research") or "research").lower()
+    if role not in ("research", "smoke", "debug"):
+        raise JobValidationError(
+            f"role must be 'research'|'smoke'|'debug' (got {req.role!r})"
+        )
+    req.role = role
+    if role == "research":
+        errs: List[str] = []
+        exposed_params = _strategy_parameter_names(req.class_name)
+        if req.order_fill_resolution != "High":
+            errs.append(
+                "order_fill_resolution must be 'High' for research jobs "
+                f"(got {req.order_fill_resolution!r}). Use role='smoke' to bypass."
+            )
+        if int(req.slippage_ticks) < 1:
+            errs.append(
+                "slippage_ticks must be >=1 for research jobs "
+                f"(got {req.slippage_ticks!r})."
+            )
+        if req.commission_template != "None":
+            # If a real template is set, _validate above already required
+            # bridge support. For research we additionally require that
+            # commission accounting is honest — currently NT bridge can only
+            # post-adjust via parameters.RoundTurnCommission, so template
+            # 'None' is the supported research path.
+            pass
+        if "RoundTurnCommission" in exposed_params:
+            rtc = req.parameters.get("RoundTurnCommission")
+            try:
+                rtc_v = float(rtc) if rtc is not None else None
+            except (TypeError, ValueError):
+                rtc_v = None
+            if rtc_v is None or rtc_v < RESEARCH_ROUND_TURN_COMMISSION:
+                errs.append(
+                    "parameters.RoundTurnCommission must be >=1.90 for research jobs "
+                    f"(got {rtc!r}). Micro futures minimum honest round-turn."
+                )
+        if "SlippageTicks" in exposed_params:
+            pst = req.parameters.get("SlippageTicks")
+            try:
+                pst_v = int(pst) if pst is not None else None
+            except (TypeError, ValueError):
+                pst_v = None
+            if pst_v is None or pst_v < 1:
+                errs.append(
+                    "parameters.SlippageTicks must be >=1 for research jobs "
+                    f"(got {pst!r}). Must match top-level slippage_ticks."
+                )
+        if errs:
+            raise JobValidationError(
+                "research-grade gate failed: " + "; ".join(errs)
+            )
+
 
 def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     """Create a job in pending/. Returns (job_id, pending_job_dir)."""
+    _apply_locked_strategy_parameters(req)
+    _inject_research_accounting_parameters(req)
+    # Risk Profile bridge contract (see _inject_risk_profile_parameters):
+    # projects normalized risk_profile -> strategy.parameters so the strategy
+    # can read capital/margin/intraday/status via [NinjaScriptProperty].
+    _inject_risk_profile_parameters(req)
     _validate(req)
 
     job_id = req.job_id or gen_job_id("ui")
@@ -902,6 +1207,8 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
             "commission_template": req.commission_template,
             "session_template": req.session_template,
             "timezone": req.timezone,
+            "role": getattr(req, "role", "research"),
+            "round_turn_commission": _effective_round_turn_commission(req),
         },
     }
     if req.batch_id:
@@ -1006,6 +1313,98 @@ def _read_json_safe(path: Path) -> Optional[Any]:
         return None
 
 
+def _compute_adjusted_metrics(trades: Optional[List[Any]],
+                              parameters: Optional[Dict[str, Any]],
+                              base_metrics: Optional[Dict[str, Any]] = None,
+                              round_turn_commission: Optional[Any] = None
+                              ) -> Optional[Dict[str, Any]]:
+    """Compute commission-adjusted metrics from per-trade data.
+
+    NinjaTrader runs use commission_template=None for backtests. Some
+    strategies expose RoundTurnCommission as a NinjaScriptProperty, older/sample
+    strategies do not. metrics.net_profit in result.json is therefore GROSS
+    PnL; this helper recomputes adjusted metrics after paying the research
+    round-turn commission per contract per trade.
+    """
+    if not isinstance(trades, list) or not trades:
+        return None
+    rtc = 0.0
+    if isinstance(parameters, dict):
+        try:
+            rtc = float(parameters.get("RoundTurnCommission", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            rtc = 0.0
+    if rtc <= 0 and round_turn_commission is not None:
+        try:
+            rtc = float(round_turn_commission or 0.0)
+        except (TypeError, ValueError):
+            rtc = 0.0
+    if rtc <= 0:
+        return None
+
+    n = 0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    commission_total = 0.0
+    adjusted_pnls: List[float] = []
+    wins = 0
+    sum_w = 0.0
+    sum_l = 0.0
+    for t in trades:
+        if not isinstance(t, dict):
+            continue
+        try:
+            pnl = float(t.get("pnl_currency", 0.0) or 0.0)
+            qty = float(t.get("quantity", 1) or 1)
+        except (TypeError, ValueError):
+            continue
+        comm = qty * rtc
+        adj = pnl - comm
+        n += 1
+        commission_total += comm
+        if pnl > 0:
+            gross_profit += pnl
+        else:
+            gross_loss += pnl
+        if adj > 0:
+            wins += 1
+            sum_w += adj
+        else:
+            sum_l += abs(adj)
+        adjusted_pnls.append(adj)
+
+    if n == 0:
+        return None
+
+    gross_net = gross_profit + gross_loss
+    net_after = gross_net - commission_total
+    pf_after = (sum_w / sum_l) if sum_l > 0 else (None if sum_w == 0 else float("inf"))
+    win_pct_after = round(wins / n * 100.0, 4)
+
+    cum = 0.0
+    peak = 0.0
+    mdd = 0.0
+    for x in adjusted_pnls:
+        cum += x
+        if cum > peak:
+            peak = cum
+        if cum - peak < mdd:
+            mdd = cum - peak
+
+    out = {
+        "round_turn_commission": rtc,
+        "commission_total_adjusted": round(commission_total, 4),
+        "net_profit_after_commission": round(net_after, 4),
+        "profit_factor_after_commission":
+            (round(pf_after, 6) if isinstance(pf_after, float) and pf_after != float("inf") else pf_after),
+        "max_drawdown_after_commission": round(mdd, 4),
+        "win_pct_after_commission": win_pct_after,
+        "trade_count_adjusted": n,
+        "commission_template_used": "None (research round-turn commission)",
+    }
+    return out
+
+
 def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
     located = find_job_dir(job_id)
     if not located:
@@ -1031,6 +1430,28 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
         summary["trade_count"] = m.get("trade_count")
         summary["winning_pct"] = m.get("winning_pct")
         summary["net_profit"]  = m.get("net_profit")
+
+        # --- Commission-adjusted metrics ---
+        # NinjaTrader runs use commission_template=None so metrics.net_profit
+        # is GROSS. Recompute "real" metrics from per-trade RoundTurnCommission.
+        try:
+            trades_doc = _read_json_safe(jdir / "trades.json")
+            params = ((job.get("strategy") or {}).get("parameters") or {})
+            execution = (job.get("execution") or {})
+            adj = _compute_adjusted_metrics(
+                trades_doc,
+                params,
+                m,
+                execution.get("round_turn_commission"),
+            )
+            if adj:
+                m.update(adj)
+                summary["net_profit_after_commission"] = adj.get("net_profit_after_commission")
+                summary["profit_factor_after_commission"] = adj.get("profit_factor_after_commission")
+                summary["commission_total_adjusted"] = adj.get("commission_total_adjusted")
+        except Exception:
+            pass
+
         summary["validated_against_strategy_analyzer"] = VALIDATED_AGAINST_STRATEGY_ANALYZER
     elif status == "failed":
         err = _read_json_safe(jdir / "error.json") or {}
@@ -1063,6 +1484,25 @@ def read_job_full(job_id: str) -> Optional[Dict[str, Any]]:
         out["batch"] = job_doc["batch"]
     if status == "done":
         out["result"] = _read_json_safe(jdir / "result.json")
+        # Augment metrics with commission-adjusted view (real net etc).
+        try:
+            res = out["result"] or {}
+            m = res.get("metrics") or {}
+            trades_doc = _read_json_safe(jdir / "trades.json")
+            params = ((job_doc.get("strategy") if isinstance(job_doc, dict) else None) or {}).get("parameters") or {}
+            execution = ((job_doc.get("execution") if isinstance(job_doc, dict) else None) or {})
+            adj = _compute_adjusted_metrics(
+                trades_doc,
+                params,
+                m,
+                execution.get("round_turn_commission"),
+            )
+            if adj and isinstance(m, dict):
+                m.update(adj)
+                res["metrics"] = m
+                out["result"] = res
+        except Exception:
+            pass
     elif status == "failed":
         out["error"] = _read_json_safe(jdir / "error.json")
         out["result_partial"] = _read_json_safe(jdir / "result.partial.json")
@@ -1260,14 +1700,16 @@ class CreateBatchRequest:
     risk_profile: Dict[str, Any] = field(default_factory=dict)
     calculate: str = "OnBarClose"
     is_tick_replay: bool = False
-    order_fill_resolution: str = "Standard"
-    slippage_ticks: int = 0
+    order_fill_resolution: str = "High"
+    slippage_ticks: int = 1
     commission: float = 0.0
     commission_template: str = "None"
     session_template: str = "CME US Index Futures RTH"
     timezone: str = "UTC"
     batch_id: Optional[str] = None
     name: Optional[str] = None  # display name for the batch
+    # See CreateJobRequest.role.
+    role: str = "research"
 
 
 def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
@@ -1321,6 +1763,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             session_template=req.session_template,
             timezone=req.timezone,
             job_id=child_id,
+            role=getattr(req, "role", "research"),
             batch_id=batch_id,
             batch_index=idx,
             batch_total=total,
@@ -1366,6 +1809,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             "commission_template": req.commission_template,
             "session_template": req.session_template,
             "timezone": req.timezone,
+            "role": getattr(req, "role", "research"),
         },
         "instruments": seen,
         "children": children_meta,

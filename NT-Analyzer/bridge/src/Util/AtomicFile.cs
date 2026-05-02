@@ -30,10 +30,22 @@ namespace NTAnalyzerBridge.Util
 
             if (File.Exists(finalPath))
             {
-                // Atomic swap, no missing-file window for readers.
-                // backupFileName=null => no backup kept.
-                File.Replace(tmp, finalPath, destinationBackupFileName: null,
-                             ignoreMetadataErrors: true);
+                try
+                {
+                    // Atomic swap, no missing-file window for readers.
+                    // backupFileName=null => no backup kept.
+                    File.Replace(tmp, finalPath, destinationBackupFileName: null,
+                                 ignoreMetadataErrors: true);
+                }
+                catch (IOException)
+                {
+                    // Keep telemetry alive if File.Replace is blocked by a
+                    // transient Windows file handle. The temp file is already
+                    // fully written, so this fallback still avoids partial JSON.
+                    if (File.Exists(finalPath))
+                        File.Delete(finalPath);
+                    File.Move(tmp, finalPath);
+                }
             }
             else
             {

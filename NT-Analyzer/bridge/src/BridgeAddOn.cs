@@ -4,6 +4,7 @@ using NTAnalyzerBridge.Config;
 using NTAnalyzerBridge.Execution;
 using NTAnalyzerBridge.JobQueue;
 using NTAnalyzerBridge.Reporting;
+using NTAnalyzerBridge.Runtime;
 using NTAnalyzerBridge.Util;
 
 namespace NTAnalyzerBridge
@@ -27,6 +28,8 @@ namespace NTAnalyzerBridge
         private StrategyLoader _strategyLoader;
         private JobQueueWatcher _watcher;
         private CatalogRefresher _catalogRefresher;
+        private RuntimeTelemetryExporter _runtimeExporter;
+        private RuntimeCommandProcessor _commandProcessor;
 
         protected override void OnStateChange()
         {
@@ -100,6 +103,32 @@ namespace NTAnalyzerBridge
                 // and serve manual refresh requests from the UI.
                 _catalogRefresher = new CatalogRefresher(_cfg, _strategyLoader);
                 _catalogRefresher.Start();
+
+                // Phase 17: NinjaTrader runtime telemetry exporter
+                // Read-only: writes data/runtime/{heartbeat,strategies,positions,executions,orders,errors}
+                // No order placement, no strategy enable/disable.
+                try
+                {
+                    _runtimeExporter = new RuntimeTelemetryExporter(_cfg.ProjectRoot);
+                    _runtimeExporter.Start();
+                }
+                catch (Exception rex)
+                {
+                    BridgeLog.Error("RuntimeTelemetryExporter start failed", rex);
+                }
+
+                // Phase 18: paper-only command processor.
+                // Reads data/runtime/commands.jsonl and enable/disables NinjaScript
+                // strategy instances. Live accounts are hard-rejected.
+                try
+                {
+                    _commandProcessor = new RuntimeCommandProcessor(_cfg.ProjectRoot);
+                    _commandProcessor.Start();
+                }
+                catch (Exception cpex)
+                {
+                    BridgeLog.Error("RuntimeCommandProcessor start failed", cpex);
+                }
             }
             catch (Exception ex)
             {
@@ -109,6 +138,14 @@ namespace NTAnalyzerBridge
 
         private void StopBridge()
         {
+            try { _commandProcessor?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: command.Stop failed", ex); }
+            finally { _commandProcessor = null; }
+
+            try { _runtimeExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: runtime.Stop failed", ex); }
+            finally { _runtimeExporter = null; }
+
             try { _catalogRefresher?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: refresher.Stop failed", ex); }
             finally { _catalogRefresher = null; }

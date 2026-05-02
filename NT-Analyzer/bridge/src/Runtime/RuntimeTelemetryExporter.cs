@@ -1,0 +1,692 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+
+using NinjaTrader.Cbi;
+using NinjaTrader.NinjaScript;
+using NTAnalyzerBridge.Util;
+
+namespace NTAnalyzerBridge.Runtime
+{
+    /// <summary>
+    /// Phase 17 - NinjaTrader runtime telemetry exporter.
+    ///
+    /// Writes JSON snapshots and JSONL append-only event streams under
+    ///   {project_root}/data/runtime/
+    /// so the NT-Analyzer Strategy Control Center (app/runtime.py) can
+    /// merge real Ninja runtime state with its registry/state machine.
+    ///
+    /// SAFETY: read-only. No order placement. No strategy enable/disable.
+    /// Live accounts are exported as `account_mode=live` purely so the UI
+    /// can display them as read-only; the backend will refuse all control.
+    /// </summary>
+    internal sealed class RuntimeTelemetryExporter
+    {
+        public const string ExporterVersion = "1.0.0";
+        private const int   TickIntervalMs  = 5000;
+
+        private readonly string _runtimeDir;
+        private readonly Timer  _timer;
+        private int _running;
+        private readonly object _writeLock = new object();
+
+        public RuntimeTelemetryExporter(string projectRoot)
+        {
+            if (string.IsNullOrEmpty(projectRoot))
+                throw new ArgumentNullException(nameof(projectRoot));
+            _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
+            Directory.CreateDirectory(_runtimeDir);
+            _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
+        }
+
+        public void Start()
+        {
+            BridgeLog.Info("RuntimeTelemetryExporter: start runtime_dir=" + _runtimeDir);
+            HookAccountEvents();
+            _timer.Change(0, TickIntervalMs);
+        }
+
+        public void Stop()
+        {
+            try { _timer.Change(Timeout.Infinite, Timeout.Infinite); }
+            catch { }
+            try { _timer.Dispose(); } catch { }
+            try { UnhookAccountEvents(); } catch { }
+            BridgeLog.Info("RuntimeTelemetryExporter: stopped");
+        }
+
+        // ---------------- timer tick ---------------------------------------
+
+        private void OnTick(object _)
+        {
+            if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
+            try
+            {
+                WriteHeartbeat();
+                WriteStrategiesAndPositions();
+            }
+            catch (Exception ex)
+            {
+                AppendError("tick", ex);
+            }
+            finally { _running = 0; }
+        }
+
+        // ---------------- heartbeat ----------------------------------------
+
+        private void WriteHeartbeat()
+        {
+            var sb = new StringBuilder(256);
+            sb.Append("{");
+            AppendKv(sb, "timestamp_utc", IsoNow());                Sep(sb);
+            AppendKv(sb, "ninja_version", SafeNinjaVersion());      Sep(sb);
+            AppendKv(sb, "machine",       Environment.MachineName); Sep(sb);
+            AppendKv(sb, "exporter_version", ExporterVersion);
+            sb.Append("}");
+            AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "heartbeat.json"),
+                                    sb.ToString());
+        }
+
+        // ---------------- strategies + positions ---------------------------
+
+        private void WriteStrategiesAndPositions()
+        {
+            var strategiesJson = new StringBuilder(2048);
+            var positionsJson  = new StringBuilder(1024);
+            strategiesJson.Append("{\"generated_at_utc\":").Append(JsStr(IsoNow()))
+                          .Append(",\"strategies\":[");
+            positionsJson.Append("{");
+
+            int sCount = 0, pCount = 0;
+            try
+            {
+                IEnumerable<Account> accounts = SafeAllAccounts();
+                foreach (var acc in accounts)
+                {
+                    if (acc == null) continue;
+                    string accName = SafeAccountName(acc);
+                    string accMode = ClassifyAccountMode(accName, acc);
+
+                    // ---- positions per account
+                    if (pCount > 0) positionsJson.Append(",");
+                    pCount++;
+                    positionsJson.Append(JsStr(accName)).Append(":[");
+                    int posI = 0;
+                    foreach (var pos in SafePositions(acc))
+                    {
+                        if (posI > 0) positionsJson.Append(",");
+                        positionsJson.Append(SerializePosition(pos));
+                        posI++;
+                    }
+                    positionsJson.Append("]");
+
+                    // ---- enabled strategies on account
+                    foreach (var strat in SafeStrategies(acc))
+                    {
+                        if (strat == null) continue;
+                        if (sCount > 0) strategiesJson.Append(",");
+                        strategiesJson.Append(SerializeStrategy(strat, accName, accMode));
+                        sCount++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendError("enumerate", ex);
+            }
+
+            strategiesJson.Append("]}");
+            positionsJson.Append("}");
+
+            AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "strategies.json"),
+                                    strategiesJson.ToString());
+            AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "positions.json"),
+                                    positionsJson.ToString());
+        }
+
+        // ---------------- per-strategy serialization -----------------------
+
+        private string SerializeStrategy(object strat, string accName, string accMode)
+        {
+            var sb = new StringBuilder(1024);
+            sb.Append("{");
+            AppendKv(sb, "timestamp_utc",    IsoNow());                                 Sep(sb);
+            AppendKv(sb, "account_name",     accName);                                  Sep(sb);
+            AppendKv(sb, "account_mode",     accMode);                                  Sep(sb);
+            AppendKv(sb, "strategy_id",      InferStrategyId(strat));                   Sep(sb);
+            AppendKv(sb, "strategy_class",   strat.GetType().Name);                     Sep(sb);
+            AppendKv(sb, "strategy_name",    GetStringProp(strat, "Name"));             Sep(sb);
+            AppendKv(sb, "instrument",       GetInstrumentFullName(strat));             Sep(sb);
+            AppendKv(sb, "contract_month",   GetInstrumentFullName(strat));             Sep(sb);
+            AppendKv(sb, "enabled",          IsStrategyEnabled(strat));                 Sep(sb);
+            AppendKv(sb, "state",            GetStringProp(strat, "State"));            Sep(sb);
+            AppendKv(sb, "connection_status", GetStringProp(strat, "ConnectionStatus")); Sep(sb);
+
+            var pos = GetSubObject(strat, "Position");
+            AppendKv(sb, "position_market_position", GetStringProp(pos, "MarketPosition")); Sep(sb);
+            AppendKv(sb, "position_qty",     GetIntProp(pos, "Quantity"));              Sep(sb);
+            AppendKv(sb, "avg_price",        GetDoubleProp(pos, "AveragePrice"));       Sep(sb);
+            AppendKv(sb, "unrealized_pnl",   GetDoubleProp(strat, "UnrealizedPnL"));    Sep(sb);
+            AppendKv(sb, "realized_pnl",     GetDoubleProp(strat, "RealizedPnL"));      Sep(sb);
+            AppendKv(sb, "session_trades_count", GetIntProp(strat, "SystemPerformance.AllTrades.Count")); Sep(sb);
+
+            var paramsDict = GatherStrategyParams(strat);
+            string paramsJson = SerializeDict(paramsDict);
+            sb.Append("\"params\":").Append(paramsJson);                                 Sep(sb);
+            AppendKv(sb, "params_hash", Sha256.OfString(CanonicalParams(paramsDict)));
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private string SerializePosition(object pos)
+        {
+            var sb = new StringBuilder(256);
+            sb.Append("{");
+            AppendKv(sb, "instrument", GetInstrumentFullName(pos)); Sep(sb);
+            AppendKv(sb, "market_position", GetStringProp(pos, "MarketPosition")); Sep(sb);
+            AppendKv(sb, "quantity", GetIntProp(pos, "Quantity")); Sep(sb);
+            AppendKv(sb, "avg_price", GetDoubleProp(pos, "AveragePrice"));
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        // ---------------- account hookup -----------------------------------
+
+        private bool _accountHooked;
+
+        private void HookAccountEvents()
+        {
+            if (_accountHooked) return;
+            try
+            {
+                foreach (var acc in SafeAllAccounts())
+                {
+                    if (acc == null) continue;
+                    try
+                    {
+                        acc.ExecutionUpdate += OnExecutionUpdate;
+                        acc.OrderUpdate     += OnOrderUpdate;
+                    }
+                    catch (Exception ex) { AppendError("hook " + SafeAccountName(acc), ex); }
+                }
+                _accountHooked = true;
+            }
+            catch (Exception ex) { AppendError("HookAccountEvents", ex); }
+        }
+
+        private void UnhookAccountEvents()
+        {
+            if (!_accountHooked) return;
+            foreach (var acc in SafeAllAccounts())
+            {
+                if (acc == null) continue;
+                try { acc.ExecutionUpdate -= OnExecutionUpdate; } catch { }
+                try { acc.OrderUpdate     -= OnOrderUpdate;     } catch { }
+            }
+            _accountHooked = false;
+        }
+
+        private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            try { AppendExecution(e); }
+            catch (Exception ex) { AppendError("OnExecutionUpdate", ex); }
+        }
+
+        private void OnOrderUpdate(object sender, OrderEventArgs e)
+        {
+            try { AppendOrder(e); }
+            catch (Exception ex) { AppendError("OnOrderUpdate", ex); }
+        }
+
+        // ---------------- executions / orders / errors append --------------
+
+        private void AppendExecution(ExecutionEventArgs e)
+        {
+            var ex = e?.Execution;
+            if (ex == null) return;
+            var sb = new StringBuilder(512);
+            sb.Append("{");
+            AppendKv(sb, "timestamp_utc", IsoNow());                                Sep(sb);
+            AppendKv(sb, "execution_id",  GetStringProp(ex, "ExecutionId"));        Sep(sb);
+            AppendKv(sb, "account_name",  GetStringProp(GetSubObject(ex, "Account"), "Name")); Sep(sb);
+            AppendKv(sb, "strategy_id",   GetStrategyIdFromExecution(ex));          Sep(sb);
+            AppendKv(sb, "strategy_class", GetStringProp(GetSubObject(ex, "Order"), "FromEntrySignal")); Sep(sb);
+            AppendKv(sb, "instrument",    GetInstrumentFullName(ex));               Sep(sb);
+            AppendKv(sb, "market_position", GetStringProp(ex, "MarketPosition"));   Sep(sb);
+            AppendKv(sb, "order_action",  GetStringProp(ex, "Order.OrderAction"));  Sep(sb);
+            AppendKv(sb, "position_action", GetStringProp(ex, "PositionAction"));   Sep(sb);
+            AppendKv(sb, "role",          ClassifyExecutionRole(ex));               Sep(sb);
+            AppendKv(sb, "exit_reason",   ClassifyExitReason(ex));                  Sep(sb);
+            AppendKv(sb, "quantity",      GetIntProp(ex, "Quantity"));              Sep(sb);
+            AppendKv(sb, "price",         GetDoubleProp(ex, "Price"));              Sep(sb);
+            AppendKv(sb, "commission",    GetDoubleProp(ex, "Commission"));         Sep(sb);
+            AppendKv(sb, "realized_pnl",  GetDoubleProp(ex, "Order.Strategy.RealizedPnL"));
+            sb.Append("}");
+            AppendLine(Path.Combine(_runtimeDir, "executions.jsonl"), sb.ToString());
+        }
+
+        private void AppendOrder(OrderEventArgs e)
+        {
+            var o = e?.Order;
+            if (o == null) return;
+            var sb = new StringBuilder(512);
+            sb.Append("{");
+            AppendKv(sb, "timestamp_utc", IsoNow());                       Sep(sb);
+            AppendKv(sb, "order_id",      GetStringProp(o, "Id"));         Sep(sb);
+            AppendKv(sb, "account_name",  GetStringProp(GetSubObject(o, "Account"), "Name")); Sep(sb);
+            AppendKv(sb, "strategy_id",   GetStringProp(o, "FromEntrySignal")); Sep(sb);
+            AppendKv(sb, "instrument",    GetInstrumentFullName(o));        Sep(sb);
+            AppendKv(sb, "order_state",   GetStringProp(o, "OrderState"));  Sep(sb);
+            AppendKv(sb, "order_action",  GetStringProp(o, "OrderAction")); Sep(sb);
+            AppendKv(sb, "order_type",    GetStringProp(o, "OrderType"));   Sep(sb);
+            AppendKv(sb, "quantity",      GetIntProp(o, "Quantity"));       Sep(sb);
+            AppendKv(sb, "filled",        GetIntProp(o, "Filled"));         Sep(sb);
+            AppendKv(sb, "limit_price",   GetDoubleProp(o, "LimitPrice"));  Sep(sb);
+            AppendKv(sb, "stop_price",    GetDoubleProp(o, "StopPrice"));   Sep(sb);
+            AppendKv(sb, "avg_fill",      GetDoubleProp(o, "AverageFillPrice"));
+            sb.Append("}");
+            AppendLine(Path.Combine(_runtimeDir, "orders.jsonl"), sb.ToString());
+        }
+
+        private void AppendError(string where, Exception ex)
+        {
+            try
+            {
+                var sb = new StringBuilder(512);
+                sb.Append("{");
+                AppendKv(sb, "timestamp_utc", IsoNow());                  Sep(sb);
+                AppendKv(sb, "where",         where ?? "");               Sep(sb);
+                AppendKv(sb, "type",          ex == null ? "" : ex.GetType().FullName); Sep(sb);
+                AppendKv(sb, "message",       ex == null ? "" : (ex.Message ?? "")); Sep(sb);
+                AppendKv(sb, "stack",         ex == null ? "" : (ex.StackTrace ?? ""));
+                sb.Append("}");
+                AppendLine(Path.Combine(_runtimeDir, "errors.jsonl"), sb.ToString());
+            }
+            catch { /* swallow - never throw from error path */ }
+        }
+
+        private void AppendLine(string path, string line)
+        {
+            lock (_writeLock)
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
+                }
+                catch (Exception ex)
+                {
+                    BridgeLog.Error("RuntimeExporter AppendLine " + path, ex);
+                }
+            }
+        }
+
+        // ---------------- helpers / safe reflection ------------------------
+
+        private static IEnumerable<Account> SafeAllAccounts()
+        {
+            try
+            {
+                lock (Account.All)
+                {
+                    return Account.All.ToList();
+                }
+            }
+            catch { return Enumerable.Empty<Account>(); }
+        }
+
+        private static IEnumerable<object> SafeStrategies(Account acc)
+        {
+            // try Account.Strategies via reflection (different NT8 builds)
+            try
+            {
+                var prop = acc.GetType().GetProperty("Strategies",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                if (prop != null)
+                {
+                    var col = prop.GetValue(acc) as System.Collections.IEnumerable;
+                    if (col != null)
+                    {
+                        var list = new List<object>();
+                        lock (col) { foreach (var x in col) if (x != null) list.Add(x); }
+                        return list;
+                    }
+                }
+            }
+            catch { }
+            return Enumerable.Empty<object>();
+        }
+
+        private static IEnumerable<object> SafePositions(Account acc)
+        {
+            try
+            {
+                var prop = acc.GetType().GetProperty("Positions");
+                if (prop != null)
+                {
+                    var col = prop.GetValue(acc) as System.Collections.IEnumerable;
+                    if (col != null)
+                    {
+                        var list = new List<object>();
+                        lock (col) { foreach (var x in col) if (x != null) list.Add(x); }
+                        return list;
+                    }
+                }
+            }
+            catch { }
+            return Enumerable.Empty<object>();
+        }
+
+        private static string SafeAccountName(Account acc)
+        {
+            try { return acc.Name ?? ""; } catch { return ""; }
+        }
+
+        private static string ClassifyAccountMode(string name, Account acc)
+        {
+            try
+            {
+                // Try Account.Provider or AccountConnection or similar
+                string provider = GetStringProp(acc, "Provider");
+                if (!string.IsNullOrEmpty(provider))
+                {
+                    string p = provider.ToLowerInvariant();
+                    if (p.Contains("playback")) return "playback";
+                    if (p.Contains("simulator") || p.Contains("sim")) return "paper";
+                }
+            }
+            catch { }
+            string n = (name ?? "").ToLowerInvariant();
+            if (n.Contains("playback")) return "playback";
+            if (n.StartsWith("sim") || n.Contains("paper") || n.Contains("demo"))
+                return "paper";
+            if (string.IsNullOrEmpty(n)) return "unknown";
+            return "live";
+        }
+
+        private static bool IsStrategyEnabled(object strat)
+        {
+            try
+            {
+                string state = GetStringProp(strat, "State");
+                if (!string.IsNullOrEmpty(state))
+                {
+                    string s = state.ToLowerInvariant();
+                    if (s == "realtime" || s == "historical" || s == "active") return true;
+                    if (s == "terminated" || s == "finalized") return false;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private static string InferStrategyId(object strat)
+        {
+            // Map class -> known strategy_id used in registry.json.
+            string cls = strat.GetType().Name;
+            if (cls == "NTAMicroVwapRiskPilot") return "b1_shortonly";
+            if (cls == "NTAMicroOrbPilot")      return "ntamicroorbpilot";
+            if (cls == "NTAMicroVwapGapMirrorPilot") return "ntamicrovwapgapmirrorpilot";
+            if (cls == "NTAMicroVwapMeanRevertPilot") return "ntamicrovwapmeanrevertpilot";
+            return cls.ToLowerInvariant();
+        }
+
+        private static string GetStrategyIdFromExecution(object ex)
+        {
+            try
+            {
+                var order = GetSubObject(ex, "Order");
+                if (order == null) return "";
+                var strat = GetSubObject(order, "Strategy");
+                if (strat == null)
+                {
+                    string sigFrom = GetStringProp(order, "FromEntrySignal");
+                    return sigFrom ?? "";
+                }
+                return InferStrategyId(strat);
+            }
+            catch { return ""; }
+        }
+
+        private static string ClassifyExecutionRole(object ex)
+        {
+            try
+            {
+                string pa = (GetStringProp(ex, "PositionAction") ?? "").ToLowerInvariant();
+                if (pa.Contains("entry")) return "entry";
+                if (pa.Contains("exit"))  return "exit";
+                string nm = (GetStringProp(GetSubObject(ex, "Order"), "Name") ?? "").ToLowerInvariant();
+                if (nm.Contains("stop"))   return "exit";
+                if (nm.Contains("target") || nm.Contains("profit")) return "exit";
+            }
+            catch { }
+            return "";
+        }
+
+        private static string ClassifyExitReason(object ex)
+        {
+            try
+            {
+                string nm = (GetStringProp(GetSubObject(ex, "Order"), "Name") ?? "").ToLowerInvariant();
+                if (nm.Contains("stop"))   return "stop";
+                if (nm.Contains("target")) return "target";
+                if (nm.Contains("profit")) return "target";
+            }
+            catch { }
+            return "";
+        }
+
+        private static IDictionary<string, object> GatherStrategyParams(object strat)
+        {
+            var d = new SortedDictionary<string, object>(StringComparer.Ordinal);
+            try
+            {
+                var t = strat.GetType();
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!p.CanRead) continue;
+                    bool isParam = false;
+                    foreach (var a in p.GetCustomAttributes(true))
+                    {
+                        var an = a.GetType().Name;
+                        if (an == "NinjaScriptPropertyAttribute" || an == "RangeAttribute"
+                            || an == "DisplayAttribute")
+                        { isParam = true; break; }
+                    }
+                    if (!isParam) continue;
+                    object v;
+                    try { v = p.GetValue(strat, null); } catch { continue; }
+                    if (v == null || v is string || v.GetType().IsPrimitive
+                        || v is decimal)
+                        d[p.Name] = v;
+                }
+            }
+            catch { }
+            return d;
+        }
+
+        private static string CanonicalParams(IDictionary<string, object> d)
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in d)
+            {
+                sb.Append(kv.Key).Append('=').Append(JsValueRaw(kv.Value)).Append(';');
+            }
+            return sb.ToString();
+        }
+
+        private static string GetInstrumentFullName(object o)
+        {
+            try
+            {
+                var inst = GetSubObject(o, "Instrument");
+                if (inst == null) return "";
+                string s = GetStringProp(inst, "FullName");
+                if (!string.IsNullOrEmpty(s)) return s;
+                var mc = GetSubObject(inst, "MasterInstrument");
+                return GetStringProp(mc, "Name") ?? "";
+            }
+            catch { return ""; }
+        }
+
+        private static object GetSubObject(object o, string path)
+        {
+            if (o == null || string.IsNullOrEmpty(path)) return null;
+            try
+            {
+                object cur = o;
+                foreach (var part in path.Split('.'))
+                {
+                    if (cur == null) return null;
+                    var pi = cur.GetType().GetProperty(part);
+                    if (pi == null) return null;
+                    cur = pi.GetValue(cur, null);
+                }
+                return cur;
+            }
+            catch { return null; }
+        }
+
+        private static string GetStringProp(object o, string path)
+        {
+            object v = (path != null && path.Contains(".")) ?
+                GetSubValue(o, path) : SimpleGet(o, path);
+            return v == null ? "" : v.ToString();
+        }
+
+        private static int GetIntProp(object o, string path)
+        {
+            object v = (path != null && path.Contains(".")) ?
+                GetSubValue(o, path) : SimpleGet(o, path);
+            if (v == null) return 0;
+            try { return Convert.ToInt32(v, CultureInfo.InvariantCulture); }
+            catch { return 0; }
+        }
+
+        private static double GetDoubleProp(object o, string path)
+        {
+            object v = (path != null && path.Contains(".")) ?
+                GetSubValue(o, path) : SimpleGet(o, path);
+            if (v == null) return 0.0;
+            try { return Convert.ToDouble(v, CultureInfo.InvariantCulture); }
+            catch { return 0.0; }
+        }
+
+        private static object SimpleGet(object o, string name)
+        {
+            if (o == null || string.IsNullOrEmpty(name)) return null;
+            try
+            {
+                var pi = o.GetType().GetProperty(name);
+                if (pi != null) return pi.GetValue(o, null);
+                var fi = o.GetType().GetField(name);
+                if (fi != null) return fi.GetValue(o);
+            }
+            catch { }
+            return null;
+        }
+
+        private static object GetSubValue(object o, string path)
+        {
+            if (o == null) return null;
+            object cur = o;
+            foreach (var part in path.Split('.'))
+            {
+                if (cur == null) return null;
+                cur = SimpleGet(cur, part);
+            }
+            return cur;
+        }
+
+        private static string SafeNinjaVersion()
+        {
+            try
+            {
+                var t = Type.GetType("NinjaTrader.Core.Globals, NinjaTrader.Core");
+                if (t != null)
+                {
+                    var p = t.GetProperty("Version") ?? t.GetProperty("ProductVersion");
+                    if (p != null)
+                    {
+                        var v = p.GetValue(null, null);
+                        if (v != null) return v.ToString();
+                    }
+                }
+            }
+            catch { }
+            return "unknown";
+        }
+
+        private static string IsoNow()
+        {
+            return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss",
+                                            CultureInfo.InvariantCulture) + "Z";
+        }
+
+        // ---- micro JSON helpers (no Newtonsoft dependency) ----------------
+
+        private static void AppendKv(StringBuilder sb, string k, object v)
+        {
+            sb.Append(JsStr(k)).Append(":").Append(JsValueRaw(v));
+        }
+
+        private static void Sep(StringBuilder sb) { sb.Append(","); }
+
+        private static string JsStr(string s)
+        {
+            if (s == null) return "null";
+            var sb = new StringBuilder(s.Length + 2);
+            sb.Append('"');
+            foreach (var c in s)
+            {
+                if (c == '"') sb.Append("\\\"");
+                else if (c == '\\') sb.Append("\\\\");
+                else if (c == '\n') sb.Append("\\n");
+                else if (c == '\r') sb.Append("\\r");
+                else if (c == '\t') sb.Append("\\t");
+                else if (c < 0x20) sb.AppendFormat("\\u{0:x4}", (int)c);
+                else sb.Append(c);
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
+        private static string JsValueRaw(object v)
+        {
+            if (v == null) return "null";
+            if (v is bool b) return b ? "true" : "false";
+            if (v is string s) return JsStr(s);
+            if (v is double d) return double.IsNaN(d) || double.IsInfinity(d)
+                                       ? "null"
+                                       : d.ToString("R", CultureInfo.InvariantCulture);
+            if (v is float f)  return float.IsNaN(f) || float.IsInfinity(f)
+                                       ? "null"
+                                       : f.ToString("R", CultureInfo.InvariantCulture);
+            if (v is decimal m) return m.ToString(CultureInfo.InvariantCulture);
+            if (v is int || v is long || v is short || v is byte
+                || v is uint || v is ulong || v is ushort || v is sbyte)
+                return Convert.ToString(v, CultureInfo.InvariantCulture);
+            return JsStr(v.ToString());
+        }
+
+        private static string SerializeDict(IDictionary<string, object> d)
+        {
+            var sb = new StringBuilder(256);
+            sb.Append("{");
+            int i = 0;
+            foreach (var kv in d)
+            {
+                if (i > 0) sb.Append(",");
+                sb.Append(JsStr(kv.Key)).Append(":").Append(JsValueRaw(kv.Value));
+                i++;
+            }
+            sb.Append("}");
+            return sb.ToString();
+        }
+    }
+}

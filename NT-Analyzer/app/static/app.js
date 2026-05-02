@@ -355,6 +355,8 @@ async function loadCatalog() {
   updateStaleChip(cat.staleness);
 
   // 1) strategy dropdown
+  renderStrategySelect();
+  /*
   const sel = document.getElementById("f-class");
   sel.replaceChildren();
   (cat.strategies || []).forEach(s => {
@@ -368,14 +370,15 @@ async function loadCatalog() {
     sel.selectedIndex = 0;
     onStrategyChange();
   }
+  */
 
   // 2) instrument basket: groups + instruments + selected. Default basket
-  //    holds MES 06-26 (or first available) so the single-instrument
+  //    holds MNQ 06-26 (or first available) so the single-instrument
   //    workflow keeps working with one click.
   initBasket();
   if (_basket.length === 0) {
-    const has = (cat.instruments || []).find(i => i.instrument === "MES 06-26");
-    if (has) _basket.push("MES 06-26");
+    const has = (cat.instruments || []).find(i => i.instrument === "MNQ 06-26");
+    if (has) _basket.push("MNQ 06-26");
     else if (cat.instruments && cat.instruments[0]) _basket.push(cat.instruments[0].instrument);
     renderBasket();
   }
@@ -467,6 +470,36 @@ async function loadCatalog() {
     _diagCatalogWarnings = [];
     hideCatalogBanner();
   }
+}
+
+function renderStrategySelect() {
+  const sel = document.getElementById("f-class");
+  if (!sel || !_catalog) return;
+  const previous = sel.value;
+  const strategies = (_catalog.strategies || []);
+
+  sel.replaceChildren();
+  strategies.forEach(s => {
+    const o = document.createElement("option");
+    o.value = s.class_name;
+    o.textContent = s.display_name || s.class_name;
+    sel.appendChild(o);
+  });
+
+  if (sel.options.length === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "Нет стратегий в каталоге NinjaTrader";
+    sel.appendChild(o);
+    sel.disabled = true;
+  } else {
+    sel.disabled = false;
+    const preferred = [...sel.options].find(o => o.value === previous)
+      || [...sel.options].find(o => o.value === "NTAMicroVwapRiskPilot")
+      || sel.options[0];
+    sel.value = preferred.value;
+  }
+  onStrategyChange();
 }
 
 let _diagCatalogWarnings = [];
@@ -1649,8 +1682,8 @@ function setSelectedReport(kind, id) {
 
 async function refreshJobs() {
   let jobsData = null, batchesData = null;
-  try { jobsData = await api.get("/api/jobs?limit=50"); } catch (e) { /* noop */ }
-  try { batchesData = await api.get("/api/batches?limit=50"); } catch (e) { /* noop */ }
+  try { jobsData = await api.get("/api/jobs?limit=500"); } catch (e) { /* noop */ }
+  try { batchesData = await api.get("/api/batches?limit=100"); } catch (e) { /* noop */ }
   if (!jobsData) return;
 
   // Top counts come from the queue-wide aggregate (not derived per row).

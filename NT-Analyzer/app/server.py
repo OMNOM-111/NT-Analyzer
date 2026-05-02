@@ -19,6 +19,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 import sys
@@ -34,9 +35,13 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import jobqueue  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
+    from app import ops  # type: ignore[no-redef]
+    from app import runtime as ops_runtime  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import marginrefresh
+    from . import ops
+    from . import runtime as ops_runtime
 
 
 HOST = "127.0.0.1"
@@ -48,6 +53,92 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # not send it, which is also accepted (empty Origin == not a cross-site
 # browser request). The current bind port is appended at runtime.
 _ALLOWED_ORIGIN_HOSTS = ("127.0.0.1", "localhost")
+
+
+# ---------------------------------------------------------------------------
+# Strategy Control Center — real source from NinjaTrader Strategies folder
+# ---------------------------------------------------------------------------
+
+_NT_STRATEGIES_DIR = Path(
+    r"C:\Users\dimon\Documents\NinjaTrader 8\bin\Custom\Strategies"
+)
+_SCC_ACTIVE_CLASSES: set = {"NTAMicroVwapRiskPilot"}
+_SCC_REJECTED_CLASSES: set = {
+    "NTAMicroOrbPilot",
+    "NTAMicroVwapGapMirrorPilot",
+    "NTAMicroVwapMeanRevertPilot",
+}
+
+
+def _build_scc_strategies() -> Dict[str, Any]:
+    """Scan real NinjaTrader Strategies folder + merge runtime telemetry."""
+    folder_strats: list = []
+    if _NT_STRATEGIES_DIR.is_dir():
+        for entry in sorted(_NT_STRATEGIES_DIR.iterdir()):
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            if name.startswith("_"):  # archived/rejected folders start with _
+                continue
+            cs_files = sorted(entry.glob("*.cs"))
+            if not cs_files:
+                continue
+            folder_strats.append({
+                "class_name": name,
+                "is_active":  name in _SCC_ACTIVE_CLASSES,
+                "is_rejected": name in _SCC_REJECTED_CLASSES,
+                "cs_files":   [f.name for f in cs_files],
+            })
+
+    hb = ops_runtime.read_heartbeat()
+    rt_raw = ops_runtime.read_strategies_raw()
+    rt_by_cls = {str(r.get("strategy_class") or "").lower(): r for r in rt_raw if r.get("strategy_class")}
+
+    active_strategies = []
+    for fs in folder_strats:
+        if not fs["is_active"]:
+            continue
+        cls = fs["class_name"]
+        reg_s = None
+        for s in ops.list_strategies():
+            if s.get("class_name") == cls:
+                reg_s = s
+                break
+        rt = rt_by_cls.get(cls.lower())
+        runtime_detected = bool(rt) and bool(hb.get("present")) and bool(hb.get("fresh"))
+        runtime_enabled  = bool(rt and rt.get("enabled"))
+        acct_name = (rt or {}).get("account_name") or ""
+        acct_mode = ops_runtime._classify_account_mode(acct_name, (rt or {}).get("account_mode"))
+        active_strategies.append({
+            **fs,
+            "registry_id":      (reg_s or {}).get("strategy_id"),
+            "registry_status":  (reg_s or {}).get("status", "unknown"),
+            "display_name":     (reg_s or {}).get("display_name", cls),
+            "locked_params":    (reg_s or {}).get("locked_params", {}),
+            "runtime":          rt,
+            "runtime_detected": runtime_detected,
+            "runtime_enabled":  runtime_enabled,
+            "account_name":     acct_name,
+            "account_mode":     acct_mode,
+            "instrument":       (rt or {}).get("instrument", ""),
+            "timeframe":        (rt or {}).get("timeframe", ""),
+        })
+
+    rejected_running = [
+        {"class_name": str(r.get("strategy_class")), "account_name": r.get("account_name")}
+        for r in rt_raw
+        if str(r.get("strategy_class") or "") in _SCC_REJECTED_CLASSES and r.get("enabled")
+    ]
+
+    return {
+        "strategies":       active_strategies,
+        "rejected_running": rejected_running,
+        "rejected_classes": sorted(_SCC_REJECTED_CLASSES),
+        "heartbeat":        hb,
+        "nt_strat_dir":     str(_NT_STRATEGIES_DIR),
+        "nt_strat_dir_ok":  _NT_STRATEGIES_DIR.is_dir(),
+    }
+
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -70,8 +161,30 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- helpers -------------------------------------------------
 
+    def _json_safe(self, value: Any) -> Any:
+        """Return JSON-standard-safe data.
+
+        Python's json.dumps emits Infinity/NaN by default, but browser
+        JSON.parse rejects those tokens. Backtests can legitimately produce
+        infinite profit factor when there are no losses, so API responses must
+        normalize non-finite floats before they reach the UI.
+        """
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {k: self._json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._json_safe(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._json_safe(v) for v in value]
+        return value
+
     def _json(self, status: int, body: Dict[str, Any]) -> None:
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        data = json.dumps(
+            self._json_safe(body),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -212,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((qs.get("limit") or ["50"])[0])
             except ValueError:
                 limit = 50
-            limit = max(1, min(200, limit))
+            limit = max(1, min(1000, limit))
             self._json(HTTPStatus.OK, {
                 "counts": jobqueue.queue_counts(),
                 "jobs": jobqueue.list_jobs(limit=limit),
@@ -277,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((qs.get("limit") or ["50"])[0])
             except ValueError:
                 limit = 50
-            limit = max(1, min(200, limit))
+            limit = max(1, min(1000, limit))
             self._json(HTTPStatus.OK, {
                 "batches": jobqueue.list_batches(limit=limit),
             })
@@ -305,7 +418,225 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, r)
                 return
 
+        # /api/scc/* routes (Strategy Control Center v2)
+        if path == "/api/scc/strategies":
+            try:
+                self._json(HTTPStatus.OK, _build_scc_strategies())
+            except Exception as e:
+                self._json(HTTPStatus.OK, {
+                    "strategies": [], "rejected_running": [],
+                    "rejected_classes": [], "heartbeat": {},
+                    "error": str(e),
+                })
+            return
+
+        # /api/ops/* routes (Strategy Control Center, read-only here)
+        if path.startswith("/api/ops"):
+            handled = self._ops_get(path, qs)
+            if handled:
+                return
+
         self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
+
+    # ------------- /api/ops/* GET dispatcher --------------------------------
+
+    def _ops_get(self, path: str, qs: Dict[str, Any]) -> bool:
+        parts = [p for p in path.split("/") if p]
+        # /api/ops/...
+        if len(parts) < 3:
+            return False
+        sub = parts[2]
+
+        if path == "/api/ops/strategies":
+            self._json(HTTPStatus.OK, {"strategies": ops.list_strategies()})
+            return True
+
+        if path == "/api/ops/audit-log":
+            try:
+                limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError:
+                limit = 200
+            sid = (qs.get("strategy_id") or [None])[0]
+            self._json(HTTPStatus.OK, {"entries": ops.read_audit_log(limit, sid)})
+            return True
+
+        if path == "/api/ops/live-lock-status":
+            self._json(HTTPStatus.OK, ops.live_lock_status())
+            return True
+
+        # ---- Phase 17: NinjaTrader runtime read-only endpoints ----
+        if path == "/api/ops/runtime/heartbeat":
+            self._json(HTTPStatus.OK, ops_runtime.read_heartbeat())
+            return True
+        if path == "/api/ops/runtime/health":
+            self._json(HTTPStatus.OK, ops_runtime.health())
+            return True
+        if path == "/api/ops/runtime/strategies":
+            self._json(HTTPStatus.OK, {
+                "strategies": ops_runtime.merge_all_strategies(),
+                "raw":        ops_runtime.read_strategies_raw(),
+            })
+            return True
+        if sub == "runtime" and len(parts) >= 4 and parts[3] == "strategies" and len(parts) == 5:
+            sid = parts[4]
+            self._json(HTTPStatus.OK, ops_runtime.merge_strategy_view(sid))
+            return True
+        if path == "/api/ops/runtime/positions":
+            self._json(HTTPStatus.OK, ops_runtime.read_positions())
+            return True
+        if path == "/api/ops/runtime/executions":
+            sid = (qs.get("strategy_id") or [None])[0]
+            try: limit = int((qs.get("limit") or ["500"])[0])
+            except ValueError: limit = 500
+            self._json(HTTPStatus.OK, {
+                "strategy_id": sid,
+                "executions":  ops_runtime.read_executions(sid, limit),
+            })
+            return True
+        if path == "/api/ops/runtime/orders":
+            sid = (qs.get("strategy_id") or [None])[0]
+            try: limit = int((qs.get("limit") or ["500"])[0])
+            except ValueError: limit = 500
+            self._json(HTTPStatus.OK, {
+                "strategy_id": sid,
+                "orders":      ops_runtime.read_orders(sid, limit),
+            })
+            return True
+        if path == "/api/ops/runtime/errors":
+            try: limit = int((qs.get("limit") or ["100"])[0])
+            except ValueError: limit = 100
+            self._json(HTTPStatus.OK, {"errors": ops_runtime.read_errors(limit)})
+            return True
+        if path == "/api/ops/runtime/commands":
+            try: limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError: limit = 200
+            self._json(HTTPStatus.OK, {"commands": ops_runtime.read_commands(limit)})
+            return True
+        if path == "/api/ops/runtime/command-results":
+            try: limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError: limit = 200
+            self._json(HTTPStatus.OK, {"results": ops_runtime.read_command_results(limit)})
+            return True
+
+        # /api/ops/strategies/{id}[/sub]
+        if sub == "strategies" and len(parts) >= 4:
+            sid = parts[3]
+            s = ops.get_strategy(sid)
+            if not s:
+                self._err(HTTPStatus.NOT_FOUND, f"strategy not found: {sid}")
+                return True
+            if len(parts) == 4:
+                states = ops.load_states()
+                self._json(HTTPStatus.OK, {
+                    "strategy": s,
+                    "state":    states.get(sid),
+                    "metrics":  ops.compute_metrics_safe(s),
+                    "runtime":  ops_runtime.merge_strategy_view(sid),
+                })
+                return True
+            tail = parts[4]
+            if tail == "metrics":
+                self._json(HTTPStatus.OK, ops.compute_metrics_safe(s))
+                return True
+            if tail == "trades":
+                self._json(HTTPStatus.OK, ops.get_trades(sid))
+                return True
+            if tail == "journal":
+                self._json(HTTPStatus.OK, ops.get_journal(sid))
+                return True
+            if tail == "risk":
+                m = ops.compute_metrics_safe(s)
+                self._json(HTTPStatus.OK, {
+                    "strategy_id": sid,
+                    "risk_state": m.get("risk_state"),
+                    "risk_reasons": m.get("risk_reasons"),
+                    "limits": s.get("risk_profile"),
+                    "today_adj_pnl": m.get("today_adj_pnl"),
+                    "weekly_adj_pnl": m.get("weekly_adj_pnl"),
+                    "current_drawdown": m.get("current_drawdown"),
+                    "consec_losing_days": m.get("consec_losing_days"),
+                })
+                return True
+            if tail == "notes":
+                self._json(HTTPStatus.OK, ops.get_notes(sid))
+                return True
+
+        return False
+
+    # ------------- /api/ops/* POST dispatcher -------------------------------
+
+    def _ops_post(self, path: str, body: Dict[str, Any]) -> None:
+        parts = [p for p in path.split("/") if p]
+        # /api/ops/live/unlock-request
+        if path == "/api/ops/live/unlock-request":
+            out = ops.request_live_unlock(reason=str(body.get("reason") or ""))
+            self._json(HTTPStatus.FORBIDDEN, out)
+            return
+        # /api/ops/runtime/command  (paper-only command queue)
+        if path == "/api/ops/runtime/command":
+            try:
+                out = ops_runtime.submit_command(
+                    command=str(body.get("command") or ""),
+                    strategy_id=str(body.get("strategy_id") or ""),
+                    account_name=str(body.get("account_name") or ""),
+                    quantity=body.get("quantity") or 1,
+                    reason=str(body.get("reason") or ""),
+                    operator=str(body.get("operator") or "ui"),
+                    class_name=str(body.get("class_name") or ""),
+                    instrument=str(body.get("instrument") or ""),
+                    contract_month=str(body.get("contract_month") or ""),
+                    params=body.get("params") if isinstance(body.get("params"), dict) else None,
+                )
+                self._json(HTTPStatus.OK, out); return
+            except ops.OpsError as e:
+                self._err(e.status, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"command error: {e}"); return
+        # /api/ops/strategies/{id}/{action}[/{sub}]
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "ops" and parts[2] == "strategies":
+            sid = parts[3]
+            action = "/".join(parts[4:])
+            reason = str(body.get("reason") or "")
+            try:
+                if action == "paper/arm":
+                    self._json(HTTPStatus.OK, ops.arm(sid, reason)); return
+                if action == "paper/start-intent":
+                    self._json(HTTPStatus.OK, ops.start_intent(sid, reason)); return
+                if action == "paper/stop-intent":
+                    self._json(HTTPStatus.OK, ops.stop_intent(sid, reason)); return
+                if action == "paper/confirm-manual":
+                    a = str(body.get("action") or "")
+                    self._json(HTTPStatus.OK, ops.confirm_manual(sid, a, reason)); return
+                if action == "paper/pause":
+                    self._json(HTTPStatus.OK, ops.pause(sid, reason)); return
+                if action == "paper/resume":
+                    self._json(HTTPStatus.OK, ops.resume(sid, reason)); return
+                if action == "paper/stop-today":
+                    self._json(HTTPStatus.OK, ops.stop_today(sid, reason)); return
+                if action == "paper/mark-passed":
+                    self._json(HTTPStatus.OK, ops.mark_paper_passed(sid, reason)); return
+                if action == "paper/evaluate-review":
+                    self._json(HTTPStatus.OK, ops.evaluate_review_due(sid)); return
+                if action == "journal/day":
+                    self._json(HTTPStatus.OK, ops.append_journal_day(sid, body.get("row") or {})); return
+                if action == "journal/autofill":
+                    on_date = body.get("date_pt")
+                    dry = bool(body.get("dry_run"))
+                    self._json(HTTPStatus.OK,
+                               ops_runtime.journal_autofill(sid, on_date, dry)); return
+                if action == "runtime/confirm-started":
+                    self._json(HTTPStatus.OK,
+                               ops_runtime.confirm_runtime(sid, "started", reason)); return
+                if action == "runtime/confirm-stopped":
+                    self._json(HTTPStatus.OK,
+                               ops_runtime.confirm_runtime(sid, "stopped", reason)); return
+                if action == "notes":
+                    self._json(HTTPStatus.OK, ops.append_note(sid, str(body.get("text") or ""))); return
+            except ops.OpsError as e:
+                self._err(e.status, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
+        self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
     def do_DELETE(self) -> None:  # noqa: N802
         """DELETE /api/jobs/<id>  or  DELETE /api/batches/<id>"""
@@ -376,15 +707,27 @@ class Handler(BaseHTTPRequestHandler):
                            and parts[1] == "batches" and parts[3] == "cancel")
         is_catalog_refresh = (path == "/api/catalog/refresh")
         is_margins_refresh = (path == "/api/margins/refresh")
+        is_ops = path.startswith("/api/ops/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
-                or is_catalog_refresh or is_margins_refresh):
+                or is_catalog_refresh or is_margins_refresh
+                or is_ops):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
         if not self._check_local_post():
             return  # _check_local_post already wrote an error
+
+        if is_ops:
+            try:
+                body = self._read_body() or {}
+            except Exception:
+                body = {}
+            if body is None:
+                return
+            self._ops_post(path, body)
+            return
 
         if is_catalog_refresh:
             out = jobqueue.request_catalog_refresh()
@@ -449,12 +792,13 @@ class Handler(BaseHTTPRequestHandler):
                     risk_profile=body.get("risk_profile") or {},
                     calculate=str(body.get("calculate") or "OnBarClose"),
                     is_tick_replay=bool(body.get("is_tick_replay") or False),
-                    order_fill_resolution=str(body.get("order_fill_resolution") or "Standard"),
-                    slippage_ticks=int(body.get("slippage_ticks") or 0),
+                    order_fill_resolution=str(body.get("order_fill_resolution") or "High"),
+                    slippage_ticks=int(body.get("slippage_ticks") or 1),
                     commission=float(body.get("commission") or 0.0),
                     commission_template=str(body.get("commission_template") or "None"),
                     session_template=str(body.get("session_template") or "CME US Index Futures RTH"),
                     timezone=str(body.get("timezone") or "UTC"),
+                    role=str(body.get("role") or "research"),
                     name=(str(body["name"]) if body.get("name") else None),
                 )
             except (TypeError, ValueError) as e:
@@ -486,12 +830,13 @@ class Handler(BaseHTTPRequestHandler):
                 risk_profile=body.get("risk_profile") or {},
                 calculate=str(body.get("calculate") or "OnBarClose"),
                 is_tick_replay=bool(body.get("is_tick_replay") or False),
-                order_fill_resolution=str(body.get("order_fill_resolution") or "Standard"),
-                slippage_ticks=int(body.get("slippage_ticks") or 0),
+                order_fill_resolution=str(body.get("order_fill_resolution") or "High"),
+                slippage_ticks=int(body.get("slippage_ticks") or 1),
                 commission=float(body.get("commission") or 0.0),
                 commission_template=str(body.get("commission_template") or "None"),
                 session_template=str(body.get("session_template") or "CME US Index Futures RTH"),
                 timezone=str(body.get("timezone") or "UTC"),
+                role=str(body.get("role") or "research"),
                 job_id=None,  # never trust client-supplied ids in MVP-1
             )
         except (TypeError, ValueError) as e:

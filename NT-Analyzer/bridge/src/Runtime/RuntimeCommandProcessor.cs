@@ -1,0 +1,515 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+
+using NinjaTrader.Cbi;
+using NinjaTrader.NinjaScript;
+using NTAnalyzerBridge.Util;
+
+namespace NTAnalyzerBridge.Runtime
+{
+    /// <summary>
+    /// Phase 18 - Runtime command processor.
+    ///
+    /// Polls data/runtime/commands.jsonl, executes paper-only enable/disable
+    /// of NinjaScript Strategy instances, appends a result to
+    /// data/runtime/command_results.jsonl.
+    ///
+    /// Hard safety:
+    ///   * live accounts are rejected (account_mode != paper / playback);
+    ///   * unknown account names are rejected (no defaulting to live);
+    ///   * archived/rejected strategy classes are rejected;
+    ///   * we never place orders, never modify orders, never bypass NinjaScript
+    ///     state machine. We only call Strategy.SetState(State.Active|Terminated)
+    ///     on existing instances enumerated from Account.Strategies.
+    ///   * if no Strategy instance exists on the chosen account we report
+    ///     status="failed" with a human message - operator must add the strategy
+    ///     instance via NinjaTrader UI first.
+    ///
+    /// Processed command_ids are remembered in-memory and persisted by reading
+    /// existing command_results.jsonl on startup so a process restart never
+    /// re-runs a finished command.
+    /// </summary>
+    internal sealed class RuntimeCommandProcessor
+    {
+        public const string ProcessorVersion = "1.0.0";
+        private const int   PollIntervalMs   = 1500;
+
+        private readonly string _runtimeDir;
+        private readonly string _commandsPath;
+        private readonly string _resultsPath;
+        private readonly Timer  _timer;
+        private readonly HashSet<string> _seen = new HashSet<string>(StringComparer.Ordinal);
+        private readonly object _lock = new object();
+        private int _running;
+
+        // Classes the bridge must refuse, per Phase 18 spec.
+        private static readonly HashSet<string> RejectedClasses = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "NTAMicroOrbPilot",
+            "NTAMicroVwapGapMirrorPilot",
+            "NTAMicroVwapMeanRevertPilot",
+        };
+
+        // B1 ShortOnly locked params - must match exactly when the operator
+        // queues a launch for this class. Mismatch => reject.
+        private static readonly Dictionary<string, double> B1Locked = new Dictionary<string, double>
+        {
+            { "EnableLong",          0    }, // false
+            { "EnableShort",         1    }, // true
+            { "TradeStartTime",      635  },
+            { "TradeEndTime",        700  },
+            { "MinStopTicks",        12   },
+            { "MaxStopTicks",        12   },
+            { "RewardRiskRatio",     3.5  },
+            { "RiskPerTradePct",     2.0  },
+            { "UserMaxContracts",    5    },
+            { "RoundTurnCommission", 1.90 },
+            { "SlippageTicks",       1    },
+        };
+
+        public RuntimeCommandProcessor(string projectRoot)
+        {
+            if (string.IsNullOrEmpty(projectRoot))
+                throw new ArgumentNullException(nameof(projectRoot));
+            _runtimeDir   = Path.Combine(projectRoot, "data", "runtime");
+            _commandsPath = Path.Combine(_runtimeDir, "commands.jsonl");
+            _resultsPath  = Path.Combine(_runtimeDir, "command_results.jsonl");
+            Directory.CreateDirectory(_runtimeDir);
+            _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
+        }
+
+        public void Start()
+        {
+            BridgeLog.Info("RuntimeCommandProcessor: start runtime_dir=" + _runtimeDir);
+            // Seed seen set from any existing results so we never re-execute.
+            try
+            {
+                if (File.Exists(_resultsPath))
+                {
+                    foreach (var line in File.ReadAllLines(_resultsPath, Encoding.UTF8))
+                    {
+                        string id = ExtractJsonString(line, "command_id");
+                        if (!string.IsNullOrEmpty(id)) _seen.Add(id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("RuntimeCommandProcessor: seed seen-set failed: " + ex.Message);
+            }
+            _timer.Change(0, PollIntervalMs);
+        }
+
+        public void Stop()
+        {
+            try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+            try { _timer.Dispose(); } catch { }
+            BridgeLog.Info("RuntimeCommandProcessor: stopped");
+        }
+
+        // ------------------------------------------------------------------
+
+        private void OnTick(object _)
+        {
+            if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
+            try
+            {
+                if (!File.Exists(_commandsPath)) return;
+                List<string> lines;
+                try { lines = File.ReadAllLines(_commandsPath, Encoding.UTF8).ToList(); }
+                catch { return; }
+
+                foreach (var raw in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) continue;
+                    string cid = ExtractJsonString(raw, "command_id");
+                    if (string.IsNullOrEmpty(cid)) continue;
+                    lock (_lock) { if (_seen.Contains(cid)) continue; }
+                    ProcessOne(raw, cid);
+                    lock (_lock) { _seen.Add(cid); }
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Error("RuntimeCommandProcessor.OnTick", ex);
+            }
+            finally { _running = 0; }
+        }
+
+        private void ProcessOne(string rawJson, string cid)
+        {
+            string command       = ExtractJsonString(rawJson, "command");
+            string strategyId    = ExtractJsonString(rawJson, "strategy_id");
+            string strategyClass = ExtractJsonString(rawJson, "strategy_class");
+            string accountName   = ExtractJsonString(rawJson, "account_name");
+            string instrument    = ExtractJsonString(rawJson, "instrument");
+
+            try
+            {
+                if (command != "enable_strategy" && command != "disable_strategy")
+                {
+                    WriteResult(cid, "rejected", "unknown command: " + command, "");
+                    return;
+                }
+                if (string.IsNullOrEmpty(strategyClass))
+                {
+                    WriteResult(cid, "rejected", "strategy_class is required", "");
+                    return;
+                }
+                if (RejectedClasses.Contains(strategyClass))
+                {
+                    WriteResult(cid, "rejected",
+                        "strategy class '" + strategyClass + "' is archived/rejected by registry",
+                        "");
+                    return;
+                }
+
+                // Resolve account.
+                Account acc = FindAccount(accountName);
+                if (acc == null)
+                {
+                    WriteResult(cid, "failed", "account not found: " + accountName, "");
+                    return;
+                }
+                string accMode = ClassifyAccountMode(accountName, acc);
+                if (accMode != "paper" && accMode != "playback")
+                {
+                    WriteResult(cid, "rejected",
+                        "account '" + accountName + "' classified as '" + accMode +
+                        "' - only paper/playback allowed", "");
+                    return;
+                }
+
+                // Find existing strategy instance on this account (we never create
+                // new ones from an AddOn - that requires the Strategies window UI).
+                object strat = FindStrategy(acc, strategyClass, instrument);
+                if (strat == null)
+                {
+                    WriteResult(cid, "failed",
+                        "no '" + strategyClass + "' instance found on account '" +
+                        accountName + "'. Add it once via NinjaTrader Strategies window, " +
+                        "then re-issue the command.",
+                        "");
+                    return;
+                }
+
+                if (command == "enable_strategy")
+                {
+                    // B1 ShortOnly param check.
+                    if (strategyClass == "NTAMicroVwapRiskPilot")
+                    {
+                        string mismatch = CheckB1Params(strat);
+                        if (mismatch != null)
+                        {
+                            WriteResult(cid, "rejected",
+                                "B1 ShortOnly param mismatch: " + mismatch,
+                                SafeStrategyId(strat));
+                            return;
+                        }
+                    }
+                    bool ok = SetStrategyState(strat, true, out string err);
+                    if (!ok)
+                    {
+                        WriteResult(cid, "failed", "SetState(Active) failed: " + err, SafeStrategyId(strat));
+                        return;
+                    }
+                    WriteResult(cid, "completed",
+                        "enabled '" + strategyClass + "' on '" + accountName + "'",
+                        SafeStrategyId(strat));
+                }
+                else // disable_strategy
+                {
+                    bool ok = SetStrategyState(strat, false, out string err);
+                    if (!ok)
+                    {
+                        WriteResult(cid, "failed", "SetState(Terminated) failed: " + err, SafeStrategyId(strat));
+                        return;
+                    }
+                    WriteResult(cid, "completed",
+                        "disabled '" + strategyClass + "' on '" + accountName + "'",
+                        SafeStrategyId(strat));
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Error("RuntimeCommandProcessor.ProcessOne cid=" + cid, ex);
+                try { WriteResult(cid, "failed", "exception: " + ex.Message, ""); }
+                catch { }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // NinjaTrader interaction
+
+        private static Account FindAccount(string name)
+        {
+            try
+            {
+                lock (Account.All)
+                {
+                    foreach (var a in Account.All)
+                    {
+                        if (a == null) continue;
+                        try { if (a.Name == name) return a; } catch { }
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string ClassifyAccountMode(string name, Account acc)
+        {
+            try
+            {
+                string provider = SafeStringProp(acc, "Provider");
+                if (!string.IsNullOrEmpty(provider))
+                {
+                    string p = provider.ToLowerInvariant();
+                    if (p.Contains("playback")) return "playback";
+                    if (p.Contains("simulator") || p.Contains("sim")) return "paper";
+                }
+            }
+            catch { }
+            string n = (name ?? "").ToLowerInvariant();
+            if (n.Contains("playback")) return "playback";
+            if (n.StartsWith("sim") || n.Contains("paper") || n.Contains("demo"))
+                return "paper";
+            if (string.IsNullOrEmpty(n)) return "unknown";
+            return "live";
+        }
+
+        private static object FindStrategy(Account acc, string className, string instrument)
+        {
+            try
+            {
+                var prop = acc.GetType().GetProperty("Strategies",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                if (prop == null) return null;
+                var col = prop.GetValue(acc) as System.Collections.IEnumerable;
+                if (col == null) return null;
+                object best = null;
+                lock (col)
+                {
+                    foreach (var s in col)
+                    {
+                        if (s == null) continue;
+                        if (s.GetType().Name != className) continue;
+                        if (best == null) best = s;
+                        if (!string.IsNullOrEmpty(instrument))
+                        {
+                            string inst = SafeInstrumentFullName(s);
+                            if (!string.IsNullOrEmpty(inst) &&
+                                inst.IndexOf(instrument, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                return s;
+                            }
+                        }
+                    }
+                }
+                return best;
+            }
+            catch { return null; }
+        }
+
+        private static bool SetStrategyState(object strat, bool enable, out string err)
+        {
+            err = "";
+            try
+            {
+                var t = strat.GetType();
+                var setState = t.GetMethod("SetState",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic,
+                    null, new[] { typeof(State) }, null);
+                if (setState == null)
+                {
+                    err = "SetState method not found";
+                    return false;
+                }
+                State target = enable ? State.Active : State.Terminated;
+                setState.Invoke(strat, new object[] { target });
+                return true;
+            }
+            catch (TargetInvocationException tex)
+            {
+                err = tex.InnerException != null ? tex.InnerException.Message : tex.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                err = ex.Message;
+                return false;
+            }
+        }
+
+        private static string CheckB1Params(object strat)
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in B1Locked)
+            {
+                double actual;
+                if (!TryGetDoubleProp(strat, kv.Key, out actual))
+                {
+                    sb.Append(kv.Key).Append(" missing; ");
+                    continue;
+                }
+                if (Math.Abs(actual - kv.Value) > 0.0001)
+                {
+                    sb.Append(kv.Key).Append("=").Append(actual.ToString(CultureInfo.InvariantCulture))
+                      .Append(" expected ").Append(kv.Value.ToString(CultureInfo.InvariantCulture))
+                      .Append("; ");
+                }
+            }
+            return sb.Length == 0 ? null : sb.ToString().TrimEnd();
+        }
+
+        private static bool TryGetDoubleProp(object o, string name, out double v)
+        {
+            v = 0;
+            try
+            {
+                var pi = o.GetType().GetProperty(name);
+                if (pi == null) return false;
+                object raw = pi.GetValue(o, null);
+                if (raw == null) return false;
+                if (raw is bool b) { v = b ? 1.0 : 0.0; return true; }
+                v = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static string SafeStringProp(object o, string name)
+        {
+            try
+            {
+                var pi = o.GetType().GetProperty(name);
+                if (pi == null) return "";
+                object v = pi.GetValue(o, null);
+                return v == null ? "" : v.ToString();
+            }
+            catch { return ""; }
+        }
+
+        private static string SafeInstrumentFullName(object o)
+        {
+            try
+            {
+                var inst = o.GetType().GetProperty("Instrument")?.GetValue(o, null);
+                if (inst == null) return "";
+                var fp = inst.GetType().GetProperty("FullName")?.GetValue(inst, null);
+                return fp == null ? "" : fp.ToString();
+            }
+            catch { return ""; }
+        }
+
+        private static string SafeStrategyId(object strat)
+        {
+            try
+            {
+                string cls = strat.GetType().Name;
+                if (cls == "NTAMicroVwapRiskPilot") return "b1_shortonly";
+                return cls.ToLowerInvariant();
+            }
+            catch { return ""; }
+        }
+
+        // ------------------------------------------------------------------
+        // Result file write & primitive JSON helpers
+
+        private void WriteResult(string commandId, string status, string message, string runtimeStrategyId)
+        {
+            var sb = new StringBuilder(256);
+            sb.Append("{");
+            JsField(sb, "command_id", commandId);            sb.Append(",");
+            JsField(sb, "timestamp_utc", IsoNow());          sb.Append(",");
+            JsField(sb, "status", status);                   sb.Append(",");
+            JsField(sb, "message", message);                 sb.Append(",");
+            JsField(sb, "runtime_strategy_id", runtimeStrategyId); sb.Append(",");
+            JsField(sb, "processor_version", ProcessorVersion);
+            sb.Append("}\n");
+            try
+            {
+                File.AppendAllText(_resultsPath, sb.ToString(), new UTF8Encoding(false));
+                BridgeLog.Info("RuntimeCommandProcessor: " + commandId + " " + status + " " + message);
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Error("RuntimeCommandProcessor: append result failed", ex);
+            }
+        }
+
+        private static void JsField(StringBuilder sb, string k, string v)
+        {
+            sb.Append('"').Append(k).Append("\":").Append(JsString(v));
+        }
+
+        private static string JsString(string s)
+        {
+            if (s == null) return "\"\"";
+            var sb = new StringBuilder(s.Length + 2);
+            sb.Append('"');
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"':  sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n");  break;
+                    case '\r': sb.Append("\\r");  break;
+                    case '\t': sb.Append("\\t");  break;
+                    default:
+                        if (c < 0x20) sb.AppendFormat("\\u{0:X4}", (int)c);
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
+        private static string IsoNow()
+        {
+            return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        // Tiny tolerant string-field extractor - avoids pulling Newtonsoft into
+        // this file. Commands are written by Python with json.dumps and known
+        // schema, so this is enough for our needs.
+        private static string ExtractJsonString(string json, string key)
+        {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return "";
+            string needle = "\"" + key + "\"";
+            int i = json.IndexOf(needle, StringComparison.Ordinal);
+            if (i < 0) return "";
+            i += needle.Length;
+            while (i < json.Length && (json[i] == ' ' || json[i] == ':' || json[i] == '\t')) i++;
+            if (i >= json.Length || json[i] != '"') return "";
+            i++;
+            var sb = new StringBuilder();
+            while (i < json.Length)
+            {
+                char c = json[i];
+                if (c == '\\' && i + 1 < json.Length)
+                {
+                    char n = json[i + 1];
+                    if (n == '"') { sb.Append('"');  i += 2; continue; }
+                    if (n == '\\'){ sb.Append('\\'); i += 2; continue; }
+                    if (n == 'n') { sb.Append('\n'); i += 2; continue; }
+                    if (n == 'r') { sb.Append('\r'); i += 2; continue; }
+                    if (n == 't') { sb.Append('\t'); i += 2; continue; }
+                    sb.Append(n); i += 2; continue;
+                }
+                if (c == '"') break;
+                sb.Append(c); i++;
+            }
+            return sb.ToString();
+        }
+    }
+}

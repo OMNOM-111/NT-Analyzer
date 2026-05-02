@@ -469,8 +469,8 @@
               <label class="field">
                 <span class="lbl">Order Fill Resolution</span>
                 <select id="f-ofr" disabled
-                        title="Зафиксировано в MVP-1 (Standard)">
-                  <option>Standard</option>
+                        title="Зафиксировано для research-запусков (High)">
+                  <option>High</option>
                 </select>
               </label>
             </div>
@@ -483,8 +483,8 @@
             <div class="row two">
               <label class="field">
                 <span class="lbl">Slippage (ticks)</span>
-                <input id="f-slippage" type="number" min="0" max="100" value="0" disabled
-                       title="Зафиксировано в MVP-1 (0)">
+                <input id="f-slippage" type="number" min="0" max="100" value="1" disabled
+                       title="Зафиксировано для research-запусков (1 tick)">
               </label>
               <label class="field disabled">
                 <span class="lbl">Tick Replay</span>
@@ -567,6 +567,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260502-backtest-fix"></script>
 </body>
 </html>
