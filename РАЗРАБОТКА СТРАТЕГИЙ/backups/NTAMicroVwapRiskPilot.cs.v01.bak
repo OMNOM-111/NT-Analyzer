@@ -1,0 +1,639 @@
+// =============================================================================
+// NTAMicroVwapRiskPilot
+// -----------------------------------------------------------------------------
+// First strategy for the NT-Analyzer pipeline.
+//
+// Spec:
+//   РАЗРАБОТКА СТРАТЕГИЙ\01_ПЛАН_СТРАТЕГИИ_NTAMicroVwapRiskPilot.md
+//
+// Risk Profile contract:
+//   The NT-Analyzer backend (app/jobqueue.py: _inject_risk_profile_parameters)
+//   projects job.risk_profile into job.strategy.parameters under a fixed
+//   whitelist (StartingCapital, IntradayOnly, ActiveMarginPerContract,
+//   MaxContractsByCapital, InstrumentStatus, MarginSourceBroker). The bridge
+//   (StrategyAnalyzerRunner.ApplyStrategyParameters) then assigns those values
+//   to the [NinjaScriptProperty]-tagged fields below. The strategy MUST refuse
+//   to trade when:
+//     * InstrumentStatus != "allowed"
+//     * StartingCapital  <= 0
+//     * ActiveMarginPerContract <= 0
+//     * MaxContractsByCapital   <  1
+//
+// Trading idea (v0.1):
+//   Intraday VWAP / EMA pullback on micro index futures (MES primary).
+//   Trend filter:    EMA(fast) vs EMA(slow), price vs Session VWAP.
+//   Strength filter: ADX(14) >= MinAdx.
+//   Activity filter: Volume[0] >= SMA(Volume, n) * MinVolumeFactor.
+//   Pullback:        price tagged VWAP or EMA(fast) within last N bars.
+//   Stop:            ATR-based, clamped to [MinStopTicks, MaxStopTicks].
+//   Target:          StopTicks * RewardRiskRatio.
+//   No overnight when IntradayOnly = true.
+// =============================================================================
+
+#region Using declarations
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using NinjaTrader.Cbi;
+using NinjaTrader.Data;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.Indicators;
+using NinjaTrader.NinjaScript.Strategies;
+#endregion
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+    public class NTAMicroVwapRiskPilot : Strategy
+    {
+        // -- indicators
+        private EMA _emaFast;
+        private EMA _emaSlow;
+        private ATR _atr;
+        private ADX _adx;
+        private SMA _volSma;
+        // Session VWAP computed manually — stored as plain double (no Series<T> needed)
+        private double _vwapValue;     // current VWAP
+        private double _vwapPrev;      // previous bar VWAP
+        private double _vwapCumTPV;    // cumulative TypicalPrice * Volume
+        private double _vwapCumVol;    // cumulative Volume
+
+        // -- runtime risk state
+        private double _realizedDayPnL;
+        private int    _tradesToday;
+        private int    _consecLosses;
+        private DateTime _currentSessionDate = DateTime.MinValue;
+        private bool   _stopTradingForDay;
+        private bool   _stopTradingForever;
+        private double _lastEntryPrice;
+        private int    _lastEntryQty;
+        private double _lastStopTicks;
+
+        // -- skip-cooldown to avoid Print() spam
+        private int _lastSkipBar = -1;
+        private string _lastSkipReason = "";
+
+        #region OnStateChange
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description = @"NTA Micro VWAP/EMA pullback (intraday). Risk Profile aware.";
+                Name        = "NTAMicroVwapRiskPilot";
+                Calculate   = Calculate.OnBarClose;
+                EntriesPerDirection                  = 1;
+                EntryHandling                        = EntryHandling.AllEntries;
+                IsExitOnSessionCloseStrategy         = true;
+                ExitOnSessionCloseSeconds            = 30;
+                IsFillLimitOnTouch                   = false;
+                MaximumBarsLookBack                  = MaximumBarsLookBack.TwoHundredFiftySix;
+                OrderFillResolution                  = OrderFillResolution.Standard;
+                Slippage                             = 0;
+                StartBehavior                        = StartBehavior.WaitUntilFlat;
+                TimeInForce                          = TimeInForce.Gtc;
+                TraceOrders                          = false;
+                RealtimeErrorHandling                = RealtimeErrorHandling.StopCancelClose;
+                StopTargetHandling                   = StopTargetHandling.PerEntryExecution;
+                BarsRequiredToTrade                  = 60;
+                IsInstantiatedOnEachOptimizationIteration = true;
+
+                // ---- Risk Profile (filled by NT-Analyzer mapper) ----
+                StartingCapital            = 0.0;
+                IntradayOnly               = true;
+                ActiveMarginPerContract    = 0.0;
+                MaxContractsByCapital      = 0;
+                InstrumentStatus           = "unknown";
+                MarginSourceBroker         = "";
+
+                // ---- Risk ----
+                RiskPerTradePct      = 1.0;
+                MaxDailyLossPct      = 2.0;
+                MaxDailyProfitPct    = 4.0;
+                MaxTradesPerDay      = 6;
+                MaxConsecutiveLosses = 3;
+                UserMaxContracts     = 5;
+                RoundTurnCommission  = 1.90;
+                SlippageTicks        = 1;
+
+                // ---- Setup toggles ----
+                EnableLong  = true;
+                EnableShort = true;
+
+                // ---- Indicators ----
+                EmaFastPeriod      = 20;
+                EmaSlowPeriod      = 50;
+                AtrPeriod          = 14;
+                AdxPeriod          = 14;
+                MinAdx             = 18.0;
+                VolumeSmaPeriod    = 20;
+                MinVolumeFactor    = 0.8;
+                PullbackLookback   = 5;
+
+                // ---- Stops / targets ----
+                AtrStopMult        = 0.6;
+                MinStopTicks       = 6;
+                MaxStopTicks       = 24;
+                RewardRiskRatio    = 1.5;
+                MoveToBreakevenAtR = 0.8;
+                TrailAfterR        = 1.2;
+
+                // ---- Time ----
+                ForceFlatMinutesBeforeClose = 15;
+                NoEntryMinutesBeforeClose   = 30;
+                AvoidFirstMinutesAfterOpen  = 5;
+            }
+            else if (State == State.Configure)
+            {
+                // nothing — single primary series
+            }
+            else if (State == State.DataLoaded)
+            {
+                _emaFast    = EMA(EmaFastPeriod);
+                _emaSlow    = EMA(EmaSlowPeriod);
+                _atr        = ATR(AtrPeriod);
+                _adx        = ADX(AdxPeriod);
+                _volSma     = SMA(Volume, VolumeSmaPeriod);
+                _vwapValue  = 0.0;
+                _vwapPrev   = 0.0;
+                _vwapCumTPV = 0.0;
+                _vwapCumVol = 0.0;
+                Print("[INIT] Manual session VWAP enabled (plain double fields)");
+
+                // Risk Profile validation — log once, set permanent stop if unsafe
+                if (StartingCapital <= 0.0)
+                {
+                    _stopTradingForever = true;
+                    Print("[RISK:stop_trading] StartingCapital <= 0 — strategy disabled");
+                }
+                else if (string.Equals(InstrumentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+                {
+                    _stopTradingForever = true;
+                    Print("[RISK:stop_trading] InstrumentStatus = blocked — strategy disabled");
+                }
+                else if (string.Equals(InstrumentStatus, "unknown", StringComparison.OrdinalIgnoreCase))
+                {
+                    _stopTradingForever = true;
+                    Print("[RISK:stop_trading] InstrumentStatus = unknown — strategy disabled (no margin info)");
+                }
+                else if (ActiveMarginPerContract <= 0.0)
+                {
+                    _stopTradingForever = true;
+                    Print("[RISK:stop_trading] ActiveMarginPerContract <= 0 — strategy disabled");
+                }
+                else if (MaxContractsByCapital < 1)
+                {
+                    _stopTradingForever = true;
+                    Print("[RISK:stop_trading] MaxContractsByCapital < 1 — strategy disabled");
+                }
+                else
+                {
+                    Print(string.Format(
+                        "[INIT] capital={0:F2} margin={1:F2} maxC={2} status={3} broker={4} intradayOnly={5}",
+                        StartingCapital, ActiveMarginPerContract, MaxContractsByCapital,
+                        InstrumentStatus, MarginSourceBroker, IntradayOnly));
+                }
+            }
+        }
+        #endregion
+
+        #region OnBarUpdate
+        protected override void OnBarUpdate()
+        {
+            if (BarsInProgress != 0) return;
+            if (CurrentBar < 1) return;
+
+            // ---- Compute session VWAP (manual, no Add-On) ----
+            // Bars.IsFirstBarOfSession is a property on the Bars object in NT8
+            if (Bars.IsFirstBarOfSession)
+            {
+                _vwapCumTPV      = 0.0;
+                _vwapCumVol      = 0.0;
+                _sessionOpenTime = Time[0];
+            }
+            double tp  = (High[0] + Low[0] + Close[0]) / 3.0;
+            double vol = Volume[0];
+            _vwapCumTPV += tp * vol;
+            _vwapCumVol += vol;
+            _vwapPrev   = _vwapValue;
+            _vwapValue  = (_vwapCumVol > 0.0) ? (_vwapCumTPV / _vwapCumVol) : Close[0];
+
+            if (CurrentBar < BarsRequiredToTrade) return;
+            if (_stopTradingForever) return;
+
+            // Roll daily counters at calendar-date boundary (Time[0].Date is always available)
+            DateTime todayDate = Time[0].Date;
+            if (todayDate != _currentSessionDate)
+            {
+                _currentSessionDate  = todayDate;
+                _realizedDayPnL      = 0.0;
+                _tradesToday         = 0;
+                _consecLosses        = 0;
+                _stopTradingForDay   = false;
+            }
+
+            // Force-flat near session close (intraday only)
+            if (IntradayOnly && IsNearSessionClose(ForceFlatMinutesBeforeClose))
+            {
+                if (Position.MarketPosition != MarketPosition.Flat)
+                {
+                    if (Position.MarketPosition == MarketPosition.Long)
+                        ExitLong("FlatEOD", "Long");
+                    else
+                        ExitShort("FlatEOD", "Short");
+                    LogSkip("force_flat_eod");
+                }
+                return;
+            }
+
+            // Daily-stop checks
+            double dailyStopUsd   = StartingCapital * MaxDailyLossPct   / 100.0;
+            double dailyProfitUsd = StartingCapital * MaxDailyProfitPct / 100.0;
+            if (!_stopTradingForDay)
+            {
+                if (_realizedDayPnL <= -dailyStopUsd)
+                {
+                    _stopTradingForDay = true;
+                    Print(string.Format("[RISK:stop_trading] daily loss {0:F2} <= -{1:F2}",
+                                        _realizedDayPnL, dailyStopUsd));
+                }
+                else if (MaxDailyProfitPct > 0 && _realizedDayPnL >= dailyProfitUsd)
+                {
+                    _stopTradingForDay = true;
+                    Print(string.Format("[RISK:stop_trading] daily profit {0:F2} >= {1:F2}",
+                                        _realizedDayPnL, dailyProfitUsd));
+                }
+                else if (_consecLosses >= MaxConsecutiveLosses)
+                {
+                    _stopTradingForDay = true;
+                    Print(string.Format("[RISK:stop_trading] consecutive losses = {0}", _consecLosses));
+                }
+                else if (_tradesToday >= MaxTradesPerDay)
+                {
+                    _stopTradingForDay = true;
+                    Print(string.Format("[RISK:stop_trading] trades today = {0}", _tradesToday));
+                }
+            }
+            if (_stopTradingForDay) return;
+
+            // No new entries near close or right after open
+            if (IsNearSessionClose(NoEntryMinutesBeforeClose))   { LogSkip("near_close"); return; }
+            if (IsRightAfterOpen(AvoidFirstMinutesAfterOpen))     { LogSkip("just_opened"); return; }
+
+            // Skip if already in a position
+            if (Position.MarketPosition != MarketPosition.Flat)
+            {
+                ManageOpenPosition();
+                return;
+            }
+
+            // ---------- Filters ----------
+            if (_adx[0] < MinAdx)                                      { LogSkip("adx_low"); return; }
+            if (Volume[0] < _volSma[0] * MinVolumeFactor)              { LogSkip("vol_low"); return; }
+
+            double vwapNow = _vwapValue;
+            bool trendUp   = _emaFast[0] > _emaSlow[0] && Close[0] > vwapNow;
+            bool trendDown = _emaFast[0] < _emaSlow[0] && Close[0] < vwapNow;
+
+            // Pullback: price touched VWAP or EMAFast within last N bars
+            // Note: _vwapPrev approximates prior-bar VWAP for the pullback check
+            bool pulledBack = false;
+            int look = Math.Min(PullbackLookback, CurrentBar);
+            for (int i = 1; i <= look; i++)
+            {
+                double v = (i == 1) ? _vwapPrev : _vwapValue;   // best available historic VWAP
+                if (Low[i] <= v && High[i] >= v)        { pulledBack = true; break; }
+                if (Low[i] <= _emaFast[i] && High[i] >= _emaFast[i]) { pulledBack = true; break; }
+            }
+            if (!pulledBack) { LogSkip("no_pullback"); return; }
+
+            // Signal bar: closed back in trend direction
+            bool longSignal  = trendUp   && EnableLong  && Close[0] > Open[0] && Close[0] > _emaFast[0];
+            bool shortSignal = trendDown && EnableShort && Close[0] < Open[0] && Close[0] < _emaFast[0];
+            if (!longSignal && !shortSignal) { LogSkip("no_signal"); return; }
+
+            // ---------- Risk-based sizing ----------
+            int stopTicks = ComputeStopTicks();
+            int qty = ComputeQuantity(stopTicks);
+            if (qty < 1) { LogSkip("qty_lt_1"); return; }
+
+            double stopPx, targetPx;
+            if (longSignal)
+            {
+                stopPx   = Close[0] - stopTicks * TickSize;
+                targetPx = Close[0] + (int)Math.Round(stopTicks * RewardRiskRatio) * TickSize;
+                SetStopLoss("Long",   CalculationMode.Price, stopPx,   false);
+                SetProfitTarget("Long", CalculationMode.Price, targetPx);
+                EnterLong(qty, "Long");
+                _lastEntryPrice = Close[0];
+                _lastEntryQty   = qty;
+                _lastStopTicks  = stopTicks;
+                Print(string.Format("[ENTRY] LONG qty={0} @ ~{1:F2} stop={2}t target~{3:F2} adx={4:F1} vwap={5:F2}",
+                                    qty, Close[0], stopTicks, targetPx, _adx[0], vwapNow));
+            }
+            else
+            {
+                stopPx   = Close[0] + stopTicks * TickSize;
+                targetPx = Close[0] - (int)Math.Round(stopTicks * RewardRiskRatio) * TickSize;
+                SetStopLoss("Short",   CalculationMode.Price, stopPx,   false);
+                SetProfitTarget("Short", CalculationMode.Price, targetPx);
+                EnterShort(qty, "Short");
+                _lastEntryPrice = Close[0];
+                _lastEntryQty   = qty;
+                _lastStopTicks  = stopTicks;
+                Print(string.Format("[ENTRY] SHORT qty={0} @ ~{1:F2} stop={2}t target~{3:F2} adx={4:F1} vwap={5:F2}",
+                                    qty, Close[0], stopTicks, targetPx, _adx[0], vwapNow));
+            }
+        }
+        #endregion
+
+        #region Position management (breakeven / trail)
+        private void ManageOpenPosition()
+        {
+            if (_lastStopTicks <= 0 || _lastEntryPrice <= 0) return;
+
+            double rDist  = _lastStopTicks * TickSize;
+            double moved  = Close[0] - _lastEntryPrice;
+            double rMult  = (Position.MarketPosition == MarketPosition.Long ? moved : -moved) / rDist;
+
+            if (rMult >= MoveToBreakevenAtR)
+            {
+                if (Position.MarketPosition == MarketPosition.Long)
+                    SetStopLoss("Long",  CalculationMode.Price, _lastEntryPrice, false);
+                else
+                    SetStopLoss("Short", CalculationMode.Price, _lastEntryPrice, false);
+            }
+
+            if (rMult >= TrailAfterR)
+            {
+                double trailDist = Math.Max(1, _lastStopTicks / 2.0) * TickSize;
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    double trail = Close[0] - trailDist;
+                    if (trail > _lastEntryPrice)
+                        SetStopLoss("Long", CalculationMode.Price, trail, false);
+                }
+                else
+                {
+                    double trail = Close[0] + trailDist;
+                    if (trail < _lastEntryPrice)
+                        SetStopLoss("Short", CalculationMode.Price, trail, false);
+                }
+            }
+        }
+        #endregion
+
+        #region Sizing helpers
+        private int ComputeStopTicks()
+        {
+            double atrTicks = _atr[0] / TickSize;
+            int s = (int)Math.Round(atrTicks * AtrStopMult);
+            if (s < MinStopTicks) s = MinStopTicks;
+            if (s > MaxStopTicks) s = MaxStopTicks;
+            return s;
+        }
+
+        private int ComputeQuantity(int stopTicks)
+        {
+            double tickValue = (Instrument != null && Instrument.MasterInstrument != null)
+                ? Instrument.MasterInstrument.PointValue * TickSize
+                : 0.0;
+            if (tickValue <= 0.0) { LogSkip("tick_value_zero"); return 0; }
+
+            double equity       = StartingCapital + _realizedDayPnL;
+            double riskBudget   = equity * RiskPerTradePct / 100.0;
+            double contractRisk = stopTicks * tickValue
+                                + RoundTurnCommission
+                                + SlippageTicks * tickValue;
+            if (contractRisk <= 0.0) return 0;
+
+            int byRisk   = (int)Math.Floor(riskBudget / contractRisk);
+            int byMargin = (ActiveMarginPerContract > 0.0)
+                           ? (int)Math.Floor(equity / ActiveMarginPerContract)
+                           : 0;
+
+            int q = byRisk;
+            if (byMargin > 0) q = Math.Min(q, byMargin);
+            if (MaxContractsByCapital > 0) q = Math.Min(q, MaxContractsByCapital);
+            if (UserMaxContracts > 0) q = Math.Min(q, UserMaxContracts);
+            if (q < 1) return 0;
+            return q;
+        }
+        #endregion
+
+        #region Time helpers
+        // NT8 standard: Bars.IsLastBarOfSession — true on the last bar of the session.
+        // We approximate "N minutes before close" by tracking session open time
+        // from _sessionOpenTime (set on IsFirstBarOfSession) and using a
+        // fixed-length session assumption, OR simply rely on IsLastBarOfSession
+        // for the force-flat trigger and a time-of-day check for no-entry.
+
+        private DateTime _sessionOpenTime  = DateTime.MinValue;
+
+        private bool IsNearSessionClose(int minutesBefore)
+        {
+            if (Bars.IsLastBarOfSession) return true;
+            if (_sessionOpenTime == DateTime.MinValue) return false;
+            // Approximate: US equity/futures regular session = ~390 min from open
+            // Use time-of-day: if it's within minutesBefore of a known close (16:00 ET / 17:00 CT)
+            // Safer: just check if current bar is >= (session open + assumed session length - minutesBefore)
+            // Most reliable without Session object: check ToD against common futures close 16:15 CT
+            // For MES (CME): pit close 16:00 CT, electronic settles 17:00 CT
+            // We'll use 16:00 CT = 22:00 UTC as the "soft close" reference.
+            // approximate session elapsed time check
+            double elapsed = (Time[0] - _sessionOpenTime).TotalMinutes;
+            return elapsed >= (385 - minutesBefore);   // 385 min ≈ typical 6.5h session
+        }
+
+        private bool IsRightAfterOpen(int minutesAfter)
+        {
+            if (_sessionOpenTime == DateTime.MinValue) return false;
+            double elapsed = (Time[0] - _sessionOpenTime).TotalMinutes;
+            return elapsed >= 0 && elapsed < minutesAfter;
+        }
+        #endregion
+
+        #region Trade book-keeping (for daily PnL / consecutive-loss tracking)
+        protected override void OnPositionUpdate(Position position, double averagePrice,
+                                                 int quantity, MarketPosition marketPosition)
+        {
+            // When position closes (Flat) we can read the most recent trade
+            // from SystemPerformance.AllTrades.
+            if (marketPosition == MarketPosition.Flat &&
+                SystemPerformance != null &&
+                SystemPerformance.AllTrades.Count > 0)
+            {
+                var t = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
+                double pnl = t.ProfitCurrency - (RoundTurnCommission * Math.Abs(_lastEntryQty));
+                _realizedDayPnL += pnl;
+                _tradesToday    += 1;
+                if (pnl < 0) _consecLosses += 1;
+                else         _consecLosses  = 0;
+                Print(string.Format("[EXIT] pnl={0:F2} dayPnL={1:F2} trades={2} consecLoss={3}",
+                                    pnl, _realizedDayPnL, _tradesToday, _consecLosses));
+                _lastStopTicks  = 0;
+                _lastEntryPrice = 0;
+                _lastEntryQty   = 0;
+            }
+        }
+        #endregion
+
+        #region Skip logging (dedup per bar)
+        private void LogSkip(string reason)
+        {
+            if (CurrentBar == _lastSkipBar && reason == _lastSkipReason) return;
+            _lastSkipBar    = CurrentBar;
+            _lastSkipReason = reason;
+            // Heavy filters get logged once per bar, not every check
+        }
+        #endregion
+
+        // ====================================================================
+        // PROPERTIES
+        // ====================================================================
+
+        #region Risk Profile (filled by NT-Analyzer mapper)
+        [NinjaScriptProperty]
+        [Display(Name = "StartingCapital", GroupName = "01-Risk Profile", Order = 0)]
+        public double StartingCapital { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "IntradayOnly", GroupName = "01-Risk Profile", Order = 1)]
+        public bool IntradayOnly { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "ActiveMarginPerContract", GroupName = "01-Risk Profile", Order = 2)]
+        public double ActiveMarginPerContract { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "MaxContractsByCapital", GroupName = "01-Risk Profile", Order = 3)]
+        public int MaxContractsByCapital { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "InstrumentStatus", GroupName = "01-Risk Profile", Order = 4)]
+        public string InstrumentStatus { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "MarginSourceBroker", GroupName = "01-Risk Profile", Order = 5)]
+        public string MarginSourceBroker { get; set; }
+        #endregion
+
+        #region Risk
+        [NinjaScriptProperty, Range(0.01, 10.0)]
+        [Display(Name = "RiskPerTradePct", GroupName = "02-Risk", Order = 0)]
+        public double RiskPerTradePct { get; set; }
+
+        [NinjaScriptProperty, Range(0.1, 50.0)]
+        [Display(Name = "MaxDailyLossPct", GroupName = "02-Risk", Order = 1)]
+        public double MaxDailyLossPct { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 100.0)]
+        [Display(Name = "MaxDailyProfitPct (0=off)", GroupName = "02-Risk", Order = 2)]
+        public double MaxDailyProfitPct { get; set; }
+
+        [NinjaScriptProperty, Range(1, 50)]
+        [Display(Name = "MaxTradesPerDay", GroupName = "02-Risk", Order = 3)]
+        public int MaxTradesPerDay { get; set; }
+
+        [NinjaScriptProperty, Range(1, 20)]
+        [Display(Name = "MaxConsecutiveLosses", GroupName = "02-Risk", Order = 4)]
+        public int MaxConsecutiveLosses { get; set; }
+
+        [NinjaScriptProperty, Range(1, 100)]
+        [Display(Name = "UserMaxContracts", GroupName = "02-Risk", Order = 5)]
+        public int UserMaxContracts { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 100.0)]
+        [Display(Name = "RoundTurnCommission ($)", GroupName = "02-Risk", Order = 6)]
+        public double RoundTurnCommission { get; set; }
+
+        [NinjaScriptProperty, Range(0, 20)]
+        [Display(Name = "SlippageTicks", GroupName = "02-Risk", Order = 7)]
+        public int SlippageTicks { get; set; }
+        #endregion
+
+        #region Setup toggles
+        [NinjaScriptProperty]
+        [Display(Name = "EnableLong", GroupName = "03-Setup", Order = 0)]
+        public bool EnableLong { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "EnableShort", GroupName = "03-Setup", Order = 1)]
+        public bool EnableShort { get; set; }
+        #endregion
+
+        #region Indicators
+        [NinjaScriptProperty, Range(2, 200)]
+        [Display(Name = "EmaFastPeriod", GroupName = "04-Indicators", Order = 0)]
+        public int EmaFastPeriod { get; set; }
+
+        [NinjaScriptProperty, Range(2, 400)]
+        [Display(Name = "EmaSlowPeriod", GroupName = "04-Indicators", Order = 1)]
+        public int EmaSlowPeriod { get; set; }
+
+        [NinjaScriptProperty, Range(2, 200)]
+        [Display(Name = "AtrPeriod", GroupName = "04-Indicators", Order = 2)]
+        public int AtrPeriod { get; set; }
+
+        [NinjaScriptProperty, Range(2, 200)]
+        [Display(Name = "AdxPeriod", GroupName = "04-Indicators", Order = 3)]
+        public int AdxPeriod { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 100.0)]
+        [Display(Name = "MinAdx", GroupName = "04-Indicators", Order = 4)]
+        public double MinAdx { get; set; }
+
+        [NinjaScriptProperty, Range(2, 500)]
+        [Display(Name = "VolumeSmaPeriod", GroupName = "04-Indicators", Order = 5)]
+        public int VolumeSmaPeriod { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 10.0)]
+        [Display(Name = "MinVolumeFactor", GroupName = "04-Indicators", Order = 6)]
+        public double MinVolumeFactor { get; set; }
+
+        [NinjaScriptProperty, Range(1, 50)]
+        [Display(Name = "PullbackLookback (bars)", GroupName = "04-Indicators", Order = 7)]
+        public int PullbackLookback { get; set; }
+        #endregion
+
+        #region Stops / targets
+        [NinjaScriptProperty, Range(0.05, 5.0)]
+        [Display(Name = "AtrStopMult", GroupName = "05-Stops", Order = 0)]
+        public double AtrStopMult { get; set; }
+
+        [NinjaScriptProperty, Range(1, 200)]
+        [Display(Name = "MinStopTicks", GroupName = "05-Stops", Order = 1)]
+        public int MinStopTicks { get; set; }
+
+        [NinjaScriptProperty, Range(1, 1000)]
+        [Display(Name = "MaxStopTicks", GroupName = "05-Stops", Order = 2)]
+        public int MaxStopTicks { get; set; }
+
+        [NinjaScriptProperty, Range(0.1, 10.0)]
+        [Display(Name = "RewardRiskRatio", GroupName = "05-Stops", Order = 3)]
+        public double RewardRiskRatio { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 5.0)]
+        [Display(Name = "MoveToBreakevenAtR", GroupName = "05-Stops", Order = 4)]
+        public double MoveToBreakevenAtR { get; set; }
+
+        [NinjaScriptProperty, Range(0.0, 10.0)]
+        [Display(Name = "TrailAfterR", GroupName = "05-Stops", Order = 5)]
+        public double TrailAfterR { get; set; }
+        #endregion
+
+        #region Time
+        [NinjaScriptProperty, Range(0, 240)]
+        [Display(Name = "ForceFlatMinutesBeforeClose", GroupName = "06-Time", Order = 0)]
+        public int ForceFlatMinutesBeforeClose { get; set; }
+
+        [NinjaScriptProperty, Range(0, 240)]
+        [Display(Name = "NoEntryMinutesBeforeClose", GroupName = "06-Time", Order = 1)]
+        public int NoEntryMinutesBeforeClose { get; set; }
+
+        [NinjaScriptProperty, Range(0, 60)]
+        [Display(Name = "AvoidFirstMinutesAfterOpen", GroupName = "06-Time", Order = 2)]
+        public int AvoidFirstMinutesAfterOpen { get; set; }
+        #endregion
+    }
+}
