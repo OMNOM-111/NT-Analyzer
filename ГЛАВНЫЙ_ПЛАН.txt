@@ -1,34 +1,47 @@
 ГЛАВНЫЙ ПЛАН ПРОЕКТА
 Анализатор стратегий NinjaTrader
 
-ТЕКУЩИЙ СТАТУС (фиксация на 2026-04-29)
+ТЕКУЩИЙ СТАТУС (обновлено 2026-05-02)
+
+=== ЗАФИКСИРОВАННАЯ РАБОЧАЯ ВЕРСИЯ ===
+Ветка: codex/trading-online-platform-ready  |  Коммит: ad3598d
+Тесты: 87/87 (runtime 44, trading 31, ops 12)
+
+--- ЧТО СДЕЛАНО И РАБОТАЕТ СТАБИЛЬНО ---
 
 - Phase A (AddOn грузится, файловая очередь работает): PASSED.
 - Phase B PoC backtest (Variant 1, PathA2 = StrategyBase.RunBacktest()): PASSED.
-  Smoke smoke_20260427T053651448Z: trade_count=9232, trades.json=9232.
-- MVP-1 functional: PASSED.
-  E2E через launcher (00_START_NT_ANALYZER.cmd → start.ps1 → app.server →
-  bridge AddOn → done) на job ui_20260427T063706266Z:
-  trade_count=9232, winning_pct=33.6763, net_profit=-7118.75,
-  gross_profit=95887.5, gross_loss=-103006.25, profit_factor=0.9309,
-  max_drawdown=-8938.75.
-  Backend слушает только 127.0.0.1, POST /api/jobs требует
-  Content-Type: application/json и режет cross-site Origin от браузера.
-- Manual cross-check vs NinjaTrader Strategy Analyzer UI: PASSED.
-  Пользователь вручную сверил результаты bridge с NinjaTrader Strategy
-  Analyzer и подтвердил идентичность. Текущая связка
-  NinjaTrader runtime + NTAnalyzerBridge + backend/UI закрепляется как
-  рабочий validated baseline для дальнейшей разработки и проверки стратегий.
-  Новая ручная сверка требуется после изменений в механизме запуска
-  StrategyAnalyzerRunner, execution settings, commission/trading-hours
-  применении или контракте результата.
+- MVP-0/1/2 functional: PASSED. E2E через launcher.
+- Manual cross-check vs NinjaTrader Strategy Analyzer: PASSED.
+
+БЭКТЕСТИРОВАНИЕ (/ui/backtesting):
+  - Запуск бэктестов из платформы: РАБОТАЕТ.
+  - Каталог стратегий, параметры, batch-запросы: РАБОТАЕТ.
+  - Постоянный validator: блокирует Standard-fill без High+slip>=1+RTC>=1.90.
+  - Просмотр сделок, метрик, equity, drawdown, history: РАБОТАЕТ.
+
+ТОРГОВЛЯ ОНЛАЙН (/ui/trading):
+  - Отображение реальных NinjaTrader strategy instances (bridge telemetry): РАБОТАЕТ.
+  - Остановка running-стратегии из платформы: РАБОТАЕТ.
+  - Аккаунт DEMO/LIVE определяется корректно, обновляется каждые ~5 сек: РАБОТАЕТ.
+  - LIVE-аккаунт заблокирован: UI + backend + bridge (read-only).
+  - Запуск новой стратегии из платформы: НЕ РЕАЛИЗОВАНО (следующий приоритет).
+    Текущий workflow: запустить стратегию вручную в NinjaTrader → платформа
+    её видит и управляет остановкой.
+
+СТРАТЕГИИ:
+  - NTAMicroVwapRiskPilot B1 ShortOnly: READY FOR PAPER (sim/demo, не live).
+  - Все остальные стратегии: отклонены (см. ПЛАН_РАЗРАБОТКИ_СТРАТЕГИЙ.md).
+  - Live-торговля: ЗАБЛОКИРОВАНА на всех уровнях.
+
+--- УСТАНОВКА BRIDGE (обязательно после каждого merge/update) ---
 
 ОБЫЧНЫЙ ЗАПУСК
 1. Открыть NinjaTrader 8 вручную.
 2. Двойной клик 00_START_NT_ANALYZER.cmd.
 3. UI откроется в браузере на http://127.0.0.1:8765/ui/.
 
-ОБНОВЛЕНИЕ BRIDGE
+--- УСТАНОВКА BRIDGE (обязательно после каждого merge/update) ---
 1. Полностью закрыть NinjaTrader 8.
 2. Запустить 01_INSTALL_BRIDGE.cmd.
 3. Снова открыть NinjaTrader.
