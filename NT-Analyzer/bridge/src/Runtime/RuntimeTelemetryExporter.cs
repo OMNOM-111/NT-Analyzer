@@ -27,13 +27,15 @@ namespace NTAnalyzerBridge.Runtime
     /// </summary>
     internal sealed class RuntimeTelemetryExporter
     {
-        public const string ExporterVersion = "1.1.0";
+        public const string ExporterVersion = "1.2.0";
         private const int   TickIntervalMs  = 5000;
 
         private readonly string _runtimeDir;
         private readonly Timer  _timer;
         private int _running;
         private readonly object _writeLock = new object();
+        private readonly Dictionary<string, StrategyHistoryState> _lastStrategyStates =
+            new Dictionary<string, StrategyHistoryState>(StringComparer.Ordinal);
 
         public RuntimeTelemetryExporter(string projectRoot)
         {
@@ -56,6 +58,7 @@ namespace NTAnalyzerBridge.Runtime
             try { _timer.Change(Timeout.Infinite, Timeout.Infinite); }
             catch { }
             try { _timer.Dispose(); } catch { }
+            try { AppendStrategyStopEvents("exporter_stop"); } catch { }
             try { UnhookAccountEvents(); } catch { }
             BridgeLog.Info("RuntimeTelemetryExporter: stopped");
         }
@@ -246,6 +249,7 @@ namespace NTAnalyzerBridge.Runtime
         {
             var strategiesJson = new StringBuilder(2048);
             var positionsJson  = new StringBuilder(1024);
+            var historyStates  = new List<StrategyHistoryState>();
             strategiesJson.Append("{\"generated_at_utc\":").Append(JsStr(IsoNow()))
                           .Append(",\"strategies\":[");
             positionsJson.Append("{");
@@ -286,6 +290,7 @@ namespace NTAnalyzerBridge.Runtime
                             continue;
                         if (sCount > 0) strategiesJson.Append(",");
                         strategiesJson.Append(SerializeStrategy(strat, accName, accMode));
+                        historyStates.Add(BuildStrategyHistoryState(strat, accName, accMode));
                         sCount++;
                     }
                 }
@@ -302,6 +307,7 @@ namespace NTAnalyzerBridge.Runtime
                                     strategiesJson.ToString());
             AtomicFile.WriteAllText(Path.Combine(_runtimeDir, "positions.json"),
                                     positionsJson.ToString());
+            UpdateStrategyHistory(historyStates);
         }
 
         // ---------------- per-strategy serialization -----------------------
@@ -362,6 +368,127 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "avg_price", GetDoubleProp(pos, "AveragePrice"));
             sb.Append("}");
             return sb.ToString();
+        }
+
+        // ---------------- strategy runtime history ------------------------
+
+        private sealed class StrategyHistoryState
+        {
+            public string RuntimeInstanceId;
+            public string StrategyId;
+            public string StrategyClass;
+            public string StrategyName;
+            public string AccountName;
+            public string AccountMode;
+            public string Instrument;
+            public string Timeframe;
+            public bool Enabled;
+            public string State;
+            public int PositionQty;
+            public double RealizedPnl;
+            public double UnrealizedPnl;
+        }
+
+        private StrategyHistoryState BuildStrategyHistoryState(object strat, string accName, string accMode)
+        {
+            string cls  = strat.GetType().Name;
+            string name = GetStringProp(strat, "Name");
+            string inst = GetInstrumentFullName(strat);
+            return new StrategyHistoryState
+            {
+                RuntimeInstanceId = RuntimeInstanceIdUtil.Compute(strat, accName, cls, inst, name),
+                StrategyId        = InferStrategyId(strat),
+                StrategyClass     = cls,
+                StrategyName      = name,
+                AccountName       = accName,
+                AccountMode       = accMode,
+                Instrument        = inst,
+                Timeframe         = GetTimeframeString(strat),
+                Enabled           = IsStrategyEnabled(strat),
+                State             = GetStringProp(strat, "State"),
+                PositionQty       = GetIntProp(GetSubObject(strat, "Position"), "Quantity"),
+                RealizedPnl       = GetDoubleProp(strat, "RealizedPnL"),
+                UnrealizedPnl     = GetDoubleProp(strat, "UnrealizedPnL"),
+            };
+        }
+
+        private void UpdateStrategyHistory(List<StrategyHistoryState> current)
+        {
+            lock (_writeLock)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var cur in current)
+                {
+                    if (cur == null || string.IsNullOrEmpty(cur.RuntimeInstanceId))
+                        continue;
+                    seen.Add(cur.RuntimeInstanceId);
+                    StrategyHistoryState prev;
+                    if (!_lastStrategyStates.TryGetValue(cur.RuntimeInstanceId, out prev))
+                    {
+                        AppendStrategyHistoryLine(
+                            cur.Enabled ? "observed_start" : "observed", cur, "first_seen");
+                    }
+                    else
+                    {
+                        if (!prev.Enabled && cur.Enabled)
+                            AppendStrategyHistoryLine("started", cur, "enabled_true");
+                        else if (prev.Enabled && !cur.Enabled)
+                            AppendStrategyHistoryLine("stopped", cur, "enabled_false");
+                        else if (!string.Equals(prev.State ?? "", cur.State ?? "",
+                                 StringComparison.OrdinalIgnoreCase))
+                            AppendStrategyHistoryLine("state_changed", cur, "state_changed");
+                    }
+                    _lastStrategyStates[cur.RuntimeInstanceId] = cur;
+                }
+
+                var missing = _lastStrategyStates.Keys
+                    .Where(k => !seen.Contains(k)).ToList();
+                foreach (var key in missing)
+                {
+                    var prev = _lastStrategyStates[key];
+                    AppendStrategyHistoryLine(
+                        prev.Enabled ? "stopped" : "disappeared", prev, "not_seen");
+                    _lastStrategyStates.Remove(key);
+                }
+            }
+        }
+
+        private void AppendStrategyStopEvents(string reason)
+        {
+            lock (_writeLock)
+            {
+                foreach (var st in _lastStrategyStates.Values.ToList())
+                {
+                    if (st != null && st.Enabled)
+                        AppendStrategyHistoryLine("exporter_stop", st, reason);
+                }
+                _lastStrategyStates.Clear();
+            }
+        }
+
+        private void AppendStrategyHistoryLine(string eventName, StrategyHistoryState st, string reason)
+        {
+            if (st == null) return;
+            var sb = new StringBuilder(512);
+            sb.Append("{");
+            AppendKv(sb, "timestamp_utc",       IsoNow());              Sep(sb);
+            AppendKv(sb, "event",               eventName ?? "");       Sep(sb);
+            AppendKv(sb, "reason",              reason ?? "");          Sep(sb);
+            AppendKv(sb, "runtime_instance_id", st.RuntimeInstanceId);  Sep(sb);
+            AppendKv(sb, "strategy_id",         st.StrategyId);         Sep(sb);
+            AppendKv(sb, "strategy_class",      st.StrategyClass);      Sep(sb);
+            AppendKv(sb, "strategy_name",       st.StrategyName);       Sep(sb);
+            AppendKv(sb, "account_name",        st.AccountName);        Sep(sb);
+            AppendKv(sb, "account_mode",        st.AccountMode);        Sep(sb);
+            AppendKv(sb, "instrument",          st.Instrument);         Sep(sb);
+            AppendKv(sb, "timeframe",           st.Timeframe);          Sep(sb);
+            AppendKv(sb, "enabled",             st.Enabled);            Sep(sb);
+            AppendKv(sb, "state",               st.State);              Sep(sb);
+            AppendKv(sb, "position_qty",        st.PositionQty);        Sep(sb);
+            AppendKv(sb, "realized_pnl",        st.RealizedPnl);        Sep(sb);
+            AppendKv(sb, "unrealized_pnl",      st.UnrealizedPnl);
+            sb.Append("}");
+            AppendLine(Path.Combine(_runtimeDir, "strategy_history.jsonl"), sb.ToString());
         }
 
         // ---------------- account hookup -----------------------------------

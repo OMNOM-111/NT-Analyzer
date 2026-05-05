@@ -38,6 +38,7 @@ let _activeRun = null;
 //     cancel_requested: boolean,
 //   }
 let _activeRunPollTimer = null;
+let _ntRunning = null;  // null=unknown, true/false from /api/health
 
 function isTerminalStatus(s) {
   return s === "done" || s === "failed" || s === "cancelled" || s === "missing";
@@ -128,7 +129,13 @@ function setSubmitState(state) {
   // running/pending — block re-submit, expose cancel.
   submit.disabled = true;
   submit.classList.add("busy");
-  submit.textContent = state === "running" ? "В работе…" : "Ожидание…";
+  if (state === "running") {
+    submit.textContent = "В работе…";
+  } else if (state === "pending" && _ntRunning === false) {
+    submit.textContent = "Ожидание запуска NinjaTrader…";
+  } else {
+    submit.textContent = "Ожидание…";
+  }
   cancel.hidden = false;
   cancel.disabled = false;
   if (_activeRun && _activeRun.cancel_requested) {
@@ -186,7 +193,11 @@ function renderActiveRunPanel() {
     txt.textContent = ar.kind === "batch" ? "Ожидание данных…" : "Один инструмент";
     if (!finished) {
       hint.hidden = false;
-      hint.textContent = "Прогресс по датам недоступен — bridge не отдаёт его в MVP-1.";
+      if (ar.last_status === "pending" && _ntRunning === false) {
+        hint.textContent = "NinjaTrader не запущен — задача в очереди. Запустите NinjaTrader; bridge подхватит её автоматически.";
+      } else {
+        hint.textContent = "Прогресс по датам недоступен — bridge не отдаёт его в MVP-1.";
+      }
     } else {
       hint.hidden = true;
     }
@@ -260,6 +271,7 @@ document.addEventListener("click", (ev) => {
   if (!t) return;
   if (t.id === "btn-jobs") openOverlay("jobs");
   else if (t.id === "btn-diag") openOverlay("diag");
+  else if (t.id === "btn-restart-server") restartServer();
   else if (t.classList && t.classList.contains("overlay-close")) {
     const which = t.dataset.close || "";
     const name = which.replace(/^overlay-/, "");
@@ -275,6 +287,35 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
+// ---------------- server restart -------------------------------------------
+async function restartServer() {
+  const btn = document.getElementById("btn-restart-server");
+  const pill = document.getElementById("health-pill");
+  if (btn) { btn.disabled = true; btn.textContent = "↺ Перезапуск…"; }
+  if (pill) { pill.textContent = "перезапуск…"; pill.className = "status-pill warn"; }
+  try {
+    await api.post("/api/server/restart", {});
+  } catch (_) { /* server will drop the connection during restart — ignore */ }
+  // Poll /api/health until server is back (up to 15 seconds).
+  let ok = false;
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const h = await api.get("/api/health");
+      if (h && h.host) { ok = true; break; }
+    } catch (_) {}
+  }
+  if (btn) { btn.disabled = false; btn.textContent = "↺ Сервер"; }
+  if (ok) {
+    if (pill) { pill.textContent = "перезапущен ✓"; pill.className = "status-pill ok"; }
+    // Reload profiles if that tab is active, then full bootstrap.
+    _profilesState.loaded = false;
+    setTimeout(() => bootstrap(), 300);
+  } else {
+    if (pill) { pill.textContent = "сервер не отвечает"; pill.className = "status-pill bad"; }
+  }
+}
+
 // ---------------- bootstrap -----------------------------------------------
 let _catalog = null;  // last GET /api/catalog response
 
@@ -288,6 +329,8 @@ async function bootstrap() {
     setStatusChip("ss-nt",
       h.ninjatrader_running ? "NinjaTrader: запущен" : "NinjaTrader: не запущен",
       h.ninjatrader_running ? "ok" : "warn");
+    _ntRunning = (h.ninjatrader_running === true) ? true
+                : (h.ninjatrader_running === false) ? false : null;
     document.getElementById("d-host").textContent = h.host;
     document.getElementById("d-root").textContent = h.project_root;
   } catch (e) {
@@ -297,6 +340,10 @@ async function bootstrap() {
   }
 
   await loadCatalog();
+
+  // Phase 22c — accept prefill from "Открыть в бэктесте" on the Trading page.
+  // URL params: ?strategy=<class>&instrument=<sym>&timeframe=<"5 Minute">&params=<json>
+  applyTradingPrefillFromURL();
 
   document.getElementById("run-form").addEventListener("submit", onSubmitJob);
   document.getElementById("d-refresh").addEventListener("click", refreshDiagnostics);
@@ -383,6 +430,8 @@ async function loadCatalog() {
     renderBasket();
   }
   renderInstrumentBrowser();
+  // Phase 22e — initialize the second left-panel tab (Strategy Profiles).
+  initLeftTabs();
   // Group warning is now surfaced via /api/catalog warnings + status-strip;
   // legacy basket-warn block removed.
 
@@ -402,6 +451,10 @@ async function loadCatalog() {
   document.getElementById("f-tf-type").addEventListener("change",  highlightActiveTimeframe);
   document.getElementById("f-tf-value").addEventListener("input",  highlightActiveTimeframe);
 
+  // date period quick-select buttons
+  document.querySelectorAll("#date-presets button[data-period]").forEach(b =>
+    b.addEventListener("click", () => applyDatePreset(b.dataset.period)));
+
   // 4) commission templates dropdown — bridge applies any supported template.
   const cSel  = document.getElementById("f-commission-template");
   const cHint = document.getElementById("f-commission-hint");
@@ -414,7 +467,9 @@ async function loadCatalog() {
     if (!t.supported) o.disabled = true;
     cSel.appendChild(o);
   });
-  cSel.value = "None";
+  const defaultTemplate = cat.execution_defaults?.commission_template || "None";
+  cSel.value = defaultTemplate;
+  if (!cSel.value) cSel.value = "None";
   const unsupportedNames = (cat.commission_templates || [])
     .filter(t => !t.supported && t.name !== "None")
     .map(t => t.name);
@@ -543,6 +598,107 @@ function applyTimeframePreset(p) {
   document.getElementById("f-tf-type").value  = p.type;
   document.getElementById("f-tf-value").value = String(p.value);
   highlightActiveTimeframe();
+}
+
+function applyDatePreset(period) {
+  const today = new Date();
+  const toVal  = today.toISOString().slice(0, 10);
+  let from = new Date(today);
+  if      (period === "1d") from.setDate(from.getDate() - 1);
+  else if (period === "1w") from.setDate(from.getDate() - 7);
+  else if (period === "1m") from.setMonth(from.getMonth() - 1);
+  else if (period === "3m") from.setMonth(from.getMonth() - 3);
+  else if (period === "1y") from.setFullYear(from.getFullYear() - 1);
+  const fromVal = from.toISOString().slice(0, 10);
+  document.getElementById("f-from-date").value = fromVal;
+  document.getElementById("f-to-date").value   = toVal;
+  document.querySelectorAll("#date-presets button").forEach(b =>
+    b.classList.toggle("active", b.dataset.period === period));
+}
+
+// Phase 22c — accept "Open in backtest" prefill from /ui/trading.html.
+// Reads strategy / instrument / timeframe / params from the URL query string,
+// applies them to the form. Safe to call when no params are present (no-op).
+function applyTradingPrefillFromURL() {
+  let qp;
+  try { qp = new URLSearchParams(window.location.search); }
+  catch (_) { return; }
+  const strategy   = qp.get("strategy");
+  const instrument = qp.get("instrument");
+  const timeframe  = qp.get("timeframe");
+  const paramsRaw  = qp.get("params");
+  if (!strategy && !instrument && !timeframe && !paramsRaw) return;
+
+  // 1) Strategy class — also rebuilds the param fields.
+  if (strategy) {
+    const sel = document.getElementById("f-class");
+    if (sel) {
+      const opt = [...sel.options].find(o => o.value === strategy);
+      if (opt) {
+        sel.value = strategy;
+        onStrategyChange();   // rebuild param fields with defaults
+      } else {
+        console.warn("Trading prefill: strategy not in catalog:", strategy);
+      }
+    }
+  }
+
+  // 2) Instrument basket — single contract from the runtime instance.
+  if (instrument) {
+    _basket = [instrument];
+    try { renderBasket(); } catch (e) { console.warn("renderBasket:", e); }
+  }
+
+  // 3) Timeframe — parse "5 Minute" / "1 Hour" / "30 Second" / "Day".
+  if (timeframe) {
+    const m = String(timeframe).trim().match(/^(\d+)\s+(\w+)$/);
+    let type = null, value = null;
+    if (m) { value = parseInt(m[1], 10); type = m[2]; }
+    else if (/^(day|tick|volume|second|minute)$/i.test(timeframe.trim())) {
+      type = timeframe.trim().charAt(0).toUpperCase() + timeframe.trim().slice(1).toLowerCase();
+      value = 1;
+    }
+    if (type) {
+      const tEl = document.getElementById("f-tf-type");
+      const vEl = document.getElementById("f-tf-value");
+      if (tEl) {
+        // Map common aliases → canonical NT period type
+        const canon = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+        if ([...tEl.options].some(o => o.value === canon)) tEl.value = canon;
+      }
+      if (vEl && value != null) vEl.value = String(value);
+      try { highlightActiveTimeframe(); } catch (_) {}
+    }
+  }
+
+  // 4) Params — JSON-encoded snapshot of NT instance parameters. Apply by
+  //    matching data-param-name on the rebuilt #strategy-params inputs.
+  if (paramsRaw) {
+    let obj = null;
+    try { obj = JSON.parse(paramsRaw); }
+    catch (e) { console.warn("Trading prefill: bad params JSON:", e); }
+    if (obj && typeof obj === "object") {
+      // Phase 22d — silently apply matched params; skipped ones are NT base/UI
+      // properties (BarsRequiredToTrade, IsAutoScale, Panel, ...) that are
+      // either already covered by the catalog or have no effect on backtest
+      // behavior. The previous "applied N, skipped M" banner was misleading.
+      Object.keys(obj).forEach(k => {
+        const inp = document.querySelector(
+          '#strategy-params [data-param-name="' + cssEscape(k) + '"]');
+        if (!inp) return;
+        const kind = inp.dataset.paramKind;
+        const v = obj[k];
+        if (kind === "bool") inp.checked = !!v;
+        else                 inp.value = String(v == null ? "" : v);
+      });
+    }
+  }
+}
+
+// Minimal CSS.escape polyfill (sufficient for parameter names).
+function cssEscape(s) {
+  if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(s);
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, ch => "\\" + ch);
 }
 
 function highlightActiveTimeframe() {
@@ -735,6 +891,365 @@ function fmtMoney(v) {
   return "$" + v.toFixed(2);
 }
 
+// Phase 22e — short timestamp for the "Создан" column (YYYY-MM-DD HH:MM).
+function _fmtCreated(ts) {
+  if (!ts) return "—";
+  const m = String(ts).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]}` : ts;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Backtest confidence model (Phase 22k).
+// The table shows confidence_score only: statistical trust in the data sample.
+// Profitability and quality metrics are shown in the tooltip as result context,
+// but they do not lower confidence just because the strategy lost money.
+// ─────────────────────────────────────────────────────────────────────────────
+const TARGET_TRADES_PER_DAY = 2.0;
+
+function computeBacktestAssessment(item) {
+  const confidence_score = computeConfidenceScore(item);
+  const quality_verdict = computeQualityVerdict(item);
+  return { confidence_score, quality_verdict };
+}
+
+function computeConfidence(item) {
+  return computeBacktestAssessment(item).confidence_score;
+}
+
+function computeConfidenceScore(item) {
+  if (!item) {
+    return { score: 0, level: "insufficient", label: "НЕТ ДАННЫХ", cssClass: "insufficient", reasons: ["нет данных"], trade_expectation: null, data_quality: null };
+  }
+  const isFinished = (item.kind === "batch") || (item.status === "done");
+  if (!isFinished || item.trades == null || item.trades === 0) {
+    return { score: 0, level: "insufficient", label: "НЕТ ДАННЫХ", cssClass: "insufficient", reasons: ["нет данных или 0 сделок"], trade_expectation: null, data_quality: null };
+  }
+  const N = Number(item.trades) || 0;
+  const tradeExpectation = computeTradeExpectation(item, N);
+  const dataQuality = computeConfidenceDataQuality(item, tradeExpectation);
+  let score = tradeExpectation.sample_score + dataQuality.adjustment;
+  if (N < 5) score = Math.min(score, 18);
+  else if (N < 10) score = Math.min(score, 28);
+  else if (N < 20) score = Math.min(score, 42);
+  else if (N < 50) score = Math.min(score, 65);
+  if (tradeExpectation.overtrade_warning) score = Math.min(score, 92);
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  let level = "very_low";
+  if (score >= 75) level = "high";
+  else if (score >= 45) level = "medium";
+  else if (score >= 25) level = "low";
+  const reasons = tradeExpectation.reasons.slice();
+  if (N < 20) reasons.push("меньше 20 сделок — статистическая база мала");
+  if (dataQuality.reasons.length) reasons.push(...dataQuality.reasons);
+  const label = _confidenceLabel(level);
+  const cssClass = _confidenceClass(level, tradeExpectation);
+  return { score, level, label, cssClass, reasons, trade_expectation: tradeExpectation, data_quality: dataQuality };
+}
+
+function computeQualityVerdict(item) {
+  if (!item) {
+    return { score: 0, verdict: "unknown", reasons: ["нет данных"], metrics: {} };
+  }
+  const isFinished = (item.kind === "batch") || (item.status === "done");
+  if (!isFinished || item.trades == null || item.trades === 0) {
+    return { score: 0, verdict: "unknown", reasons: ["нет данных или 0 сделок"], metrics: {} };
+  }
+
+  const reasons = [];
+  const np = _metricNumber(item, "net_profit_after_commission", "net_profit");
+  const pf = _profitFactorFromItem(item);
+  const ddRaw = _metricNumber(item, "max_drawdown_after_commission", "max_drawdown");
+  const wr = _metricNumber(item, "winning_pct");
+  const dd = ddRaw != null ? Math.abs(ddRaw) : null;
+  const metrics = { net_profit: np, profit_factor: pf, max_drawdown: ddRaw, winning_pct: wr };
+
+  if (np == null && pf == null) {
+    return { score: 0, verdict: "unknown", reasons: ["нет PnL/PF для оценки качества"], metrics };
+  }
+  if ((np != null && np <= 0) || (pf != null && pf < 1.0)) {
+    if (np != null && np <= 0) reasons.push("результат отрицательный");
+    if (pf != null && pf < 1.0) reasons.push("PF ниже 1.0");
+    return { score: 20, verdict: "losing", reasons, metrics };
+  }
+
+  let score = 45;
+  let verdict = "weak";
+  if (pf != null) {
+    if      (pf >= 2.0) { score = 90; verdict = "excellent"; }
+    else if (pf >= 1.5) { score = 78; verdict = "good"; }
+    else if (pf >= 1.2) { score = 62; verdict = "medium"; reasons.push(`PF=${pf.toFixed(2)} средний`); }
+    else                { score = 42; verdict = "weak"; reasons.push(`PF=${pf.toFixed(2)} слабый`); }
+  } else if (np != null && np > 0) {
+    score = 55;
+    verdict = "medium";
+    reasons.push("PF отсутствует — качество оценивается осторожно");
+  }
+  if (dd != null && np != null && np > 0) {
+    const ratio = dd / np;
+    metrics.drawdown_to_net = ratio;
+    if      (ratio <= 0.50) { score += 4; }
+    else if (ratio <= 1.00) { score -= 6; reasons.push(`DD/Net=${ratio.toFixed(2)}`); }
+    else                    { score -= 18; reasons.push(`просадка выше прибыли (DD/Net=${ratio.toFixed(2)})`); }
+  }
+  if (wr != null && (wr < 25 || wr > 80)) {
+    score -= 6;
+    reasons.push(`нетипичный win-rate ${wr.toFixed(0)}%`);
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  if (score >= 85) verdict = "excellent";
+  else if (score >= 70) verdict = "good";
+  else if (score >= 55) verdict = "medium";
+  else verdict = "weak";
+  return { score, verdict, reasons, metrics };
+}
+
+function computeTradeExpectation(item, trades) {
+  const target = _targetTradesPerDay(item);
+  const days = _periodTradingDays(item && item.period);
+  const reasons = [];
+  if (days != null && days > 0) {
+    const expected = Math.max(1, days * target);
+    const ratio = trades / expected;
+    const tradesPerDay = trades / days;
+    let sampleScore;
+    let band = "";
+    let active_note = false;
+    let overtrade_warning = false;
+    if (tradesPerDay <= 0) {
+      sampleScore = 0;
+      band = "нет сделок";
+    } else if (tradesPerDay < 0.5) {
+      sampleScore = 10 + (tradesPerDay / 0.5) * 15;
+      band = "очень низкая частота";
+      reasons.push(`меньше 0.5 сделки/день (${tradesPerDay.toFixed(2)})`);
+    } else if (tradesPerDay < 1.0) {
+      sampleScore = 25 + ((tradesPerDay - 0.5) / 0.5) * 20;
+      band = "низкая частота";
+      reasons.push(`0.5–1 сделка/день (${tradesPerDay.toFixed(2)})`);
+    } else if (tradesPerDay < 2.0) {
+      sampleScore = 45 + ((tradesPerDay - 1.0) / 1.0) * 20;
+      band = "средняя частота";
+    } else if (tradesPerDay < 4.0) {
+      sampleScore = 75 + ((tradesPerDay - 2.0) / 2.0) * 20;
+      band = "хорошая частота";
+    } else if (tradesPerDay <= 6.0) {
+      sampleScore = 90 + ((tradesPerDay - 4.0) / 2.0) * 10;
+      band = "высокая активность";
+      active_note = true;
+      reasons.push(`активная стратегия: ${tradesPerDay.toFixed(2)} сделок/день`);
+    } else {
+      sampleScore = 92;
+      band = "очень высокая активность";
+      overtrade_warning = true;
+      reasons.push(`возможна переторговка: ${tradesPerDay.toFixed(2)} сделок/день`);
+    }
+    return {
+      target_trades_per_day: target,
+      trading_days: days,
+      expected_trades: expected,
+      actual_trades: trades,
+      trades_per_day: tradesPerDay,
+      trade_ratio: ratio,
+      sample_score: Math.round(sampleScore),
+      band,
+      active_note,
+      overtrade_warning,
+      reasons,
+    };
+  }
+
+  let sampleScore;
+  if      (trades >= 200) sampleScore = 88;
+  else if (trades >= 100) sampleScore = 82;
+  else if (trades >= 50)  sampleScore = 62;
+  else if (trades >= 20)  sampleScore = 38;
+  else                    sampleScore = 18;
+  reasons.push("неизвестен период теста — expected trades посчитать нельзя");
+  return {
+    target_trades_per_day: target,
+    trading_days: null,
+    expected_trades: null,
+    actual_trades: trades,
+    trades_per_day: null,
+    trade_ratio: null,
+    sample_score: sampleScore,
+    band: "период неизвестен",
+    active_note: false,
+    overtrade_warning: false,
+    reasons,
+  };
+}
+
+function computeConfidenceDataQuality(item, tradeExpectation) {
+  const reasons = [];
+  let adjustment = 0;
+  if (!tradeExpectation || tradeExpectation.trading_days == null) {
+    adjustment -= 8;
+  } else if (tradeExpectation.trading_days < 5) {
+    adjustment -= 10;
+    reasons.push(`очень короткий период: ${tradeExpectation.trading_days.toFixed(1)} торговых дней`);
+  } else if (tradeExpectation.trading_days < 20) {
+    adjustment -= 5;
+    reasons.push(`короткий период: ${tradeExpectation.trading_days.toFixed(1)} торговых дней`);
+  }
+
+  const checks = [
+    { ok: item.winning_pct != null, name: "Win %" },
+    { ok: _metricNumber(item, "net_profit_after_commission", "net_profit") != null, name: "Net Profit" },
+    { ok: _profitFactorFromItem(item) != null, name: "PF" },
+    { ok: _metricNumber(item, "max_drawdown_after_commission", "max_drawdown") != null, name: "Max DD" },
+  ];
+  const present = checks.filter(x => x.ok).length;
+  const missing = checks.filter(x => !x.ok).map(x => x.name);
+  if (present === checks.length) {
+    adjustment += 3;
+  } else if (present >= 2) {
+    adjustment -= 4;
+    reasons.push(`часть метрик отсутствует: ${missing.join(", ")}`);
+  } else {
+    adjustment -= 10;
+    reasons.push(`мало метрик результата: ${missing.join(", ")}`);
+  }
+  return { adjustment, present_metrics: present, total_metrics: checks.length, missing_metrics: missing, reasons };
+}
+
+function _targetTradesPerDay(item) {
+  const raw = item && (item.target_trades_per_day ?? item.TargetTradesPerDay);
+  const v = raw != null ? Number(raw) : TARGET_TRADES_PER_DAY;
+  return Number.isFinite(v) && v > 0 ? v : TARGET_TRADES_PER_DAY;
+}
+
+function _metricNumber(item, ...keys) {
+  for (const k of keys) {
+    if (item[k] == null) continue;
+    const v = Number(item[k]);
+    if (!Number.isNaN(v) && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function _profitFactorFromItem(item) {
+  const direct = _metricNumber(item, "profit_factor_after_commission", "profit_factor");
+  if (direct != null) return direct;
+  for (const k of ["profit_factor_after_commission", "profit_factor"]) {
+    const raw = item && item[k];
+    if (raw === "∞" || raw === "Infinity" || raw === "inf") return Infinity;
+  }
+  const gp = _metricNumber(item, "gross_profit_after_commission", "gross_profit");
+  const gl = _metricNumber(item, "gross_loss_after_commission", "gross_loss");
+  if (gp == null || gl == null) return null;
+  if (gl < 0) return gp / Math.abs(gl);
+  if (gl === 0 && gp > 0) return Infinity;
+  return null;
+}
+
+function _fmtProfitFactor(pf) {
+  if (pf == null) return "—";
+  if (pf === Infinity) return "∞";
+  return Number(pf).toFixed(2);
+}
+
+function _periodMonths(period) {
+  if (!period || !period.from_utc || !period.to_utc) return null;
+  const a = Date.parse(period.from_utc);
+  const b = Date.parse(period.to_utc);
+  if (!isFinite(a) || !isFinite(b) || b <= a) return null;
+  return (b - a) / (1000 * 60 * 60 * 24 * 30.4375);
+}
+
+function _periodTradingDays(period) {
+  if (!period || !period.from_utc || !period.to_utc) return null;
+  const a = new Date(period.from_utc), b = new Date(period.to_utc);
+  if (!isFinite(a) || !isFinite(b) || b <= a) return null;
+  // Approx: 5 trading days per 7 calendar days.
+  const cal = (b - a) / (1000 * 60 * 60 * 24);
+  return cal * (5 / 7);
+}
+
+const _CONF_LEVEL_LABEL = {
+  high: "ВЫСОКОЕ",
+  medium: "СРЕДНЕЕ",
+  low: "НИЗКОЕ",
+  very_low: "ОЧЕНЬ НИЗКОЕ",
+  insufficient: "НЕТ ДАННЫХ",
+};
+
+const _QUALITY_VERDICT_LABEL = {
+  excellent: "отличный результат",
+  good: "хороший результат",
+  medium: "средний результат",
+  weak: "слабый результат",
+  losing: "убыточный результат",
+  unknown: "качество не оценено",
+};
+
+function _confidenceLabel(level) {
+  return _CONF_LEVEL_LABEL[level] || level || "—";
+}
+
+function _confidenceClass(level, tradeExpectation) {
+  if (level === "high") return tradeExpectation && tradeExpectation.active_note ? "excellent" : "good";
+  if (level === "medium") return "medium";
+  if (level === "low") return "weak";
+  if (level === "very_low") return "low";
+  return "insufficient";
+}
+
+function renderConfidenceBadge(item) {
+  const td = el("td", { cls: "col-confidence" });
+  const assessment = computeBacktestAssessment(item);
+  const c = assessment.confidence_score;
+  const span = el("span");
+  span.className = "confidence-badge " + c.cssClass;
+  span.textContent = `${c.score}% · ${c.label}`;
+  span.title = buildBacktestRatingTooltip(assessment);
+  td.appendChild(span);
+  return td;
+}
+
+function buildBacktestRatingTooltip(assessment) {
+  const c = assessment.confidence_score;
+  const q = assessment.quality_verdict;
+  const te = c.trade_expectation;
+  const lines = [
+    `Доверие к данным: ${c.score}% · ${c.label}`,
+    `Основа: размер выборки, период, частота сделок, полнота метрик`,
+  ];
+  if (te) {
+    lines.push(`Период: ${te.trading_days != null ? te.trading_days.toFixed(1) + " торговых дней" : "н/д"}`);
+    lines.push(`Ожидалось сделок: ${te.expected_trades != null ? Math.round(te.expected_trades) : "н/д"}`);
+    lines.push(`Фактически сделок: ${te.actual_trades}`);
+    lines.push(`Цель: ${te.target_trades_per_day.toFixed(1)} сделок/день`);
+    lines.push(`Сделок/день: ${te.trades_per_day != null ? te.trades_per_day.toFixed(2) : "н/д"}`);
+    lines.push(`Частота: ${te.trade_ratio != null ? te.trade_ratio.toFixed(2) + " от нормы" : "н/д"}`);
+    if (te.trades_per_day != null) {
+      const delta = te.trades_per_day - te.target_trades_per_day;
+      lines.push(`Отклонение: ${delta >= 0 ? "+" : ""}${delta.toFixed(2)} сделок/день`);
+    }
+    lines.push(`Диапазон: ${te.band || "н/д"}`);
+  }
+  if (c.data_quality) {
+    lines.push(`Метрики: ${c.data_quality.present_metrics}/${c.data_quality.total_metrics}`);
+    if (c.data_quality.missing_metrics && c.data_quality.missing_metrics.length) {
+      lines.push(`Нет метрик: ${c.data_quality.missing_metrics.join(", ")}`);
+    }
+  }
+  lines.push(`Качество результата: ${_QUALITY_VERDICT_LABEL[q.verdict] || q.verdict} (не влияет на доверие)`);
+  if (q.metrics) {
+    if (q.metrics.net_profit != null) lines.push(`Итог: ${fmtMoneySign(q.metrics.net_profit)}`);
+    if (q.metrics.profit_factor != null) lines.push(`PF: ${_fmtProfitFactor(q.metrics.profit_factor)}`);
+    if (q.metrics.max_drawdown != null) lines.push(`Max DD: ${fmtMoneySign(q.metrics.max_drawdown)}`);
+    if (q.metrics.winning_pct != null) lines.push(`Win %: ${q.metrics.winning_pct.toFixed(1)}%`);
+  }
+  const reasons = [...(c.reasons || [])];
+  if (reasons.length) lines.push("Детали доверия:\n— " + [...new Set(reasons)].join("\n— "));
+  if (q.reasons && q.reasons.length) {
+    lines.push("Контекст результата:\n— " + [...new Set(q.reasons)].join("\n— "));
+  }
+  return lines.join("\n");
+}
+
 // Convert "MES 06-26" → "MES JUN 26" (NinjaTrader-style display format).
 // DISPLAY ONLY — never use for basket keys or catalog lookups.
 const _MONTH_ABBR = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
@@ -854,6 +1369,249 @@ function initInstrumentBrowser() {
     } catch {}
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 22e — left-panel tabs (Инструменты / Лучшие профили).
+// Profiles are loaded once on first activation and cached in memory.
+// ─────────────────────────────────────────────────────────────────────────────
+let _profilesState = { loaded: false, data: null, search: "", statusFilter: "all" };
+
+function initLeftTabs() {
+  const tabs = document.querySelectorAll(".left-tab[data-left-tab]");
+  if (!tabs.length) return;
+  tabs.forEach(btn => {
+    if (btn.dataset.wired === "1") return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", () => activateLeftTab(btn.dataset.leftTab));
+  });
+  // Profiles search/filter listeners.
+  const ps = document.getElementById("prof-search");
+  const pf = document.getElementById("prof-status-filter");
+  const pr = document.getElementById("prof-refresh");
+  if (ps && ps.dataset.wired !== "1") {
+    ps.dataset.wired = "1";
+    ps.addEventListener("input", () => { _profilesState.search = ps.value; renderProfilesList(); });
+  }
+  if (pf && pf.dataset.wired !== "1") {
+    pf.dataset.wired = "1";
+    pf.addEventListener("change", () => { _profilesState.statusFilter = pf.value; renderProfilesList(); });
+  }
+  if (pr && pr.dataset.wired !== "1") {
+    pr.dataset.wired = "1";
+    pr.addEventListener("click", () => { _profilesState.loaded = false; loadProfiles(); });
+  }
+}
+
+function activateLeftTab(name) {
+  document.querySelectorAll(".left-tab[data-left-tab]").forEach(btn => {
+    const active = btn.dataset.leftTab === name;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  const paneInst = document.getElementById("left-pane-instruments");
+  const paneProf = document.getElementById("left-pane-profiles");
+  if (paneInst) paneInst.hidden = (name !== "instruments");
+  if (paneProf) paneProf.hidden = (name !== "profiles");
+  if (name === "profiles" && !_profilesState.loaded) loadProfiles();
+}
+
+async function loadProfiles() {
+  try {
+    const data = await api.get("/api/profiles");
+    _profilesState.data = data;
+    _profilesState.loaded = true;
+    renderProfilesList();
+  } catch (e) {
+    const list = document.getElementById("profiles-list");
+    if (list) list.innerHTML = `<div class="muted small" style="padding:10px;color:#f87171;">Ошибка загрузки профилей: ${e.message}</div>`;
+  }
+}
+
+const _PROF_STATUS_LABEL = {
+  research_baseline: "База исследования",
+  paper_candidate:   "Кандидат для paper",
+  paper_ready:       "Готово к paper",
+  rejected:          "Отклонено",
+  archived:          "В архиве",
+};
+
+function renderProfilesList() {
+  const list = document.getElementById("profiles-list");
+  if (!list) return;
+  const data = _profilesState.data;
+  const profiles = (data && Array.isArray(data.profiles)) ? data.profiles : [];
+
+  const q = (_profilesState.search || "").trim().toLowerCase();
+  const sf = _profilesState.statusFilter || "all";
+  const filtered = profiles.filter(p => {
+    if (sf !== "all" && p.status !== sf) return false;
+    if (!q) return true;
+    const hay = [
+      p.name, p.strategy_class, p.instrument, p.timeframe,
+      p.status, p.profile_id,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+
+  list.replaceChildren();
+  if (!filtered.length) {
+    const empty = el("div", { cls: "muted small" });
+    empty.style.padding = "10px";
+    empty.textContent = profiles.length
+      ? "Профили не найдены по фильтру."
+      : "Реестр профилей пуст. Добавьте через data/profiles/strategies.json.";
+    list.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(p => list.appendChild(renderProfileCard(p)));
+}
+
+function renderProfileCard(p) {
+  const card = el("div", { cls: "profile-card" });
+
+  // Header: name + status badge.
+  const head = el("div", { cls: "profile-head" });
+  const title = el("div", { cls: "profile-title", text: p.name || p.profile_id });
+  const badge = el("span");
+  badge.className = "profile-status " + (p.status || "unknown");
+  badge.textContent = _PROF_STATUS_LABEL[p.status] || p.status_label || (p.status || "—");
+  head.appendChild(title);
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  // Subtitle: strategy / instrument / timeframe / window.
+  const sub = el("div", { cls: "profile-sub" });
+  const parts = [
+    p.strategy_class,
+    fmtContract(p.instrument),
+    p.timeframe,
+    p.trade_window_pt ? `🕒 ${p.trade_window_pt} PT` : null,
+  ].filter(Boolean);
+  sub.textContent = parts.join(" · ");
+  card.appendChild(sub);
+
+  // Period of last test.
+  if (p.test_period && p.test_period.from_utc && p.test_period.to_utc) {
+    const per = el("div", { cls: "profile-period" });
+    per.textContent = `Период: ${p.test_period.from_utc.slice(0,10)} → ${p.test_period.to_utc.slice(0,10)}`;
+    card.appendChild(per);
+  }
+
+  // Metrics grid.
+  const m = p.metrics || {};
+  const conf = p.confidence_score || p.confidence;
+  const metricsRow = el("div", { cls: "profile-metrics" });
+  metricsRow.appendChild(_metricCell("Сделки", m.trade_count != null ? m.trade_count : "—"));
+  metricsRow.appendChild(_metricCell("Win %",
+    m.winning_pct != null ? m.winning_pct.toFixed(1) + "%" : "—"));
+  metricsRow.appendChild(_metricCell("Чистый",
+    m.net_profit_after_commission != null ? fmtMoneySign(m.net_profit_after_commission) : "—",
+    m.net_profit_after_commission > 0 ? "pos" : (m.net_profit_after_commission < 0 ? "neg" : "")));
+  metricsRow.appendChild(_metricCell("PF",
+    m.profit_factor_after_commission != null ? Number(m.profit_factor_after_commission).toFixed(2) : "—"));
+  metricsRow.appendChild(_metricCell("Макс. DD",
+    m.max_drawdown != null ? fmtMoneySign(m.max_drawdown) : "—",
+    m.max_drawdown < 0 ? "neg" : ""));
+  metricsRow.appendChild(_metricCell("Доверие",
+    conf && conf.score != null ? conf.score + "% " + (_CONF_LEVEL_LABEL[conf.level] || conf.level || "") : "—"));
+  card.appendChild(metricsRow);
+
+  const decision = p.decision || {};
+  const decisionText = decision.reason || p.profile_summary || p.notes;
+  if (decisionText) {
+    const box = el("div", { cls: "profile-decision", text: decisionText });
+    if (decision.next_test) box.title = "Следующий тест: " + decision.next_test;
+    card.appendChild(box);
+  }
+
+  // Locked parameters preview (compact, expandable on hover via title).
+  const lp = p.locked_parameters || {};
+  const lpKeys = Object.keys(lp);
+  if (lpKeys.length) {
+    const params = el("div", { cls: "profile-params" });
+    const preview = lpKeys.slice(0, 4)
+      .map(k => `${k}=${lp[k]}`).join(" · ")
+      + (lpKeys.length > 4 ? ` · +${lpKeys.length - 4} ещё` : "");
+    params.textContent = "🔒 " + preview;
+    params.title = lpKeys.map(k => `${k} = ${lp[k]}`).join("\n");
+    card.appendChild(params);
+  }
+
+  // Footer actions: load into form, view last job.
+  const foot = el("div", { cls: "profile-foot" });
+  const btnLoad = el("button", { cls: "profile-btn", text: "Загрузить в форму" });
+  btnLoad.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    loadProfileIntoForm(p);
+  });
+  foot.appendChild(btnLoad);
+  if (p.last_job_id) {
+    const btnJob = el("button", { cls: "profile-btn", text: "Открыть последний job" });
+    btnJob.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openResult(p.last_job_id);
+    });
+    foot.appendChild(btnJob);
+  }
+  card.appendChild(foot);
+
+  return card;
+}
+
+function _metricCell(label, value, tone) {
+  const cell = el("div", { cls: "profile-metric" + (tone ? " " + tone : "") });
+  const lbl = el("div", { cls: "profile-metric-lbl", text: label });
+  const val = el("div", { cls: "profile-metric-val", text: String(value) });
+  cell.appendChild(lbl);
+  cell.appendChild(val);
+  return cell;
+}
+
+// Apply a profile's settings to the right-panel form so the user can run a
+// fresh backtest with the locked configuration.
+function loadProfileIntoForm(p) {
+  if (!p) return;
+  // Strategy class — rebuilds param fields with defaults.
+  if (p.strategy_class) {
+    const sel = document.getElementById("f-class");
+    if (sel) {
+      const opt = [...sel.options].find(o => o.value === p.strategy_class);
+      if (opt) {
+        sel.value = p.strategy_class;
+        try { onStrategyChange(); } catch (_) {}
+      }
+    }
+  }
+  // Instrument basket.
+  if (p.instrument) {
+    _basket = [p.instrument];
+    try { renderBasket(); } catch (_) {}
+  }
+  // Timeframe.
+  if (p.timeframe) {
+    const m = String(p.timeframe).trim().match(/^(\d+)\s+(\w+)$/);
+    if (m) {
+      const tEl = document.getElementById("f-tf-type");
+      const vEl = document.getElementById("f-tf-value");
+      const canon = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
+      if (tEl && [...tEl.options].some(o => o.value === canon)) tEl.value = canon;
+      if (vEl) vEl.value = m[1];
+      try { highlightActiveTimeframe(); } catch (_) {}
+    }
+  }
+  // Locked parameters.
+  const lp = p.locked_parameters || {};
+  Object.keys(lp).forEach(k => {
+    const inp = document.querySelector('#strategy-params [data-param-name="' + cssEscape(k) + '"]');
+    if (!inp) return;
+    if (inp.dataset.paramKind === "bool") inp.checked = !!lp[k];
+    else                                    inp.value = String(lp[k] == null ? "" : lp[k]);
+  });
+  // Surface that a profile was loaded.
+  try { console.log("[profile] loaded:", p.profile_id); } catch (_) {}
+}
+
 
 function populateInstrumentBrowserGroups() {
   const sel = document.getElementById("ib-group");
@@ -1704,20 +2462,51 @@ async function refreshJobs() {
   const items = [];
   const batches = (batchesData && batchesData.batches) || [];
   for (const b of batches) {
+    // Phase 22d — show instruments (not strategy class) in the "Имя / инструмент"
+    // column so batch rows don't duplicate the strategy column. Show first 2-3
+    // contracts and a "+ N ещё" suffix when the basket is larger.
+    // Phase 22h — prefer _batchNormalizedCache (derived from children on first
+    // openBatch() call) over raw API data, so polling refreshes never revert
+    // the parent row back to "strategy.name ×N" / "—" after normalization.
+    const cached = _batchNormalizedCache[b.batch_id];
+    const rawInsts = Array.isArray(b.instruments) ? b.instruments : [];
+    const insts = (rawInsts.length > 0) ? rawInsts
+                : (cached && cached.instruments && cached.instruments.length > 0)
+                  ? cached.instruments : [];
+    const rawPeriod = b.period || null;
+    const cachedPeriod = (cached && (cached.fromUtc || cached.toUtc))
+      ? { from_utc: cached.fromUtc, to_utc: cached.toUtc } : null;
+    const batchPeriod = rawPeriod || cachedPeriod;
+    const MAX_SHOWN = 3;
+    let label;
+    if (insts.length === 0) {
+      label = b.name || b.batch_id;
+    } else if (insts.length <= MAX_SHOWN) {
+      label = insts.map(fmtContract).join(", ");
+    } else {
+      const head = insts.slice(0, MAX_SHOWN).map(fmtContract).join(", ");
+      label = `${head} + ${insts.length - MAX_SHOWN} ещё`;
+    }
     items.push({
       kind: "batch",
       id: b.batch_id,
-      label: b.name || b.batch_id,
+      report_no: b.report_no != null ? b.report_no : null,
+      label: label,
+      labelTitle: insts.length ? insts.join(", ") : (b.name || ""),
       strategy: b.class_name || "—",
       status: summarizeBatchCounts(b.counts || {}, b.total || 0),
       counts: b.counts || {},
       total: b.total || 0,
-      period: b.period || null,
+      period: batchPeriod,
       created: b.created_at_utc || "",
-      finished: "",
-      trades: b.trade_count != null ? b.trade_count : null,
-      winning_pct: b.winning_pct != null ? b.winning_pct : null,
-      net_profit: b.net_profit != null ? b.net_profit : null,
+      finished: b.finished_at_utc || "",
+      trades: b.trade_count != null ? b.trade_count : (cached && cached.trade_count != null ? cached.trade_count : null),
+      winning_pct: b.winning_pct != null ? b.winning_pct : (cached && cached.winning_pct != null ? cached.winning_pct : null),
+      net_profit: b.net_profit != null ? b.net_profit : (cached && cached.net_profit != null ? cached.net_profit : null),
+      profit_factor: b.profit_factor != null ? b.profit_factor : (cached && cached.profit_factor != null ? cached.profit_factor : null),
+      gross_profit: b.gross_profit != null ? b.gross_profit : (cached && cached.gross_profit != null ? cached.gross_profit : null),
+      gross_loss: b.gross_loss != null ? b.gross_loss : (cached && cached.gross_loss != null ? cached.gross_loss : null),
+      max_drawdown:  b.max_drawdown  != null ? b.max_drawdown  : (cached && cached.max_drawdown != null ? cached.max_drawdown : null),
       mtime: b.created_at_utc ? Date.parse(b.created_at_utc) : 0,
     });
   }
@@ -1727,7 +2516,9 @@ async function refreshJobs() {
     items.push({
       kind: "job",
       id: j.job_id,
+      report_no: j.report_no != null ? j.report_no : null,
       label: fmtContract(j.instrument) || j.job_id,
+      labelTitle: "",
       strategy: j.class_name || "—",
       status: j.status,
       period: j.period || null,
@@ -1736,6 +2527,12 @@ async function refreshJobs() {
       trades: j.trade_count != null ? j.trade_count : null,
       winning_pct: j.winning_pct != null ? j.winning_pct : null,
       net_profit: j.net_profit != null ? j.net_profit : null,
+      net_profit_after_commission: j.net_profit_after_commission != null ? j.net_profit_after_commission : null,
+      profit_factor: j.profit_factor != null ? j.profit_factor : null,
+      gross_profit: j.gross_profit != null ? j.gross_profit : null,
+      gross_loss: j.gross_loss != null ? j.gross_loss : null,
+      profit_factor_after_commission: j.profit_factor_after_commission != null ? j.profit_factor_after_commission : null,
+      max_drawdown:  j.max_drawdown  != null ? j.max_drawdown  : null,
       mtime: j.mtime ? j.mtime * 1000
               : (j.created_at_utc ? Date.parse(j.created_at_utc) : 0),
     });
@@ -1755,13 +2552,28 @@ async function refreshJobs() {
     tr.dataset.repkey = `${it.kind}:${it.id}`;
     if (tr.dataset.repkey === _selectedReportKey) tr.classList.add("selected");
 
-    // Имя / инструмент (with id as title for power users)
+    // Phase 22e — column order: №, Создан, Имя, Стратегия, Тип, Статус,
+    //   Период, Сделок, Win%, Итог, Доверие, ×
+
+    // 0) № — persistent report number assigned by the backend.
+    tr.appendChild(td(it.report_no != null ? it.report_no : "—", { cls: "col-num-compact" }));
+
+    // 1) Создан — short ISO timestamp; full value as title.
+    tr.appendChild(td(_fmtCreated(it.created), { title: it.created || "" }));
+
+    // 2) Имя — instrument(s) for jobs and batches; never strategy class.
     const tdName = el("td", { cls: "col-rep-name" });
-    tdName.textContent = it.label;
-    tdName.title = `${it.kind === "batch" ? "Пакет" : "Запуск"}: ${it.id}`;
+    tdName.textContent = it.label || "—";
+    const kindLabel = it.kind === "batch" ? "Пакет" : "Запуск";
+    tdName.title = it.labelTitle
+      ? `${kindLabel}: ${it.id}\nИнструменты: ${it.labelTitle}`
+      : `${kindLabel}: ${it.id}`;
     tr.appendChild(tdName);
 
-    // Тип
+    // 3) Стратегия
+    tr.appendChild(td(it.strategy));
+
+    // 4) Тип
     const tdKind = el("td");
     tdKind.appendChild(el("span", {
       cls: "badge-kind " + it.kind,
@@ -1771,10 +2583,7 @@ async function refreshJobs() {
     }));
     tr.appendChild(tdKind);
 
-    // Стратегия
-    tr.appendChild(td(it.strategy));
-
-    // Статус (for batches show counts inline)
+    // 5) Статус (for batches show counts inline)
     const tdSt = el("td");
     tdSt.appendChild(el("span", {
       cls: "status-badge " + (STATUS_CLASSES[it.status] || "unknown"),
@@ -1790,17 +2599,15 @@ async function refreshJobs() {
     }
     tr.appendChild(tdSt);
 
-    // Период
+    // 6) Период — never empty, show "—" if unknown.
     const period = it.period
       ? `${(it.period.from_utc||"").slice(0,10)} → ${(it.period.to_utc||"").slice(0,10)}`
-      : "";
+      : "—";
     tr.appendChild(td(period, {
       title: it.period ? `${it.period.from_utc} → ${it.period.to_utc}` : "" }));
 
-    // Создан / Финиш / Сделок / Win%
-    tr.appendChild(td(it.created));
-    tr.appendChild(td(it.finished));
-    tr.appendChild(td(it.trades != null ? it.trades : "", { cls: "col-num-compact" }));
+    // 7) Сделок
+    tr.appendChild(td(it.trades != null ? it.trades : "—", { cls: "col-num-compact" }));
 
     // Win % — green if ≥50, red if <50
     const tdWin = el("td", { cls: "col-num-compact" });
@@ -1825,6 +2632,9 @@ async function refreshJobs() {
     }
     tr.appendChild(tdNet);
 
+    // Доверие (Phase 22d) — Backtest Confidence Score 0-100% with tooltip.
+    tr.appendChild(renderConfidenceBadge(it));
+
     // Delete button (×) — stops propagation so it doesn't open the report.
     const tdDel = el("td", { cls: "col-del" });
     const btnDel = el("button");
@@ -1845,6 +2655,7 @@ async function refreshJobs() {
     });
     tbody.appendChild(tr);
   });
+  hydrateVisibleBatchReportRows(filtered);
 }
 
 async function deleteReport(kind, id) {
@@ -1899,6 +2710,11 @@ const _tradeFilters = { side: "all", pnl: "all" };
 let _activeBatch = null;        // batch detail object, or null for single-job mode
 let _activeBatchRows = [];      // rows[] from /api/batches/{id}/results
 let _batchPollTimer = null;     // setTimeout id for auto-refresh while jobs run
+// Phase 22h — persistent normalized display data derived from batch children.
+// Keyed by batch_id. Survives refreshJobs() re-renders so the top table never
+// reverts to the raw "strategy.name ×N" / "—" values after polling updates.
+const _batchNormalizedCache = {}; // { [batchId]: { instruments: [...], fromUtc, toUtc } }
+const _batchHydrateInFlight = new Set();
 
 async function openResult(jobId) {
   // Load the job header to detect batch membership; if part of a batch we
@@ -2015,6 +2831,10 @@ async function openBatch(batchId, focusJobId) {
   }
   document.getElementById("result-job-id").textContent = pick || batchId;
   renderResultRowsTable(_activeBatchRows, pick);
+  // Patch the parent batch row in the top table with instrument/period data
+  // derived from the children. This corrects display even when the running
+  // server process has an old list_batches() that lacks these fields.
+  normalizeBatchReportRow(batchId, _activeBatchRows);
   if (pick) await setActiveJob(pick, null);
 
   // Auto-refresh while jobs are still in flight.
@@ -2029,6 +2849,184 @@ async function openBatch(batchId, focusJobId) {
       }
     }, 2500);
   }
+}
+
+/**
+ * Derives instruments and period from already-loaded child rows and:
+ *   1. Writes results to _batchNormalizedCache so refreshJobs() polling
+ *      never reverts the parent row to raw "strategy.name ×N" / "—".
+ *   2. Patches the parent <tr> DOM cells immediately.
+ *
+ * Period derivation order:
+ *   a) min/max across children's r.period (populated by updated read_batch_results)
+ *   b) _activeBatch.period  (batch-manifest level, always present for new batches)
+ *   c) null  → period cell left as-is
+ *
+ * Acceptance criteria (phase 22h):
+ *   1. Parent row never shows "StrategyName ×N" in Имя when child instruments exist.
+ *   2. Parent row shows correct merged period from children.
+ *   3. If children have different periods: min(from) → max(to).
+ *   4. Duplicate instruments are de-duplicated.
+ *   5. More than 3 instruments: show first 3 + "+ N more".
+ *   6. Normalization survives polling refreshes (cache is consulted in refreshJobs).
+ */
+function normalizeBatchReportRow(batchId, rows) {
+  if (!batchId || !rows || rows.length === 0) return;
+  const summary = _deriveBatchSummaryFromRows(rows);
+
+  // 1. Derive unique instruments from child rows (preserve insertion order).
+  const instruments = summary.instruments;
+
+  // 2. Derive covering period: min(from_utc) → max(to_utc) across children.
+  //    Fall back to _activeBatch.period when children lack per-row periods
+  //    (old server process: read_batch_results did not include period per child).
+  let fromUtc = summary.fromUtc, toUtc = summary.toUtc;
+  // Fallback: use batch-manifest period when children lack per-row periods.
+  if (!fromUtc && _activeBatch && _activeBatch.batch_id === batchId) {
+    const bp = _activeBatch.period;
+    if (bp) { fromUtc = bp.from_utc || null; toUtc = bp.to_utc || null; }
+  }
+
+  // 3. Persist to cache so refreshJobs() polling does not revert the row.
+  if (instruments.length > 0 || fromUtc || summary.trade_count != null) {
+    _batchNormalizedCache[batchId] = { ...summary, instruments, fromUtc, toUtc };
+  }
+
+  console.debug("[normalizeBatchReportRow]", batchId,
+    "instruments:", instruments,
+    "period:", fromUtc, "→", toUtc,
+    "cached:", !!_batchNormalizedCache[batchId]);
+
+  if (instruments.length === 0 && !fromUtc) return; // nothing to patch
+
+  // 4. Find the parent <tr> in the top reports table.
+  const tr = document.querySelector(`#jobs-table tr[data-repkey="batch:${batchId}"]`);
+  if (!tr) return;
+  const cells = tr.cells;
+  // Column layout (matches thead in index.html):
+  //   0:№  1:Создан  2:Имя  3:Стратегия  4:Тип  5:Статус  6:Период  7:Сделок …
+  if (!cells || cells.length < 7) return;
+
+  // 4a. Patch "Имя" (index 2) — instrument list, never strategy name.
+  if (instruments.length > 0) {
+    const MAX_SHOWN = 3;
+    let label;
+    if (instruments.length <= MAX_SHOWN) {
+      label = instruments.map(fmtContract).join(", ");
+    } else {
+      const head = instruments.slice(0, MAX_SHOWN).map(fmtContract).join(", ");
+      label = `${head} + ${instruments.length - MAX_SHOWN} ещё`;
+    }
+    cells[2].textContent = label;
+    cells[2].title =
+      `Пакет: ${batchId}\nИнструменты: ${instruments.map(fmtContract).join(", ")}`;
+  }
+
+  // 4b. Patch "Период" (index 6) — derived covering period.
+  if (fromUtc || toUtc) {
+    const periodText =
+      `${(fromUtc || "").slice(0, 10)} → ${(toUtc || "").slice(0, 10)}`;
+    cells[6].textContent = periodText;
+    cells[6].title = `${fromUtc || ""} → ${toUtc || ""}`;
+  }
+
+  // 4c. Patch metrics and rating when /api/batches lacked aggregate fields.
+  if (summary.trade_count != null && cells.length > 10) {
+    cells[7].textContent = summary.trade_count.toLocaleString();
+    if (summary.winning_pct != null) {
+      cells[8].textContent = summary.winning_pct.toFixed(1) + "%";
+      cells[8].style.color = summary.winning_pct >= 50 ? "#4ade80" : "#f87171";
+    }
+    if (summary.net_profit != null) {
+      cells[9].textContent = fmtMoneySign(summary.net_profit);
+      cells[9].style.color = summary.net_profit > 0 ? "#4ade80"
+                         : summary.net_profit < 0 ? "#f87171" : "#9ca3af";
+    }
+    const badgeTd = renderConfidenceBadge({
+      kind: "batch",
+      status: "done",
+      trades: summary.trade_count,
+      winning_pct: summary.winning_pct,
+      net_profit: summary.net_profit,
+      gross_profit: summary.gross_profit,
+      gross_loss: summary.gross_loss,
+      profit_factor: summary.profit_factor,
+      max_drawdown: summary.max_drawdown,
+      period: (fromUtc || toUtc) ? { from_utc: fromUtc, to_utc: toUtc } : null,
+    });
+    cells[10].replaceChildren(...Array.from(badgeTd.childNodes));
+  }
+}
+
+async function hydrateVisibleBatchReportRows(items) {
+  const candidates = items.filter(it => {
+    if (it.kind !== "batch" || !it.id) return false;
+    const cached = _batchNormalizedCache[it.id];
+    if (_batchHydrateInFlight.has(it.id)) return false;
+    return !cached || !cached.instruments || !cached.instruments.length
+      || !it.period || it.profit_factor == null || it.gross_profit == null || it.gross_loss == null;
+  }).slice(0, 12);
+  for (const it of candidates) {
+    _batchHydrateInFlight.add(it.id);
+    api.get(`/api/batches/${encodeURIComponent(it.id)}/results`)
+      .then(data => normalizeBatchReportRow(it.id, (data && data.rows) || []))
+      .catch(e => console.warn("hydrate batch row:", it.id, e))
+      .finally(() => _batchHydrateInFlight.delete(it.id));
+  }
+}
+
+function _deriveBatchSummaryFromRows(rows) {
+  const seenInst = new Set();
+  const instruments = [];
+  let fromUtc = null, toUtc = null;
+  let totalTrades = 0, totalWinners = 0;
+  let totalNet = 0, totalGrossProfit = 0, totalGrossLoss = 0;
+  let worstDd = 0;
+  let hasTrades = false, hasNet = false, hasGross = false, hasDd = false;
+
+  for (const r of rows || []) {
+    const inst = r.instrument;
+    if (inst && !seenInst.has(inst)) { seenInst.add(inst); instruments.push(inst); }
+    const p = r.period;
+    if (p) {
+      if (p.from_utc && (!fromUtc || p.from_utc < fromUtc)) fromUtc = p.from_utc;
+      if (p.to_utc   && (!toUtc   || p.to_utc   > toUtc  )) toUtc   = p.to_utc;
+    }
+    if (r.status && r.status !== "done") continue;
+    const m = r.metrics || {};
+    const tc = _metricNumber({ v: m.trade_count }, "v");
+    if (tc == null) continue;
+    hasTrades = true;
+    totalTrades += tc;
+    const wp = _metricNumber({ v: m.winning_pct }, "v");
+    if (wp != null) totalWinners += Math.round(wp * tc / 100);
+    const np = _metricNumber({ v: m.net_profit }, "v");
+    if (np != null) { totalNet += np; hasNet = true; }
+    const gp = _metricNumber({ v: m.gross_profit }, "v");
+    const gl = _metricNumber({ v: m.gross_loss }, "v");
+    if (gp != null && gl != null) { totalGrossProfit += gp; totalGrossLoss += gl; hasGross = true; }
+    const dd = _metricNumber({ v: m.max_drawdown }, "v");
+    if (dd != null) { if (dd < worstDd) worstDd = dd; hasDd = true; }
+  }
+
+  let pf = null;
+  if (hasGross) {
+    if (totalGrossLoss < 0) pf = totalGrossProfit / Math.abs(totalGrossLoss);
+    else if (totalGrossLoss === 0 && totalGrossProfit > 0) pf = Infinity;
+  }
+  const winningPct = (hasTrades && totalTrades > 0) ? (totalWinners / totalTrades * 100) : null;
+  return {
+    instruments,
+    fromUtc,
+    toUtc,
+    trade_count: hasTrades ? totalTrades : null,
+    winning_pct: winningPct,
+    net_profit: hasNet ? totalNet : null,
+    gross_profit: hasGross ? totalGrossProfit : null,
+    gross_loss: hasGross ? totalGrossLoss : null,
+    profit_factor: pf,
+    max_drawdown: hasDd ? worstDd : null,
+  };
 }
 
 // Build a period_check {before_from, after_to, ok} from a job by parsing
@@ -2055,7 +3053,15 @@ function renderResultRowsTable(rows, activeJobId) {
   if (!tbody) { tbody = document.createElement("tbody"); tbl.appendChild(tbody); }
   tbody.replaceChildren();
 
-  rows.forEach(r => {
+  // Phase 22g — batch-details rows mirror the main reports table:
+  //   №, Создан, Имя, Стратегия, Тип, Статус, Период, Сделок, Win%, Итог, Доверие
+  //
+  // created_at_utc and period now come from each child's job.json (via the
+  // updated read_batch_results backend). Batch-level values are fallbacks.
+  const batchCreated = (_activeBatch && _activeBatch.created_at_utc) || "";
+  const batchPeriod  = (_activeBatch && _activeBatch.period) || null;
+
+  rows.forEach((r, idx) => {
     const tr = el("tr");
     if (r.job_id === activeJobId) tr.classList.add("selected");
     if (r.status === "failed") tr.classList.add("row-failed");
@@ -2065,44 +3071,82 @@ function renderResultRowsTable(rows, activeJobId) {
       ? Object.entries(r._params).map(([k,v]) => `${k}=${v}`).join(", ")
       : "";
     if (paramStr) tr.title = `Параметры: ${paramStr}`;
-    tr.appendChild(td(fmtContract(r.instrument) || "—", { cls: "col-instr" }));
-    tr.appendChild(td(r._strategy_class || "—", { cls: "col-strat" }));
 
     const m = r.metrics || {};
-    tr.appendChild(td(fmtMoneySign(m.gross_profit), { cls: "num pos" }));
-    tr.appendChild(td(fmtMoneySign(m.gross_loss),   { cls: "num neg" }));
-    tr.appendChild(td(
-      typeof m.profit_factor === "number"
-        ? m.profit_factor.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })
-        : "—",
-      { cls: "num " + (m.profit_factor >= 1 ? "pos" : (m.profit_factor != null ? "neg" : "")) }));
-    tr.appendChild(td(fmtMoneySign(m.max_drawdown), { cls: "num neg" }));
-    tr.appendChild(td(m.trade_count != null ? m.trade_count.toLocaleString() : "—",
-      { cls: "num" }));
-    tr.appendChild(td(
-      typeof m.winning_pct === "number"
-        ? m.winning_pct.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%"
-        : "—", { cls: "num" }));
 
+    // 0) №
+    tr.appendChild(td(idx + 1, { cls: "col-num-compact" }));
+
+    // 1) Создан — per-child, fallback to batch
+    const childCreated = r.created_at_utc || batchCreated;
+    tr.appendChild(td(_fmtCreated(childCreated), { title: childCreated || "" }));
+
+    // 2) Имя — instrument
+    tr.appendChild(td(fmtContract(r.instrument) || "—", { cls: "col-rep-name" }));
+
+    // 3) Стратегия — per-child class_name from job.json, fallback to batch-level
+    tr.appendChild(td(r.class_name || r._strategy_class || "—"));
+
+    // 4) Тип — child of a batch is always a single job
+    const tdKind = el("td");
+    tdKind.appendChild(el("span", { cls: "badge-kind job", text: "запуск" }));
+    tr.appendChild(tdKind);
+
+    // 5) Статус
     const tdStatus = el("td");
     tdStatus.appendChild(el("span", {
       cls: "status-badge " + (STATUS_CLASSES[r.status] || "unknown"),
       text: statusLabel(r.status) }));
     tr.appendChild(tdStatus);
 
-    const tdPC = el("td");
-    const pc = r.period_check;
-    let pcText = "n/a", pcCls = "unknown";
-    if (pc) {
-      if (pc.ok) { pcText = "OK"; pcCls = "ok"; }
-      else { pcText = `FAIL ${pc.before_from}/${pc.after_to}`; pcCls = "fail"; }
-    }
-    tdPC.appendChild(el("span", { cls: "status-badge " + pcCls, text: pcText }));
-    tr.appendChild(tdPC);
+    // 6) Период — per-child from job.json, fallback to batch period
+    const rowPeriod = r.period || batchPeriod;
+    const periodText = rowPeriod
+      ? `${(rowPeriod.from_utc||"").slice(0,10)} → ${(rowPeriod.to_utc||"").slice(0,10)}`
+      : "—";
+    tr.appendChild(td(periodText, {
+      title: rowPeriod ? `${rowPeriod.from_utc} → ${rowPeriod.to_utc}` : "" }));
 
-    // Итог (net profit) — moved to end of the row.
-    tr.appendChild(td(fmtMoneySign(m.net_profit), {
-      cls: "num " + (m.net_profit > 0 ? "pos" : (m.net_profit < 0 ? "neg" : "")) }));
+    // 7) Сделок
+    tr.appendChild(td(m.trade_count != null ? m.trade_count.toLocaleString() : "—",
+      { cls: "col-num-compact" }));
+
+    // 8) Win %
+    const tdWin = el("td", { cls: "col-num-compact" });
+    if (typeof m.winning_pct === "number") {
+      tdWin.textContent = m.winning_pct.toFixed(1) + "%";
+      tdWin.style.color = m.winning_pct >= 50 ? "#4ade80" : "#f87171";
+    } else {
+      tdWin.textContent = "—";
+      tdWin.style.color = "#4b5563";
+    }
+    tr.appendChild(tdWin);
+
+    // 9) Итог (net profit)
+    const tdNet = el("td", { cls: "col-num-compact" });
+    if (m.net_profit != null && !Number.isNaN(m.net_profit)) {
+      tdNet.textContent = fmtMoneySign(m.net_profit);
+      tdNet.style.color = m.net_profit > 0 ? "#4ade80"
+                       : m.net_profit < 0 ? "#f87171" : "#9ca3af";
+    } else {
+      tdNet.textContent = "—";
+      tdNet.style.color = "#4b5563";
+    }
+    tr.appendChild(tdNet);
+
+    // 10) Доверие — reuse the badge renderer with a row-shaped item.
+    tr.appendChild(renderConfidenceBadge({
+      kind: "job",
+      status: r.status,
+      trades: m.trade_count != null ? m.trade_count : null,
+      winning_pct: m.winning_pct != null ? m.winning_pct : null,
+      net_profit: m.net_profit != null ? m.net_profit : null,
+      profit_factor: m.profit_factor != null ? m.profit_factor : null,
+      gross_profit: m.gross_profit != null ? m.gross_profit : null,
+      gross_loss: m.gross_loss != null ? m.gross_loss : null,
+      max_drawdown: m.max_drawdown != null ? m.max_drawdown : null,
+      period: rowPeriod,
+    }));
 
     tr.addEventListener("click", () => {
       // Only re-load if a different job was clicked.
@@ -3560,11 +4604,19 @@ async function refreshNinjaTraderChip() {
       pill.classList.add("ok");
     }
     if (h.ninjatrader_running === true) {
+      _ntRunning = true;
       setStatusChip("ss-nt", "NinjaTrader: запущен", "ok");
     } else if (h.ninjatrader_running === false) {
+      _ntRunning = false;
       setStatusChip("ss-nt", "NinjaTrader: не запущен", "warn");
     } else {
+      _ntRunning = null;
       setStatusChip("ss-nt", "NinjaTrader: статус неизвестен", "warn");
+    }
+    // Refresh pending-state label if a job is currently waiting.
+    if (_activeRun && (_activeRun.last_status === "pending")) {
+      setSubmitState("pending");
+      renderActiveRunPanel();
     }
   } catch (e) {
     setStatusChip("ss-nt", "Backend: недоступен", "bad");

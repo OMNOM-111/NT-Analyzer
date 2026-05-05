@@ -219,7 +219,121 @@ header h1 { margin: 0; font-size: 15px; font-weight: 600; }
   width: 1%; white-space: nowrap; text-align: right;
 }
 /* Delete button column: fixed tiny */
-.reports-table .col-del { width: 28px; text-align: center; padding: 0 4px; }.reports-table .badge-kind {
+.reports-table .col-del { width: 28px; text-align: center; padding: 0 4px; }
+/* Backtest statistical confidence column: compact red → green badge */
+.reports-table .col-confidence { width: 1%; white-space: nowrap; text-align: center; }
+.confidence-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 3px;
+  font-size: 11px; font-weight: 600; cursor: help;
+  border: 1px solid transparent;
+}
+.confidence-badge.excellent { background: #12451f; color: #bbf7d0; border-color: #22c55e; }
+.confidence-badge.good      { background: #244d19; color: #bef264; border-color: #84cc16; }
+.confidence-badge.medium    { background: #4d4314; color: #fde68a; border-color: #eab308; }
+.confidence-badge.weak      { background: #5b3511; color: #fdba74; border-color: #f97316; }
+.confidence-badge.low       { background: #4a1f1f; color: #fca5a5; border-color: #ef4444; }
+.confidence-badge.loss      { background: #5a1d1d; color: #fecaca; border-color: #dc2626; }
+.confidence-badge.insufficient { background: #2a3148; color: #9ca3af; border-color: #475569; }
+
+/* ─── Phase 22e — Left-panel tabs (Инструменты / Лучшие профили) ─────────── */
+.left-tabs {
+  display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #243049;
+  background: #0f172a;
+}
+.left-tab {
+  background: transparent; color: #94a3b8; border: 1px solid transparent;
+  border-bottom: none; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  border-radius: 4px 4px 0 0; font-weight: 500;
+}
+.left-tab:hover { color: #cbd5e1; background: #1e293b; }
+.left-tab.active {
+  background: #1e293b; color: #e2e8f0; border-color: #243049;
+  border-bottom: 1px solid #1e293b; margin-bottom: -1px;
+}
+.left-pane[hidden] { display: none !important; }
+.left-pane { display: block; }
+
+/* Profiles tab UI */
+.profiles-controls {
+  display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid #243049;
+  flex-wrap: wrap; align-items: center;
+}
+.profiles-controls input[type="search"],
+.profiles-controls input[type="text"] {
+  flex: 1 1 140px; min-width: 100px;
+  background: #0f172a; color: #e2e8f0; border: 1px solid #243049;
+  border-radius: 3px; padding: 4px 8px; font-size: 12px;
+}
+.profiles-controls select {
+  background: #0f172a; color: #e2e8f0; border: 1px solid #243049;
+  border-radius: 3px; padding: 4px 6px; font-size: 12px;
+}
+.profiles-controls button {
+  background: #1e293b; color: #cbd5e1; border: 1px solid #243049;
+  border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.profiles-controls button:hover { background: #243049; color: #e2e8f0; }
+
+.profiles-list {
+  padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+}
+
+.profile-card {
+  background: #1e293b; border: 1px solid #243049; border-radius: 5px;
+  padding: 10px 12px; transition: border-color 0.15s, background 0.15s;
+}
+.profile-card:hover { border-color: #3b4f74; background: #243049; }
+
+.profile-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-bottom: 4px;
+}
+.profile-title { font-weight: 600; color: #e2e8f0; font-size: 13px; }
+.profile-status {
+  display: inline-block; padding: 1px 7px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.03em; border: 1px solid transparent; white-space: nowrap;
+}
+.profile-status.research_baseline { background: #1e3a5f; color: #93c5fd; border-color: #2a4a73; }
+.profile-status.paper_candidate   { background: #5a4a18; color: #fcd34d; border-color: #6b5a25; }
+.profile-status.paper_ready       { background: #14532d; color: #86efac; border-color: #166534; }
+.profile-status.rejected          { background: #5a1d1d; color: #fca5a5; border-color: #7f1d1d; }
+.profile-status.archived          { background: #2a3148; color: #6b7280; border-color: #374151; }
+
+.profile-sub { color: #a3b3d0; font-size: 11px; margin-bottom: 4px; }
+.profile-period { color: #6b7280; font-size: 11px; margin-bottom: 6px; }
+
+.profile-metrics {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px;
+  padding: 6px 0; border-top: 1px solid #243049; border-bottom: 1px solid #243049;
+  margin-bottom: 6px;
+}
+.profile-metric { text-align: center; }
+.profile-metric-lbl { color: #6b7280; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+.profile-metric-val { color: #e2e8f0; font-size: 12px; font-weight: 600; }
+.profile-metric.pos .profile-metric-val { color: #86efac; }
+.profile-metric.neg .profile-metric-val { color: #fca5a5; }
+
+.profile-decision {
+  color: #cbd5e1; font-size: 10px; line-height: 1.35;
+  margin: 0 0 6px 0; padding: 6px 7px;
+  background: #111827; border: 1px solid #243049; border-radius: 4px;
+}
+
+.profile-params {
+  font-family: ui-monospace, monospace; font-size: 10px; color: #94a3b8;
+  padding: 4px 0; cursor: help;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.profile-foot { display: flex; gap: 6px; margin-top: 6px; }
+.profile-btn {
+  flex: 1; background: #243049; color: #cbd5e1; border: 1px solid #2a3a5a;
+  border-radius: 3px; padding: 4px 8px; font-size: 11px; cursor: pointer;
+}
+.profile-btn:hover { background: #2a3a5a; color: #e2e8f0; }
+
+.reports-table .badge-kind {
   display: inline-block; padding: 1px 6px; border-radius: 3px;
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   background: #2a3148; color: #a3b3d0;
@@ -596,7 +710,7 @@ details.group[open] > summary { border-bottom-color: #232732; }
 .batch-refresh:hover { background: #2a4a6a; }
 
 .result-rows-wrap {
-  max-height: 28vh; overflow-y: auto; overflow-x: hidden;
+  max-height: 28vh; overflow-y: auto; overflow-x: auto;
   border: 1px solid #2a2d34; border-radius: 5px;
   background: #0f1115;
   flex: 0 0 auto;
@@ -606,11 +720,30 @@ details.group[open] > summary { border-bottom-color: #232732; }
   width: 100%; border-collapse: collapse; font-size: 12px;
   table-layout: fixed;
 }
-.result-rows th.col-instr,  .result-rows td.col-instr  { width: 12%; }
+/* Phase 22g — 11 columns matching main reports table.
+   Widths sum to 100%; tighter to fit in 28vh wrap without overflow.
+   №   Создан  Имя     Страт.  Тип   Статус  Период  Сделок Win%  Итог   Доверие */
+.result-rows col:nth-child(1)  { width: 3.5%; }   /* № */
+.result-rows col:nth-child(2)  { width: 10%;  }   /* Создан */
+.result-rows col:nth-child(3)  { width: 11%;  }   /* Имя */
+.result-rows col:nth-child(4)  { width: 16%;  }   /* Стратегия */
+.result-rows col:nth-child(5)  { width: 7%;   }   /* Тип */
+.result-rows col:nth-child(6)  { width: 8%;   }   /* Статус */
+.result-rows col:nth-child(7)  { width: 15%;  }   /* Период */
+.result-rows col:nth-child(8)  { width: 5.5%; }   /* Сделок */
+.result-rows col:nth-child(9)  { width: 5.5%; }   /* Win% */
+.result-rows col:nth-child(10) { width: 7%;   }   /* Итог */
+.result-rows col:nth-child(11) { width: 10%;  }   /* Доверие */
+/* Also restrict th/td widths via col-* helper classes */
+.result-rows th.col-num-compact, .result-rows td.col-num-compact { width: 5.5%; }
+.result-rows th.col-rep-name,    .result-rows td.col-rep-name    { width: 11%; }
+.result-rows th.col-confidence,  .result-rows td.col-confidence  { width: 10%; text-align: center; }
+/* Legacy instr/strat/status/period col classes kept for compatibility */
+.result-rows th.col-instr,  .result-rows td.col-instr  { width: 11%; }
 .result-rows th.col-strat,  .result-rows td.col-strat  { width: 16%; }
 .result-rows th.col-status, .result-rows td.col-status { width: 8%; }
-.result-rows th.col-period, .result-rows td.col-period { width: 10%; }
-.result-rows th.num,        .result-rows td.num        { width: 7.5%; }
+.result-rows th.col-period, .result-rows td.col-period { width: 15%; }
+.result-rows th.num,        .result-rows td.num        { width: 5.5%; }
 .result-rows thead th {
   position: sticky; top: 0; z-index: 2;
   background: #161922; color: #6b7280; font-weight: 500;

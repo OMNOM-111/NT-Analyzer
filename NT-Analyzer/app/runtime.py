@@ -33,6 +33,8 @@ from . import ops
 
 HEARTBEAT_MAX_AGE_SEC = 60          # heartbeat older than this => stale
 RUNTIME_DIR_NAME      = "runtime"
+STRATEGY_HISTORY_FILE = "strategy_history.jsonl"
+STRATEGY_DISPLAY_PREFS_FILE = "strategy_display_prefs.json"
 
 # Subset of locked params we re-verify at runtime per Phase 17 spec.
 B1_LOCKED_PARAMS_CHECK: Dict[str, Any] = {
@@ -105,6 +107,15 @@ def _read_jsonl(p: Path, max_lines: int = 5000) -> List[Dict[str, Any]]:
         except Exception:
             continue
     return out
+
+
+def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, p)
 
 
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
@@ -324,6 +335,283 @@ def read_executions(strategy_id: Optional[str] = None,
 
 def read_errors(limit: int = 200) -> List[Dict[str, Any]]:
     return _read_jsonl(_path("errors.jsonl"))[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Strategy display preferences
+# ---------------------------------------------------------------------------
+
+def _strategy_display_key(class_name: str) -> str:
+    return str(class_name or "").strip()
+
+
+def read_strategy_display_prefs() -> Dict[str, Any]:
+    raw = _read_json(_path(STRATEGY_DISPLAY_PREFS_FILE), default={})
+    hidden: set[str] = set()
+    updated_at = None
+    if isinstance(raw, dict):
+        updated_at = raw.get("updated_at_utc")
+        items = raw.get("hidden_classes")
+        if isinstance(items, list):
+            hidden.update(_strategy_display_key(str(x)) for x in items if _strategy_display_key(str(x)))
+        legacy = raw.get("classes")
+        if isinstance(legacy, dict):
+            for cls, cfg in legacy.items():
+                if isinstance(cfg, dict) and cfg.get("hidden"):
+                    key = _strategy_display_key(str(cls))
+                    if key:
+                        hidden.add(key)
+    return {
+        "hidden_classes": sorted(hidden),
+        "updated_at_utc": updated_at,
+    }
+
+
+def is_strategy_display_hidden(class_name: str) -> bool:
+    key = _strategy_display_key(class_name)
+    if not key:
+        return False
+    return key in set(read_strategy_display_prefs().get("hidden_classes") or [])
+
+
+def set_strategy_display_hidden(class_name: str, hidden: bool) -> Dict[str, Any]:
+    key = _strategy_display_key(class_name)
+    if not key:
+        raise ops.OpsError("class_name is required", 400)
+    prefs = read_strategy_display_prefs()
+    hidden_classes = set(prefs.get("hidden_classes") or [])
+    if hidden:
+        hidden_classes.add(key)
+    else:
+        hidden_classes.discard(key)
+    out = {
+        "hidden_classes": sorted(hidden_classes),
+        "updated_at_utc": _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+    _write_json_atomic(_path(STRATEGY_DISPLAY_PREFS_FILE), out)
+    return {"ok": True, "class_name": key, "hidden": bool(hidden), "prefs": out}
+
+
+# ---------------------------------------------------------------------------
+# Runtime strategy history
+# ---------------------------------------------------------------------------
+
+def _history_row_matches(row: Dict[str, Any],
+                         strategy_id: Optional[str] = None,
+                         runtime_instance_id: Optional[str] = None,
+                         class_name: Optional[str] = None) -> bool:
+    if runtime_instance_id and str(row.get("runtime_instance_id") or "") != runtime_instance_id:
+        return False
+    if strategy_id and str(row.get("strategy_id") or "").lower() != strategy_id.lower():
+        return False
+    if class_name and str(row.get("strategy_class") or "").lower() != class_name.lower():
+        return False
+    return True
+
+
+def read_strategy_history_events(limit: int = 500,
+                                 strategy_id: Optional[str] = None,
+                                 runtime_instance_id: Optional[str] = None,
+                                 class_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    limit = max(1, min(int(limit or 500), 5000))
+    rows = _read_jsonl(_path(STRATEGY_HISTORY_FILE), max_lines=max(5000, limit * 5))
+    rows = [
+        r for r in rows
+        if isinstance(r, dict)
+        and _history_row_matches(r, strategy_id, runtime_instance_id, class_name)
+    ]
+    return rows[-limit:]
+
+
+def _duration_sec(start_iso: Optional[str], end_iso: Optional[str]) -> Optional[int]:
+    start = _parse_iso(start_iso)
+    end = _parse_iso(end_iso)
+    if not start or not end:
+        return None
+    return max(0, int(round((end - start).total_seconds())))
+
+
+def _history_session_seed(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "runtime_instance_id": str(row.get("runtime_instance_id") or ""),
+        "strategy_id":        row.get("strategy_id") or "",
+        "strategy_class":     row.get("strategy_class") or "",
+        "strategy_name":      row.get("strategy_name") or "",
+        "account_name":       row.get("account_name") or "",
+        "account_mode":       row.get("account_mode") or "",
+        "instrument":         row.get("instrument") or "",
+        "timeframe":          row.get("timeframe") or "",
+        "started_at_utc":     row.get("timestamp_utc"),
+        "ended_at_utc":       None,
+        "duration_sec":       None,
+        "is_open":            True,
+        "start_event":        row.get("event") or "started",
+        "end_event":          None,
+        "end_reason":         None,
+        "last_event_utc":     row.get("timestamp_utc"),
+    }
+
+
+def _close_history_session(sess: Dict[str, Any], row: Dict[str, Any]) -> None:
+    end_ts = row.get("timestamp_utc") or sess.get("last_event_utc") or sess.get("started_at_utc")
+    sess["ended_at_utc"] = end_ts
+    sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), end_ts)
+    sess["is_open"] = False
+    sess["end_event"] = row.get("event") or "stopped"
+    sess["end_reason"] = row.get("reason") or None
+    sess["last_event_utc"] = end_ts
+
+
+def _current_enabled_runtime_keys() -> set[str]:
+    hb = read_heartbeat()
+    if not (hb.get("present") and hb.get("fresh")):
+        return set()
+    keys: set[str] = set()
+    for idx, row in enumerate(read_strategies_raw()):
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        keys.add(str(row.get("runtime_instance_id") or _make_runtime_instance_id(row, idx)))
+    return keys
+
+
+def _build_strategy_sessions(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    open_by_key: Dict[str, Dict[str, Any]] = {}
+    sessions: List[Dict[str, Any]] = []
+    current_enabled = _current_enabled_runtime_keys()
+    now_iso = _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    for row in events:
+        key = str(row.get("runtime_instance_id") or "")
+        if not key:
+            continue
+        event = str(row.get("event") or "").lower()
+        enabled = bool(row.get("enabled"))
+
+        if event in ("observed_start", "started"):
+            if enabled and key not in open_by_key:
+                open_by_key[key] = _history_session_seed(row)
+            elif key in open_by_key:
+                open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+            continue
+
+        if event == "state_changed":
+            if enabled and key not in open_by_key:
+                open_by_key[key] = _history_session_seed(row)
+            elif not enabled and key in open_by_key:
+                sess = open_by_key.pop(key)
+                _close_history_session(sess, row)
+                sessions.append(sess)
+            elif key in open_by_key:
+                open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+            continue
+
+        if event in ("stopped", "disappeared", "exporter_stop"):
+            if key in open_by_key:
+                sess = open_by_key.pop(key)
+                _close_history_session(sess, row)
+                sessions.append(sess)
+            continue
+
+        if event == "observed" and key in open_by_key:
+            open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+
+    for key, sess in list(open_by_key.items()):
+        if key in current_enabled:
+            sess["is_open"] = True
+            sess["ended_at_utc"] = None
+            sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), now_iso)
+            sess["end_event"] = None
+            sess["end_reason"] = "still_running"
+        else:
+            end_ts = sess.get("last_event_utc") or sess.get("started_at_utc")
+            sess["is_open"] = False
+            sess["ended_at_utc"] = end_ts
+            sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), end_ts)
+            sess["end_event"] = "missing_stop"
+            sess["end_reason"] = "not in current fresh runtime snapshot"
+        sessions.append(sess)
+
+    sessions.sort(key=lambda s: str(s.get("started_at_utc") or ""))
+    return sessions
+
+
+def _current_snapshot_sessions(strategy_id: Optional[str],
+                               runtime_instance_id: Optional[str],
+                               class_name: Optional[str]) -> List[Dict[str, Any]]:
+    hb = read_heartbeat()
+    if not (hb.get("present") and hb.get("fresh")):
+        return []
+    out: List[Dict[str, Any]] = []
+    now_iso = _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z")
+    for idx, row in enumerate(read_strategies_raw()):
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        r = dict(row)
+        r["runtime_instance_id"] = str(
+            r.get("runtime_instance_id") or _make_runtime_instance_id(r, idx))
+        if not _history_row_matches(r, strategy_id, runtime_instance_id, class_name):
+            continue
+        start = r.get("timestamp_utc") or hb.get("timestamp_utc") or now_iso
+        out.append({
+            "runtime_instance_id": r.get("runtime_instance_id"),
+            "strategy_id":        r.get("strategy_id") or "",
+            "strategy_class":     r.get("strategy_class") or "",
+            "strategy_name":      r.get("strategy_name") or "",
+            "account_name":       r.get("account_name") or "",
+            "account_mode":       r.get("account_mode") or "",
+            "instrument":         r.get("instrument") or "",
+            "timeframe":          r.get("timeframe") or "",
+            "started_at_utc":     start,
+            "ended_at_utc":       None,
+            "duration_sec":       _duration_sec(start, now_iso),
+            "is_open":            True,
+            "start_event":        "current_snapshot",
+            "end_event":          None,
+            "end_reason":         "history file is not available yet",
+            "last_event_utc":     r.get("timestamp_utc"),
+            "source":             "current_snapshot_only",
+        })
+    return out
+
+
+def read_strategy_history(limit_events: int = 500,
+                          limit_sessions: int = 200,
+                          strategy_id: Optional[str] = None,
+                          runtime_instance_id: Optional[str] = None,
+                          class_name: Optional[str] = None) -> Dict[str, Any]:
+    limit_events = max(1, min(int(limit_events or 500), 5000))
+    limit_sessions = max(1, min(int(limit_sessions or 200), 1000))
+    events = read_strategy_history_events(
+        limit=max(limit_events, 5000),
+        strategy_id=strategy_id,
+        runtime_instance_id=runtime_instance_id,
+        class_name=class_name,
+    )
+    sessions = _build_strategy_sessions(events)
+    warnings: List[str] = []
+    if not events:
+        sessions = _current_snapshot_sessions(strategy_id, runtime_instance_id, class_name)
+        if sessions:
+            warnings.append(
+                "strategy_history.jsonl is not available yet; showing current snapshot only")
+    total_sec = sum(int(s.get("duration_sec") or 0) for s in sessions)
+    active = [s for s in sessions if s.get("is_open")]
+    return {
+        "events": events[-limit_events:],
+        "sessions": sessions[-limit_sessions:],
+        "summary": {
+            "sessions": len(sessions),
+            "active_sessions": len(active),
+            "total_duration_sec": total_sec,
+        },
+        "filters": {
+            "strategy_id": strategy_id,
+            "runtime_instance_id": runtime_instance_id,
+            "class_name": class_name,
+        },
+        "warnings": warnings,
+        "source": "strategy_history_jsonl" if events else "current_snapshot",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +930,13 @@ def merge_all_runtime_strategies(
     raw_list = read_strategies_raw()
     hb = read_heartbeat()
     runtime_detected_global = bool(hb.get("present")) and bool(hb.get("fresh"))
+    hidden_classes = set(read_strategy_display_prefs().get("hidden_classes") or [])
     out: List[Dict[str, Any]] = []
+
+    # Bridge offline → strategies.json on disk is a stale snapshot from the last
+    # NT session. Surfacing it would lie about what's actually running. Hide it.
+    if not runtime_detected_global:
+        return out
 
     for idx, r in enumerate(raw_list):
         if not isinstance(r, dict):
@@ -655,6 +949,7 @@ def merge_all_runtime_strategies(
 
         sid = str(r.get("strategy_id") or "").strip()
         cls = str(r.get("strategy_class") or "").strip()
+        display_key = _strategy_display_key(cls or sid)
         acct_name     = str(r.get("account_name") or "")
         acct_mode_raw = r.get("account_mode") if isinstance(r.get("account_mode"), str) else None
         acct_mode     = _classify_account_mode(acct_name, acct_mode_raw)
@@ -719,6 +1014,8 @@ def merge_all_runtime_strategies(
             "today":                today,
             "runtime":              r,
             "source":               "runtime+registry" if registry_hit else "runtime_only",
+            "display_key":          display_key,
+            "display_hidden":       display_key in hidden_classes,
         }
 
         if (selected_account is not None or selected_instrument is not None
@@ -853,7 +1150,8 @@ def health() -> Dict[str, Any]:
     hb = read_heartbeat()
     files = {}
     for name in ("heartbeat.json", "strategies.json", "executions.jsonl",
-                 "orders.jsonl", "positions.json", "errors.jsonl"):
+                 "orders.jsonl", "positions.json", "errors.jsonl",
+                 STRATEGY_HISTORY_FILE, STRATEGY_DISPLAY_PREFS_FILE):
         p = rdir / name
         files[name] = {"exists": p.is_file(),
                        "size":  (p.stat().st_size if p.is_file() else 0)}

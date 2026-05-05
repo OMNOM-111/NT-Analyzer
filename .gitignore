@@ -10,6 +10,8 @@
 /NT-Analyzer/data/commands/**
 /NT-Analyzer/data/ops/**
 /NT-Analyzer/data/runtime/**
+/NT-Analyzer/data/profiles/_*.json
+/NT-Analyzer/data/reports/**
 /NT-Analyzer/data/catalog/*.json
 !/NT-Analyzer/data/catalog/instrument_groups.json
 !/NT-Analyzer/data/catalog/margins.json

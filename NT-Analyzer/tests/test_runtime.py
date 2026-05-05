@@ -778,6 +778,60 @@ def t44(tmp):
     assert rt_mod._is_paper_account("1267509") is False, "numeric live should not be paper-class"
 
 
+@case("phase23: strategy display prefs mark runtime rows hidden by class")
+def t45(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True,
+                   strategy_id="levels_painter",
+                   strategy_class="NTLevelsPainter")
+    out = rt.set_strategy_display_hidden("NTLevelsPainter", True)
+    assert out["ok"] is True, out
+    prefs = rt.read_strategy_display_prefs()
+    assert "NTLevelsPainter" in prefs["hidden_classes"], prefs
+    views = rt.merge_all_runtime_strategies()
+    assert len(views) == 1, views
+    assert views[0]["display_key"] == "NTLevelsPainter", views[0]
+    assert views[0]["display_hidden"] is True, views[0]
+    rt.set_strategy_display_hidden("NTLevelsPainter", False)
+    views2 = rt.merge_all_runtime_strategies()
+    assert views2[0]["display_hidden"] is False, views2[0]
+
+
+@case("phase23: strategy_history.jsonl aggregates closed and active sessions")
+def t46(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True)
+    rdir = tmp / "data" / "runtime"
+    raw = json.loads((rdir / "strategies.json").read_text(encoding="utf-8"))
+    raw["strategies"][0]["runtime_instance_id"] = "ri-history-1"
+    (rdir / "strategies.json").write_text(json.dumps(raw), encoding="utf-8")
+    base = {
+        "runtime_instance_id": "ri-history-1",
+        "strategy_id": "b1_shortonly",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "strategy_name": "B1 ShortOnly",
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "instrument": "MNQ 06-26",
+        "timeframe": "5 Minute",
+        "state": "Realtime",
+    }
+    rows = [
+        {**base, "timestamp_utc": _now_iso(-7200), "event": "observed_start",
+         "enabled": True, "reason": "first_seen"},
+        {**base, "timestamp_utc": _now_iso(-3600), "event": "stopped",
+         "enabled": False, "reason": "enabled_false"},
+        {**base, "timestamp_utc": _now_iso(-1800), "event": "started",
+         "enabled": True, "reason": "enabled_true"},
+    ]
+    with (rdir / "strategy_history.jsonl").open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    hist = rt.read_strategy_history(class_name="NTAMicroVwapRiskPilot")
+    assert hist["summary"]["sessions"] == 2, hist
+    assert hist["summary"]["active_sessions"] == 1, hist
+    assert hist["sessions"][-1]["is_open"] is True, hist["sessions"]
+    assert hist["sessions"][0]["duration_sec"] >= 3500, hist["sessions"][0]
+
+
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12,
              t13, t14, t15, t16, t17, t18,
@@ -785,7 +839,9 @@ def main() -> int:
              t27, t28, t29, t30, t31, t32, t33, t34,
              t35, t36, t37,
              # Phase 19
-             t38, t39, t40, t41, t42, t43, t44]
+             t38, t39, t40, t41, t42, t43, t44,
+             # Phase 23
+             t45, t46]
     print(f"Running {len(cases)} Phase 17/18/10/19 runtime tests:")
     for c in cases:
         c()

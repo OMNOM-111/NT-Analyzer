@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>NT-Analyzer</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260503-phase22i-rating">
 </head>
 <body>
 <header>
@@ -30,6 +30,7 @@
   <div class="header-actions">
     <button type="button" id="btn-instruments-toggle" class="hdr-btn" title="Показать/скрыть панель инструментов">Инструменты</button>
     <button type="button" id="btn-diag" class="hdr-btn">Диагностика</button>
+    <button type="button" id="btn-restart-server" class="hdr-btn" title="Перезапустить python-сервер (перезагружает код без перезапуска NinjaTrader)">↺ Сервер</button>
     <span class="status-pill" id="health-pill">проверка…</span>
   </div>
 </header>
@@ -38,35 +39,63 @@
   <!-- ============== INSTRUMENT BROWSER (left) ============== -->
   <aside class="instrument-sidebar" id="instrument-sidebar">
     <div class="instrument-head">
-      <span>Инструменты</span>
+      <div class="left-tabs" role="tablist">
+        <button type="button" class="left-tab active" data-left-tab="instruments" role="tab" aria-selected="true">Инструменты</button>
+        <button type="button" class="left-tab" data-left-tab="profiles" role="tab" aria-selected="false">Профили стратегий</button>
+      </div>
       <span style="display:flex;gap:4px;align-items:center;">
         <span class="muted small" id="ib-count">0</span>
         <button id="ib-add-all-btn" title="Добавить все видимые инструменты в корзину" style="background:#2a3340;color:#cfe1ff;border:1px solid #3a4150;border-radius:3px;padding:1px 7px;font-size:11px;cursor:pointer;">+ все</button>
       </span>
     </div>
-    <div class="instrument-controls">
-      <input id="ib-search" type="search" placeholder="Поиск: MES, ES, CL…" autocomplete="off" />
-      <select id="ib-group">
-        <option value="all">Все группы</option>
-      </select>
-      <div class="ib-toggles">
-        <label>Только актуальные <input type="checkbox" id="ib-only-current" checked></label>
-        <label>Показать все сроки <input type="checkbox" id="ib-show-all-expiries"></label>
+
+    <!-- ===== Tab pane: Инструменты ===== -->
+    <div class="left-pane" id="left-pane-instruments">
+      <div class="instrument-controls">
+        <input id="ib-search" type="search" placeholder="Поиск: MES, ES, CL…" autocomplete="off" />
+        <select id="ib-group">
+          <option value="all">Все группы</option>
+        </select>
+        <div class="ib-toggles">
+          <label>Только актуальные <input type="checkbox" id="ib-only-current" checked></label>
+          <label>Показать все сроки <input type="checkbox" id="ib-show-all-expiries"></label>
+        </div>
+      </div>
+      <div class="instrument-table-wrap">
+        <table id="instrument-table" class="dense">
+          <thead>
+            <tr>
+              <th>Инструмент</th>
+              <th>Группа</th>
+              <th class="num">Шаг</th>
+              <th class="num">$/тик</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ib-tbody"></tbody>
+        </table>
       </div>
     </div>
-    <div class="instrument-table-wrap">
-      <table id="instrument-table" class="dense">
-        <thead>
-          <tr>
-            <th>Инструмент</th>
-            <th>Группа</th>
-            <th class="num">Шаг</th>
-            <th class="num">$/тик</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="ib-tbody"></tbody>
-      </table>
+
+    <!-- ===== Tab pane: Профили стратегий (Phase 22e) ===== -->
+    <div class="left-pane" id="left-pane-profiles" hidden>
+      <div class="profiles-controls">
+        <input id="prof-search" type="search" placeholder="Поиск профиля…" autocomplete="off" />
+        <select id="prof-status-filter">
+          <option value="all">Все статусы</option>
+          <option value="research_baseline">База исследования</option>
+          <option value="paper_candidate">Кандидат для paper</option>
+          <option value="paper_ready">Готово к paper</option>
+          <option value="rejected">Отклонено</option>
+          <option value="archived">В архиве</option>
+        </select>
+        <button id="prof-refresh" type="button" title="Обновить">⟳</button>
+      </div>
+      <div class="profiles-list-wrap">
+        <div id="profiles-list" class="profiles-list">
+          <div class="muted small" style="padding:10px;">Загрузка…</div>
+        </div>
+      </div>
     </div>
   </aside>
 
@@ -91,16 +120,17 @@
         <table id="jobs-table" class="dense reports-table">
           <thead>
             <tr>
-              <th class="col-rep-name">Имя / инструмент</th>
-              <th>Тип</th>
+              <th class="col-num-compact">№</th>
+              <th>Создан</th>
+              <th class="col-rep-name">Имя</th>
               <th>Стратегия</th>
+              <th>Тип</th>
               <th>Статус</th>
               <th>Период</th>
-              <th>Создан</th>
-              <th>Финиш / HB</th>
               <th class="col-num-compact">Сделок</th>
               <th class="col-num-compact">Win %</th>
               <th class="col-num-compact">Итог</th>
+              <th class="col-confidence">Доверие</th>
               <th class="col-del"></th>
             </tr>
           </thead>
@@ -124,20 +154,33 @@
 
       <!-- Top instruments table (always visible: 1 row for single, N for batch). -->
       <div class="result-rows-wrap">
-        <table id="result-rows-table" class="dense result-rows">
+        <table id="result-rows-table" class="dense reports-table result-rows">
+          <colgroup>
+            <col><!-- № -->
+            <col><!-- Создан -->
+            <col><!-- Имя -->
+            <col><!-- Стратегия -->
+            <col><!-- Тип -->
+            <col><!-- Статус -->
+            <col><!-- Период -->
+            <col><!-- Сделок -->
+            <col><!-- Win% -->
+            <col><!-- Итог -->
+            <col><!-- Доверие -->
+          </colgroup>
           <thead>
             <tr>
-              <th class="col-instr">Инструмент</th>
-              <th class="col-strat">Стратегия</th>
-              <th class="num">Прибыль</th>
-              <th class="num">Убыток</th>
-              <th class="num">PF</th>
-              <th class="num">Просадка</th>
-              <th class="num">Сделок</th>
-              <th class="num">Win %</th>
-              <th class="col-status">Статус</th>
-              <th class="col-period">Период</th>
-              <th class="num">Итог</th>
+              <th class="col-num-compact">№</th>
+              <th>Создан</th>
+              <th class="col-rep-name">Имя</th>
+              <th>Стратегия</th>
+              <th>Тип</th>
+              <th>Статус</th>
+              <th>Период</th>
+              <th class="col-num-compact">Сделок</th>
+              <th class="col-num-compact">Win %</th>
+              <th class="col-num-compact">Итог</th>
+              <th class="col-confidence">Доверие</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -435,6 +478,18 @@
                 <input id="f-to-date" type="date" value="2026-04-24" required>
               </label>
             </div>
+            <div class="row">
+              <div class="field">
+                <span class="lbl">Быстрый выбор периода</span>
+                <div class="presets" id="date-presets">
+                  <button type="button" data-period="1d">1 день</button>
+                  <button type="button" data-period="1w">1 неделя</button>
+                  <button type="button" data-period="1m">1 месяц</button>
+                  <button type="button" data-period="3m">1 квартал</button>
+                  <button type="button" data-period="1y">1 год</button>
+                </div>
+              </div>
+            </div>
             <div class="row two">
               <label class="field">
                 <span class="lbl">Trading Hours</span>
@@ -575,7 +630,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20260502-backtest-fix"></script>
+<script src="app.js?v=20260503-phase22k-stat-confidence"></script>
 <script src="market_clock.js?v=20260502-hotfix5"></script>
 </body>
 </html>

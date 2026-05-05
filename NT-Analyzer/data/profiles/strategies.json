@@ -1,0 +1,475 @@
+{
+  "schema_version": "1.1",
+  "generated_from": {
+    "audit_scope": "jobs/done, data/profiles/_audit_ntamicrovwap.json, strategy development reports",
+    "rules": [
+      "acceptance profiles require High order fill resolution",
+      "acceptance profiles require slippage_ticks >= 1",
+      "all profile decisions use quantity-aware RoundTurnCommission >= 1.90 per contract",
+      "trading windows are shown in PT first"
+    ]
+  },
+  "profiles": [
+    {
+      "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+      "name": "MNQ B1 ShortOnly - locked paper profile",
+      "strategy_class": "NTAMicroVwapRiskPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "5 Minute",
+      "trade_window_pt": "06:35-07:00",
+      "status": "paper_ready",
+      "status_label": "Готово к paper",
+      "last_job_id": "ui_20260501T185820607Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "StartingCapital": 2000.0,
+        "IntradayOnly": true,
+        "ActiveMarginPerContract": 100.0,
+        "MaxContractsByCapital": 20,
+        "InstrumentStatus": "allowed",
+        "MarginSourceBroker": "NinjaTrader",
+        "EnableLong": false,
+        "EnableShort": true,
+        "UseDailyBiasFilter": false,
+        "EmaFastPeriod": 50,
+        "EmaSlowPeriod": 200,
+        "AtrPeriod": 14,
+        "AdxPeriod": 14,
+        "MinAdx": 22.0,
+        "VolumeSmaPeriod": 20,
+        "MinVolumeFactor": 1.2,
+        "PullbackLookback": 3,
+        "AtrStopMult": 0.75,
+        "MinStopTicks": 12,
+        "MaxStopTicks": 12,
+        "RewardRiskRatio": 3.5,
+        "MoveToBreakevenAtR": 0.8,
+        "TrailAfterR": 1.2,
+        "EntryTimeoutBars": 2,
+        "EntryOffsetTicks": 2,
+        "TradeStartTime": 635,
+        "TradeEndTime": 700,
+        "UseSecondTradeWindow": false,
+        "SecondTradeStartTime": 1030,
+        "SecondTradeEndTime": 1200,
+        "ForceFlatTime": 1245,
+        "MaxDailyLossPct": 2.0,
+        "MaxDailyProfitPct": 4.0,
+        "MaxTradesPerDay": 4,
+        "MaxConsecutiveLosses": 3,
+        "UserMaxContracts": 5,
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None",
+        "session_template": "CME US Index Futures RTH"
+      },
+      "metrics": {
+        "trade_count": 92,
+        "winning_pct": 54.3478,
+        "gross_net_profit": 3599.0,
+        "commission_total_adjusted": 860.7,
+        "net_profit_after_commission": 2738.3,
+        "profit_factor_after_commission": 2.490394,
+        "max_drawdown": -174.0,
+        "is_2024_adj_net": 831.8,
+        "is_2024_adj_pf": 1.966,
+        "oos_2025_adj_net": 1497.3,
+        "oos_2025_adj_pf": 2.533,
+        "positive_quarters": "8/8"
+      },
+      "confidence_score": {
+        "score": 72,
+        "level": "high",
+        "label": "High fill + slip=1 + slip=2 stress passed"
+      },
+      "decision": {
+        "verdict": "paper_ready",
+        "reason": "Лучший проверенный профиль: High fill, slip=1, quantity-aware комиссия. 2024-2025: Adj Net +$2738.30, aPF 2.49, DD -$174, 92 сделки; 2024 и 2025 отдельно положительные.",
+        "weaknesses": [
+          "Низкая частота: около 60 активных дней за 2024-2025",
+          "Только MNQ и только short",
+          "Нужен paper-forward журнал перед любым live"
+        ],
+        "next_test": "Повторить current-source 5m Full/IS/OOS и отдельно 2026 YTD после перезапуска backend"
+      },
+      "notes": "Главный профиль для paper/sim. В форме должен грузить MNQ, 5 Minute, B1 06:35-07:00 PT и все locked параметры."
+    },
+    {
+      "profile_id": "b1_shortonly_mnq_5m_high_slip2_stress_v2",
+      "name": "MNQ B1 ShortOnly - slippage=2 stress",
+      "strategy_class": "NTAMicroVwapRiskPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "5 Minute",
+      "trade_window_pt": "06:35-07:00",
+      "status": "research_baseline",
+      "status_label": "Стресс-тест",
+      "last_job_id": "ui_20260501T023856168Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "StartingCapital": 2000.0,
+        "IntradayOnly": true,
+        "ActiveMarginPerContract": 100.0,
+        "MaxContractsByCapital": 20,
+        "InstrumentStatus": "allowed",
+        "MarginSourceBroker": "NinjaTrader",
+        "EnableLong": false,
+        "EnableShort": true,
+        "UseDailyBiasFilter": false,
+        "EmaFastPeriod": 50,
+        "EmaSlowPeriod": 200,
+        "MinAdx": 22.0,
+        "MinVolumeFactor": 1.2,
+        "PullbackLookback": 3,
+        "AtrStopMult": 0.75,
+        "MinStopTicks": 12,
+        "MaxStopTicks": 12,
+        "RewardRiskRatio": 3.5,
+        "EntryTimeoutBars": 2,
+        "EntryOffsetTicks": 2,
+        "TradeStartTime": 635,
+        "TradeEndTime": 700,
+        "RiskPerTradePct": 2.0,
+        "UserMaxContracts": 5,
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 2
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 2,
+        "round_turn_commission": 1.9,
+        "commission_template": "None",
+        "session_template": "CME US Index Futures RTH"
+      },
+      "metrics": {
+        "trade_count": 88,
+        "winning_pct": 53.4091,
+        "gross_net_profit": 3023.5,
+        "commission_total_adjusted": 822.7,
+        "net_profit_after_commission": 2200.8,
+        "profit_factor_after_commission": 2.111,
+        "max_drawdown": -212.5
+      },
+      "confidence_score": {
+        "score": 68,
+        "level": "medium",
+        "label": "Stress survived"
+      },
+      "decision": {
+        "verdict": "research_baseline",
+        "reason": "Тот же B1 ShortOnly сохраняет edge даже при slippage=2: Adj Net +$2200.80, aPF 2.11. Это подтверждает запас прочности основного paper-профиля.",
+        "weaknesses": [
+          "Просадка хуже, чем slip=1",
+          "Не самостоятельный профиль для запуска; это контрольная версия"
+        ],
+        "next_test": "Использовать как контроль после каждого изменения стратегии/bridge"
+      },
+      "notes": "Не запускать как основную конфигурацию; держать рядом как стресс-эталон."
+    },
+    {
+      "profile_id": "b1_shortonly_mnq_1m_extended_current_2023_2026",
+      "name": "MNQ B1 ShortOnly - 1m extended current-source",
+      "strategy_class": "NTAMicroVwapRiskPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "1 Minute",
+      "trade_window_pt": "06:35-07:00",
+      "status": "paper_candidate",
+      "status_label": "Кандидат / current-source",
+      "last_job_id": "ui_20260503T032714341Z",
+      "test_period": {
+        "from_utc": "2023-03-12T00:00:00Z",
+        "to_utc": "2026-04-24T00:00:00Z"
+      },
+      "locked_parameters": {
+        "StartingCapital": 2000.0,
+        "IntradayOnly": true,
+        "ActiveMarginPerContract": 100.0,
+        "MaxContractsByCapital": 20,
+        "InstrumentStatus": "allowed",
+        "MarginSourceBroker": "NinjaTrader",
+        "EnableLong": false,
+        "EnableShort": true,
+        "UseDailyBiasFilter": false,
+        "EmaFastPeriod": 50,
+        "EmaSlowPeriod": 200,
+        "MinAdx": 22.0,
+        "MinVolumeFactor": 1.2,
+        "PullbackLookback": 3,
+        "AtrStopMult": 0.75,
+        "MinStopTicks": 12,
+        "MaxStopTicks": 12,
+        "RewardRiskRatio": 3.5,
+        "EntryTimeoutBars": 2,
+        "EntryOffsetTicks": 2,
+        "TradeStartTime": 635,
+        "TradeEndTime": 700,
+        "RiskPerTradePct": 2.0,
+        "UserMaxContracts": 5,
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None",
+        "session_template": "CME US Index Futures RTH"
+      },
+      "metrics": {
+        "trade_count": 152,
+        "winning_pct": 43.4211,
+        "gross_net_profit": 3212.5,
+        "commission_total_adjusted": 1368.0,
+        "net_profit_after_commission": 1844.5,
+        "profit_factor_after_commission": 1.528677,
+        "max_drawdown": -360.0
+      },
+      "confidence_score": {
+        "score": 61,
+        "level": "medium",
+        "label": "Longer period, lower PF"
+      },
+      "decision": {
+        "verdict": "paper_candidate",
+        "reason": "Свежий current-source прогон на расширенном периоде 2023-03-12..2026-04-24 остаётся положительным: Adj Net +$1844.50, aPF 1.53 на 152 сделках.",
+        "weaknesses": [
+          "PF и win% заметно ниже 5m paper-профиля",
+          "MaxDD -$360 превышает paper risk-limit -$300",
+          "Это 1m-вариант, не замена locked 5m без отдельного paper"
+        ],
+        "next_test": "Сравнить 1m и 5m current-source на одинаковом периоде 2024-2026"
+      },
+      "notes": "Использовать как дополнительный исследовательский профиль, если нужна большая выборка."
+    },
+    {
+      "profile_id": "b1_longshort_mnq_5m_high_rejected",
+      "name": "MNQ B1 Long+Short - rejected frequency variant",
+      "strategy_class": "NTAMicroVwapRiskPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "5 Minute",
+      "trade_window_pt": "06:35-07:00",
+      "status": "rejected",
+      "status_label": "Отклонено",
+      "last_job_id": "ui_20260501T185820677Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "StartingCapital": 2000.0,
+        "IntradayOnly": true,
+        "ActiveMarginPerContract": 100.0,
+        "MaxContractsByCapital": 20,
+        "EnableLong": true,
+        "EnableShort": true,
+        "UseDailyBiasFilter": false,
+        "EmaFastPeriod": 50,
+        "EmaSlowPeriod": 200,
+        "MinStopTicks": 12,
+        "MaxStopTicks": 12,
+        "RewardRiskRatio": 3.5,
+        "TradeStartTime": 635,
+        "TradeEndTime": 700,
+        "RiskPerTradePct": 2.0,
+        "UserMaxContracts": 5,
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None"
+      },
+      "metrics": {
+        "trade_count": 242,
+        "winning_pct": 40.9091,
+        "gross_net_profit": 4990.0,
+        "commission_total_adjusted": 2261.0,
+        "net_profit_after_commission": 2729.0,
+        "profit_factor_after_commission": 1.436249,
+        "max_drawdown": -552.0
+      },
+      "confidence_score": {
+        "score": 38,
+        "level": "low",
+        "label": "Frequency improved, risk worsened"
+      },
+      "decision": {
+        "verdict": "rejected",
+        "reason": "Частота выше, но Long разрушает качество Short edge: aPF 1.44 против 2.49 у ShortOnly, MaxDD -$552 против -$174. Не использовать для paper.",
+        "weaknesses": [
+          "Просадка в 3x выше основного профиля",
+          "IS24 слабый, LongOnly убыточен после комиссии"
+        ],
+        "next_test": "Не возвращаться к Long в B1; искать независимый модуль другим сетапом"
+      },
+      "notes": "Сохранён как анти-профиль: выглядит красиво по Net, но хуже по риску."
+    },
+    {
+      "profile_id": "gapmirror_mnq_1m_high_archived",
+      "name": "GapMirror MNQ 1m - archived survivor",
+      "strategy_class": "NTAMicroVwapGapMirrorPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "1 Minute",
+      "trade_window_pt": "06:35-07:00",
+      "status": "archived",
+      "status_label": "В архиве",
+      "last_job_id": "ui_20260501T192914247Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None"
+      },
+      "metrics": {
+        "trade_count": 75,
+        "winning_pct": 42.6667,
+        "gross_net_profit": 1405.0,
+        "commission_total_adjusted": 634.6,
+        "net_profit_after_commission": 770.4,
+        "profit_factor_after_commission": 1.481,
+        "max_drawdown": -260.4
+      },
+      "confidence_score": {
+        "score": 42,
+        "level": "low",
+        "label": "Archived but not zero"
+      },
+      "decision": {
+        "verdict": "archived",
+        "reason": "После quantity-aware комиссии стратегия остаётся слегка положительной, но слабее B1 ShortOnly и уже перенесена в архив. Не кандидат для online.",
+        "weaknesses": [
+          "Низкая прибыль относительно риска",
+          "Нет преимущества над B1 ShortOnly",
+          "Кодовая ветка архивирована"
+        ],
+        "next_test": "Восстанавливать только при новой, независимой long/gap гипотезе"
+      },
+      "notes": "Хранится для истории ревизии, чтобы не возвращаться к слабому варианту."
+    },
+    {
+      "profile_id": "orb_mes_5m_high_rejected",
+      "name": "ORB MES 5m - rejected high-frequency module",
+      "strategy_class": "NTAMicroOrbPilot",
+      "instrument": "MES 06-26",
+      "timeframe": "5 Minute",
+      "trade_window_pt": "06:45-08:00",
+      "status": "rejected",
+      "status_label": "Отклонено",
+      "last_job_id": "ui_20260501T045413512Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None"
+      },
+      "metrics": {
+        "trade_count": 476,
+        "winning_pct": 37.1849,
+        "gross_net_profit": 1332.5,
+        "commission_total_adjusted": 944.3,
+        "net_profit_after_commission": 388.2,
+        "profit_factor_after_commission": 1.043,
+        "max_drawdown": -694.4
+      },
+      "confidence_score": {
+        "score": 22,
+        "level": "very_low",
+        "label": "High frequency, no edge"
+      },
+      "decision": {
+        "verdict": "rejected",
+        "reason": "Даёт много сделок, но edge почти нулевой после комиссии: aPF 1.04 и DD -$694. Не улучшает портфель.",
+        "weaknesses": [
+          "IS24 отрицательный",
+          "MaxDD слишком большой для счёта $2000",
+          "Остальные инструменты ORB хуже"
+        ],
+        "next_test": "Не запускать без принципиально нового ORB-фильтра"
+      },
+      "notes": "Сохранён как пример, почему высокая частота без PF не подходит."
+    },
+    {
+      "profile_id": "meanrevert_mnq_1m_rejected",
+      "name": "MeanRevert MNQ 1m - rejected family",
+      "strategy_class": "NTAMicroVwapMeanRevertPilot",
+      "instrument": "MNQ 06-26",
+      "timeframe": "1 Minute",
+      "trade_window_pt": "06:35-10:00",
+      "status": "rejected",
+      "status_label": "Отклонено",
+      "last_job_id": "ui_20260501T194118515Z",
+      "test_period": {
+        "from_utc": "2024-01-01T00:00:00Z",
+        "to_utc": "2025-12-31T00:00:00Z"
+      },
+      "locked_parameters": {
+        "RoundTurnCommission": 1.9,
+        "SlippageTicks": 1
+      },
+      "execution": {
+        "calculate": "OnBarClose",
+        "order_fill_resolution": "High",
+        "slippage_ticks": 1,
+        "round_turn_commission": 1.9,
+        "commission_template": "None"
+      },
+      "metrics": {
+        "trade_count": 386,
+        "winning_pct": 31.3,
+        "gross_net_profit": -491.5,
+        "net_profit_after_commission": -1224.9,
+        "profit_factor_after_commission": 0.78,
+        "max_drawdown": -650.0
+      },
+      "confidence_score": {
+        "score": 10,
+        "level": "very_low",
+        "label": "Rejected"
+      },
+      "decision": {
+        "verdict": "rejected",
+        "reason": "Семейство MeanRevert отрицательно на full/IS/OOS. Не использовать для дальнейших backtest без перепроектирования.",
+        "weaknesses": [
+          "Отрицательная математика после комиссии",
+          "Нет подтверждённого режима, где модуль помогает"
+        ],
+        "next_test": "Только новая asymmetric/regime-conditional идея"
+      },
+      "notes": "Анти-профиль для защиты от повторного запуска старой MR-гипотезы."
+    }
+  ]
+}

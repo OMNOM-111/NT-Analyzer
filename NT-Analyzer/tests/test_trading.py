@@ -601,6 +601,16 @@ def t31(tmp):
         "if behavior changed, remove the TODO and flip this assertion"
 
 
+@case("t32: trading UI exposes persistent hide + strategy history")
+def t32(tmp):
+    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    assert 'id="chk-show-hidden"' in html, "missing show-hidden toggle"
+    assert 'id="pane-history"' in html, "missing history tab pane"
+    assert "/api/ops/runtime/strategy-display" in js, "missing display prefs endpoint"
+    assert "/api/ops/runtime/strategy-history" in js, "missing strategy history endpoint"
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -608,7 +618,7 @@ def t31(tmp):
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12,
              t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
-             t25, t26, t27, t28, t29, t30, t31]
+             t25, t26, t27, t28, t29, t30, t31, t32]
     print(f"Running {len(cases)} Trading Online tests:")
     for c in cases:
         c()

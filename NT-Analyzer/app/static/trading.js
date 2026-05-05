@@ -81,6 +81,8 @@
     selectedInstrument: "MNQ 06-26",
     timer: null,
     bridgeOnline: false,
+    showHiddenStrategies: false,
+    displayPrefs: { hidden_classes: [] },
     // Phase 6 — command pipeline live status
     activeCommand: null,    // { command_id, command, submitted_at_utc }
     cmdPollTimer: null,
@@ -109,6 +111,21 @@
     return json;
   };
 
+  function findRuntimeView(id) {
+    return (STATE.runtimeStrats || []).find(s =>
+      s.runtime_instance_id === id || s.strategy_id === id);
+  }
+
+  function visibleRuntimeStrats() {
+    const rows = STATE.runtimeStrats || [];
+    return STATE.showHiddenStrategies ? rows : rows.filter(s => !s.display_hidden);
+  }
+
+  function runtimeClassName(view) {
+    const rt = (view && view.runtime) || {};
+    return rt.strategy_class || view.display_key || view.strategy_id || "";
+  }
+
   // ----- top status chips ---------------------------------------------------
   function setChip(id, text, cls) {
     const el = $(id); if (!el) return;
@@ -123,24 +140,16 @@
       const cat = await api("/api/catalog");
       STATE.catalog = cat;
       const strats = (cat && cat.strategies) || [];
-      const sel = $("sel-strategy");
-      sel.innerHTML = "";
-      strats.forEach(s => {
-        const o = document.createElement("option");
-        o.value = s.class_name || s.name || s.id || "";
-        o.textContent = (s.label || s.class_name || o.value);
-        sel.appendChild(o);
-      });
+      // sel-strategy dropdown removed in Phase 22c — strategy is now driven by
+      // the row clicked in the Active strategies table. We only keep the list
+      // in STATE so that defaults still work when no row is selected yet.
+      STATE.strategies = strats;
       const def = strats.find(s => (s.class_name || s.name) === "NTAMicroVwapRiskPilot");
-      if (def) sel.value = def.class_name || def.name;
-      STATE.selectedStrategy = sel.value || "NTAMicroVwapRiskPilot";
+      STATE.selectedStrategy = (def && (def.class_name || def.name)) || "NTAMicroVwapRiskPilot";
 
-      // instruments from catalog (same source as backtest page)
+      // instruments from catalog (still useful for instrument display name & default)
       const insts = (cat && cat.instruments) || [];
       STATE.instruments = insts;
-      // populate group selector once
-      populateGroupSelector();
-      renderInstruments();
       // legacy hidden select kept in sync
       const isel = $("sel-instrument");
       if (isel) {
@@ -155,26 +164,40 @@
       }
       autoSelectFrontMonthIfNeeded();
       renderInstrumentDisplay();
+      renderStrategyDisplay();
     } catch (e) {
       console.warn("catalog load failed:", e.message);
     }
   }
 
-  function populateGroupSelector() {
-    const sel = $("inst-group"); if (!sel) return;
-    const present = new Set();
-    (STATE.instruments || []).forEach(i => present.add(groupOf(instrumentName(i))));
-    sel.innerHTML = '<option value="__all__">Все группы</option>';
-    GROUP_DEFS.forEach(([name]) => {
-      if (!present.has(name)) return;
-      const o = document.createElement("option");
-      o.value = name; o.textContent = name;
-      sel.appendChild(o);
-    });
-    if (present.has("Other")) {
-      const o = document.createElement("option");
-      o.value = "Other"; o.textContent = "Other";
-      sel.appendChild(o);
+  // Phase 22c: instrument browser UI was replaced by Performance Center.
+  // populateGroupSelector / renderInstruments are kept as no-op stubs to avoid
+  // breaking any external callers; the related DOM nodes no longer exist.
+  function populateGroupSelector() { /* no-op */ }
+  function renderInstruments()    { /* no-op */ }
+
+  async function loadDisplayPrefs() {
+    try {
+      const prefs = await api("/api/ops/runtime/strategy-display");
+      STATE.displayPrefs = prefs || { hidden_classes: [] };
+    } catch (e) {
+      STATE.displayPrefs = { hidden_classes: [] };
+    }
+  }
+
+  async function setStrategyHidden(className, hidden) {
+    if (!className) return;
+    try {
+      await api("/api/ops/runtime/strategy-display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_name: className, hidden: !!hidden }),
+      });
+      await loadDisplayPrefs();
+      await loadRuntime();
+    } catch (e) {
+      const banner = $("rt-banner");
+      if (banner) banner.textContent = "Не удалось сохранить видимость стратегии: " + e.message;
     }
   }
 
@@ -534,71 +557,7 @@
     return m;
   }
 
-  function renderInstruments() {
-    const root = $("inst-list");
-    const filter = (STATE.instrumentFilter || "").trim().toLowerCase();
-    let items = (STATE.instruments || []).slice();
-    // group filter
-    if (STATE.instrumentGroup && STATE.instrumentGroup !== "__all__") {
-      items = items.filter(i => groupOf(instrumentName(i)) === STATE.instrumentGroup);
-    }
-    // current/expired filter
-    if (STATE.instOnlyCurrent && !STATE.instShowExpired) {
-      items = items.filter(isInstrumentCurrent);
-    } else if (STATE.instShowExpired) {
-      // include everything (no-op)
-    }
-    // search filter
-    if (filter) {
-      items = items.filter(i => {
-        const sym = instrumentName(i).toLowerCase();
-        const grp = groupOf(instrumentName(i)).toLowerCase();
-        return sym.includes(filter) || grp.includes(filter);
-      });
-    }
-    $("inst-count").textContent = String(items.length);
-    if (!items.length) {
-      root.innerHTML = '<div class="muted-empty">Нет инструментов.</div>';
-      return;
-    }
-    // Sort: group, then front-month first inside root, then alpha.
-    const front = frontMonthMap(items);
-    items.sort((a, b) => {
-      const ga = groupOf(instrumentName(a)), gb = groupOf(instrumentName(b));
-      if (ga !== gb) return ga.localeCompare(gb);
-      const ra = rootOf(instrumentName(a)), rb = rootOf(instrumentName(b));
-      if (ra !== rb) return ra.localeCompare(rb);
-      // Front-month first within root
-      const fa = (front[ra] === (a.data_last || "")) ? 0 : 1;
-      const fb = (front[rb] === (b.data_last || "")) ? 0 : 1;
-      if (fa !== fb) return fa - fb;
-      return instrumentName(a).localeCompare(instrumentName(b));
-    });
-    const html = items.map(i => {
-      const sym = instrumentName(i);
-      const grp = groupOf(sym);
-      const r = rootOf(sym);
-      const isFront = (front[r] === (i.data_last || ""));
-      const sel = (sym === STATE.selectedInstrument) ? " sel" : "";
-      const fm = isFront ? '<span class="frontmark" title="Front-month">•</span>' : "";
-      return `<div class="inst-row${sel}" data-sym="${escapeHtml(sym)}">
-        <span class="sym">${fm}${escapeHtml(sym)}</span>
-        <span class="grp">${escapeHtml(grp)}</span>
-      </div>`;
-    }).join("");
-    root.innerHTML = html;
-    root.querySelectorAll(".inst-row").forEach(el => {
-      el.addEventListener("click", () => {
-        STATE.selectedInstrument = el.dataset.sym;
-        const isel = $("sel-instrument");
-        if (isel) isel.value = STATE.selectedInstrument;
-        renderInstruments();
-        renderInstrumentDisplay();
-        refreshSelectionDiff();
-        refreshLaunchControls();
-      });
-    });
-  }
+
 
   function renderInstrumentDisplay() {
     const box = $("sel-instrument-display");
@@ -608,6 +567,30 @@
       return;
     }
     box.innerHTML = `<span style="color:#cfe1ff;">${escapeHtml(instrumentDisplay(STATE.selectedInstrument))}</span>`;
+  }
+
+  function renderStrategyDisplay() {
+    const box = $("sel-strategy-display");
+    if (!box) return;
+    if (!STATE.selectedStrategy) {
+      box.innerHTML = '<span class="muted-empty">не выбрана</span>';
+      return;
+    }
+    box.innerHTML = `<span style="color:#cfe1ff;">${escapeHtml(STATE.selectedStrategy)}</span>`;
+  }
+
+  // Show/hide right panel: visible only when a runtime row is selected.
+  function setRightPanelVisible(visible) {
+    const grid  = $("trading-grid");
+    const right = $("trading-right");
+    if (!grid || !right) return;
+    if (visible) {
+      right.classList.remove("hidden");
+      grid.classList.remove("no-right");
+    } else {
+      right.classList.add("hidden");
+      grid.classList.add("no-right");
+    }
   }
 
   // ----- runtime strategies table ------------------------------------------
@@ -620,6 +603,7 @@
     setChip("chip-runtime",
       "NT runtime: " + (STATE.bridgeOnline ? "онлайн" : "offline"),
       STATE.bridgeOnline ? "ok" : "bad");
+    await loadDisplayPrefs();
 
     // Pass current selectors so backend can compute selection_diff per row.
     const qp = new URLSearchParams();
@@ -631,9 +615,15 @@
     try { all = await api(url); }
     catch (e) { all = { strategies: [] }; }
     STATE.runtimeStrats = (all && all.strategies) || [];
+    const selected = findRuntimeView(STATE.selectedRuntime);
+    if (selected && selected.display_hidden && !STATE.showHiddenStrategies) {
+      STATE.selectedRuntime = null;
+      setRightPanelVisible(false);
+    }
     renderRuntimeTable();
     refreshSelectionDiff();
     refreshLaunchControls();
+    renderPerformanceCenter();
     if (STATE.selectedRuntime) renderAnalytics(STATE.selectedRuntime);
   }
 
@@ -645,17 +635,44 @@
     return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
   }
 
+  function fmtDateTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(String(iso));
+    if (isNaN(d.getTime())) return String(iso).slice(0, 19).replace("T", " ");
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  function fmtDurationSec(sec) {
+    if (sec == null || isNaN(Number(sec))) return "—";
+    let s = Math.max(0, Math.round(Number(sec)));
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60);
+    if (d) return `${d}д ${h}ч`;
+    if (h) return `${h}ч ${m}м`;
+    return `${m}м`;
+  }
+
   function renderRuntimeTable() {
     const body = $("rt-strats-body");
-    $("rt-strats-count").textContent = String(STATE.runtimeStrats.length);
+    const allRows = STATE.runtimeStrats || [];
+    const visible = visibleRuntimeStrats();
+    const hiddenCount = allRows.filter(s => s.display_hidden).length;
+    $("rt-strats-count").textContent = String(visible.length);
+    const hiddenEl = $("rt-hidden-count");
+    if (hiddenEl) hiddenEl.textContent = hiddenCount ? `скрыто: ${hiddenCount}` : "";
     const banner = $("rt-banner");
     banner.innerHTML = "";
-    const visible = STATE.runtimeStrats;
     if (!visible.length) {
       const msg = "Нет активных стратегий в NinjaTrader. " +
                   "Добавьте и включите стратегию вручную: NinjaTrader → Strategies tab → Add → Enable. " +
                   "После этого она появится здесь и платформа начнёт мониторинг.";
-      body.innerHTML = `<tr><td colspan="10" class="muted-empty">${escapeHtml(msg)}</td></tr>`;
+      const hiddenMsg = hiddenCount && !STATE.showHiddenStrategies
+        ? " Все текущие стратегии скрыты фильтром."
+        : "";
+      body.innerHTML = `<tr><td colspan="11" class="muted-empty">${escapeHtml(msg + hiddenMsg)}</td></tr>`;
       return;
     }
     body.innerHTML = visible.map(s => {
@@ -690,8 +707,13 @@
                   data-iid="${escapeHtml(iid)}"
                   title="Открыть Parameters diff">MISMATCH (${nMis})</span>`;
       const since = fmtHms(rt.timestamp_utc);
+      const hidden = !!s.display_hidden;
+      const displayCls = escapeHtml(runtimeClassName(s));
+      const displayToggle = `<input type="checkbox" class="rt-display-toggle"
+          data-class-name="${displayCls}" ${hidden ? "" : "checked"}
+          title="${hidden ? "Показать в приложении" : "Скрыть в приложении"}">`;
       const sel = (iid === STATE.selectedRuntime) ? " sel" : "";
-      return `<tr class="${sel}" data-iid="${escapeHtml(iid)}">
+      return `<tr class="${sel}${hidden ? " rt-hidden-row" : ""}" data-iid="${escapeHtml(iid)}">
         <td>${escapeHtml(cls)}</td>
         <td>${escapeHtml(acct)}</td>
         <td>${modeBadge}</td>
@@ -702,17 +724,45 @@
         <td class="num">${escapeHtml(pos)}</td>
         <td class="num">${escapeHtml(pnl)}</td>
         <td><span class="muted small">${escapeHtml(since)}</span></td>
+        <td class="num">${displayToggle}</td>
       </tr>`;
     }).join("");
     body.querySelectorAll("tr[data-iid]").forEach(tr => {
       tr.addEventListener("click", () => {
         STATE.selectedRuntime = tr.dataset.iid;
+        // Phase 22c: row click is the single source of truth. Sync
+        // STATE.selectedStrategy / Instrument / timeframe from this row so the
+        // right-panel displays and "Открыть в бэктесте" use real runtime values.
+        const view = findRuntimeView(tr.dataset.iid);
+        if (view) {
+          const rt = view.runtime || {};
+          STATE.selectedStrategy   = rt.strategy_class || STATE.selectedStrategy;
+          STATE.selectedInstrument = rt.instrument || STATE.selectedInstrument;
+          const tfEl = $("sel-timeframe");
+          if (tfEl && rt.timeframe) {
+            // Add option dynamically if NT timeframe is not in the static list.
+            if (![...tfEl.options].some(o => o.value === rt.timeframe)) {
+              const o = document.createElement("option");
+              o.value = rt.timeframe; o.textContent = rt.timeframe;
+              tfEl.appendChild(o);
+            }
+            tfEl.value = rt.timeframe;
+          }
+          // Show panel only when row is selected.
+          setRightPanelVisible(true);
+        }
+        renderStrategyDisplay();
+        renderInstrumentDisplay();
         renderRuntimeTable();
-        refreshSelectionDiff();
         refreshLaunchControls();
-        const view = STATE.runtimeStrats.find(s => s.runtime_instance_id === tr.dataset.iid
-                                                  || s.strategy_id === tr.dataset.iid);
-        if (view) renderAnalytics(view.strategy_id || tr.dataset.iid);
+        if (view) renderAnalytics(view.runtime_instance_id || view.strategy_id || tr.dataset.iid);
+      });
+    });
+    body.querySelectorAll(".rt-display-toggle").forEach(cb => {
+      cb.addEventListener("click", (ev) => ev.stopPropagation());
+      cb.addEventListener("change", async (ev) => {
+        ev.stopPropagation();
+        await setStrategyHidden(cb.dataset.className || "", !cb.checked);
       });
     });
     body.querySelectorAll(".params-mismatch-badge").forEach(b => {
@@ -720,9 +770,8 @@
         ev.stopPropagation();
         STATE.selectedRuntime = b.dataset.iid;
         renderRuntimeTable();
-        const view = STATE.runtimeStrats.find(s => s.runtime_instance_id === b.dataset.iid
-                                                  || s.strategy_id === b.dataset.iid);
-        if (view) renderAnalytics(view.strategy_id || b.dataset.iid);
+        const view = findRuntimeView(b.dataset.iid);
+        if (view) renderAnalytics(view.runtime_instance_id || view.strategy_id || b.dataset.iid);
         switchBottomTab("params-diff");
       });
     });
@@ -747,7 +796,7 @@
 
   // ----- analytics tabs -----------------------------------------------------
   async function renderAnalytics(sid) {
-    const view = STATE.runtimeStrats.find(s => s.strategy_id === sid);
+    const view = findRuntimeView(sid);
     if (!view) return;
     const rt = view.runtime || {};
     const today = view.today || {};
@@ -781,8 +830,8 @@
       $("pane-trades").innerHTML = renderRows(r.executions, ["timestamp_utc", "direction", "quantity", "price", "pnl"]);
     } catch (e) { $("pane-trades").innerHTML = '<div class="muted-empty">Нет данных.</div>'; }
     try {
-      const r = await api("/api/ops/runtime/orders?strategy_id=" + encodeURIComponent(sid) + "&limit=200");
-      $("pane-orders").innerHTML = renderRows(r.orders, ["timestamp_utc", "side", "type", "quantity", "price", "state"]);
+      const r = await api("/api/ops/runtime/orders?strategy_id=" + encodeURIComponent(sid) + "&limit=500");
+      $("pane-orders").innerHTML = renderOrdersAudit(r.orders);
     } catch (e) { $("pane-orders").innerHTML = '<div class="muted-empty">Нет данных.</div>'; }
 
     $("pane-position").innerHTML = `<pre style="font-size:11px;color:#cfe1ff;">` +
@@ -806,6 +855,7 @@
       $("pane-events").innerHTML = renderRows(r.errors, ["timestamp_utc", "kind", "message"]);
     } catch (e) { $("pane-events").innerHTML = '<div class="muted-empty">Нет событий.</div>'; }
 
+    await renderStrategyHistoryPane(view);
     renderLockedParams(view);
   }
 
@@ -818,13 +868,18 @@
       return;
     }
     const pcheck = view.params_check || {};
+    const rtCls = (view.runtime || {}).strategy_class || "";
+    const cfg = STRATEGY_CONFIGS[rtCls];
+    const cfgLabel = cfg ? `${cfg.displayName} ${cfg.version}` : "locked";
     if (!pcheck.checked) {
-      pane.innerHTML = '<div class="muted-empty">Сравнение параметров недоступно</div>';
+      pane.innerHTML = cfg
+        ? '<div class="muted-empty">Данные параметров не получены от NT</div>'
+        : '<div class="muted-empty">Нет конфига параметров для этой стратегии</div>';
       return;
     }
     if (view.params_ok) {
       pane.innerHTML = '<div style="padding:8px;color:#b9f5cd;">' +
-        '✓ Все ' + escapeHtml(pcheck.checked) + ' параметров совпадают с locked B1 ShortOnly' +
+        '✓ Все ' + escapeHtml(pcheck.checked) + ` параметров совпадают с ${escapeHtml(cfgLabel)}` +
         '</div>';
       return;
     }
@@ -840,10 +895,79 @@
     pane.innerHTML = `<table class="params-diff-tbl">
       <thead><tr>
         <th>Параметр</th>
-        <th>Ожидается (locked B1)</th>
+        <th>Ожидается (${escapeHtml(cfgLabel)})</th>
         <th>Фактически в NT</th>
       </tr></thead>
       <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  function renderOrdersAudit(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      return '<div class="muted-empty">Журнал ордеров пуст.</div>';
+    }
+    const counts = {};
+    for (const r of rows) {
+      const st = String(r.order_state || "").toLowerCase() || "—";
+      counts[st] = (counts[st] || 0) + 1;
+    }
+    const STATE_BADGE = {
+      filled:        "ok",
+      partfilled:    "ok",
+      working:       "warn",
+      accepted:      "warn",
+      submitted:     "warn",
+      cancelpending: "mut",
+      cancelled:     "mut",
+      rejected:      "bad",
+      expired:       "mut",
+    };
+    const order = ["filled","partfilled","working","accepted","submitted","cancelled","cancelpending","rejected","expired"];
+    const summaryParts = order.filter(k => counts[k]).map(k =>
+      `<span class="badge ${STATE_BADGE[k] || "mut"}">${escapeHtml(k)}: ${counts[k]}</span>`
+    );
+    for (const k of Object.keys(counts)) {
+      if (!order.includes(k)) summaryParts.push(`<span class="badge mut">${escapeHtml(k)}: ${counts[k]}</span>`);
+    }
+    const summary = `<div style="padding:6px 8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+       <span class="muted small">Всего событий: ${rows.length}</span>
+       ${summaryParts.join(" ")}
+     </div>`;
+
+    const body = rows.slice().reverse().map(r => {
+      const ts = fmtHms(r.timestamp_utc);
+      const oid = String(r.order_id || "").slice(-8) || "—";
+      const action = String(r.order_action || "—");
+      const actCls = /buy/i.test(action) ? "ok" : (/sell/i.test(action) ? "bad" : "mut");
+      const otype = String(r.order_type || "—");
+      const st = String(r.order_state || "—");
+      const stCls = STATE_BADGE[st.toLowerCase()] || "mut";
+      const qtyTotal = (r.quantity != null) ? r.quantity : "—";
+      const qtyFilled = (r.filled != null) ? r.filled : 0;
+      const qtyCell = (r.filled != null && r.quantity != null && r.filled !== r.quantity)
+        ? `${qtyFilled}/${qtyTotal}` : String(qtyTotal);
+      let price = "—";
+      if (r.avg_fill && r.avg_fill > 0)        price = fmtNum(r.avg_fill);
+      else if (r.limit_price && r.limit_price > 0) price = fmtNum(r.limit_price) + " (lim)";
+      else if (r.stop_price && r.stop_price > 0)   price = fmtNum(r.stop_price) + " (stop)";
+      const inst = r.instrument || "—";
+      return `<tr>
+        <td><span class="muted small">${escapeHtml(ts)}</span></td>
+        <td><span class="muted small">${escapeHtml(oid)}</span></td>
+        <td><span class="badge ${actCls}">${escapeHtml(action)}</span></td>
+        <td>${escapeHtml(otype)}</td>
+        <td><span class="badge ${stCls}">${escapeHtml(st)}</span></td>
+        <td class="num">${escapeHtml(qtyCell)}</td>
+        <td class="num">${escapeHtml(price)}</td>
+        <td><span class="muted small">${escapeHtml(inst)}</span></td>
+      </tr>`;
+    }).join("");
+    return summary + `<table class="tg-tbl">
+      <thead><tr>
+        <th>Время</th><th>Order ID</th><th>Действие</th><th>Тип</th>
+        <th>Состояние</th><th class="num">Кол-во</th><th class="num">Цена</th><th>Инструмент</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
     </table>`;
   }
 
@@ -861,21 +985,93 @@
     return '<table class="tg-tbl"><thead>' + head + "</thead><tbody>" + body + "</tbody></table>";
   }
 
+  async function renderStrategyHistoryPane(view) {
+    const pane = $("pane-history");
+    if (!pane || !view) return;
+    const cls = runtimeClassName(view);
+    const qp = new URLSearchParams({
+      class_name: cls,
+      limit_events: "200",
+      limit_sessions: "200",
+    });
+    try {
+      const hist = await api("/api/ops/runtime/strategy-history?" + qp.toString());
+      pane.innerHTML = renderStrategyHistory(hist);
+    } catch (e) {
+      pane.innerHTML = '<div class="muted-empty">История недоступна: ' +
+        escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function renderStrategyHistory(hist) {
+    const sessions = (hist && hist.sessions) || [];
+    const events = (hist && hist.events) || [];
+    const summary = (hist && hist.summary) || {};
+    const warnings = (hist && hist.warnings) || [];
+    const chips = `<div class="history-summary">
+      <span class="badge ok">активно: ${escapeHtml(summary.active_sessions || 0)}</span>
+      <span class="badge mut">сессий: ${escapeHtml(summary.sessions || 0)}</span>
+      <span class="badge mut">всего: ${escapeHtml(fmtDurationSec(summary.total_duration_sec || 0))}</span>
+    </div>`;
+    const warnBlock = warnings.length
+      ? '<div class="rt-banner">' + warnings.map(escapeHtml).join("<br>") + '</div>'
+      : "";
+    if (!sessions.length && !events.length) {
+      return chips + warnBlock +
+        '<div class="muted-empty">История пока пуста. Новые включения/остановки начнут записываться после обновления bridge.</div>';
+    }
+    const sessionRows = sessions.slice().reverse().map(s => {
+      const status = s.is_open
+        ? '<span class="badge ok">идёт</span>'
+        : '<span class="badge mut">закрыта</span>';
+      return `<tr>
+        <td>${escapeHtml(fmtDateTime(s.started_at_utc))}</td>
+        <td>${s.is_open ? status : escapeHtml(fmtDateTime(s.ended_at_utc))}</td>
+        <td class="num">${escapeHtml(fmtDurationSec(s.duration_sec))}</td>
+        <td>${escapeHtml(s.account_name || "")}</td>
+        <td>${escapeHtml(s.instrument || "")}</td>
+        <td>${escapeHtml(s.timeframe || "")}</td>
+        <td>${escapeHtml(s.start_event || "")}${s.end_reason ? " / " + escapeHtml(s.end_reason) : ""}</td>
+      </tr>`;
+    }).join("");
+    const eventsRows = events.slice(-50).reverse().map(e => `<tr>
+      <td>${escapeHtml(fmtDateTime(e.timestamp_utc))}</td>
+      <td>${escapeHtml(e.event || "")}</td>
+      <td>${escapeHtml(e.account_name || "")}</td>
+      <td>${escapeHtml(e.instrument || "")}</td>
+      <td>${escapeHtml(e.state || "")}</td>
+      <td>${escapeHtml(e.reason || "")}</td>
+    </tr>`).join("");
+    return chips + warnBlock + `<table class="tg-tbl history-table">
+      <thead><tr>
+        <th>Старт</th><th>Финиш</th><th class="num">Длительность</th>
+        <th>Счёт</th><th>Инструмент</th><th>TF</th><th>Событие</th>
+      </tr></thead>
+      <tbody>${sessionRows}</tbody>
+    </table>
+    <details class="history-events">
+      <summary>Сырые события (${events.length})</summary>
+      <table class="tg-tbl">
+        <thead><tr><th>Время</th><th>Event</th><th>Счёт</th><th>Инструмент</th><th>State</th><th>Reason</th></tr></thead>
+        <tbody>${eventsRows}</tbody>
+      </table>
+    </details>`;
+  }
+
   // ----- locked params + launch gating -------------------------------------
   function renderLockedParams(view) {
     const root = $("locked-params");
     const cls = view ? (view.runtime || {}).strategy_class : STATE.selectedStrategy;
-    if (cls !== "NTAMicroVwapRiskPilot") {
-      root.innerHTML = '<div class="muted-empty" style="padding:4px;">Locked-параметры ' +
-        'определены только для NTAMicroVwapRiskPilot (B1 ShortOnly).</div>';
+    const cfg = STRATEGY_CONFIGS[cls];
+    if (!cfg) {
+      root.innerHTML = '<div class="muted-empty" style="padding:4px;">Нет конфига параметров для этой стратегии.</div>';
       return;
     }
-    const expected = (view && view.params_check && view.params_check.checked > 0)
-      ? B1_LOCKED_DISPLAY : B1_LOCKED_DISPLAY;
     const mism = (view && view.params_check && view.params_check.mismatches) || [];
     const mismMap = {};
     mism.forEach(m => { mismMap[m.key] = m; });
-    root.innerHTML = Object.entries(expected).map(([k, v]) => {
+    const header = `<div style="font-size:10px;color:#667;margin-bottom:4px;">${escapeHtml(cfg.displayName)} ${escapeHtml(cfg.version)}</div>`;
+    root.innerHTML = header + Object.entries(cfg.lockedParams).map(([k, v]) => {
       const m = mismMap[k];
       const cls2 = m ? " mismatch" : "";
       const actual = m ? (" (rt=" + (m.actual ?? "missing") + ")") : "";
@@ -883,16 +1079,32 @@
     }).join("");
   }
 
-  const B1_LOCKED_DISPLAY = {
-    EnableLong: false, EnableShort: true, UseDailyBiasFilter: false,
-    EmaFastPeriod: 50, EmaSlowPeriod: 200,
-    TradeStartTime: 635, TradeEndTime: 700,
-    MinStopTicks: 12, MaxStopTicks: 12,
-    RewardRiskRatio: 3.5, RiskPerTradePct: 2.0, UserMaxContracts: 5,
-    RoundTurnCommission: 1.90, SlippageTicks: 1,
-    StartingCapital: 2000, IntradayOnly: true,
-    ActiveMarginPerContract: 50, MaxContractsByCapital: 40,
-    InstrumentStatus: "allowed", MarginSourceBroker: "NinjaTrader",
+  // Per-strategy "best params" registry.
+  // Add a new entry here when you have optimised locked params for a strategy.
+  // Key: exact strategy class name as reported by NinjaTrader.
+  // If a strategy has no entry, the locked-params panel and params diff are hidden.
+  const STRATEGY_CONFIGS = {
+    "NTAMicroVwapRiskPilot": {
+      displayName: "B1 ShortOnly",
+      version: "v1",
+      lockedParams: {
+        EnableLong: false, EnableShort: true, UseDailyBiasFilter: false,
+        EmaFastPeriod: 50, EmaSlowPeriod: 200,
+        TradeStartTime: 635, TradeEndTime: 700,
+        MinStopTicks: 12, MaxStopTicks: 12,
+        RewardRiskRatio: 3.5, RiskPerTradePct: 2.0, UserMaxContracts: 5,
+        RoundTurnCommission: 1.90, SlippageTicks: 1,
+        StartingCapital: 2000, IntradayOnly: true,
+        ActiveMarginPerContract: 50, MaxContractsByCapital: 40,
+        InstrumentStatus: "allowed", MarginSourceBroker: "NinjaTrader",
+      },
+    },
+    // Пример добавления другой стратегии:
+    // "MyOtherStrategy": {
+    //   displayName: "Trend Follow",
+    //   version: "v2",
+    //   lockedParams: { EnableLong: true, EnableShort: false, ... },
+    // },
   };
 
   // Compute the gate. Returns {can_start, reasons[]}.
@@ -918,8 +1130,7 @@
       reasons.push("Выберите строку стратегии в таблице NinjaTrader выше");
       return { can_start: false, reasons };
     }
-    const view = STATE.runtimeStrats.find(s =>
-      s.runtime_instance_id === STATE.selectedRuntime || s.strategy_id === STATE.selectedRuntime);
+    const view = findRuntimeView(STATE.selectedRuntime);
     if (!view) {
       reasons.push("Выбранная строка не найдена — обновите таблицу");
     } else {
@@ -933,70 +1144,10 @@
     return { can_start: reasons.length === 0, reasons };
   }
 
-  // ----- Runtime validation panel ------------------------------------------
-  // Renders into #sel-diff: running state + config diff + params check.
-  function renderRuntimeValidation(view) {
-    const box = $("sel-diff");
-    if (!box) return;
-
-    if (!STATE.bridgeOnline) {
-      box.innerHTML = '<div class="rt-status-row bad">⚫ NinjaTrader bridge offline. Откройте NinjaTrader.</div>';
-      return;
-    }
-    if (!view) {
-      box.innerHTML =
-        '<div class="rt-status-row muted">Стратегия не выбрана в таблице.<br>' +
-        'Добавьте и включите стратегию в NinjaTrader → Strategies, ' +
-        'затем выберите строку выше.</div>';
-      return;
-    }
-
-    const rt = view.runtime || {};
-    const detected = !!view.runtime_detected;
-    const running  = !!(detected && view.runtime_enabled);
-    const stateIcon  = !detected ? "⚫" : running ? "🟢" : "⚪";
-    const stateLabel = !detected ? "Не обнаружена в NinjaTrader"
-                     : running   ? "Активна в NinjaTrader — мониторинг активен"
-                     :             "Остановлена в NinjaTrader";
-    const stateCls   = !detected ? "bad" : running ? "ok" : "warn";
-
-    // Config diff: compare right-panel selectors vs the runtime row values
-    const checks = [
-      { label: "Стратегия",  sel: STATE.selectedStrategy || "",
-        rt: rt.strategy_class || "" },
-      { label: "Аккаунт",   sel: STATE.selectedAccount  || "",
-        rt: rt.account_name   || "" },
-      { label: "Инструмент", sel: STATE.selectedInstrument || "",
-        rt: rt.instrument || rt.contract_month || "" },
-      { label: "Таймфрейм", sel: ($("sel-timeframe") || {}).value || "",
-        rt: rt.timeframe || "" },
-    ];
-    const mismatches = checks.filter(c =>
-      c.sel && c.rt && c.sel.trim().toLowerCase() !== c.rt.trim().toLowerCase());
-    const allMatch = mismatches.length === 0;
-
-    const configStatus = allMatch
-      ? '<div class="rt-status-row ok" style="margin-top:4px;">✓ Конфиг совпадает с активным instance</div>'
-      : '<div class="rt-status-row warn" style="margin-top:4px;">⚠ Выбранный конфиг отличается от active instance:</div>';
-    const diffHtml = mismatches.map(c =>
-      `<div class="rt-diff-row"><span class="k">${escapeHtml(c.label)}</span>` +
-      `<span>выбрано: <b>${escapeHtml(c.sel)}</b> · в NT: <b>${escapeHtml(c.rt)}</b></span></div>`
-    ).join("");
-
-    // Params validation
-    let paramsHtml = "";
-    if (view.params_ok) {
-      paramsHtml = '<div class="rt-status-row ok" style="margin-top:4px;">✓ B1 ShortOnly locked params: совпадают</div>';
-    } else if (view.params_check && (view.params_check.checked || 0) > 0) {
-      const nMis = (view.params_check.mismatches || []).length;
-      paramsHtml = `<div class="rt-status-row warn" style="margin-top:4px;">` +
-        `⚠ B1 params: ${nMis} расхождений — см. вкладку "Parameters diff"</div>`;
-    }
-
-    box.innerHTML =
-      `<div class="rt-status-row ${escapeHtml(stateCls)}">${stateIcon} ${escapeHtml(stateLabel)}</div>` +
-      configStatus + diffHtml + paramsHtml;
-  }
+  // Phase 22c: sel-diff block removed from DOM. The validation panel was
+  // misleading (compared right-panel selectors with NT). It is now a no-op;
+  // active-state info is reflected in the table badges and block-reasons.
+  function renderRuntimeValidation(_view) { /* no-op */ }
 
   function refreshLaunchControls() {
     const gate = computeGate();
@@ -1004,8 +1155,7 @@
     const startBtn = $("btn-start");
     const stopBtn  = $("btn-stop");
 
-    const view = STATE.runtimeStrats.find(s =>
-      s.runtime_instance_id === STATE.selectedRuntime || s.strategy_id === STATE.selectedRuntime);
+    const view = findRuntimeView(STATE.selectedRuntime);
     const isRunning = !!(view && view.runtime_detected && view.runtime_enabled);
     const isStopped = !!(view && view.runtime_detected && !view.runtime_enabled);
 
@@ -1075,12 +1225,12 @@
     }
   }
 
-  // Phase 6.7 — selection vs runtime diff: now rendered by renderRuntimeValidation()
+  // Phase 22c: selection_diff block removed; this is now a thin wrapper that
+  // simply ensures the right panel visibility tracks the selected runtime row.
   function refreshSelectionDiff() {
-    const view = STATE.runtimeStrats.find(s =>
-      s.runtime_instance_id === STATE.selectedRuntime || s.strategy_id === STATE.selectedRuntime);
+    const view = findRuntimeView(STATE.selectedRuntime);
     STATE.selectionDiff = (view && view.selection_diff) || null;
-    renderRuntimeValidation(view || null);
+    setRightPanelVisible(!!view);
   }
 
   async function refreshTradingState() {
@@ -1092,8 +1242,7 @@
   // Monitor+Validate mode: we only enable/disable EXISTING NinjaTrader strategy instances.
   // Creating a new instance programmatically is NOT supported by NinjaTrader AddOn API.
   async function sendCommand(command) {
-    const view = STATE.runtimeStrats.find(s =>
-      s.runtime_instance_id === STATE.selectedRuntime || s.strategy_id === STATE.selectedRuntime);
+    const view = findRuntimeView(STATE.selectedRuntime);
 
     // Gate should already prevent reaching this without a view, but guard explicitly.
     if (!view) {
@@ -1118,8 +1267,8 @@
     const targetInst = (rt.instrument || inst || "");
     const targetTf = (rt.timeframe || tf || "5 Minute");
     const sid = (view && view.strategy_id) || (targetCls + "@" + targetAcct + "@" + targetInst);
-    const params = (command === "enable_strategy" && targetCls === "NTAMicroVwapRiskPilot")
-      ? B1_LOCKED_DISPLAY : {};
+    const stratCfg = STRATEGY_CONFIGS[targetCls];
+    const params = (command === "enable_strategy" && stratCfg) ? stratCfg.lockedParams : {};
     const body = {
       command, strategy_id: sid, runtime_instance_id: iid, class_name: targetCls,
       account_name: targetAcct, instrument: targetInst, timeframe: targetTf,
@@ -1273,7 +1422,7 @@
         break;
       case "failed_param_mismatch":
         cls = "failure";
-        head = "✗ Bridge отклонил: параметры не совпадают с locked B1.";
+        head = "✗ Bridge отклонил: параметры не совпадают с locked params стратегии.";
         body = (st.bridge_result && st.bridge_result.message) || st.reason || "";
         break;
       case "failed_bridge_offline":
@@ -1378,6 +1527,7 @@
     }
     const m = computePaperStatus(rows);
     if (!m) { body.innerHTML = '<div class="muted-empty">Нет данных.</div>'; return; }
+    renderEquitySparkline();
     const passBadge = m.requirement_pass
       ? '<span class="badge ok">PASS</span>'
       : '<span class="badge bad">FAIL</span>';
@@ -1395,6 +1545,178 @@
     `;
   }
 
+  // ----- Phase 22c: Performance Center (left panel) ------------------------
+  // Aggregates runtime data already loaded by the page (no extra polls except
+  // a lightweight /api/ops/runtime/errors fetch for the events list) and
+  // renders into the #performance-center sidebar. Called from loadRuntime()
+  // and from loadPaperStatus() so the equity sparkline updates with the
+  // journal poll.
+  let _pcEventsLastFetch = 0;
+  async function renderPerformanceCenter() {
+    const root = $("performance-center");
+    if (!root) return;
+    const rts = visibleRuntimeStrats();
+    const accounts = STATE.accounts || [];
+
+    // ---- summary cards
+    let pnlToday = 0, tradesToday = 0, activeCount = 0;
+    rts.forEach(s => {
+      const today = s.today || {};
+      const rt = s.runtime || {};
+      const pnl = (today.pnl_today != null) ? today.pnl_today
+                : (today.adjusted_pnl != null) ? today.adjusted_pnl
+                : (rt.realized_pnl != null) ? rt.realized_pnl : null;
+      if (pnl != null && !isNaN(Number(pnl))) pnlToday += Number(pnl);
+      const t = (today.trades_today != null) ? today.trades_today
+              : (today.trades_count != null) ? today.trades_count : 0;
+      tradesToday += Number(t) || 0;
+      if (s.runtime_detected && s.runtime_enabled) activeCount += 1;
+    });
+    const acct = pickActiveAccount();
+    const netliq = (acct && acct.net_liquidation != null) ? acct.net_liquidation
+                 : (acct && acct.cash_value != null) ? acct.cash_value : null;
+
+    const elPnl = $("pc-pnl-today");
+    if (elPnl) {
+      elPnl.textContent = fmtMoney(pnlToday);
+      elPnl.classList.remove("pos", "neg");
+      if (pnlToday > 0) elPnl.classList.add("pos");
+      else if (pnlToday < 0) elPnl.classList.add("neg");
+    }
+    const elNet = $("pc-netliq");
+    if (elNet) elNet.textContent = (netliq == null) ? "—" : fmtMoney(netliq);
+    const elAct = $("pc-active-count");
+    if (elAct) elAct.textContent = String(activeCount);
+    const elTr = $("pc-trades-today");
+    if (elTr) elTr.textContent = String(tradesToday);
+
+    // ---- equity sparkline (uses paper journal cumulative_adjusted_pnl)
+    renderEquitySparkline();
+
+    // ---- active strategies list
+    const elList = $("pc-active-list");
+    if (elList) {
+      const running = rts.filter(s => s.runtime_detected && s.runtime_enabled);
+      if (!running.length) {
+        elList.innerHTML = '<div class="muted-empty" style="padding:6px;">нет активных</div>';
+      } else {
+        elList.innerHTML = running.map(s => {
+          const rt = s.runtime || {};
+          const today = s.today || {};
+          const pnl = (today.pnl_today != null) ? today.pnl_today
+                    : (rt.realized_pnl != null) ? rt.realized_pnl : null;
+          const cls = (pnl == null) ? "" : (pnl >= 0 ? "pos" : "neg");
+          return `<div class="pc-row">
+            <span class="lbl">${escapeHtml((rt.strategy_class || s.strategy_id || "?"))} <span class="muted-small">${escapeHtml(rt.instrument || "")}</span></span>
+            <span class="val ${cls}">${escapeHtml(fmtMoney(pnl))}</span>
+          </div>`;
+        }).join("");
+      }
+    }
+
+    // ---- instrument rating by today's PnL (aggregate across strategies)
+    const elRank = $("pc-instr-rank");
+    if (elRank) {
+      const byInst = {};
+      rts.forEach(s => {
+        const rt = s.runtime || {};
+        const today = s.today || {};
+        const inst = rt.instrument || "—";
+        const pnl = (today.pnl_today != null) ? today.pnl_today
+                  : (rt.realized_pnl != null) ? rt.realized_pnl : 0;
+        if (!byInst[inst]) byInst[inst] = { pnl: 0, trades: 0 };
+        byInst[inst].pnl += Number(pnl) || 0;
+        byInst[inst].trades += Number(today.trades_today || today.trades_count || 0) || 0;
+      });
+      const ranked = Object.entries(byInst).sort((a, b) => b[1].pnl - a[1].pnl);
+      if (!ranked.length) {
+        elRank.innerHTML = '<div class="muted-empty" style="padding:6px;">нет данных</div>';
+      } else {
+        elRank.innerHTML = ranked.slice(0, 8).map(([inst, m]) => {
+          const cls = m.pnl >= 0 ? "pos" : "neg";
+          return `<div class="pc-row">
+            <span class="lbl">${escapeHtml(inst)} <span class="muted-small">${m.trades} сд.</span></span>
+            <span class="val ${cls}">${escapeHtml(fmtMoney(m.pnl))}</span>
+          </div>`;
+        }).join("");
+      }
+    }
+
+    // ---- update stamp
+    const elU = $("pc-updated");
+    if (elU) {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      elU.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    }
+
+    // ---- last events (poll at most once per 10s)
+    const now = Date.now();
+    if (now - _pcEventsLastFetch > 10000) {
+      _pcEventsLastFetch = now;
+      try {
+        const r = await api("/api/ops/runtime/errors?limit=10");
+        renderPerformanceEvents((r && r.errors) || []);
+      } catch (e) {
+        renderPerformanceEvents([]);
+      }
+    }
+  }
+
+  function renderPerformanceEvents(rows) {
+    const elE = $("pc-events");
+    if (!elE) return;
+    if (!rows || !rows.length) {
+      elE.innerHTML = '<div class="muted-empty" style="padding:6px;">нет</div>';
+      return;
+    }
+    elE.innerHTML = rows.slice(-8).reverse().map(r => {
+      const ts = fmtHms(r.timestamp_utc);
+      const k = String(r.kind || "").toLowerCase();
+      const kindCls = (k === "error" || k === "rejected") ? "kind-error"
+                    : (k === "warn" || k === "warning") ? "kind-warn" : "";
+      const msg = String(r.message || r.kind || "").slice(0, 200);
+      return `<div class="pc-event ${kindCls}">
+        <span class="ts">${escapeHtml(ts)}</span>
+        <span class="msg">${escapeHtml(msg)}</span>
+      </div>`;
+    }).join("");
+  }
+
+  function renderEquitySparkline() {
+    const svg = $("pc-equity");
+    const meta = $("pc-equity-meta");
+    if (!svg) return;
+    const rows = STATE.paperJournal || [];
+    if (!rows.length) {
+      svg.innerHTML = '<text x="100" y="32" text-anchor="middle" fill="#667" font-size="10">нет данных</text>';
+      if (meta) meta.textContent = "—";
+      return;
+    }
+    const sorted = rows.slice().sort((a, b) =>
+      String(a.date_pt || "").localeCompare(String(b.date_pt || "")));
+    const tail = sorted.slice(-30);
+    const pts = tail.map(r => Number(r.cumulative_adjusted_pnl || 0));
+    if (!pts.length) {
+      svg.innerHTML = '<text x="100" y="32" text-anchor="middle" fill="#667" font-size="10">нет данных</text>';
+      return;
+    }
+    const min = Math.min(0, ...pts), max = Math.max(0, ...pts);
+    const W = 200, H = 60, pad = 2;
+    const xStep = pts.length > 1 ? (W - 2 * pad) / (pts.length - 1) : 0;
+    const yScale = (max - min) || 1;
+    const toY = (v) => H - pad - ((v - min) / yScale) * (H - 2 * pad);
+    const toX = (i) => pad + i * xStep;
+    const d = pts.map((v, i) => (i === 0 ? "M" : "L") + toX(i).toFixed(1) + "," + toY(v).toFixed(1)).join(" ");
+    const last = pts[pts.length - 1];
+    const colour = last >= 0 ? "#6fcf97" : "#ff8a8a";
+    const zeroY = toY(0);
+    svg.innerHTML =
+      `<line x1="0" y1="${zeroY.toFixed(1)}" x2="${W}" y2="${zeroY.toFixed(1)}" stroke="#2a2d34" stroke-width="0.5"/>` +
+      `<path d="${d}" fill="none" stroke="${colour}" stroke-width="1.5"/>`;
+    if (meta) meta.textContent = `последний: ${fmtMoney(last)} · ${tail.length} дн.`;
+  }
+
   // ----- wiring -------------------------------------------------------------
   function wire() {
     $("sel-account").addEventListener("change", e => {
@@ -1403,55 +1725,54 @@
       renderAccountHeadline(pickActiveAccount());
       loadRuntime();
     });
-    $("sel-strategy").addEventListener("change", e => {
-      STATE.selectedStrategy = e.target.value;
-      autoSelectFrontMonthIfNeeded();
-      renderInstrumentDisplay();
-      refreshLaunchControls();
-    });
     const isel = $("sel-instrument");
     if (isel) isel.addEventListener("change", e => {
       STATE.selectedInstrument = e.target.value;
       renderInstrumentDisplay();
-      refreshSelectionDiff();
-    });
-    $("inst-search").addEventListener("input", e => {
-      STATE.instrumentFilter = e.target.value || "";
-      renderInstruments();
-    });
-    const grpSel = $("inst-group");
-    if (grpSel) grpSel.addEventListener("change", e => {
-      STATE.instrumentGroup = e.target.value || "__all__";
-      renderInstruments();
-    });
-    const onlyCur = $("inst-only-current");
-    if (onlyCur) onlyCur.addEventListener("change", e => {
-      STATE.instOnlyCurrent = !!e.target.checked;
-      renderInstruments();
-    });
-    const showExp = $("inst-show-expired");
-    if (showExp) showExp.addEventListener("change", e => {
-      STATE.instShowExpired = !!e.target.checked;
-      renderInstruments();
     });
     const tfSel = $("sel-timeframe");
     if (tfSel) tfSel.addEventListener("change", () => {
-      refreshSelectionDiff();
       loadRuntime();
     });
     $("btn-refresh").addEventListener("click", refreshTradingState);
     $("btn-status").addEventListener("click", refreshTradingState);
     $("btn-start").addEventListener("click", () => sendCommand("enable_strategy"));
     $("btn-stop").addEventListener("click", () => sendCommand("disable_strategy"));
+    const showHidden = $("chk-show-hidden");
+    if (showHidden) showHidden.addEventListener("change", e => {
+      STATE.showHiddenStrategies = !!e.target.checked;
+      renderRuntimeTable();
+      renderPerformanceCenter();
+      refreshSelectionDiff();
+    });
+    const btnClose = $("btn-close-right");
+    if (btnClose) btnClose.addEventListener("click", () => {
+      STATE.selectedRuntime = null;
+      renderRuntimeTable();
+      setRightPanelVisible(false);
+      refreshLaunchControls();
+    });
     const obb = $("btn-open-backtest");
     if (obb) obb.addEventListener("click", () => {
-      const cls = STATE.selectedStrategy || "";
-      const inst = STATE.selectedInstrument || "";
-      const tf = ($("sel-timeframe") || {}).value || "5 Minute";
-      const qp = new URLSearchParams({
-        strategy: cls, instrument: inst, timeframe: tf,
-      }).toString();
-      window.open("/ui/index.html?" + qp, "_blank");
+      // Phase 22c: pass full runtime instance — strategy class, instrument,
+      // timeframe AND actual NT params — so the backtest page can prefill the
+      // form with what is *really* running, not what was in the dropdowns.
+      const view = findRuntimeView(STATE.selectedRuntime);
+      const rt = (view && view.runtime) || {};
+      const cls  = rt.strategy_class || STATE.selectedStrategy || "";
+      const inst = rt.instrument || STATE.selectedInstrument || "";
+      const tf   = rt.timeframe || ($("sel-timeframe") || {}).value || "5 Minute";
+      const qp = new URLSearchParams({ strategy: cls, instrument: inst, timeframe: tf });
+      // Runtime params come from bridge as rt.parameters / rt.params (object).
+      // Encode as JSON in the URL so the backtest page can apply them verbatim.
+      const rtParams = (rt.parameters && typeof rt.parameters === "object") ? rt.parameters
+                     : (rt.params     && typeof rt.params     === "object") ? rt.params
+                     : null;
+      if (rtParams && Object.keys(rtParams).length) {
+        try { qp.set("params", JSON.stringify(rtParams)); }
+        catch (_) { /* ignore non-serialisable values */ }
+      }
+      window.open("/ui/index.html?" + qp.toString(), "_blank");
     });
     document.querySelectorAll("#bot-tabs button").forEach(b => {
       b.addEventListener("click", () => switchBottomTab(b.dataset.tab));
@@ -1469,6 +1790,7 @@
     await loadRuntime();
     await loadPaperStatus();
     refreshLaunchControls();
+    renderPerformanceCenter();
     STATE.timer = setInterval(refreshTradingState, 5000);
   }
 

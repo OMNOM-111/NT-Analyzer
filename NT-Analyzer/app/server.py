@@ -22,6 +22,7 @@ import json
 import math
 import os
 import socket
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -47,6 +48,24 @@ else:
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _do_restart_server() -> None:
+    """Spawn a helper that waits for the old process to exit, then starts a new one."""
+    port = sys.argv[1] if len(sys.argv) > 1 else str(DEFAULT_PORT)
+    cwd = str(_PROJECT_ROOT)
+    exe = sys.executable
+    helper = (
+        "import time, subprocess, sys\n"
+        f"time.sleep(1.2)\n"
+        f"subprocess.Popen([{exe!r}, '-m', 'app.server', {port!r}], cwd={cwd!r})\n"
+    )
+    kw: dict = {}
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    subprocess.Popen([exe, "-c", helper], cwd=cwd, **kw)
+    os._exit(0)
 
 # Allowed origin hosts for mutating requests (POST). Browsers attach Origin
 # automatically; non-browser clients (CLI, PowerShell Invoke-RestMethod) do
@@ -320,6 +339,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, jobqueue.build_catalog_response())
             return
 
+        # Phase 22e — Strategy Profiles registry (best-of/locked configs).
+        if path == "/api/profiles":
+            self._json(HTTPStatus.OK, jobqueue.read_strategy_profiles())
+            return
+
         if path == "/api/jobs":
             try:
                 limit = int((qs.get("limit") or ["50"])[0])
@@ -470,6 +494,26 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/ops/runtime/health":
             self._json(HTTPStatus.OK, ops_runtime.health())
+            return True
+        if path == "/api/ops/runtime/strategy-display":
+            self._json(HTTPStatus.OK, ops_runtime.read_strategy_display_prefs())
+            return True
+        if path == "/api/ops/runtime/strategy-history":
+            try:
+                limit_events = int((qs.get("limit_events") or ["500"])[0])
+            except ValueError:
+                limit_events = 500
+            try:
+                limit_sessions = int((qs.get("limit_sessions") or ["200"])[0])
+            except ValueError:
+                limit_sessions = 200
+            self._json(HTTPStatus.OK, ops_runtime.read_strategy_history(
+                limit_events=limit_events,
+                limit_sessions=limit_sessions,
+                strategy_id=(qs.get("strategy_id") or [None])[0],
+                runtime_instance_id=(qs.get("runtime_instance_id") or [None])[0],
+                class_name=(qs.get("class_name") or [None])[0],
+            ))
             return True
         if path == "/api/ops/runtime/strategies":
             # Trading Online expects the bridge to be the source of truth.
@@ -652,6 +696,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(e.status, str(e)); return
             except Exception as e:  # pragma: no cover
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"command error: {e}"); return
+        if path == "/api/ops/runtime/strategy-display":
+            try:
+                out = ops_runtime.set_strategy_display_hidden(
+                    class_name=str(body.get("class_name") or ""),
+                    hidden=bool(body.get("hidden")),
+                )
+                self._json(HTTPStatus.OK, out); return
+            except ops.OpsError as e:
+                self._err(e.status, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"display prefs error: {e}"); return
         # /api/ops/strategies/{id}/{action}[/{sub}]
         if len(parts) >= 5 and parts[0] == "api" and parts[1] == "ops" and parts[2] == "strategies":
             sid = parts[3]
@@ -767,11 +822,13 @@ class Handler(BaseHTTPRequestHandler):
                            and parts[1] == "batches" and parts[3] == "cancel")
         is_catalog_refresh = (path == "/api/catalog/refresh")
         is_margins_refresh = (path == "/api/margins/refresh")
+        is_server_restart = (path == "/api/server/restart")
         is_ops = path.startswith("/api/ops/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
+                or is_server_restart
                 or is_ops):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
@@ -799,6 +856,13 @@ class Handler(BaseHTTPRequestHandler):
             out = marginrefresh.refresh_margins_now(trigger="manual")
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_GATEWAY
             self._json(status, out)
+            return
+
+        if is_server_restart:
+            self._json(HTTPStatus.OK, {"status": "restarting"})
+            t = threading.Timer(0.6, _do_restart_server)
+            t.daemon = True
+            t.start()
             return
 
         if is_cancel_job:

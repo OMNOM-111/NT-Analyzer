@@ -90,6 +90,230 @@ def catalog_dir() -> Path:
     return project_root() / "data" / "catalog"
 
 
+def reports_dir() -> Path:
+    return project_root() / "data" / "reports"
+
+
+def report_numbers_file() -> Path:
+    return reports_dir() / "report_numbers.json"
+
+
+def _report_key(kind: str, report_id: str) -> str:
+    return f"{kind}:{report_id}"
+
+
+def _read_report_numbers() -> Dict[str, Any]:
+    p = report_numbers_file()
+    if not p.is_file():
+        return {"schema_version": "1.0", "next_number": 1, "reports": {}}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("reports"), dict):
+            try:
+                data["next_number"] = int(data.get("next_number") or 1)
+            except (TypeError, ValueError):
+                data["next_number"] = 1
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"schema_version": "1.0", "next_number": 1, "reports": {}}
+
+
+def _write_report_numbers(data: Dict[str, Any]) -> None:
+    p = report_numbers_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, p)
+
+
+def _report_sort_time(created_at: Optional[str], fallback_mtime: float) -> float:
+    if created_at:
+        try:
+            return datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return float(fallback_mtime or 0.0)
+
+
+def _collect_report_number_candidates() -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for sub in QUEUE_SUBDIRS:
+        d = jobs_dir() / sub
+        if not d.is_dir():
+            continue
+        for child in d.iterdir():
+            if not child.is_dir() or child.name == ".staging":
+                continue
+            job = _read_json_safe(child / "job.json") or {}
+            if job.get("batch"):
+                continue
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append({
+                "key": _report_key("job", child.name),
+                "kind": "job",
+                "id": child.name,
+                "created_at_utc": job.get("created_at_utc"),
+                "sort_time": _report_sort_time(job.get("created_at_utc"), mtime),
+            })
+    bdir = batches_dir()
+    if bdir.is_dir():
+        for child in bdir.iterdir():
+            if not child.is_dir():
+                continue
+            meta = _read_json_safe(child / "batch.json") or {}
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append({
+                "key": _report_key("batch", child.name),
+                "kind": "batch",
+                "id": child.name,
+                "created_at_utc": meta.get("created_at_utc"),
+                "sort_time": _report_sort_time(meta.get("created_at_utc"), mtime),
+            })
+    candidates.sort(key=lambda x: (x.get("sort_time") or 0.0, x.get("key") or ""))
+    return candidates
+
+
+def sync_report_numbers() -> Dict[str, int]:
+    data = _read_report_numbers()
+    reports = data.setdefault("reports", {})
+    changed = False
+    max_seen = 0
+    for entry in reports.values():
+        try:
+            max_seen = max(max_seen, int(entry.get("number") if isinstance(entry, dict) else entry))
+        except (TypeError, ValueError):
+            continue
+    next_number = max(int(data.get("next_number") or 1), max_seen + 1)
+    for cand in _collect_report_number_candidates():
+        key = cand["key"]
+        entry = reports.get(key)
+        if isinstance(entry, dict) and isinstance(entry.get("number"), int):
+            continue
+        if isinstance(entry, int):
+            reports[key] = {"number": entry, "kind": cand["kind"], "id": cand["id"]}
+            changed = True
+            continue
+        reports[key] = {
+            "number": next_number,
+            "kind": cand["kind"],
+            "id": cand["id"],
+            "created_at_utc": cand.get("created_at_utc"),
+            "assigned_at_utc": utcnow_iso(),
+        }
+        next_number += 1
+        changed = True
+    if data.get("next_number") != next_number:
+        data["next_number"] = next_number
+        changed = True
+    data["schema_version"] = "1.0"
+    if changed:
+        _write_report_numbers(data)
+    out: Dict[str, int] = {}
+    for key, entry in reports.items():
+        try:
+            out[key] = int(entry.get("number") if isinstance(entry, dict) else entry)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def profiles_dir() -> Path:
+    """Directory holding the curated Strategy Profiles registry (Phase 22e)."""
+    return project_root() / "data" / "profiles"
+
+
+def read_strategy_profiles() -> Dict[str, Any]:
+    """Return the Strategy Profiles registry in the UI-facing schema.
+
+    Profiles are user-curated "best-of" configurations (strategy + instrument +
+    timeframe + locked params + status). The Backtesting page uses them as a
+    second left-panel tab; the Trading page will compare live-running NT
+    strategies against them to surface parameter drift.
+    """
+    p = profiles_dir() / "strategies.json"
+    if not p.is_file():
+        return {"schema_version": "1.0", "profiles": []}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("profiles"), list):
+            out = dict(data)
+            out["profiles"] = [
+                _normalize_strategy_profile_for_ui(x)
+                for x in data.get("profiles", [])
+                if isinstance(x, dict)
+            ]
+            return out
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"schema_version": "1.0", "profiles": []}
+
+
+def _date_to_utc_midnight(value: Any) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if "T" in s:
+        return s
+    return f"{s}T00:00:00Z"
+
+
+def _normalize_strategy_profile_for_ui(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept legacy and current profile JSON shapes.
+
+    Phase 22e originally stored profiles as id/strategy/parameters/period while
+    the UI renders profile_id/strategy_class/locked_parameters/test_period.
+    Keep the registry readable across both shapes so a stale or hand-edited
+    profile file does not produce blank cards.
+    """
+    out = dict(profile)
+    if "profile_id" not in out and "id" in out:
+        out["profile_id"] = out.get("id")
+    if "strategy_class" not in out and "strategy" in out:
+        out["strategy_class"] = out.get("strategy")
+    if "locked_parameters" not in out and isinstance(out.get("parameters"), dict):
+        out["locked_parameters"] = out.get("parameters")
+    if "last_job_id" not in out:
+        src = out.get("source")
+        if isinstance(src, dict) and src.get("best_job_id"):
+            out["last_job_id"] = src.get("best_job_id")
+
+    if "test_period" not in out:
+        period = out.get("period")
+        if isinstance(period, dict):
+            out["test_period"] = {
+                "from_utc": _date_to_utc_midnight(period.get("from") or period.get("start")),
+                "to_utc":   _date_to_utc_midnight(period.get("to") or period.get("end")),
+            }
+
+    metrics = out.get("metrics")
+    if isinstance(metrics, dict):
+        normalized = dict(metrics)
+        if "trade_count" not in normalized and "trades" in metrics:
+            normalized["trade_count"] = metrics.get("trades")
+        if "winning_pct" not in normalized and "win_pct" in metrics:
+            normalized["winning_pct"] = metrics.get("win_pct")
+        if "net_profit_after_commission" not in normalized and "adj_net" in metrics:
+            normalized["net_profit_after_commission"] = metrics.get("adj_net")
+        if "profit_factor_after_commission" not in normalized and "adj_pf" in metrics:
+            normalized["profit_factor_after_commission"] = metrics.get("adj_pf")
+        if "max_drawdown" not in normalized and "adj_max_drawdown" in metrics:
+            normalized["max_drawdown"] = metrics.get("adj_max_drawdown")
+        out["metrics"] = normalized
+
+    return out
+
+
 def _read_catalog_file(name: str) -> Optional[Dict[str, Any]]:
     p = catalog_dir() / name
     if not p.is_file():
@@ -506,7 +730,7 @@ def build_catalog_response() -> Dict[str, Any]:
                 {"label": "1 Minute",  "type": "Minute", "value": 1},
                 {"label": "5 Minute",  "type": "Minute", "value": 5},
                 {"label": "15 Minute", "type": "Minute", "value": 15},
-                {"label": "1 Day",     "type": "Day",    "value": 1},
+                {"label": "60 Minute", "type": "Minute", "value": 60},
             ],
         },
         "commission_templates":    commission_templates,
@@ -517,7 +741,7 @@ def build_catalog_response() -> Dict[str, Any]:
             "order_fill_resolution": "High",
             "slippage_ticks":        1,
             "commission":            0.0,
-            "commission_template":   "None",
+            "commission_template":   "NinjaTrader Brokerage Free",
             "session_template":      "CME US Index Futures RTH",
             "timezone":              "UTC",
         },
@@ -969,6 +1193,11 @@ def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
 
     The strategy is responsible for refusing to trade when these are unsafe
     (status != "allowed", margin <= 0, max contracts < 1, capital <= 0).
+
+    When a Risk Profile is present it is authoritative for account/margin
+    values. Locked strategy defaults are trading-logic defaults, not a reason
+    to keep stale margin assumptions (for example MNQ intraday margin moving
+    from $50 to $100).
     """
     rp = req.risk_profile or {}
     if not isinstance(rp, dict) or not rp:
@@ -1000,8 +1229,7 @@ def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
     for k in RISK_PROFILE_PARAM_KEYS:
         if k not in exposed:
             continue
-        if k not in req.parameters or _risk_profile_param_is_placeholder(k, req.parameters[k]):
-            req.parameters[k] = derived[k]
+        req.parameters[k] = derived[k]
 
 
 def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
@@ -1270,6 +1498,7 @@ def queue_counts() -> Dict[str, int]:
 
 def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
     """Most recent first across all queues."""
+    report_numbers = sync_report_numbers()
     rows: List[Dict[str, Any]] = []
     for sub in QUEUE_SUBDIRS:
         d = jobs_dir() / sub
@@ -1294,6 +1523,8 @@ def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
         meta = read_job_summary(r["job_id"])
         if meta:
             r.update(meta)
+        if not (r.get("batch") or {}).get("batch_id"):
+            r["report_no"] = report_numbers.get(_report_key("job", r["job_id"]))
         out.append(r)
     return out
 
@@ -1430,6 +1661,15 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
         summary["trade_count"] = m.get("trade_count")
         summary["winning_pct"] = m.get("winning_pct")
         summary["net_profit"]  = m.get("net_profit")
+        summary["gross_profit"] = m.get("gross_profit")
+        summary["gross_loss"] = m.get("gross_loss")
+        # Phase 22d/22i — surface/fallback for the reports rating column.
+        summary["profit_factor"] = m.get("profit_factor")
+        if summary["profit_factor"] is None:
+            pf = _profit_factor_from_gross(m.get("gross_profit"), m.get("gross_loss"))
+            if pf is not None:
+                summary["profit_factor"] = pf
+        summary["max_drawdown"]  = m.get("max_drawdown")
 
         # --- Commission-adjusted metrics ---
         # NinjaTrader runs use commission_template=None so metrics.net_profit
@@ -1841,6 +2081,7 @@ def _safe_batch_id(batch_id: str) -> str:
 
 def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
     """Most recent batches first."""
+    report_numbers = sync_report_numbers()
     bdir = batches_dir()
     if not bdir.is_dir():
         return []
@@ -1861,18 +2102,97 @@ def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
         # Lightweight aggregate over children.
         agg = _aggregate_batch_status(children)
         agg_metrics = _aggregate_batch_metrics(children)
+        # Phase 22d — surface instruments/period/finished so the reports
+        # table can show them on batch rows (was empty before).
+        instruments = m.get("instruments")
+        if not instruments:
+            # Older batches had instruments only on children — derive.
+            seen, dedup = set(), []
+            for c in children:
+                inst = c.get("instrument")
+                if inst and inst not in seen:
+                    seen.add(inst); dedup.append(inst)
+            instruments = dedup
+        # Phase 22g — derive period from children's job.json when
+        # batch.json doesn't have it (older batches).
+        period = m.get("period")
+        if not period:
+            period = _aggregate_batch_period(children)
+        finished_at = _aggregate_batch_finished(children)
         out.append({
-            "batch_id":       bid,
-            "name":           m.get("name") or bid,
-            "created_at_utc": m.get("created_at_utc"),
-            "class_name":     (m.get("strategy") or {}).get("class_name"),
-            "total":          m.get("total") or len(children),
-            "counts":         agg,
-            "trade_count":    agg_metrics.get("trade_count"),
-            "winning_pct":    agg_metrics.get("winning_pct"),
-            "net_profit":     agg_metrics.get("net_profit"),
+            "batch_id":         bid,
+            "report_no":        report_numbers.get(_report_key("batch", bid)),
+            "name":             m.get("name") or bid,
+            "created_at_utc":   m.get("created_at_utc"),
+            "finished_at_utc":  finished_at,
+            "class_name":       (m.get("strategy") or {}).get("class_name"),
+            "total":            m.get("total") or len(children),
+            "counts":           agg,
+            "instruments":      instruments,
+            "period":           period,
+            "trade_count":      agg_metrics.get("trade_count"),
+            "winning_pct":      agg_metrics.get("winning_pct"),
+            "net_profit":       agg_metrics.get("net_profit"),
+            "gross_profit":     agg_metrics.get("gross_profit"),
+            "gross_loss":       agg_metrics.get("gross_loss"),
+            "profit_factor":    agg_metrics.get("profit_factor"),
+            "max_drawdown":     agg_metrics.get("max_drawdown"),
         })
     return out
+
+
+def _aggregate_batch_period(children: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """Derive the covering period for a batch from its children's job.json files.
+
+    Returns {from_utc, to_utc} spanning min(child.from) → max(child.to), or None
+    when no period data is available. Used as a fallback for older batches that
+    were created before batch.json stored the period at the manifest level.
+    """
+    from_dates: List[str] = []
+    to_dates:   List[str] = []
+    for c in children:
+        jid = c.get("job_id")
+        if not jid:
+            continue
+        loc = find_job_dir(jid)
+        if not loc:
+            continue
+        _, jdir = loc
+        jmeta = _read_json_safe(jdir / "job.json") or {}
+        p = jmeta.get("period") or {}
+        if p.get("from_utc"):
+            from_dates.append(p["from_utc"])
+        if p.get("to_utc"):
+            to_dates.append(p["to_utc"])
+    if not from_dates or not to_dates:
+        return None
+    return {"from_utc": min(from_dates), "to_utc": max(to_dates)}
+
+
+def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
+    """Return the latest finished_at_utc across done/failed child jobs, or
+    None if no child has finished. Used for the "Финиш / НВ" column on
+    batch rows.
+    """
+    latest: Optional[str] = None
+    for c in children:
+        jid = c.get("job_id")
+        if not jid:
+            continue
+        loc = find_job_dir(jid)
+        if not loc:
+            continue
+        status, jdir = loc
+        ts: Optional[str] = None
+        if status == "done":
+            res = _read_json_safe(jdir / "result.json") or {}
+            ts = res.get("finished_at_utc")
+        elif status == "failed":
+            err = _read_json_safe(jdir / "error.json") or {}
+            ts = err.get("finished_at_utc")
+        if ts and (latest is None or ts > latest):
+            latest = ts
+    return latest
 
 
 def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -1892,12 +2212,24 @@ def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return {trade_count, winning_pct, net_profit} aggregated across all done child jobs."""
+    """Return {trade_count, winning_pct, net_profit, profit_factor, max_drawdown}
+    aggregated across all done child jobs.
+
+    profit_factor is recomputed from summed gross_profit/gross_loss; max_drawdown
+    is the worst (most negative) value across children — a portfolio-level lower
+    bound rather than a true blended drawdown, but sufficient for the
+    confidence score and table display.
+    """
     total_trades = 0
     total_winners = 0
     total_net = 0.0
+    total_gross_profit = 0.0
+    total_gross_loss = 0.0
+    worst_dd = 0.0
     has_any = False
     has_net = False
+    has_gross = False
+    has_dd = False
     for c in children:
         jid = c.get("job_id")
         if not jid:
@@ -1911,6 +2243,9 @@ def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
         tc = m.get("trade_count")
         wp = m.get("winning_pct")
         np_ = m.get("net_profit")
+        gp = m.get("gross_profit")
+        gl = m.get("gross_loss")
+        dd = m.get("max_drawdown")
         if tc is None:
             continue
         has_any = True
@@ -1919,18 +2254,53 @@ def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
             total_winners += round(float(wp) * int(tc) / 100)
         if np_ is not None:
             try:
-                total_net += float(np_)
-                has_net = True
-            except (TypeError, ValueError):
-                pass
+                total_net += float(np_); has_net = True
+            except (TypeError, ValueError): pass
+        if gp is not None and gl is not None:
+            try:
+                total_gross_profit += float(gp)
+                total_gross_loss   += float(gl)
+                has_gross = True
+            except (TypeError, ValueError): pass
+        if dd is not None:
+            try:
+                ddf = float(dd)
+                if ddf < worst_dd: worst_dd = ddf
+                has_dd = True
+            except (TypeError, ValueError): pass
     if not has_any:
         return {}
     winning_pct = (total_winners / total_trades * 100) if total_trades > 0 else None
+    pf = None
+    if has_gross and total_gross_loss < 0:
+        pf = total_gross_profit / abs(total_gross_loss)
     return {
-        "trade_count": total_trades,
-        "winning_pct": round(winning_pct, 2) if winning_pct is not None else None,
-        "net_profit":  total_net if has_net else None,
+        "trade_count":   total_trades,
+        "winning_pct":   round(winning_pct, 2) if winning_pct is not None else None,
+        "net_profit":    total_net if has_net else None,
+        "gross_profit":  total_gross_profit if has_gross else None,
+        "gross_loss":    total_gross_loss if has_gross else None,
+        "profit_factor": round(pf, 4) if pf is not None else None,
+        "max_drawdown":  worst_dd if has_dd else None,
     }
+
+
+def _profit_factor_from_gross(gross_profit: Any, gross_loss: Any) -> Optional[float]:
+    """Return finite PF from gross profit/loss, or None for no-loss/unknown cases.
+
+    No-loss profitable runs have infinite PF; the frontend can display ∞ from
+    gross_profit/gross_loss directly, while API JSON stays standards-compliant.
+    """
+    if gross_profit is None or gross_loss is None:
+        return None
+    try:
+        gp = float(gross_profit)
+        gl = float(gross_loss)
+    except (TypeError, ValueError):
+        return None
+    if gl < 0:
+        return round(gp / abs(gl), 6)
+    return None
 
 
 def read_batch(batch_id: str) -> Optional[Dict[str, Any]]:
@@ -1969,6 +2339,12 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
             if loc:
                 status, jdir = loc
                 row["status"] = status
+                # Phase 22g — read job.json to get created_at_utc + period
+                # for every status so the batch-details table can show them.
+                jmeta = _read_json_safe(jdir / "job.json") or {}
+                row["created_at_utc"] = jmeta.get("created_at_utc")
+                row["period"]         = jmeta.get("period")
+                row["class_name"]     = (jmeta.get("strategy") or {}).get("class_name")
                 if status == "done":
                     res = _read_json_safe(jdir / "result.json") or {}
                     row["metrics"] = res.get("metrics") or {}
@@ -1981,6 +2357,7 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
     return {
         "batch_id": batch_id,
         "name":     m.get("name"),
+        "created_at_utc": m.get("created_at_utc"),
         "strategy": m.get("strategy"),
         "timeframe": m.get("timeframe"),
         "period":    m.get("period"),
