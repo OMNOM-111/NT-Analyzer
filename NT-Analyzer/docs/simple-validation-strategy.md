@@ -4,7 +4,7 @@ This is a deliberately simple deterministic strategy for comparing NinjaTrader S
 
 Strategy file:
 
-`C:\Users\dimon\Documents\NinjaTrader 8\bin\Custom\Strategies\NTAnalyzerEveryNBarLong.cs`
+`%USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\Strategies\NTAnalyzerEveryNBarLong.cs`
 
 ## Logic
 

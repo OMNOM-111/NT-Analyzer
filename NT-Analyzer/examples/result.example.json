@@ -22,7 +22,7 @@
   "context": {
     "strategy": {
       "class_name": "SampleMACrossOver",
-      "resolved_source_file": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+      "resolved_source_file": "C:\\Path\\To\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
       "source_file_sha256": "sha256:placeholder",
       "ninjatrader_custom_dll_sha256": "sha256:placeholder",
       "final_parameters": {

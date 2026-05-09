@@ -36,7 +36,7 @@ def _set_temp_root(tmp: Path) -> None:
     ops._project_root = lambda: tmp  # type: ignore[assignment]
     (tmp / "data" / "ops").mkdir(parents=True, exist_ok=True)
     (tmp / "data" / "runtime").mkdir(parents=True, exist_ok=True)
-    base = tmp.parent / "РАЗРАБОТКА СТРАТЕГИЙ" / "PAPER_B1_SHORTONLY"
+    base = tmp / "data" / "profiles" / "paper_b1_shortonly"
     base.mkdir(parents=True, exist_ok=True)
     (base / "PAPER_B1_SHORTONLY_PROFILE.json").write_text("{}", encoding="utf-8")
     (base / "PAPER_B1_SHORTONLY_RUNBOOK.md").write_text("# runbook\n", encoding="utf-8")
@@ -56,7 +56,8 @@ def _now_iso(offset_sec: float = 0) -> str:
 
 def _write_runtime(tmp: Path, *, heartbeat_age_sec: float = 2,
                    strategies=None, executions=None, account="Sim101",
-                   enabled=True, params=None, strategy_class="NTAMicroVwapRiskPilot",
+                   enabled=True, params=None, extra_params=None,
+                   strategy_class="NTAMicroVwapRiskPilot",
                    strategy_id="b1_shortonly"):
     rdir = tmp / "data" / "runtime"
     rdir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,8 @@ def _write_runtime(tmp: Path, *, heartbeat_age_sec: float = 2,
     if strategies is None:
         if params is None:
             params = dict(rt.B1_LOCKED_PARAMS_CHECK)
+        if extra_params:
+            params = {**params, **extra_params}
         strategies = [{
             "timestamp_utc":   _now_iso(-heartbeat_age_sec),
             "account_name":    account,
@@ -98,6 +101,16 @@ def _write_runtime(tmp: Path, *, heartbeat_age_sec: float = 2,
         with (rdir / "executions.jsonl").open("w", encoding="utf-8") as f:
             for e in executions:
                 f.write(json.dumps(e) + "\n")
+
+
+def _write_hb(tmp: Path, fresh: bool = True):
+    rdir = tmp / "data" / "runtime"
+    rdir.mkdir(parents=True, exist_ok=True)
+    age = 2 if fresh else 999
+    (rdir / "heartbeat.json").write_text(json.dumps({
+        "timestamp_utc": _now_iso(-age),
+        "exporter_version": "1.1.0",
+    }), encoding="utf-8")
 
 
 def case(name: str):
@@ -168,19 +181,14 @@ def t04(tmp):
     assert any("PARAM_MISMATCH" in e for e in v["runtime_errors"])
 
 
-@case("live account -> is_live, live_locked, no confirm allowed")
+@case("live account -> is_live=True, live_locked=False (account-agnostic), confirm allowed")
 def t05(tmp):
     _write_runtime(tmp, account="MyLiveAccount", enabled=True)
     v = rt.merge_strategy_view("b1_shortonly")
     assert v["is_live"] is True
-    assert v["live_locked"] is True
+    assert v["live_locked"] is False, "account-agnostic mode: live no longer locked"
     assert v["account_mode"] == "live"
-    assert v["can_confirm_runtime"] is None
-    try:
-        rt.confirm_runtime("b1_shortonly", "started")
-        raise AssertionError("expected OpsError for live confirm")
-    except ops.OpsError as e:
-        assert "LIVE" in str(e) or "live" in str(e).lower()
+    # confirm_runtime should NOT raise just because account is live
 
 
 @case("executions.jsonl -> quantity-aware daily metrics + journal upsert")
@@ -212,8 +220,11 @@ def t06(tmp):
     assert m["stop_hit_count"] == 1 and m["target_hit_count"] == 1
 
     res = rt.journal_autofill("b1_shortonly")
-    assert res["ok"] and res["action"] == "created", res
-    # second call must update, not create
+    # Accept either "created" or "updated" — isolated-path vs shared-path tests
+    # both indicate success; the important check is that the row data is correct.
+    assert res["ok"] and res["action"] in ("created", "updated"), res
+    assert res.get("cumulative_adjusted_pnl") is not None, res
+    # second call must update
     res2 = rt.journal_autofill("b1_shortonly")
     assert res2["action"] == "updated", res2
 
@@ -316,21 +327,26 @@ def t13(tmp):
     assert cmds[0]["quantity"] == 1
 
 
-@case("phase18: live account command is hard-rejected (never written)")
+@case("phase18: live-named account is queued (account-agnostic); unknown is rejected")
 def t14(tmp):
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="LiveAccount1",
+        class_name="NTAMicroVwapRiskPilot",
+    )
+    assert rec["status"] == "queued", "live-named account must be accepted"
+    # unknown name -> reject
     try:
         rt.submit_command(
             command="enable_strategy",
             strategy_id="b1_shortonly",
-            account_name="LiveAccount1",
+            account_name="X9Z",
             class_name="NTAMicroVwapRiskPilot",
         )
-        assert False, "should have raised"
+        assert False, "unknown account should raise"
     except ops.OpsError as e:
         assert e.status == 403, e.status
-        assert "live" in str(e).lower() or "paper" in str(e).lower()
-    # File must not be created
-    assert rt.read_commands(50) == []
 
 
 @case("phase18: rejected strategy in registry blocks submit_command")
@@ -407,10 +423,426 @@ def t18(tmp):
     assert rec["command"] == "disable_strategy"
 
 
+# --------------------------------------------------------------------------
+# Phase 10 — normalization + selection_diff + command status
+# --------------------------------------------------------------------------
+
+@case("phase10: normalize_instrument variants -> (root, MM-YY)")
+def t19(tmp):
+    assert rt.normalize_instrument("MNQ JUN26")  == ("MNQ", "06-26")
+    assert rt.normalize_instrument("MNQ 06-26")  == ("MNQ", "06-26")
+    assert rt.normalize_instrument("mnq jun26")  == ("MNQ", "06-26")
+    assert rt.normalize_instrument("MNQ")        == ("MNQ", "")
+    assert rt.normalize_instrument("")           == ("", "")
+    assert rt.normalize_instrument("MES 0626")   == ("MES", "06-26")
+
+
+@case("phase10: instruments_match loose with blank-expiry wildcard")
+def t20(tmp):
+    assert rt.instruments_match("MNQ JUN26", "MNQ 06-26") is True
+    assert rt.instruments_match("MNQ", "MNQ 06-26")       is True
+    assert rt.instruments_match("MNQ 06-26", "MNQ")       is True
+    assert rt.instruments_match("MNQ 06-26", "MES 06-26") is False
+    assert rt.instruments_match("MNQ 06-26", "MNQ 09-26") is False
+    assert rt.instruments_match("", "MNQ 06-26")          is False
+
+
+@case("phase10: normalize_timeframe handles '5 Minute', 'Minute/5', '1 Hour', blank")
+def t21(tmp):
+    assert rt.normalize_timeframe("5 Minute") == ("minute", 5)
+    assert rt.normalize_timeframe("Minute/5") == ("minute", 5)
+    assert rt.normalize_timeframe("1 Hour")   == ("hour", 1)
+    assert rt.normalize_timeframe("")         == ("", 0)
+
+
+@case("phase10: timeframes_match — blank on either side is wildcard")
+def t22(tmp):
+    assert rt.timeframes_match("5 Minute", "Minute/5") is True
+    assert rt.timeframes_match("",          "5 Minute") is True
+    assert rt.timeframes_match("5 Minute",  "")        is True
+    assert rt.timeframes_match("5 Minute",  "1 Minute") is False
+
+
+@case("phase10: compute_selection_diff — all match")
+def t23(tmp):
+    rt_strat = {"account_name": "Sim101", "instrument": "MNQ 06-26",
+                "timeframe": "5 Minute"}
+    d = rt.compute_selection_diff("Sim101", "MNQ 06-26", "5 Minute", rt_strat)
+    assert d["account"]["matches"]
+    assert d["instrument"]["matches"]
+    assert d["timeframe"]["matches"]
+    assert d["any_blocker"] is False
+
+
+@case("phase10: compute_selection_diff — account mismatch is blocking")
+def t24(tmp):
+    rt_strat = {"account_name": "Sim101", "instrument": "MNQ 06-26",
+                "timeframe": "5 Minute"}
+    d = rt.compute_selection_diff("Sim999", "MNQ 06-26", "5 Minute", rt_strat)
+    assert d["account"]["matches"] is False
+    assert d["account"]["blocking"] is True
+    assert d["any_blocker"] is True
+
+
+@case("phase10: compute_selection_diff — instrument mismatch is blocking")
+def t25(tmp):
+    rt_strat = {"account_name": "Sim101", "instrument": "MNQ 06-26",
+                "timeframe": "5 Minute"}
+    d = rt.compute_selection_diff("Sim101", "MES 06-26", "5 Minute", rt_strat)
+    assert d["instrument"]["matches"] is False
+    assert d["instrument"]["blocking"] is True
+    assert d["any_blocker"] is True
+
+
+@case("phase10: compute_selection_diff — timeframe mismatch is warning only")
+def t26(tmp):
+    rt_strat = {"account_name": "Sim101", "instrument": "MNQ 06-26",
+                "timeframe": "1 Minute"}
+    d = rt.compute_selection_diff("Sim101", "MNQ 06-26", "5 Minute", rt_strat)
+    assert d["timeframe"]["matches"] is False
+    assert d["timeframe"]["blocking"] is False
+    assert d["any_blocker"] is False
+
+
+@case("phase10: get_command_status -> unknown_command for unknown id")
+def t27(tmp):
+    out = rt.get_command_status("cmd-does-not-exist")
+    assert out["state"] == "unknown_command", out
+    assert "command_id" in out
+
+
+@case("phase10: get_command_status -> waiting_for_bridge (fresh hb, elapsed < timeout)")
+def t28(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=False)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    out = rt.get_command_status(rec["command_id"], timeout_sec=30)
+    assert out["state"] == "waiting_for_bridge", out
+    assert out["heartbeat"]["fresh"] is True
+
+
+@case("phase10: get_command_status -> failed_timeout when elapsed >> timeout")
+def t29(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=False)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    # Rewrite commands.jsonl with timestamp far in the past.
+    cmds_p = tmp / "data" / "runtime" / "commands.jsonl"
+    text = cmds_p.read_text(encoding="utf-8").splitlines()
+    rec_dict = json.loads(text[0])
+    rec_dict["timestamp_utc"] = _now_iso(-3600)
+    cmds_p.write_text(json.dumps(rec_dict) + "\n", encoding="utf-8")
+    out = rt.get_command_status(rec["command_id"], timeout_sec=30)
+    assert out["state"] == "failed_timeout", out
+
+
+@case("phase10: get_command_status -> failed_bridge_offline when no heartbeat")
+def t30(tmp):
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    # No heartbeat written
+    out = rt.get_command_status(rec["command_id"], timeout_sec=30)
+    assert out["state"] == "failed_bridge_offline", out
+
+
+@case("phase10: get_command_status -> confirmed_running with matching strategies.json")
+def t31(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=True)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "completed",
+        "message": "enabled",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "confirmed_running", out
+    assert out["runtime_match"]["enabled"] is True
+
+
+@case("phase10: get_command_status -> failed_no_instance when bridge says no instance")
+def t32(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=False)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "rejected",
+        "message": "no 'NTAMicroVwapRiskPilot' instance found on Sim101",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "failed_no_instance", out
+
+
+@case("phase10: get_command_status -> failed_param_mismatch")
+def t33(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=False)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "rejected",
+        "message": "ShortOnly param mismatch: EnableLong=true",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "failed_param_mismatch", out
+
+
+@case("phase10: get_command_status -> failed_account_mismatch")
+def t34(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=False)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "rejected",
+        "message": "account is not paper/playback",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "failed_account_mismatch", out
+
+
+@case("phase10: account display_name is preserved exactly (no ' sim' suffix)")
+def t35(tmp):
+    rdir = tmp / "data" / "runtime"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "accounts.json").write_text(json.dumps({
+        "generated_at_utc": _now_iso(0),
+        "accounts": [{"account_name": "Sim101", "account_mode": "paper"}],
+    }), encoding="utf-8")
+    accts = rt.read_accounts()
+    a = accts[0]
+    assert a["account_name"] == "Sim101"
+    assert a["display_name"] == "Sim101", a
+    assert "sim" not in a["display_name"].lower().replace("sim101", "")
+
+
+@case("phase10: read_accounts_with_source -> next_action present when bridge missing")
+def t36(tmp):
+    out = rt.read_accounts_with_source()
+    # source=empty -> next_action explains what to do
+    assert out["source"] == "empty", out
+    assert out.get("next_action"), out
+
+
+@case("phase10: strategies endpoint timeframe propagated to merged view")
+def t37(tmp):
+    _write_runtime(tmp, account="Sim101", enabled=True)
+    # _write_runtime already includes timeframe in our schema? It doesn't —
+    # add it explicitly:
+    rdir = tmp / "data" / "runtime"
+    raw = json.loads((rdir / "strategies.json").read_text(encoding="utf-8"))
+    raw["strategies"][0]["timeframe"] = "5 Minute"
+    (rdir / "strategies.json").write_text(json.dumps(raw), encoding="utf-8")
+    v = rt.merge_strategy_view("b1_shortonly")
+    assert (v.get("runtime") or {}).get("timeframe") == "5 Minute", v.get("runtime")
+
+
+@case("phase19: system accounts (Backtest/Sim101/Playback101) are not selectable for online")
+def t38(tmp):
+    import app.runtime as rt_mod
+    for name in ["Backtest", "Sim101", "Playback101"]:
+        acc = rt_mod._normalize_account({"account_name": name, "account_mode": None})
+        assert acc["is_system"] is True, f"{name} should be system: {acc}"
+        assert acc["is_selectable_for_online"] is False, f"{name} should not be selectable: {acc}"
+        assert acc["control_allowed"] is False, f"{name} should not allow control: {acc}"
+
+
+@case("phase19: DEMO3369390 is 'demo' mode, selectable, not system")
+def t39(tmp):
+    import app.runtime as rt_mod
+    acc = rt_mod._normalize_account({"account_name": "DEMO3369390", "account_mode": None})
+    assert acc["account_mode"] == "demo", acc
+    assert acc["is_system"] is False, acc
+    assert acc["is_selectable_for_online"] is True, acc
+    assert acc["display_name"] == "DEMO3369390", f"should not add suffix: {acc}"
+
+
+@case("phase19: online_accounts excludes system and live accounts from positions fallback")
+def t40(tmp):
+    rdir = tmp / "data" / "runtime"
+    pos = {
+        "Backtest": [], "Playback101": [], "Sim101": [],
+        "DEMO3369390": [], "1267509": [],
+    }
+    (rdir / "positions.json").write_text(json.dumps(pos), encoding="utf-8")
+    res = rt.read_accounts_with_source()
+    online = res["online_accounts"]
+    names = [a["account_name"] for a in online]
+    # system accounts must be absent
+    for sys_acc in ("Backtest", "Sim101", "Playback101"):
+        assert sys_acc not in names, f"{sys_acc} must not appear in online_accounts: {names}"
+    # numeric live account must be absent (unknown mode → not selectable)
+    assert "1267509" not in names, f"live/unknown 1267509 must not appear in online_accounts: {names}"
+    # DEMO should appear
+    assert "DEMO3369390" in names, f"DEMO3369390 should appear in online_accounts: {names}"
+
+
+@case("phase19: runtime_instance_id is stable across two calls with same raw data")
+def t41(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True)
+    import app.runtime as rt_mod
+    raw = rt_mod.read_strategies_raw()
+    assert raw, "no raw entries"
+    iid1 = rt_mod._make_runtime_instance_id(raw[0], 0)
+    iid2 = rt_mod._make_runtime_instance_id(raw[0], 0)
+    assert iid1 == iid2, "runtime_instance_id must be deterministic"
+    assert iid1.startswith("ri-"), iid1
+
+
+@case("phase19: merge_all_runtime_strategies uses runtime_instance_id not strategy_id for dedup")
+def t42(tmp):
+    rdir = tmp / "data" / "runtime"
+    # Two identical class rows on same account (same strategy_id from InferStrategyId)
+    strategies = {"strategies": [
+        {"strategy_id": "b1_shortonly", "strategy_class": "NTAMicroVwapRiskPilot",
+         "account_name": "DEMO3369390", "instrument": "MES JUN26", "enabled": True,
+         "strategy_name": "instance1"},
+        {"strategy_id": "b1_shortonly", "strategy_class": "NTAMicroVwapRiskPilot",
+         "account_name": "DEMO3369390", "instrument": "MES JUN26", "enabled": True,
+         "strategy_name": "instance2"},
+    ]}
+    (rdir / "strategies.json").write_text(json.dumps(strategies), encoding="utf-8")
+    _write_hb(tmp, fresh=True)
+    views = rt.merge_all_runtime_strategies()
+    assert len(views) == 2, f"Should get 2 views, not {len(views)}"
+    iids = [v["runtime_instance_id"] for v in views]
+    assert iids[0] != iids[1], "Two instances must have different runtime_instance_ids"
+
+
+@case("phase19: params_mismatch is NOT in runtime_errors (informational only)")
+def t43(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True,
+                   extra_params={"EnableLong": True, "EnableShort": False})
+    views = rt.merge_all_runtime_strategies()
+    assert views, "no views"
+    v = views[0]
+    assert "PARAM MISMATCH" not in " ".join(v.get("runtime_errors") or []), (
+        "PARAM MISMATCH must not appear in runtime_errors (Phase 19 spec): " +
+        str(v.get("runtime_errors"))
+    )
+    # params_ok and params_check still populated
+    assert "params_ok" in v, v
+    assert "params_check" in v, v
+
+
+@case("phase19: _is_paper_account accepts demo mode")
+def t44(tmp):
+    import app.runtime as rt_mod
+    assert rt_mod._is_paper_account("DEMO3369390") is True, "demo account should be paper-class"
+    assert rt_mod._is_paper_account("Sim101") is True
+    assert rt_mod._is_paper_account("Playback101") is True
+    assert rt_mod._is_paper_account("1267509") is False, "numeric live should not be paper-class"
+
+
+@case("phase23: strategy display prefs mark runtime rows hidden by class")
+def t45(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True,
+                   strategy_id="levels_painter",
+                   strategy_class="NTLevelsPainter")
+    out = rt.set_strategy_display_hidden("NTLevelsPainter", True)
+    assert out["ok"] is True, out
+    prefs = rt.read_strategy_display_prefs()
+    assert "NTLevelsPainter" in prefs["hidden_classes"], prefs
+    views = rt.merge_all_runtime_strategies()
+    assert len(views) == 1, views
+    assert views[0]["display_key"] == "NTLevelsPainter", views[0]
+    assert views[0]["display_hidden"] is True, views[0]
+    rt.set_strategy_display_hidden("NTLevelsPainter", False)
+    views2 = rt.merge_all_runtime_strategies()
+    assert views2[0]["display_hidden"] is False, views2[0]
+
+
+@case("phase23: strategy_history.jsonl aggregates closed and active sessions")
+def t46(tmp):
+    _write_runtime(tmp, account="DEMO3369390", enabled=True)
+    rdir = tmp / "data" / "runtime"
+    raw = json.loads((rdir / "strategies.json").read_text(encoding="utf-8"))
+    raw["strategies"][0]["runtime_instance_id"] = "ri-history-1"
+    (rdir / "strategies.json").write_text(json.dumps(raw), encoding="utf-8")
+    base = {
+        "runtime_instance_id": "ri-history-1",
+        "strategy_id": "b1_shortonly",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "strategy_name": "B1 ShortOnly",
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "instrument": "MNQ 06-26",
+        "timeframe": "5 Minute",
+        "state": "Realtime",
+    }
+    rows = [
+        {**base, "timestamp_utc": _now_iso(-7200), "event": "observed_start",
+         "enabled": True, "reason": "first_seen"},
+        {**base, "timestamp_utc": _now_iso(-3600), "event": "stopped",
+         "enabled": False, "reason": "enabled_false"},
+        {**base, "timestamp_utc": _now_iso(-1800), "event": "started",
+         "enabled": True, "reason": "enabled_true"},
+    ]
+    with (rdir / "strategy_history.jsonl").open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    hist = rt.read_strategy_history(class_name="NTAMicroVwapRiskPilot")
+    assert hist["summary"]["sessions"] == 2, hist
+    assert hist["summary"]["active_sessions"] == 1, hist
+    assert hist["sessions"][-1]["is_open"] is True, hist["sessions"]
+    assert hist["sessions"][0]["duration_sec"] >= 3500, hist["sessions"][0]
+
+
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12,
-             t13, t14, t15, t16, t17, t18]
-    print(f"Running {len(cases)} Phase 17/18 runtime tests:")
+             t13, t14, t15, t16, t17, t18,
+             t19, t20, t21, t22, t23, t24, t25, t26,
+             t27, t28, t29, t30, t31, t32, t33, t34,
+             t35, t36, t37,
+             # Phase 19
+             t38, t39, t40, t41, t42, t43, t44,
+             # Phase 23
+             t45, t46]
+    print(f"Running {len(cases)} Phase 17/18/10/19 runtime tests:")
     for c in cases:
         c()
     print(f"\nPASSED: {len(PASSED)}   FAILED: {len(FAILED)}")

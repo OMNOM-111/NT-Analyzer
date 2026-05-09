@@ -3,7 +3,7 @@
     Build and deploy NTAnalyzerBridge.dll into NinjaTrader 8.
 
 .DESCRIPTION
-    Phase A install script.
+    Bridge install script.
       1. Builds bridge\NTAnalyzerBridge.csproj (Debug by default).
       2. Copies NTAnalyzerBridge.dll into <NinjaTraderUserDir>\bin\Custom\.
          (NinjaTrader's documented Visual Studio AddOn deploy path.)
@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 
 function Write-Step { param($msg) Write-Host "[install-bridge] $msg" -ForegroundColor Cyan }
 function Write-Ok   { param($msg) Write-Host "[install-bridge] OK: $msg" -ForegroundColor Green }
-function Write-Warn2{ param($msg) Write-Host "[install-bridge] WARN: $msg" -ForegroundColor Yellow }
+function Write-Warn { param($msg) Write-Host "[install-bridge] WARN: $msg" -ForegroundColor Yellow }
 
 function Get-ScriptDirectory {
     if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
@@ -113,11 +113,11 @@ Write-Ok "DLL deployed"
 # 3. Deploy config (do NOT overwrite an existing one)
 $cfgDst = Join-Path $customDir 'NTAnalyzerBridge.config.json'
 if (Test-Path $cfgDst) {
-    Write-Warn2 "config already exists, leaving as-is: $cfgDst"
+    Write-Warn "config already exists, leaving as-is: $cfgDst"
 } else {
     Copy-Item -Path $exampleCfg -Destination $cfgDst
     Write-Ok "config installed: $cfgDst"
-    Write-Warn2 "open the file and verify project_root / ninjatrader_user_dir match this machine"
+    Write-Warn "open the file and verify project_root / ninjatrader_user_dir match this machine"
 }
 
 # 4. Queue layout

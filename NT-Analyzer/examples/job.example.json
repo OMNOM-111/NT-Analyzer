@@ -6,7 +6,7 @@
 
   "strategy": {
     "class_name": "SampleMACrossOver",
-    "source_file_hint": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+    "source_file_hint": "C:\\Path\\To\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
     "parameters": {}
   },
 

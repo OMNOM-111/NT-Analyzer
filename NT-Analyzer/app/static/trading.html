@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>Торговля онлайн — NT-Analyzer</title>
+<link rel="stylesheet" href="style.css">
+<script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
+<style>
+/* trading.html — layout reuses workbench grid from backtest page */
+.trading-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr 320px;
+  grid-template-rows: 1fr;
+  gap: 0;
+  height: calc(100vh - 49px);
+}
+.trading-grid.no-right {
+  grid-template-columns: 340px 1fr;
+}
+.tg-left, .tg-mid, .tg-right {
+  border-right: 1px solid #2a2d34;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  background: #11141a;
+}
+.tg-right { border-right: none; border-left: 1px solid #2a2d34; }
+.tg-right.hidden { display: none; }
+.tg-mid { background: #0f1115; }
+
+/* Performance Center (left panel) */
+.pc-section { border-bottom: 1px solid #1f232c; padding: 8px 10px; }
+.pc-section:last-child { border-bottom: none; }
+.pc-section h4 {
+  margin: 0 0 6px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; color: #889; font-weight: 500;
+}
+.pc-pnl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pc-card {
+  background: #14171f; border: 1px solid #1f232c; border-radius: 4px;
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 2px;
+}
+.pc-card .k { color: #889; font-size: 10px; }
+.pc-card .v { color: #e6e6e6; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pc-card .v.pos { color: #b9f5cd; }
+.pc-card .v.neg { color: #ffb3b3; }
+.pc-equity-svg { width: 100%; height: 60px; display: block; background: #0e1218; border-radius: 3px; }
+.pc-row {
+  display: flex; justify-content: space-between; gap: 6px;
+  padding: 3px 0; font-size: 12px; border-bottom: 1px dotted #1a1d24;
+}
+.pc-row:last-child { border-bottom: none; }
+.pc-row .lbl { color: #cfe1ff; }
+.pc-row .lbl.muted { color: #889; }
+.pc-row .val { color: #e6e6e6; font-variant-numeric: tabular-nums; }
+.pc-row .val.pos { color: #b9f5cd; }
+.pc-row .val.neg { color: #ffb3b3; }
+.pc-event {
+  font-size: 11px; padding: 3px 0; border-bottom: 1px dotted #1a1d24;
+  display: flex; gap: 6px;
+}
+.pc-event:last-child { border-bottom: none; }
+.pc-event .ts { color: #667; min-width: 56px; font-variant-numeric: tabular-nums; }
+.pc-event .msg { color: #cfe1ff; flex: 1; word-break: break-word; }
+.pc-event.kind-error .msg { color: #ffb3b3; }
+.pc-event.kind-warn  .msg { color: #ffd99b; }
+
+.tg-section-head {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: #889; padding: 6px 10px; border-bottom: 1px solid #2a2d34;
+  background: #161922; display: flex; align-items: center; gap: 6px;
+}
+.tg-section-head .grow { flex: 1; }
+.tg-body { flex: 1; overflow: auto; padding: 4px 6px; }
+
+/* center: top half = active strategies table, bottom half = analytics tabs */
+.tg-mid-top, .tg-mid-bot {
+  display: flex; flex-direction: column;
+  border-bottom: 1px solid #2a2d34;
+}
+.tg-mid-top { flex: 1 1 50%; min-height: 200px; }
+.tg-mid-bot { flex: 1 1 50%; min-height: 180px; border-bottom: none; }
+
+table.tg-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.tg-tbl th, table.tg-tbl td {
+  padding: 4px 8px; border-bottom: 1px solid #1f232c; text-align: left;
+}
+table.tg-tbl thead th {
+  position: sticky; top: 0; background: #161922; color: #aab; font-weight: 500;
+  font-size: 11px; z-index: 1;
+}
+table.tg-tbl tbody tr { cursor: pointer; }
+table.tg-tbl tbody tr:hover { background: #1a1f2a; }
+table.tg-tbl tbody tr.sel { background: #1f3a5a; }
+table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rt-show-hidden { display:flex; align-items:center; gap:4px; font-size:11px; color:#889; user-select:none; }
+.rt-show-hidden input, .rt-display-toggle { accent-color:#6da9ff; }
+
+.badge {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; line-height: 1.4;
+}
+.badge.ok   { background: #1f5135; color: #b9f5cd; }
+.badge.bad  { background: #5a1f1f; color: #ffb3b3; }
+.badge.warn { background: #5a4421; color: #ffd99b; }
+.badge.mut  { background: #2c3142; color: #aab; }
+.badge.demo { background: #1f3a55; color: #9bd4ff; }
+.acct-live-card { display:flex; gap:6px; align-items:center; padding:3px 0; font-size:11px; }
+.muted-small { color: #667; font-size: 10px; }
+.badge.clickable { cursor: pointer; text-decoration: underline dotted; }
+
+.history-summary { display:flex; gap:6px; flex-wrap:wrap; padding:4px 0 8px; }
+.history-events { margin-top:8px; color:#aab; }
+.history-events > summary { cursor:pointer; font-size:11px; padding:4px 0; color:#889; }
+
+/* Active-strategies banner (B1 mismatch warning) */
+.rt-banner {
+  margin: 4px 8px; padding: 6px 10px; border-radius: 4px;
+  font-size: 12px; line-height: 1.4;
+  background: #4a2118; color: #ffd1c5; border: 1px solid #6a2a1f;
+}
+.rt-banner:empty { display: none; }
+
+/* Runtime validation panel (right column, replaces old sel-diff) */
+.sel-diff { padding: 6px 10px; border-bottom: 1px solid #1f232c;
+  background: #14171f; font-size: 11px; }
+.rt-status-row { padding: 2px 0; }
+.rt-status-row.ok   { color: #b9f5cd; }
+.rt-status-row.warn { color: #ffd99b; }
+.rt-status-row.bad  { color: #ffb3b3; }
+.rt-status-row.muted { color: #667; }
+.rt-diff-row { display:flex; gap:8px; padding: 1px 0 1px 12px; color: #ffd99b; }
+.rt-diff-row .k { color: #889; min-width: 80px; }
+/* block-reasons: coloured inline status under buttons */
+.block-reasons { padding: 4px 10px 0; font-size: 11px; min-height: 16px; }
+.block-reasons.is-running { color: #b9f5cd; }
+.block-reasons.is-blocked { color: #ffd99b; }
+
+/* Command status bar (right column, below buttons) */
+.cmd-bar { margin: 6px 10px; padding: 8px 10px; border-radius: 4px;
+  font-size: 12px; line-height: 1.45;
+  background: #14171f; border: 1px solid #2a2d34; color: #cfe1ff;
+  white-space: pre-wrap; }
+.cmd-bar.hidden { display: none; }
+.cmd-bar.waiting { background: #3a3318; border-color: #5a4421; color: #ffd99b; }
+.cmd-bar.success { background: #163a26; border-color: #2a6a47; color: #b9f5cd; }
+.cmd-bar.failure { background: #3a1818; border-color: #6a2a2a; color: #ffb3b3; }
+.cmd-bar .head { font-weight: 500; margin-bottom: 2px; }
+.cmd-bar .reset {
+  margin-top: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer;
+  background: #2a3340; color: #cfe1ff; border: 1px solid #3a4150; border-radius: 3px;
+}
+.cmd-bar .spinner {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #ffd99b; border-top-color: transparent; margin-right: 6px;
+  vertical-align: middle; animation: cmd-spin 0.9s linear infinite;
+}
+@keyframes cmd-spin { to { transform: rotate(360deg); } }
+
+/* Paper status block */
+.paper-status {
+  border-top: 1px solid #2a2d34; border-bottom: 1px solid #2a2d34;
+  background: #11141a; font-size: 12px;
+}
+.paper-status > summary {
+  list-style: none; cursor: pointer; padding: 6px 10px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: #889; background: #161922; user-select: none;
+}
+.paper-status > summary::-webkit-details-marker { display: none; }
+.paper-status .ps-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px;
+  padding: 8px 10px;
+}
+.paper-status .ps-cell { display: flex; flex-direction: column; }
+.paper-status .ps-cell .k { color: #889; font-size: 10px; }
+.paper-status .ps-cell .v { color: #e6e6e6; font-variant-numeric: tabular-nums; font-size: 13px; }
+
+/* instrument filter controls */
+.inst-controls { padding: 4px 6px; display: flex; flex-direction: column; gap: 4px; }
+.inst-controls select,
+.inst-controls input[type="search"] {
+  width: 100%; background: #1a1e26; color: #e6e6e6;
+  border: 1px solid #2c3142; border-radius: 3px;
+  padding: 4px 6px; font-size: 12px;
+}
+.inst-controls .chk-row {
+  display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: #aab;
+}
+.inst-controls .chk-row label { display: inline-flex; gap: 4px; align-items: center; }
+.inst-row .frontmark { color: #6fcf97; margin-right: 3px; }
+
+/* Parameters diff table */
+.params-diff-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.params-diff-tbl th, .params-diff-tbl td {
+  padding: 3px 8px; border-bottom: 1px solid #1f232c; text-align: left;
+}
+.params-diff-tbl thead th { color: #aab; background: #161922; font-weight: 500; font-size: 11px; }
+.params-diff-tbl tbody tr.diff td.actual { color: #ffb3b3; }
+.params-diff-tbl tbody tr.diff td.expected { color: #b9f5cd; }
+
+/* account select option styling */
+#sel-account option:disabled { color: #555; }
+
+/* settings panel (right) */
+.settings-row { padding: 8px 10px; border-bottom: 1px solid #1f232c; }
+.settings-row label { display: block; font-size: 11px; color: #889; margin-bottom: 3px; }
+.settings-row select,
+.settings-row input[type="text"] {
+  width: 100%;
+  background: #1a1e26; color: #e6e6e6;
+  border: 1px solid #2c3142; border-radius: 3px;
+  padding: 4px 6px; font-size: 12px;
+}
+.settings-row .acct-info {
+  background: #14171f; border: 1px solid #1f232c; border-radius: 4px;
+  padding: 6px 8px; font-size: 11px; line-height: 1.5;
+}
+.settings-row .acct-info .kv { display: flex; justify-content: space-between; }
+.settings-row .acct-info .kv .k { color: #889; }
+.settings-row .acct-info .kv .v { color: #e6e6e6; font-variant-numeric: tabular-nums; }
+
+/* Phase 19+ hotfix2: prominent account headline at top of right panel */
+.acct-headline {
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 6px 8px 10px 8px;
+  border: 1px solid #2a3340;
+  background: #0f1620;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.acct-headline.mode-paper { background: linear-gradient(180deg,#0e2418,#0f1620); border-color:#1f6b3a; }
+.acct-headline.mode-demo  { background: linear-gradient(180deg,#0e2418,#0f1620); border-color:#1f6b3a; }
+.acct-headline.mode-live  { background: linear-gradient(180deg,#2a0f12,#1a0d10); border-color:#a0303a; }
+.acct-headline.mode-playback { background: linear-gradient(180deg,#241a08,#1a1408); border-color:#a07a1f; }
+.acct-headline.mode-unknown,
+.acct-headline.mode-disconnected { background:#1a1a1a; border-color:#444; }
+
+.acct-headline .ah-top {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.acct-headline .ah-mode {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 3px 10px; border-radius: 4px;
+}
+.acct-headline.mode-paper .ah-mode,
+.acct-headline.mode-demo  .ah-mode { background:#1f6b3a; color:#dfffea; }
+.acct-headline.mode-live  .ah-mode { background:#a0303a; color:#ffe0e0; }
+.acct-headline.mode-playback .ah-mode { background:#a07a1f; color:#fff2cc; }
+.acct-headline.mode-unknown .ah-mode,
+.acct-headline.mode-disconnected .ah-mode { background:#444; color:#ddd; }
+
+.acct-headline .ah-name { font-size: 14px; color:#e6e6e6; font-weight:600; }
+.acct-headline .ah-conn { font-size: 11px; padding:2px 6px; border-radius:3px; }
+.acct-headline .ah-conn.connected { background:#1f6b3a; color:#dfffea; }
+.acct-headline .ah-conn.disconnected { background:#7a1f1f; color:#ffd6d6; }
+
+.acct-headline .ah-balance {
+  font-size: 22px; font-weight: 700; color:#fff;
+  font-variant-numeric: tabular-nums;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.acct-headline .ah-balance .ah-currency { font-size: 12px; color:#889; font-weight:500; }
+.acct-headline .ah-sub {
+  font-size: 11px; color:#889;
+  display:flex; gap:14px; flex-wrap:wrap;
+}
+.acct-headline .ah-sub b { color:#bcd; font-weight:500; }
+.acct-headline .ah-warn {
+  font-size: 11px; color:#ffd99b;
+  border-top: 1px dashed #443;
+  padding-top: 6px; margin-top: 2px;
+}
+.acct-headline .ah-warn.lock { color:#ff8a8a; }
+
+.locked-params {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px; line-height: 1.45; color: #cfe1ff;
+  background: #141821; border: 1px solid #1f232c; border-radius: 4px;
+  padding: 6px 8px; max-height: 200px; overflow: auto;
+}
+.locked-params .row { display: flex; justify-content: space-between; gap: 6px; }
+.locked-params .row .k { color: #889; }
+.locked-params .row .v { color: #b9f5cd; font-weight: 500; }
+.locked-params .row.mismatch .v { color: #ffb3b3; }
+
+.btn-row { display: flex; gap: 6px; padding: 8px 10px; flex-wrap: wrap; }
+.btn-row button {
+  flex: 1 1 auto; min-width: 80px;
+  padding: 6px 10px; font-size: 12px; cursor: pointer;
+  background: #2a3340; color: #cfe1ff; border: 1px solid #3a4150;
+  border-radius: 3px;
+}
+.btn-row button.primary { background: #1f5135; color: #b9f5cd; border-color: #2a6a47; }
+.btn-row button.danger  { background: #5a1f1f; color: #ffb3b3; border-color: #6a2a2a; }
+.btn-row button:disabled {
+  background: #1a1d23; color: #555; border-color: #232830; cursor: not-allowed;
+}
+
+.block-reasons {
+  padding: 6px 10px; font-size: 11px; color: #ffb3b3;
+  background: #2a1414; border-top: 1px solid #5a1f1f;
+}
+.block-reasons:empty { display: none; }
+
+/* tabs at bottom */
+.tab-bar { display: flex; gap: 0; background: #161922; border-bottom: 1px solid #2a2d34; }
+.tab-bar button {
+  background: transparent; color: #aab; border: none; border-bottom: 2px solid transparent;
+  padding: 6px 14px; font-size: 12px; cursor: pointer;
+}
+.tab-bar button.active { color: #cfe1ff; border-bottom-color: #2a4a6a; }
+.tab-pane { display: none; padding: 6px 10px; height: 100%; overflow: auto; }
+.tab-pane.active { display: block; }
+
+.muted-empty { color: #667; padding: 14px; font-size: 12px; text-align: center; }
+
+/* instrument list */
+.inst-row {
+  display: flex; justify-content: space-between; gap: 6px;
+  padding: 3px 6px; cursor: pointer; border-radius: 2px;
+  font-size: 12px;
+}
+.inst-row:hover { background: #1a1f2a; }
+.inst-row.sel { background: #1f3a5a; color: #b3d6ff; }
+.inst-row .sym { font-weight: 500; }
+.inst-row .grp { color: #667; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NT-Analyzer <span class="muted">— Торговля онлайн</span></h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/trading.html" class="top-nav-link active">Торговля онлайн</a>
+    <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
+  </nav>
+   <div class="status-strip" id="status-strip">
+    <span class="status-chip" id="chip-backend">Backend: …</span>
+    <span class="status-chip" id="chip-runtime">NT runtime: …</span>
+    <span class="status-chip" id="chip-live">Live: —</span>
+    <span class="status-chip" id="chip-acct">Аккаунт: —</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+      <span class="status-chip" id="chip-market" title="Расписание CME equity futures (MES/ES): Вс 15:00 PT → Пт 14:00 PT, ежедневная пауза 14:00–15:00 PT.">Рынок: …</span>
+      <span class="status-chip" id="chip-clock" title="Текущее время по California (Pacific Time)">…</span>
+    </div>
+  </div>
+</header>
+
+<div class="trading-grid no-right" id="trading-grid">
+
+  <!-- ============== LEFT: Performance Center ============== -->
+  <aside class="tg-left" id="performance-center">
+    <div class="tg-section-head">
+      <span class="grow">Performance Center</span>
+      <span class="muted small" id="pc-updated">—</span>
+    </div>
+    <div class="tg-body" id="pc-body">
+      <section class="pc-section" aria-label="PnL и счёт">
+        <h4>Сводка</h4>
+        <div class="pc-pnl-grid">
+          <div class="pc-card">
+            <span class="k">PnL сегодня</span>
+            <span class="v" id="pc-pnl-today">—</span>
+          </div>
+          <div class="pc-card">
+            <span class="k">Net Liquidation</span>
+            <span class="v" id="pc-netliq">—</span>
+          </div>
+          <div class="pc-card">
+            <span class="k">Активных стратегий</span>
+            <span class="v" id="pc-active-count">0</span>
+          </div>
+          <div class="pc-card">
+            <span class="k">Сделок сегодня</span>
+            <span class="v" id="pc-trades-today">0</span>
+          </div>
+        </div>
+      </section>
+      <section class="pc-section" aria-label="Equity">
+        <h4>Equity (последние 30 дней)</h4>
+        <svg class="pc-equity-svg" id="pc-equity" viewBox="0 0 200 60" preserveAspectRatio="none"></svg>
+        <div class="muted-small" id="pc-equity-meta" style="text-align:right;">—</div>
+      </section>
+      <section class="pc-section" aria-label="Активные стратегии">
+        <h4>Активные стратегии</h4>
+        <div id="pc-active-list"><div class="muted-empty" style="padding:6px;">нет</div></div>
+      </section>
+      <section class="pc-section" aria-label="Рейтинг инструментов">
+        <h4>Инструменты — рейтинг по PnL сегодня</h4>
+        <div id="pc-instr-rank"><div class="muted-empty" style="padding:6px;">нет данных</div></div>
+      </section>
+      <section class="pc-section" aria-label="Последние события">
+        <h4>Последние события</h4>
+        <div id="pc-events"><div class="muted-empty" style="padding:6px;">нет</div></div>
+      </section>
+    </div>
+  </aside>
+
+  <!-- ============== CENTER ============== -->
+  <main class="tg-mid">
+
+    <!-- center top: active strategies running in NinjaTrader -->
+    <section class="tg-mid-top">
+      <div class="tg-section-head">
+        <span class="grow">Активные стратегии в NinjaTrader</span>
+        <span class="muted small" id="rt-strats-count">0</span>
+        <span class="muted small" id="rt-hidden-count"></span>
+        <label class="rt-show-hidden"><input id="chk-show-hidden" type="checkbox"> скрытые</label>
+        <button id="btn-refresh" class="hdr-btn" type="button" style="font-size:11px;padding:2px 8px;">Обновить</button>
+      </div>
+      <div class="rt-banner" id="rt-banner"></div>
+      <div style="overflow:auto;flex:1;">
+        <table class="tg-tbl" id="rt-strats-tbl">
+          <thead>
+            <tr>
+              <th>Стратегия</th>
+              <th>Счёт</th>
+              <th>Режим</th>
+              <th>Инструмент</th>
+              <th>Timeframe</th>
+              <th>Состояние</th>
+              <th>Параметры</th>
+              <th class="num">Поз.</th>
+              <th class="num">PnL сегодня</th>
+              <th>Last update</th>
+              <th class="num">Показ</th>
+            </tr>
+          </thead>
+          <tbody id="rt-strats-body">
+            <tr><td colspan="11" class="muted-empty">Нет данных от runtime bridge.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Paper status — VWAP Short MNQ 5m v1 (Phase 9) -->
+    <details class="paper-status" id="paper-status" open>
+      <summary>Paper status — VWAP Short MNQ 5m v1
+      </summary>
+      <div id="paper-status-body">
+        <div class="muted-empty" style="padding:8px;">Загрузка журнала…</div>
+      </div>
+    </details>
+
+    <!-- Phase 23 — Trading History (closed strategy sessions) -->
+    <button type="button" id="btn-trading-history" class="hdr-btn" style="margin:8px 0 0 8px;">📋 История стратегий</button>
+    <section id="trading-history-panel" hidden style="padding:0 8px 8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;margin-top:8px;">
+        <span style="font-weight:600;">История сессий стратегий</span>
+        <button type="button" id="btn-history-refresh" class="hdr-btn">⟳ Обновить</button>
+      </div>
+      <div class="reports-wrap" style="overflow:auto;max-height:300px;">
+        <table id="history-table" class="dense tg-tbl">
+          <thead>
+            <tr>
+              <th>Стратегия</th>
+              <th>Инструмент</th>
+              <th>Аккаунт</th>
+              <th>Начало (PT)</th>
+              <th>Конец (PT)</th>
+              <th>Длительность</th>
+              <th>Параметры</th>
+              <th>Сделок / PnL</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- center bottom: analytics for selected strategy -->
+    <section class="tg-mid-bot">
+      <div class="tab-bar" id="bot-tabs">
+        <button class="active" data-tab="overview">Обзор</button>
+        <button data-tab="trades">Сделки</button>
+        <button data-tab="orders">Ордера</button>
+        <button data-tab="position">Позиция</button>
+        <button data-tab="params-diff">Parameters diff</button>
+        <button data-tab="journal">Журнал дня</button>
+        <button data-tab="events">События</button>
+        <button data-tab="history">История</button>
+      </div>
+      <div style="flex:1;overflow:hidden;position:relative;">
+        <div class="tab-pane active" id="pane-overview"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-trades"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-orders"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-position"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-params-diff"><div class="muted-empty">Сравнение параметров недоступно</div></div>
+        <div class="tab-pane" id="pane-journal"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-events"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-history"><div class="muted-empty">Выберите стратегию выше.</div></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============== RIGHT: settings & launch (hidden until row selected) ============== -->
+  <aside class="tg-right hidden" id="trading-right">
+    <div class="tg-section-head">
+      <span class="grow">Управление выбранной стратегией</span>
+      <button id="btn-close-right" type="button" class="hdr-btn"
+              style="font-size:11px;padding:2px 8px;" title="Скрыть панель">×</button>
+    </div>
+    <div style="overflow:auto;flex:1;">
+
+      <!-- Phase 19+ hotfix2: prominent current-account headline -->
+      <div id="acct-headline" class="acct-headline mode-unknown" title="Текущий выбранный аккаунт NinjaTrader. Режим определяется bridge'ом по имени и провайдеру: DEMO/Sim/Playback → paper/playback, остальное (например, реальный broker account) → LIVE.">
+        <div class="ah-top">
+          <span class="ah-mode" id="ah-mode">—</span>
+          <span class="ah-name" id="ah-name">Аккаунт не выбран</span>
+          <span class="ah-conn" id="ah-conn"></span>
+        </div>
+        <div class="ah-balance" id="ah-balance">
+          <span class="ah-amount">—</span>
+          <span class="ah-currency" id="ah-currency"></span>
+        </div>
+        <div class="ah-sub" id="ah-sub"></div>
+        <div class="ah-warn" id="ah-warn" style="display:none;"></div>
+      </div>
+
+      <div class="settings-row">
+        <label>Аккаунт NinjaTrader</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="sel-account" style="flex:1;"></select>
+          <span id="sel-account-mode" class="badge mut">—</span>
+        </div>
+        <div class="acct-info" id="acct-info" style="margin-top:6px;">
+          <div class="muted-empty" style="padding:4px;">Аккаунт не выбран.</div>
+        </div>
+        <div id="live-accounts-info" style="display:none;margin-top:4px;"></div>
+      </div>
+
+      <div class="settings-row">
+        <label>Стратегия (из выбранной строки)</label>
+        <div id="sel-strategy-display" class="acct-info" style="padding:4px 8px;">
+          <span class="muted-empty">не выбрана</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label>Инструмент (из выбранной строки)</label>
+        <div id="sel-instrument-display" class="acct-info" style="padding:4px 8px;">
+          <span class="muted-empty">не выбран</span>
+        </div>
+        <!-- legacy hidden select kept for back-compat with tests/scripts -->
+        <select id="sel-instrument" style="display:none;"></select>
+      </div>
+
+      <div class="settings-row">
+        <label>Timeframe</label>
+        <select id="sel-timeframe">
+          <option value="1 Minute">1 Minute</option>
+          <option value="5 Minute" selected>5 Minute</option>
+          <option value="15 Minute">15 Minute</option>
+          <option value="1 Hour">1 Hour</option>
+        </select>
+      </div>
+
+      <div class="settings-row">
+        <label>Locked параметры стратегии</label>
+        <div class="locked-params" id="locked-params">
+          <div class="muted-empty" style="padding:4px;">—</div>
+        </div>
+      </div>
+
+      <div class="block-reasons" id="block-reasons"></div>
+
+      <div class="btn-row">
+        <button id="btn-start" class="primary" title="Включить существующий instance в NinjaTrader. Требует выбрать строку в таблице выше.">Включить instance в NT</button>
+        <button id="btn-stop" class="danger" title="Отправить команду disable в NinjaTrader для выбранного instance.">Остановить</button>
+        <button id="btn-status" title="Принудительно обновить данные (автообновление каждые 5с)">Обновить</button>
+        <button id="btn-open-backtest" title="Открыть выбранную runtime-стратегию в бэктестировании со всеми её параметрами (instrument, timeframe, params).">Открыть в бэктесте</button>
+      </div>
+
+      <!-- Live command pipeline status bar (Phase 6.6) -->
+      <div class="cmd-bar hidden" id="cmd-status-bar"></div>
+
+      <div class="settings-row" style="border-bottom:none;">
+        <div style="font-size:11px;color:#889;line-height:1.6;">
+          <b style="color:#aab;">Режим: Monitor + Validate</b><br>
+          Платформа управляет только <b>уже существующими</b> strategy instances в NinjaTrader.<br>
+          Автоматическое создание нового instance не поддерживается NinjaTrader AddOn API.<br><br>
+          Рабочий процесс:<br>
+          1. Добавьте стратегию вручную в NinjaTrader → Strategies tab → Add.<br>
+          2. Она появится в таблице выше — выберите строку.<br>
+          3. Платформа проверит параметры и начнёт мониторинг.<br>
+          4. Кнопка «Включить / Остановить» управляет этим instance.<br><br>
+          Live и demo аккаунты обрабатываются одинаково: если NinjaTrader подключён к Live, управление работает так же, как на Sim/Playback.
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script src="trading.js?v=20260506-history-hidden1"></script>
+<script src="market_clock.js?v=20260502-hotfix5"></script>
+</body>
+</html>

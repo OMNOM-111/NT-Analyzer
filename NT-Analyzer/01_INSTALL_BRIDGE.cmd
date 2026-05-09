@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo [NT-Analyzer] Phase B: install bridge DLL and config
+echo [NT-Analyzer] install bridge DLL and config
 echo.
 echo IMPORTANT: close NinjaTrader completely before running this.
 echo.

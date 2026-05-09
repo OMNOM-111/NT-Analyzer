@@ -35,7 +35,7 @@ def _set_temp_root(tmp: Path) -> None:
     ops._project_root = lambda: workspace  # type: ignore[assignment]
     (workspace / "data" / "ops").mkdir(parents=True, exist_ok=True)
     # also create a fake journal CSV with header for B1
-    base = tmp / "РАЗРАБОТКА СТРАТЕГИЙ" / "PAPER_B1_SHORTONLY"
+    base = tmp / "NT-Analyzer" / "data" / "profiles" / "paper_b1_shortonly"
     base.mkdir(parents=True, exist_ok=True)
     (base / "PAPER_B1_SHORTONLY_PROFILE.json").write_text("{}", encoding="utf-8")
     (base / "PAPER_B1_SHORTONLY_RUNBOOK.md").write_text("# runbook\n", encoding="utf-8")
@@ -76,9 +76,11 @@ def case(name: str):
 def t01(tmp):
     strats = ops.list_strategies()
     sids = [s["strategy_id"] for s in strats]
-    assert "b1_shortonly" in sids, sids
+    assert "vwap_short_mnq_5m_v1" in sids, sids
     b1 = ops.get_strategy("b1_shortonly")
     assert b1 is not None
+    assert b1["strategy_id"] == "vwap_short_mnq_5m_v1"
+    assert "b1_shortonly" in b1.get("legacy_strategy_ids", [])
     assert b1["status"] == "paper_ready"
     assert b1["class_name"] == "NTAMicroVwapRiskPilot"
     assert b1["validation_job_id"] == "ui_20260501T185820607Z"
@@ -183,7 +185,7 @@ def t08(tmp):
 @case("missing journal CSV is recoverable warning, not crash")
 def t09(tmp):
     # delete the CSV
-    base = tmp / "РАЗРАБОТКА СТРАТЕГИЙ" / "PAPER_B1_SHORTONLY"
+    base = tmp / "NT-Analyzer" / "data" / "profiles" / "paper_b1_shortonly"
     csv_p = base / "PAPER_B1_SHORTONLY_DAILY_JOURNAL.csv"
     if csv_p.exists():
         csv_p.unlink()

@@ -1,6 +1,6 @@
 {
-  "project_root": "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer",
-  "ninjatrader_user_dir": "C:\\Users\\dimon\\Documents\\NinjaTrader 8",
+  "project_root": "C:\\Path\\To\\NT-Analyzer",
+  "ninjatrader_user_dir": "C:\\Path\\To\\NinjaTrader 8",
   "poll_interval_ms": 1500,
   "heartbeat_interval_ms": 5000,
   "heartbeat_ttl_ms": 60000,

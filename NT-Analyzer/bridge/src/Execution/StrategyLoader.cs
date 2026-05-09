@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using NTAnalyzerBridge.Util;
 
 namespace NTAnalyzerBridge.Execution
@@ -24,6 +26,7 @@ namespace NTAnalyzerBridge.Execution
         private Assembly _customAssembly;
         private Type _strategyBaseType;
         private List<Type> _whitelist;
+        private DateTime _customAssemblyDiskMtimeUtc = DateTime.MinValue;
 
         public StrategyLoader(string ninjaTraderUserDir)
         {
@@ -39,37 +42,21 @@ namespace NTAnalyzerBridge.Execution
         /// </summary>
         public void Refresh()
         {
-            // Resolve the strategy base type explicitly so we don't depend
-            // on NinjaTrader.Custom being already in the AppDomain when we run.
-            _strategyBaseType = Type.GetType(
-                "NinjaTrader.NinjaScript.Strategies.Strategy, NinjaTrader.Core",
-                throwOnError: false);
-
-            if (_strategyBaseType == null)
-            {
-                // Older/newer builds may keep Strategy in NinjaTrader.Custom
-                _strategyBaseType = AppDomain.CurrentDomain.GetAssemblies()
-                    .Select(a => SafeGetType(a, "NinjaTrader.NinjaScript.Strategies.Strategy"))
-                    .FirstOrDefault(t => t != null);
-            }
-
-            if (_strategyBaseType == null)
-                throw new InvalidOperationException(
-                    "NinjaTrader.NinjaScript.Strategies.Strategy not found in current AppDomain");
-
-            // After NinjaScript Compile, NT8 loads a NEW NinjaTrader.Custom
-            // assembly into the same AppDomain side-by-side with the previous
-            // one. We must pick the most recently loaded copy so that the
-            // catalog reflects what NinjaTrader currently sees, not what was
-            // present when the AddOn was first initialized.
-            _customAssembly = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(a => string.Equals(
-                    a.GetName().Name, "NinjaTrader.Custom", StringComparison.OrdinalIgnoreCase))
-                .LastOrDefault();
+            // Prefer the assembly already loaded by NinjaTrader. Strategy
+            // Analyzer execution expects strategy types from NT's AppDomain;
+            // byte-loaded copies can enumerate incorrectly because their base
+            // Strategy type is not the same runtime identity.
+            _customAssembly = FindLoadedCustomAssembly()
+                              ?? TryLoadCurrentCustomDllBytes();
 
             if (_customAssembly == null)
                 throw new InvalidOperationException(
                     "NinjaTrader.Custom assembly not loaded in current AppDomain");
+
+            _strategyBaseType = ResolveStrategyBaseType(_customAssembly);
+            if (_strategyBaseType == null)
+                throw new InvalidOperationException(
+                    "NinjaTrader.NinjaScript.Strategies.Strategy not found");
 
             // Verify physical location matches the configured NinjaTrader user dir.
             string actualLocation = TryGetAssemblyLocation(_customAssembly);
@@ -102,7 +89,8 @@ namespace NTAnalyzerBridge.Execution
                             && _strategyBaseType.IsAssignableFrom(t))
                 .ToList();
 
-            BridgeLog.Info("Strategy whitelist refreshed: " + _whitelist.Count + " strategies");
+            BridgeLog.Info("Strategy whitelist refreshed: " + _whitelist.Count +
+                           " strategies [" + string.Join(", ", WhitelistedClassNames()) + "]");
         }
 
         public IReadOnlyList<string> WhitelistedClassNames()
@@ -141,6 +129,109 @@ namespace NTAnalyzerBridge.Execution
             }
             catch { }
             return null;
+        }
+
+        private Assembly TryLoadCurrentCustomDllBytes()
+        {
+            DateTime mtime = SafeGetFileMtimeUtc(_expectedCustomDllFullPath);
+            if (mtime == DateTime.MinValue)
+                return null;
+
+            if (_customAssembly != null && mtime == _customAssemblyDiskMtimeUtc)
+                return _customAssembly;
+
+            Exception lastError = null;
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                try
+                {
+                    byte[] raw = ReadAllBytesShared(_expectedCustomDllFullPath);
+                    var asm = Assembly.Load(raw);
+                    _customAssemblyDiskMtimeUtc = mtime;
+                    BridgeLog.Info("StrategyLoader: loaded NinjaTrader.Custom from disk bytes " +
+                                   "(mtime=" + mtime.ToString("o") +
+                                   ", bytes=" + raw.Length + ")");
+                    return asm;
+                }
+                catch (IOException ex)
+                {
+                    lastError = ex;
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    lastError = ex;
+                }
+                catch (BadImageFormatException ex)
+                {
+                    lastError = ex;
+                    break;
+                }
+
+                Thread.Sleep(150);
+            }
+
+            if (lastError != null)
+                BridgeLog.Warn("StrategyLoader: could not load current NinjaTrader.Custom.dll bytes; " +
+                               "falling back to AppDomain assembly: " + lastError.Message);
+            return null;
+        }
+
+        private static Assembly FindLoadedCustomAssembly()
+        {
+            return AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => string.Equals(
+                    a.GetName().Name, "NinjaTrader.Custom", StringComparison.OrdinalIgnoreCase))
+                .LastOrDefault();
+        }
+
+        private static Type ResolveStrategyBaseType(Assembly customAssembly)
+        {
+            var t = Type.GetType(
+                "NinjaTrader.NinjaScript.Strategies.Strategy, NinjaTrader.Core",
+                throwOnError: false);
+            if (t != null) return t;
+
+            t = AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => SafeGetType(a, "NinjaTrader.NinjaScript.Strategies.Strategy"))
+                .FirstOrDefault(x => x != null);
+            if (t != null) return t;
+
+            return customAssembly == null
+                ? null
+                : SafeGetType(customAssembly, "NinjaTrader.NinjaScript.Strategies.Strategy");
+        }
+
+        private static DateTime SafeGetFileMtimeUtc(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return DateTime.MinValue;
+                return File.GetLastWriteTimeUtc(path);
+            }
+            catch { return DateTime.MinValue; }
+        }
+
+        private static byte[] ReadAllBytesShared(string path)
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                                           FileShare.ReadWrite | FileShare.Delete))
+            {
+                if (fs.Length > int.MaxValue)
+                    throw new IOException("assembly is too large to load into memory: " + fs.Length);
+                byte[] bytes = new byte[(int)fs.Length];
+                int offset = 0;
+                while (offset < bytes.Length)
+                {
+                    int n = fs.Read(bytes, offset, bytes.Length - offset);
+                    if (n <= 0) break;
+                    offset += n;
+                }
+                if (offset == bytes.Length) return bytes;
+
+                byte[] trimmed = new byte[offset];
+                Buffer.BlockCopy(bytes, 0, trimmed, 0, offset);
+                return trimmed;
+            }
         }
 
         private static Type SafeGetType(Assembly a, string fullName)

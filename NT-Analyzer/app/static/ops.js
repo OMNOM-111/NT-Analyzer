@@ -187,12 +187,12 @@ function renderParamsPanel(s) {
     </div>
   </div>`;
 
-  // Locked params section (B1 ShortOnly)
+  // Locked params section (VWAP Short MNQ 5m v1)
   const locked = s.locked_params || {};
   if (Object.keys(locked).length > 0) {
     const rtParams = rt.params || {};
     html += `<div class="section">
-      <div class="section-title">Заблокированные параметры B1 ShortOnly</div>
+      <div class="section-title">Заблокированные параметры VWAP Short MNQ 5m v1</div>
       <div class="small muted" style="margin-bottom:6px">Параметры жёстко зафиксированы. Bridge отклоняет команды с любым отличием.</div>
       <table class="params-table">
         <thead><tr><th>Параметр</th><th>Требуется</th><th>В NT runtime</th></tr></thead>

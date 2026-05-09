@@ -274,12 +274,37 @@ def t08(tmp):
         f"runtime_enabled must be False when bridge offline, got: {view['runtime_enabled']}"
 
 
+@case("t09: scc scans NT-Analyzer_strategies first and keeps legacy root fallback")
+def t09(tmp):
+    import unittest.mock as mock
+    from app import server
+
+    preferred = tmp / "Strategies" / "NT-Analyzer_strategies"
+    legacy = tmp / "Strategies"
+    (preferred / "NTAMicroVwapRiskPilot").mkdir(parents=True, exist_ok=True)
+    (preferred / "NTAMicroVwapRiskPilot" / "NTAMicroVwapRiskPilot.cs").write_text(
+        "// preferred strategy\n",
+        encoding="utf-8",
+    )
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / "NTAnalyzerEveryNBarLong.cs").write_text("// legacy standalone\n", encoding="utf-8")
+
+    with mock.patch.object(server, "_NT_STRATEGIES_DIR", preferred), \
+         mock.patch.object(server, "_NT_STRATEGIES_LEGACY_DIR", legacy):
+        result = server._build_scc_strategies()
+
+    names = [row.get("class_name") for row in result.get("strategies") or []]
+    assert "NTAMicroVwapRiskPilot" in names, f"preferred folder class missing, got {names}"
+    assert "NTAnalyzerEveryNBarLong" in names, f"legacy root fallback missing, got {names}"
+    assert result["nt_strat_dir_ok"] is True, "preferred NT-Analyzer_strategies dir must be reported as present"
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08]
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09]
     print(f"Running {len(cases)} SCC v2 tests:")
     for c in cases:
         c()

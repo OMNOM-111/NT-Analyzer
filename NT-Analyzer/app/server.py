@@ -18,13 +18,17 @@ Endpoints:
 """
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
 import socket
+import subprocess
 import sys
 import threading
 import urllib.parse
+from datetime import timezone
+from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,6 +51,24 @@ else:
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _do_restart_server() -> None:
+    """Spawn a helper that waits for the old process to exit, then starts a new one."""
+    port = sys.argv[1] if len(sys.argv) > 1 else str(DEFAULT_PORT)
+    cwd = str(_PROJECT_ROOT)
+    exe = sys.executable
+    helper = (
+        "import time, subprocess, sys\n"
+        f"time.sleep(1.2)\n"
+        f"subprocess.Popen([{exe!r}, '-m', 'app.server', {port!r}], cwd={cwd!r})\n"
+    )
+    kw: dict = {}
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    subprocess.Popen([exe, "-c", helper], cwd=cwd, **kw)
+    os._exit(0)
 
 # Allowed origin hosts for mutating requests (POST). Browsers attach Origin
 # automatically; non-browser clients (CLI, PowerShell Invoke-RestMethod) do
@@ -59,10 +81,27 @@ _ALLOWED_ORIGIN_HOSTS = ("127.0.0.1", "localhost")
 # Strategy Control Center — real source from NinjaTrader Strategies folder
 # ---------------------------------------------------------------------------
 
-_NT_STRATEGIES_DIR = Path(
-    r"C:\Users\dimon\Documents\NinjaTrader 8\bin\Custom\Strategies"
-)
-_SCC_ACTIVE_CLASSES: set = {"NTAMicroVwapRiskPilot"}
+def _default_ninjatrader_user_dir() -> Path:
+    override = os.environ.get("NINJATRADER_USER_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / "Documents" / "NinjaTrader 8"
+
+
+_NT_USER_DIR = _default_ninjatrader_user_dir()
+_NT_STRATEGIES_DIR = _NT_USER_DIR / "bin" / "Custom" / "Strategies" / "NT-Analyzer_strategies"
+_NT_STRATEGIES_LEGACY_DIR = _NT_USER_DIR / "bin" / "Custom" / "Strategies"
+_SCC_ACTIVE_CLASSES: set = {
+    "PullbackMNQ5mV2",
+    "VWAPPullbackMGC5mV1",
+    "NTAMicroVwapRiskPilot",
+    "NTAMicroVwapRiskExplorer",
+    "NTAMicroSessionEdgeExplorer",
+    "NTAMicroMnqScalpPilot",
+    "NTAMnqMicroOrbOpenScalp",
+    "NTAnalyzerEveryNBarLong",
+    "StrategiyaUrovney",
+}
 _SCC_REJECTED_CLASSES: set = {
     "NTAMicroOrbPilot",
     "NTAMicroVwapGapMirrorPilot",
@@ -70,29 +109,48 @@ _SCC_REJECTED_CLASSES: set = {
 }
 
 
+def _iter_nt_strategy_entries():
+    seen_roots = set()
+    for root in (_NT_STRATEGIES_DIR, _NT_STRATEGIES_LEGACY_DIR):
+        if root in seen_roots or not root.is_dir():
+            continue
+        seen_roots.add(root)
+        for entry in sorted(root.iterdir()):
+            if root == _NT_STRATEGIES_LEGACY_DIR and entry.is_dir() and entry.name == _NT_STRATEGIES_DIR.name:
+                continue
+            yield entry
+
+
 def _build_scc_strategies() -> Dict[str, Any]:
-    """Scan real NinjaTrader Strategies folder + merge runtime telemetry."""
+    """Scan active NinjaTrader strategy roots + merge runtime telemetry."""
     folder_strats: list = []
-    if _NT_STRATEGIES_DIR.is_dir():
-        for entry in sorted(_NT_STRATEGIES_DIR.iterdir()):
-            if not entry.is_dir():
-                continue
+    seen_classes = set()
+    for entry in _iter_nt_strategy_entries():
+        if entry.name.startswith("_"):  # archived/rejected folders start with _
+            continue
+        if entry.is_dir():
             name = entry.name
-            if name.startswith("_"):  # archived/rejected folders start with _
-                continue
             cs_files = sorted(entry.glob("*.cs"))
-            if not cs_files:
-                continue
-            folder_strats.append({
-                "class_name": name,
-                "is_active":  name in _SCC_ACTIVE_CLASSES,
-                "is_rejected": name in _SCC_REJECTED_CLASSES,
-                "cs_files":   [f.name for f in cs_files],
-            })
+        elif entry.is_file() and entry.suffix.lower() == ".cs" and not entry.name.startswith("@"): 
+            name = entry.stem
+            cs_files = [entry]
+        else:
+            continue
+        if name in seen_classes:
+            continue
+        seen_classes.add(name)
+        folder_strats.append({
+            "class_name": name,
+            "is_active":  name in _SCC_ACTIVE_CLASSES,
+            "is_rejected": name in _SCC_REJECTED_CLASSES,
+            "cs_files":   [f.name for f in cs_files],
+        })
 
     hb = ops_runtime.read_heartbeat()
     rt_raw = ops_runtime.read_strategies_raw()
     rt_by_cls = {str(r.get("strategy_class") or "").lower(): r for r in rt_raw if r.get("strategy_class")}
+    cat = jobqueue.read_strategies_catalog() or {}
+    cat_by_cls = {str(s.get("class_name") or ""): s for s in cat.get("strategies") or [] if isinstance(s, dict)}
 
     active_strategies = []
     for fs in folder_strats:
@@ -104,6 +162,7 @@ def _build_scc_strategies() -> Dict[str, Any]:
             if s.get("class_name") == cls:
                 reg_s = s
                 break
+        cat_s = cat_by_cls.get(cls) or {}
         rt = rt_by_cls.get(cls.lower())
         runtime_detected = bool(rt) and bool(hb.get("present")) and bool(hb.get("fresh"))
         runtime_enabled  = bool(rt and rt.get("enabled"))
@@ -113,7 +172,7 @@ def _build_scc_strategies() -> Dict[str, Any]:
             **fs,
             "registry_id":      (reg_s or {}).get("strategy_id"),
             "registry_status":  (reg_s or {}).get("status", "unknown"),
-            "display_name":     (reg_s or {}).get("display_name", cls),
+            "display_name":     (reg_s or {}).get("display_name") or cat_s.get("display_name") or cls,
             "locked_params":    (reg_s or {}).get("locked_params", {}),
             "runtime":          rt,
             "runtime_detected": runtime_detected,
@@ -161,6 +220,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- helpers -------------------------------------------------
 
+    @staticmethod
+    def _is_client_disconnect_error(err: BaseException) -> bool:
+        # Browsers may cancel in-flight requests during navigation/reload.
+        if isinstance(err, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return True
+        if isinstance(err, OSError):
+            winerror = getattr(err, "winerror", None)
+            if winerror in {10053, 10054, 64}:
+                return True
+            if err.errno in {errno.EPIPE, errno.ECONNRESET}:
+                return True
+        return False
+
     def _json_safe(self, value: Any) -> Any:
         """Return JSON-standard-safe data.
 
@@ -185,14 +257,19 @@ class Handler(BaseHTTPRequestHandler):
             ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        # CSP-ish hardening for a local UI
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            # CSP-ish hardening for a local UI
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return
+            raise
 
     def _err(self, status: int, msg: str) -> None:
         self._json(status, {"error": msg})
@@ -258,6 +335,29 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- static (UI bundle) -------------------------------------
 
+    def _static_cache_control(self, target: Path) -> str:
+        # Keep UI files fresh while still allowing the browser to reuse cached
+        # responses via conditional requests and bfcache.
+        if target.suffix.lower() == ".html":
+            return "no-cache"
+        return "public, max-age=120, must-revalidate"
+
+    def _not_modified(self, target: Path) -> bool:
+        raw_ims = self.headers.get("If-Modified-Since")
+        if not raw_ims:
+            return False
+        try:
+            ims = parsedate_to_datetime(raw_ims)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return False
+        if ims.tzinfo is None:
+            ims = ims.replace(tzinfo=timezone.utc)
+        try:
+            mtime = target.stat().st_mtime
+        except OSError:
+            return False
+        return int(ims.timestamp()) >= int(mtime)
+
     def _serve_static(self, rel: str) -> None:
         if not rel or rel == "/":
             rel = "index.html"
@@ -273,14 +373,29 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.NOT_FOUND, f"static not found: {rel}")
             return
         ct = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        data = target.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", ct)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(data)
+        cache_control = self._static_cache_control(target)
+        last_modified = formatdate(target.stat().st_mtime, usegmt=True)
+        try:
+            if self._not_modified(target):
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("Cache-Control", cache_control)
+                self.send_header("Last-Modified", last_modified)
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                return
+            data = target.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", cache_control)
+            self.send_header("Last-Modified", last_modified)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return
+            raise
 
     # ------------- routing -------------------------------------------------
 
@@ -320,15 +435,34 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, jobqueue.build_catalog_response())
             return
 
+        # Phase 22e — Strategy Profiles registry (best-of/locked configs).
+        if path == "/api/profiles":
+            self._json(HTTPStatus.OK, jobqueue.read_strategy_profiles())
+            return
+
+        # Phase 24 — Instrument coverage (which symbols have a strategy).
+        if path == "/api/coverage":
+            self._json(HTTPStatus.OK, jobqueue.read_instrument_coverage())
+            return
+
         if path == "/api/jobs":
             try:
                 limit = int((qs.get("limit") or ["50"])[0])
             except ValueError:
                 limit = 50
+            try:
+                offset = int((qs.get("offset") or ["0"])[0])
+            except ValueError:
+                offset = 0
             limit = max(1, min(1000, limit))
+            offset = max(0, offset)
+            counts = jobqueue.queue_counts()
             self._json(HTTPStatus.OK, {
-                "counts": jobqueue.queue_counts(),
-                "jobs": jobqueue.list_jobs(limit=limit),
+                "counts": counts,
+                "offset": offset,
+                "limit": limit,
+                "total": sum(int(v or 0) for v in counts.values()),
+                "jobs": jobqueue.list_jobs(limit=limit, offset=offset),
             })
             return
 
@@ -390,9 +524,17 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((qs.get("limit") or ["50"])[0])
             except ValueError:
                 limit = 50
+            try:
+                offset = int((qs.get("offset") or ["0"])[0])
+            except ValueError:
+                offset = 0
             limit = max(1, min(1000, limit))
+            offset = max(0, offset)
             self._json(HTTPStatus.OK, {
-                "batches": jobqueue.list_batches(limit=limit),
+                "offset": offset,
+                "limit": limit,
+                "total": jobqueue.count_batches(),
+                "batches": jobqueue.list_batches(limit=limit, offset=offset),
             })
             return
 
@@ -471,10 +613,55 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ops/runtime/health":
             self._json(HTTPStatus.OK, ops_runtime.health())
             return True
+        if path == "/api/ops/runtime/strategy-display":
+            self._json(HTTPStatus.OK, ops_runtime.read_strategy_display_prefs())
+            return True
+        if path == "/api/ops/runtime/strategy-history":
+            try:
+                limit_events = int((qs.get("limit_events") or ["500"])[0])
+            except ValueError:
+                limit_events = 500
+            try:
+                limit_sessions = int((qs.get("limit_sessions") or ["200"])[0])
+            except ValueError:
+                limit_sessions = 200
+            self._json(HTTPStatus.OK, ops_runtime.read_strategy_history(
+                limit_events=limit_events,
+                limit_sessions=limit_sessions,
+                strategy_id=(qs.get("strategy_id") or [None])[0],
+                runtime_instance_id=(qs.get("runtime_instance_id") or [None])[0],
+                class_name=(qs.get("class_name") or [None])[0],
+            ))
+            return True
+        if path == "/api/ops/runtime/history":
+            try:
+                limit = int((qs.get("limit") or ["100"])[0])
+            except ValueError:
+                limit = 100
+            sessions = ops_runtime.get_strategy_sessions(limit=limit)
+            self._json(HTTPStatus.OK, {"sessions": sessions})
+            return True
         if path == "/api/ops/runtime/strategies":
+            # Trading Online expects the bridge to be the source of truth.
+            # Always use merge_all_runtime_strategies() which iterates the raw
+            # bridge strategies.json — never adds fake registry-only entries.
+            sel_acct = (qs.get("selected_account")    or [None])[0]
+            sel_inst = (qs.get("selected_instrument") or [None])[0]
+            sel_tf   = (qs.get("selected_timeframe")  or [None])[0]
+            runtime_list = ops_runtime.merge_all_runtime_strategies(
+                selected_account=sel_acct,
+                selected_instrument=sel_inst,
+                selected_timeframe=sel_tf,
+            )
+            raw_list = ops_runtime.read_strategies_raw()
             self._json(HTTPStatus.OK, {
-                "strategies": ops_runtime.merge_all_strategies(),
-                "raw":        ops_runtime.read_strategies_raw(),
+                "strategies": runtime_list,
+                "raw":        raw_list,
+                "source":     "runtime_bridge",
+                "warnings":   [] if runtime_list else [
+                    "NinjaTrader bridge не видит активных strategy instances. "
+                    "Проверьте, что стратегия включена в NinjaTrader и bridge пересобран."
+                ],
             })
             return True
         if sub == "runtime" and len(parts) >= 4 and parts[3] == "strategies" and len(parts) == 5:
@@ -483,6 +670,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/ops/runtime/positions":
             self._json(HTTPStatus.OK, ops_runtime.read_positions())
+            return True
+        if path == "/api/ops/runtime/accounts":
+            self._json(HTTPStatus.OK, ops_runtime.read_accounts_with_source())
             return True
         if path == "/api/ops/runtime/executions":
             sid = (qs.get("strategy_id") or [None])[0]
@@ -516,6 +706,44 @@ class Handler(BaseHTTPRequestHandler):
             try: limit = int((qs.get("limit") or ["200"])[0])
             except ValueError: limit = 200
             self._json(HTTPStatus.OK, {"results": ops_runtime.read_command_results(limit)})
+            return True
+        if path == "/api/ops/runtime/command-status":
+            try: timeout = int((qs.get("timeout_sec") or ["30"])[0])
+            except ValueError: timeout = 30
+            cid = (qs.get("command_id") or [None])[0]
+            since = (qs.get("since_ts") or [None])[0]
+            if cid:
+                self._json(HTTPStatus.OK,
+                           ops_runtime.get_command_status(cid, timeout_sec=timeout))
+            else:
+                self._json(HTTPStatus.OK, {
+                    "statuses": ops_runtime.get_command_statuses_since(
+                        since_ts=since, timeout_sec=timeout),
+                })
+            return True
+        if path == "/api/ops/runtime/instruments":
+            # Returns per-root current/all instruments for the Trading Online selector.
+            # Each root entry has front_month (most recent), and all contracts.
+            from app.catalog import get_instruments  # type: ignore
+            try:
+                all_instr = get_instruments()
+            except Exception:
+                all_instr = []
+            root_map: dict = {}
+            for ins in all_instr:
+                root = str(ins.get("root") or ins.get("symbol","")[:3])
+                root_map.setdefault(root, []).append(ins)
+            result = []
+            for root, contracts in sorted(root_map.items()):
+                def _dl(c: dict) -> str:
+                    return str(c.get("data_last") or "")
+                contracts_sorted = sorted(contracts, key=_dl, reverse=True)
+                result.append({
+                    "root": root,
+                    "front_month": contracts_sorted[0] if contracts_sorted else None,
+                    "contracts": contracts_sorted,
+                })
+            self._json(HTTPStatus.OK, {"roots": result})
             return True
 
         # /api/ops/strategies/{id}[/sub]
@@ -585,6 +813,8 @@ class Handler(BaseHTTPRequestHandler):
                     class_name=str(body.get("class_name") or ""),
                     instrument=str(body.get("instrument") or ""),
                     contract_month=str(body.get("contract_month") or ""),
+                    timeframe=str(body.get("timeframe") or ""),
+                    runtime_instance_id=str(body.get("runtime_instance_id") or ""),
                     params=body.get("params") if isinstance(body.get("params"), dict) else None,
                 )
                 self._json(HTTPStatus.OK, out); return
@@ -592,6 +822,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(e.status, str(e)); return
             except Exception as e:  # pragma: no cover
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"command error: {e}"); return
+        if path == "/api/ops/runtime/strategy-display":
+            try:
+                out = ops_runtime.set_strategy_display_hidden(
+                    class_name=str(body.get("class_name") or ""),
+                    hidden=bool(body.get("hidden")),
+                )
+                self._json(HTTPStatus.OK, out); return
+            except ops.OpsError as e:
+                self._err(e.status, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"display prefs error: {e}"); return
+        # /api/ops/profiles/{profile_id}/{update|delete}
+        if len(parts) == 5 and parts[0] == "api" and parts[1] == "ops" and parts[2] == "profiles":
+            profile_id = urllib.parse.unquote(parts[3])
+            action = parts[4]
+            try:
+                if action == "update":
+                    updates = body.get("updates") if isinstance(body.get("updates"), dict) else {}
+                    self._json(HTTPStatus.OK, jobqueue.update_strategy_profile(
+                        profile_id,
+                        updates,
+                        action=str(body.get("action") or "update"),
+                    )); return
+                if action == "delete":
+                    self._json(HTTPStatus.OK, jobqueue.delete_strategy_profile(profile_id)); return
+            except jobqueue.JobValidationError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"profile update error: {e}"); return
         # /api/ops/strategies/{id}/{action}[/{sub}]
         if len(parts) >= 5 and parts[0] == "api" and parts[1] == "ops" and parts[2] == "strategies":
             sid = parts[3]
@@ -707,11 +966,13 @@ class Handler(BaseHTTPRequestHandler):
                            and parts[1] == "batches" and parts[3] == "cancel")
         is_catalog_refresh = (path == "/api/catalog/refresh")
         is_margins_refresh = (path == "/api/margins/refresh")
+        is_server_restart = (path == "/api/server/restart")
         is_ops = path.startswith("/api/ops/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
+                or is_server_restart
                 or is_ops):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
@@ -739,6 +1000,13 @@ class Handler(BaseHTTPRequestHandler):
             out = marginrefresh.refresh_margins_now(trigger="manual")
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_GATEWAY
             self._json(status, out)
+            return
+
+        if is_server_restart:
+            self._json(HTTPStatus.OK, {"status": "restarting"})
+            t = threading.Timer(0.6, _do_restart_server)
+            t.daemon = True
+            t.start()
             return
 
         if is_cancel_job:
@@ -837,7 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
                 session_template=str(body.get("session_template") or "CME US Index Futures RTH"),
                 timezone=str(body.get("timezone") or "UTC"),
                 role=str(body.get("role") or "research"),
-                job_id=None,  # never trust client-supplied ids in MVP-1
+                job_id=None,  # never trust client-supplied ids
             )
         except (TypeError, ValueError) as e:
             self._err(HTTPStatus.BAD_REQUEST, f"bad request: {e}")

@@ -43,7 +43,7 @@ namespace NTAnalyzerBridge.Config
         /// ONLY when this flag is true AND PathA2 produced no result — in
         /// 8.1.6.3 it reliably throws NullReferenceException because the
         /// optimizer expects context that isn't set up outside Strategy
-        /// Analyzer. MVP-0 default = false. Set to true only when
+        /// Analyzer. Default = false. Set to true only when
         /// investigating Optimizer internals.
         /// </summary>
         [JsonProperty("enable_path_a_optimizer_runbacktest")]

@@ -1,45 +1,94 @@
 # Local market data exports are large and machine-specific.
 /data/
 
-# Runtime queues, run artifacts, logs, and local backend output.
-/NT-Analyzer/jobs/**
-!/NT-Analyzer/jobs/
-!/NT-Analyzer/jobs/*/
-!/NT-Analyzer/jobs/*/.gitkeep
-/NT-Analyzer/data/batches/**
-/NT-Analyzer/data/commands/**
-/NT-Analyzer/data/ops/**
-/NT-Analyzer/data/runtime/**
+# Backups and local environments.
+/BACKUPS/
+/NT-Analyzer_backup_*/
+/.venv/
+/.pytest_cache/
+/NT-Analyzer/.venv/
+/NT-Analyzer/.pytest_cache/
+**/.venv/
+**/.pytest_cache/
+
+# Python caches and virtualenv artifacts.
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py,cover
+
+# C# / .NET / NinjaTrader bridge build outputs.
+**/bin/
+**/obj/
+*.pdb
+*.dll
+*.exe
+*.cache
+
+# Visual Studio / VS Code / IDE files.
+/.vs/
+/.vscode/
+/.idea/
+**/.vs/
+**/.vscode/
+**/.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NT-Analyzer runtime queues, outputs, reports, logs, and local state.
+/NT-Analyzer/jobs/
+/NT-Analyzer/data/batches/
+/NT-Analyzer/data/commands/
+/NT-Analyzer/data/reports/
+/NT-Analyzer/data/profiles/
+/NT-Analyzer/data/research/
+/NT-Analyzer/data/runtime/
+/NT-Analyzer/data/ops/
+/NT-Analyzer/data/last_job.txt
+/NT-Analyzer/logs/
+/NT-Analyzer/_backup_before_restore_*/
+/NT-Analyzer/research_archive/
+
+# Keep only safe static catalog sources in Git.
 /NT-Analyzer/data/catalog/*.json
 !/NT-Analyzer/data/catalog/instrument_groups.json
 !/NT-Analyzer/data/catalog/margins.json
-# Runtime artifacts of the margin refresher (atomic-write tmp, legacy backups)
-/NT-Analyzer/data/catalog/*.json.tmp
-/NT-Analyzer/data/catalog/*.json.bak
+
+# Temporary runtime/result/error/heartbeat artifacts.
+**/heartbeat.json
+**/heartbeat.json.tmp
+**/result.json.tmp
+**/result.tmp.json
+**/error.json.tmp
+**/error.tmp.json
+**/*.json.tmp
+**/*.json.bak
+**/*.tmp
+
+# Local logs and ad-hoc generated files.
 /NT-Analyzer/docs/*.new
-/NT-Analyzer/data/last_job.txt
 /NT-Analyzer/data/*.log
 /NT-Analyzer/data/*.err
 /NT-Analyzer/*.log
 /NT-Analyzer/*.err
 /NT-Analyzer/*.out
 /NT-Analyzer/app/*.log
-/NT-Analyzer/logs/
-/NT-Analyzer/_backup_before_restore_*/
 
-# Build outputs and caches.
-**/bin/
-**/obj/
-**/__pycache__/
-*.pyc
-*.pdb
-*.dll
+# Local machine-specific configs. Keep only safe example configs.
+/NT-Analyzer/bridge/NTAnalyzerBridge.config.json
+/NT-Analyzer/bridge/NTAnalyzerBridge.config.*.json
+!/NT-Analyzer/bridge/NTAnalyzerBridge.config.example.json
+/NT-Analyzer/bridge/*.local.json
+/NT-Analyzer/**/*.local.json
+/NT-Analyzer/**/*.user.json
 
-# Local IDE/system files.
-.vs/
-.vscode/
-.idea/
-*.user
-*.suo
+# Explicit audit/runtime artifacts called out before first public push.
+/NT-Analyzer/data/ops/audit_log.jsonl
+
+# OS cruft.
 Thumbs.db
 desktop.ini
+.DS_Store

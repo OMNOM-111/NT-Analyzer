@@ -1,9 +1,8 @@
-# Контракт данных v0 (MVP-0)
+# Контракт данных NT-Analyzer
 
-Это **минимальная** версия контракта только для PoC bridge.
-Полная формальная схема (JSON Schema / Pydantic / TypeScript) будет
-сделана на Этапе 4 «Контракт данных v1». До тех пор схема ниже —
-рабочее соглашение между AddOn и CLI.
+Это рабочее соглашение между backend, UI и NinjaTrader bridge. Формальная
+JSON Schema может быть добавлена позже, но текущие поля ниже уже используются
+приложением и сохраненными job/result артефактами.
 
 `schema_version` обязателен с самого начала, чтобы будущие миграции
 работали корректно.
@@ -37,11 +36,11 @@
     // Подсказка для логов и сверки. НЕ используется для загрузки кода.
     // Если путь не совпадает с реально найденным через reflection — bridge
     // добавляет verification_warning, но использует именно reflected путь.
-    "source_file_hint": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+    "source_file_hint": "C:\\Path\\To\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
 
     "parameters": {
       // имя параметра -> значение, как ожидает NinjaScriptProperty
-      // для PoC можно оставить пустым => дефолты из стратегии
+      // можно оставить пустым => дефолты из стратегии
     }
   },
 
@@ -57,7 +56,7 @@
   },
 
   "risk_profile": {
-    // MVP-1: информационный профиль счёта. Он сохраняется в job/result,
+    // Информационный профиль счёта. Он сохраняется в job/result,
     // но не ограничивает NinjaTrader-прогон, пока стратегия явно не
     // поддерживает общий RiskManager.
     "schema_version": "0.1",
@@ -102,8 +101,8 @@
 - `parameters` может быть пустым объектом — тогда AddOn использует значения по умолчанию.
 - `source_file_hint` — **не доверенный** ввод. Bridge никогда не загружает код по этому пути,
   не компилирует его и не передаёт его в reflection. Реальный класс выбирается только
-  из reflected whitelist `NinjaTrader.Custom.dll`. См. план, раздел 18.
-- `risk_profile` в MVP-1 является информационным контекстом счёта. Он обязан
+  из reflected whitelist `NinjaTrader.Custom.dll`.
+- `risk_profile` является информационным контекстом счёта. Он обязан
   сохраняться в истории запуска, но не должен менять NinjaTrader-compatible
   backtest без явной поддержки RiskManager внутри стратегии.
 
@@ -118,7 +117,7 @@
 {
   "schema_version": "0.1",
   "job_id": "...",                     // совпадает с job.json
-  "run_hash": "sha256:...",            // правило формирования см. план, раздел 10
+  "run_hash": "sha256:...",            // hash канонического контекста запуска
   "started_at_utc":  "2026-04-26T12:34:57Z",
   "finished_at_utc": "2026-04-26T12:35:42Z",
   "duration_ms": 45123,
@@ -135,7 +134,7 @@
     // САМОДОСТАТОЧНОСТЬ: всё, что нужно, чтобы понять прогон без job.json.
     "strategy": {
       "class_name": "SampleMACrossOver",
-      "resolved_source_file": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
+      "resolved_source_file": "C:\\Path\\To\\NinjaTrader 8\\bin\\Custom\\Strategies\\@SampleMACrossOver.cs",
       "source_file_sha256": "sha256:...",
       "source_file_mtime_utc": "2026-04-20T10:00:00Z",
       "ninjatrader_custom_dll_sha256": "sha256:...",
@@ -154,7 +153,7 @@
     // Отпечаток исторических данных, использованных в прогоне.
     // Если NT перекачает/обновит history, тот же run_hash может дать другой
     // результат — поэтому фиксируем fingerprint отдельно.
-    // Для MVP-0 допускается заглушка с явным verification_warning.
+    // Если fingerprint недоступен, используется заглушка с явным verification_warning.
     "historical_data_fingerprint": {
       "method": "sha256_of_concatenated_db_files | placeholder",
       "value": "sha256:...",
@@ -191,7 +190,7 @@
   "artifacts": {
     // относительные пути от jobs/done/<job_id>/
     "trades_file": "trades.json",
-    "equity_curve_file": null,        // для MVP-0 можно опустить
+    "equity_curve_file": null,
     "drawdown_curve_file": null,
     "logs_file": "ninjascript.log",
     "raw_bridge_result_file": "raw.json"
@@ -211,12 +210,12 @@
 - `context.strategy` обязан содержать `class_name`, `resolved_source_file`,
   `source_file_sha256`, `ninjatrader_custom_dll_sha256` и `final_parameters` —
   result.json должен быть полностью самодостаточным для истории/AI/повторного открытия.
-- `run_hash` считается по правилу из плана (раздел 10).
-  **Ограничение MVP-0**: `historical_data_fingerprint` НЕ входит в `run_hash`,
+- `run_hash` считается по каноническому job context.
+  Текущий контракт: `historical_data_fingerprint` НЕ входит в `run_hash`,
   поэтому два прогона с одинаковым `run_hash`, но изменившейся NT history,
   могут дать разные метрики. Это явно фиксируется отдельным полем
   `historical_data_fingerprint` и должно учитываться при сравнении прогонов.
-  В v1 контракта решается, включать ли fingerprint в `run_hash`.
+  При изменении этого правила нужно явно поднять/описать версию контракта.
 - Все timestamps в UTC.
 - Если bridge не смог посчитать какое-то поле metrics — ставит `null`,
   а не выдумывает значение, и добавляет запись в `verification_warnings`.

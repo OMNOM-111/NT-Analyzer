@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>Стратегии — NT-Analyzer</title>
+<link rel="stylesheet" href="style.css?v=20260508-two-statuses1">
+<script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
+</head>
+<body class="strategies-page-body">
+<header>
+  <h1>NT-Analyzer <span class="muted">— Стратегии</span></h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/strategies.html" class="top-nav-link active">Стратегии</a>
+  </nav>
+  <div class="status-strip">
+    <span class="status-chip" id="strategies-data-chip">Загрузка данных...</span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+      <span class="status-chip" id="chip-market" title="Расписание CME equity futures (MES/ES): Вс 15:00 PT -> Пт 14:00 PT, ежедневная пауза 14:00-15:00 PT.">Рынок: ...</span>
+      <span class="status-chip" id="chip-clock" title="Текущее время по California (Pacific Time)">...</span>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button type="button" id="strategies-refresh" class="hdr-btn">Обновить</button>
+    <span class="status-pill" id="strategies-health-pill">проверка...</span>
+  </div>
+</header>
+
+<main class="strategies-page" id="strategies-page" data-testid="strategies-page">
+  <section class="strategies-task-panel" aria-labelledby="strategies-task-title">
+    <div class="strategies-task-copy">
+      <div class="strategies-panel-kicker">Задача</div>
+      <h2 id="strategies-task-title">Собрать стратегии для первого списка инструментов</h2>
+      <p>
+        Для каждого инструмента нужно довести портфель до 10 рабочих стратегий.
+        Усредненная цель портфеля: больше $2 000 чистой прибыли за 30 дней и не меньше 60 сделок за 30 дней.
+      </p>
+      <p class="muted" style="margin-top:6px;">
+        На этой странице в портфель считаются только утвержденные ready-профили,
+        привязанные к реальному классу NinjaTrader. Архивные и исследовательские версии не занимают слоты.
+      </p>
+      <div class="strategies-name-rule">
+        <span>Шаблон имени:</span>
+        <code>ИмяСтратегии Инструмент Таймфрейм vN</code>
+        <span class="muted">пример: Scalping MNQ 5m v1</span>
+      </div>
+      <p class="muted" style="margin-top:6px;">
+        Этот шаблон нужно закрепить для display-имени версии: `profile.name` и параметра `Name` в NinjaTrader runtime.
+        Сам `class_name` лучше оставлять стабильным идентификатором семейства, если это не новая отдельная стратегия в коде.
+      </p>
+    </div>
+      <div class="strategies-task-stats" id="strategies-task-stats" aria-live="polite">
+      <div class="strategies-stat-card">
+        <span>Инструменты</span>
+        <strong id="stat-instruments">—</strong>
+      </div>
+      <div class="strategies-stat-card">
+        <span>Слоты стратегий</span>
+        <strong id="stat-slots">—</strong>
+      </div>
+      <div class="strategies-stat-card">
+        <span>Версии</span>
+        <strong id="stat-ready">—</strong>
+      </div>
+      <div class="strategies-stat-card">
+        <span>Online</span>
+        <strong id="stat-online">—</strong>
+      </div>
+    </div>
+  </section>
+
+  <section class="strategies-main-grid" id="strategies-main-grid">
+    <aside
+      class="strategies-panel strategies-instruments-panel"
+      id="strategies-instruments-panel"
+      aria-labelledby="strategies-instruments-title"
+    >
+      <div class="strategies-panel-head">
+        <div>
+          <div class="strategies-panel-kicker">Инструменты</div>
+          <h3 id="strategies-instruments-title">Список покрытия</h3>
+        </div>
+        <span class="strategies-counter" id="strategies-instrument-count">—</span>
+      </div>
+      <div class="strategies-controls">
+        <input id="strategies-search" type="search" placeholder="Поиск: MNQ, MGC..." autocomplete="off">
+        <select id="strategies-status-filter" aria-label="Фильтр статуса">
+          <option value="all">Все статусы</option>
+          <option value="ready">Готовые</option>
+          <option value="in_progress">В процессе</option>
+        </select>
+      </div>
+      <div class="strategies-instrument-list" id="strategies-instrument-list"></div>
+    </aside>
+
+    <div
+      class="strategies-resizer"
+      id="strategies-left-resizer"
+      data-resize-side="left"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Изменить ширину списка покрытия"
+      tabindex="0"
+    ></div>
+
+    <section
+      class="strategies-panel strategies-matrix-panel"
+      id="strategies-matrix-panel"
+      aria-labelledby="strategies-matrix-title"
+    >
+      <div class="strategies-panel-head">
+        <div>
+          <div class="strategies-panel-kicker">Портфель</div>
+          <h3 id="strategies-matrix-title">Инструменты x 10 стратегий</h3>
+        </div>
+        <div class="strategies-legend" aria-label="Легенда">
+          <span><i class="legend-dot active"></i>online</span>
+          <span><i class="legend-dot ready"></i>готова</span>
+          <span><i class="legend-dot progress"></i>в процессе</span>
+        </div>
+      </div>
+      <div class="strategies-matrix-wrap" data-testid="strategies-matrix">
+        <table class="strategies-matrix-table">
+          <thead id="strategies-matrix-head"></thead>
+          <tbody id="strategies-matrix-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div
+      class="strategies-resizer"
+      id="strategies-right-resizer"
+      data-resize-side="right"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Изменить ширину детализации"
+      tabindex="0"
+    ></div>
+
+    <aside
+      class="strategies-panel strategies-detail-panel"
+      id="strategies-detail-panel"
+      aria-labelledby="strategies-detail-title"
+    >
+      <div class="strategies-panel-head">
+        <div>
+          <div class="strategies-panel-kicker">Детализация</div>
+          <h3 id="strategies-detail-title">Инструмент</h3>
+        </div>
+        <span class="strategies-counter" id="strategies-selected-status">—</span>
+      </div>
+      <div class="strategies-detail-body" id="strategies-detail-body">
+        <div class="strategies-empty-state">Загрузка...</div>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<script src="strategies.js?v=20260508-ready-portfolio2"></script>
+<script src="market_clock.js?v=20260502-hotfix5"></script>
+</body>
+</html>

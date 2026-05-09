@@ -14,7 +14,7 @@ namespace NTAnalyzerBridge.Reporting
     /// hash of the canonical job context (strategy class + final parameters
     /// + instrument + timeframe + period + execution + addon_version
     /// + ninjatrader_custom_dll_sha256 + source_file_sha256).
-    /// MVP-0: historical_data_fingerprint is intentionally NOT mixed in.
+    /// historical_data_fingerprint is intentionally NOT mixed in.
     /// </summary>
     internal static class RunHashCalculator
     {

@@ -44,10 +44,10 @@
 //     NTAMicroVwapRiskPilot.Diagnostics.cs — LogSkip
 //   Trading logic is IDENTICAL to v0.5 — only file layout changed.
 // -----------------------------------------------------------------------------
-// Spec:
-//   РАЗРАБОТКА СТРАТЕГИЙ\01_ПЛАН_СТРАТЕГИИ_NTAMicroVwapRiskPilot.md
+// Current profile:
+//   NT-Analyzer/data/profiles/strategies.json
 //
-// Risk Profile contract (Phase 0 mapper in app/jobqueue.py):
+// Risk Profile contract:
 //   The NT-Analyzer backend projects job.risk_profile into job.strategy.parameters
 //   under a fixed whitelist:
 //     StartingCapital, IntradayOnly, ActiveMarginPerContract,

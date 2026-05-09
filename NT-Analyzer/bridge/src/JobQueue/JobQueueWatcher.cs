@@ -14,13 +14,13 @@ namespace NTAnalyzerBridge.JobQueue
 {
     /// <summary>
     /// Single-threaded queue watcher. One claimed job at a time
-    /// (parallel runs are forbidden in MVP-0).
+    /// (parallel runs are forbidden for one NinjaTrader bridge instance).
     ///
     /// Lifecycle for one claimed job:
     ///   1. Directory.Move pending/&lt;id&gt; -> running/&lt;id&gt;
     ///   2. write heartbeat.json (PID, process name)
     ///   3. periodically refresh heartbeat + check cancel.flag
-    ///   4. delegate the actual run to IHistoricalRunner (Phase B+)
+    ///   4. delegate the actual run to IHistoricalRunner
     ///   5. Directory.Move running/&lt;id&gt; -> done|failed|cancelled
     ///
     /// On startup it also recovers stale running/&lt;id&gt; folders whose

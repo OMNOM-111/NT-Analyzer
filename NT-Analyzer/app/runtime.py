@@ -20,9 +20,11 @@ returns `runtime_detected=False`. Nothing crashes.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import os
+import re
 import statistics
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
@@ -32,6 +34,8 @@ from . import ops
 
 HEARTBEAT_MAX_AGE_SEC = 60          # heartbeat older than this => stale
 RUNTIME_DIR_NAME      = "runtime"
+STRATEGY_HISTORY_FILE = "strategy_history.jsonl"
+STRATEGY_DISPLAY_PREFS_FILE = "strategy_display_prefs.json"
 
 # Subset of locked params we re-verify at runtime per Phase 17 spec.
 B1_LOCKED_PARAMS_CHECK: Dict[str, Any] = {
@@ -48,8 +52,115 @@ B1_LOCKED_PARAMS_CHECK: Dict[str, Any] = {
     "SlippageTicks":       1,
 }
 
+PROFILE_RUNTIME_PARAM_SKIP = frozenset({
+    # NinjaTrader's runtime exporter may omit enum/display-only properties.
+    # Wrapper strategies still hard-lock these in SetDefaults, so absence here
+    # should not create a false parameter mismatch.
+    "SetupMode",
+    "_session_template",
+})
+
 LIVE_ACCOUNT_HINTS = ("live", "real", "production", "prod")
-PAPER_ACCOUNT_HINTS = ("sim101", "sim ", "playback", "paper", "demo")
+PAPER_ACCOUNT_HINTS = ("sim101", "sim ", "paper")
+DEMO_ACCOUNT_HINTS  = ("demo",)
+
+# Accounts that NinjaTrader exposes but are system/backtest pseudo-accounts —
+# never shown in the "Торговля онлайн" dropdown and never selectable.
+_SYSTEM_ACCOUNT_NAMES = frozenset({"backtest", "sim101", "playback101"})
+
+STRATEGY_ID_ALIASES = {
+    "b1_shortonly": "vwap_short_mnq_5m_v1",
+    "vwappullbackmgc5mv1": "vwap_pullback_mgc_5m_v1",
+    "ntamnqmicroorbopenscalp": "orb_open_scalp_mnq_1m_v1",
+}
+
+STRATEGY_CLASS_METADATA = {
+    "NTAMicroVwapRiskPilot": {
+        "strategy_id": "vwap_short_mnq_5m_v1",
+        "display_name": "VWAP Short MNQ 5m v1",
+        "legacy_strategy_ids": ["b1_shortonly"],
+    },
+    "VWAPPullbackMGC5mV1": {
+        "strategy_id": "vwap_pullback_mgc_5m_v1",
+        "display_name": "VWAP Pullback MGC 5m v1",
+        "legacy_strategy_ids": ["vwappullbackmgc5mv1"],
+    },
+    "PullbackMNQ5mV2": {
+        "strategy_id": "pullback_mnq_5m_v2",
+        "display_name": "Pullback MNQ 5m v2",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMicroVwapRiskExplorer": {
+        "strategy_id": "vwap_risk_explorer_mgc_5m_v1",
+        "display_name": "VWAP Risk Explorer MGC 5m v1",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMicroSessionEdgeExplorer": {
+        "strategy_id": "session_edge_multi_5m_v2",
+        "display_name": "Session Edge Multi 5m v2",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMicroMnqScalpPilot": {
+        "strategy_id": "scalping_mnq_1m_v1",
+        "display_name": "Scalping MNQ 1m v1",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqMicroOrbOpenScalp": {
+        "strategy_id": "orb_open_scalp_mnq_1m_v1",
+        "display_name": "ORB Open Scalp MNQ 1m v1",
+        "legacy_strategy_ids": ["ntamnqmicroorbopenscalp"],
+    },
+    "NTAnalyzerEveryNBarLong": {
+        "strategy_id": "every_n_bar_long_generic_any_v1",
+        "display_name": "Every N Bar Long Generic Any v1",
+        "legacy_strategy_ids": [],
+    },
+    "StrategiyaUrovney": {
+        "strategy_id": "levels_strategy_userdefined_v1",
+        "display_name": "Levels Strategy UserDefined v1",
+        "legacy_strategy_ids": [],
+    },
+}
+
+
+def canonical_strategy_id(strategy_id: Any) -> str:
+    raw = str(strategy_id or "").strip().lower()
+    return STRATEGY_ID_ALIASES.get(raw, raw)
+
+
+def _normalize_runtime_strategy_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a canonicalized copy of a bridge runtime row.
+
+    This keeps the UI stable while an older, still-running bridge DLL may be
+    writing legacy IDs such as ``b1_shortonly`` into data/runtime/strategies.json.
+    The bridge source is also canonicalized; this is only a read-time guard.
+    """
+    out = dict(row)
+    cls = str(out.get("strategy_class") or out.get("class_name") or "").strip()
+    meta = STRATEGY_CLASS_METADATA.get(cls)
+    if meta:
+        canonical_sid = str(meta["strategy_id"])
+        display_name = str(meta["display_name"])
+        out["strategy_id"] = canonical_sid
+        out["stable_id"] = canonical_sid
+        out["display_name"] = display_name
+        out["strategy_name"] = display_name
+        legacy_ids = list(out.get("legacy_strategy_ids") or [])
+        for legacy_id in meta.get("legacy_strategy_ids") or []:
+            if legacy_id not in {str(x) for x in legacy_ids}:
+                legacy_ids.append(legacy_id)
+        out["legacy_strategy_ids"] = legacy_ids
+        params = out.get("params")
+        if isinstance(params, dict):
+            params = dict(params)
+            params["Name"] = display_name
+            out["params"] = params
+        return out
+    sid = out.get("strategy_id")
+    if sid:
+        out["strategy_id"] = canonical_strategy_id(sid)
+        out.setdefault("stable_id", out["strategy_id"])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +212,15 @@ def _read_jsonl(p: Path, max_lines: int = 5000) -> List[Dict[str, Any]]:
     return out
 
 
+def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, p)
+
+
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
@@ -144,19 +264,28 @@ def read_heartbeat() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _classify_account_mode(account_name: str, declared_mode: Optional[str] = None) -> str:
-    """paper | live | playback | unknown."""
+    """paper | demo | live | playback | unknown."""
     if declared_mode:
         m = str(declared_mode).strip().lower()
-        if m in ("paper", "live", "playback"):
+        if m in ("paper", "live", "playback", "demo"):
             return m
     name = (account_name or "").strip().lower()
     if not name:
         return "unknown"
+    if "playback" in name:
+        return "playback"
     if any(h in name for h in PAPER_ACCOUNT_HINTS):
-        return "paper" if "playback" not in name else "playback"
+        return "paper"
+    if any(h in name for h in DEMO_ACCOUNT_HINTS):
+        return "demo"
     if any(h in name for h in LIVE_ACCOUNT_HINTS):
         return "live"
     return "unknown"
+
+
+def _is_system_account(name: str) -> bool:
+    """Backtest/Sim101/Playback101 are NT pseudo-accounts, not user accounts."""
+    return (name or "").strip().lower() in _SYSTEM_ACCOUNT_NAMES
 
 
 def read_strategies_raw() -> List[Dict[str, Any]]:
@@ -166,7 +295,22 @@ def read_strategies_raw() -> List[Dict[str, Any]]:
     items = raw.get("strategies") or []
     if not isinstance(items, list):
         return []
-    return items
+    # Defensive: even if a stale bridge build still exports Finalized/Terminated
+    # ghost rows (objects that NT detached from Strategies tab but kept alive),
+    # hide them so the UI is 1:1 with NinjaTrader. Heuristic: ghost rows have
+    # state in {finalized, terminated}, enabled=False AND data_series_count==0.
+    # Legitimate stopped instances keep their data series, so we let them through.
+    GHOSTS = {"finalized", "terminated"}
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        st  = str(it.get("state") or "").lower()
+        dsc = it.get("data_series_count")
+        if st in GHOSTS and not it.get("enabled") and (dsc == 0):
+            continue
+        out.append(_normalize_runtime_strategy_row(it))
+    return out
 
 
 def read_positions() -> Dict[str, Any]:
@@ -174,6 +318,106 @@ def read_positions() -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
     return raw
+
+
+def read_accounts() -> List[Dict[str, Any]]:
+    """Return the list of NinjaTrader accounts known to the bridge.
+
+    Primary source is `data/runtime/accounts.json` written by the bridge
+    (see RuntimeTelemetryExporter.WriteAccounts). Falls back to deriving
+    a minimal account list from `positions.json` keys when accounts.json
+    is missing — useful when running the bridge from older builds.
+
+    Each account dict carries:
+      - account_name        (str)
+      - account_mode        ("paper" | "playback" | "live" | "unknown")
+      - is_live             (bool)
+      - cash_value          (float | None)
+      - buying_power        (float | None)
+      - net_liquidation     (float | None)
+      - realized_pnl        (float | None)
+      - unrealized_pnl      (float | None)
+      - currency            (str | None)
+      - connection_status   (str | None)
+    """
+    raw = _read_json(_path("accounts.json"), default=None)
+    items: List[Dict[str, Any]] = []
+    if isinstance(raw, dict):
+        lst = raw.get("accounts")
+        if isinstance(lst, list):
+            for r in lst:
+                if not isinstance(r, dict):
+                    continue
+                items.append(_normalize_account(r))
+    if not items:
+        # fallback: derive from positions.json keys
+        pos = read_positions()
+        for name in pos.keys():
+            items.append(_normalize_account({"account_name": name}))
+    return items
+
+
+def _normalize_account(r: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(r.get("account_name") or "").strip()
+    declared = r.get("account_mode")
+    mode = _classify_account_mode(name, declared if isinstance(declared, str) else None)
+
+    def _f(v: Any) -> Optional[float]:
+        try:
+            if v is None or v == "":
+                return None
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    cash_v   = _f(r.get("cash_value"))
+    bp_v     = _f(r.get("buying_power"))
+    nl_v     = _f(r.get("net_liquidation"))
+    real_v   = _f(r.get("realized_pnl"))
+    unreal_v = _f(r.get("unrealized_pnl"))
+
+    raw_notes = r.get("availability_notes")
+    avail_notes: List[str] = []
+    if isinstance(raw_notes, list):
+        avail_notes = [str(x) for x in raw_notes if x is not None]
+
+    missing: List[str] = []
+    if cash_v is None: missing.append("cash_value")
+    if bp_v   is None: missing.append("buying_power")
+    if nl_v   is None: missing.append("net_liquidation")
+    next_action: Optional[str] = None
+    if missing:
+        next_action = (
+            "NinjaTrader не отдал поля: " + ", ".join(missing) +
+            ". Это нормально для некоторых брокер-провайдеров — "
+            "баланс будет недоступен."
+        )
+
+    is_system = _is_system_account(name)
+    is_live = (mode == "live")
+    is_selectable = (mode in ("paper", "playback", "demo", "live")) and not is_system
+    hidden_reason: Optional[str] = (
+        "system/backtest/playback account" if is_system else None)
+
+    return {
+        "account_name":            name,
+        "display_name":            name,  # never decorated with mode suffix
+        "account_mode":            mode,
+        "is_live":                 is_live,
+        "is_system":               is_system,
+        "is_selectable_for_online": is_selectable,
+        "control_allowed":         is_selectable,
+        "hidden_reason":           hidden_reason,
+        "cash_value":              cash_v,
+        "buying_power":            bp_v,
+        "net_liquidation":         nl_v,
+        "realized_pnl":            real_v,
+        "unrealized_pnl":          unreal_v,
+        "currency":               (r.get("currency") or None),
+        "connection_status":       (r.get("connection_status") or None),
+        "availability_notes":      avail_notes,
+        "next_action":             next_action,
+    }
 
 
 def read_orders(strategy_id: Optional[str] = None,
@@ -194,6 +438,322 @@ def read_executions(strategy_id: Optional[str] = None,
 
 def read_errors(limit: int = 200) -> List[Dict[str, Any]]:
     return _read_jsonl(_path("errors.jsonl"))[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Strategy display preferences
+# ---------------------------------------------------------------------------
+
+def _strategy_display_key(class_name: str) -> str:
+    return str(class_name or "").strip()
+
+
+def read_strategy_display_prefs() -> Dict[str, Any]:
+    raw = _read_json(_path(STRATEGY_DISPLAY_PREFS_FILE), default={})
+    hidden: set[str] = set()
+    updated_at = None
+    if isinstance(raw, dict):
+        updated_at = raw.get("updated_at_utc")
+        items = raw.get("hidden_classes")
+        if isinstance(items, list):
+            hidden.update(_strategy_display_key(str(x)) for x in items if _strategy_display_key(str(x)))
+        legacy = raw.get("classes")
+        if isinstance(legacy, dict):
+            for cls, cfg in legacy.items():
+                if isinstance(cfg, dict) and cfg.get("hidden"):
+                    key = _strategy_display_key(str(cls))
+                    if key:
+                        hidden.add(key)
+    return {
+        "hidden_classes": sorted(hidden),
+        "updated_at_utc": updated_at,
+    }
+
+
+def is_strategy_display_hidden(class_name: str) -> bool:
+    key = _strategy_display_key(class_name)
+    if not key:
+        return False
+    return key in set(read_strategy_display_prefs().get("hidden_classes") or [])
+
+
+def set_strategy_display_hidden(class_name: str, hidden: bool) -> Dict[str, Any]:
+    key = _strategy_display_key(class_name)
+    if not key:
+        raise ops.OpsError("class_name is required", 400)
+    prefs = read_strategy_display_prefs()
+    hidden_classes = set(prefs.get("hidden_classes") or [])
+    if hidden:
+        hidden_classes.add(key)
+    else:
+        hidden_classes.discard(key)
+    out = {
+        "hidden_classes": sorted(hidden_classes),
+        "updated_at_utc": _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+    _write_json_atomic(_path(STRATEGY_DISPLAY_PREFS_FILE), out)
+    return {"ok": True, "class_name": key, "hidden": bool(hidden), "prefs": out}
+
+
+# ---------------------------------------------------------------------------
+# Runtime strategy history
+# ---------------------------------------------------------------------------
+
+def _history_row_matches(row: Dict[str, Any],
+                         strategy_id: Optional[str] = None,
+                         runtime_instance_id: Optional[str] = None,
+                         class_name: Optional[str] = None) -> bool:
+    if runtime_instance_id and str(row.get("runtime_instance_id") or "") != runtime_instance_id:
+        return False
+    if strategy_id and str(row.get("strategy_id") or "").lower() != strategy_id.lower():
+        return False
+    if class_name and str(row.get("strategy_class") or "").lower() != class_name.lower():
+        return False
+    return True
+
+
+def read_strategy_history_events(limit: int = 500,
+                                 strategy_id: Optional[str] = None,
+                                 runtime_instance_id: Optional[str] = None,
+                                 class_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    limit = max(1, min(int(limit or 500), 5000))
+    rows = _read_jsonl(_path(STRATEGY_HISTORY_FILE), max_lines=max(5000, limit * 5))
+    rows = [
+        r for r in rows
+        if isinstance(r, dict)
+        and _history_row_matches(r, strategy_id, runtime_instance_id, class_name)
+    ]
+    return rows[-limit:]
+
+
+def _duration_sec(start_iso: Optional[str], end_iso: Optional[str]) -> Optional[int]:
+    start = _parse_iso(start_iso)
+    end = _parse_iso(end_iso)
+    if not start or not end:
+        return None
+    return max(0, int(round((end - start).total_seconds())))
+
+
+def _history_session_seed(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "runtime_instance_id": str(row.get("runtime_instance_id") or ""),
+        "strategy_id":        row.get("strategy_id") or "",
+        "strategy_class":     row.get("strategy_class") or "",
+        "strategy_name":      row.get("strategy_name") or "",
+        "account_name":       row.get("account_name") or "",
+        "account_mode":       row.get("account_mode") or "",
+        "instrument":         row.get("instrument") or "",
+        "timeframe":          row.get("timeframe") or "",
+        "started_at_utc":     row.get("timestamp_utc"),
+        "ended_at_utc":       None,
+        "duration_sec":       None,
+        "is_open":            True,
+        "start_event":        row.get("event") or "started",
+        "end_event":          None,
+        "end_reason":         None,
+        "last_event_utc":     row.get("timestamp_utc"),
+        # Phase 24 — История tab: surface trades / pnl / params.
+        "parameters":         row.get("params") or {},
+        "trades_count":       row.get("session_trades_count"),
+        "gross_pnl":          row.get("realized_pnl"),
+    }
+
+
+def _close_history_session(sess: Dict[str, Any], row: Dict[str, Any]) -> None:
+    end_ts = row.get("timestamp_utc") or sess.get("last_event_utc") or sess.get("started_at_utc")
+    sess["ended_at_utc"] = end_ts
+    sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), end_ts)
+    sess["is_open"] = False
+    sess["end_event"] = row.get("event") or "stopped"
+    sess["end_reason"] = row.get("reason") or None
+    sess["last_event_utc"] = end_ts
+    # Carry the most recent observable counters from the closing event.
+    if row.get("session_trades_count") is not None:
+        sess["trades_count"] = row.get("session_trades_count")
+    if row.get("realized_pnl") is not None:
+        sess["gross_pnl"] = row.get("realized_pnl")
+    if row.get("params"):
+        sess["parameters"] = row.get("params")
+
+
+def _current_enabled_runtime_keys() -> set[str]:
+    hb = read_heartbeat()
+    if not (hb.get("present") and hb.get("fresh")):
+        return set()
+    keys: set[str] = set()
+    for idx, row in enumerate(read_strategies_raw()):
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        keys.add(str(row.get("runtime_instance_id") or _make_runtime_instance_id(row, idx)))
+    return keys
+
+
+def _build_strategy_sessions(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    open_by_key: Dict[str, Dict[str, Any]] = {}
+    sessions: List[Dict[str, Any]] = []
+    current_enabled = _current_enabled_runtime_keys()
+    now_iso = _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    for row in events:
+        key = str(row.get("runtime_instance_id") or "")
+        if not key:
+            continue
+        event = str(row.get("event") or "").lower()
+        enabled = bool(row.get("enabled"))
+
+        if event in ("observed_start", "started"):
+            if enabled and key not in open_by_key:
+                open_by_key[key] = _history_session_seed(row)
+            elif key in open_by_key:
+                open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+            continue
+
+        if event == "state_changed":
+            if enabled and key not in open_by_key:
+                open_by_key[key] = _history_session_seed(row)
+            elif not enabled and key in open_by_key:
+                sess = open_by_key.pop(key)
+                _close_history_session(sess, row)
+                sessions.append(sess)
+            elif key in open_by_key:
+                open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+            continue
+
+        if event in ("stopped", "disappeared", "exporter_stop"):
+            if key in open_by_key:
+                sess = open_by_key.pop(key)
+                _close_history_session(sess, row)
+                sessions.append(sess)
+            continue
+
+        if event == "observed" and key in open_by_key:
+            open_by_key[key]["last_event_utc"] = row.get("timestamp_utc")
+
+    # Phase 24 — for sessions still open, fold in live counters/params from
+    # the current strategies.jsonl snapshot so the History tab can show
+    # trades / pnl / params even before a stop event lands.
+    snapshot_by_key: Dict[str, Dict[str, Any]] = {}
+    for idx, srow in enumerate(read_strategies_raw()):
+        if not isinstance(srow, dict):
+            continue
+        rk = str(srow.get("runtime_instance_id") or _make_runtime_instance_id(srow, idx))
+        snapshot_by_key[rk] = srow
+
+    for key, sess in list(open_by_key.items()):
+        snap = snapshot_by_key.get(key) or {}
+        if snap.get("params"):
+            sess["parameters"] = snap.get("params")
+        if snap.get("session_trades_count") is not None:
+            sess["trades_count"] = snap.get("session_trades_count")
+        if snap.get("realized_pnl") is not None:
+            sess["gross_pnl"] = snap.get("realized_pnl")
+        if key in current_enabled:
+            sess["is_open"] = True
+            sess["ended_at_utc"] = None
+            sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), now_iso)
+            sess["end_event"] = None
+            sess["end_reason"] = "still_running"
+        else:
+            end_ts = sess.get("last_event_utc") or sess.get("started_at_utc")
+            sess["is_open"] = False
+            sess["ended_at_utc"] = end_ts
+            sess["duration_sec"] = _duration_sec(sess.get("started_at_utc"), end_ts)
+            sess["end_event"] = "missing_stop"
+            sess["end_reason"] = "not in current fresh runtime snapshot"
+        sessions.append(sess)
+
+    sessions.sort(key=lambda s: str(s.get("started_at_utc") or ""))
+    return sessions
+
+
+def _current_snapshot_sessions(strategy_id: Optional[str],
+                               runtime_instance_id: Optional[str],
+                               class_name: Optional[str]) -> List[Dict[str, Any]]:
+    hb = read_heartbeat()
+    if not (hb.get("present") and hb.get("fresh")):
+        return []
+    out: List[Dict[str, Any]] = []
+    now_iso = _now_utc().isoformat(timespec="seconds").replace("+00:00", "Z")
+    for idx, row in enumerate(read_strategies_raw()):
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        r = dict(row)
+        r["runtime_instance_id"] = str(
+            r.get("runtime_instance_id") or _make_runtime_instance_id(r, idx))
+        if not _history_row_matches(r, strategy_id, runtime_instance_id, class_name):
+            continue
+        start = r.get("timestamp_utc") or hb.get("timestamp_utc") or now_iso
+        out.append({
+            "runtime_instance_id": r.get("runtime_instance_id"),
+            "strategy_id":        r.get("strategy_id") or "",
+            "strategy_class":     r.get("strategy_class") or "",
+            "strategy_name":      r.get("strategy_name") or "",
+            "account_name":       r.get("account_name") or "",
+            "account_mode":       r.get("account_mode") or "",
+            "instrument":         r.get("instrument") or "",
+            "timeframe":          r.get("timeframe") or "",
+            "started_at_utc":     start,
+            "ended_at_utc":       None,
+            "duration_sec":       _duration_sec(start, now_iso),
+            "is_open":            True,
+            "start_event":        "current_snapshot",
+            "end_event":          None,
+            "end_reason":         "history file is not available yet",
+            "last_event_utc":     r.get("timestamp_utc"),
+            "source":             "current_snapshot_only",
+            "parameters":         r.get("params") or {},
+            "trades_count":       r.get("session_trades_count"),
+            "gross_pnl":          r.get("realized_pnl"),
+        })
+    return out
+
+
+def read_strategy_history(limit_events: int = 500,
+                          limit_sessions: int = 200,
+                          strategy_id: Optional[str] = None,
+                          runtime_instance_id: Optional[str] = None,
+                          class_name: Optional[str] = None) -> Dict[str, Any]:
+    limit_events = max(1, min(int(limit_events or 500), 5000))
+    limit_sessions = max(1, min(int(limit_sessions or 200), 1000))
+    events = read_strategy_history_events(
+        limit=max(limit_events, 5000),
+        strategy_id=strategy_id,
+        runtime_instance_id=runtime_instance_id,
+        class_name=class_name,
+    )
+    sessions = _build_strategy_sessions(events)
+    warnings: List[str] = []
+    if not events:
+        sessions = _current_snapshot_sessions(strategy_id, runtime_instance_id, class_name)
+        if sessions:
+            warnings.append(
+                "strategy_history.jsonl is not available yet; showing current snapshot only")
+    total_sec = sum(int(s.get("duration_sec") or 0) for s in sessions)
+    active = [s for s in sessions if s.get("is_open")]
+    return {
+        "events": events[-limit_events:],
+        "sessions": sessions[-limit_sessions:],
+        "summary": {
+            "sessions": len(sessions),
+            "active_sessions": len(active),
+            "total_duration_sec": total_sec,
+        },
+        "filters": {
+            "strategy_id": strategy_id,
+            "runtime_instance_id": runtime_instance_id,
+            "class_name": class_name,
+        },
+        "warnings": warnings,
+        "source": "strategy_history_jsonl" if events else "current_snapshot",
+    }
+
+
+def get_strategy_sessions(limit: int = 200) -> list:
+    """Return closed+open strategy sessions for the History tab."""
+    events = read_strategy_history_events(limit=limit * 10)
+    sessions = _build_strategy_sessions(events)
+    sessions.sort(key=lambda s: s.get("started_at_utc") or "", reverse=True)
+    return sessions[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -223,18 +783,28 @@ def _eq_loose(expected: Any, actual: Any) -> bool:
 def validate_params(strategy_id: str,
                     runtime_params: Dict[str, Any]) -> Dict[str, Any]:
     """Return {ok, mismatches:[{key,expected,actual}], checked:int}."""
-    if strategy_id == "b1_shortonly":
+    if canonical_strategy_id(strategy_id) == "vwap_short_mnq_5m_v1":
         expected = B1_LOCKED_PARAMS_CHECK
     else:
         s = ops.get_strategy(strategy_id) or {}
         expected = s.get("locked_params") or {}
+    return _validate_expected_params(expected, runtime_params)
+
+
+def _validate_expected_params(expected: Dict[str, Any],
+                              runtime_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return {ok, mismatches:[{key,expected,actual}], checked:int}."""
     mismatches: List[Dict[str, Any]] = []
     rp = runtime_params or {}
     # Make case-insensitive lookup of runtime_params
     rp_lower = {str(k).lower(): v for k, v in rp.items()}
+    checked = 0
     for k, v_exp in expected.items():
+        if str(k) in PROFILE_RUNTIME_PARAM_SKIP:
+            continue
         if not isinstance(v_exp, (int, float, bool, str)):
             continue
+        checked += 1
         v_act = rp.get(k, rp_lower.get(str(k).lower(), None))
         if v_act is None:
             mismatches.append({"key": k, "expected": v_exp, "actual": None,
@@ -244,7 +814,7 @@ def validate_params(strategy_id: str,
             mismatches.append({"key": k, "expected": v_exp, "actual": v_act,
                                "reason": "value_mismatch"})
     return {"ok": len(mismatches) == 0, "mismatches": mismatches,
-            "checked": len(expected)}
+            "checked": checked}
 
 
 # ---------------------------------------------------------------------------
@@ -357,18 +927,30 @@ def _find_runtime_for(strategy_id: str,
                       registry_strategy: Dict[str, Any],
                       raw_strategies: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     sid_l = strategy_id.lower()
+    canonical_sid = canonical_strategy_id(strategy_id)
     cls = (registry_strategy.get("class_name") or "").lower()
+    aliases = {str(x).lower() for x in registry_strategy.get("legacy_strategy_ids") or []}
     for r in raw_strategies:
         rsid = str(r.get("strategy_id") or "").lower()
         rcls = str(r.get("strategy_class") or "").lower()
-        if rsid and rsid == sid_l:
+        if rsid and (rsid == sid_l or canonical_strategy_id(rsid) == canonical_sid or rsid in aliases):
             return r
         if rcls and rcls == cls:
             return r
     return None
 
 
-def merge_strategy_view(strategy_id: str) -> Dict[str, Any]:
+def merge_strategy_view(strategy_id: str,
+                        selected_account: Optional[str] = None,
+                        selected_instrument: Optional[str] = None,
+                        selected_timeframe: Optional[str] = None) -> Dict[str, Any]:
+    """Read-only merged view: registry + paper state + bridge runtime row.
+
+    When the optional ``selected_*`` kwargs are provided (typically populated
+    from the Trading Online right-panel selectors), a ``selection_diff``
+    block is appended comparing UI choice vs the runtime strategy reported
+    by the bridge. Paper/playback only — never gates live trading.
+    """
     s = ops.get_strategy(strategy_id)
     if not s:
         return {"error": "strategy not found", "strategy_id": strategy_id}
@@ -390,9 +972,9 @@ def merge_strategy_view(strategy_id: str) -> Dict[str, Any]:
     account_mode_raw = (rt or {}).get("account_mode")
     account_mode     = _classify_account_mode(account_name, account_mode_raw)
 
-    # Live detection — purely informational, never controllable.
+    # Live detection — informational only, account-agnostic control mode.
     is_live = (account_mode == "live") or (account_mode_raw == "live")
-    live_locked = True  # always
+    live_locked = False  # account-agnostic: live and demo are controlled identically
 
     # Param validation
     runtime_params = (rt or {}).get("params") or {}
@@ -407,10 +989,10 @@ def merge_strategy_view(strategy_id: str) -> Dict[str, Any]:
     if runtime_detected:
         if runtime_enabled and paper_state in ("paper_ready", "stopped_today",
                                                "paused", "risk_blocked"):
-            warnings.append("Runtime enabled but not confirmed in Control Center")
+            warnings.append("Runtime enabled but not confirmed in NinjaTrader Strategies tab")
             mismatch_kind = "runtime_enabled_not_confirmed"
         if (not runtime_enabled) and paper_state == "paper_running":
-            warnings.append("Runtime stopped outside Control Center")
+            warnings.append("Runtime stopped outside NinjaTrader Strategies tab")
             mismatch_kind = "runtime_stopped_outside"
 
     # Rejected strategies must never be runtime-confirmed
@@ -418,15 +1000,15 @@ def merge_strategy_view(strategy_id: str) -> Dict[str, Any]:
         errors.append("Rejected/archived strategy is enabled at runtime — DISABLE in NinjaTrader immediately")
 
     if is_live:
-        warnings.append("LIVE account detected — read-only, no controls available")
+        warnings.append("LIVE account detected — управление работает так же, как на demo/paper")
 
     today = compute_runtime_today_metrics(strategy_id) if runtime_detected else {}
 
     can_confirm_runtime: Optional[str] = None
-    if mismatch_kind == "runtime_enabled_not_confirmed" and account_mode in ("paper", "playback") \
+    if mismatch_kind == "runtime_enabled_not_confirmed" and account_mode in ("paper", "playback", "demo", "live") \
        and s["status"] not in ("rejected", "archived") and pcheck["ok"]:
         can_confirm_runtime = "started"
-    elif mismatch_kind == "runtime_stopped_outside" and account_mode in ("paper", "playback"):
+    elif mismatch_kind == "runtime_stopped_outside" and account_mode in ("paper", "playback", "demo", "live"):
         can_confirm_runtime = "stopped"
 
     out: Dict[str, Any] = {
@@ -449,11 +1031,339 @@ def merge_strategy_view(strategy_id: str) -> Dict[str, Any]:
         "today":            today,
         "runtime":          (rt or None),
     }
+    if (selected_account is not None or selected_instrument is not None
+            or selected_timeframe is not None):
+        out["selection_diff"] = compute_selection_diff(
+            selected_account, selected_instrument, selected_timeframe, rt)
     return out
 
 
 def merge_all_strategies() -> List[Dict[str, Any]]:
     return [merge_strategy_view(s["strategy_id"]) for s in ops.list_strategies()]
+
+
+def _make_runtime_instance_id(r: Dict[str, Any], idx: int) -> str:
+    """Stable unique identifier for a specific runtime strategy instance.
+
+    If the bridge already wrote a ``runtime_instance_id`` field (Phase 19+
+    bridge builds), we use it directly. Otherwise we compute a synthetic 16-char
+    hex ID from the combination of account/class/instrument/name/index so that
+    two copies of the same class on the same account are distinguishable.
+    """
+    existing = str(r.get("runtime_instance_id") or "").strip()
+    if existing:
+        return existing
+    raw = (
+        f"{r.get('account_name', '')}|"
+        f"{r.get('strategy_class', '')}|"
+        f"{r.get('instrument', '')}|"
+        f"{r.get('strategy_name', '')}|"
+        f"{idx}"
+    )
+    return "ri-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _contract_root(value: Any) -> str:
+    s = str(value or "").strip().upper()
+    m = re.match(r"^([A-Z0-9]+)", s)
+    return m.group(1) if m else ""
+
+
+def _read_strategy_profiles_for_runtime() -> List[Dict[str, Any]]:
+    p = ops._project_root() / "data" / "profiles" / "strategies.json"
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
+        return []
+    return [x for x in data["profiles"] if isinstance(x, dict)]
+
+
+def _profile_runtime_classes(profile: Dict[str, Any]) -> set:
+    out = set()
+    for key in ("strategy_class", "deploy_strategy_class"):
+        v = str(profile.get(key) or "").strip().lower()
+        if v:
+            out.add(v)
+    for v in profile.get("runtime_strategy_classes") or []:
+        s = str(v or "").strip().lower()
+        if s:
+            out.add(s)
+    return out
+
+
+def _profile_registry_hit_for_runtime(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build a registry-like row from data/profiles for deploy wrappers.
+
+    Some production-friendly NinjaScript classes wrap a research engine, e.g.
+    VWAPPullbackMGC5mV1 wraps the SessionEdge MGC profile. The ops registry
+    may not know these wrappers yet, but strategy profiles do. Use those aliases
+    for runtime status and locked-parameter checks.
+    """
+    sid = str(r.get("strategy_id") or "").strip().lower()
+    cls = str(r.get("strategy_class") or r.get("strategy_name") or "").strip().lower()
+    root = _contract_root(r.get("instrument") or r.get("contract_month"))
+    if not cls and not sid:
+        return None
+    for p in _read_strategy_profiles_for_runtime():
+        p_root = _contract_root(p.get("instrument") or p.get("current_contract"))
+        if root and p_root and root != p_root:
+            continue
+        runtime_sid = str(p.get("runtime_strategy_id") or "").strip().lower()
+        canonical_sid = canonical_strategy_id(sid)
+        if (cls and cls in _profile_runtime_classes(p)) or (runtime_sid and canonical_sid == canonical_strategy_id(runtime_sid)):
+            return {
+            "strategy_id": canonical_sid or canonical_strategy_id(runtime_sid) or cls,
+                "display_name": p.get("name") or p.get("profile_id") or cls,
+                "class_name": r.get("strategy_class") or p.get("deploy_strategy_class") or p.get("strategy_class"),
+                "status": p.get("status") or "",
+                "account_mode": "paper",
+                "allowed_accounts": [],
+                "instrument": p_root,
+                "contract_month": p.get("current_contract") or p.get("instrument") or "",
+                "locked_params": p.get("locked_parameters") or {},
+                "validation_job_id": p.get("last_job_id") or "",
+                "validation_summary": p.get("metrics") or {},
+                "profile_id": p.get("profile_id") or "",
+                "source": "strategy_profile",
+            }
+    return None
+
+
+def merge_all_runtime_strategies(
+        selected_account: Optional[str] = None,
+        selected_instrument: Optional[str] = None,
+        selected_timeframe: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Runtime-driven view: source of truth is ``strategies.json`` written by
+    the NinjaTrader bridge, NOT the registry.
+
+    Each raw bridge entry is enriched with registry/param info if a matching
+    registry ``strategy_id`` exists. Entries unknown to the registry are still
+    surfaced as a minimal view so the Trading Online page reflects what
+    NinjaTrader actually has, without filtering.
+
+    Every output entry has a unique ``runtime_instance_id`` so that two copies
+    of the same strategy class on the same account can be distinguished both
+    in the table and in stop/start commands.
+
+    If ``strategies.json`` is empty/absent, returns []. Never invents entries.
+    """
+    raw_list = read_strategies_raw()
+    hb = read_heartbeat()
+    runtime_detected_global = bool(hb.get("present")) and bool(hb.get("fresh"))
+    hidden_classes = set(read_strategy_display_prefs().get("hidden_classes") or [])
+    out: List[Dict[str, Any]] = []
+
+    # Bridge offline → strategies.json on disk is a stale snapshot from the last
+    # NT session. Surfacing it would lie about what's actually running. Hide it.
+    if not runtime_detected_global:
+        return out
+
+    for idx, r in enumerate(raw_list):
+        if not isinstance(r, dict):
+            continue
+        r = dict(r)  # local copy — we'll mutate below
+
+        # Assign stable instance ID before anything else.
+        iid = _make_runtime_instance_id(r, idx)
+        r["runtime_instance_id"] = iid
+
+        sid = str(r.get("strategy_id") or "").strip()
+        cls = str(r.get("strategy_class") or "").strip()
+        display_key = _strategy_display_key(cls or sid)
+        acct_name     = str(r.get("account_name") or "")
+        acct_mode_raw = r.get("account_mode") if isinstance(r.get("account_mode"), str) else None
+        acct_mode     = _classify_account_mode(acct_name, acct_mode_raw)
+
+        registry_hit = (ops.get_strategy(sid) if sid else None) or _profile_registry_hit_for_runtime(r)
+
+        warnings: List[str] = []
+        errors: List[str] = []
+
+        stale = _stale_reason(hb)
+        if stale:
+            warnings.append(stale)
+
+        is_live = (acct_mode == "live")
+        if is_live:
+            warnings.append("LIVE account — read-only, no controls available")
+
+        # Param check — informational only per Phase 19 spec.
+        # Param mismatches must NOT block stop/start in the UI.
+        runtime_params = r.get("params") or {}
+        if registry_hit and r.get("enabled") and \
+                registry_hit.get("status") not in ("rejected", "archived"):
+            pcheck = _validate_expected_params(
+                registry_hit.get("locked_params") or {}, runtime_params)
+            # Phase 19: param mismatch is info, not a hard error
+            # (do NOT add to errors[] — that would block UI controls)
+        else:
+            pcheck = {"ok": True, "mismatches": [], "checked": 0}
+
+        if registry_hit and registry_hit.get("status") in ("rejected", "archived") \
+                and r.get("enabled"):
+            errors.append(
+                "Rejected/archived strategy is enabled at runtime — "
+                "DISABLE in NinjaTrader immediately")
+
+        paper_state: Optional[str] = None
+        today: Dict[str, Any] = {}
+        if registry_hit:
+            states = ops.load_states()
+            paper_state = (states.get(sid) or {}).get(
+                "current_state", registry_hit["status"])
+            if r.get("enabled"):
+                today = compute_runtime_today_metrics(sid)
+
+        view: Dict[str, Any] = {
+            "runtime_instance_id":  iid,
+            "strategy_id":          sid or cls.lower(),
+            "registry_status":      registry_hit.get("status") if registry_hit else None,
+            "paper_state":          paper_state,
+            "runtime_detected":     runtime_detected_global,
+            "runtime_enabled":      bool(r.get("enabled")),
+            "account_name":         acct_name,
+            "account_mode":         acct_mode,
+            "is_live":              is_live,
+            "live_locked":          False,
+            "params_ok":            pcheck["ok"],
+            "params_check":         pcheck,
+            "runtime_warnings":     warnings,
+            "runtime_errors":       errors,
+            "mismatch_kind":        None,
+            "can_confirm_runtime":  None,
+            "heartbeat":            hb,
+            "today":                today,
+            "runtime":              r,
+            "source":               "runtime+registry" if registry_hit else "runtime_only",
+            "display_key":          display_key,
+            "display_hidden":       display_key in hidden_classes,
+        }
+
+        if (selected_account is not None or selected_instrument is not None
+                or selected_timeframe is not None):
+            view["selection_diff"] = compute_selection_diff(
+                selected_account, selected_instrument, selected_timeframe, r)
+
+        out.append(view)
+
+    return out
+
+
+def read_accounts_with_source() -> Dict[str, Any]:
+    """Same as read_accounts() but reports where the data came from.
+
+    `source` is one of:
+      - "accounts_json"        — bridge-written accounts.json available & fresh
+      - "accounts_json_stale"  — accounts.json present but >2 min behind heartbeat
+      - "positions_fallback"   — derived from positions.json keys (no balances)
+      - "empty"                — neither file present
+
+    Returns ``next_action`` at the top level when the operator must take a
+    deploy/install step (e.g. reinstall the bridge DLL). Paper/playback only.
+    """
+    raw = _read_json(_path("accounts.json"), default=None)
+    items: List[Dict[str, Any]] = []
+    source = "empty"
+    next_action: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    exporter_version: Optional[str] = None
+    if isinstance(raw, dict):
+        lst = raw.get("accounts")
+        if isinstance(lst, list):
+            for r in lst:
+                if isinstance(r, dict):
+                    items.append(_normalize_account(r))
+            if items:
+                source = "accounts_json"
+        if isinstance(raw.get("summary"), dict):
+            summary = raw.get("summary")
+        if isinstance(raw.get("exporter_version"), str):
+            exporter_version = raw.get("exporter_version")
+        # staleness check: accounts.json timestamp vs heartbeat timestamp
+        if items:
+            acc_ts = _parse_iso(raw.get("generated_at_utc")
+                                or raw.get("timestamp_utc"))
+            hb_raw = _read_json(_path("heartbeat.json"), default=None)
+            hb_ts  = _parse_iso((hb_raw or {}).get("timestamp_utc")) if hb_raw else None
+            if acc_ts is not None and hb_ts is not None:
+                lag = (hb_ts - acc_ts).total_seconds()
+                if lag > 120:
+                    source = "accounts_json_stale"
+    if not items:
+        pos = read_positions()
+        for name in pos.keys():
+            items.append(_normalize_account({"account_name": name}))
+        if items:
+            source = "positions_fallback"
+            next_action = (
+                "Bridge DLL устарела (нет accounts.json). "
+                "Закрыть NinjaTrader → запустить 01_INSTALL_BRIDGE.cmd → открыть NinjaTrader."
+            )
+    if not items and source == "empty":
+        next_action = (
+            "Bridge не записал accounts.json. Проверить, что NinjaTrader открыт "
+            "и AddOn запустился (см. NTAnalyzerBridge.log)."
+        )
+
+    # Defensive: live accounts must always be flagged regardless of source.
+    for a in items:
+        if (a.get("account_mode") == "live") and not a.get("is_live"):
+            a["is_live"] = True
+
+    # online_accounts = only real user accounts that the UI can show/select
+    online_accounts = [a for a in items if a.get("is_selectable_for_online")]
+
+    warnings: List[str] = []
+    if source == "accounts_json_stale":
+        warnings.append(
+            "accounts.json устарел относительно heartbeat (>2 мин). "
+            "Балансы могут не отражать текущего состояния."
+        )
+    elif source == "positions_fallback":
+        warnings.append(
+            "accounts.json не найден — bridge ещё не пишет полные данные счетов. "
+            "Список аккаунтов восстановлен из positions.json. Балансы недоступны."
+        )
+    elif source == "empty":
+        warnings.append(
+            "Bridge пока не отдал ни accounts.json, ни positions.json. "
+            "Запустите NinjaTrader и проверьте, что AddOn активен."
+        )
+    out: Dict[str, Any] = {"accounts": items, "online_accounts": online_accounts,
+                           "source": source,
+                           "warnings": warnings, "next_action": next_action}
+    if summary is not None:
+        out["summary"] = summary
+    if exporter_version is not None:
+        out["exporter_version"] = exporter_version
+
+    # Phase 19+ hotfix3: surface staleness so the UI can hide / mark stale
+    # balances when NinjaTrader is closed and the bridge is no longer writing
+    # accounts.json. The UI uses these to display an "NT OFFLINE" banner
+    # instead of a stale (e.g. last-seen DEMO) balance card.
+    now = _now_utc()
+    acc_raw = _read_json(_path("accounts.json"), default=None) or {}
+    acc_ts = _parse_iso(acc_raw.get("generated_at_utc")
+                        or acc_raw.get("timestamp_utc"))
+    hb_raw = _read_json(_path("heartbeat.json"), default=None) or {}
+    hb_ts  = _parse_iso(hb_raw.get("timestamp_utc"))
+    accounts_age_sec = (now - acc_ts).total_seconds() if acc_ts else None
+    heartbeat_age_sec = (now - hb_ts).total_seconds() if hb_ts else None
+    # bridge is "online" only if heartbeat is fresh (<= 30s)
+    bridge_online = bool(heartbeat_age_sec is not None and heartbeat_age_sec <= 30.0)
+    out["accounts_generated_at_utc"] = acc_raw.get("generated_at_utc") \
+        or acc_raw.get("timestamp_utc")
+    out["heartbeat_at_utc"] = hb_raw.get("timestamp_utc")
+    out["accounts_age_sec"] = (round(accounts_age_sec, 1)
+                               if accounts_age_sec is not None else None)
+    out["heartbeat_age_sec"] = (round(heartbeat_age_sec, 1)
+                                if heartbeat_age_sec is not None else None)
+    out["bridge_online"] = bridge_online
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +1375,8 @@ def health() -> Dict[str, Any]:
     hb = read_heartbeat()
     files = {}
     for name in ("heartbeat.json", "strategies.json", "executions.jsonl",
-                 "orders.jsonl", "positions.json", "errors.jsonl"):
+                 "orders.jsonl", "positions.json", "errors.jsonl",
+                 STRATEGY_HISTORY_FILE, STRATEGY_DISPLAY_PREFS_FILE):
         p = rdir / name
         files[name] = {"exists": p.is_file(),
                        "size":  (p.stat().st_size if p.is_file() else 0)}
@@ -622,9 +1533,7 @@ def confirm_runtime(strategy_id: str, action: str, reason: str = "") -> Dict[str
     s = ops.get_strategy(strategy_id) or {}
     if s.get("status") in ("rejected", "archived"):
         raise ops.OpsError("rejected/archived strategy cannot be runtime-confirmed", 403)
-    if view.get("is_live"):
-        raise ops.OpsError("LIVE account detected — runtime confirm forbidden", 403)
-    if view.get("account_mode") not in ("paper", "playback"):
+    if view.get("account_mode") not in ("paper", "playback", "demo", "live"):
         raise ops.OpsError(
             f"account_mode={view.get('account_mode')} not allowed for runtime confirm", 403)
     if action == "started":
@@ -663,7 +1572,25 @@ def _is_paper_account(account_name: str) -> bool:
     """Treat unknown as NOT paper. Only explicit Sim/Playback/Paper/Demo names pass."""
     if not account_name:
         return False
-    return _classify_account_mode(account_name) in ("paper", "playback")
+    return _classify_account_mode(account_name) in ("paper", "playback", "demo")
+
+
+def _resolve_account_mode_for_command(account_name: str) -> str:
+    """Look up the bridge-declared account_mode (preferred) and fall back to
+    name-hint classification. Returns 'paper'|'demo'|'playback'|'live'|'unknown'.
+    Live accounts often have numeric names with no hint, so the bridge's
+    declared mode (from NT Account.Provider) is the authoritative source."""
+    if not account_name:
+        return "unknown"
+    declared: Optional[str] = None
+    try:
+        for a in read_accounts():
+            if a.get("account_name") == account_name:
+                declared = a.get("account_mode")
+                break
+    except Exception:
+        declared = None
+    return _classify_account_mode(account_name, declared)
 
 
 def submit_command(command: str,
@@ -675,15 +1602,20 @@ def submit_command(command: str,
                    class_name: str = "",
                    instrument: str = "",
                    contract_month: str = "",
+                   timeframe: str = "",
+                   runtime_instance_id: str = "",
                    params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Queue a paper-only command for the NT bridge.
+    """Queue a command for the NT bridge (account-agnostic).
 
     Hard rules:
       * command must be in ALLOWED_COMMANDS
-      * account must classify as paper or playback (NOT live, NOT unknown)
+      * account must classify as paper, playback, demo or live (NOT unknown)
       * if strategy_id matches a registry entry → registry archived/rejected
         block applies. Otherwise (any class from the NT Strategies folder)
         we trust the operator and queue the command.
+      * runtime_instance_id (when provided) targets the exact strategy
+        instance the UI selected; the bridge uses it to disambiguate
+        multiple instances of the same class on the same account.
       * params (optional) is a dict of operator-chosen NinjaScript property
         overrides; persisted into the command record so the bridge can apply
         them.
@@ -698,10 +1630,11 @@ def submit_command(command: str,
         raise ops.OpsError("class_name required (catalog strategy)", 400)
     if s and s.get("status") in ("rejected", "archived"):
         raise ops.OpsError("strategy is archived/rejected — command refused", 403)
-    if not _is_paper_account(account_name):
+    acct_mode = _resolve_account_mode_for_command(account_name)
+    if acct_mode == "unknown":
         raise ops.OpsError(
-            f"account '{account_name}' is not classified as paper/playback — "
-            "live account control is forbidden", 403)
+            f"account '{account_name}' could not be classified by name or bridge "
+            "telemetry — refusing command for safety", 403)
     try:
         qty = int(quantity)
     except Exception:
@@ -718,11 +1651,13 @@ def submit_command(command: str,
         "strategy_class": resolved_class,
         "instrument": instrument or (s.get("instrument") if s else ""),
         "contract_month": contract_month or (s.get("contract_month") if s else ""),
+        "timeframe": timeframe or "",
         "account_name": account_name,
         "quantity": qty,
         "operator": operator,
         "reason": reason or "",
         "params": params or {},
+        "runtime_instance_id": runtime_instance_id or "",
         "live_block_passed": True,
     }
     p = _path(COMMANDS_FILE)
@@ -741,6 +1676,8 @@ def submit_command(command: str,
     except Exception:
         pass
     record["status"] = "queued"
+    record["state"] = "waiting_for_bridge"
+    record["timeout_sec"] = _CMD_DEFAULT_TIMEOUT_SEC
     return record
 
 
@@ -748,5 +1685,436 @@ def read_commands(limit: int = 200) -> List[Dict[str, Any]]:
     return _read_jsonl(_path(COMMANDS_FILE), max_lines=limit)
 
 
-def read_command_results(limit: int = 200) -> List[Dict[str, Any]]:
+def read_command_results(limit: int = 500) -> List[Dict[str, Any]]:
+    """Tail-read `data/runtime/command_results.jsonl` written by the bridge.
+
+    Paper/playback only — the bridge refuses to process commands for live
+    accounts at the C# layer, but this reader is content-agnostic. Each row
+    typically carries: command_id, timestamp_utc, status
+    ("completed" | "failed" | "rejected"), message, strategy_id, optionally
+    account_name and strategy_class. Malformed lines are silently skipped.
+    Returns the most recent `limit` rows.
+    """
     return _read_jsonl(_path(COMMAND_RESULTS_FILE), max_lines=limit)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — instrument / timeframe normalization & selection diff
+# ---------------------------------------------------------------------------
+
+_MONTH_NAME_TO_NUM: Dict[str, str] = {
+    "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04",
+    "MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08",
+    "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12",
+}
+
+
+def normalize_instrument(s: str) -> Tuple[str, str]:
+    """Return ``(root_upper, "MM-YY")`` for an instrument descriptor.
+
+    Paper/playback bridge contract — the bridge writes instrument names in
+    one of: ``"MNQ JUN26"``, ``"MNQ 06-26"``, root-only ``"MNQ"`` or blank.
+    Unknown shapes degrade to ``(input_upper_root_or_empty, "")`` rather
+    than raising. Year is kept as the 2-digit form supplied by NinjaTrader.
+    """
+    if not s:
+        return ("", "")
+    raw = str(s).strip().upper()
+    if not raw:
+        return ("", "")
+    # split on whitespace or '-' boundary; expiry token is the last segment
+    # that contains digits or matches a month name.
+    parts = raw.replace("\t", " ").split()
+    if len(parts) == 1:
+        # could be "MNQ" or "MNQ06-26" (rare). Try to detect digit suffix.
+        token = parts[0]
+        # check trailing "MMMYY" or "MM-YY"
+        for i in range(1, len(token)):
+            tail = token[i:]
+            mm, yy = _parse_expiry_token(tail)
+            if mm:
+                return (token[:i], f"{mm}-{yy}")
+        return (token, "")
+    root = parts[0]
+    expiry = " ".join(parts[1:])
+    mm, yy = _parse_expiry_token(expiry)
+    if not mm:
+        return (root, "")
+    return (root, f"{mm}-{yy}")
+
+
+def _parse_expiry_token(tok: str) -> Tuple[str, str]:
+    """Parse 'JUN26', 'JUN 26', '06-26', '06/26', '0626' -> ('06','26')."""
+    if not tok:
+        return ("", "")
+    t = tok.strip().upper().replace(" ", "").replace("/", "-")
+    # MM-YY
+    if "-" in t:
+        a, _, b = t.partition("-")
+        if a.isdigit() and b.isdigit() and len(a) <= 2 and len(b) == 2:
+            return (a.zfill(2), b)
+    # MMMYY  (e.g. JUN26)
+    if len(t) >= 5 and t[:3].isalpha() and t[3:].isdigit():
+        mm = _MONTH_NAME_TO_NUM.get(t[:3])
+        yy = t[3:]
+        if mm and len(yy) == 2:
+            return (mm, yy)
+    # MMYY all digits
+    if t.isdigit() and len(t) == 4:
+        return (t[:2], t[2:])
+    return ("", "")
+
+
+def instruments_match(a: str, b: str) -> bool:
+    """Loose match: equal root AND equal MM-YY (or one side has no expiry).
+
+    Paper/playback only — used to bind UI-selected instrument to a runtime
+    strategy reported by the bridge. A blank ``MM-YY`` on either side is
+    treated as a wildcard (root-only descriptor matches a dated contract).
+    """
+    ra, ea = normalize_instrument(a)
+    rb, eb = normalize_instrument(b)
+    if not ra or not rb:
+        return False
+    if ra != rb:
+        return False
+    if not ea or not eb:
+        return True
+    return ea == eb
+
+
+def normalize_timeframe(s: str) -> Tuple[str, int]:
+    """Return ``(period_type_lower, value)`` for a timeframe descriptor.
+
+    Paper/playback bridge contract — NinjaTrader exports ``"5 Minute"`` or
+    ``"1 Hour"``; the legacy backtest UI uses ``"Minute/5"`` / ``"Hour/1"``.
+    Both shapes (and blank) are accepted. Unknown -> ``("", 0)``.
+    """
+    if not s:
+        return ("", 0)
+    raw = str(s).strip()
+    if not raw:
+        return ("", 0)
+    # "Minute/5"
+    if "/" in raw:
+        kind, _, val = raw.partition("/")
+        try:
+            return (kind.strip().lower(), int(val.strip()))
+        except ValueError:
+            return (kind.strip().lower(), 0)
+    # "5 Minute"
+    parts = raw.split()
+    if len(parts) == 2:
+        a, b = parts
+        if a.isdigit():
+            return (b.lower(), int(a))
+        if b.isdigit():
+            return (a.lower(), int(b))
+    # bare "Minute" / "Day"
+    if raw.isalpha():
+        return (raw.lower(), 0)
+    return ("", 0)
+
+
+def timeframes_match(a: str, b: str) -> bool:
+    """Loose timeframe match. Blank/unknown on either side -> True (graceful)
+    because older bridge builds do not export ``timeframe`` at all.
+    Paper/playback only — informational, never used to gate live trading.
+    """
+    na = normalize_timeframe(a)
+    nb = normalize_timeframe(b)
+    if not na[0] or not nb[0]:
+        return True
+    return na == nb
+
+
+def compute_selection_diff(selected_account: Optional[str],
+                           selected_instrument: Optional[str],
+                           selected_timeframe: Optional[str],
+                           runtime_strategy: Optional[Dict[str, Any]]
+                           ) -> Dict[str, Any]:
+    """Compare UI-selected (account, instrument, timeframe) against a runtime
+    strategy row. Paper/playback only — the result is read-only diagnostics
+    for the Trading Online tab and never affects live trading paths.
+
+    The returned shape is stable so the UI can render badges deterministically.
+    Account mismatch and instrument mismatch are blocking; timeframe is
+    warning-only (the bridge does not always export it on older builds).
+    """
+    rt = runtime_strategy or {}
+    rt_account    = str(rt.get("account_name") or "")
+    rt_instrument = str(rt.get("instrument") or rt.get("contract_month") or "")
+    rt_timeframe  = str(rt.get("timeframe") or "")
+
+    sel_account    = (selected_account or "").strip()
+    sel_instrument = (selected_instrument or "").strip()
+    sel_timeframe  = (selected_timeframe or "").strip()
+
+    acct_match = bool(sel_account) and (sel_account.lower() == rt_account.lower())
+    inst_norm_match = instruments_match(sel_instrument, rt_instrument) \
+        if sel_instrument and rt_instrument else False
+    inst_exact = bool(sel_instrument) and (sel_instrument == rt_instrument)
+    inst_match = inst_exact or inst_norm_match
+    tf_match = timeframes_match(sel_timeframe, rt_timeframe)
+
+    account_block = {
+        "matches":   acct_match,
+        "expected":  sel_account or None,
+        "actual":    rt_account or None,
+        "blocking":  (not acct_match) and bool(sel_account),
+    }
+    instrument_block = {
+        "matches":          inst_match,
+        "expected":         sel_instrument or None,
+        "actual":           rt_instrument or None,
+        "normalized_match": inst_norm_match,
+        "blocking":         (not inst_match) and bool(sel_instrument),
+    }
+    timeframe_block = {
+        "matches":   tf_match,
+        "expected":  sel_timeframe or None,
+        "actual":    rt_timeframe or None,
+        "blocking":  False,  # never blocking — bridge may not export it
+    }
+    any_blocker = bool(account_block["blocking"] or instrument_block["blocking"])
+    return {
+        "account":     account_block,
+        "instrument":  instrument_block,
+        "timeframe":   timeframe_block,
+        "any_blocker": any_blocker,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — command status state machine
+# ---------------------------------------------------------------------------
+
+_CMD_DEFAULT_TIMEOUT_SEC = 30
+_BRIDGE_RUNTIME_GRACE_SEC = 5  # bridge reported done -> wait for telemetry tick
+
+
+def _match_runtime_for_command(cmd: Dict[str, Any],
+                               raw_strategies: List[Dict[str, Any]]
+                               ) -> Optional[Dict[str, Any]]:
+    """Match the runtime row that corresponds to ``cmd``.
+
+    Preference order:
+      1. Exact ``runtime_instance_id`` match (when the command carries one).
+         This is the only correct way to disambiguate multiple instances of
+         the same class on the same account.
+      2. Loose ``(strategy_class, account_name, instrument)`` match, while
+         skipping ghost rows (state in {Finalized, Terminated, ""}) so a
+         dead instance doesn't shadow the live one.
+    """
+    cmd_iid = str(cmd.get("runtime_instance_id") or "")
+    if cmd_iid:
+        for r in raw_strategies:
+            if isinstance(r, dict) and str(r.get("runtime_instance_id") or "") == cmd_iid:
+                return r
+        # explicit id given but not found — caller treats as no match
+        return None
+
+    GHOSTS = {"finalized", "terminated"}
+    cmd_class = str(cmd.get("strategy_class") or "").lower()
+    cmd_acct  = str(cmd.get("account_name") or "").lower()
+    cmd_inst  = str(cmd.get("instrument") or "")
+    for r in raw_strategies:
+        if not isinstance(r, dict):
+            continue
+        rstate = str(r.get("state") or "").lower()
+        rdsc   = r.get("data_series_count")
+        if rstate in GHOSTS and not r.get("enabled") and (rdsc == 0):
+            continue
+        rcls = str(r.get("strategy_class") or "").lower()
+        racct = str(r.get("account_name") or "").lower()
+        rinst = str(r.get("instrument") or r.get("contract_month") or "")
+        if cmd_class and rcls != cmd_class:
+            continue
+        if cmd_acct and racct != cmd_acct:
+            continue
+        if cmd_inst and rinst and not instruments_match(cmd_inst, rinst):
+            continue
+        return r
+    return None
+
+
+def _classify_rejected_message(message: str) -> str:
+    """Map bridge rejection text to a stable Phase-2 sub-state."""
+    m = (message or "").lower()
+    if "not paper" in m or "not playback" in m or "live" in m:
+        return "failed_account_mismatch"
+    if "shortonly" in m or "param mismatch" in m:
+        return "failed_param_mismatch"
+    if "no '" in m and "instance" in m:
+        return "failed_no_instance"
+    if "no instance" in m or "not found" in m:
+        return "failed_no_instance"
+    return "failed_rejected"
+
+
+def get_command_status(command_id: str,
+                       timeout_sec: int = _CMD_DEFAULT_TIMEOUT_SEC
+                       ) -> Dict[str, Any]:
+    """Resolve the current state of a queued bridge command (paper/playback
+    only — the backend refuses to queue live commands).
+
+    Reads ``commands.jsonl``, ``command_results.jsonl``, ``heartbeat.json``
+    and ``strategies.json`` from ``data/runtime/`` and returns a single dict
+    suitable for rendering a status pill in the Trading Online UI. Never
+    raises; missing/malformed inputs degrade to ``unknown_command`` /
+    ``failed_bridge_offline`` states. See plan.md Phase 2 for the full state
+    table.
+    """
+    cmds = read_commands(limit=2000)
+    cmd: Optional[Dict[str, Any]] = None
+    for c in cmds:
+        if str(c.get("command_id") or "") == command_id:
+            cmd = c
+            break
+    if cmd is None:
+        return {
+            "command_id":  command_id,
+            "state":       "unknown_command",
+            "reason":      "command_id not in commands.jsonl",
+            "timeout_sec": int(timeout_sec),
+        }
+
+    submitted_at = _parse_iso(cmd.get("timestamp_utc"))
+    elapsed_sec  = ((_now_utc() - submitted_at).total_seconds()
+                    if submitted_at else 0.0)
+
+    # bridge result lookup
+    bridge_row: Optional[Dict[str, Any]] = None
+    for r in read_command_results(limit=2000):
+        if str(r.get("command_id") or "") == command_id:
+            bridge_row = r  # take the latest match (results may dedupe)
+    bridge_result: Optional[Dict[str, Any]] = None
+    if bridge_row is not None:
+        bridge_result = {
+            "status":           str(bridge_row.get("status") or ""),
+            "message":          str(bridge_row.get("message") or ""),
+            "completed_at_utc": bridge_row.get("timestamp_utc")
+                                or bridge_row.get("completed_at_utc"),
+        }
+
+    hb = read_heartbeat()
+    hb_view = {
+        "present":  bool(hb.get("present")),
+        "fresh":    bool(hb.get("fresh")),
+        "stale_sec": (hb.get("age_sec") if hb.get("present") else None),
+    }
+
+    raw_strats = read_strategies_raw()
+    rt_match_raw = _match_runtime_for_command(cmd, raw_strats)
+    runtime_match: Optional[Dict[str, Any]] = None
+    if rt_match_raw is not None:
+        runtime_match = {
+            "strategy_class": rt_match_raw.get("strategy_class"),
+            "account_name":   rt_match_raw.get("account_name"),
+            "instrument":     rt_match_raw.get("instrument")
+                              or rt_match_raw.get("contract_month"),
+            "enabled":        bool(rt_match_raw.get("enabled")),
+            "timestamp_utc":  rt_match_raw.get("timestamp_utc"),
+        }
+
+    base: Dict[str, Any] = {
+        "command_id":       command_id,
+        "command":          cmd.get("command"),
+        "strategy_id":      cmd.get("strategy_id"),
+        "strategy_class":   cmd.get("strategy_class"),
+        "account_name":     cmd.get("account_name"),
+        "instrument":       cmd.get("instrument"),
+        "timeframe":        cmd.get("timeframe"),
+        "submitted_at_utc": cmd.get("timestamp_utc"),
+        "elapsed_sec":      round(float(elapsed_sec), 2),
+        "bridge_result":    bridge_result,
+        "runtime_match":    runtime_match,
+        "heartbeat":        hb_view,
+        "timeout_sec":      int(timeout_sec),
+    }
+
+    state = "waiting_for_bridge"
+    reason = "no bridge_result yet — waiting for command_results.jsonl"
+
+    if bridge_result is not None:
+        bstatus = bridge_result["status"].lower()
+        bmsg    = bridge_result["message"]
+        if bstatus == "rejected":
+            state  = _classify_rejected_message(bmsg)
+            reason = bmsg or "command rejected by bridge"
+        elif bstatus == "failed":
+            state  = "failed_other"
+            reason = bmsg or "bridge reported failure"
+        elif bstatus == "completed":
+            cmd_kind = str(cmd.get("command") or "")
+            if cmd_kind == "enable_strategy":
+                if runtime_match and runtime_match["enabled"]:
+                    state  = "confirmed_running"
+                    reason = "runtime strategy entry shows enabled=True"
+                elif elapsed_sec > timeout_sec:
+                    state  = "failed_no_runtime_confirmation"
+                    reason = ("Bridge принял команду, но NinjaTrader не подтвердил "
+                              "переход стратегии в Realtime в пределах таймаута. "
+                              "Проверьте Strategies tab вручную.")
+                else:
+                    state  = "bridge_completed_awaiting_runtime"
+                    reason = ("bridge completed; waiting up to "
+                              f"{_BRIDGE_RUNTIME_GRACE_SEC}s for next telemetry tick")
+            elif cmd_kind == "disable_strategy":
+                if (runtime_match is None) or (not runtime_match["enabled"]):
+                    state  = "confirmed_stopped"
+                    reason = "runtime strategy entry missing or enabled=False"
+                elif elapsed_sec > timeout_sec:
+                    state  = "failed_no_runtime_confirmation"
+                    reason = ("Bridge принял команду disable, но стратегия в "
+                              "NinjaTrader всё ещё enabled=True после таймаута.")
+                else:
+                    state  = "bridge_completed_awaiting_runtime"
+                    reason = ("bridge completed; waiting up to "
+                              f"{_BRIDGE_RUNTIME_GRACE_SEC}s for next telemetry tick")
+            else:
+                state  = "failed_other"
+                reason = f"unknown command kind: {cmd_kind}"
+        else:
+            state  = "failed_other"
+            reason = f"unrecognized bridge status: {bstatus}"
+    else:
+        if (not hb_view["present"]) or (not hb_view["fresh"]):
+            state  = "failed_bridge_offline"
+            reason = ("bridge heartbeat missing or stale — NinjaTrader may be "
+                      "closed or NTAnalyzerBridge AddOn is not running")
+        elif elapsed_sec >= timeout_sec:
+            state  = "failed_timeout"
+            reason = (f"no command_results.jsonl entry for command_id within "
+                      f"{int(timeout_sec)}s — bridge processor not running or "
+                      "DLL stale (run 01_INSTALL_BRIDGE.cmd)")
+        else:
+            state  = "waiting_for_bridge"
+            reason = (f"awaiting bridge response ({int(elapsed_sec)}s of "
+                      f"{int(timeout_sec)}s elapsed)")
+
+    base["state"]  = state
+    base["reason"] = reason
+    return base
+
+
+def get_command_statuses_since(since_ts: Optional[str] = None,
+                               timeout_sec: int = _CMD_DEFAULT_TIMEOUT_SEC
+                               ) -> List[Dict[str, Any]]:
+    """Batch resolver: returns ``get_command_status`` for every command
+    submitted at-or-after ``since_ts`` (ISO-8601 UTC). When ``since_ts`` is
+    omitted, defaults to the last 30 minutes. Paper/playback only.
+    """
+    since_dt = _parse_iso(since_ts) if since_ts else None
+    if since_dt is None:
+        since_dt = _now_utc() - timedelta(minutes=30)
+    out: List[Dict[str, Any]] = []
+    for c in read_commands(limit=2000):
+        cid = str(c.get("command_id") or "")
+        if not cid:
+            continue
+        ts = _parse_iso(c.get("timestamp_utc"))
+        if ts is None or ts < since_dt:
+            continue
+        out.append(get_command_status(cid, timeout_sec=timeout_sec))
+    return out

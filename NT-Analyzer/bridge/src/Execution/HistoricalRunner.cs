@@ -12,8 +12,7 @@ namespace NTAnalyzerBridge.Execution
     }
 
     /// <summary>
-    /// Outcome of running one job. Phase A only ever produces Failed
-    /// (with error_type=not_implemented) or Cancelled.
+    /// Outcome of running one job.
     /// </summary>
     internal sealed class JobRunOutcome
     {
@@ -50,7 +49,7 @@ namespace NTAnalyzerBridge.Execution
     }
 
     /// <summary>
-    /// Phase A stub. Kept as a fallback / for future tests.
+    /// Stub runner kept as a fallback / for future tests.
     /// Production wiring uses StrategyAnalyzerRunner (Variant 1).
     /// </summary>
     internal sealed class NotImplementedHistoricalRunner : IHistoricalRunner
@@ -65,7 +64,7 @@ namespace NTAnalyzerBridge.Execution
 
             return JobRunOutcome.Failed(
                 "not_implemented",
-                "Phase A stub runner — wire StrategyAnalyzerRunner instead");
+                "Stub runner — wire StrategyAnalyzerRunner instead");
         }
     }
 }

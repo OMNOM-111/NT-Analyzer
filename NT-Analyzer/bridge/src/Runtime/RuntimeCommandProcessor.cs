@@ -16,12 +16,12 @@ namespace NTAnalyzerBridge.Runtime
     /// <summary>
     /// Phase 18 - Runtime command processor.
     ///
-    /// Polls data/runtime/commands.jsonl, executes paper-only enable/disable
+    /// Polls data/runtime/commands.jsonl, executes enable/disable
     /// of NinjaScript Strategy instances, appends a result to
     /// data/runtime/command_results.jsonl.
     ///
+    /// Account-agnostic: paper / playback / demo / live are controlled identically.
     /// Hard safety:
-    ///   * live accounts are rejected (account_mode != paper / playback);
     ///   * unknown account names are rejected (no defaulting to live);
     ///   * archived/rejected strategy classes are rejected;
     ///   * we never place orders, never modify orders, never bypass NinjaScript
@@ -144,11 +144,12 @@ namespace NTAnalyzerBridge.Runtime
 
         private void ProcessOne(string rawJson, string cid)
         {
-            string command       = ExtractJsonString(rawJson, "command");
-            string strategyId    = ExtractJsonString(rawJson, "strategy_id");
-            string strategyClass = ExtractJsonString(rawJson, "strategy_class");
-            string accountName   = ExtractJsonString(rawJson, "account_name");
-            string instrument    = ExtractJsonString(rawJson, "instrument");
+            string command           = ExtractJsonString(rawJson, "command");
+            string strategyId        = ExtractJsonString(rawJson, "strategy_id");
+            string strategyClass     = ExtractJsonString(rawJson, "strategy_class");
+            string accountName       = ExtractJsonString(rawJson, "account_name");
+            string instrument        = ExtractJsonString(rawJson, "instrument");
+            string runtimeInstanceId = ExtractJsonString(rawJson, "runtime_instance_id");
 
             try
             {
@@ -178,22 +179,26 @@ namespace NTAnalyzerBridge.Runtime
                     return;
                 }
                 string accMode = ClassifyAccountMode(accountName, acc);
-                if (accMode != "paper" && accMode != "playback")
+                if (accMode == "unknown")
                 {
                     WriteResult(cid, "rejected",
-                        "account '" + accountName + "' classified as '" + accMode +
-                        "' - only paper/playback allowed", "");
+                        "account '" + accountName + "' could not be classified - refusing for safety", "");
                     return;
                 }
+                // Account-agnostic: paper / playback / demo / live are all controlled identically.
 
                 // Find existing strategy instance on this account (we never create
                 // new ones from an AddOn - that requires the Strategies window UI).
-                object strat = FindStrategy(acc, strategyClass, instrument);
+                object strat = FindStrategy(acc, strategyClass, instrument, accountName, runtimeInstanceId);
                 if (strat == null)
                 {
+                    string detail = string.IsNullOrEmpty(runtimeInstanceId)
+                        ? "no '" + strategyClass + "' instance found on account '" + accountName + "'."
+                        : "no instance with runtime_instance_id='" + runtimeInstanceId +
+                          "' (class '" + strategyClass + "') found on account '" + accountName +
+                          "'. Telemetry may be stale, refresh and retry.";
                     WriteResult(cid, "failed",
-                        "no '" + strategyClass + "' instance found on account '" +
-                        accountName + "'. Add it once via NinjaTrader Strategies window, " +
+                        detail + " Add it once via NinjaTrader Strategies window, " +
                         "then re-issue the command.",
                         "");
                     return;
@@ -285,7 +290,8 @@ namespace NTAnalyzerBridge.Runtime
             return "live";
         }
 
-        private static object FindStrategy(Account acc, string className, string instrument)
+        private static object FindStrategy(Account acc, string className, string instrument,
+                                           string accountName, string runtimeInstanceId)
         {
             try
             {
@@ -301,6 +307,26 @@ namespace NTAnalyzerBridge.Runtime
                     {
                         if (s == null) continue;
                         if (s.GetType().Name != className) continue;
+
+                        // Skip ghost objects (Finalized/Terminated) — they are
+                        // not visible in the Strategies tab and not actionable.
+                        string st = SafeStringProp(s, "State") ?? "";
+                        if (st.Equals("Finalized", StringComparison.OrdinalIgnoreCase) ||
+                            st.Equals("Terminated", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        // Exact targeting via runtime_instance_id (preferred):
+                        // matches the same hash the telemetry exporter wrote.
+                        if (!string.IsNullOrEmpty(runtimeInstanceId))
+                        {
+                            string sName = SafeStringProp(s, "Name");
+                            string sInst = SafeInstrumentFullName(s);
+                            string sid = NTAnalyzerBridge.Util.RuntimeInstanceIdUtil
+                                .Compute(s, accountName, className, sInst, sName);
+                            if (sid == runtimeInstanceId) return s;
+                            continue; // when id is provided, only an exact match wins
+                        }
+
                         if (best == null) best = s;
                         if (!string.IsNullOrEmpty(instrument))
                         {
@@ -313,6 +339,8 @@ namespace NTAnalyzerBridge.Runtime
                         }
                     }
                 }
+                // If id was specified but no match found — return null (don't fall back).
+                if (!string.IsNullOrEmpty(runtimeInstanceId)) return null;
                 return best;
             }
             catch { return null; }
@@ -414,7 +442,15 @@ namespace NTAnalyzerBridge.Runtime
             try
             {
                 string cls = strat.GetType().Name;
-                if (cls == "NTAMicroVwapRiskPilot") return "b1_shortonly";
+                if (cls == "NTAMicroVwapRiskPilot") return "vwap_short_mnq_5m_v1";
+                if (cls == "VWAPPullbackMGC5mV1") return "vwap_pullback_mgc_5m_v1";
+                if (cls == "PullbackMNQ5mV2") return "pullback_mnq_5m_v2";
+                if (cls == "NTAMicroVwapRiskExplorer") return "vwap_risk_explorer_mgc_5m_v1";
+                if (cls == "NTAMicroSessionEdgeExplorer") return "session_edge_multi_5m_v2";
+                if (cls == "NTAMicroMnqScalpPilot") return "scalping_mnq_1m_v1";
+                if (cls == "NTAMnqMicroOrbOpenScalp") return "orb_open_scalp_mnq_1m_v1";
+                if (cls == "NTAnalyzerEveryNBarLong") return "every_n_bar_long_generic_any_v1";
+                if (cls == "StrategiyaUrovney") return "levels_strategy_userdefined_v1";
                 return cls.ToLowerInvariant();
             }
             catch { return ""; }

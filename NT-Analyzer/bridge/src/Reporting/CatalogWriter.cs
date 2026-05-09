@@ -139,10 +139,53 @@ namespace NTAnalyzerBridge.Reporting
             {
                 ["class_name"]   = t.Name,
                 ["full_name"]    = t.FullName,
-                ["display_name"] = t.Name,
+                ["display_name"] = ReadStrategyDisplayName(instance, t.Name),
+                ["stable_id"]    = StableIdForClass(t.Name),
+                ["legacy_strategy_ids"] = LegacyIdsForClass(t.Name),
                 ["source_file"]  = TryGuessSourceFile(t, ntUserDir),
                 ["parameters"]   = parameters,
             };
+        }
+
+        private static string ReadStrategyDisplayName(object instance, string fallback)
+        {
+            if (instance == null) return fallback;
+            try
+            {
+                var pi = instance.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                object raw = pi != null ? pi.GetValue(instance) : null;
+                string value = raw == null ? null : raw.ToString();
+                return string.IsNullOrWhiteSpace(value) ? fallback : value;
+            }
+            catch { return fallback; }
+        }
+
+        private static string StableIdForClass(string className)
+        {
+            switch (className)
+            {
+                case "PullbackMNQ5mV2": return "pullback_mnq_5m_v2";
+                case "VWAPPullbackMGC5mV1": return "vwap_pullback_mgc_5m_v1";
+                case "NTAMicroVwapRiskPilot": return "vwap_short_mnq_5m_v1";
+                case "NTAMicroVwapRiskExplorer": return "vwap_risk_explorer_mgc_5m_v1";
+                case "NTAMicroSessionEdgeExplorer": return "session_edge_multi_5m_v2";
+                case "NTAMicroMnqScalpPilot": return "scalping_mnq_1m_v1";
+                case "NTAMnqMicroOrbOpenScalp": return "orb_open_scalp_mnq_1m_v1";
+                case "NTAnalyzerEveryNBarLong": return "every_n_bar_long_generic_any_v1";
+                case "StrategiyaUrovney": return "levels_strategy_userdefined_v1";
+                default: return className == null ? "" : className.ToLowerInvariant();
+            }
+        }
+
+        private static List<string> LegacyIdsForClass(string className)
+        {
+            if (className == "NTAMicroVwapRiskPilot")
+                return new List<string> { "b1_shortonly" };
+            if (className == "VWAPPullbackMGC5mV1")
+                return new List<string> { "vwappullbackmgc5mv1" };
+            if (className == "NTAMnqMicroOrbOpenScalp")
+                return new List<string> { "ntamnqmicroorbopenscalp" };
+            return new List<string>();
         }
 
         private static string ClassifyType(Type t)

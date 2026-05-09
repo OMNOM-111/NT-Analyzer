@@ -26,7 +26,8 @@ namespace NTAnalyzerBridge.Execution
     ///     and drive the public lifecycle SetState→RunIteration→WaitForIterationsCompleted.
     ///  4. Extract trades + metrics from StrategyBase.SystemPerformance.
     ///
-    /// Failure policy (per ГЛАВНЫЙ_ПЛАН and explicit user instruction):
+    /// Failure policy: failed strategy runs are surfaced as failed jobs, not
+    /// silently converted into successful reports.
     ///   never silently fall back to Variant 2. If Variant 1 fails at step N,
     ///   return Failed("variant1_unavailable", &lt;step&gt;: &lt;exception&gt;) with
     ///   the FULL diagnostic trail so the user can see exactly which API
@@ -100,7 +101,7 @@ namespace NTAnalyzerBridge.Execution
             if (ct.IsCancellationRequested)
                 return JobRunOutcome.Cancelled("cancelled before backtest start");
 
-            // Backtest path order (MVP-0):
+            // Backtest path order:
             //   PathA2 first \u2014 verified working on NinjaTrader 8.1.6.3.
             //   PathA  only if explicitly enabled in config (R&D toggle):
             //          private static Optimizer.RunBacktest reliably throws
@@ -374,7 +375,7 @@ namespace NTAnalyzerBridge.Execution
                 return null;
 
             // ---- BarsToLoad / DaysToLoad: do NOT override -----------------
-            // Earlier MVP-0 code unconditionally did
+            // Earlier code unconditionally did
             //     TrySet(s, "BarsToLoad", 200000)
             // which made NT load 200000 bars BACK from `To`, ignoring `From`
             // entirely (loaded 2025-09-30 instead of requested 2026-03-12,
@@ -466,7 +467,7 @@ namespace NTAnalyzerBridge.Execution
             string tz = (string)exec["timezone"];
             if (!string.IsNullOrEmpty(tz) && !string.Equals(tz, "UTC", StringComparison.OrdinalIgnoreCase))
             {
-                diag.Add("FATAL: execution.timezone='" + tz + "' — only 'UTC' supported in MVP-0");
+                diag.Add("FATAL: execution.timezone='" + tz + "' — only 'UTC' supported by the current bridge");
                 return false;
             }
 
@@ -829,7 +830,7 @@ namespace NTAnalyzerBridge.Execution
             }
 
             // Build whitelist of allowed property names.
-            // MVP-0 contract: ONLY properties carrying [NinjaScriptProperty]
+            // Contract: ONLY properties carrying [NinjaScriptProperty]
             // are user-tunable parameters. A plain public setter on the
             // strategy class is NOT enough — that would let job.json reach
             // into internal/auxiliary state and break reproducibility.
@@ -1318,7 +1319,7 @@ namespace NTAnalyzerBridge.Execution
             try
             {
                 // Surface ONLY properties carrying [NinjaScriptProperty] —
-                // the same MVP-0 contract used by ApplyStrategyParameters.
+                // the same contract used by ApplyStrategyParameters.
                 // This guarantees that result.final_parameters is always
                 // exactly the set the user/AI is allowed to tune (and that
                 // run_hash stays meaningful).

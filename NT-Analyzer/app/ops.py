@@ -45,7 +45,7 @@ except Exception:  # pragma: no cover - Python < 3.9 fallback
     ZoneInfo = None  # type: ignore
 
 # ---------------------------------------------------------------------------
-# Constants — locked Phase 14R/15 baseline
+# Constants — locked B1 baseline
 # ---------------------------------------------------------------------------
 
 ROUND_TURN_COMMISSION = 1.90  # USD per round-turn per contract
@@ -151,12 +151,17 @@ def _to_pt(dt_utc: datetime) -> datetime:
 
 
 def _paper_base_dir() -> Path:
-    """Find PAPER_B1_SHORTONLY without depending on Cyrillic path literals."""
-    root = _project_root().parent
+    """Find B1 paper documents inside the project, with legacy fallback."""
+    project = _project_root()
+    preferred = project / "data" / "profiles" / "paper_b1_shortonly"
+    if (preferred / "PAPER_B1_SHORTONLY_PROFILE.json").is_file():
+        return preferred
+
+    root = project.parent
     for p in root.rglob("PAPER_B1_SHORTONLY"):
         if p.is_dir() and (p / "PAPER_B1_SHORTONLY_PROFILE.json").is_file():
             return p
-    return root / "PAPER_B1_SHORTONLY"
+    return preferred
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +169,16 @@ def _paper_base_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 def _default_registry() -> Dict[str, Any]:
-    base_docs = (_project_root().parent / "РАЗРАБОТКА СТРАТЕГИЙ"
-                 / "PAPER_B1_SHORTONLY")
     base_docs = _paper_base_dir()
     return {
         "schema_version": "1.0",
         "generated_at_utc": _now_iso(),
         "strategies": [
             {
-                "strategy_id":         "b1_shortonly",
-                "display_name":        "B1 ShortOnly",
+                "strategy_id":         "vwap_short_mnq_5m_v1",
+                "stable_id":           "vwap_short_mnq_5m_v1",
+                "legacy_strategy_ids": ["b1_shortonly"],
+                "display_name":        "VWAP Short MNQ 5m v1",
                 "class_name":          "NTAMicroVwapRiskPilot",
                 "status":              "paper_ready",
                 "account_mode":        "paper",
@@ -239,7 +244,7 @@ def _default_registry() -> Dict[str, Any]:
                 "checklist_path":     "",
                 "journal_csv_path":   "",
                 "journal_xlsx_path":  "",
-                "archive_reason": "Phase 14R: negative across every regime n>=5; raw ORB has no edge on MNQ.",
+                "archive_reason": "Rejected: negative across every checked regime n>=5; raw ORB has no edge on MNQ.",
                 "created_at_utc": _now_iso(),
                 "updated_at_utc": _now_iso(),
             },
@@ -258,7 +263,7 @@ def _default_registry() -> Dict[str, Any]:
                 "validation_summary": {"adj_net": -111, "adj_pf": 0.87},
                 "paper_profile_path": "", "runbook_path": "",
                 "checklist_path": "", "journal_csv_path": "", "journal_xlsx_path": "",
-                "archive_reason": "Phase 11 retraction + Phase 14R: long mirror does not survive honest fills.",
+                "archive_reason": "Rejected: long mirror does not survive honest fills.",
                 "created_at_utc": _now_iso(),
                 "updated_at_utc": _now_iso(),
             },
@@ -277,7 +282,7 @@ def _default_registry() -> Dict[str, Any]:
                 "validation_summary": {"adj_net": -1225, "adj_pf": 0.0},
                 "paper_profile_path": "", "runbook_path": "",
                 "checklist_path": "", "journal_csv_path": "", "journal_xlsx_path": "",
-                "archive_reason": "Phase 12C verdict + Phase 14R: symmetric MR v0.1 negative across regimes.",
+                "archive_reason": "Rejected: symmetric MR v0.1 negative across checked regimes.",
                 "created_at_utc": _now_iso(),
                 "updated_at_utc": _now_iso(),
             },
@@ -328,8 +333,24 @@ def _repair_registry(reg: Dict[str, Any]) -> bool:
         "journal_xlsx_path": base_docs / "PAPER_B1_SHORTONLY_DAILY_JOURNAL.xlsx",
     }
     for s in reg.get("strategies", []):
-        if s.get("strategy_id") != "b1_shortonly":
+        sid = str(s.get("strategy_id") or "")
+        aliases = {str(x) for x in s.get("legacy_strategy_ids") or []}
+        if sid not in {"b1_shortonly", "vwap_short_mnq_5m_v1"} and "b1_shortonly" not in aliases:
             continue
+        if sid == "b1_shortonly":
+            s["strategy_id"] = "vwap_short_mnq_5m_v1"
+            changed = True
+        if s.get("stable_id") != "vwap_short_mnq_5m_v1":
+            s["stable_id"] = "vwap_short_mnq_5m_v1"
+            changed = True
+        legacy_ids = list(s.get("legacy_strategy_ids") or [])
+        if "b1_shortonly" not in {str(x) for x in legacy_ids}:
+            legacy_ids.append("b1_shortonly")
+            s["legacy_strategy_ids"] = legacy_ids
+            changed = True
+        if s.get("display_name") != "VWAP Short MNQ 5m v1":
+            s["display_name"] = "VWAP Short MNQ 5m v1"
+            changed = True
         for key, value in b1_paths.items():
             text = str(value)
             if s.get(key) != text:
@@ -376,8 +397,10 @@ def load_states() -> Dict[str, Any]:
 
 
 def get_strategy(strategy_id: str) -> Optional[Dict[str, Any]]:
+    needle = str(strategy_id or "")
     for s in load_registry()["strategies"]:
-        if s["strategy_id"] == strategy_id:
+        aliases = {str(x) for x in s.get("legacy_strategy_ids") or []}
+        if s["strategy_id"] == needle or needle in aliases:
             return s
     return None
 
@@ -993,7 +1016,7 @@ def live_lock_status() -> Dict[str, Any]:
         "live_unlock_token_present": p.is_file(),
         "blocked_reason": "live trading is forbidden until paper-review passes",
         "blocked_until": blocked_until,
-        "policy": "Phase 16 hard rule: no API path enables live trading.",
+        "policy": "No ops API path enables live trading.",
     }
 
 
@@ -1004,5 +1027,5 @@ def request_live_unlock(reason: str = "") -> Dict[str, Any]:
         "ok": False,
         "live_unlock_granted": False,
         "blocked": True,
-        "reason": "blocked until paper-review passed (Phase 16 hard rule)",
+        "reason": "blocked until paper-review passed",
     }

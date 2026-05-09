@@ -52,6 +52,48 @@ QUEUE_SUBDIRS = ("pending", "running", "done", "failed", "cancelled")
 VALIDATED_AGAINST_STRATEGY_ANALYZER = True
 
 
+# ---------------------------------------------------------------------------
+# In-memory caches for queue/catalog performance:
+#
+#   `/api/jobs?limit=500` against a 720-job repo was ~30s because every call
+#   re-read job.json + result.json + trades.json for every job. Done/failed
+#   job folders never change once written, so we cache parsed summaries
+#   keyed by (job_id, dir_mtime, status). Only changed folders are re-read.
+#
+# Cache invalidation is automatic: a folder's mtime changes when a status
+# move (running -> done) happens or when the bridge writes new artefacts.
+# Cache survives only in process memory; restart = clean rebuild.
+# ---------------------------------------------------------------------------
+
+# job_id -> (signature, summary_dict).  signature == (status, mtime).
+_JOB_SUMMARY_CACHE: Dict[str, Tuple[Tuple[str, float], Dict[str, Any]]] = {}
+
+# batch_id -> (signature, aggregate_dict).  signature combines bdir mtime,
+# child status, and child mtime so aggregate refreshes whenever any child moves.
+_BATCH_METRICS_CACHE: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
+
+# Last queue fingerprint that triggered a sync_report_numbers() call; reused
+# until the queue itself changes.  Avoids the per-request full scan.
+_REPORT_NUMBERS_FP: Optional[Tuple[int, float]] = None
+_REPORT_NUMBERS_VALUE: Dict[str, int] = {}
+
+
+def reset_caches() -> None:
+    """Drop in-memory list_jobs/list_batches caches (used by tests)."""
+    _JOB_SUMMARY_CACHE.clear()
+    _BATCH_METRICS_CACHE.clear()
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+    _REPORT_NUMBERS_FP = None
+    _REPORT_NUMBERS_VALUE = {}
+
+
+def cache_stats() -> Dict[str, int]:
+    return {
+        "jobs_cached":    len(_JOB_SUMMARY_CACHE),
+        "batches_cached": len(_BATCH_METRICS_CACHE),
+    }
+
+
 def utcnow_iso(precision: str = "seconds") -> str:
     now = datetime.now(timezone.utc)
     if precision == "ms":
@@ -88,6 +130,515 @@ def jobs_dir() -> Path:
 
 def catalog_dir() -> Path:
     return project_root() / "data" / "catalog"
+
+
+def reports_dir() -> Path:
+    return project_root() / "data" / "reports"
+
+
+def report_numbers_file() -> Path:
+    return reports_dir() / "report_numbers.json"
+
+
+def _report_key(kind: str, report_id: str) -> str:
+    return f"{kind}:{report_id}"
+
+
+def _read_report_numbers() -> Dict[str, Any]:
+    p = report_numbers_file()
+    if not p.is_file():
+        return {"schema_version": "1.0", "next_number": 1, "reports": {}}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("reports"), dict):
+            try:
+                data["next_number"] = int(data.get("next_number") or 1)
+            except (TypeError, ValueError):
+                data["next_number"] = 1
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"schema_version": "1.0", "next_number": 1, "reports": {}}
+
+
+def _write_report_numbers(data: Dict[str, Any]) -> None:
+    p = report_numbers_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, p)
+
+
+def _report_sort_time(created_at: Optional[str], fallback_mtime: float) -> float:
+    if created_at:
+        try:
+            return datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return float(fallback_mtime or 0.0)
+
+
+def _collect_report_number_candidates() -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for sub in QUEUE_SUBDIRS:
+        d = jobs_dir() / sub
+        if not d.is_dir():
+            continue
+        for child in d.iterdir():
+            if not child.is_dir() or child.name == ".staging":
+                continue
+            job = _read_json_safe(child / "job.json") or {}
+            if job.get("batch"):
+                continue
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append({
+                "key": _report_key("job", child.name),
+                "kind": "job",
+                "id": child.name,
+                "created_at_utc": job.get("created_at_utc"),
+                "sort_time": _report_sort_time(job.get("created_at_utc"), mtime),
+            })
+    bdir = batches_dir()
+    if bdir.is_dir():
+        for child in bdir.iterdir():
+            if not child.is_dir():
+                continue
+            meta = _read_json_safe(child / "batch.json") or {}
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append({
+                "key": _report_key("batch", child.name),
+                "kind": "batch",
+                "id": child.name,
+                "created_at_utc": meta.get("created_at_utc"),
+                "sort_time": _report_sort_time(meta.get("created_at_utc"), mtime),
+            })
+    candidates.sort(key=lambda x: (x.get("sort_time") or 0.0, x.get("key") or ""))
+    return candidates
+
+
+def sync_report_numbers() -> Dict[str, int]:
+    data = _read_report_numbers()
+    reports = data.setdefault("reports", {})
+    changed = False
+    max_seen = 0
+    for entry in reports.values():
+        try:
+            max_seen = max(max_seen, int(entry.get("number") if isinstance(entry, dict) else entry))
+        except (TypeError, ValueError):
+            continue
+    next_number = max(int(data.get("next_number") or 1), max_seen + 1)
+    for cand in _collect_report_number_candidates():
+        key = cand["key"]
+        entry = reports.get(key)
+        if isinstance(entry, dict) and isinstance(entry.get("number"), int):
+            continue
+        if isinstance(entry, int):
+            reports[key] = {"number": entry, "kind": cand["kind"], "id": cand["id"]}
+            changed = True
+            continue
+        reports[key] = {
+            "number": next_number,
+            "kind": cand["kind"],
+            "id": cand["id"],
+            "created_at_utc": cand.get("created_at_utc"),
+            "assigned_at_utc": utcnow_iso(),
+        }
+        next_number += 1
+        changed = True
+    if data.get("next_number") != next_number:
+        data["next_number"] = next_number
+        changed = True
+    data["schema_version"] = "1.0"
+    if changed:
+        _write_report_numbers(data)
+    out: Dict[str, int] = {}
+    for key, entry in reports.items():
+        try:
+            out[key] = int(entry.get("number") if isinstance(entry, dict) else entry)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _get_report_numbers_cached() -> Dict[str, int]:
+    """Return stable report-number mapping, warming the in-process cache if needed."""
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+    if _REPORT_NUMBERS_FP is None:
+        _REPORT_NUMBERS_VALUE = sync_report_numbers()
+        # Cheap sentinel; list_jobs/list_batches compute a stronger fingerprint.
+        _REPORT_NUMBERS_FP = (0, 0.0)
+    return _REPORT_NUMBERS_VALUE
+
+
+def profiles_dir() -> Path:
+    """Directory holding the curated Strategy Profiles registry."""
+    return project_root() / "data" / "profiles"
+
+
+def read_strategy_profiles() -> Dict[str, Any]:
+    """Return the Strategy Profiles registry in the UI-facing schema.
+
+    Profiles are user-curated "best-of" configurations (strategy + instrument +
+    timeframe + locked params + status). The Backtesting page uses them as a
+    second left-panel tab; the Trading page will compare live-running NT
+    strategies against them to surface parameter drift.
+    """
+    p = profiles_dir() / "strategies.json"
+    if not p.is_file():
+        return {"schema_version": "1.0", "profiles": []}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("profiles"), list):
+            out = dict(data)
+            out["profiles"] = [
+                _normalize_strategy_profile_for_ui(x)
+                for x in data.get("profiles", [])
+                if isinstance(x, dict)
+            ]
+            return out
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"schema_version": "1.0", "profiles": []}
+
+
+_PROFILE_STATUS_LABELS: Dict[str, str] = {
+    "ready": "Готова",
+    "in_progress": "В процессе",
+    "paper_ready": "Готово к paper",
+    "paper_candidate": "Кандидат",
+    "research_baseline": "База исследования",
+    "rejected": "Отклонено",
+    "archived": "Архив",
+}
+
+
+def _strategy_profiles_path() -> Path:
+    return profiles_dir() / "strategies.json"
+
+
+def _write_json_atomic(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def _read_strategy_profiles_raw() -> Dict[str, Any]:
+    path = _strategy_profiles_path()
+    if not path.is_file():
+        return {"schema_version": "1.1", "profiles": []}
+    with open(path, "r", encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise JobValidationError("profiles registry must be a JSON object")
+    profiles = data.get("profiles")
+    if not isinstance(profiles, list):
+        data["profiles"] = []
+    return data
+
+
+def update_strategy_profile(profile_id: str,
+                            updates: Dict[str, Any],
+                            action: str = "update") -> Dict[str, Any]:
+    """Mutate one Strategy Profile in data/profiles/strategies.json."""
+    pid = str(profile_id or "").strip()
+    if not pid:
+        raise JobValidationError("profile_id is required")
+    data = _read_strategy_profiles_raw()
+    profiles = data.get("profiles") or []
+    target: Optional[Dict[str, Any]] = None
+    for profile in profiles:
+        if isinstance(profile, dict) and str(profile.get("profile_id") or profile.get("id") or "") == pid:
+            target = profile
+            break
+    if target is None:
+        raise JobValidationError(f"profile not found: {pid}")
+
+    allowed = {"name", "status", "status_label", "notes"}
+    changed: Dict[str, Any] = {}
+    for key, value in (updates or {}).items():
+        if key not in allowed:
+            continue
+        if key == "status":
+            value = str(value or "").strip()
+            if value not in _PROFILE_STATUS_LABELS:
+                raise JobValidationError(f"unsupported profile status: {value}")
+            target["status"] = value
+            target["status_label"] = _PROFILE_STATUS_LABELS[value]
+            changed["status"] = value
+            changed["status_label"] = target["status_label"]
+            continue
+        if key in ("name", "status_label", "notes"):
+            value = str(value or "").strip()
+            if not value and key == "name":
+                raise JobValidationError("profile name cannot be empty")
+            target[key] = value
+            changed[key] = value
+
+    if not changed:
+        raise JobValidationError("no supported profile fields to update")
+
+    target["updated_at_utc"] = utcnow_iso()
+    log = target.get("ui_decisions")
+    if not isinstance(log, list):
+        log = []
+    log.append({
+        "at_utc": target["updated_at_utc"],
+        "action": str(action or "update"),
+        "changes": changed,
+    })
+    target["ui_decisions"] = log[-20:]
+    _write_json_atomic(_strategy_profiles_path(), data)
+    return {"ok": True, "profile_id": pid, "profile": _normalize_strategy_profile_for_ui(target)}
+
+
+def delete_strategy_profile(profile_id: str) -> Dict[str, Any]:
+    """Remove one Strategy Profile from the profile registry."""
+    pid = str(profile_id or "").strip()
+    if not pid:
+        raise JobValidationError("profile_id is required")
+    data = _read_strategy_profiles_raw()
+    profiles = data.get("profiles") or []
+    kept = [p for p in profiles if not (isinstance(p, dict) and str(p.get("profile_id") or p.get("id") or "") == pid)]
+    if len(kept) == len(profiles):
+        raise JobValidationError(f"profile not found: {pid}")
+    data["profiles"] = kept
+    data["updated_at_utc"] = utcnow_iso()
+    _write_json_atomic(_strategy_profiles_path(), data)
+    return {"ok": True, "profile_id": pid, "deleted": True}
+
+
+def read_instrument_coverage() -> Dict[str, Any]:
+    """UI-facing instrument coverage payload.
+
+    Reads the offline-generated `data/profiles/instrument_strategy_coverage.json`
+    so the Coverage tab can show which symbols already have a strategy and at
+    what readiness level. The file is regenerated by
+    `tools/research/python/write_instrument_coverage.py`; we just expose it
+    over HTTP without re-deriving here.
+    """
+    p = profiles_dir() / "instrument_strategy_coverage.json"
+    if not p.is_file():
+        return {"schema_version": "1.0", "instruments": [], "summary": {}}
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return {"schema_version": "1.0", "instruments": [], "summary": {}}
+
+        profiles_doc = read_strategy_profiles()
+        all_profiles = [
+            x for x in profiles_doc.get("profiles", [])
+            if isinstance(x, dict)
+        ]
+        catalog_doc = read_strategies_catalog() or {}
+        catalog_classes = {
+            str(x.get("class_name") or "")
+            for x in (catalog_doc.get("strategies") or [])
+            if isinstance(x, dict) and x.get("class_name")
+        }
+
+        def _root_from_instrument(value: Any) -> str:
+            s = str(value or "").strip().upper()
+            m = re.match(r"^([A-Z0-9]+)", s)
+            return m.group(1) if m else ""
+
+        def _evidence_ids(profile: Dict[str, Any]) -> List[str]:
+            ids: List[str] = []
+            last = profile.get("last_job_id")
+            if last:
+                ids.append(str(last))
+            for x in profile.get("evidence_job_ids") or []:
+                sx = str(x or "")
+                if sx and sx not in ids:
+                    ids.append(sx)
+            return ids
+
+        by_root: Dict[str, List[Dict[str, Any]]] = {}
+        for prof in all_profiles:
+            root = _root_from_instrument(
+                prof.get("instrument") or prof.get("current_contract")
+            )
+            if root:
+                by_root.setdefault(root, []).append(prof)
+
+        def _coverage_status(status: Any) -> str:
+            return "ready" if str(status or "") in {"ready", "paper_ready"} else "in_progress"
+
+        status_order = {
+            "ready": 0,
+            "paper_ready": 0,
+            "in_progress": 1,
+            "paper_candidate": 1,
+            "research_baseline": 2,
+            "rejected": 3,
+            "archived": 4,
+        }
+        for profs in by_root.values():
+            profs.sort(key=lambda p: (
+                status_order.get(str(p.get("status") or ""), 9),
+                str(p.get("name") or p.get("profile_id") or ""),
+            ))
+
+        def _profile_summary(profile: Dict[str, Any]) -> Dict[str, Any]:
+            cls = str(profile.get("strategy_class") or "")
+            return {
+                "profile_id":       profile.get("profile_id") or "",
+                "name":             profile.get("name") or profile.get("profile_id") or "",
+                "status":           profile.get("status") or "",
+                "strategy_class":   cls,
+                "deploy_strategy_class": profile.get("deploy_strategy_class") or "",
+                "runtime_strategy_classes": profile.get("runtime_strategy_classes") or [],
+                "runtime_strategy_id": profile.get("runtime_strategy_id") or "",
+                "instrument":       profile.get("instrument") or "",
+                "timeframe":        profile.get("timeframe") or "",
+                "metrics":          profile.get("metrics") or {},
+                "test_period":      profile.get("test_period") or profile.get("period") or {},
+                "confidence_score": profile.get("confidence_score") or {},
+                "demo_plan":        profile.get("demo_plan") or {},
+                "last_job_id":      profile.get("last_job_id") or "",
+                "evidence_job_ids": _evidence_ids(profile),
+                "locked":           bool(profile.get("is_locked") or profile.get("locked")),
+                "catalog_available": bool(cls and cls in catalog_classes),
+            }
+
+        def _status_counts(profiles: List[Dict[str, Any]]) -> Dict[str, int]:
+            counts = {
+                "total": len(profiles),
+                "ready": 0,
+                "in_progress": 0,
+                "paper_ready": 0,
+                "paper_candidate": 0,
+                "research_baseline": 0,
+                "rejected": 0,
+                "archived": 0,
+                "available": 0,
+                "approved_available": 0,
+            }
+            for prof in profiles:
+                status = str(prof.get("status") or "")
+                counts[_coverage_status(status)] += 1
+                if status in counts:
+                    counts[status] += 1
+                cls = str(prof.get("strategy_class") or "")
+                available = bool(cls and cls in catalog_classes)
+                if available:
+                    counts["available"] += 1
+                if available and _coverage_status(status) == "ready":
+                    counts["approved_available"] += 1
+            return counts
+
+        def _flatten(entry: Dict[str, Any]) -> Dict[str, Any]:
+            groups = entry.get("groups") or []
+            root = entry.get("root") or ""
+            profs = by_root.get(str(root).upper(), [])
+            best_id = entry.get("best_profile_id") or ""
+            best = next(
+                (p for p in profs if str(p.get("profile_id") or "") == str(best_id)),
+                profs[0] if profs else None,
+            )
+            counts = _status_counts(profs)
+            return {
+                "root":           root,
+                "group":          ", ".join(groups) if groups else "—",
+                "strategy_count": counts["total"] if profs else int(entry.get("strategy_count") or 0),
+                "best_status":    _coverage_status(entry.get("status") or "missing"),
+                "profile_name":   (best or {}).get("name") or entry.get("strategy_class") or "",
+                "profile_id":     best_id,
+                "instrument":     entry.get("current_contract") or "",
+                "locked":         bool(entry.get("is_locked")),
+                "next_action":    entry.get("next_action") or "",
+                "status_counts":   counts,
+                "profiles":        [_profile_summary(p) for p in profs],
+            }
+
+        rows: List[Dict[str, Any]] = []
+        for entry in data.get("micros", []) or []:
+            if isinstance(entry, dict):
+                rows.append(_flatten(entry))
+        for entry in data.get("non_micros_with_profiles", []) or []:
+            if isinstance(entry, dict):
+                rows.append(_flatten(entry))
+
+        # Sort: ready first, then everything still being worked.
+        order = {"ready": 0, "in_progress": 1}
+        rows.sort(key=lambda r: (order.get(r["best_status"], 9), r["root"]))
+
+        return {
+            "schema_version":   data.get("schema_version", "1.0"),
+            "generated_at_utc": data.get("generated_at_utc", ""),
+            "summary":          data.get("summary") or {},
+            "instruments":      rows,
+        }
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": "1.0", "instruments": [], "summary": {}}
+
+
+def _date_to_utc_midnight(value: Any) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if "T" in s:
+        return s
+    return f"{s}T00:00:00Z"
+
+
+def _normalize_strategy_profile_for_ui(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept legacy and current profile JSON shapes.
+
+    Older profile files stored profiles as id/strategy/parameters/period while
+    the UI renders profile_id/strategy_class/locked_parameters/test_period.
+    Keep the registry readable across both shapes so a stale or hand-edited
+    profile file does not produce blank cards.
+    """
+    out = dict(profile)
+    if "profile_id" not in out and "id" in out:
+        out["profile_id"] = out.get("id")
+    if "strategy_class" not in out and "strategy" in out:
+        out["strategy_class"] = out.get("strategy")
+    if "locked_parameters" not in out and isinstance(out.get("parameters"), dict):
+        out["locked_parameters"] = out.get("parameters")
+    if "last_job_id" not in out:
+        src = out.get("source")
+        if isinstance(src, dict) and src.get("best_job_id"):
+            out["last_job_id"] = src.get("best_job_id")
+
+    if "test_period" not in out:
+        period = out.get("period")
+        if isinstance(period, dict):
+            out["test_period"] = {
+                "from_utc": _date_to_utc_midnight(period.get("from") or period.get("start")),
+                "to_utc":   _date_to_utc_midnight(period.get("to") or period.get("end")),
+            }
+
+    metrics = out.get("metrics")
+    if isinstance(metrics, dict):
+        normalized = dict(metrics)
+        if "trade_count" not in normalized and "trades" in metrics:
+            normalized["trade_count"] = metrics.get("trades")
+        if "winning_pct" not in normalized and "win_pct" in metrics:
+            normalized["winning_pct"] = metrics.get("win_pct")
+        if "net_profit_after_commission" not in normalized and "adj_net" in metrics:
+            normalized["net_profit_after_commission"] = metrics.get("adj_net")
+        if "profit_factor_after_commission" not in normalized and "adj_pf" in metrics:
+            normalized["profit_factor_after_commission"] = metrics.get("adj_pf")
+        if "max_drawdown" not in normalized and "adj_max_drawdown" in metrics:
+            normalized["max_drawdown"] = metrics.get("adj_max_drawdown")
+        out["metrics"] = normalized
+
+    return out
 
 
 def _read_catalog_file(name: str) -> Optional[Dict[str, Any]]:
@@ -154,8 +705,20 @@ def _custom_dll_path() -> Path:
     return ninjatrader_user_dir() / "bin" / "Custom" / "NinjaTrader.Custom.dll"
 
 
-def _nt_strategies_dir() -> Path:
+def _legacy_nt_strategies_dir() -> Path:
     return ninjatrader_user_dir() / "bin" / "Custom" / "Strategies"
+
+
+def _nt_strategies_dir() -> Path:
+    return _legacy_nt_strategies_dir() / "NT-Analyzer_strategies"
+
+
+def _nt_strategy_search_roots() -> List[Path]:
+    roots: List[Path] = []
+    for path in (_nt_strategies_dir(), _legacy_nt_strategies_dir()):
+        if path not in roots:
+            roots.append(path)
+    return roots
 
 
 def _nonempty_file(path: Path) -> bool:
@@ -167,11 +730,12 @@ def _nonempty_file(path: Path) -> bool:
 
 def _resolve_strategy_source_file(class_name: str,
                                   catalog_source_file: Any = None) -> Optional[str]:
-    """Resolve the real .cs file from Custom/Strategies.
+    """Resolve the real .cs file from the active NinjaTrader strategy roots.
 
     The bridge catalog can be stale after folders were archived or after a
     zero-byte root stub existed. Prefer a non-empty catalog path, otherwise
-    fall back to Strategies/<Class>/<Class>.cs and then Strategies/<Class>.cs.
+    search NT-Analyzer_strategies first and then the legacy Strategies root
+    for still-unmigrated standalone .cs files.
     """
     raw = str(catalog_source_file or "")
     if raw and _nonempty_file(Path(raw)):
@@ -180,11 +744,45 @@ def _resolve_strategy_source_file(class_name: str,
     safe = str(class_name or "").strip()
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", safe):
         return None
-    base = _nt_strategies_dir()
-    for candidate in (base / safe / f"{safe}.cs", base / f"{safe}.cs"):
-        if _nonempty_file(candidate):
-            return str(candidate)
+    for base in _nt_strategy_search_roots():
+        for candidate in (base / safe / f"{safe}.cs", base / f"{safe}.cs"):
+            if _nonempty_file(candidate):
+                return str(candidate)
     return None
+
+
+_NT_STRATEGY_NAME_RE = re.compile(r'^\s*Name\s*=\s*"([^"\r\n]+)"\s*;', re.MULTILINE)
+
+
+def _resolve_strategy_display_name(source_file: Any,
+                                   fallback_display_name: Any,
+                                   class_name: Any = None) -> str:
+    """Resolve the visible NinjaTrader strategy name from the .cs source.
+
+    NinjaTrader's Strategies window shows the strategy ``Name`` assigned in
+    ``State.SetDefaults``. The bridge catalog historically stored ``t.Name``
+    (C# class name), which makes the UI disagree with NinjaTrader for classes
+    like ``PullbackMNQ5mV2`` -> ``Pullback MNQ 5m v2``.
+
+    Prefer the source-defined ``Name = "..."`` when available, otherwise keep
+    the catalog/fallback display name.
+    """
+    fallback = str(fallback_display_name or class_name or "").strip()
+    raw = str(source_file or "").strip()
+    if not raw:
+        return fallback
+    p = Path(raw)
+    if not _nonempty_file(p):
+        return fallback
+    try:
+        text = p.read_text(encoding="utf-8-sig", errors="ignore")
+    except OSError:
+        return fallback
+    m = _NT_STRATEGY_NAME_RE.search(text)
+    if not m:
+        return fallback
+    value = str(m.group(1) or "").strip()
+    return value or fallback
 
 
 def _safe_mtime(p: Path) -> Optional[float]:
@@ -396,7 +994,7 @@ def whitelisted_strategies() -> List[str]:
 def build_catalog_response() -> Dict[str, Any]:
     """Aggregate response for GET /api/catalog. Combines strategies.json and
     instruments.json (bridge-written) with backend-side defaults and the
-    explicit list of MVP-1 unsupported features so the UI does not have to
+    explicit list of current bridge limitations so the UI does not have to
     hardcode anything.
     """
     warnings: List[str] = []
@@ -452,7 +1050,15 @@ def build_catalog_response() -> Dict[str, Any]:
                     "Перекомпилируйте скрипты в NinjaTrader (Tools → Compile)."
                 )
                 continue
-            s = dict(s, source_file=sf)
+            s = dict(
+                s,
+                source_file=sf,
+                display_name=_resolve_strategy_display_name(
+                    sf,
+                    s.get("display_name"),
+                    cls_name,
+                ),
+            )
             if os.path.basename(sf).startswith("@"):
                 # Sample templates — keep but mark
                 s = dict(s, is_sample=True)
@@ -506,7 +1112,7 @@ def build_catalog_response() -> Dict[str, Any]:
                 {"label": "1 Minute",  "type": "Minute", "value": 1},
                 {"label": "5 Minute",  "type": "Minute", "value": 5},
                 {"label": "15 Minute", "type": "Minute", "value": 15},
-                {"label": "1 Day",     "type": "Day",    "value": 1},
+                {"label": "60 Minute", "type": "Minute", "value": 60},
             ],
         },
         "commission_templates":    commission_templates,
@@ -517,7 +1123,7 @@ def build_catalog_response() -> Dict[str, Any]:
             "order_fill_resolution": "High",
             "slippage_ticks":        1,
             "commission":            0.0,
-            "commission_template":   "None",
+            "commission_template":   "NinjaTrader Brokerage Free",
             "session_template":      "CME US Index Futures RTH",
             "timezone":              "UTC",
         },
@@ -529,11 +1135,11 @@ def build_catalog_response() -> Dict[str, Any]:
         ],
         "unsupported_features": [
             {"key": "trading_hours_template_other",
-             "reason": "Bridge fixes session_template to CME US Index Futures RTH in MVP-1"},
-            {"key": "break_at_eod",       "reason": "Not supported in MVP-1"},
-            {"key": "exit_on_session_close", "reason": "Not supported in MVP-1"},
-            {"key": "tick_replay",        "reason": "Not exposed in MVP-1 (fixed false)"},
-            {"key": "include_trade_history_in_backtest", "reason": "Always true in MVP-1"},
+             "reason": "Bridge currently fixes session_template to CME US Index Futures RTH"},
+            {"key": "break_at_eod",       "reason": "Not supported by the current bridge"},
+            {"key": "exit_on_session_close", "reason": "Not supported by the current bridge"},
+            {"key": "tick_replay",        "reason": "Not exposed by the current bridge (fixed false)"},
+            {"key": "include_trade_history_in_backtest", "reason": "Always true in the current bridge"},
         ],
         "generated_at_utc": {
             "strategies":  strategies_generated_at,
@@ -849,8 +1455,7 @@ def _normalize_risk_profile(profile: Any) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Risk Profile -> strategy.parameters bridge contract
 # ---------------------------------------------------------------------------
-# Phase 0 contract documented in:
-#   РАЗРАБОТКА СТРАТЕГИЙ/01_ПЛАН_СТРАТЕГИИ_NTAMicroVwapRiskPilot.md §3
+# B1 contract: inject risk profile fields into strategies that expose them.
 #
 # The bridge (StrategyAnalyzerRunner.ApplyStrategyParameters) only injects
 # job.strategy.parameters into NinjaScriptProperty fields. The raw
@@ -969,6 +1574,11 @@ def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
 
     The strategy is responsible for refusing to trade when these are unsafe
     (status != "allowed", margin <= 0, max contracts < 1, capital <= 0).
+
+    When a Risk Profile is present it is authoritative for account/margin
+    values. Locked strategy defaults are trading-logic defaults, not a reason
+    to keep stale margin assumptions (for example MNQ intraday margin moving
+    from $50 to $100).
     """
     rp = req.risk_profile or {}
     if not isinstance(rp, dict) or not rp:
@@ -1000,8 +1610,10 @@ def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
     for k in RISK_PROFILE_PARAM_KEYS:
         if k not in exposed:
             continue
-        if k not in req.parameters or _risk_profile_param_is_placeholder(k, req.parameters[k]):
-            req.parameters[k] = derived[k]
+        current = req.parameters.get(k)
+        if k in req.parameters and not _risk_profile_param_is_placeholder(k, current):
+            continue
+        req.parameters[k] = derived[k]
 
 
 def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
@@ -1078,11 +1690,43 @@ def _validate(req: CreateJobRequest) -> None:
                 f"Шаблон комиссии «{req.commission_template}» найден, но "
                 f"bridge пока не умеет его применять: {reason}"
             )
-    if req.session_template != "CME US Index Futures RTH":
-        raise JobValidationError(
-            "trading_hours_template_unsupported: bridge fixes session_template "
-            f"to 'CME US Index Futures RTH' in MVP-1, got '{req.session_template}'"
-        )
+    # session_template: bridge calls TradingHours.Get(name) at runtime and
+    # FATAL-fails the job if the name doesn't resolve. Backend used to hard-pin
+    # this to "CME US Index Futures RTH"; that broke any non-index micro
+    # research (metals/energy/FX/crypto). Now we accept any name that exists in
+    # the local templates catalog. Templates marked supported=False are
+    # accepted only for role in {"smoke","debug"} until proven by a smoke run.
+    try:
+        _th_doc = read_templates_catalog() or {}
+    except Exception:
+        _th_doc = {}
+    _th_list = _th_doc.get("trading_hours_templates") or []
+    _th_by_name = {t.get("name"): t for t in _th_list if isinstance(t, dict)}
+    _requested_th = req.session_template
+    if not _th_list:
+        # No catalog yet (bridge offline) — fall back to the legacy hard pin.
+        if _requested_th != "CME US Index Futures RTH":
+            raise JobValidationError(
+                "trading_hours catalog empty and session_template != "
+                "'CME US Index Futures RTH'. Refresh catalog or use the index template."
+            )
+    else:
+        _th_entry = _th_by_name.get(_requested_th)
+        if _th_entry is None:
+            raise JobValidationError(
+                f"session_template '{_requested_th}' not found in templates catalog. "
+                "Run /api/catalog/refresh after copying TradingHours templates."
+            )
+        # supported=False templates are 'experimental': bridge can still call
+        # TradingHours.Get on them, but we have not confirmed end-to-end. Allow
+        # only smoke/debug runs to use them until smoke promotes the entry.
+        _role_for_th = (getattr(req, "role", "research") or "research").lower()
+        if not _th_entry.get("supported") and _role_for_th == "research":
+            raise JobValidationError(
+                f"session_template '{_requested_th}' is present in catalog but "
+                "marked supported=False (not yet smoke-validated). "
+                "Run a role='smoke' job first to promote it, then retry as research."
+            )
     if req.timezone != "UTC":
         raise JobValidationError("timezone must be 'UTC'")
     if not isinstance(req.parameters, dict):
@@ -1097,7 +1741,7 @@ def _validate(req: CreateJobRequest) -> None:
         raise JobValidationError("job_id contains forbidden characters")
 
     # ------------------------------------------------------------------
-    # Research-grade execution gate. Phase 12A (post-Phase-11 retraction).
+    # Research-grade execution gate.
     # Any job tagged role="research" (default) MUST use realistic fill +
     # explicit honest commission. Standard fill / slip=0 / no commission
     # silently inflate edge by 3-5x; this gate prevents that ever again.
@@ -1268,9 +1912,19 @@ def queue_counts() -> Dict[str, int]:
     return out
 
 
-def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
-    """Most recent first across all queues."""
+def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """Most recent first across all queues.
+
+    Performance: walks all queue subdirs once to build (jid, status, mtime),
+    then re-uses cached summaries for every (jid, status, mtime) we've seen
+    before. Only changed entries hit disk via read_job_summary().
+    """
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+
+    # Index pass: cheap stat() per entry.
     rows: List[Dict[str, Any]] = []
+    fp_count = 0
+    fp_sum_mtime = 0.0
     for sub in QUEUE_SUBDIRS:
         d = jobs_dir() / sub
         if not d.is_dir():
@@ -1288,12 +1942,35 @@ def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
                 "path": str(child),
                 "mtime": mtime,
             })
+            fp_count += 1
+            fp_sum_mtime += mtime
+
+    # Reuse the previous report-numbers map unless the index actually changed.
+    fp = (fp_count, round(fp_sum_mtime, 3))
+    if fp != _REPORT_NUMBERS_FP:
+        _REPORT_NUMBERS_VALUE = sync_report_numbers()
+        _REPORT_NUMBERS_FP = fp
+    report_numbers = _REPORT_NUMBERS_VALUE
+
     rows.sort(key=lambda r: r["mtime"], reverse=True)
+    offset = max(0, int(offset or 0))
+    limit = max(1, int(limit or 50))
     out: List[Dict[str, Any]] = []
-    for r in rows[: max(1, limit)]:
-        meta = read_job_summary(r["job_id"])
+    for r in rows[offset: offset + limit]:
+        sig = (r["status"], r["mtime"])
+        cached = _JOB_SUMMARY_CACHE.get(r["job_id"])
+        if cached and cached[0] == sig:
+            meta = cached[1]
+        else:
+            meta = read_job_summary(r["job_id"])
+            if meta:
+                # Drop transient "status" duplication into the cache;
+                # we'll re-merge below.
+                _JOB_SUMMARY_CACHE[r["job_id"]] = (sig, meta)
         if meta:
             r.update(meta)
+        if not (r.get("batch") or {}).get("batch_id"):
+            r["report_no"] = report_numbers.get(_report_key("job", r["job_id"]))
         out.append(r)
     return out
 
@@ -1430,6 +2107,15 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
         summary["trade_count"] = m.get("trade_count")
         summary["winning_pct"] = m.get("winning_pct")
         summary["net_profit"]  = m.get("net_profit")
+        summary["gross_profit"] = m.get("gross_profit")
+        summary["gross_loss"] = m.get("gross_loss")
+        # Surface/fallback for the reports rating column.
+        summary["profit_factor"] = m.get("profit_factor")
+        if summary["profit_factor"] is None:
+            pf = _profit_factor_from_gross(m.get("gross_profit"), m.get("gross_loss"))
+            if pf is not None:
+                summary["profit_factor"] = pf
+        summary["max_drawdown"]  = m.get("max_drawdown")
 
         # --- Commission-adjusted metrics ---
         # NinjaTrader runs use commission_template=None so metrics.net_profit
@@ -1469,9 +2155,11 @@ def read_job_full(job_id: str) -> Optional[Dict[str, Any]]:
     if not located:
         return None
     status, jdir = located
+    report_numbers = _get_report_numbers_cached()
     out: Dict[str, Any] = {
         "job_id": job_id,
         "status": status,
+        "report_no": report_numbers.get(_report_key("job", job_id)),
         "path": str(jdir),
         "files": [p.name for p in jdir.iterdir() if p.is_file()],
         "validated_against_strategy_analyzer": VALIDATED_AGAINST_STRATEGY_ANALYZER,
@@ -1654,14 +2342,16 @@ def ninjatrader_running() -> Optional[bool]:
         out = subprocess.run(
             [str(tasklist), "/FO", "CSV", "/NH"],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=4,
             startupinfo=startupinfo,
             creationflags=creationflags,
         )
         if out.returncode != 0:
             return None
-        haystack = (out.stdout or "").lower() + "\n" + (out.stderr or "").lower()
+        stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
+        stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
+        haystack = stdout.lower() + "\n" + stderr.lower()
         return "ninjatrader" in haystack
     except Exception:
         return None
@@ -1837,8 +2527,27 @@ def _safe_batch_id(batch_id: str) -> str:
     return batch_id
 
 
-def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
-    """Most recent batches first."""
+def count_batches() -> int:
+    bdir = batches_dir()
+    if not bdir.is_dir():
+        return 0
+    n = 0
+    for child in bdir.iterdir():
+        if child.is_dir():
+            n += 1
+    return n
+
+
+def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """Most recent batches first.
+
+    Aggregate metrics + period + finished_at scans are O(N)
+    across all child jobs and were re-run on every poll. Now cached per
+    (batch_id, signature) where signature folds in bdir mtime + max child
+    mtime, so polling refreshes are nearly free until something changes.
+    """
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+
     bdir = batches_dir()
     if not bdir.is_dir():
         return []
@@ -1851,26 +2560,145 @@ def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
         except OSError:
             continue
     rows.sort(reverse=True)
+
+    # Reuse cached report-numbers fingerprint computed by list_jobs (or
+    # rebuild it cheaply here when the caller hits batches before jobs).
+    if _REPORT_NUMBERS_FP is None:
+        _REPORT_NUMBERS_VALUE = sync_report_numbers()
+        # Approximate fingerprint that a subsequent list_jobs() will recompute
+        # exactly if anything changed.
+        _REPORT_NUMBERS_FP = (0, 0.0)
+    report_numbers = _REPORT_NUMBERS_VALUE
+
+    offset = max(0, int(offset or 0))
+    limit = max(1, int(limit or 50))
+
     out: List[Dict[str, Any]] = []
-    for _, p in rows[: max(1, limit)]:
-        m = _read_json_safe(p / "batch.json") or {}
+    for bdir_mtime, p in rows[offset: offset + limit]:
         bid = p.name
+        m = _read_json_safe(p / "batch.json") or {}
         children = m.get("children") or []
-        # Lightweight aggregate over children.
-        agg = _aggregate_batch_status(children)
-        agg_metrics = _aggregate_batch_metrics(children)
+        # Compute child status/mtime signature for cache.  Status is part of
+        # the signature because a job directory can move between queue folders
+        # without changing its own mtime.
+        max_child_mtime = 0.0
+        child_status_parts: List[str] = []
+        for c in children:
+            jid = c.get("job_id")
+            if not jid:
+                continue
+            loc = find_job_dir(jid)
+            if not loc:
+                child_status_parts.append(f"{jid}:missing:0")
+                continue
+            status, child_dir = loc
+            try:
+                cm = child_dir.stat().st_mtime
+                if cm > max_child_mtime:
+                    max_child_mtime = cm
+            except OSError:
+                cm = 0.0
+            child_status_parts.append(f"{jid}:{status}:{round(cm, 3)}")
+        sig = (
+            round(bdir_mtime, 3),
+            round(max_child_mtime, 3),
+            "|".join(child_status_parts),
+        )
+        cached = _BATCH_METRICS_CACHE.get(bid)
+        if cached and cached[0] == sig:
+            agg_payload = cached[1]
+        else:
+            agg = _aggregate_batch_status(children)
+            agg_metrics = _aggregate_batch_metrics(children)
+            instruments = m.get("instruments")
+            if not instruments:
+                seen, dedup = set(), []
+                for c in children:
+                    inst = c.get("instrument")
+                    if inst and inst not in seen:
+                        seen.add(inst); dedup.append(inst)
+                instruments = dedup
+            period = m.get("period") or _aggregate_batch_period(children)
+            finished_at = _aggregate_batch_finished(children)
+            agg_payload = {
+                "name":            m.get("name") or bid,
+                "created_at_utc":  m.get("created_at_utc"),
+                "finished_at_utc": finished_at,
+                "class_name":      (m.get("strategy") or {}).get("class_name"),
+                "total":           m.get("total") or len(children),
+                "counts":          agg,
+                "instruments":     instruments,
+                "period":          period,
+                "trade_count":     agg_metrics.get("trade_count"),
+                "winning_pct":     agg_metrics.get("winning_pct"),
+                "net_profit":      agg_metrics.get("net_profit"),
+                "gross_profit":    agg_metrics.get("gross_profit"),
+                "gross_loss":      agg_metrics.get("gross_loss"),
+                "profit_factor":   agg_metrics.get("profit_factor"),
+                "max_drawdown":    agg_metrics.get("max_drawdown"),
+            }
+            _BATCH_METRICS_CACHE[bid] = (sig, agg_payload)
+
         out.append({
-            "batch_id":       bid,
-            "name":           m.get("name") or bid,
-            "created_at_utc": m.get("created_at_utc"),
-            "class_name":     (m.get("strategy") or {}).get("class_name"),
-            "total":          m.get("total") or len(children),
-            "counts":         agg,
-            "trade_count":    agg_metrics.get("trade_count"),
-            "winning_pct":    agg_metrics.get("winning_pct"),
-            "net_profit":     agg_metrics.get("net_profit"),
+            "batch_id":  bid,
+            "report_no": report_numbers.get(_report_key("batch", bid)),
+            **agg_payload,
         })
     return out
+
+
+def _aggregate_batch_period(children: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """Derive the covering period for a batch from its children's job.json files.
+
+    Returns {from_utc, to_utc} spanning min(child.from) → max(child.to), or None
+    when no period data is available. Used as a fallback for older batches that
+    were created before batch.json stored the period at the manifest level.
+    """
+    from_dates: List[str] = []
+    to_dates:   List[str] = []
+    for c in children:
+        jid = c.get("job_id")
+        if not jid:
+            continue
+        loc = find_job_dir(jid)
+        if not loc:
+            continue
+        _, jdir = loc
+        jmeta = _read_json_safe(jdir / "job.json") or {}
+        p = jmeta.get("period") or {}
+        if p.get("from_utc"):
+            from_dates.append(p["from_utc"])
+        if p.get("to_utc"):
+            to_dates.append(p["to_utc"])
+    if not from_dates or not to_dates:
+        return None
+    return {"from_utc": min(from_dates), "to_utc": max(to_dates)}
+
+
+def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
+    """Return the latest finished_at_utc across done/failed child jobs, or
+    None if no child has finished. Used for the "Финиш / НВ" column on
+    batch rows.
+    """
+    latest: Optional[str] = None
+    for c in children:
+        jid = c.get("job_id")
+        if not jid:
+            continue
+        loc = find_job_dir(jid)
+        if not loc:
+            continue
+        status, jdir = loc
+        ts: Optional[str] = None
+        if status == "done":
+            res = _read_json_safe(jdir / "result.json") or {}
+            ts = res.get("finished_at_utc")
+        elif status == "failed":
+            err = _read_json_safe(jdir / "error.json") or {}
+            ts = err.get("finished_at_utc")
+        if ts and (latest is None or ts > latest):
+            latest = ts
+    return latest
 
 
 def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -1890,12 +2718,24 @@ def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return {trade_count, winning_pct, net_profit} aggregated across all done child jobs."""
+    """Return {trade_count, winning_pct, net_profit, profit_factor, max_drawdown}
+    aggregated across all done child jobs.
+
+    profit_factor is recomputed from summed gross_profit/gross_loss; max_drawdown
+    is the worst (most negative) value across children — a portfolio-level lower
+    bound rather than a true blended drawdown, but sufficient for the
+    confidence score and table display.
+    """
     total_trades = 0
     total_winners = 0
     total_net = 0.0
+    total_gross_profit = 0.0
+    total_gross_loss = 0.0
+    worst_dd = 0.0
     has_any = False
     has_net = False
+    has_gross = False
+    has_dd = False
     for c in children:
         jid = c.get("job_id")
         if not jid:
@@ -1909,6 +2749,9 @@ def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
         tc = m.get("trade_count")
         wp = m.get("winning_pct")
         np_ = m.get("net_profit")
+        gp = m.get("gross_profit")
+        gl = m.get("gross_loss")
+        dd = m.get("max_drawdown")
         if tc is None:
             continue
         has_any = True
@@ -1917,18 +2760,53 @@ def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
             total_winners += round(float(wp) * int(tc) / 100)
         if np_ is not None:
             try:
-                total_net += float(np_)
-                has_net = True
-            except (TypeError, ValueError):
-                pass
+                total_net += float(np_); has_net = True
+            except (TypeError, ValueError): pass
+        if gp is not None and gl is not None:
+            try:
+                total_gross_profit += float(gp)
+                total_gross_loss   += float(gl)
+                has_gross = True
+            except (TypeError, ValueError): pass
+        if dd is not None:
+            try:
+                ddf = float(dd)
+                if ddf < worst_dd: worst_dd = ddf
+                has_dd = True
+            except (TypeError, ValueError): pass
     if not has_any:
         return {}
     winning_pct = (total_winners / total_trades * 100) if total_trades > 0 else None
+    pf = None
+    if has_gross and total_gross_loss < 0:
+        pf = total_gross_profit / abs(total_gross_loss)
     return {
-        "trade_count": total_trades,
-        "winning_pct": round(winning_pct, 2) if winning_pct is not None else None,
-        "net_profit":  total_net if has_net else None,
+        "trade_count":   total_trades,
+        "winning_pct":   round(winning_pct, 2) if winning_pct is not None else None,
+        "net_profit":    total_net if has_net else None,
+        "gross_profit":  total_gross_profit if has_gross else None,
+        "gross_loss":    total_gross_loss if has_gross else None,
+        "profit_factor": round(pf, 4) if pf is not None else None,
+        "max_drawdown":  worst_dd if has_dd else None,
     }
+
+
+def _profit_factor_from_gross(gross_profit: Any, gross_loss: Any) -> Optional[float]:
+    """Return finite PF from gross profit/loss, or None for no-loss/unknown cases.
+
+    No-loss profitable runs have infinite PF; the frontend can display ∞ from
+    gross_profit/gross_loss directly, while API JSON stays standards-compliant.
+    """
+    if gross_profit is None or gross_loss is None:
+        return None
+    try:
+        gp = float(gross_profit)
+        gl = float(gross_loss)
+    except (TypeError, ValueError):
+        return None
+    if gl < 0:
+        return round(gp / abs(gl), 6)
+    return None
 
 
 def read_batch(batch_id: str) -> Optional[Dict[str, Any]]:
@@ -1949,6 +2827,7 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
     m = read_batch(batch_id)
     if not m:
         return None
+    report_numbers = _get_report_numbers_cached()
     rows: List[Dict[str, Any]] = []
     for c in m.get("children") or []:
         jid = c.get("job_id")
@@ -1967,6 +2846,12 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
             if loc:
                 status, jdir = loc
                 row["status"] = status
+                # Read job.json to get created_at_utc + period.
+                # for every status so the batch-details table can show them.
+                jmeta = _read_json_safe(jdir / "job.json") or {}
+                row["created_at_utc"] = jmeta.get("created_at_utc")
+                row["period"]         = jmeta.get("period")
+                row["class_name"]     = (jmeta.get("strategy") or {}).get("class_name")
                 if status == "done":
                     res = _read_json_safe(jdir / "result.json") or {}
                     row["metrics"] = res.get("metrics") or {}
@@ -1978,7 +2863,9 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
         rows.append(row)
     return {
         "batch_id": batch_id,
+        "report_no": report_numbers.get(_report_key("batch", batch_id)),
         "name":     m.get("name"),
+        "created_at_utc": m.get("created_at_utc"),
         "strategy": m.get("strategy"),
         "timeframe": m.get("timeframe"),
         "period":    m.get("period"),

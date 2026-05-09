@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    NT-Analyzer launcher (MVP-1).
+    NT-Analyzer launcher.
 
 .DESCRIPTION
     Starts the local Python backend (which also serves the static UI) on

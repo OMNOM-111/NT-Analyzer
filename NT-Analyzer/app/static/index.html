@@ -5,11 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>NT-Analyzer</title>
-<link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260508-two-statuses1">
+  <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 </head>
 <body>
 <header>
-  <h1>NT-Analyzer <span class="muted">MVP-1</span></h1>
+  <h1>NT-Analyzer <span class="muted">— Бэктестирование</span></h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/index.html" class="top-nav-link active">Бэктестирование</a>
+    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
+  </nav>
   <div class="status-strip" id="run-status-strip">
     <span class="status-chip" id="ss-nt">NinjaTrader: проверка…</span>
     <span class="status-chip" id="ss-catalog" hidden></span>
@@ -18,10 +24,15 @@
       <button type="button" id="ss-stale-btn" class="chip-action">Обновить</button>
     </span>
     <span class="status-chip warn" id="ss-commission" hidden></span>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+      <span class="status-chip" id="chip-market" title="Расписание CME equity futures (MES/ES): Вс 15:00 PT → Пт 14:00 PT, ежедневная пауза 14:00–15:00 PT.">Рынок: …</span>
+      <span class="status-chip" id="chip-clock" title="Текущее время по California (Pacific Time)">…</span>
+    </div>
   </div>
   <div class="header-actions">
     <button type="button" id="btn-instruments-toggle" class="hdr-btn" title="Показать/скрыть панель инструментов">Инструменты</button>
     <button type="button" id="btn-diag" class="hdr-btn">Диагностика</button>
+    <button type="button" id="btn-restart-server" class="hdr-btn" title="Перезапустить python-сервер (перезагружает код без перезапуска NinjaTrader)">↺ Сервер</button>
     <span class="status-pill" id="health-pill">проверка…</span>
   </div>
 </header>
@@ -30,35 +41,89 @@
   <!-- ============== INSTRUMENT BROWSER (left) ============== -->
   <aside class="instrument-sidebar" id="instrument-sidebar">
     <div class="instrument-head">
-      <span>Инструменты</span>
+      <div class="left-tabs" role="tablist">
+        <button type="button" class="left-tab active" data-left-tab="instruments" role="tab" aria-selected="true">Инструменты</button>
+        <button type="button" class="left-tab" data-left-tab="profiles" role="tab" aria-selected="false">Профили стратегий</button>
+        <button type="button" class="left-tab" data-left-tab="coverage" role="tab" aria-selected="false">Покрытие</button>
+      </div>
       <span style="display:flex;gap:4px;align-items:center;">
         <span class="muted small" id="ib-count">0</span>
         <button id="ib-add-all-btn" title="Добавить все видимые инструменты в корзину" style="background:#2a3340;color:#cfe1ff;border:1px solid #3a4150;border-radius:3px;padding:1px 7px;font-size:11px;cursor:pointer;">+ все</button>
       </span>
     </div>
-    <div class="instrument-controls">
-      <input id="ib-search" type="search" placeholder="Поиск: MES, ES, CL…" autocomplete="off" />
-      <select id="ib-group">
-        <option value="all">Все группы</option>
-      </select>
-      <div class="ib-toggles">
-        <label>Только актуальные <input type="checkbox" id="ib-only-current" checked></label>
-        <label>Показать все сроки <input type="checkbox" id="ib-show-all-expiries"></label>
+
+    <!-- ===== Tab pane: Инструменты ===== -->
+    <div class="left-pane" id="left-pane-instruments">
+      <div class="instrument-controls">
+        <input id="ib-search" type="search" placeholder="Поиск: MES, ES, CL…" autocomplete="off" />
+        <select id="ib-group">
+          <option value="all">Все группы</option>
+        </select>
+        <div class="ib-toggles">
+          <label>Только актуальные <input type="checkbox" id="ib-only-current" checked></label>
+          <label>Показать все сроки <input type="checkbox" id="ib-show-all-expiries"></label>
+        </div>
+      </div>
+      <div class="instrument-table-wrap">
+        <table id="instrument-table" class="dense">
+          <thead>
+            <tr>
+              <th>Инструмент</th>
+              <th>Группа</th>
+              <th class="num">Шаг</th>
+              <th class="num">$/тик</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ib-tbody"></tbody>
+        </table>
       </div>
     </div>
-    <div class="instrument-table-wrap">
-      <table id="instrument-table" class="dense">
-        <thead>
-          <tr>
-            <th>Инструмент</th>
-            <th>Группа</th>
-            <th class="num">Шаг</th>
-            <th class="num">$/тик</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="ib-tbody"></tbody>
-      </table>
+
+    <!-- ===== Tab pane: Профили стратегий (Phase 22e) ===== -->
+    <div class="left-pane" id="left-pane-profiles" hidden>
+      <div class="profiles-controls">
+        <input id="prof-search" type="search" placeholder="Поиск профиля…" autocomplete="off" />
+        <select id="prof-status-filter">
+          <option value="all">Все статусы</option>
+          <option value="ready">Готовые</option>
+          <option value="in_progress">В процессе</option>
+        </select>
+        <button id="prof-refresh" type="button" title="Обновить">⟳</button>
+      </div>
+      <div class="profiles-list-wrap">
+        <div id="profiles-list" class="profiles-list">
+          <div class="muted small" style="padding:10px;">Загрузка…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Tab pane: Покрытие (Phase 24) ===== -->
+    <div class="left-pane" id="left-pane-coverage" hidden>
+      <div class="profiles-controls">
+        <select id="cov-status-filter">
+          <option value="all">Все</option>
+          <option value="ready">Готовые</option>
+          <option value="in_progress">В процессе</option>
+        </select>
+        <button id="cov-refresh" type="button" title="Обновить">⟳</button>
+      </div>
+      <div class="instrument-table-wrap">
+        <table id="coverage-table" class="dense">
+          <thead>
+            <tr>
+              <th>Инструмент</th>
+              <th class="num">Профили</th>
+              <th>Статус</th>
+              <th>Цель</th>
+            </tr>
+          </thead>
+          <tbody id="cov-tbody">
+            <tr><td colspan="4" class="muted small" style="padding:10px;">Загрузка…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="muted small" id="cov-summary" style="padding:6px 10px;border-top:1px solid #243049;"></div>
     </div>
   </aside>
 
@@ -78,21 +143,43 @@
           <button type="button" data-filter="failed">ошибка</button>
         </div>
         <button type="button" id="jobs-refresh" class="reports-refresh">⟳</button>
+        <button type="button" id="btn-delete-checked" class="reports-refresh" title="Удалить отмеченные отчёты" hidden>🗑 Удалить выбранные</button>
+        <div class="view-toggle" id="reports-view-toggle" style="display:flex;gap:2px;">
+          <button type="button" class="view-btn active" data-view="list" title="Список">☰ Список</button>
+          <button type="button" class="view-btn" data-view="tree" title="Дерево по стратегиям">🌲 Дерево</button>
+        </div>
       </div>
       <div class="reports-wrap">
         <table id="jobs-table" class="dense reports-table">
+          <colgroup>
+            <col class="jobs-col-check">
+            <col class="jobs-col-no">
+            <col class="jobs-col-created">
+            <col class="jobs-col-name">
+            <col class="jobs-col-strategy">
+            <col class="jobs-col-kind">
+            <col class="jobs-col-status">
+            <col class="jobs-col-period">
+            <col class="jobs-col-trades">
+            <col class="jobs-col-win">
+            <col class="jobs-col-net">
+            <col class="jobs-col-confidence">
+            <col class="jobs-col-del">
+          </colgroup>
           <thead>
             <tr>
-              <th class="col-rep-name">Имя / инструмент</th>
-              <th>Тип</th>
-              <th>Стратегия</th>
-              <th>Статус</th>
-              <th>Период</th>
-              <th>Создан</th>
-              <th>Финиш / HB</th>
-              <th class="col-num-compact">Сделок</th>
-              <th class="col-num-compact">Win %</th>
-              <th class="col-num-compact">Итог</th>
+              <th class="col-check"><input type="checkbox" id="jobs-check-all" title="Выбрать все"></th>
+              <th class="col-num-compact sortable" data-sort="report_no">№</th>
+              <th class="sortable" data-sort="mtime">Создан</th>
+              <th class="col-rep-name sortable" data-sort="label">Имя</th>
+              <th class="sortable" data-sort="strategy">Стратегия</th>
+              <th class="sortable" data-sort="kind">Тип</th>
+              <th class="sortable" data-sort="status">Статус</th>
+              <th class="sortable" data-sort="period">Период</th>
+              <th class="col-num-compact sortable" data-sort="trades">Сделок</th>
+              <th class="col-num-compact sortable" data-sort="winning_pct">Win %</th>
+              <th class="col-num-compact sortable" data-sort="net_profit">Итог</th>
+              <th class="col-confidence sortable" data-sort="confidence">Доверие</th>
               <th class="col-del"></th>
             </tr>
           </thead>
@@ -116,20 +203,33 @@
 
       <!-- Top instruments table (always visible: 1 row for single, N for batch). -->
       <div class="result-rows-wrap">
-        <table id="result-rows-table" class="dense result-rows">
+        <table id="result-rows-table" class="dense reports-table result-rows">
+          <colgroup>
+            <col><!-- № -->
+            <col><!-- Создан -->
+            <col><!-- Имя -->
+            <col><!-- Стратегия -->
+            <col><!-- Тип -->
+            <col><!-- Статус -->
+            <col><!-- Период -->
+            <col><!-- Сделок -->
+            <col><!-- Win% -->
+            <col><!-- Итог -->
+            <col><!-- Доверие -->
+          </colgroup>
           <thead>
             <tr>
-              <th class="col-instr">Инструмент</th>
-              <th class="col-strat">Стратегия</th>
-              <th class="num">Прибыль</th>
-              <th class="num">Убыток</th>
-              <th class="num">PF</th>
-              <th class="num">Просадка</th>
-              <th class="num">Сделок</th>
-              <th class="num">Win %</th>
-              <th class="col-status">Статус</th>
-              <th class="col-period">Период</th>
-              <th class="num">Итог</th>
+              <th class="col-num-compact">№</th>
+              <th>Создан</th>
+              <th class="col-rep-name">Имя</th>
+              <th>Стратегия</th>
+              <th>Тип</th>
+              <th>Статус</th>
+              <th>Период</th>
+              <th class="col-num-compact">Сделок</th>
+              <th class="col-num-compact">Win %</th>
+              <th class="col-num-compact">Итог</th>
+              <th class="col-confidence">Доверие</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -316,7 +416,7 @@
             <label class="field">
               <span class="lbl">Тип анализа</span>
               <input type="text" value="Бэктест" disabled
-                     title="Только бэктест в MVP-1">
+                     title="Текущая версия запускает исторический бэктест">
             </label>
             <label class="field">
               <span class="lbl">Стратегия</span>
@@ -387,7 +487,7 @@
 
             <label class="field">
               <span class="lbl">Цена основана на</span>
-              <select disabled title="Fixed in MVP-1 (bridge uses Last)">
+              <select disabled title="Зафиксировано bridge: Last">
                 <option>Last</option>
               </select>
             </label>
@@ -427,11 +527,23 @@
                 <input id="f-to-date" type="date" value="2026-04-24" required>
               </label>
             </div>
+            <div class="row">
+              <div class="field">
+                <span class="lbl">Быстрый выбор периода</span>
+                <div class="presets" id="date-presets">
+                  <button type="button" data-period="1d">1 день</button>
+                  <button type="button" data-period="1w">1 неделя</button>
+                  <button type="button" data-period="1m">1 месяц</button>
+                  <button type="button" data-period="3m">1 квартал</button>
+                  <button type="button" data-period="1y">1 год</button>
+                </div>
+              </div>
+            </div>
             <div class="row two">
               <label class="field">
                 <span class="lbl">Trading Hours</span>
                 <select id="f-thours" disabled
-                        title="Bridge: CME US Index Futures RTH в MVP-1">
+                        title="Bridge сейчас использует CME US Index Futures RTH">
                 </select>
               </label>
               <label class="field">
@@ -444,11 +556,11 @@
             <div class="row two">
               <label class="field disabled">
                 <span class="lbl">Break at EOD</span>
-                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+                <input type="checkbox" disabled title="Не поддерживается текущим bridge">
               </label>
               <label class="field disabled">
                 <span class="lbl">Exit on session close</span>
-                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+                <input type="checkbox" disabled title="Не поддерживается текущим bridge">
               </label>
             </div>
           </div>
@@ -462,7 +574,7 @@
               <label class="field">
                 <span class="lbl">Calculate</span>
                 <select id="f-calculate" disabled
-                        title="Зафиксировано в MVP-1 (OnBarClose)">
+                        title="Зафиксировано bridge: OnBarClose">
                   <option>OnBarClose</option>
                 </select>
               </label>
@@ -477,7 +589,7 @@
             <label class="field">
               <span class="lbl">Шаблон комиссии</span>
               <select id="f-commission-template"
-                      title="Только 'None' применяется bridge'ом в MVP-1"></select>
+                      title="Текущий bridge применяет только 'None'"></select>
               <span class="hint" id="f-commission-hint"></span>
             </label>
             <div class="row two">
@@ -488,12 +600,12 @@
               </label>
               <label class="field disabled">
                 <span class="lbl">Tick Replay</span>
-                <input type="checkbox" disabled title="Не поддерживается в MVP-1">
+                <input type="checkbox" disabled title="Не поддерживается текущим bridge">
               </label>
             </div>
             <label class="field disabled">
               <span class="lbl">Include Trade History</span>
-              <input type="checkbox" checked disabled title="Всегда true в MVP-1">
+              <input type="checkbox" checked disabled title="Всегда true в текущем bridge">
             </label>
           </div>
         </details>
@@ -567,6 +679,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20260502-backtest-fix"></script>
+  <script src="app.js?v=20260508-two-statuses1"></script>
+<script src="market_clock.js?v=20260502-hotfix5"></script>
 </body>
 </html>

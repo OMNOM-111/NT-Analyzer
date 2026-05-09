@@ -7,8 +7,9 @@
       %USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\
     (per the official NT8 Visual Studio AddOn workflow — NOT into bin\Custom\AddOns\).
 
-    Phase B (current): Variant 1 Strategy Analyzer runner via
-    Optimizer.RunBacktest reflection. See bridge/src/Execution/StrategyAnalyzerRunner.cs.
+    Current runner: StrategyBase.RunBacktest first, optional Optimizer.RunBacktest
+    reflection fallback only when explicitly enabled. See
+    bridge/src/Execution/StrategyAnalyzerRunner.cs.
   -->
 
   <PropertyGroup>
@@ -23,7 +24,7 @@
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>
     <Version>0.1.0</Version>
-    <Description>NT-Analyzer Bridge AddOn (Phase B — Variant 1 Strategy Analyzer)</Description>
+    <Description>NT-Analyzer Bridge AddOn</Description>
   </PropertyGroup>
 
   <PropertyGroup>
