@@ -28,6 +28,201 @@
 .tg-right { border-right: none; border-left: 1px solid #2a2d34; }
 .tg-right.hidden { display: none; }
 .tg-mid { background: #0f1115; }
+.tg-mid { overflow-y: auto; overflow-x: hidden; min-height: 0; }
+
+/* Account overview band */
+.account-overview-band {
+  flex: 0 0 auto;
+  border-bottom: 1px solid #2a2d34;
+  background: #10151d;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.2fr) minmax(280px, 0.9fr);
+  gap: 10px;
+  min-height: 154px;
+}
+.acct-panel {
+  min-width: 0;
+  border: 1px solid #232b38;
+  border-radius: 6px;
+  background: #0d1219;
+  padding: 9px 10px;
+}
+.acct-panel h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #8fa2bd;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.acct-title-row { display:flex; align-items:center; gap:8px; min-width:0; }
+.acct-name { color:#f3f7ff; font-size:18px; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.acct-conn { color:#9aaabd; font-size:11px; padding:2px 7px; border-radius:4px; background:#182131; }
+.acct-money-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; margin-top:10px; }
+.acct-metric { min-width:0; }
+.acct-metric .k { color:#78879b; font-size:10px; display:block; }
+.acct-metric .v { color:#e8eef8; font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.acct-metric .v.pos, .pc-card .v.pos, .num.pos, .v.pos, .val.pos, .acct-bar-value.pos { color:#73e59a; }
+.acct-metric .v.neg, .pc-card .v.neg, .num.neg, .v.neg, .val.neg, .acct-bar-value.neg { color:#ff8989; }
+.acct-today-grid { display:grid; grid-template-columns:repeat(5, minmax(70px, 1fr)); gap:7px; }
+.acct-today-cell {
+  border: 1px solid #202938;
+  border-radius: 5px;
+  background:#111923;
+  padding:7px 8px;
+  min-width:0;
+}
+.acct-today-cell .k { display:block; color:#7d8aa0; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.acct-today-cell .v { display:block; color:#eef4ff; font-size:16px; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pc-section .acct-today-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pc-section .acct-today-cell { padding:6px 7px; }
+.pc-section .acct-today-cell .v { font-size:14px; }
+.acct-subline { margin-top:7px; display:flex; gap:10px; flex-wrap:wrap; color:#77869b; font-size:10px; }
+.acct-warning { margin-top:7px; color:#ffd99b; font-size:11px; min-height:14px; }
+.acct-warning:empty { display:none; }
+.acct-pnl-chart { width:100%; height:118px; display:block; border:1px solid #1f2937; border-radius:5px; background:#0a1017; }
+.acct-bars { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.acct-bar-row { display:grid; grid-template-columns:minmax(90px, 1fr) minmax(80px, 1.4fr) 72px; gap:8px; align-items:center; font-size:11px; }
+.acct-bar-label { color:#cfe1ff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acct-bar-label span { color:#65748a; }
+.acct-bar-track { height:7px; background:#151d2a; border-radius:4px; overflow:hidden; }
+.acct-bar-track i { display:block; height:100%; border-radius:4px; }
+.acct-bar-track i.pos { background:#3fd177; }
+.acct-bar-track i.neg { background:#e85e5e; }
+.acct-bar-value { text-align:right; font-variant-numeric:tabular-nums; color:#dce8f8; }
+.session-board {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(430px, 1fr) minmax(360px, .78fr);
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a2d34;
+  background: #0e1219;
+}
+.session-card {
+  min-width: 0;
+  border: 1px solid #232b38;
+  border-radius: 6px;
+  background: #0c1118;
+  overflow: hidden;
+}
+.session-card-head {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-bottom: 1px solid #202838;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.session-card-head h3 { margin: 0; color: #cbd8ea; font-size: 12px; font-weight: 650; }
+.session-card-head .grow { flex: 1; }
+.session-btn {
+  background: #151d2a; color: #d7e3f3; border: 1px solid #2b3546;
+  border-radius: 4px; min-width: 26px; height: 24px; padding: 0 7px;
+  font-size: 12px; cursor: pointer;
+}
+.session-month-pnl { font-size: 12px; color: #9cabbd; font-variant-numeric: tabular-nums; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-weekdays { padding: 6px 8px 3px; color: #718197; font-size: 10px; text-align: center; text-transform: uppercase; }
+.calendar-grid { padding: 0 8px 8px; }
+.calendar-day {
+  min-height: 50px; border: 1px solid #263040; margin: -1px 0 0 -1px;
+  background: #0a0f15; padding: 5px 6px; color: #8d9aae; cursor: pointer;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.calendar-day:hover { background: #111923; }
+.calendar-day.other-month { color:#435064; background:#0b0d11; }
+.calendar-day.selected { outline: 1px solid #43c7b5; outline-offset: -2px; background:#0b251d; }
+.calendar-day.today .cal-date { background:#2387cf; color:white; border-radius:10px; padding:0 5px; }
+.calendar-day.pos { background: rgba(37, 120, 62, .24); }
+.calendar-day.neg { background: rgba(139, 37, 47, .25); }
+.cal-date-row { display:flex; justify-content:space-between; align-items:center; min-height:16px; }
+.cal-date { font-size: 11px; color:#cfe1ff; }
+.cal-pnl { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top:auto; }
+.cal-pnl.pos { color:#54e886; }
+.cal-pnl.neg { color:#ff7474; }
+.cal-orders { color:#7c8ba0; font-size:10px; }
+.cal-orders.empty { color:#384456; }
+.cal-empty { color:#384456; font-size:10px; margin-top:auto; }
+.session-day-trades { margin: 0; }
+.session-day-trades .session-card-head { gap: 10px; }
+.day-trades-table-wrap { max-height: 360px; overflow:auto; }
+.day-trades-table-wrap table.tg-tbl { width:100%; border-collapse:collapse; font-size:12px; }
+.day-trades-table-wrap th { position:sticky; top:0; background:#111822; color:#8fa2bd; }
+.day-trades-table-wrap th, .day-trades-table-wrap td { padding:4px 8px; border-bottom:1px solid #1d2531; text-align:left; }
+.day-trades-table-wrap td.num, .day-trades-table-wrap th.num { text-align:right; font-variant-numeric:tabular-nums; }
+.day-section-title { padding: 7px 9px 4px; color:#8fa2bd; font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; }
+.day-orders-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 9px 6px; border-top:1px solid #202838; }
+.day-orders-head strong { color:#cbd8ea; font-size:12px; }
+.day-orders-badges { display:flex; gap:5px; flex-wrap:wrap; }
+.day-orders-table-wrap { max-height: 360px; overflow:auto; }
+.day-orders-table th { position:sticky; top:0; background:#111822; color:#8fa2bd; }
+.day-orders-table td { vertical-align:top; }
+.day-order-cancelled, .day-order-rejected { opacity:.72; background: rgba(148, 163, 184, .06); }
+.day-order-rejected { background: rgba(120, 44, 44, .16); }
+.session-details { display: grid; grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.selected-day-summary { padding: 9px 10px; display: grid; grid-template-columns: repeat(4, minmax(70px, 1fr)); gap: 7px; }
+.selected-day-summary .metric { min-width: 0; border: 1px solid #202838; border-radius: 5px; background: #101722; padding: 6px 7px; }
+.selected-day-summary .k { display:block; color:#78879b; font-size:10px; }
+.selected-day-summary .v { display:block; color:#eef4ff; font-size:14px; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mini-table-wrap { max-height: 142px; overflow:auto; }
+table.mini-tbl { width:100%; border-collapse:collapse; font-size:11px; }
+table.mini-tbl th, table.mini-tbl td { padding:3px 7px; border-bottom:1px solid #1d2531; text-align:left; }
+table.mini-tbl th { color:#8fa2bd; background:#111822; position:sticky; top:0; }
+.status-pill { display:inline-block; border-radius:3px; padding:1px 5px; font-size:10px; }
+.status-pill.working { background:#173652; color:#9ed5ff; }
+.status-pill.filled { background:#1f5135; color:#b9f5cd; }
+.status-pill.cancelled { background:#3a3f4d; color:#aab3c3; }
+.status-pill.rejected { background:#5a1f1f; color:#ffb3b3; }
+.status-pill.pending { background:#5a4421; color:#ffd99b; }
+.mapping-warning {
+  margin: 7px 0;
+  padding: 7px 9px;
+  border: 1px solid #5b4925;
+  border-radius: 5px;
+  background: #241d0d;
+  color: #ffd99b;
+  font-size: 12px;
+}
+.analytics-grid { display:grid; grid-template-columns:repeat(2, minmax(220px, 1fr)); gap:8px; }
+.analytics-panel {
+  min-width:0;
+  border:1px solid #222a38;
+  border-radius:6px;
+  background:#101721;
+  padding:8px 10px;
+}
+.analytics-panel.span-2 { grid-column:1 / -1; }
+.analytics-panel h3 { margin:0 0 7px; font-size:11px; color:#8fa2bd; text-transform:uppercase; letter-spacing:.04em; }
+.analytics-panel .kv { display:flex; justify-content:space-between; gap:12px; padding:3px 0; border-bottom:1px dotted #1d2531; }
+.analytics-panel .kv:last-child { border-bottom:none; }
+.analytics-panel .k { color:#7b8798; }
+.analytics-panel .v { color:#e6eefb; font-variant-numeric:tabular-nums; text-align:right; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.analytics-note { margin-top:7px; padding:7px 9px; border-radius:5px; font-size:12px; }
+.analytics-note.warn { color:#ffd99b; background:#241d0d; border:1px solid #5b4925; }
+.analytics-note.bad { color:#ffb3b3; background:#2c1212; border:1px solid #5a1f1f; }
+.pane-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 8px; }
+.pane-toolbar button,
+.pane-toolbar select {
+  background:#151d2a; color:#d7e3f3; border:1px solid #2b3546; border-radius:4px;
+  padding:4px 8px; font-size:11px;
+}
+.pane-toolbar button { cursor:pointer; }
+.pane-toolbar button.active { background:#1d3f63; color:#d7ecff; border-color:#3970a5; }
+.pane-toolbar button:disabled { opacity:.45; cursor:not-allowed; }
+.toolbar-note { color:#7b8798; font-size:11px; margin-left:auto; }
+.flat-state { padding:18px; color:#9fb0c8; text-align:center; border:1px dashed #2d3747; border-radius:5px; background:#0d1219; }
+.unmapped-row, .rt-unmapped-row { background:rgba(90,68,33,.16); }
+.warn-text { color:#ffd99b !important; }
+.muted-empty.compact { padding:4px; }
+@media (max-width: 1200px) {
+  .trading-grid,
+  .trading-grid.no-right { grid-template-columns: 1fr; }
+  .tg-left { display:none; }
+  .tg-right { position:fixed; right:0; top:49px; bottom:0; width:min(420px, 100vw); z-index:20; }
+  .session-board { grid-template-columns: 1fr; }
+}
 
 /* Performance Center (left panel) */
 .pc-section { border-bottom: 1px solid #1f232c; padding: 8px 10px; }
@@ -43,9 +238,18 @@
 }
 .pc-card .k { color: #889; font-size: 10px; }
 .pc-card .v { color: #e6e6e6; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pc-card .pc-sub { display:block; margin-top:2px; color:#718197; font-size:9px; line-height:1.15; }
 .pc-card .v.pos { color: #b9f5cd; }
 .pc-card .v.neg { color: #ffb3b3; }
 .pc-equity-svg { width: 100%; height: 60px; display: block; background: #0e1218; border-radius: 3px; }
+.pc-today-equity-canvas {
+  width: 100%;
+  height: 132px;
+  display: block;
+  background: #0f1115;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+}
 .pc-row {
   display: flex; justify-content: space-between; gap: 6px;
   padding: 3px 0; font-size: 12px; border-bottom: 1px dotted #1a1d24;
@@ -79,8 +283,8 @@
   display: flex; flex-direction: column;
   border-bottom: 1px solid #2a2d34;
 }
-.tg-mid-top { flex: 1 1 50%; min-height: 200px; }
-.tg-mid-bot { flex: 1 1 50%; min-height: 180px; border-bottom: none; }
+.tg-mid-top { flex: 0 0 auto; min-height: 220px; }
+.tg-mid-bot { flex: 1 1 auto; min-height: 260px; }
 
 table.tg-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.tg-tbl th, table.tg-tbl td {
@@ -94,6 +298,18 @@ table.tg-tbl tbody tr { cursor: pointer; }
 table.tg-tbl tbody tr:hover { background: #1a1f2a; }
 table.tg-tbl tbody tr.sel { background: #1f3a5a; }
 table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
+table.tg-tbl tbody tr.rt-phantom-row { opacity: .55; background: rgba(255,255,255,.02); }
+table.tg-tbl tbody tr.rt-stopped-row { opacity: .65; }
+table.tg-tbl tbody tr.rt-phantom-row td.cell-no,
+table.tg-tbl tbody tr.rt-stopped-row td.cell-no { color: var(--muted); }
+table.tg-tbl tbody tr.strategy-in-window { background: rgba(63, 209, 119, 0.09); }
+table.tg-tbl tbody tr.strategy-in-window:hover { background: rgba(63, 209, 119, 0.14); }
+table.tg-tbl tbody tr.strategy-in-window.sel { background: rgba(47, 120, 80, 0.28); }
+table.tg-tbl tbody tr.strategy-out-window { background: rgba(120, 130, 150, 0.11); }
+table.tg-tbl tbody tr.strategy-out-window:hover { background: rgba(120, 130, 150, 0.16); }
+table.tg-tbl tbody tr.strategy-out-window.sel { background: rgba(70, 80, 100, 0.28); }
+.tw-cell { min-width: 118px; font-size: 11px; line-height: 1.35; white-space: nowrap; }
+.tw-cell .tw-status-line { margin-top: 2px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .rt-show-hidden { display:flex; align-items:center; gap:4px; font-size:11px; color:#889; user-select:none; }
 .rt-show-hidden input, .rt-display-toggle { accent-color:#6da9ff; }
@@ -338,6 +554,7 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
   <nav class="top-nav" aria-label="Разделы">
     <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
     <a href="/ui/trading.html" class="top-nav-link active">Торговля онлайн</a>
+    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
     <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
   </nav>
    <div class="status-strip" id="status-strip">
@@ -362,14 +579,15 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
     </div>
     <div class="tg-body" id="pc-body">
       <section class="pc-section" aria-label="PnL и счёт">
-        <h4>Сводка</h4>
+        <h4>Сводка с 13.05</h4>
         <div class="pc-pnl-grid">
           <div class="pc-card">
-            <span class="k">PnL сегодня</span>
+            <span class="k">Account PnL с 13.05</span>
             <span class="v" id="pc-pnl-today">—</span>
+            <span class="pc-sub" id="pc-pnl-source">—</span>
           </div>
           <div class="pc-card">
-            <span class="k">Net Liquidation</span>
+            <span class="k">Баланс от $2,000</span>
             <span class="v" id="pc-netliq">—</span>
           </div>
           <div class="pc-card">
@@ -377,23 +595,33 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
             <span class="v" id="pc-active-count">0</span>
           </div>
           <div class="pc-card">
-            <span class="k">Сделок сегодня</span>
+            <span class="k">Закрытых сделок</span>
             <span class="v" id="pc-trades-today">0</span>
           </div>
         </div>
       </section>
-      <section class="pc-section" aria-label="Equity">
-        <h4>Equity (последние 30 дней)</h4>
-        <svg class="pc-equity-svg" id="pc-equity" viewBox="0 0 200 60" preserveAspectRatio="none"></svg>
-        <div class="muted-small" id="pc-equity-meta" style="text-align:right;">—</div>
+      <section class="pc-section" aria-label="Весь период">
+        <h4 id="acct-day-title">С 13.05</h4>
+        <div class="acct-today-grid">
+          <div class="acct-today-cell"><span class="k">PnL</span><span class="v" id="acct-today-pnl">—</span></div>
+          <div class="acct-today-cell"><span class="k">Исполнения</span><span class="v" id="acct-today-trades">0</span></div>
+          <div class="acct-today-cell"><span class="k">Win / Loss</span><span class="v" id="acct-today-winloss">0 / 0</span></div>
+          <div class="acct-today-cell"><span class="k">Инструменты</span><span class="v" id="acct-today-instruments">—</span></div>
+          <div class="acct-today-cell"><span class="k">Unmapped</span><span class="v" id="acct-today-unmapped">0</span></div>
+        </div>
+        <canvas class="pc-today-equity-canvas" id="acct-pnl-chart" width="320" height="132"></canvas>
+        <div class="muted-small" id="acct-exec-gross" style="text-align:right;margin-top:3px;">deduped gross est.: —</div>
+        <div class="acct-warning" id="acct-data-warning"></div>
+      </section>
+      <section class="pc-section" aria-label="Доход по инструментам">
+        <h4 id="acct-instruments-title">Доход по инструментам с 13.05</h4>
+        <div class="acct-bars" id="acct-pnl-instruments">
+          <div class="muted-empty compact">нет данных</div>
+        </div>
       </section>
       <section class="pc-section" aria-label="Активные стратегии">
         <h4>Активные стратегии</h4>
         <div id="pc-active-list"><div class="muted-empty" style="padding:6px;">нет</div></div>
-      </section>
-      <section class="pc-section" aria-label="Рейтинг инструментов">
-        <h4>Инструменты — рейтинг по PnL сегодня</h4>
-        <div id="pc-instr-rank"><div class="muted-empty" style="padding:6px;">нет данных</div></div>
       </section>
       <section class="pc-section" aria-label="Последние события">
         <h4>Последние события</h4>
@@ -419,23 +647,76 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
         <table class="tg-tbl" id="rt-strats-tbl">
           <thead>
             <tr>
+              <th class="num">№</th>
               <th>Стратегия</th>
               <th>Счёт</th>
               <th>Режим</th>
               <th>Инструмент</th>
               <th>Timeframe</th>
               <th>Состояние</th>
+              <th>Окно входа</th>
               <th>Параметры</th>
+              <th>Сделки</th>
               <th class="num">Поз.</th>
-              <th class="num">PnL сегодня</th>
+              <th class="num" id="rt-pnl-day-head">PnL выбранного дня</th>
               <th>Last update</th>
               <th class="num">Показ</th>
             </tr>
           </thead>
           <tbody id="rt-strats-body">
-            <tr><td colspan="11" class="muted-empty">Нет данных от runtime bridge.</td></tr>
+            <tr><td colspan="14" class="muted-empty">Нет данных от runtime bridge.</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- center middle: analytics for selected strategy (Обзор / Orders / История) -->
+    <section class="tg-mid-bot">
+      <div class="tab-bar" id="bot-tabs">
+        <button class="active" data-tab="overview">Обзор</button>
+        <button data-tab="orders">Orders</button>
+        <button data-tab="history">История</button>
+      </div>
+      <div style="flex:1;overflow:hidden;position:relative;">
+        <div class="tab-pane active" id="pane-overview"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-orders"><div class="muted-empty">Выберите стратегию выше.</div></div>
+        <div class="tab-pane" id="pane-history"><div class="muted-empty">Выберите стратегию выше.</div></div>
+      </div>
+    </section>
+
+    <section class="session-board" aria-label="Торговая сессия">
+      <div class="session-card">
+        <div class="session-card-head">
+          <button id="cal-prev-month" class="session-btn" type="button" title="Предыдущий месяц">‹</button>
+          <h3 id="cal-month-title" class="grow">—</h3>
+          <span id="cal-market-countdown" class="session-calendar-eta"
+            title="То же расписание и отсчёт, что у индикатора «Рынок» справа сверху (CME Globex MES/ES, PT).">…</span>
+          <span id="cal-month-pnl" class="session-month-pnl">Monthly P/L: —</span>
+          <button id="cal-today" class="session-btn" type="button">Today</button>
+          <button id="cal-next-month" class="session-btn" type="button" title="Следующий месяц">›</button>
+        </div>
+        <div class="calendar-weekdays">
+          <span>Вс</span><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span>
+        </div>
+        <div id="trade-calendar" class="calendar-grid"></div>
+      </div>
+      <div class="session-details">
+        <div class="session-card">
+          <div class="session-card-head">
+            <h3 id="selected-day-title" class="grow">Выбранный день</h3>
+            <span id="selected-day-source" class="muted small">—</span>
+          </div>
+          <div id="selected-day-summary" class="selected-day-summary"></div>
+        </div>
+        <section class="session-day-trades session-card" id="session-day-trades" aria-label="Сделки за выбранный день" hidden></section>
+        <div class="session-card">
+          <div class="session-card-head"><h3 class="grow">Позиции сейчас</h3><span id="snapshot-position-count" class="muted small">—</span></div>
+          <div id="snapshot-positions" class="mini-table-wrap"><div class="flat-state">Flat по всем инструментам.</div></div>
+        </div>
+        <div class="session-card">
+          <div class="session-card-head"><h3 class="grow">Working orders / SL / TP</h3><span id="snapshot-order-count" class="muted small">—</span></div>
+          <div id="snapshot-working-orders" class="mini-table-wrap"><div class="muted-empty compact">нет активных ордеров</div></div>
+        </div>
       </div>
     </section>
 
@@ -474,29 +755,6 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
       </div>
     </section>
 
-    <!-- center bottom: analytics for selected strategy -->
-    <section class="tg-mid-bot">
-      <div class="tab-bar" id="bot-tabs">
-        <button class="active" data-tab="overview">Обзор</button>
-        <button data-tab="trades">Сделки</button>
-        <button data-tab="orders">Ордера</button>
-        <button data-tab="position">Позиция</button>
-        <button data-tab="params-diff">Parameters diff</button>
-        <button data-tab="journal">Журнал дня</button>
-        <button data-tab="events">События</button>
-        <button data-tab="history">История</button>
-      </div>
-      <div style="flex:1;overflow:hidden;position:relative;">
-        <div class="tab-pane active" id="pane-overview"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-trades"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-orders"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-position"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-params-diff"><div class="muted-empty">Сравнение параметров недоступно</div></div>
-        <div class="tab-pane" id="pane-journal"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-events"><div class="muted-empty">Выберите стратегию выше.</div></div>
-        <div class="tab-pane" id="pane-history"><div class="muted-empty">Выберите стратегию выше.</div></div>
-      </div>
-    </section>
   </main>
 
   <!-- ============== RIGHT: settings & launch (hidden until row selected) ============== -->
@@ -590,7 +848,7 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
           2. Она появится в таблице выше — выберите строку.<br>
           3. Платформа проверит параметры и начнёт мониторинг.<br>
           4. Кнопка «Включить / Остановить» управляет этим instance.<br><br>
-          Live и demo аккаунты обрабатываются одинаково: если NinjaTrader подключён к Live, управление работает так же, как на Sim/Playback.
+          Live аккаунты отображаются только для мониторинга; команды включения и остановки для них заблокированы.
         </div>
       </div>
     </div>
@@ -598,7 +856,7 @@ table.tg-tbl tbody tr.rt-hidden-row { opacity: .55; }
 
 </div>
 
-<script src="trading.js?v=20260506-history-hidden1"></script>
-<script src="market_clock.js?v=20260502-hotfix5"></script>
+<script src="market_clock.js?v=20260513-session-api1"></script>
+<script src="trading.js?v=20260521-trade-sort1"></script>
 </body>
 </html>

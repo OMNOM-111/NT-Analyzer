@@ -183,6 +183,8 @@ def _default_registry() -> Dict[str, Any]:
                 "status":              "paper_ready",
                 "account_mode":        "paper",
                 "allowed_accounts":    ["Sim101", "Playback101"],
+                "slot":                1,
+                "cell_id":             "CELL-011",
                 "instrument":          "MNQ",
                 "contract_month":      "MNQ 06-26",
                 "locked_params": {
@@ -381,21 +383,6 @@ def _repair_registry(reg: Dict[str, Any]) -> bool:
     return changed
 
 
-def load_states() -> Dict[str, Any]:
-    p = state_path()
-    reg = load_registry()
-    states: Dict[str, Any] = _read_json(p, {})
-    changed = False
-    for s in reg["strategies"]:
-        sid = s["strategy_id"]
-        if sid not in states:
-            states[sid] = _default_state(sid, s["status"])
-            changed = True
-    if changed:
-        _write_json_atomic(p, states)
-    return states
-
-
 def get_strategy(strategy_id: str) -> Optional[Dict[str, Any]]:
     needle = str(strategy_id or "")
     for s in load_registry()["strategies"]:
@@ -403,6 +390,35 @@ def get_strategy(strategy_id: str) -> Optional[Dict[str, Any]]:
         if s["strategy_id"] == needle or needle in aliases:
             return s
     return None
+
+
+def _canonical_strategy_id(strategy_id: str) -> str:
+    s = get_strategy(strategy_id)
+    return str((s or {}).get("strategy_id") or strategy_id)
+
+
+def load_states() -> Dict[str, Any]:
+    p = state_path()
+    reg = load_registry()
+    states: Dict[str, Any] = _read_json(p, {})
+    changed = False
+    for s in reg["strategies"]:
+        sid = s["strategy_id"]
+        aliases = [str(x) for x in s.get("legacy_strategy_ids") or [] if str(x) != sid]
+        if sid not in states:
+            alias_state = next((states.get(a) for a in aliases if isinstance(states.get(a), dict)), None)
+            states[sid] = alias_state or _default_state(sid, s["status"])
+            changed = True
+        if isinstance(states.get(sid), dict) and states[sid].get("strategy_id") != sid:
+            states[sid]["strategy_id"] = sid
+            changed = True
+        for a in aliases:
+            if a in states:
+                states.pop(a, None)
+                changed = True
+    if changed:
+        _write_json_atomic(p, states)
+    return states
 
 
 def list_strategies() -> List[Dict[str, Any]]:
@@ -847,12 +863,13 @@ def _transition(strategy_id: str, new_state: str, *, reason: str,
     s = get_strategy(strategy_id)
     if not s:
         raise OpsError("strategy not found", 404)
+    sid = s["strategy_id"]
     if not allow_rejected and s["status"] in ("archived", "rejected"):
         raise OpsError(f"strategy is {s['status']}; cannot transition", 403)
     if new_state not in ALLOWED_STATES:
         raise OpsError(f"unknown state: {new_state}", 400)
     states = load_states()
-    st = states.setdefault(strategy_id, _default_state(strategy_id, s["status"]))
+    st = states.setdefault(sid, _default_state(sid, s["status"]))
     cur = st["current_state"]
     if cur == new_state:
         return st
@@ -870,7 +887,7 @@ def _transition(strategy_id: str, new_state: str, *, reason: str,
         st["stopped_at_utc"] = _now_iso(); st["manual_enabled"] = False
         st["intent_pending"] = False
     _save_states(states)
-    audit_append(f"transition/{new_state}", strategy_id, cur, new_state,
+    audit_append(f"transition/{new_state}", sid, cur, new_state,
                  reason=reason, account_mode=s["account_mode"])
     return st
 
@@ -890,19 +907,20 @@ def start_intent(strategy_id: str, reason: str = "") -> Dict[str, Any]:
     Does NOT enable anything in NinjaTrader. Returns a manual checklist."""
     s = get_strategy(strategy_id)
     if not s: raise OpsError("not found", 404)
+    sid = s["strategy_id"]
     if s["status"] in ("archived", "rejected"):
         raise OpsError("rejected/archived strategies cannot be started", 403)
     if s["account_mode"] == "live_locked":
         raise OpsError("live trading is locked", 403)
     states = load_states()
-    st = states.setdefault(strategy_id, _default_state(strategy_id, s["status"]))
+    st = states.setdefault(sid, _default_state(sid, s["status"]))
     if st["current_state"] not in ("armed",):
         raise OpsError(f"start-intent requires state=armed, current={st['current_state']}", 409)
     st["last_intent"] = {"action": "start", "at_utc": _now_iso(),
                          "reason": reason, "by": "operator"}
     st["intent_pending"] = True
     _save_states(states)
-    audit_append("intent/start", strategy_id, st["current_state"], "armed",
+    audit_append("intent/start", sid, st["current_state"], "armed",
                  reason=reason or "operator start intent",
                  account_mode=s["account_mode"])
     return {
@@ -927,15 +945,16 @@ def confirm_manual(strategy_id: str, action: str, reason: str = "") -> Dict[str,
 def stop_intent(strategy_id: str, reason: str = "") -> Dict[str, Any]:
     s = get_strategy(strategy_id)
     if not s: raise OpsError("not found", 404)
+    sid = s["strategy_id"]
     states = load_states()
-    st = states.setdefault(strategy_id, _default_state(strategy_id, s["status"]))
+    st = states.setdefault(sid, _default_state(sid, s["status"]))
     if st["current_state"] not in ("paper_running", "paused", "armed"):
         raise OpsError(f"stop-intent invalid for state={st['current_state']}", 409)
     st["last_intent"] = {"action": "stop", "at_utc": _now_iso(),
                          "reason": reason, "by": "operator"}
     st["intent_pending"] = True
     _save_states(states)
-    audit_append("intent/stop", strategy_id, st["current_state"], st["current_state"],
+    audit_append("intent/stop", sid, st["current_state"], st["current_state"],
                  reason=reason or "operator stop intent",
                  account_mode=s["account_mode"])
     return {
@@ -969,8 +988,9 @@ def evaluate_review_due(strategy_id: str) -> Dict[str, Any]:
     """Auto-transition from paper_running -> paper_review_due when gates met."""
     s = get_strategy(strategy_id)
     if not s: raise OpsError("not found", 404)
+    sid = s["strategy_id"]
     states = load_states()
-    st = states.get(strategy_id) or _default_state(strategy_id, s["status"])
+    st = states.get(sid) or _default_state(sid, s["status"])
     if st["current_state"] != "paper_running":
         return {"transitioned": False, "current_state": st["current_state"]}
     m = compute_metrics_safe(s)

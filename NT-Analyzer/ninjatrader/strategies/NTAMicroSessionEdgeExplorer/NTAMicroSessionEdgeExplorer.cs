@@ -56,7 +56,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         RollingVwapCrypto   = 5
     }
 
-    public partial class NTAMicroSessionEdgeExplorer : Strategy
+    public abstract partial class NTAMicroSessionEdgeExplorer : Strategy
     {
         // ----- indicators -----
         private EMA _emaFast;
@@ -114,6 +114,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double _lastEntryPrice;
         private int    _lastEntryQty;
         private int    _lastStopTicks;
+        private string _activeEntrySignal = null;
 
         // ----- skip logging dedupe -----
         private int    _lastSkipBar    = -1;
@@ -356,9 +357,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 CancelPendingEntry("force_flat");
                 if (Position.MarketPosition == MarketPosition.Long)
-                    ExitLong("FlatEOD", "Long");
+                    ExitLong("FlatEOD", ActiveEntrySignalForPosition());
                 else if (Position.MarketPosition == MarketPosition.Short)
-                    ExitShort("FlatEOD", "Short");
+                    ExitShort("FlatEOD", ActiveEntrySignalForPosition());
                 if (atForceFlat) LogSkip("force_flat_time");
                 return;
             }

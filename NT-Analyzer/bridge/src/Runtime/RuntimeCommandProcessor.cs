@@ -20,9 +20,9 @@ namespace NTAnalyzerBridge.Runtime
     /// of NinjaScript Strategy instances, appends a result to
     /// data/runtime/command_results.jsonl.
     ///
-    /// Account-agnostic: paper / playback / demo / live are controlled identically.
     /// Hard safety:
     ///   * unknown account names are rejected (no defaulting to live);
+    ///   * live account control is rejected; live telemetry is read-only;
     ///   * archived/rejected strategy classes are rejected;
     ///   * we never place orders, never modify orders, never bypass NinjaScript
     ///     state machine. We only call Strategy.SetState(State.Active|Terminated)
@@ -131,8 +131,11 @@ namespace NTAnalyzerBridge.Runtime
                     string cid = ExtractJsonString(raw, "command_id");
                     if (string.IsNullOrEmpty(cid)) continue;
                     lock (_lock) { if (_seen.Contains(cid)) continue; }
-                    ProcessOne(raw, cid);
-                    lock (_lock) { _seen.Add(cid); }
+                    bool resultWritten = ProcessOne(raw, cid);
+                    if (resultWritten)
+                    {
+                        lock (_lock) { _seen.Add(cid); }
+                    }
                 }
             }
             catch (Exception ex)
@@ -142,7 +145,7 @@ namespace NTAnalyzerBridge.Runtime
             finally { _running = 0; }
         }
 
-        private void ProcessOne(string rawJson, string cid)
+        private bool ProcessOne(string rawJson, string cid)
         {
             string command           = ExtractJsonString(rawJson, "command");
             string strategyId        = ExtractJsonString(rawJson, "strategy_id");
@@ -155,37 +158,36 @@ namespace NTAnalyzerBridge.Runtime
             {
                 if (command != "enable_strategy" && command != "disable_strategy")
                 {
-                    WriteResult(cid, "rejected", "unknown command: " + command, "");
-                    return;
+                    return WriteResult(cid, "rejected", "unknown command: " + command, "");
                 }
                 if (string.IsNullOrEmpty(strategyClass))
                 {
-                    WriteResult(cid, "rejected", "strategy_class is required", "");
-                    return;
+                    return WriteResult(cid, "rejected", "strategy_class is required", "");
                 }
                 if (RejectedClasses.Contains(strategyClass))
                 {
-                    WriteResult(cid, "rejected",
+                    return WriteResult(cid, "rejected",
                         "strategy class '" + strategyClass + "' is archived/rejected by registry",
                         "");
-                    return;
                 }
 
                 // Resolve account.
                 Account acc = FindAccount(accountName);
                 if (acc == null)
                 {
-                    WriteResult(cid, "failed", "account not found: " + accountName, "");
-                    return;
+                    return WriteResult(cid, "failed", "account not found: " + accountName, "");
                 }
                 string accMode = ClassifyAccountMode(accountName, acc);
                 if (accMode == "unknown")
                 {
-                    WriteResult(cid, "rejected",
+                    return WriteResult(cid, "rejected",
                         "account '" + accountName + "' could not be classified - refusing for safety", "");
-                    return;
                 }
-                // Account-agnostic: paper / playback / demo / live are all controlled identically.
+                if (accMode == "live")
+                {
+                    return WriteResult(cid, "rejected",
+                        "live account control is disabled; telemetry is read-only", "");
+                }
 
                 // Find existing strategy instance on this account (we never create
                 // new ones from an AddOn - that requires the Strategies window UI).
@@ -197,11 +199,10 @@ namespace NTAnalyzerBridge.Runtime
                         : "no instance with runtime_instance_id='" + runtimeInstanceId +
                           "' (class '" + strategyClass + "') found on account '" + accountName +
                           "'. Telemetry may be stale, refresh and retry.";
-                    WriteResult(cid, "failed",
+                    return WriteResult(cid, "failed",
                         detail + " Add it once via NinjaTrader Strategies window, " +
                         "then re-issue the command.",
                         "");
-                    return;
                 }
 
                 if (command == "enable_strategy")
@@ -212,19 +213,17 @@ namespace NTAnalyzerBridge.Runtime
                         string mismatch = CheckB1Params(strat);
                         if (mismatch != null)
                         {
-                            WriteResult(cid, "rejected",
+                            return WriteResult(cid, "rejected",
                                 "B1 ShortOnly param mismatch: " + mismatch,
                                 SafeStrategyId(strat));
-                            return;
                         }
                     }
                     bool ok = SetStrategyState(strat, true, out string err);
                     if (!ok)
                     {
-                        WriteResult(cid, "failed", "SetState(Active) failed: " + err, SafeStrategyId(strat));
-                        return;
+                        return WriteResult(cid, "failed", "SetState(Active) failed: " + err, SafeStrategyId(strat));
                     }
-                    WriteResult(cid, "completed",
+                    return WriteResult(cid, "completed",
                         "enabled '" + strategyClass + "' on '" + accountName + "'",
                         SafeStrategyId(strat));
                 }
@@ -233,10 +232,9 @@ namespace NTAnalyzerBridge.Runtime
                     bool ok = SetStrategyState(strat, false, out string err);
                     if (!ok)
                     {
-                        WriteResult(cid, "failed", "SetState(Terminated) failed: " + err, SafeStrategyId(strat));
-                        return;
+                        return WriteResult(cid, "failed", "SetState(Terminated) failed: " + err, SafeStrategyId(strat));
                     }
-                    WriteResult(cid, "completed",
+                    return WriteResult(cid, "completed",
                         "disabled '" + strategyClass + "' on '" + accountName + "'",
                         SafeStrategyId(strat));
                 }
@@ -244,8 +242,8 @@ namespace NTAnalyzerBridge.Runtime
             catch (Exception ex)
             {
                 BridgeLog.Error("RuntimeCommandProcessor.ProcessOne cid=" + cid, ex);
-                try { WriteResult(cid, "failed", "exception: " + ex.Message, ""); }
-                catch { }
+                try { return WriteResult(cid, "failed", "exception: " + ex.Message, ""); }
+                catch { return false; }
             }
         }
 
@@ -444,6 +442,9 @@ namespace NTAnalyzerBridge.Runtime
                 string cls = strat.GetType().Name;
                 if (cls == "NTAMicroVwapRiskPilot") return "vwap_short_mnq_5m_v1";
                 if (cls == "VWAPPullbackMGC5mV1") return "vwap_pullback_mgc_5m_v1";
+                if (cls == "B1ShortOnlyMGC5mV2") return "mgc_b1_short_5m_v2";
+                if (cls == "B1Stop24MGC5mC003") return "mgc_b1_stop24_5m_c003";
+                if (cls == "B1Stop20MGC5mC004") return "mgc_b1_stop20_5m_c004";
                 if (cls == "PullbackMNQ5mV2") return "pullback_mnq_5m_v2";
                 if (cls == "NTAMicroVwapRiskExplorer") return "vwap_risk_explorer_mgc_5m_v1";
                 if (cls == "NTAMicroSessionEdgeExplorer") return "session_edge_multi_5m_v2";
@@ -459,7 +460,7 @@ namespace NTAnalyzerBridge.Runtime
         // ------------------------------------------------------------------
         // Result file write & primitive JSON helpers
 
-        private void WriteResult(string commandId, string status, string message, string runtimeStrategyId)
+        private bool WriteResult(string commandId, string status, string message, string runtimeStrategyId)
         {
             var sb = new StringBuilder(256);
             sb.Append("{");
@@ -474,10 +475,12 @@ namespace NTAnalyzerBridge.Runtime
             {
                 File.AppendAllText(_resultsPath, sb.ToString(), new UTF8Encoding(false));
                 BridgeLog.Info("RuntimeCommandProcessor: " + commandId + " " + status + " " + message);
+                return true;
             }
             catch (Exception ex)
             {
                 BridgeLog.Error("RuntimeCommandProcessor: append result failed", ex);
+                return false;
             }
         }
 

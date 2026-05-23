@@ -19,10 +19,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             // ----- Breakeven -----
             if (rMult >= MoveToBreakevenAtR)
             {
+                string signal = ActiveEntrySignalForPosition();
                 if (Position.MarketPosition == MarketPosition.Long)
-                    SetStopLoss("Long",  CalculationMode.Price, _lastEntryPrice, false);
+                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
                 else
-                    SetStopLoss("Short", CalculationMode.Price, _lastEntryPrice, false);
+                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
             }
 
             // ----- Trail after R -----
@@ -33,13 +34,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     double trail = Close[0] - trailDist;
                     if (trail > _lastEntryPrice)
-                        SetStopLoss("Long", CalculationMode.Price, trail, false);
+                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
                 }
                 else
                 {
                     double trail = Close[0] + trailDist;
                     if (trail < _lastEntryPrice)
-                        SetStopLoss("Short", CalculationMode.Price, trail, false);
+                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
                 }
             }
 
@@ -49,9 +50,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (rMult < MinProgressR)
                 {
                     if (Position.MarketPosition == MarketPosition.Long)
-                        ExitLong("TimeStop", "Long");
+                        ExitLong("TimeStop", ActiveEntrySignalForPosition());
                     else
-                        ExitShort("TimeStop", "Short");
+                        ExitShort("TimeStop", ActiveEntrySignalForPosition());
                     Print(string.Format("[EXIT:time_stop] rMult={0:F2} < {1:F2} bars={2}",
                                          rMult, MinProgressR, CurrentBar - _lastEntryBar));
                 }

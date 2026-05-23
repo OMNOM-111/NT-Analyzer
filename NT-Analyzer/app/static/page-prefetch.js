@@ -3,18 +3,23 @@
 (() => {
   const PAGE_ASSETS = {
     "/ui/index.html": [
-      "/ui/app.js?v=20260508-two-statuses1",
-      "/ui/market_clock.js?v=20260502-hotfix5",
+      "/ui/app.js?v=20260521-cleanup2",
+      "/ui/market_clock.js?v=20260513-session-api1",
       "/ui/style.css?v=20260508-two-statuses1",
     ],
     "/ui/trading.html": [
-      "/ui/trading.js?v=20260506-history-hidden1",
-      "/ui/market_clock.js?v=20260502-hotfix5",
+      "/ui/market_clock.js?v=20260513-session-api1",
+      "/ui/trading.js?v=20260521-cleanup3",
       "/ui/style.css",
     ],
+    "/ui/performance.html": [
+      "/ui/performance.js?v=20260519-performance-center2",
+      "/ui/market_clock.js?v=20260513-session-api1",
+      "/ui/style.css?v=20260519-performance-center1",
+    ],
     "/ui/strategies.html": [
-      "/ui/strategies.js?v=20260508-ready-portfolio2",
-      "/ui/market_clock.js?v=20260502-hotfix5",
+      "/ui/strategies.js?v=20260521-cleanup2",
+      "/ui/market_clock.js?v=20260513-session-api1",
       "/ui/style.css?v=20260508-two-statuses1",
     ],
   };

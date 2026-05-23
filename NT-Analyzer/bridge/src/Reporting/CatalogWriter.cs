@@ -62,7 +62,7 @@ namespace NTAnalyzerBridge.Reporting
                 ["count"]            = arr.Count,
                 ["strategies"]       = arr,
             };
-            File.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
         }
 
         private static Dictionary<string, object> BuildStrategyEntry(Type t, string ntUserDir)
@@ -166,6 +166,9 @@ namespace NTAnalyzerBridge.Reporting
             {
                 case "PullbackMNQ5mV2": return "pullback_mnq_5m_v2";
                 case "VWAPPullbackMGC5mV1": return "vwap_pullback_mgc_5m_v1";
+                case "B1ShortOnlyMGC5mV2": return "mgc_b1_short_5m_v2";
+                case "B1Stop24MGC5mC003": return "mgc_b1_stop24_5m_c003";
+                case "B1Stop20MGC5mC004": return "mgc_b1_stop20_5m_c004";
                 case "NTAMicroVwapRiskPilot": return "vwap_short_mnq_5m_v1";
                 case "NTAMicroVwapRiskExplorer": return "vwap_risk_explorer_mgc_5m_v1";
                 case "NTAMicroSessionEdgeExplorer": return "session_edge_multi_5m_v2";
@@ -183,6 +186,12 @@ namespace NTAnalyzerBridge.Reporting
                 return new List<string> { "b1_shortonly" };
             if (className == "VWAPPullbackMGC5mV1")
                 return new List<string> { "vwappullbackmgc5mv1" };
+            if (className == "B1ShortOnlyMGC5mV2")
+                return new List<string> { "mgc_b1_shortonly_5m_v2" };
+            if (className == "B1Stop24MGC5mC003")
+                return new List<string> { "b1stop24mgc5mc003" };
+            if (className == "B1Stop20MGC5mC004")
+                return new List<string> { "b1stop20mgc5mc004" };
             if (className == "NTAMnqMicroOrbOpenScalp")
                 return new List<string> { "ntamnqmicroorbopenscalp" };
             return new List<string>();
@@ -359,7 +368,7 @@ namespace NTAnalyzerBridge.Reporting
                 },
                 ["instruments"]      = rows,
             };
-            File.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
         }
 
         // Try to resolve the instrument via NinjaTrader.Cbi.Instrument.GetInstrument
@@ -590,7 +599,7 @@ namespace NTAnalyzerBridge.Reporting
                 ["trading_hours_templates"] = thours,
                 ["notes"]                 = notes,
             };
-            File.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
         }
     }
 }

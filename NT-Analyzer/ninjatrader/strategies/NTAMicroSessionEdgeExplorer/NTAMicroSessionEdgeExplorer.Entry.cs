@@ -6,12 +6,13 @@
 // NTAMicroVwapRiskExplorer v0.5 entry logic.
 
 using System;
+using NinjaTrader.Cbi;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroSessionEdgeExplorer
+    public abstract partial class NTAMicroSessionEdgeExplorer
     {
         // =====================================================================
         // 1. VwapPullback — identical to NTAMicroVwapRiskExplorer v0.5
@@ -296,11 +297,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void PlaceLongStopExplicit(double trigger, double protStop, double target,
                                            int stopTicks, int qty, string tag)
         {
-            SetStopLoss("Long",   CalculationMode.Price, protStop, false);
-            SetProfitTarget("Long", CalculationMode.Price, target);
-            EnterLongStopMarket(0, false, qty, trigger, "Long");
+            string signal = TelemetrySignal("Long");
+            SetStopLoss(signal, CalculationMode.Price, protStop, false);
+            SetProfitTarget(signal, CalculationMode.Price, target);
+            EnterLongStopMarket(0, false, qty, trigger, signal);
 
-            _pendingEntrySignal     = "Long";
+            _pendingEntrySignal     = signal;
             _pendingEntryBar        = CurrentBar;
             _pendingEntryStopPx     = trigger;
             _pendingEntryProtStopPx = protStop;
@@ -315,11 +317,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void PlaceShortStopExplicit(double trigger, double protStop, double target,
                                             int stopTicks, int qty, string tag)
         {
-            SetStopLoss("Short",   CalculationMode.Price, protStop, false);
-            SetProfitTarget("Short", CalculationMode.Price, target);
-            EnterShortStopMarket(0, false, qty, trigger, "Short");
+            string signal = TelemetrySignal("Short");
+            SetStopLoss(signal, CalculationMode.Price, protStop, false);
+            SetProfitTarget(signal, CalculationMode.Price, target);
+            EnterShortStopMarket(0, false, qty, trigger, signal);
 
-            _pendingEntrySignal     = "Short";
+            _pendingEntrySignal     = signal;
             _pendingEntryBar        = CurrentBar;
             _pendingEntryStopPx     = trigger;
             _pendingEntryProtStopPx = protStop;
@@ -338,6 +341,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 reason, _pendingEntrySignal, CurrentBar));
             _pendingEntrySignal = null;
             _pendingEntryBar    = -1;
+        }
+
+        private string TelemetrySignal(string side)
+        {
+            return GetType().Name + "." + side;
+        }
+
+        private bool IsEntrySignalName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            if (_pendingEntrySignal != null && name == _pendingEntrySignal) return true;
+            return name == TelemetrySignal("Long") || name == TelemetrySignal("Short")
+                || name == "Long" || name == "Short";
+        }
+
+        private string ActiveEntrySignalForPosition()
+        {
+            if (!string.IsNullOrEmpty(_activeEntrySignal)) return _activeEntrySignal;
+            if (Position.MarketPosition == MarketPosition.Long) return TelemetrySignal("Long");
+            if (Position.MarketPosition == MarketPosition.Short) return TelemetrySignal("Short");
+            return "";
         }
     }
 }

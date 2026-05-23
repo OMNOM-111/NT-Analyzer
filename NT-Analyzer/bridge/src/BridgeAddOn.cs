@@ -66,6 +66,7 @@ namespace NTAnalyzerBridge
                 BridgeLog.Configure(_cfg.NinjaTraderUserDir);
                 BridgeLog.Info("config loaded from " + configPath);
                 BridgeLog.Info("project_root=" + _cfg.ProjectRoot);
+                BridgeLog.Info("jobs_dir=" + _cfg.JobsDir);
 
                 _strategyLoader = new StrategyLoader(_cfg.NinjaTraderUserDir);
                 _strategyLoader.Refresh();

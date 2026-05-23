@@ -42,6 +42,7 @@ python -m app.server 8765
 
 ```powershell
 python -m tests.test_ops
+python -m tests.test_jobqueue
 python -m tests.test_runtime
 python -m tests.test_scc
 python -m tests.test_trading

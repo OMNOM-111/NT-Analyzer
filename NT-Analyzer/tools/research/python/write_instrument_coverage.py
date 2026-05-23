@@ -106,14 +106,22 @@ def _latest_bundle_dir() -> str | None:
     return dirs[-1] if dirs else None
 
 
+def _latest_bundle_name(strategies_doc: dict) -> str | None:
+    generated_from = strategies_doc.get("generated_from") or {}
+    bundles = generated_from.get("bundles") or []
+    if bundles:
+        return bundles[-1]
+    bundle_dir = _latest_bundle_dir()
+    return os.path.basename(bundle_dir) if bundle_dir else None
+
+
 def build_coverage():
     groups = _load_json(os.path.join(ROOT, "data", "catalog", "instrument_groups.json"), {})
     strategies_doc = _load_json(os.path.join(ROOT, "data", "profiles", "strategies.json"), {})
     profiles = strategies_doc.get("profiles") or []
     instruments_catalog = _load_json(os.path.join(ROOT, "data", "catalog", "instruments.json"), None)
 
-    bundle_dir = _latest_bundle_dir()
-    bundle_name = os.path.basename(bundle_dir) if bundle_dir else None
+    bundle_name = _latest_bundle_name(strategies_doc)
 
     # Group lookup
     micros = []

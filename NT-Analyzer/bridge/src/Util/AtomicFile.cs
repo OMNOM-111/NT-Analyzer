@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 
 namespace NTAnalyzerBridge.Util
 {
@@ -15,42 +16,86 @@ namespace NTAnalyzerBridge.Util
     /// </summary>
     internal static class AtomicFile
     {
-        public static void WriteAllText(string finalPath, string content)
+        public static void WriteAllText(string finalPath, string content, bool createDirectory = true)
         {
             string dir = Path.GetDirectoryName(finalPath);
             if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
+            {
+                if (createDirectory)
+                    Directory.CreateDirectory(dir);
+                else if (!Directory.Exists(dir))
+                    throw new DirectoryNotFoundException(dir);
+            }
 
-            string tmp = finalPath + ".tmp";
-            // overwrite stale tmp from a previous crashed write
-            if (File.Exists(tmp))
-                File.Delete(tmp);
+            string tmp = finalPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(tmp, content);
 
-            File.WriteAllText(tmp, content);
+                if (File.Exists(finalPath))
+                {
+                    ReplaceWithRetry(tmp, finalPath);
+                }
+                else
+                {
+                    MoveWithRetry(tmp, finalPath);
+                }
+            }
+            finally
+            {
+                TryDelete(tmp);
+            }
+        }
 
-            if (File.Exists(finalPath))
+        private static void ReplaceWithRetry(string tmp, string finalPath)
+        {
+            // Atomic swap, no missing-file window for readers. Windows can
+            // briefly reject the replace while Python/backend readers hold the
+            // old file handle, so retry instead of surfacing false bridge errors.
+            RetryFileOp(delegate
+            {
+                File.Replace(tmp, finalPath, destinationBackupFileName: null,
+                             ignoreMetadataErrors: true);
+            });
+        }
+
+        private static void MoveWithRetry(string tmp, string finalPath)
+        {
+            RetryFileOp(delegate { File.Move(tmp, finalPath); });
+        }
+
+        private static void RetryFileOp(Action op)
+        {
+            Exception last = null;
+            for (int i = 0; i < 12; i++)
             {
                 try
                 {
-                    // Atomic swap, no missing-file window for readers.
-                    // backupFileName=null => no backup kept.
-                    File.Replace(tmp, finalPath, destinationBackupFileName: null,
-                                 ignoreMetadataErrors: true);
+                    op();
+                    return;
                 }
-                catch (IOException)
+                catch (IOException ex)
                 {
-                    // Keep telemetry alive if File.Replace is blocked by a
-                    // transient Windows file handle. The temp file is already
-                    // fully written, so this fallback still avoids partial JSON.
-                    if (File.Exists(finalPath))
-                        File.Delete(finalPath);
-                    File.Move(tmp, finalPath);
+                    last = ex;
                 }
+                catch (UnauthorizedAccessException ex)
+                {
+                    last = ex;
+                }
+                Thread.Sleep(40 * (i + 1));
             }
-            else
+            if (last != null)
+                throw last;
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
             {
-                File.Move(tmp, finalPath);
+                if (File.Exists(path))
+                    File.Delete(path);
             }
+            catch { }
         }
     }
 }

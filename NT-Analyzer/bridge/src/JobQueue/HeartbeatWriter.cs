@@ -36,6 +36,13 @@ namespace NTAnalyzerBridge.JobQueue
         {
             try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
             try { _timer.Dispose(); } catch { }
+            try
+            {
+                SpinWait.SpinUntil(
+                    () => Interlocked.CompareExchange(ref _beatInFlight, 0, 0) == 0,
+                    1000);
+            }
+            catch { }
         }
 
         private void Beat()
@@ -54,7 +61,8 @@ namespace NTAnalyzerBridge.JobQueue
                     ["updated_at_utc"]  = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
                 };
                 AtomicFile.WriteAllText(Path.Combine(_runningJobDir, "heartbeat.json"),
-                    hb.ToString(Formatting.Indented));
+                    hb.ToString(Formatting.Indented),
+                    createDirectory: false);
             }
             catch (Exception ex)
             {

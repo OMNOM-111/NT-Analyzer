@@ -3,13 +3,10 @@
 
 # Backups and local environments.
 /BACKUPS/
-/NT-Analyzer_backup_*/
 /.venv/
 /.pytest_cache/
 /NT-Analyzer/.venv/
 /NT-Analyzer/.pytest_cache/
-**/.venv/
-**/.pytest_cache/
 
 # Python caches and virtualenv artifacts.
 **/__pycache__/
@@ -30,9 +27,6 @@
 /.vs/
 /.vscode/
 /.idea/
-**/.vs/
-**/.vscode/
-**/.idea/
 *.user
 *.suo
 *.userosscache
@@ -59,10 +53,14 @@
 
 # Temporary runtime/result/error/heartbeat artifacts.
 **/heartbeat.json
-**/heartbeat.json.tmp
+**/heartbeat-*.json
+**/result.json
 **/result.json.tmp
+**/result-*.json
 **/result.tmp.json
+**/error.json
 **/error.json.tmp
+**/error-*.json
 **/error.tmp.json
 **/*.json.tmp
 **/*.json.bak
@@ -79,14 +77,19 @@
 
 # Local machine-specific configs. Keep only safe example configs.
 /NT-Analyzer/bridge/NTAnalyzerBridge.config.json
-/NT-Analyzer/bridge/NTAnalyzerBridge.config.*.json
-!/NT-Analyzer/bridge/NTAnalyzerBridge.config.example.json
 /NT-Analyzer/bridge/*.local.json
 /NT-Analyzer/**/*.local.json
 /NT-Analyzer/**/*.user.json
 
 # Explicit audit/runtime artifacts called out before first public push.
 /NT-Analyzer/data/ops/audit_log.jsonl
+/NT-Analyzer/docs/audit/
+
+# Personal backlog and local planning notes (not part of the product repo).
+/Планы - не сделано/
+
+# Local Excel backups from registry maintenance.
+**/*.corrupt-backup-*.xlsx
 
 # OS cruft.
 Thumbs.db

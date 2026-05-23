@@ -10,29 +10,11 @@
    Bridge does not currently expose market state, so this is computed from
    the user's clock rendered in America/Los_Angeles tz via Intl APIs.
 
-   Required DOM: #chip-clock and #chip-market (any other parent is fine).
+   DOM (optional): #chip-clock, #chip-market, #cal-market-countdown.
+
+   Shared API for trading calendar: window.NTAMarketClock
 */
 (function () {
-  if (window.__nta_marketClockInit) return;
-  window.__nta_marketClockInit = true;
-
-  function getClockEl()  { return document.getElementById("chip-clock"); }
-  function getMarketEl() { return document.getElementById("chip-market"); }
-  if (!getClockEl() && !getMarketEl()) return;
-
-  // Inject minimal style so chip colors work on any page that includes us.
-  if (!document.getElementById("nta-market-clock-style")) {
-    const st = document.createElement("style");
-    st.id = "nta-market-clock-style";
-    st.textContent = `
-      #chip-clock { font-variant-numeric: tabular-nums; }
-      #chip-market.ok   { background:#1f6b3a !important; color:#dfffea !important; }
-      #chip-market.bad  { background:#7a1f1f !important; color:#ffd6d6 !important; }
-      #chip-market.warn { background:#a07a1f !important; color:#fff2cc !important; }
-    `;
-    document.head.appendChild(st);
-  }
-
   const fmtClock = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles", weekday: "short", month: "short",
     day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
@@ -42,6 +24,10 @@
     timeZone: "America/Los_Angeles",
     weekday: "short", hour: "2-digit", minute: "2-digit",
     hour12: false
+  });
+  const fmtPtYmd = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
   });
   const partsToObj = d => Object.fromEntries(
     fmtParts.formatToParts(d).map(p => [p.type, p.value])
@@ -100,27 +86,100 @@
     return `${h}ч ${m.toString().padStart(2,"0")}м`;
   }
 
-  function tick() {
-    const now = new Date();
-    const clockEl = getClockEl();
-    const mktEl   = getMarketEl();
-    if (clockEl) clockEl.textContent = fmtClock.format(now) + " PT";
-    if (mktEl) {
-      const s = marketState(now);
-      if (s.open) {
-        const close = nextBoundary(now, false);
-        const left = close ? fmtDelta(close - now) : "?";
-        mktEl.className = "status-chip ok";
-        mktEl.textContent = `🟢 Рынок открыт · до закрытия ${left}`;
-      } else {
-        const open = nextBoundary(now, true);
-        const left = open ? fmtDelta(open - now) : "?";
-        const reason = REASON_RU[s.reason] || s.reason;
-        mktEl.className = "status-chip bad";
-        mktEl.textContent = `🔴 Рынок закрыт (${reason}) · до открытия ${left}`;
-      }
+  function ptCalendarDate(d) {
+    if (!d || isNaN(d.getTime())) return "";
+    try {
+      return fmtPtYmd.format(d);
+    } catch (_) {
+      return "";
     }
   }
+
+  /** Trading day key aligned with CME Globex segment boundaries (same model as chip). */
+  function timestampSessionDatePt(iso) {
+    const d = new Date(String(iso || ""));
+    if (isNaN(d.getTime())) return "";
+    const s = marketState(d);
+    if (s.open) {
+      const close = nextBoundary(d, false);
+      if (close) return ptCalendarDate(close);
+    }
+    return ptCalendarDate(d);
+  }
+
+  function nowSessionDatePt() {
+    return timestampSessionDatePt(new Date().toISOString());
+  }
+
+  function buildMarketChip(now) {
+    const s = marketState(now);
+    if (s.open) {
+      const close = nextBoundary(now, false);
+      const left = close ? fmtDelta(close - now) : "?";
+      return { open: true, text: `🟢 Рынок открыт · до закрытия ${left}` };
+    }
+    const open = nextBoundary(now, true);
+    const left = open ? fmtDelta(open - now) : "?";
+    const reason = REASON_RU[s.reason] || s.reason;
+    return { open: false, text: `🔴 Рынок закрыт (${reason}) · до открытия ${left}` };
+  }
+
+  window.NTAMarketClock = {
+    marketState,
+    nextBoundary,
+    fmtDelta,
+    ptCalendarDate,
+    timestampSessionDatePt,
+    nowSessionDatePt,
+    buildMarketChip,
+  };
+
+  function tick() {
+    const now = new Date();
+    const chip = buildMarketChip(now);
+    const clockEl = document.getElementById("chip-clock");
+    const mktEl = document.getElementById("chip-market");
+    const calEl = document.getElementById("cal-market-countdown");
+    if (clockEl) clockEl.textContent = fmtClock.format(now) + " PT";
+    if (mktEl) {
+      mktEl.className = chip.open ? "status-chip ok" : "status-chip bad";
+      mktEl.textContent = chip.text;
+    }
+    if (calEl) {
+      calEl.textContent = chip.text;
+      calEl.classList.remove("eta-open", "eta-closed");
+      calEl.classList.add(chip.open ? "eta-open" : "eta-closed");
+    }
+  }
+
+  const hasTickTarget = () =>
+    document.getElementById("chip-clock") ||
+    document.getElementById("chip-market") ||
+    document.getElementById("cal-market-countdown");
+
+  if (window.__nta_marketClockDomBound) return;
+  if (!hasTickTarget()) return;
+  window.__nta_marketClockDomBound = true;
+
+  if (!document.getElementById("nta-market-clock-style")) {
+    const st = document.createElement("style");
+    st.id = "nta-market-clock-style";
+    st.textContent = `
+      #chip-clock { font-variant-numeric: tabular-nums; }
+      #chip-market.ok   { background:#1f6b3a !important; color:#dfffea !important; }
+      #chip-market.bad  { background:#7a1f1f !important; color:#ffd6d6 !important; }
+      #chip-market.warn { background:#a07a1f !important; color:#fff2cc !important; }
+      #cal-market-countdown {
+        font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+        max-width: min(240px, 38vw); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        flex-shrink: 1; min-width: 0; text-align: right;
+      }
+      #cal-market-countdown.eta-open { color: #73e59a; }
+      #cal-market-countdown.eta-closed { color: #ff9b9b; }
+    `;
+    document.head.appendChild(st);
+  }
+
   tick();
   setInterval(tick, 1000);
 })();

@@ -27,7 +27,7 @@ namespace NTAnalyzerBridge.Runtime
     /// </summary>
     internal sealed class RuntimeTelemetryExporter
     {
-        public const string ExporterVersion = "1.2.0";
+        public const string ExporterVersion = "1.2.2";
         private const int   TickIntervalMs  = 5000;
 
         private readonly string _runtimeDir;
@@ -36,6 +36,9 @@ namespace NTAnalyzerBridge.Runtime
         private readonly object _writeLock = new object();
         private readonly Dictionary<string, StrategyHistoryState> _lastStrategyStates =
             new Dictionary<string, StrategyHistoryState>(StringComparer.Ordinal);
+        // Tracks execution_ids already written this session to suppress historical-replay duplicates.
+        private readonly HashSet<string> _knownExecutionIds =
+            new HashSet<string>(StringComparer.Ordinal);
 
         public RuntimeTelemetryExporter(string projectRoot)
         {
@@ -43,6 +46,7 @@ namespace NTAnalyzerBridge.Runtime
                 throw new ArgumentNullException(nameof(projectRoot));
             _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
             Directory.CreateDirectory(_runtimeDir);
+            LoadKnownExecutionIds();
             _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
         }
 
@@ -52,6 +56,34 @@ namespace NTAnalyzerBridge.Runtime
             HookAccountEvents();
             _timer.Change(0, TickIntervalMs);
         }
+
+        /// <summary>Reads existing executions.jsonl at startup to pre-populate the known-IDs set,
+        /// so that historical-replay ExecutionUpdate events don't create duplicates.</summary>
+        private void LoadKnownExecutionIds()
+        {
+            try
+            {
+                string path = Path.Combine(_runtimeDir, "executions.jsonl");
+                if (!File.Exists(path)) return;
+                foreach (string line in File.ReadLines(path))
+                {
+                    // Fast scan: look for "execution_id":"<value>" without full JSON parse.
+                    const string key = "\"execution_id\":\"";
+                    int start = line.IndexOf(key, StringComparison.Ordinal);
+                    if (start < 0) continue;
+                    start += key.Length;
+                    int end = line.IndexOf('"', start);
+                    if (end <= start) continue;
+                    _knownExecutionIds.Add(line.Substring(start, end - start));
+                }
+                BridgeLog.Info($"RuntimeTelemetryExporter: pre-loaded {_knownExecutionIds.Count} known execution IDs");
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("RuntimeTelemetryExporter: failed to load known execution IDs: " + ex.Message);
+            }
+        }
+
 
         public void Stop()
         {
@@ -70,6 +102,7 @@ namespace NTAnalyzerBridge.Runtime
             if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
             try
             {
+                HookAccountEvents();
                 WriteHeartbeat();
                 WriteAccounts();
                 WriteStrategiesAndPositions();
@@ -365,9 +398,38 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "instrument", GetInstrumentFullName(pos)); Sep(sb);
             AppendKv(sb, "market_position", GetStringProp(pos, "MarketPosition")); Sep(sb);
             AppendKv(sb, "quantity", GetIntProp(pos, "Quantity")); Sep(sb);
-            AppendKv(sb, "avg_price", GetDoubleProp(pos, "AveragePrice"));
+            AppendKv(sb, "avg_price", GetDoubleProp(pos, "AveragePrice")); Sep(sb);
+            AppendKv(sb, "unrealized_pnl", TryGetPositionUnrealizedPnl(pos));
             sb.Append("}");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Best-effort unrealized P/L for this instrument position (currency of account).
+        /// Different NT8 builds expose different member names; missing values stay null.
+        /// </summary>
+        private static double? TryGetPositionUnrealizedPnl(object pos)
+        {
+            if (pos == null) return null;
+            foreach (string name in new[] {
+                "UnrealizedProfitLoss", "UnrealizedPnL", "UnrealizedPL"
+            })
+            {
+                double? v = GetDoubleProp(pos, name);
+                if (v != null) return v;
+            }
+            try
+            {
+                var mi = pos.GetType().GetMethod("GetUnrealizedProfitLoss",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (mi != null && mi.GetParameters().Length == 0)
+                {
+                    object r = mi.Invoke(pos, null);
+                    if (r != null) return Convert.ToDouble(r, CultureInfo.InvariantCulture);
+                }
+            }
+            catch { }
+            return null;
         }
 
         // ---------------- strategy runtime history ------------------------
@@ -493,38 +555,49 @@ namespace NTAnalyzerBridge.Runtime
 
         // ---------------- account hookup -----------------------------------
 
-        private bool _accountHooked;
+        private readonly Dictionary<string, Account> _hookedAccounts =
+            new Dictionary<string, Account>(StringComparer.OrdinalIgnoreCase);
 
         private void HookAccountEvents()
         {
-            if (_accountHooked) return;
             try
             {
                 foreach (var acc in SafeAllAccounts())
                 {
                     if (acc == null) continue;
+                    string key = SafeAccountName(acc);
+                    if (string.IsNullOrEmpty(key))
+                        key = "account@" + acc.GetHashCode().ToString(CultureInfo.InvariantCulture);
+                    Account existing;
+                    if (_hookedAccounts.TryGetValue(key, out existing) &&
+                        object.ReferenceEquals(existing, acc))
+                        continue;
                     try
                     {
+                        if (existing != null)
+                        {
+                            try { existing.ExecutionUpdate -= OnExecutionUpdate; } catch { }
+                            try { existing.OrderUpdate     -= OnOrderUpdate;     } catch { }
+                        }
                         acc.ExecutionUpdate += OnExecutionUpdate;
                         acc.OrderUpdate     += OnOrderUpdate;
+                        _hookedAccounts[key] = acc;
                     }
                     catch (Exception ex) { AppendError("hook " + SafeAccountName(acc), ex); }
                 }
-                _accountHooked = true;
             }
             catch (Exception ex) { AppendError("HookAccountEvents", ex); }
         }
 
         private void UnhookAccountEvents()
         {
-            if (!_accountHooked) return;
-            foreach (var acc in SafeAllAccounts())
+            foreach (var acc in _hookedAccounts.Values.ToList())
             {
                 if (acc == null) continue;
                 try { acc.ExecutionUpdate -= OnExecutionUpdate; } catch { }
                 try { acc.OrderUpdate     -= OnOrderUpdate;     } catch { }
             }
-            _accountHooked = false;
+            _hookedAccounts.Clear();
         }
 
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
@@ -545,33 +618,79 @@ namespace NTAnalyzerBridge.Runtime
         {
             var ex = e?.Execution;
             if (ex == null) return;
+            var order = GetSubObject(ex, "Order") ?? GetSubObject(e, "Order");
             var sb = new StringBuilder(512);
             sb.Append("{");
-            AppendKv(sb, "timestamp_utc", IsoNow());                                Sep(sb);
-            AppendKv(sb, "execution_id",  GetStringProp(ex, "ExecutionId"));        Sep(sb);
-            AppendKv(sb, "account_name",  GetStringProp(GetSubObject(ex, "Account"), "Name")); Sep(sb);
+            // Use the exchange/fill clock for this execution — not export wall time —
+            // so jsonl survives NT restarts (replay dedupe + correct PT "today" bucketing).
+            AppendKv(sb, "timestamp_utc", IsoExecutionTimeUtc(ex));                 Sep(sb);
+            string execId = GetStringProp(ex, "ExecutionId");
+            AppendKv(sb, "execution_id",  execId);                                  Sep(sb);
+            // Deduplicate: skip historical-replay fills already written in a prior session.
+            if (!string.IsNullOrEmpty(execId))
+            {
+                lock (_writeLock)
+                {
+                    if (!_knownExecutionIds.Add(execId))
+                        return;
+                }
+            }
+            string accName = GetStringProp(GetSubObject(ex, "Account"), "Name");
+            string instrument  = GetInstrumentFullName(ex);
+            AppendKv(sb, "account_name",  accName);                                 Sep(sb);
+            AppendKv(sb, "order_id",       FirstNonEmpty(
+                GetStringProp(order, "Id"),
+                GetStringProp(order, "OrderId"),
+                GetStringProp(ex, "OrderId")));                                      Sep(sb);
+            string orderName = GetStringProp(order, "Name");
+            // For exits during historical replay the Order may be null; read FromEntrySignal
+            // directly off the Execution object as fallback (NT preserves it on the fill record).
+            string fromEntrySignal = FirstNonEmpty(
+                GetStringProp(order, "FromEntrySignal"),
+                GetStringProp(ex, "FromEntrySignal"));
 
             // Phase 19: get strategy class/id from Order.Strategy directly when possible,
             // fall back to FromEntrySignal (a signal name, not a class name).
-            var order = GetSubObject(ex, "Order");
-            var exStrat = GetSubObject(order, "Strategy");
+            var exStrat = ResolveStrategyFromOrder(order, accName, instrument);
             string stratClass  = exStrat != null ? exStrat.GetType().Name
-                                                 : GetStringProp(order, "FromEntrySignal");
+                                                 : StrategyClassFromSignal(fromEntrySignal, orderName);
             string stratId     = exStrat != null ? InferStrategyId(exStrat)
-                                                 : GetStrategyIdFromExecution(ex);
+                                                 : InferStrategyIdFromClass(stratClass);
+            string stratName   = exStrat != null ? GetStringProp(exStrat, "Name") : "";
+            string runtimeId   = exStrat != null
+                ? RuntimeInstanceIdUtil.Compute(exStrat, accName, stratClass, instrument, stratName)
+                : "";
 
             AppendKv(sb, "strategy_id",   stratId);                                 Sep(sb);
             AppendKv(sb, "strategy_class", stratClass);                             Sep(sb);
-            AppendKv(sb, "instrument",    GetInstrumentFullName(ex));               Sep(sb);
+            AppendKv(sb, "strategy_name", stratName);                               Sep(sb);
+            AppendKv(sb, "runtime_instance_id", runtimeId);                         Sep(sb);
+            AppendKv(sb, "order_name",    orderName);                               Sep(sb);
+            AppendKv(sb, "from_entry_signal", fromEntrySignal);                     Sep(sb);
+            AppendKv(sb, "instrument",    instrument);                              Sep(sb);
             AppendKv(sb, "market_position", GetStringProp(ex, "MarketPosition"));   Sep(sb);
-            AppendKv(sb, "order_action",  GetStringProp(ex, "Order.OrderAction"));  Sep(sb);
+            AppendKv(sb, "order_action",  FirstNonEmpty(
+                GetStringProp(order, "OrderAction"),
+                GetStringProp(ex, "Order.OrderAction"),
+                GetStringProp(ex, "OrderAction")));                                 Sep(sb);
+            AppendKv(sb, "order_type",    FirstNonEmpty(
+                GetStringProp(order, "OrderType"),
+                GetStringProp(ex, "Order.OrderType"),
+                GetStringProp(ex, "OrderType")));                                   Sep(sb);
+            AppendKv(sb, "order_state",   FirstNonEmpty(
+                GetStringProp(order, "OrderState"),
+                GetStringProp(ex, "Order.OrderState"),
+                GetStringProp(ex, "OrderState")));                                  Sep(sb);
+            AppendKv(sb, "limit_price",   GetDoubleProp(order, "LimitPrice"));      Sep(sb);
+            AppendKv(sb, "stop_price",    GetDoubleProp(order, "StopPrice"));       Sep(sb);
+            AppendKv(sb, "avg_fill",      GetDoubleProp(order, "AverageFillPrice"));Sep(sb);
             AppendKv(sb, "position_action", GetStringProp(ex, "PositionAction"));   Sep(sb);
             AppendKv(sb, "role",          ClassifyExecutionRole(ex));               Sep(sb);
             AppendKv(sb, "exit_reason",   ClassifyExitReason(ex));                  Sep(sb);
             AppendKv(sb, "quantity",      GetIntProp(ex, "Quantity"));              Sep(sb);
             AppendKv(sb, "price",         GetDoubleProp(ex, "Price"));              Sep(sb);
             AppendKv(sb, "commission",    GetDoubleProp(ex, "Commission"));         Sep(sb);
-            AppendKv(sb, "realized_pnl",  GetDoubleProp(ex, "Order.Strategy.RealizedPnL"));
+            AppendKv(sb, "realized_pnl",  null);
             sb.Append("}");
             AppendLine(Path.Combine(_runtimeDir, "executions.jsonl"), sb.ToString());
         }
@@ -584,9 +703,32 @@ namespace NTAnalyzerBridge.Runtime
             sb.Append("{");
             AppendKv(sb, "timestamp_utc", IsoNow());                       Sep(sb);
             AppendKv(sb, "order_id",      GetStringProp(o, "Id"));         Sep(sb);
-            AppendKv(sb, "account_name",  GetStringProp(GetSubObject(o, "Account"), "Name")); Sep(sb);
-            AppendKv(sb, "strategy_id",   GetStringProp(o, "FromEntrySignal")); Sep(sb);
-            AppendKv(sb, "instrument",    GetInstrumentFullName(o));        Sep(sb);
+            string accName = GetStringProp(GetSubObject(o, "Account"), "Name");
+            string instrument = GetInstrumentFullName(o);
+            string orderName = GetStringProp(o, "Name");
+            string fromEntrySignal = GetStringProp(o, "FromEntrySignal");
+            var orderStrat = ResolveStrategyFromOrder(o, accName, instrument);
+            string stratClass = orderStrat != null ? orderStrat.GetType().Name : "";
+            string stratId = orderStrat != null ? InferStrategyId(orderStrat)
+                                                : "";
+            if (orderStrat == null)
+            {
+                stratClass = StrategyClassFromSignal(fromEntrySignal, orderName);
+                stratId = InferStrategyIdFromClass(stratClass);
+            }
+            string stratName = orderStrat != null ? GetStringProp(orderStrat, "Name") : "";
+            string runtimeId = orderStrat != null
+                ? RuntimeInstanceIdUtil.Compute(orderStrat, accName, stratClass, instrument, stratName)
+                : "";
+
+            AppendKv(sb, "account_name",  accName);                         Sep(sb);
+            AppendKv(sb, "strategy_id",   stratId);                         Sep(sb);
+            AppendKv(sb, "strategy_class", stratClass);                     Sep(sb);
+            AppendKv(sb, "strategy_name", stratName);                       Sep(sb);
+            AppendKv(sb, "runtime_instance_id", runtimeId);                 Sep(sb);
+            AppendKv(sb, "order_name",    orderName);                       Sep(sb);
+            AppendKv(sb, "from_entry_signal", fromEntrySignal);             Sep(sb);
+            AppendKv(sb, "instrument",    instrument);                      Sep(sb);
             AppendKv(sb, "order_state",   GetStringProp(o, "OrderState"));  Sep(sb);
             AppendKv(sb, "order_action",  GetStringProp(o, "OrderAction")); Sep(sb);
             AppendKv(sb, "order_type",    GetStringProp(o, "OrderType"));   Sep(sb);
@@ -735,13 +877,27 @@ namespace NTAnalyzerBridge.Runtime
         {
             // Map class -> canonical stable_id used by NT-Analyzer.
             string cls = strat.GetType().Name;
+            return InferStrategyIdFromClass(cls);
+        }
+
+        private static string InferStrategyIdFromClass(string cls)
+        {
+            if (string.IsNullOrEmpty(cls)) return "";
             if (cls == "PullbackMNQ5mV2") return "pullback_mnq_5m_v2";
             if (cls == "VWAPPullbackMGC5mV1") return "vwap_pullback_mgc_5m_v1";
+            if (cls == "B1ShortOnlyMGC5mV2") return "mgc_b1_short_5m_v2";
+            if (cls == "B1Stop24MGC5mC003") return "mgc_b1_stop24_5m_c003";
+            if (cls == "B1Stop20MGC5mC004") return "mgc_b1_stop20_5m_c004";
+            if (cls == "NTAMnqMicroOrbRetestScalpC013") return "ntamnqmicroorbretestscalpc013";
+            if (cls == "NTAMnqFullSessionOrbRetestScalpC014") return "ntamnqfullsessionorbretestscalpc014";
+            if (cls == "NTAMnqLiquiditySweepReversalC015") return "ntamnqliquiditysweepreversalc015";
+            if (cls == "NTAMnqOpenDriveShortScalpC016") return "ntamnqopendriveshortscalpc016";
             if (cls == "NTAMicroVwapRiskPilot") return "vwap_short_mnq_5m_v1";
             if (cls == "NTAMicroVwapRiskExplorer") return "vwap_risk_explorer_mgc_5m_v1";
             if (cls == "NTAMicroSessionEdgeExplorer") return "session_edge_multi_5m_v2";
             if (cls == "NTAMicroMnqScalpPilot") return "scalping_mnq_1m_v1";
             if (cls == "NTAMnqMicroOrbOpenScalp") return "orb_open_scalp_mnq_1m_v1";
+            if (cls == "NTAMicroGoldSessionSweepReversalPilot") return "ntamicrogoldsessionsweepreversalpilot";
             if (cls == "NTAnalyzerEveryNBarLong") return "every_n_bar_long_generic_any_v1";
             if (cls == "StrategiyaUrovney") return "levels_strategy_userdefined_v1";
             if (cls == "NTAMicroOrbPilot")      return "ntamicroorbpilot";
@@ -842,15 +998,212 @@ namespace NTAnalyzerBridge.Runtime
             {
                 var order = GetSubObject(ex, "Order");
                 if (order == null) return "";
-                var strat = GetSubObject(order, "Strategy");
+                var strat = ResolveStrategyFromOrder(order,
+                    GetStringProp(GetSubObject(ex, "Account"), "Name"),
+                    GetInstrumentFullName(ex));
                 if (strat == null)
                 {
-                    string sigFrom = GetStringProp(order, "FromEntrySignal");
-                    return sigFrom ?? "";
+                    string cls = StrategyClassFromSignal(
+                        GetStringProp(order, "FromEntrySignal"),
+                        GetStringProp(order, "Name"));
+                    return InferStrategyIdFromClass(cls);
                 }
                 return InferStrategyId(strat);
             }
             catch { return ""; }
+        }
+
+        private static object ResolveStrategyFromOrder(object order, string accountName, string instrument)
+        {
+            if (order == null) return null;
+
+            string[] directNames = {
+                "Strategy", "OwnerStrategy", "NinjaScript", "Owner", "StrategyBase"
+            };
+            foreach (string name in directNames)
+            {
+                object candidate = SimpleGet(order, name);
+                if (IsStrategyObject(candidate)) return candidate;
+            }
+
+            try
+            {
+                const BindingFlags flags = BindingFlags.Public
+                    | BindingFlags.NonPublic
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly;
+
+                Type t = order.GetType();
+                while (t != null)
+                {
+                    foreach (var p in t.GetProperties(flags))
+                    {
+                        if (p == null || p.GetIndexParameters().Length != 0)
+                            continue;
+                        if (!LooksLikeStrategyMember(p.Name, p.PropertyType))
+                            continue;
+                        try
+                        {
+                            object candidate = p.GetValue(order, null);
+                            if (IsStrategyObject(candidate)) return candidate;
+                        }
+                        catch { }
+                    }
+
+                    foreach (var f in t.GetFields(flags))
+                    {
+                        if (f == null || !LooksLikeStrategyMember(f.Name, f.FieldType))
+                            continue;
+                        try
+                        {
+                            object candidate = f.GetValue(order);
+                            if (IsStrategyObject(candidate)) return candidate;
+                        }
+                        catch { }
+                    }
+
+                    t = t.BaseType;
+                }
+            }
+            catch { }
+
+            string signalClass = StrategyClassFromSignal(
+                GetStringProp(order, "FromEntrySignal"),
+                GetStringProp(order, "Name"));
+            if (!string.IsNullOrEmpty(signalClass))
+            {
+                var bySignal = FindStrategyByClass(accountName, instrument, signalClass);
+                if (bySignal != null) return bySignal;
+            }
+
+            var only = FindSingleStrategyForAccountInstrument(accountName, instrument);
+            if (only != null) return only;
+            return null;
+        }
+
+        private static string StrategyClassFromSignal(params string[] values)
+        {
+            if (values == null) return "";
+            foreach (var raw in values)
+            {
+                string s = (raw ?? "").Trim();
+                if (string.IsNullOrEmpty(s)) continue;
+                foreach (var sep in new[] { '.', ':', '|' })
+                {
+                    int idx = s.IndexOf(sep);
+                    if (idx <= 0) continue;
+                    string head = s.Substring(0, idx).Trim();
+                    if (LooksLikeStrategyClassName(head)) return head;
+                }
+                if (LooksLikeStrategyClassName(s)) return s;
+            }
+            return "";
+        }
+
+        private static bool LooksLikeStrategyClassName(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return false;
+            if (value == "Long" || value == "Short" || value == "Entry" || value == "Exit")
+                return false;
+            return value.StartsWith("NTA", StringComparison.Ordinal)
+                || value.StartsWith("B1", StringComparison.Ordinal)
+                || value == "VWAPPullbackMGC5mV1"
+                || value == "PullbackMNQ5mV2"
+                || value == "StrategiyaUrovney";
+        }
+
+        private static object FindStrategyByClass(string accountName, string instrument, string className)
+        {
+            if (string.IsNullOrEmpty(className)) return null;
+            try
+            {
+                foreach (var acc in SafeAllAccounts())
+                {
+                    if (acc == null) continue;
+                    if (!string.IsNullOrEmpty(accountName) &&
+                        !string.Equals(SafeAccountName(acc), accountName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    foreach (var strat in SafeStrategies(acc))
+                    {
+                        if (strat == null) continue;
+                        if (!string.Equals(strat.GetType().Name, className, StringComparison.Ordinal))
+                            continue;
+                        if (!SameInstrumentRoot(GetInstrumentFullName(strat), instrument))
+                            continue;
+                        return strat;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static object FindSingleStrategyForAccountInstrument(string accountName, string instrument)
+        {
+            var matches = new List<object>();
+            try
+            {
+                foreach (var acc in SafeAllAccounts())
+                {
+                    if (acc == null) continue;
+                    if (!string.IsNullOrEmpty(accountName) &&
+                        !string.Equals(SafeAccountName(acc), accountName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    foreach (var strat in SafeStrategies(acc))
+                    {
+                        if (strat == null) continue;
+                        if (!SameInstrumentRoot(GetInstrumentFullName(strat), instrument))
+                            continue;
+                        matches.Add(strat);
+                    }
+                }
+            }
+            catch { return null; }
+            return matches.Count == 1 ? matches[0] : null;
+        }
+
+        private static bool SameInstrumentRoot(string a, string b)
+        {
+            string ar = InstrumentRoot(a);
+            string br = InstrumentRoot(b);
+            if (string.IsNullOrEmpty(ar) || string.IsNullOrEmpty(br)) return false;
+            return string.Equals(ar, br, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string InstrumentRoot(string value)
+        {
+            string s = (value ?? "").Trim();
+            if (string.IsNullOrEmpty(s)) return "";
+            int i = 0;
+            while (i < s.Length && char.IsLetterOrDigit(s[i])) i++;
+            return i <= 0 ? "" : s.Substring(0, i).ToUpperInvariant();
+        }
+
+        private static bool LooksLikeStrategyMember(string memberName, Type memberType)
+        {
+            string n = (memberName ?? "").ToLowerInvariant();
+            string tn = memberType == null ? "" : (memberType.FullName ?? memberType.Name ?? "");
+            if (n.Contains("strategy") || n.Contains("ninjascript")) return true;
+            return tn.Contains("NinjaTrader.NinjaScript.Strategies")
+                || tn.EndsWith(".Strategy", StringComparison.Ordinal)
+                || tn.EndsWith(".StrategyBase", StringComparison.Ordinal)
+                || tn.IndexOf("Strategy", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsStrategyObject(object candidate)
+        {
+            if (candidate == null) return false;
+            Type t = candidate.GetType();
+            while (t != null)
+            {
+                string full = t.FullName ?? t.Name ?? "";
+                if (full.Contains("NinjaTrader.NinjaScript.Strategies"))
+                    return true;
+                if (t.Name == "Strategy" || t.Name == "StrategyBase")
+                    return true;
+                t = t.BaseType;
+            }
+            return false;
         }
 
         private static string ClassifyExecutionRole(object ex)
@@ -943,9 +1296,7 @@ namespace NTAnalyzerBridge.Runtime
                 foreach (var part in path.Split('.'))
                 {
                     if (cur == null) return null;
-                    var pi = cur.GetType().GetProperty(part);
-                    if (pi == null) return null;
-                    cur = pi.GetValue(cur, null);
+                    cur = SimpleGet(cur, part);
                 }
                 return cur;
             }
@@ -982,13 +1333,32 @@ namespace NTAnalyzerBridge.Runtime
             if (o == null || string.IsNullOrEmpty(name)) return null;
             try
             {
-                var pi = o.GetType().GetProperty(name);
-                if (pi != null) return pi.GetValue(o, null);
-                var fi = o.GetType().GetField(name);
-                if (fi != null) return fi.GetValue(o);
+                const BindingFlags flags = BindingFlags.Public
+                    | BindingFlags.NonPublic
+                    | BindingFlags.Instance;
+                Type t = o.GetType();
+                while (t != null)
+                {
+                    var pi = t.GetProperty(name, flags | BindingFlags.DeclaredOnly);
+                    if (pi != null && pi.GetIndexParameters().Length == 0)
+                        return pi.GetValue(o, null);
+                    var fi = t.GetField(name, flags | BindingFlags.DeclaredOnly);
+                    if (fi != null) return fi.GetValue(o);
+                    t = t.BaseType;
+                }
             }
             catch { }
             return null;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            if (values == null) return "";
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            return "";
         }
 
         private static object GetSubValue(object o, string path)
@@ -1026,6 +1396,34 @@ namespace NTAnalyzerBridge.Runtime
         {
             return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss",
                                             CultureInfo.InvariantCulture) + "Z";
+        }
+
+        /// <summary>
+        /// Fill time in UTC ISO-8601 (ms) for jsonl rows. Falls back to IsoNow() if Time is missing.
+        /// </summary>
+        private static string IsoExecutionTimeUtc(object ex)
+        {
+            try
+            {
+                object tObj = SimpleGet(ex, "Time");
+                if (tObj is DateTime dt)
+                {
+                    DateTime utc;
+                    if (dt.Kind == DateTimeKind.Utc)
+                        utc = dt;
+                    else if (dt.Kind == DateTimeKind.Local)
+                        utc = dt.ToUniversalTime();
+                    else
+                    {
+                        // NinjaTrader commonly surfaces Unspecified; treat like local workstation time.
+                        utc = DateTime.SpecifyKind(dt, DateTimeKind.Local).ToUniversalTime();
+                    }
+                    return utc.ToString("yyyy-MM-ddTHH:mm:ss.fff",
+                                        CultureInfo.InvariantCulture) + "Z";
+                }
+            }
+            catch { /* fall through */ }
+            return IsoNow();
         }
 
         // ---- micro JSON helpers (no Newtonsoft dependency) ----------------

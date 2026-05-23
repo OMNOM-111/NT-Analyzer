@@ -21,7 +21,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroVwapRiskExplorer
+    public abstract partial class NTAMicroVwapRiskExplorer
     {
         #region Time helpers
         // ToTime returns HHMMSS as int. We compare in HHMM precision.

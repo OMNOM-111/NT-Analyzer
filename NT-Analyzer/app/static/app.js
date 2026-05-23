@@ -18,13 +18,42 @@ const api = {
     if (!r.ok) throw new Error(data.error || `${r.status}`);
     return data;
   },
+  async delete(url) {
+    const r = await fetch(url, { method: "DELETE", headers: { Accept: "application/json" } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `${r.status}`);
+    return data;
+  },
 };
+
+function storageGet(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    return value == null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+function storageJsonArray(key) {
+  try {
+    const parsed = JSON.parse(storageGet(key, "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 // ---------------- active-run state machine -------------------------------
 // Tracks the most recently submitted single job or batch so we can show
 // "Ожидание…/В работе…", display a cancel button, and gate the submit
 // button until the run reaches a terminal status.
 let _activeRun = null;
+let _submitInFlight = false;
 //   {
 //     kind: "job" | "batch",
 //     id: string,
@@ -41,7 +70,8 @@ let _activeRunPollTimer = null;
 let _ntRunning = null;  // null=unknown, true/false from /api/health
 
 function isTerminalStatus(s) {
-  return s === "done" || s === "failed" || s === "cancelled" || s === "missing";
+  return s === "done" || s === "failed" || s === "cancelled" ||
+    s === "partial_failed" || s === "partial_cancelled" || s === "missing";
 }
 function isBatchTerminal(counts, total) {
   if (!counts) return false;
@@ -100,13 +130,7 @@ async function pollActiveRun() {
       _activeRun.total  = b.total || 0;
       const c = _activeRun.counts;
       const total = _activeRun.total || 0;
-      const done = (c.done||0) + (c.failed||0) + (c.cancelled||0) + (c.missing||0);
-      _activeRun.last_status =
-        (c.running||0) > 0 ? "running" :
-        (c.pending||0) > 0 ? "pending" :
-        (c.failed||0) === total && total > 0 ? "failed" :
-        (c.cancelled||0) === total && total > 0 ? "cancelled" :
-        "done";
+      _activeRun.last_status = summarizeBatchCounts(c, total);
       renderActiveRunPanel();
       setSubmitState(_activeRun.last_status);
       if (isBatchTerminal(c, total)) endActiveRun(_activeRun.last_status);
@@ -187,7 +211,9 @@ function renderActiveRunPanel() {
     const pct = ar.total > 0 ? Math.round((finished / ar.total) * 100) : 0;
     bar.style.width = pct + "%";
     txt.textContent = `${finished} из ${ar.total} · в работе ${c.running||0} · ожидает ${c.pending||0}` +
-      ((c.failed||0) > 0 ? ` · ошибок ${c.failed}` : "");
+      ((c.failed||0) > 0 ? ` · ошибок ${c.failed}` : "") +
+      ((c.missing||0) > 0 ? ` · пропало ${c.missing}` : "") +
+      ((c.cancelled||0) > 0 ? ` · отменено ${c.cancelled}` : "");
     hint.hidden = true;
   } else {
     // Single job: indeterminate bar (just full when done).
@@ -246,6 +272,16 @@ function loadRecentReports() { refreshJobs({ reset: true }); }
 function summarizeBatchCounts(c, total) {
   const p = c.pending||0, r = c.running||0;
   if (p + r > 0) return r > 0 ? "running" : "pending";
+  if ((c.failed||0) > 0 || (c.missing||0) > 0) {
+    return ((c.failed||0) + (c.missing||0)) === total && total > 0
+      ? "failed"
+      : "partial_failed";
+  }
+  if ((c.cancelled||0) > 0) {
+    return (c.cancelled||0) === total && total > 0
+      ? "cancelled"
+      : "partial_cancelled";
+  }
   if ((c.failed||0) === total && total > 0) return "failed";
   if ((c.cancelled||0) === total && total > 0) return "cancelled";
   return "done";
@@ -321,6 +357,7 @@ async function restartServer() {
 
 // ---------------- bootstrap -----------------------------------------------
 let _catalog = null;  // last GET /api/catalog response
+let _bootstrapWired = false;
 
 async function bootstrap() {
   // health + ninjatrader status
@@ -336,6 +373,8 @@ async function bootstrap() {
                 : (h.ninjatrader_running === false) ? false : null;
     document.getElementById("d-host").textContent = h.host;
     document.getElementById("d-root").textContent = h.project_root;
+    const dJobs = document.getElementById("d-jobs");
+    if (dJobs) dJobs.textContent = h.jobs_dir || "";
   } catch (e) {
     document.getElementById("health-pill").textContent = "backend недоступен";
     document.getElementById("health-pill").classList.add("bad");
@@ -348,6 +387,8 @@ async function bootstrap() {
   // URL params: ?strategy=<class>&instrument=<sym>&timeframe=<"5 Minute">&params=<json>
   applyTradingPrefillFromURL();
 
+  if (!_bootstrapWired) {
+  _bootstrapWired = true;
   document.getElementById("run-form").addEventListener("submit", onSubmitJob);
   document.getElementById("d-refresh").addEventListener("click", refreshDiagnostics);
   document.getElementById("d-catalog-refresh").addEventListener("click", () => triggerCatalogRefresh("diag"));
@@ -395,6 +436,7 @@ async function bootstrap() {
   if (chkAll) {
     chkAll.addEventListener("change", () => {
       document.querySelectorAll("#jobs-table tbody input[type=checkbox]").forEach(c => {
+        if (c.disabled) return;
         c.checked = chkAll.checked;
         const key = c.dataset.repkey;
         if (chkAll.checked) _checkedKeys.add(key);
@@ -412,7 +454,7 @@ async function bootstrap() {
   document.querySelectorAll(".view-btn[data-view]").forEach(btn => {
     btn.addEventListener("click", () => {
       _reportsView = btn.dataset.view;
-      localStorage.setItem("reportsView", _reportsView);
+      storageSet(_REPORTS_VIEW_CACHE_KEY, _reportsView);
       document.querySelectorAll(".view-btn[data-view]").forEach(b =>
         b.classList.toggle("active", b === btn)
       );
@@ -439,6 +481,7 @@ async function bootstrap() {
   setInterval(refreshNinjaTraderChip, 10000);
   // Active-run elapsed-time tick (visual only; status comes from poll).
   setInterval(tickActiveRunElapsed, 1000);
+  }
 
   // If the workspace is empty (no submit yet this session), surface the
   // most recent reports so the operator has somewhere to click.
@@ -685,7 +728,8 @@ function applyTradingPrefillFromURL() {
   const instrument = qp.get("instrument");
   const timeframe  = qp.get("timeframe");
   const paramsRaw  = qp.get("params");
-  if (!strategy && !instrument && !timeframe && !paramsRaw) return;
+  const periodPreset = qp.get("period");
+  if (!strategy && !instrument && !timeframe && !paramsRaw && !periodPreset) return;
 
   // 1) Strategy class — also rebuilds the param fields.
   if (strategy) {
@@ -727,6 +771,11 @@ function applyTradingPrefillFromURL() {
       if (vEl && value != null) vEl.value = String(value);
       try { highlightActiveTimeframe(); } catch (_) {}
     }
+  }
+
+  // 3b) Short date preset for "Проверить" from Strategies.
+  if (periodPreset && ["1d", "1w", "1m", "3m", "1y"].includes(periodPreset)) {
+    try { applyDatePreset(periodPreset); } catch (_) {}
   }
 
   // 4) Params — JSON-encoded snapshot of NT instance parameters. Apply by
@@ -1439,10 +1488,10 @@ function initInstrumentBrowser() {
       const wb = document.getElementById("workbench");
       if (!wb) return;
       const hidden = wb.classList.toggle("no-instruments");
-      try { localStorage.setItem("ib_hidden", hidden ? "1" : "0"); } catch {}
+      storageSet("ib_hidden", hidden ? "1" : "0");
     });
     try {
-      if (localStorage.getItem("ib_hidden") === "1") {
+      if (storageGet("ib_hidden") === "1") {
         document.getElementById("workbench")?.classList.add("no-instruments");
       }
     } catch {}
@@ -1454,6 +1503,7 @@ function initInstrumentBrowser() {
 // Profiles are loaded once on first activation and cached in memory.
 // ─────────────────────────────────────────────────────────────────────────────
 let _profilesState = { loaded: false, data: null, search: "", statusFilter: "all" };
+let _favoritesState = { loaded: false, data: null, search: "", pending: new Map(), repeating: new Set() };
 
 function initLeftTabs() {
   const tabs = document.querySelectorAll(".left-tab[data-left-tab]");
@@ -1479,6 +1529,16 @@ function initLeftTabs() {
     pr.dataset.wired = "1";
     pr.addEventListener("click", () => { _profilesState.loaded = false; loadProfiles(); });
   }
+  const fs = document.getElementById("fav-search");
+  const fr = document.getElementById("fav-refresh");
+  if (fs && fs.dataset.wired !== "1") {
+    fs.dataset.wired = "1";
+    fs.addEventListener("input", () => { _favoritesState.search = fs.value; renderFavoritesList(); });
+  }
+  if (fr && fr.dataset.wired !== "1") {
+    fr.dataset.wired = "1";
+    fr.addEventListener("click", () => loadReportFavorites({ force: true, validate: true }));
+  }
 }
 
 function activateLeftTab(name) {
@@ -1490,11 +1550,14 @@ function activateLeftTab(name) {
   const paneInst = document.getElementById("left-pane-instruments");
   const paneProf = document.getElementById("left-pane-profiles");
   const paneCov  = document.getElementById("left-pane-coverage");
+  const paneFav  = document.getElementById("left-pane-favorites");
   if (paneInst) paneInst.hidden = (name !== "instruments");
   if (paneProf) paneProf.hidden = (name !== "profiles");
   if (paneCov)  paneCov.hidden  = (name !== "coverage");
+  if (paneFav)  paneFav.hidden  = (name !== "favorites");
   if (name === "profiles" && !_profilesState.loaded) loadProfiles();
   if (name === "coverage") loadCoverage();
+  if (name === "favorites" && !_favoritesState.loaded) loadReportFavorites({ validate: false });
 }
 
 // ─── Coverage tab (Phase 24) ───────────────────────────────────────────
@@ -2153,6 +2216,410 @@ function loadProfileIntoForm(p) {
   });
   // Surface that a profile was loaded.
   try { console.log("[profile] loaded:", p.profile_id); } catch (_) {}
+}
+
+function reportFavoriteKey(kind, id) {
+  return `${kind}:${id}`;
+}
+
+function reportFavoriteEntries() {
+  const data = _favoritesState.data || {};
+  return Array.isArray(data.favorites) ? data.favorites : [];
+}
+
+function ensureFavoritesStateData() {
+  if (!_favoritesState.data || typeof _favoritesState.data !== "object") {
+    _favoritesState.data = { schema_version: "1.0", favorites: [] };
+  }
+  if (!Array.isArray(_favoritesState.data.favorites)) {
+    _favoritesState.data.favorites = [];
+  }
+  return _favoritesState.data;
+}
+
+function favoritePendingOp(key) {
+  return (_favoritesState.pending instanceof Map) ? (_favoritesState.pending.get(key) || null) : null;
+}
+
+function favoriteRepeatBusy(key) {
+  return (_favoritesState.repeating instanceof Set) ? _favoritesState.repeating.has(key) : false;
+}
+
+function reportFavoriteState(kind, id, baseFavorite = false) {
+  const key = reportFavoriteKey(kind, id);
+  const pendingOp = favoritePendingOp(key);
+  const favorite = pendingOp === "add" ? true
+    : (pendingOp === "remove" ? false : (!!baseFavorite || isReportFavoriteKey(key)));
+  return {
+    key,
+    pendingOp,
+    favorite,
+    favoriteBusy: !!pendingOp,
+  };
+}
+
+function canFavoriteTopReport(item) {
+  return !!item && item.kind === "job";
+}
+
+function activeBatchFavoriteChildrenCount(batchId) {
+  if (!_activeBatch || _activeBatch.batch_id !== batchId || !Array.isArray(_activeBatchRows)) {
+    return 0;
+  }
+  let count = 0;
+  for (const row of _activeBatchRows) {
+    if (!row || !row.job_id) continue;
+    if (reportFavoriteState("job", row.job_id).favorite) count += 1;
+  }
+  return count;
+}
+
+function upsertFavoriteLocal(item) {
+  if (!item || !item.kind || !item.id) return;
+  const data = ensureFavoritesStateData();
+  const key = item.key || reportFavoriteKey(item.kind, item.id);
+  item.key = key;
+  const next = reportFavoriteEntries().filter(x => (x.key || reportFavoriteKey(x.kind, x.id)) !== key);
+  next.unshift(item);
+  data.favorites = next;
+}
+
+function removeFavoriteLocal(kind, id) {
+  const data = ensureFavoritesStateData();
+  const key = reportFavoriteKey(kind, id);
+  data.favorites = reportFavoriteEntries().filter(x => (x.key || reportFavoriteKey(x.kind, x.id)) !== key);
+}
+
+function rerenderFavoritesUi() {
+  pruneCheckedFavorites();
+  renderFavoritesList();
+  if (Array.isArray(_activeBatchRows) && _activeBatchRows.length) {
+    renderResultRowsTable(_activeBatchRows, _selectedJob);
+  }
+  _lastJobsRenderSig = "";
+  if (_jobsPayload) _renderJobsPayload(_jobsPayload.jobsData, _jobsPayload.batchesData || { batches: [] });
+}
+
+function reportFavoriteMap() {
+  const map = new Map();
+  for (const item of reportFavoriteEntries()) {
+    const key = item.key || reportFavoriteKey(item.kind, item.id);
+    if (key) map.set(key, item);
+  }
+  return map;
+}
+
+function reportFavoriteFor(kind, id) {
+  return reportFavoriteMap().get(reportFavoriteKey(kind, id)) || null;
+}
+
+function isReportFavorite(kind, id) {
+  return !!reportFavoriteFor(kind, id);
+}
+
+function isReportFavoriteKey(key) {
+  const favs = reportFavoriteMap();
+  return favs.has(key);
+}
+
+function pruneCheckedFavorites() {
+  let changed = false;
+  for (const key of [..._checkedKeys]) {
+    if (isReportFavoriteKey(key)) {
+      _checkedKeys.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) _updateDeleteCheckedBtn();
+}
+
+async function loadReportFavorites(options = {}) {
+  if (_favoritesState.loaded && _favoritesState.data && !options.force) {
+    renderFavoritesList();
+    return _favoritesState.data;
+  }
+  try {
+    const url = options.validate ? "/api/report-favorites?validate=1" : "/api/report-favorites";
+    const data = await api.get(url);
+    _favoritesState.data = data;
+    _favoritesState.loaded = true;
+    rerenderFavoritesUi();
+    return data;
+  } catch (e) {
+    if (!options.silent) {
+      const list = document.getElementById("favorites-list");
+      if (list) {
+        list.replaceChildren(el("div", {
+          cls: "muted small",
+          text: `Ошибка загрузки избранных: ${e.message}`,
+        }));
+      }
+    }
+    throw e;
+  }
+}
+
+function favoriteValidationTone(validation) {
+  const status = validation?.status || "";
+  if (status === "ok") return "ok";
+  if (status === "stale") return "warn";
+  return "bad";
+}
+
+function favoriteValidationLabel(validation) {
+  switch (validation?.status) {
+    case "ok": return "актуально";
+    case "stale": return "перепроверить";
+    case "missing": return "файл удален";
+    case "strategy_missing": return "нет стратегии";
+    case "params_mismatch": return "параметры изменились";
+    default: return "не проверено";
+  }
+}
+
+function favoriteParamLabel(validation) {
+  if (!validation) return "парам.: ?";
+  if (validation.parameters_match_catalog === true) return "парам.: ок";
+  if (validation.parameters_match_catalog === false) return "парам.: нет";
+  return "парам.: ?";
+}
+
+function renderFavoritesList() {
+  const list = document.getElementById("favorites-list");
+  if (!list) return;
+  const q = String(_favoritesState.search || "").trim().toLowerCase();
+  const favorites = reportFavoriteEntries().filter(item => {
+    if (!q) return true;
+    const hay = [
+      item.report_no,
+      item.label,
+      item.strategy,
+      item.instrument,
+      (item.instruments || []).join(" "),
+      item.timeframe,
+      item.description,
+      item.id,
+      item.kind,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+  list.replaceChildren();
+  if (!favorites.length) {
+    list.appendChild(el("div", {
+      cls: "muted small",
+      text: reportFavoriteEntries().length ? "Избранные не найдены по фильтру." : "Избранных отчетов пока нет. Нажмите звезду в таблице отчетов.",
+    }));
+    return;
+  }
+  favorites.forEach(item => list.appendChild(renderFavoriteCard(item)));
+}
+
+function renderFavoriteCard(item) {
+  const validation = item.validation || {};
+  const key = item.key || reportFavoriteKey(item.kind, item.id);
+  const repeatBusy = favoriteRepeatBusy(key);
+  const card = el("div", { cls: `profile-card favorite-card ${validation.status || ""}` });
+  card.title = "Нажмите, чтобы открыть отчет";
+  card.addEventListener("click", () => openFavoriteReport(item));
+
+  const head = el("div", { cls: "profile-head" });
+  const title = el("div", {
+    cls: "profile-title",
+    text: `${item.report_no != null ? "#" + item.report_no + " " : ""}${item.label || item.id}`,
+  });
+  const badge = el("span", {
+    cls: `favorite-badge ${favoriteValidationTone(validation)}`,
+    text: favoriteValidationLabel(validation),
+    title: validation.checked_at_utc ? `Проверено: ${validation.checked_at_utc}` : "",
+  });
+  head.appendChild(title);
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  const sub = el("div", { cls: "profile-sub" });
+  const period = item.period && item.period.from_utc && item.period.to_utc
+    ? `${_fmtDatePT(item.period.from_utc)} → ${_fmtDatePT(item.period.to_utc)}`
+    : "";
+  sub.textContent = [
+    item.kind === "batch" ? "Пакет" : "Запуск",
+    item.strategy,
+    item.timeframe,
+    period,
+  ].filter(Boolean).join(" · ");
+  card.appendChild(sub);
+
+  const meta = el("div", { cls: "favorite-meta" });
+  meta.appendChild(el("span", {
+    cls: `favorite-badge ${validation.report_unchanged ? "ok" : "warn"}`,
+    text: validation.report_unchanged ? "отчет: ок" : "отчет: проверить",
+  }));
+  meta.appendChild(el("span", {
+    cls: `favorite-badge ${validation.strategy_exists === false ? "bad" : "ok"}`,
+    text: validation.strategy_exists === false ? "стратегия: нет" : "стратегия: ок",
+  }));
+  meta.appendChild(el("span", {
+    cls: `favorite-badge ${validation.parameters_match_catalog === false ? "bad" : "ok"}`,
+    text: favoriteParamLabel(validation),
+    title: (validation.unknown_parameters || []).join("\n"),
+  }));
+  meta.appendChild(el("span", {
+    cls: "favorite-badge ok",
+    text: validation.validated_against_strategy_analyzer ? "SA: ok" : "SA: ?",
+  }));
+  card.appendChild(meta);
+
+  const desc = String(item.description || "").trim();
+  card.appendChild(el("div", {
+    cls: `favorite-description ${desc ? "" : "empty"}`,
+    text: desc || "Описание не задано.",
+  }));
+
+  const foot = el("div", { cls: "profile-foot" });
+  const btnOpen = el("button", { cls: "profile-btn", text: "Открыть" });
+  btnOpen.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openFavoriteReport(item);
+  });
+  foot.appendChild(btnOpen);
+  const btnRepeat = el("button", {
+    cls: "profile-btn",
+    text: repeatBusy ? "Запускаем..." : "Повторить",
+  });
+  btnRepeat.disabled = repeatBusy;
+  btnRepeat.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    repeatFavoriteReport(item);
+  });
+  foot.appendChild(btnRepeat);
+  const btnDesc = el("button", { cls: "profile-btn", text: "Описание" });
+  btnDesc.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    editFavoriteDescription(item);
+  });
+  foot.appendChild(btnDesc);
+  const btnRemove = el("button", { cls: "profile-btn", text: "Снять ★" });
+  btnRemove.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    toggleReportFavorite(item.kind, item.id);
+  });
+  foot.appendChild(btnRemove);
+  card.appendChild(foot);
+  return card;
+}
+
+function openFavoriteReport(item) {
+  if (!item || !item.kind || !item.id) return;
+  setSelectedReport(item.kind, item.id, { scroll: true, reveal: true });
+  if (item.kind === "batch") openBatch(item.id);
+  else openResult(item.id);
+}
+
+async function repeatFavoriteReport(item) {
+  if (!item || !item.kind || !item.id) return;
+  if (_activeRun || _submitInFlight) {
+    alert("Дождитесь завершения текущего запуска, затем повторите отчет.");
+    return;
+  }
+  const key = item.key || reportFavoriteKey(item.kind, item.id);
+  if (favoriteRepeatBusy(key)) return;
+  _favoritesState.repeating.add(key);
+  rerenderFavoritesUi();
+  const out = document.getElementById("run-result");
+  const period = item.period && typeof item.period === "object" ? item.period : {};
+  const instruments = Array.isArray(item.instruments) && item.instruments.length
+    ? item.instruments.slice()
+    : (item.instrument ? [item.instrument] : []);
+  try {
+    const resp = await api.post(
+      `/api/report-favorites/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}/repeat`,
+      {}
+    );
+    if (resp.kind === "batch") {
+      if (out) {
+        out.hidden = false;
+        out.textContent = `Повторный пакет отправлен: ${resp.batch_id} · задач: ${resp.total}`;
+      }
+      startActiveRun({
+        kind: "batch",
+        id: resp.batch_id,
+        strategy: item.strategy || "",
+        instruments,
+        period: { from_utc: period.from_utc || "", to_utc: period.to_utc || "" },
+        total: resp.total || instruments.length,
+      });
+      _submitInFlight = false;
+      refreshJobs({ reset: true });
+      setTimeout(() => openBatch(resp.batch_id), 400);
+      return;
+    }
+    if (out) {
+      out.hidden = false;
+      out.textContent = `Повторный запуск отправлен: ${resp.job_id}`;
+    }
+    startActiveRun({
+      kind: "job",
+      id: resp.job_id,
+      strategy: item.strategy || "",
+      instruments,
+      period: { from_utc: period.from_utc || "", to_utc: period.to_utc || "" },
+    });
+    _submitInFlight = false;
+    refreshJobs({ reset: true });
+    setTimeout(() => openResult(resp.job_id), 400);
+  } catch (e) {
+    alert("Не удалось повторить отчет: " + e.message);
+  } finally {
+    _favoritesState.repeating.delete(key);
+    rerenderFavoritesUi();
+  }
+}
+
+async function editFavoriteDescription(item) {
+  const key = item.key || reportFavoriteKey(item.kind, item.id);
+  const next = window.prompt("Описание избранного отчета", item.description || "");
+  if (next == null) return;
+  try {
+    const [kind, ...rest] = key.split(":");
+    const id = rest.join(":");
+    const resp = await api.post(`/api/report-favorites/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/description`, {
+      description: next,
+    });
+    if (resp && resp.favorite) {
+      upsertFavoriteLocal(resp.favorite);
+      rerenderFavoritesUi();
+    }
+  } catch (e) {
+    alert("Не удалось сохранить описание: " + e.message);
+  }
+}
+
+async function toggleReportFavorite(kind, id) {
+  const key = reportFavoriteKey(kind, id);
+  if (favoritePendingOp(key)) return;
+  const existing = reportFavoriteFor(kind, id);
+  const removing = !!existing;
+  if (!removing && kind !== "job") {
+    alert("Пакетный отчёт нельзя добавлять в избранное сверху. Выберите конкретный запуск в нижней таблице.");
+    return;
+  }
+  _favoritesState.pending.set(key, removing ? "remove" : "add");
+  if (removing) removeFavoriteLocal(kind, id);
+  rerenderFavoritesUi();
+  try {
+    if (removing) {
+      await api.delete(`/api/report-favorites/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
+      _checkedKeys.delete(key);
+    } else {
+      const resp = await api.post("/api/report-favorites", { kind, id });
+      if (resp && resp.favorite) upsertFavoriteLocal(resp.favorite);
+    }
+  } catch (e) {
+    if (removing && existing) upsertFavoriteLocal(existing);
+    alert("Не удалось обновить избранное: " + e.message);
+  } finally {
+    _favoritesState.pending.delete(key);
+    rerenderFavoritesUi();
+  }
 }
 
 
@@ -2840,10 +3307,11 @@ async function triggerMarginsRefresh() {
 // working.
 async function onSubmitJob(ev) {
   ev.preventDefault();
-  if (_activeRun) {
+  if (_activeRun || _submitInFlight) {
     // A run is already in flight — guard against double submit.
     return;
   }
+  _submitInFlight = true;
   const btn = document.getElementById("run-submit");
   btn.disabled = true;
   btn.classList.add("busy");
@@ -2855,6 +3323,7 @@ async function onSubmitJob(ev) {
   const toDate   = document.getElementById("f-to-date").value;
   const instruments = (_basket || []).slice();
   const resetBtn = () => {
+    _submitInFlight = false;
     btn.disabled = false; btn.classList.remove("busy");
     btn.textContent = "Запустить бэктест";
   };
@@ -2899,6 +3368,7 @@ async function onSubmitJob(ev) {
         strategy: common.class_name, instruments: instruments,
         period: { from_utc: common.from_utc, to_utc: common.to_utc },
       });
+      _submitInFlight = false;
       refreshJobs({ reset: true });
       // single-job: open the result for it directly in the workspace
       setTimeout(() => openResult(r.job_id), 400);
@@ -2917,6 +3387,7 @@ async function onSubmitJob(ev) {
         period: { from_utc: common.from_utc, to_utc: common.to_utc },
         total: r.total,
       });
+      _submitInFlight = false;
       refreshJobs({ reset: true });
       // Open the batch view immediately so the user sees per-instrument
       // rows fill in as bridge processes them (auto-refresh inside openBatch).
@@ -2933,24 +3404,34 @@ async function onSubmitJob(ev) {
 
 // ---------------- jobs tab ------------------------------------------------
 let _selectedJob = null;
-let _jobsFilter  = "all";  // all | running | done | failed
+let _jobsFilter  = "all";  // all | running | done | failed | favorite
 let _sortCol = "mtime";   // default: sort by creation time
 let _sortDir = "desc";    // default: newest first
 const _checkedKeys = new Set();  // "kind:id" keys of checked rows
 // Phase 23 — report view mode
-let _reportsView = localStorage.getItem("reportsView") || "list"; // "list"|"tree"
+const _REPORTS_VIEW_CACHE_KEY = "reportsView.v2";
+let _reportsView = storageGet(_REPORTS_VIEW_CACHE_KEY, "list") || "list"; // "list"|"tree"
+if (_reportsView !== "list" && _reportsView !== "tree") _reportsView = "list";
 const _JOBS_CACHE_KEY = "jobsTableCache.v3";
 let _jobsCacheShown = false;
 let _lastJobsRenderSig = "";
 let _jobsPayload = null;
+// The backend sorts/filters before slicing, so the UI can load reports in
+// predictable 50-row chunks without mixing old middle pages into the top.
 const REPORTS_PAGE_SIZE = 50;
+const REPORTS_RESET_PAGE_SIZE = 50;
+const REPORTS_BACKGROUND_PREFETCH_ENABLED = false;
+const REPORTS_BACKGROUND_PREFETCH_DELAY_MS = 900;
+const REPORTS_BACKGROUND_PAGE_SIZE = 5000;
 let _reportsPaging = {
-  jobsOffset: 0,
-  batchesOffset: 0,
-  hasMoreJobs: true,
-  hasMoreBatches: true,
+  offset: 0,
+  total: 0,
+  hasMore: true,
   loading: false,
 };
+let _reportsPrefetchTimer = null;
+let _reportsPrefetchInFlight = false;
+let _reportsPrefetchToken = 0;
 
 // Whitelist of allowed status -> CSS class. Anything else falls back to
 // "unknown" so an unexpected backend value can never inject arbitrary
@@ -2960,14 +3441,18 @@ const STATUS_CLASSES = {
   running:   "running",
   done:      "done",
   failed:    "failed",
+  partial_failed: "failed",
   cancelled: "cancelled",
+  partial_cancelled: "cancelled",
 };
 const STATUS_LABELS = {
   pending:   "ожидание",
   running:   "в работе",
   done:      "готово",
   failed:    "ошибка",
+  partial_failed: "частично",
   cancelled: "отменено",
+  partial_cancelled: "частично отменено",
 };
 function statusLabel(s) { return STATUS_LABELS[s] || s || ""; }
 
@@ -3078,6 +3563,13 @@ function _sortItems(items) {
   });
 }
 
+function _createdSortMs(createdAtUtc, reportNo) {
+  const t = Date.parse(createdAtUtc || "");
+  if (Number.isFinite(t)) return t;
+  const n = Number(reportNo);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function _updateSortHeaders() {
   document.querySelectorAll("#jobs-table th[data-sort]").forEach(th => {
     th.classList.remove("sort-asc", "sort-desc");
@@ -3090,23 +3582,24 @@ function _updateSortHeaders() {
 function _syncCheckAllState() {
   const allChk = document.getElementById("jobs-check-all");
   if (!allChk) return;
-  const all = document.querySelectorAll("#jobs-table tbody input[type=checkbox]");
+  const all = document.querySelectorAll("#jobs-table tbody input[type=checkbox]:not(:disabled)");
   const checked = [...all].filter(c => c.checked);
   allChk.indeterminate = checked.length > 0 && checked.length < all.length;
   allChk.checked = all.length > 0 && checked.length === all.length;
 }
 
 function _updateDeleteCheckedBtn() {
+  for (const key of [..._checkedKeys]) {
+    if (isReportFavoriteKey(key)) _checkedKeys.delete(key);
+  }
   const btn = document.getElementById("btn-delete-checked");
   if (btn) btn.hidden = _checkedKeys.size === 0;
 }
 
 // ---- tree state: which strategy / strategy::group folders are collapsed ----
-const _treeCollapsed = new Set(
-  JSON.parse(localStorage.getItem("treeCollapsed") || "[]")
-);
+const _treeCollapsed = new Set(storageJsonArray("treeCollapsed"));
 function _saveTreeCollapsed() {
-  localStorage.setItem("treeCollapsed", JSON.stringify([..._treeCollapsed]));
+  storageSet("treeCollapsed", JSON.stringify([..._treeCollapsed]));
 }
 
 // Extract the instrument root (e.g. "MNQ 06-26" → "MNQ", "MGC Jun 26" → "MGC")
@@ -3313,6 +3806,7 @@ function _buildTreeGroupRow({ depth, label, strategyText, kindText, aggregate, c
   tr.className = `tree-folder-row tree-level-${depth}`;
 
   tr.appendChild(td("", { cls: "col-check" }));
+  tr.appendChild(td("", { cls: "col-star" }));
   tr.appendChild(td(_aggregateReportNoText(aggregate), { cls: "col-num-compact" }));
   tr.appendChild(td(_fmtCreated(aggregate.created), { title: aggregate.created || "" }));
 
@@ -3446,7 +3940,7 @@ function _renderTreeView(filtered, tbody) {
 
 function _readJobsCache() {
   try {
-    const raw = localStorage.getItem(_JOBS_CACHE_KEY);
+    const raw = storageGet(_JOBS_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed && parsed.jobsData ? parsed : null;
@@ -3464,6 +3958,7 @@ function _jobsRenderSignature(jobsData, batchesData) {
   const treeSig = _reportsView === "tree"
     ? JSON.stringify([..._treeCollapsed].sort())
     : "";
+  const favoritesSig = reportFavoriteEntries().map(x => x.key || reportFavoriteKey(x.kind, x.id)).sort().join("|");
   const jobSig = (jobsData.jobs || []).map(j =>
     [j.job_id, j.status, j.report_no, j.mtime, j.trade_count, j.net_profit].join(":")
   ).join("|");
@@ -3484,6 +3979,7 @@ function _jobsRenderSignature(jobsData, batchesData) {
     _sortCol,
     _sortDir,
     treeSig,
+    favoritesSig,
     JSON.stringify(jobsData.counts || {}),
     jobSig,
     batchSig,
@@ -3509,9 +4005,15 @@ function _renderJobsPayload(jobsData, batchesData) {
   }
 
   const items = [];
+  const favorites = reportFavoriteMap();
   const batches = (batchesData && batchesData.batches) || [];
   for (const b of batches) {
+    const favKey = reportFavoriteKey("batch", b.batch_id);
     const cached = _batchNormalizedCache[b.batch_id];
+    const favoriteChildrenCount = Math.max(
+      Number(b.favorite_children_count || 0),
+      activeBatchFavoriteChildrenCount(b.batch_id)
+    );
     const rawInsts = Array.isArray(b.instruments) ? b.instruments : [];
     const insts = rawInsts.length > 0
       ? rawInsts
@@ -3528,17 +4030,19 @@ function _renderJobsPayload(jobsData, batchesData) {
       label = insts.map(fmtContract).join(", ");
     } else {
       const head = insts.slice(0, MAX_SHOWN).map(fmtContract).join(", ");
-      label = `${head} + ${insts.length - MAX_SHOWN} РµС‰С‘`;
+      label = `${head} + ${insts.length - MAX_SHOWN} ещё`;
     }
     items.push({
       kind: "batch",
       id: b.batch_id,
+      favorite: favorites.has(favKey) || b.favorite === true,
+      favorite_children_count: favoriteChildrenCount,
       report_no: b.report_no != null ? b.report_no : null,
       label,
       labelTitle: insts.length ? insts.join(", ") : (b.name || ""),
       rawMultiContract: insts.length > 1,
       rawContractCount: insts.length,
-      strategy: b.class_name || "вЂ”",
+      strategy: b.class_name || "—",
       status: summarizeBatchCounts(b.counts || {}, b.total || 0),
       counts: b.counts || {},
       total: b.total || 0,
@@ -3552,15 +4056,17 @@ function _renderJobsPayload(jobsData, batchesData) {
       gross_profit: b.gross_profit != null ? b.gross_profit : (cached && cached.gross_profit != null ? cached.gross_profit : null),
       gross_loss: b.gross_loss != null ? b.gross_loss : (cached && cached.gross_loss != null ? cached.gross_loss : null),
       max_drawdown: b.max_drawdown != null ? b.max_drawdown : (cached && cached.max_drawdown != null ? cached.max_drawdown : null),
-      mtime: b.created_at_utc ? Date.parse(b.created_at_utc) : 0,
+      mtime: _createdSortMs(b.created_at_utc, b.report_no),
     });
   }
   for (const j of jobsData.jobs || []) {
     if (j.batch && j.batch.batch_id) continue;
+    const favKey = reportFavoriteKey("job", j.job_id);
     const finished = j.finished_at_utc || j.heartbeat_at_utc || "";
     items.push({
       kind: "job",
       id: j.job_id,
+      favorite: favorites.has(favKey) || j.favorite === true,
       report_no: j.report_no != null ? j.report_no : null,
       label: fmtContract(j.instrument) || j.job_id,
       labelTitle: "",
@@ -3578,11 +4084,17 @@ function _renderJobsPayload(jobsData, batchesData) {
       gross_loss: j.gross_loss != null ? j.gross_loss : null,
       profit_factor_after_commission: j.profit_factor_after_commission != null ? j.profit_factor_after_commission : null,
       max_drawdown: j.max_drawdown != null ? j.max_drawdown : null,
-      mtime: j.mtime ? j.mtime * 1000 : (j.created_at_utc ? Date.parse(j.created_at_utc) : 0),
+      mtime: _createdSortMs(j.created_at_utc, j.report_no),
     });
   }
   const sorted = _sortItems(items);
-  const filtered = sorted.filter(it => _jobsFilter === "all" ? true : (it.status === _jobsFilter));
+  const filtered = sorted.filter(it => {
+    if (_jobsFilter === "all") return true;
+    if (_jobsFilter === "favorite") return !!it.favorite;
+    if (_jobsFilter === "failed") return it.status === "failed" || it.status === "partial_failed";
+    if (_jobsFilter === "cancelled") return it.status === "cancelled" || it.status === "partial_cancelled";
+    return it.status === _jobsFilter;
+  });
   const tbody = document.querySelector("#jobs-table tbody");
   if (!tbody) return;
   tbody.replaceChildren();
@@ -3594,16 +4106,22 @@ function _renderJobsPayload(jobsData, batchesData) {
   _syncCheckAllState();
   _updateDeleteCheckedBtn();
   setTimeout(maybeLoadMoreReports, 0);
+  scheduleReportsAutoPrefetch();
 }
 
 let _refreshInFlight = false;
 
 function _resetReportsPaging() {
+  if (_reportsPrefetchTimer) {
+    clearTimeout(_reportsPrefetchTimer);
+    _reportsPrefetchTimer = null;
+  }
+  _reportsPrefetchToken += 1;
+  _reportsPrefetchInFlight = false;
   _reportsPaging = {
-    jobsOffset: 0,
-    batchesOffset: 0,
-    hasMoreJobs: true,
-    hasMoreBatches: true,
+    offset: 0,
+    total: 0,
+    hasMore: true,
     loading: false,
   };
   _jobsPayload = null;
@@ -3629,32 +4147,56 @@ function _mergeById(existing, incoming, idKey) {
   return out;
 }
 
-function _mergeReportsPayload(jobsData, batchesData) {
+function _mergeReportsPayload(reportsData) {
   const current = _jobsPayload || {
     jobsData: { jobs: [], counts: {} },
     batchesData: { batches: [] },
+    reportsData: { offset: 0, limit: 0, total: 0 },
   };
-  const mergedJobs = jobsData
-    ? Object.assign({}, current.jobsData || {}, jobsData, {
-        jobs: _mergeById((current.jobsData || {}).jobs, jobsData.jobs, "job_id"),
+  const mergedJobs = reportsData
+    ? Object.assign({}, current.jobsData || {}, {
+        counts: reportsData.counts || {},
+        jobs: _mergeById((current.jobsData || {}).jobs, reportsData.jobs, "job_id"),
       })
     : (current.jobsData || { jobs: [], counts: {} });
-  const mergedBatches = batchesData
-    ? Object.assign({}, current.batchesData || {}, batchesData, {
-        batches: _mergeById((current.batchesData || {}).batches, batchesData.batches, "batch_id"),
+  const mergedBatches = reportsData
+    ? Object.assign({}, current.batchesData || {}, {
+        batches: _mergeById((current.batchesData || {}).batches, reportsData.batches, "batch_id"),
       })
     : (current.batchesData || { batches: [] });
-  _jobsPayload = { jobsData: mergedJobs, batchesData: mergedBatches };
+  const mergedMeta = reportsData
+    ? {
+        offset: reportsData.offset || 0,
+        limit: reportsData.limit || 0,
+        total: reportsData.total || 0,
+      }
+    : (current.reportsData || { offset: 0, limit: 0, total: 0 });
+  _jobsPayload = { jobsData: mergedJobs, batchesData: mergedBatches, reportsData: mergedMeta };
   _writeJobsCache(mergedJobs, mergedBatches);
   _jobsCacheShown = true;
 }
 
 function _reportsHasMore() {
-  return !!(_reportsPaging.hasMoreJobs || _reportsPaging.hasMoreBatches);
+  return !!_reportsPaging.hasMore;
+}
+
+function _reportsQuery(offset, limit) {
+  const qs = new URLSearchParams({
+    offset: String(Math.max(0, Number(offset) || 0)),
+    limit: String(Math.max(1, Number(limit) || REPORTS_PAGE_SIZE)),
+    sort: _sortCol || "mtime",
+    dir: _sortDir || "desc",
+    filter: _jobsFilter || "all",
+  });
+  return `/api/reports?${qs.toString()}`;
 }
 
 async function _loadReportsPage(reset) {
-  if (reset) _resetReportsPaging();
+  if (reset) {
+    _resetReportsPaging();
+    const wrap = document.querySelector(".reports-wrap");
+    if (wrap) wrap.scrollTop = 0;
+  }
   if (_reportsPaging.loading) return;
   if (!_reportsHasMore()) {
     if (_jobsPayload) _renderJobsPayload(_jobsPayload.jobsData, _jobsPayload.batchesData || { batches: [] });
@@ -3662,38 +4204,21 @@ async function _loadReportsPage(reset) {
   }
   _reportsPaging.loading = true;
   try {
-    const jobsUrl = `/api/jobs?offset=${_reportsPaging.jobsOffset}&limit=${REPORTS_PAGE_SIZE}`;
-    const batchesUrl = `/api/batches?offset=${_reportsPaging.batchesOffset}&limit=${REPORTS_PAGE_SIZE}`;
-    const [jobsRes, batchesRes] = await Promise.allSettled([
-      _reportsPaging.hasMoreJobs ? api.get(jobsUrl) : Promise.resolve(null),
-      _reportsPaging.hasMoreBatches ? api.get(batchesUrl) : Promise.resolve(null),
-    ]);
-    const jobsData = jobsRes.status === "fulfilled" ? jobsRes.value : null;
-    const batchesData = batchesRes.status === "fulfilled" ? batchesRes.value : null;
-
-    if (jobsData) {
-      const got = Array.isArray(jobsData.jobs) ? jobsData.jobs.length : 0;
-      const base = Number.isFinite(Number(jobsData.offset)) ? Number(jobsData.offset) : _reportsPaging.jobsOffset;
-      const total = Number.isFinite(Number(jobsData.total)) ? Number(jobsData.total) : base + got;
-      _reportsPaging.jobsOffset = base + got;
-      _reportsPaging.hasMoreJobs = got > 0 && _reportsPaging.jobsOffset < total;
-    } else {
-      _reportsPaging.hasMoreJobs = false;
-    }
-
-    if (batchesData) {
-      const got = Array.isArray(batchesData.batches) ? batchesData.batches.length : 0;
-      const base = Number.isFinite(Number(batchesData.offset)) ? Number(batchesData.offset) : _reportsPaging.batchesOffset;
-      const total = Number.isFinite(Number(batchesData.total)) ? Number(batchesData.total) : base + got;
-      _reportsPaging.batchesOffset = base + got;
-      _reportsPaging.hasMoreBatches = got > 0 && _reportsPaging.batchesOffset < total;
-    } else {
-      _reportsPaging.hasMoreBatches = false;
-    }
-
-    if (jobsData || batchesData) {
-      _mergeReportsPayload(jobsData, batchesData);
+    const pageLimit = reset ? REPORTS_RESET_PAGE_SIZE : REPORTS_PAGE_SIZE;
+    const reportsData = await api.get(_reportsQuery(_reportsPaging.offset, pageLimit));
+    if (reportsData) {
+      const gotJobs = Array.isArray(reportsData.jobs) ? reportsData.jobs.length : 0;
+      const gotBatches = Array.isArray(reportsData.batches) ? reportsData.batches.length : 0;
+      const got = gotJobs + gotBatches;
+      const base = Number.isFinite(Number(reportsData.offset)) ? Number(reportsData.offset) : _reportsPaging.offset;
+      const total = Number.isFinite(Number(reportsData.total)) ? Number(reportsData.total) : base + got;
+      _reportsPaging.offset = base + got;
+      _reportsPaging.total = total;
+      _reportsPaging.hasMore = got > 0 && _reportsPaging.offset < total;
+      _mergeReportsPayload(reportsData);
       _renderJobsPayload(_jobsPayload.jobsData, _jobsPayload.batchesData || { batches: [] });
+    } else {
+      _reportsPaging.hasMore = false;
     }
   } finally {
     _reportsPaging.loading = false;
@@ -3704,14 +4229,9 @@ async function _loadReportsPage(reset) {
 // new entries appear without resetting the user's scroll position or pagination state.
 async function _pollReportsPage() {
   try {
-    const [jobsRes, batchesRes] = await Promise.allSettled([
-      api.get(`/api/jobs?offset=0&limit=${REPORTS_PAGE_SIZE}`),
-      api.get(`/api/batches?offset=0&limit=${REPORTS_PAGE_SIZE}`),
-    ]);
-    const jobsData    = jobsRes.status    === "fulfilled" ? jobsRes.value    : null;
-    const batchesData = batchesRes.status === "fulfilled" ? batchesRes.value : null;
-    if (jobsData || batchesData) {
-      _mergeReportsPayload(jobsData, batchesData);
+    const reportsData = await api.get(_reportsQuery(0, REPORTS_PAGE_SIZE));
+    if (reportsData) {
+      _mergeReportsPayload(reportsData);
       // Force re-render after every successful poll so status changes are
       // never silently skipped by the signature cache.
       _lastJobsRenderSig = "";
@@ -3744,9 +4264,55 @@ async function refreshJobs(opts) {
 
 function maybeLoadMoreReports() {
   const wrap = document.querySelector(".reports-wrap");
-  if (!wrap || _reportsPaging.loading || !_reportsHasMore()) return;
+  if (!wrap || _reportsPaging.loading || _reportsPrefetchInFlight || !_reportsHasMore()) return;
   const distance = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
   if (distance <= 240) refreshJobs({ append: true });
+}
+
+function scheduleReportsAutoPrefetch() {
+  if (!REPORTS_BACKGROUND_PREFETCH_ENABLED) return;
+  if (_reportsPrefetchTimer || !_reportsHasMore()) return;
+  _reportsPrefetchTimer = setTimeout(() => {
+    _reportsPrefetchTimer = null;
+    if (!_reportsHasMore() || _reportsPrefetchInFlight) return;
+    if (_reportsPaging.loading || _refreshInFlight) {
+      scheduleReportsAutoPrefetch();
+      return;
+    }
+    prefetchRemainingReports();
+  }, REPORTS_BACKGROUND_PREFETCH_DELAY_MS);
+}
+
+async function prefetchRemainingReports() {
+  if (_reportsPrefetchInFlight || _reportsPaging.loading || _refreshInFlight || !_reportsHasMore()) return;
+  const token = _reportsPrefetchToken;
+  _reportsPrefetchInFlight = true;
+  try {
+    const remaining = _reportsPaging.total > _reportsPaging.offset
+      ? _reportsPaging.total - _reportsPaging.offset
+      : REPORTS_BACKGROUND_PAGE_SIZE;
+    const pageLimit = Math.max(
+      REPORTS_PAGE_SIZE,
+      Math.min(REPORTS_BACKGROUND_PAGE_SIZE, remaining)
+    );
+    const reportsData = await api.get(_reportsQuery(_reportsPaging.offset, pageLimit));
+    if (token !== _reportsPrefetchToken || !reportsData) return;
+    const gotJobs = Array.isArray(reportsData.jobs) ? reportsData.jobs.length : 0;
+    const gotBatches = Array.isArray(reportsData.batches) ? reportsData.batches.length : 0;
+    const got = gotJobs + gotBatches;
+    const base = Number.isFinite(Number(reportsData.offset)) ? Number(reportsData.offset) : _reportsPaging.offset;
+    const total = Number.isFinite(Number(reportsData.total)) ? Number(reportsData.total) : base + got;
+    _reportsPaging.offset = base + got;
+    _reportsPaging.total = total;
+    _reportsPaging.hasMore = got > 0 && _reportsPaging.offset < total;
+    _mergeReportsPayload(reportsData);
+    _renderJobsPayload(_jobsPayload.jobsData, _jobsPayload.batchesData || { batches: [] });
+  } catch (e) {
+    // Keep the first page usable; scroll pagination or the next refresh can retry.
+  } finally {
+    _reportsPrefetchInFlight = false;
+    if (token === _reportsPrefetchToken && _reportsHasMore()) scheduleReportsAutoPrefetch();
+  }
 }
 
 async function _refreshJobsLegacyUnused() {
@@ -3892,19 +4458,35 @@ async function _refreshJobsLegacyUnused() {
 
 function _buildReportRow(it) {
   const tr = el("tr");
-  tr.dataset.repkey = `${it.kind}:${it.id}`;
+  const favState = reportFavoriteState(it.kind, it.id, !!it.favorite);
+  const repKey = favState.key;
+  const favorite = favState.favorite;
+  const favoriteBusy = favState.favoriteBusy;
+  const canFavoriteHere = canFavoriteTopReport(it);
+  const batchHasFavoriteChildren = it.kind === "batch" && Number(it.favorite_children_count || 0) > 0;
+  const deleteProtected = favorite || favoriteBusy || batchHasFavoriteChildren;
+  const deleteProtectTitle = favorite
+    ? "Избранный отчёт защищён от удаления. Сначала снимите звезду."
+    : batchHasFavoriteChildren
+      ? "Внутри этого пакета есть избранный отчёт. Сначала снимите звезду с конкретного запуска в нижней таблице или в панели избранного."
+      : "Выбрать для удаления";
+  tr.dataset.repkey = repKey;
   if (tr.dataset.repkey === _selectedReportKey) tr.classList.add("selected");
+  if (favorite) tr.classList.add("favorite");
   tr._item = it;  // for tree re-render
 
   // 0a) Checkbox column
   const tdCheck = el("td", { cls: "col-check" });
   const chk = document.createElement("input");
   chk.type = "checkbox";
-  chk.dataset.repkey = `${it.kind}:${it.id}`;
-  chk.checked = _checkedKeys.has(`${it.kind}:${it.id}`);
+  chk.dataset.repkey = repKey;
+  chk.disabled = deleteProtected;
+  chk.title = deleteProtectTitle;
+  if (deleteProtected) _checkedKeys.delete(repKey);
+  chk.checked = !deleteProtected && _checkedKeys.has(repKey);
   chk.addEventListener("change", (ev) => {
     ev.stopPropagation();
-    const key = `${it.kind}:${it.id}`;
+    const key = repKey;
     if (chk.checked) _checkedKeys.add(key);
     else _checkedKeys.delete(key);
     _syncCheckAllState();
@@ -3913,7 +4495,39 @@ function _buildReportRow(it) {
   tdCheck.appendChild(chk);
   tr.appendChild(tdCheck);
 
-  // Phase 22e — column order: №, Создан, Имя, Стратегия, Тип, Статус,
+  // 0b) Favorite star — protected reports cannot be deleted until unstarred.
+  const tdStar = el("td", { cls: "col-star" });
+  if (canFavoriteHere || favorite || favoriteBusy) {
+    const btnStar = el("button");
+    btnStar.type = "button";
+    btnStar.disabled = favoriteBusy || !canFavoriteHere;
+    btnStar.className = "report-star" + (favorite ? " active" : "") + (favoriteBusy ? " pending" : "");
+    btnStar.textContent = favorite ? "★" : "☆";
+    btnStar.title = favoriteBusy
+      ? "Сохраняем изменение избранного..."
+      : canFavoriteHere
+        ? (favorite
+            ? "В избранном. Нажмите, чтобы снять защиту удаления."
+            : "Добавить отчёт в избранные")
+        : "Пакетный отчёт нельзя добавлять в избранное сверху. Выберите конкретный запуск в нижней таблице.";
+    btnStar.setAttribute("aria-label", btnStar.title);
+    btnStar.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (favoriteBusy || !canFavoriteHere) return;
+      toggleReportFavorite(it.kind, it.id);
+    });
+    tdStar.appendChild(btnStar);
+  } else {
+    const blocked = el("span", {
+      cls: "report-star-blocked",
+      text: "",
+      title: "Для пакетного отчёта избранное ставится на конкретном запуске в нижней таблице.",
+    });
+    tdStar.appendChild(blocked);
+  }
+  tr.appendChild(tdStar);
+
+  // Phase 22e — column order: ★, №, Создан, Имя, Стратегия, Тип, Статус,
   //   Период, Сделок, Win%, Итог, Доверие, ×
 
   // 0) № — persistent report number assigned by the backend.
@@ -4009,11 +4623,17 @@ function _buildReportRow(it) {
   // Delete button (×) — stops propagation so it doesn't open the report.
   const tdDel = el("td", { cls: "col-del" });
   const btnDel = el("button");
-  btnDel.className = "btn-row-delete";
-  btnDel.title = "Удалить отчёт";
+  btnDel.className = "btn-row-delete" + (deleteProtected ? " locked" : "");
+  btnDel.disabled = deleteProtected;
+  btnDel.title = favorite
+    ? "Избранный отчёт нельзя удалить. Сначала снимите звезду."
+    : batchHasFavoriteChildren
+      ? "Внутри пакета есть избранный отчёт. Сначала снимите звезду с конкретного запуска."
+      : "Удалить отчёт";
   btnDel.textContent = "×";
   btnDel.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    if (deleteProtected) return;
     deleteReport(it.kind, it.id);
   });
   tdDel.appendChild(btnDel);
@@ -4028,21 +4648,19 @@ function _buildReportRow(it) {
 }
 
 async function deleteReport(kind, id) {
+  if (isReportFavorite(kind, id)) {
+    alert("Этот отчёт в избранном. Сначала снимите звезду, затем удаляйте.");
+    return;
+  }
   const label = kind === "batch" ? "пакет" : "запуск";
   if (!confirm(`Удалить ${label} «${id}»? Это действие необратимо.`)) return;
   const url = kind === "batch"
     ? `/api/batches/${encodeURIComponent(id)}`
     : `/api/jobs/${encodeURIComponent(id)}`;
   try {
-    const resp = await fetch(url, { method: "DELETE" });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      const msg = data.error || data.message || resp.statusText;
-      alert(`Не удалось удалить: ${msg}`);
-      return;
-    }
+    await api.delete(url);
   } catch (e) {
-    alert(`Ошибка при удалении: ${e.message}`);
+    alert(`Не удалось удалить: ${e.message}`);
     return;
   }
   // If the deleted report was the one currently displayed, clear the detail area.
@@ -4056,8 +4674,17 @@ async function deleteReport(kind, id) {
 
 async function deleteCheckedReports() {
   if (_checkedKeys.size === 0) return;
-  if (!confirm(`Удалить ${_checkedKeys.size} отмеченных отчётов? Это действие необратимо.`)) return;
+  const blocked = [..._checkedKeys].filter(isReportFavoriteKey);
+  blocked.forEach(key => _checkedKeys.delete(key));
   const keys = [..._checkedKeys];
+  if (blocked.length && !keys.length) {
+    alert("Все выбранные отчёты находятся в избранном. Сначала снимите звёзды.");
+    _updateDeleteCheckedBtn();
+    _syncCheckAllState();
+    return;
+  }
+  const extra = blocked.length ? `\n\n${blocked.length} избранных отчётов пропущены.` : "";
+  if (!confirm(`Удалить ${keys.length} отмеченных отчётов? Это действие необратимо.${extra}`)) return;
   let errors = 0;
   for (const key of keys) {
     const [kind, ...rest] = key.split(":");
@@ -4066,15 +4693,13 @@ async function deleteCheckedReports() {
       ? `/api/batches/${encodeURIComponent(id)}`
       : `/api/jobs/${encodeURIComponent(id)}`;
     try {
-      const resp = await fetch(url, { method: "DELETE" });
-      if (resp.ok) {
-        _checkedKeys.delete(key);
-        if (_selectedReportKey === key) {
-          _selectedReportKey = null;
-          document.getElementById("result-content").hidden = true;
-          document.getElementById("result-empty").hidden = false;
-        }
-      } else { errors++; }
+      await api.delete(url);
+      _checkedKeys.delete(key);
+      if (_selectedReportKey === key) {
+        _selectedReportKey = null;
+        document.getElementById("result-content").hidden = true;
+        document.getElementById("result-empty").hidden = false;
+      }
     } catch { errors++; }
   }
   if (errors) alert(`Не удалось удалить ${errors} отчётов.`);
@@ -4096,9 +4721,11 @@ let _allTrades = [];        // full trades.json (loaded once per job)
 let _filteredTrades = [];   // after side+pnl filters
 let _selectedTradeNo = null;
 let _bars = null;           // OHLCV array for the chart
-let _barsState = "loading"; // loading|ok|missing|error
+let _barsState = "idle";    // idle|loading|ok|missing|error
+let _barsLoadingFor = null;
 let _drawObjects = [];      // strategy draw objects (universal schema)
-let _drawObjectsState = { exported: false, reason: "loading", diagnostics: [] };
+let _drawObjectsState = { exported: false, reason: "idle", diagnostics: [] };
+let _drawObjectsLoadingFor = null;
 let _chartHover = null;
 let _resultJob = null;      // last loaded job for chart cross-reference
 
@@ -4279,18 +4906,19 @@ function normalizeBatchReportRow(batchId, rows) {
   const summary = _deriveBatchSummaryFromRows(rows);
   const BATCH_ROW_COL = {
     check: 0,
-    reportNo: 1,
-    created: 2,
-    name: 3,
-    strategy: 4,
-    kind: 5,
-    status: 6,
-    period: 7,
-    trades: 8,
-    winPct: 9,
-    net: 10,
-    confidence: 11,
-    del: 12,
+    star: 1,
+    reportNo: 2,
+    created: 3,
+    name: 4,
+    strategy: 5,
+    kind: 6,
+    status: 7,
+    period: 8,
+    trades: 9,
+    winPct: 10,
+    net: 11,
+    confidence: 12,
+    del: 13,
   };
 
   // 1. Derive unique instruments from child rows (preserve insertion order).
@@ -4323,8 +4951,8 @@ function normalizeBatchReportRow(batchId, rows) {
   if (!tr) return;
   const cells = tr.cells;
   // Column layout (matches thead in index.html):
-  //   0:check  1:№  2:Создан  3:Имя  4:Стратегия  5:Тип  6:Статус
-  //   7:Период  8:Сделок  9:Win%  10:Итог  11:Доверие  12:delete
+  //   0:check  1:star  2:№  3:Создан  4:Имя  5:Стратегия  6:Тип
+  //   7:Статус  8:Период  9:Сделок  10:Win%  11:Итог  12:Доверие  13:delete
   if (!cells || cells.length < (BATCH_ROW_COL.confidence + 1)) return;
 
   // 4a. Patch "Имя" (index 2) — instrument list, never strategy name.
@@ -4473,8 +5101,9 @@ function renderResultRowsTable(rows, activeJobId) {
   if (!tbody) { tbody = document.createElement("tbody"); tbl.appendChild(tbody); }
   tbody.replaceChildren();
 
-  // Phase 22g — batch-details rows mirror the main reports table:
-  //   №, Создан, Имя, Стратегия, Тип, Статус, Период, Сделок, Win%, Итог, Доверие
+  // Batch-details rows mirror the main reports table and allow favoriting the
+  // concrete child run directly from the lower table.
+  //   ★, №, Создан, Имя, Стратегия, Тип, Статус, Период, Сделок, Win%, Итог, Доверие
   //
   // created_at_utc and period now come from each child's job.json (via the
   // updated read_batch_results backend). Batch-level values are fallbacks.
@@ -4494,6 +5123,30 @@ function renderResultRowsTable(rows, activeJobId) {
     if (paramStr) tr.title = `Параметры: ${paramStr}`;
 
     const m = r.metrics || {};
+    const favState = reportFavoriteState("job", r.job_id, !!r.favorite);
+    const favorite = favState.favorite;
+    const favoriteBusy = favState.favoriteBusy;
+    if (favorite) tr.classList.add("favorite");
+
+    const tdStar = el("td", { cls: "col-star" });
+    const btnStar = el("button");
+    btnStar.type = "button";
+    btnStar.disabled = favoriteBusy;
+    btnStar.className = "report-star" + (favorite ? " active" : "") + (favoriteBusy ? " pending" : "");
+    btnStar.textContent = favorite ? "★" : "☆";
+    btnStar.title = favoriteBusy
+      ? "Сохраняем изменение избранного..."
+      : favorite
+        ? "В избранном. Нажмите, чтобы снять звезду."
+        : "Добавить конкретный запуск в избранные";
+    btnStar.setAttribute("aria-label", btnStar.title);
+    btnStar.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (favoriteBusy) return;
+      toggleReportFavorite("job", r.job_id);
+    });
+    tdStar.appendChild(btnStar);
+    tr.appendChild(tdStar);
 
     // 0) № — child row is anchored to the selected top report number.
     const childIndex = (typeof r._detail_index === "number" && Number.isFinite(r._detail_index))
@@ -4595,9 +5248,11 @@ async function setActiveJob(jobId, jobOpt) {
   _filteredTrades = [];
   _selectedTradeNo = null;
   _bars = null;
-  _barsState = "loading";
+  _barsState = "idle";
+  _barsLoadingFor = null;
   _drawObjects = [];
-  _drawObjectsState = { exported: false, reason: "loading", diagnostics: [] };
+  _drawObjectsState = { exported: false, reason: "idle", diagnostics: [] };
+  _drawObjectsLoadingFor = null;
   _chartViewStart = 0;
   _chartViewEnd   = null;
   switchResultTab("summary");
@@ -4681,12 +5336,27 @@ async function setActiveJob(jobId, jobOpt) {
   }
 
   // ---- Анализ: full trades + equity ----------------------------------
-  await loadAllTrades();
-  // Now that trades are loaded, populate the All/Long/Short matrix.
-  renderPerfMatrix(metrics, _allTrades, exec);
-  // ---- График: bars + strategy draw objects (lazy, but kick off now) ---
-  loadBars();
-  loadDrawObjects();
+  // Show the bridge summary immediately; Long/Short slices update after
+  // trades.json finishes loading in the background.
+  renderPerfMatrix(metrics, [], exec);
+  loadAllTrades().then((loaded) => {
+    if (loaded && _selectedJob === jobId) renderPerfMatrix(metrics, _allTrades, exec);
+  });
+  // ---- График: bars + strategy draw objects ---------------------------
+  // Large bars.json artifacts are loaded only when the chart tab is opened.
+  const chartStatus = document.getElementById("chart-status");
+  if (chartStatus) {
+    chartStatus.hidden = false;
+    chartStatus.classList.remove("error");
+    chartStatus.textContent = "График опциональный: откройте вкладку, чтобы загрузить bars.json, если он есть у отчета.";
+  }
+  const chartInfo = document.getElementById("chart-info");
+  if (chartInfo) chartInfo.textContent = "";
+  const drawingsBanner = document.getElementById("chart-drawings-status");
+  if (drawingsBanner) {
+    drawingsBanner.hidden = true;
+    drawingsBanner.textContent = "";
+  }
 }
 
 function setText(id, v) {
@@ -5052,7 +5722,8 @@ function fillResultContext(job) {
 // ---- Analysis tab: full trades list, equity curve, filters ---------------
 
 async function loadAllTrades() {
-  if (!_selectedJob) return;
+  if (!_selectedJob) return false;
+  const startedFor = _selectedJob;
   // Pull the full trades list. NT runs we ship with cap out at ~2k trades
   // which is small enough to keep client-side; if a future job exceeds the
   // 1000-row backend cap we just truncate the analysis view.
@@ -5063,18 +5734,21 @@ async function loadAllTrades() {
     let data;
     try {
       data = await api.get(
-        `/api/jobs/${encodeURIComponent(_selectedJob)}/trades`
+        `/api/jobs/${encodeURIComponent(startedFor)}/trades`
         + `?offset=${off}&limit=${PAGE}`
       );
     } catch (e) { break; }
+    if (_selectedJob !== startedFor) return false;
     const got = data.trades || [];
     acc = acc.concat(got);
     off += got.length;
     if (got.length < PAGE || off >= (data.total || 0)) break;
   }
+  if (_selectedJob !== startedFor) return false;
   _allTrades = acc;
   applyTradeFilters();
   drawEquityCurve();
+  return true;
 }
 
 function applyTradeFilters() {
@@ -5205,7 +5879,10 @@ function switchResultTab(name) {
   // Defer the redraw one frame so the now-visible canvas has its real
   // clientWidth/clientHeight populated by layout.
   if (name === "analysis") requestAnimationFrame(drawEquityCurve);
-  if (name === "chart")    requestAnimationFrame(drawPriceChart);
+  if (name === "chart") {
+    ensureChartArtifactsLoaded();
+    requestAnimationFrame(drawPriceChart);
+  }
 }
 document.querySelectorAll(".result-tabs .rtab").forEach(b => {
   b.addEventListener("click", () => switchResultTab(b.dataset.rtab));
@@ -5384,6 +6061,9 @@ function _chartView() {
 }
 
 async function loadBars() {
+  if (!_selectedJob) return;
+  if (_barsState === "loading" && _barsLoadingFor === _selectedJob) return;
+  if (_barsState === "ok" || _barsState === "missing") return;
   const status = document.getElementById("chart-status");
   const info   = document.getElementById("chart-info");
   status.classList.remove("error");
@@ -5392,6 +6072,7 @@ async function loadBars() {
   // Capture which job we started loading for; if user clicks another row
   // before paging completes, abandon results to avoid mixing instruments.
   const startedFor = _selectedJob;
+  _barsLoadingFor = startedFor;
   const PAGE = 50000;
   const HARD_CAP = 500000;   // sanity upper bound (10x ~year of M1)
   try {
@@ -5410,10 +6091,11 @@ async function loadBars() {
       if (offset === 0 && chunk.length === 0) {
         _bars = [];
         _barsState = "missing";
+        _barsLoadingFor = null;
         status.hidden = false;
         status.textContent =
           "График недоступен: bars.json отсутствует для этого job. " +
-          "Перезапустите бэктест после обновления bridge — bars.json появится у новых jobs.";
+          "Итоги и анализ работают без него; график появится только у отчетов, где bridge сохранил bars.json.";
         const cv = document.getElementById("price-canvas");
         if (cv) cv.style.display = "none";
         if (info) info.textContent = "";
@@ -5427,6 +6109,7 @@ async function loadBars() {
     }
     _bars = all;
     _barsState = "ok";
+    _barsLoadingFor = null;
     status.hidden = true;
     status.textContent = "";
     const cv = document.getElementById("price-canvas");
@@ -5448,9 +6131,18 @@ async function loadBars() {
   } catch (e) {
     if (_selectedJob !== startedFor) return;
     _barsState = "error";
+    _barsLoadingFor = null;
     status.hidden = false;
     status.classList.add("error");
     status.textContent = "Ошибка загрузки bars.json: " + e.message;
+  }
+}
+
+function ensureChartArtifactsLoaded() {
+  if (!_selectedJob) return;
+  if (_barsState === "idle" || _barsState === "error") loadBars();
+  if (_drawObjectsState.reason === "idle" && _drawObjectsLoadingFor !== _selectedJob) {
+    loadDrawObjects();
   }
 }
 
@@ -5735,11 +6427,15 @@ function drawStrategyOverlay(ctx, tToIdx, xI, yP, padL, padT, innerW, innerH) {
 }
 
 async function loadDrawObjects() {
+  if (!_selectedJob) return;
   const startedFor = _selectedJob;
+  if (_drawObjectsLoadingFor === startedFor) return;
+  _drawObjectsLoadingFor = startedFor;
   const banner = document.getElementById("chart-drawings-status");
   try {
     const data = await api.get(`/api/jobs/${encodeURIComponent(startedFor)}/draw_objects`);
     if (_selectedJob !== startedFor) return;
+    _drawObjectsLoadingFor = null;
     _drawObjects = (data.objects || []).filter(o => o && o.type);
     _drawObjectsState = {
       exported: data.exported === true,
@@ -5761,6 +6457,7 @@ async function loadDrawObjects() {
     }
     drawPriceChart();
   } catch (e) {
+    _drawObjectsLoadingFor = null;
     _drawObjects = [];
     _drawObjectsState = { exported: false, reason: "fetch_error", diagnostics: [String(e)] };
     if (banner) {

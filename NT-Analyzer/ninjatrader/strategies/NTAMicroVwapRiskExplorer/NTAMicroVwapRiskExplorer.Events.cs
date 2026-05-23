@@ -8,7 +8,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroVwapRiskExplorer
+    public abstract partial class NTAMicroVwapRiskExplorer
     {
         #region Order / trade events
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice,
@@ -19,19 +19,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Pending entry filled -> clear pending state, lock-in entry baseline
             if (_pendingEntrySignal != null
                 && order != null
-                && (order.Name == "Long" || order.Name == "Short")
+                && IsEntrySignalName(order.Name)
                 && (orderState == OrderState.Filled || orderState == OrderState.PartFilled))
             {
                 _lastEntryPrice = averageFillPrice;
                 _lastEntryQty   = filled > 0 ? filled : _pendingEntryQty;
                 _lastStopTicks  = _pendingStopTicks;
+                _activeEntrySignal = order.Name;
                 _pendingEntrySignal = null;
                 _pendingEntryBar    = -1;
             }
             // Pending entry rejected/cancelled
             else if (_pendingEntrySignal != null
                      && order != null
-                     && (order.Name == "Long" || order.Name == "Short")
+                     && IsEntrySignalName(order.Name)
                      && (orderState == OrderState.Cancelled || orderState == OrderState.Rejected))
             {
                 _pendingEntrySignal = null;
@@ -59,6 +60,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             _lastStopTicks  = 0;
             _lastEntryPrice = 0;
             _lastEntryQty   = 0;
+            _activeEntrySignal = null;
         }
         #endregion
     }

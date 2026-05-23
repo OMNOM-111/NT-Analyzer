@@ -7,7 +7,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroSessionEdgeExplorer
+    public abstract partial class NTAMicroSessionEdgeExplorer
     {
         #region Risk Profile
         [NinjaScriptProperty]

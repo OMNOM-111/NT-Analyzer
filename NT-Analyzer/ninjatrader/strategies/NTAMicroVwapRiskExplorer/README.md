@@ -8,7 +8,8 @@ defaults table and locked-profile mapping) differ.
 
 `NTAMicroVwapRiskPilot` is locked to its accepted MNQ paper profile
 (`b1_shortonly_mnq_5m_high_slip1_paper_v2`) — backend force-applies its locked
-parameters on every job (`app/jobqueue.py:_apply_locked_strategy_parameters`).
+parameters on smoke/debug queue jobs only (`app/jobqueue.py:_apply_locked_strategy_parameters`;
+`role=research` keeps submitted/profile parameters for audits and sweeps).
 That makes the original class unusable for honest research on other instruments.
 
 `NTAMicroVwapRiskExplorer` exists so we can vary parameters and instruments

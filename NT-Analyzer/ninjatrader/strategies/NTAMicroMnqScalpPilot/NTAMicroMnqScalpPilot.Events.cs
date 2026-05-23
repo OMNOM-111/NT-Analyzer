@@ -12,7 +12,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                                               OrderState orderState, DateTime time, ErrorCode error,
                                               string nativeError)
         {
-            bool isEntryOrder = order != null && (order.Name == "Long" || order.Name == "Short");
+            bool isEntryOrder = order != null && IsEntrySignalName(order.Name);
             if (_pendingEntrySignal != null && isEntryOrder)
                 _pendingEntryOrder = order;
 
@@ -24,6 +24,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 _lastEntryQty   = filled > 0 ? filled : _pendingEntryQty;
                 _lastStopTicks  = _pendingStopTicks;
                 _lastEntryBar   = CurrentBar;
+                _activeEntrySignal = order.Name;
                 ClearPendingEntryState();
             }
             else if (_pendingEntrySignal != null
@@ -54,6 +55,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             _lastEntryPrice = 0;
             _lastEntryQty   = 0;
             _lastEntryBar   = -1;
+            _activeEntrySignal = null;
         }
     }
 }

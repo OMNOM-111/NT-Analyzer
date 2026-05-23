@@ -158,7 +158,9 @@ def t06(tmp):
     assert prog.get("trading_days_completed") == 10
     res = ops.evaluate_review_due("b1_shortonly")
     states = ops.load_states()
-    assert states["b1_shortonly"]["current_state"] != "paper_review_due", states["b1_shortonly"]
+    canon = "vwap_short_mnq_5m_v1"
+    assert "b1_shortonly" not in states, states
+    assert states[canon]["current_state"] != "paper_review_due", states[canon]
 
 
 @case("start-intent writes audit log")

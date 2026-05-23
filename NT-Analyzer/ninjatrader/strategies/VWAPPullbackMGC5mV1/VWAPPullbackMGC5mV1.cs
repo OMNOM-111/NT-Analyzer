@@ -6,7 +6,7 @@
 //   `sev2_mgc_vwappullback_shortonly_paper_v1`.
 //
 //   - Class:        VWAPPullbackMGC5mV1
-//   - Display name: "VWAP Pullback MGC 5m v1"
+//   - Display name: "Scalping Gold MGC 5m v1 c001"
 //   - Engine:       inherits NTAMicroSessionEdgeExplorer (research engine).
 //                   No logic duplicated; this class only locks defaults.
 //
@@ -44,8 +44,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (State == State.SetDefaults)
             {
-                Name        = "VWAP Pullback MGC 5m v1";
-                Description = "VWAP Pullback MGC 5m v1 — paper-ready " +
+                Name        = "Scalping Gold MGC 5m v1 c001";
+                Description = "Scalping Gold MGC 5m v1 c001 — paper-ready " +
                               "deploy of SessionEdge v2 VwapPullback shortonly " +
                               "for MGC 06-26 (5 Minute, Nymex Metals RTH1). " +
                               "Profile: sev2_mgc_vwappullback_shortonly_paper_v1. " +

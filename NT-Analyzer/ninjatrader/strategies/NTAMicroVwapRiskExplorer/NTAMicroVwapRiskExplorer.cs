@@ -86,7 +86,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     // Only this file declares the base class. All other files use:
     //   public partial class NTAMicroVwapRiskExplorer
-    public partial class NTAMicroVwapRiskExplorer : Strategy
+    public abstract partial class NTAMicroVwapRiskExplorer : Strategy
     {
         // ----- indicators -----
         private EMA _emaFast;
@@ -109,7 +109,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private RiskManager _risk;
 
         // ----- pending stop-entry tracking -----
-        private string  _pendingEntrySignal = null;       // "Long" | "Short" | null
+        private string  _pendingEntrySignal = null;
         private int     _pendingEntryBar    = -1;
         private double  _pendingEntryStopPx = 0.0;
         private double  _pendingEntryProtStopPx = 0.0;
@@ -121,6 +121,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double _lastEntryPrice;
         private int    _lastEntryQty;
         private int    _lastStopTicks;
+        private string _activeEntrySignal = null;
 
         // ----- skip logging dedupe -----
         private int    _lastSkipBar    = -1;
@@ -320,9 +321,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 CancelPendingEntry("force_flat");
                 if (Position.MarketPosition == MarketPosition.Long)
-                    ExitLong("FlatEOD", "Long");
+                    ExitLong("FlatEOD", ActiveEntrySignalForPosition());
                 else if (Position.MarketPosition == MarketPosition.Short)
-                    ExitShort("FlatEOD", "Short");
+                    ExitShort("FlatEOD", ActiveEntrySignalForPosition());
                 if (atForceFlat) LogSkip("force_flat_time");
                 return;
             }

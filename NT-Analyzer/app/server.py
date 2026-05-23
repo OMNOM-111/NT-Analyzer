@@ -8,6 +8,7 @@ NT-Analyzer local backend (stdlib only — no FastAPI, no pip install).
 Endpoints:
     GET  /api/health
     GET  /api/strategies
+    GET  /api/reports               mixed jobs + batches feed (shared pagination)
     GET  /api/jobs                  list recent jobs (limit query param)
     POST /api/jobs                  create a new job
     GET  /api/jobs/{job_id}         full job summary (job + result/error)
@@ -40,11 +41,13 @@ if __package__ is None or __package__ == "":
     from app import jobqueue  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
+    from app import performance  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import marginrefresh
     from . import ops
+    from . import performance
     from . import runtime as ops_runtime
 
 
@@ -94,9 +97,10 @@ _NT_STRATEGIES_LEGACY_DIR = _NT_USER_DIR / "bin" / "Custom" / "Strategies"
 _SCC_ACTIVE_CLASSES: set = {
     "PullbackMNQ5mV2",
     "VWAPPullbackMGC5mV1",
+    "B1ShortOnlyMGC5mV2",
+    "B1Stop24MGC5mC003",
+    "B1Stop20MGC5mC004",
     "NTAMicroVwapRiskPilot",
-    "NTAMicroVwapRiskExplorer",
-    "NTAMicroSessionEdgeExplorer",
     "NTAMicroMnqScalpPilot",
     "NTAMnqMicroOrbOpenScalp",
     "NTAnalyzerEveryNBarLong",
@@ -151,28 +155,51 @@ def _build_scc_strategies() -> Dict[str, Any]:
     rt_by_cls = {str(r.get("strategy_class") or "").lower(): r for r in rt_raw if r.get("strategy_class")}
     cat = jobqueue.read_strategies_catalog() or {}
     cat_by_cls = {str(s.get("class_name") or ""): s for s in cat.get("strategies") or [] if isinstance(s, dict)}
+    ops_by_cls = {str(s.get("class_name") or ""): s for s in ops.list_strategies()}
+
+    # Some deploy wrappers live in nested source paths under their research
+    # engine folder. Surface them anyway so SCC matches the real strategy
+    # inventory instead of only the top-level directory layout.
+    for cls in sorted(_SCC_ACTIVE_CLASSES):
+        if cls in seen_classes:
+            continue
+        sf = jobqueue._resolve_strategy_source_file(
+            cls,
+            (cat_by_cls.get(cls) or {}).get("source_file"),
+        )
+        if not sf:
+            continue
+        seen_classes.add(cls)
+        folder_strats.append({
+            "class_name": cls,
+            "is_active": True,
+            "is_rejected": cls in _SCC_REJECTED_CLASSES,
+            "cs_files": [Path(sf).name],
+        })
 
     active_strategies = []
     for fs in folder_strats:
         if not fs["is_active"]:
             continue
         cls = fs["class_name"]
-        reg_s = None
-        for s in ops.list_strategies():
-            if s.get("class_name") == cls:
-                reg_s = s
-                break
+        reg_s = ops_by_cls.get(cls)
         cat_s = cat_by_cls.get(cls) or {}
+        source_file = jobqueue._resolve_strategy_source_file(cls, cat_s.get("source_file"))
+        display_name = jobqueue._resolve_strategy_display_name(
+            source_file,
+            (reg_s or {}).get("display_name") or cat_s.get("display_name") or cls,
+            cls,
+        )
         rt = rt_by_cls.get(cls.lower())
         runtime_detected = bool(rt) and bool(hb.get("present")) and bool(hb.get("fresh"))
-        runtime_enabled  = bool(rt and rt.get("enabled"))
+        runtime_enabled  = bool(rt and rt.get("enabled")) and runtime_detected
         acct_name = (rt or {}).get("account_name") or ""
         acct_mode = ops_runtime._classify_account_mode(acct_name, (rt or {}).get("account_mode"))
         active_strategies.append({
             **fs,
             "registry_id":      (reg_s or {}).get("strategy_id"),
             "registry_status":  (reg_s or {}).get("status", "unknown"),
-            "display_name":     (reg_s or {}).get("display_name") or cat_s.get("display_name") or cls,
+            "display_name":     display_name,
             "locked_params":    (reg_s or {}).get("locked_params", {}),
             "runtime":          rt,
             "runtime_detected": runtime_detected,
@@ -274,8 +301,33 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, status: int, msg: str) -> None:
         self._json(status, {"error": msg})
 
+    def _bytes(self, status: int, data: bytes, content_type: str,
+               download_name: Optional[str] = None) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            if download_name:
+                quoted = urllib.parse.quote(download_name)
+                self.send_header(
+                    "Content-Disposition",
+                    f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}",
+                )
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return
+            raise
+
     def _read_body(self) -> Optional[Dict[str, Any]]:
-        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            self._err(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            return None
         if n <= 0:
             return {}
         if n > 1 * 1024 * 1024:
@@ -283,10 +335,14 @@ class Handler(BaseHTTPRequestHandler):
             return None
         raw = self.rfile.read(n)
         try:
-            return json.loads(raw.decode("utf-8"))
+            body = json.loads(raw.decode("utf-8"))
         except Exception as e:
             self._err(HTTPStatus.BAD_REQUEST, f"invalid json: {e}")
             return None
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "json body must be an object")
+            return None
+        return body
 
     def _check_local_post(self) -> bool:
         """Reject cross-site POSTs from a browser. Returns True if the request
@@ -370,8 +426,24 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.FORBIDDEN, "path traversal blocked")
             return
         if not target.is_file():
-            self._err(HTTPStatus.NOT_FOUND, f"static not found: {rel}")
-            return
+            if target.suffix == "":
+                html_target = target.with_suffix(".html")
+                try:
+                    html_target.relative_to(STATIC_DIR.resolve())
+                except ValueError:
+                    self._err(HTTPStatus.FORBIDDEN, "path traversal blocked")
+                    return
+                if html_target.is_file():
+                    target = html_target
+                    ct = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+                    cache_control = self._static_cache_control(target)
+                    last_modified = formatdate(target.stat().st_mtime, usegmt=True)
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"static not found: {rel}")
+                    return
+            else:
+                self._err(HTTPStatus.NOT_FOUND, f"static not found: {rel}")
+                return
         ct = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
         cache_control = self._static_cache_control(target)
         last_modified = formatdate(target.stat().st_mtime, usegmt=True)
@@ -420,6 +492,7 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "host": HOST,
                 "project_root": str(jobqueue.project_root()),
+                "jobs_dir": str(jobqueue.jobs_dir()),
                 "ninjatrader_running": jobqueue.ninjatrader_running(),
             })
             return
@@ -445,6 +518,53 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, jobqueue.read_instrument_coverage())
             return
 
+        if path == "/api/performance/trades.csv":
+            filename, data = performance.build_trades_csv(
+                period=(qs.get("period") or ["month"])[0],
+                from_date=(qs.get("from") or [None])[0],
+                to_date=(qs.get("to") or [None])[0],
+                account_name=(qs.get("account") or [None])[0],
+            )
+            self._bytes(HTTPStatus.OK, data, "text/csv; charset=utf-8", filename)
+            return
+
+        if path == "/api/performance":
+            self._json(HTTPStatus.OK, performance.build_performance_response(
+                period=(qs.get("period") or ["now"])[0],
+                from_date=(qs.get("from") or [None])[0],
+                to_date=(qs.get("to") or [None])[0],
+                account_name=(qs.get("account") or [None])[0],
+            ))
+            return
+
+        if path == "/api/report-favorites":
+            validate = str((qs.get("validate") or ["0"])[0]).strip().lower() in {"1", "true", "yes"}
+            self._json(HTTPStatus.OK, jobqueue.read_report_favorites(validate=validate))
+            return
+
+        if path == "/api/reports":
+            try:
+                limit = int((qs.get("limit") or ["100"])[0])
+            except ValueError:
+                limit = 100
+            try:
+                offset = int((qs.get("offset") or ["0"])[0])
+            except ValueError:
+                offset = 0
+            sort_col = str((qs.get("sort") or ["mtime"])[0] or "mtime")
+            sort_dir = str((qs.get("dir") or ["desc"])[0] or "desc")
+            status_filter = str((qs.get("filter") or ["all"])[0] or "all")
+            limit = max(1, min(10000, limit))
+            offset = max(0, offset)
+            self._json(HTTPStatus.OK, jobqueue.list_reports(
+                limit=limit,
+                offset=offset,
+                sort_col=sort_col,
+                sort_dir=sort_dir,
+                status_filter=status_filter,
+            ))
+            return
+
         if path == "/api/jobs":
             try:
                 limit = int((qs.get("limit") or ["50"])[0])
@@ -454,15 +574,16 @@ class Handler(BaseHTTPRequestHandler):
                 offset = int((qs.get("offset") or ["0"])[0])
             except ValueError:
                 offset = 0
-            limit = max(1, min(1000, limit))
+            limit = max(1, min(10000, limit))
             offset = max(0, offset)
-            counts = jobqueue.queue_counts()
+            jobs = jobqueue.list_jobs(limit=limit, offset=offset)
+            counts = jobqueue.listable_queue_counts()
             self._json(HTTPStatus.OK, {
                 "counts": counts,
                 "offset": offset,
                 "limit": limit,
                 "total": sum(int(v or 0) for v in counts.values()),
-                "jobs": jobqueue.list_jobs(limit=limit, offset=offset),
+                "jobs": jobs,
             })
             return
 
@@ -528,7 +649,7 @@ class Handler(BaseHTTPRequestHandler):
                 offset = int((qs.get("offset") or ["0"])[0])
             except ValueError:
                 offset = 0
-            limit = max(1, min(1000, limit))
+            limit = max(1, min(10000, limit))
             offset = max(0, offset)
             self._json(HTTPStatus.OK, {
                 "offset": offset,
@@ -676,20 +797,60 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/ops/runtime/executions":
             sid = (qs.get("strategy_id") or [None])[0]
+            acct = (qs.get("account_name") or [None])[0]
+            iid = (qs.get("runtime_instance_id") or [None])[0]
+            cls = (qs.get("class_name") or [None])[0]
+            inst = (qs.get("instrument") or [None])[0]
             try: limit = int((qs.get("limit") or ["500"])[0])
             except ValueError: limit = 500
+            limit = max(1, min(limit, 100_000))
+            executions, dedupe_meta = ops_runtime.read_executions_with_meta(
+                sid, limit,
+                account_name=acct,
+                runtime_instance_id=iid,
+                class_name=cls,
+                instrument=inst,
+            )
             self._json(HTTPStatus.OK, {
                 "strategy_id": sid,
-                "executions":  ops_runtime.read_executions(sid, limit),
+                "account_name": acct,
+                "runtime_instance_id": iid,
+                "class_name": cls,
+                "instrument": inst,
+                "dedupe": dedupe_meta,
+                "raw_count": dedupe_meta.get("raw_count"),
+                "deduped_count": dedupe_meta.get("deduped_count"),
+                "duplicate_count": dedupe_meta.get("duplicate_count"),
+                "executions":  executions,
             })
             return True
         if path == "/api/ops/runtime/orders":
             sid = (qs.get("strategy_id") or [None])[0]
+            acct = (qs.get("account_name") or [None])[0]
+            iid = (qs.get("runtime_instance_id") or [None])[0]
+            cls = (qs.get("class_name") or [None])[0]
+            inst = (qs.get("instrument") or [None])[0]
             try: limit = int((qs.get("limit") or ["500"])[0])
             except ValueError: limit = 500
+            limit = max(1, min(limit, 100_000))
+            orders, dedupe_meta = ops_runtime.read_orders_with_meta(
+                sid, limit,
+                account_name=acct,
+                runtime_instance_id=iid,
+                class_name=cls,
+                instrument=inst,
+            )
             self._json(HTTPStatus.OK, {
                 "strategy_id": sid,
-                "orders":      ops_runtime.read_orders(sid, limit),
+                "account_name": acct,
+                "runtime_instance_id": iid,
+                "class_name": cls,
+                "instrument": inst,
+                "dedupe": dedupe_meta,
+                "raw_count": dedupe_meta.get("raw_count"),
+                "deduped_count": dedupe_meta.get("deduped_count"),
+                "duplicate_count": dedupe_meta.get("duplicate_count"),
+                "orders":      orders,
             })
             return True
         if path == "/api/ops/runtime/errors":
@@ -724,14 +885,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ops/runtime/instruments":
             # Returns per-root current/all instruments for the Trading Online selector.
             # Each root entry has front_month (most recent), and all contracts.
-            from app.catalog import get_instruments  # type: ignore
-            try:
-                all_instr = get_instruments()
-            except Exception:
-                all_instr = []
+            instr_doc = jobqueue.read_instruments_catalog() or {}
+            all_instr = instr_doc.get("instruments") or []
             root_map: dict = {}
             for ins in all_instr:
-                root = str(ins.get("root") or ins.get("symbol","")[:3])
+                if not isinstance(ins, dict):
+                    continue
+                name = str(ins.get("instrument") or ins.get("symbol") or ins.get("name") or "")
+                root = str(ins.get("root") or name.split(" ", 1)[0])
+                if not root:
+                    continue
                 root_map.setdefault(root, []).append(ins)
             result = []
             for root, contracts in sorted(root_map.items()):
@@ -898,7 +1061,7 @@ class Handler(BaseHTTPRequestHandler):
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
     def do_DELETE(self) -> None:  # noqa: N802
-        """DELETE /api/jobs/<id>  or  DELETE /api/batches/<id>"""
+        """DELETE /api/jobs/<id>, /api/batches/<id>, or report favorite refs."""
         url = urllib.parse.urlparse(self.path)
         path = url.path
         parts = [p for p in path.split("/") if p]
@@ -907,12 +1070,23 @@ class Handler(BaseHTTPRequestHandler):
                         and parts[1] == "jobs")
         is_del_batch = (len(parts) == 3 and parts[0] == "api"
                         and parts[1] == "batches")
+        is_del_favorite = (len(parts) == 4 and parts[0] == "api"
+                           and parts[1] == "report-favorites")
 
-        if not (is_del_job or is_del_batch):
+        if not (is_del_job or is_del_batch or is_del_favorite):
             self._err(HTTPStatus.NOT_FOUND, f"no DELETE route: {path}")
             return
 
         if not self._check_local_origin():
+            return
+
+        if is_del_favorite:
+            try:
+                out = jobqueue.unfavorite_report(parts[2], parts[3])
+            except jobqueue.JobValidationError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
+            self._json(HTTPStatus.OK, out)
             return
 
         if is_del_job:
@@ -929,6 +1103,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif reason == "running":
                     self._err(HTTPStatus.CONFLICT,
                               "Нельзя удалить запущенный job; сначала отмените.")
+                elif reason in ("favorite", "favorite_parent_batch"):
+                    self._err(HTTPStatus.CONFLICT,
+                              "Отчёт находится в избранном. Сначала снимите звезду.")
                 else:
                     self._err(HTTPStatus.INTERNAL_SERVER_ERROR, reason)
                 return
@@ -949,6 +1126,9 @@ class Handler(BaseHTTPRequestHandler):
             elif reason == "has_running_jobs":
                 self._err(HTTPStatus.CONFLICT,
                           "Пакет содержит запущенные задачи; сначала отмените их.")
+            elif reason in ("favorite", "has_favorite_jobs"):
+                self._err(HTTPStatus.CONFLICT,
+                          "Отчёт находится в избранном. Сначала снимите звезду.")
             else:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, reason)
             return
@@ -968,12 +1148,13 @@ class Handler(BaseHTTPRequestHandler):
         is_margins_refresh = (path == "/api/margins/refresh")
         is_server_restart = (path == "/api/server/restart")
         is_ops = path.startswith("/api/ops/")
+        is_report_favorites = path == "/api/report-favorites" or path.startswith("/api/report-favorites/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
-                or is_ops):
+                or is_ops or is_report_favorites):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
@@ -981,10 +1162,7 @@ class Handler(BaseHTTPRequestHandler):
             return  # _check_local_post already wrote an error
 
         if is_ops:
-            try:
-                body = self._read_body() or {}
-            except Exception:
-                body = {}
+            body = self._read_body()
             if body is None:
                 return
             self._ops_post(path, body)
@@ -1046,6 +1224,38 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_body()
         if body is None:
             return  # _read_body already wrote an error
+
+        if is_report_favorites:
+            try:
+                if path == "/api/report-favorites":
+                    out = jobqueue.favorite_report(
+                        str(body.get("kind") or ""),
+                        str(body.get("id") or body.get("report_id") or ""),
+                        description=(str(body["description"]) if "description" in body else None),
+                    )
+                    self._json(HTTPStatus.OK, out)
+                    return
+                fav_parts = [p for p in path.split("/") if p]
+                if len(fav_parts) == 5 and fav_parts[0] == "api" and fav_parts[1] == "report-favorites" and fav_parts[4] == "repeat":
+                    out = jobqueue.repeat_report_favorite(fav_parts[2], fav_parts[3])
+                    self._json(HTTPStatus.CREATED, out)
+                    return
+                if len(fav_parts) == 5 and fav_parts[0] == "api" and fav_parts[1] == "report-favorites" and fav_parts[4] == "description":
+                    out = jobqueue.update_report_favorite(
+                        fav_parts[2],
+                        fav_parts[3],
+                        {"description": body.get("description")},
+                    )
+                    self._json(HTTPStatus.OK, out)
+                    return
+            except jobqueue.JobValidationError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"favorite error: {e}")
+                return
+            self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
+            return
 
         if path == "/api/batches":
             try:
@@ -1142,6 +1352,7 @@ def run(port: Optional[int] = None) -> None:
     print(f"[nta-backend] listening on http://{HOST}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{HOST}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
+    print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
     sys.stdout.flush()
     try:
         server.serve_forever()

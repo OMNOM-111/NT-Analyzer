@@ -133,6 +133,7 @@ namespace NTAnalyzerBridge.JobQueue
                     if (cts.IsCancellationRequested && outcome.Status != JobStatus.Cancelled)
                         outcome = JobRunOutcome.Cancelled("cancelled by user");
 
+                    try { heartbeat?.Stop(); heartbeat = null; } catch { }
                     Finalize(jobId, runningJobDir, outcome);
                 }
             }
@@ -141,6 +142,7 @@ namespace NTAnalyzerBridge.JobQueue
                 BridgeLog.Error("job " + jobId + " failed unexpectedly", ex);
                 try
                 {
+                    try { heartbeat?.Stop(); heartbeat = null; } catch { }
                     Finalize(jobId, runningJobDir, JobRunOutcome.Failed("unhandled_exception", ex.ToString()));
                 }
                 catch (Exception ex2)

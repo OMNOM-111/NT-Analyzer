@@ -14,6 +14,7 @@
   <nav class="top-nav" aria-label="Разделы">
     <a href="/ui/index.html" class="top-nav-link active">Бэктестирование</a>
     <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
     <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
   </nav>
   <div class="status-strip" id="run-status-strip">
@@ -45,6 +46,7 @@
         <button type="button" class="left-tab active" data-left-tab="instruments" role="tab" aria-selected="true">Инструменты</button>
         <button type="button" class="left-tab" data-left-tab="profiles" role="tab" aria-selected="false">Профили стратегий</button>
         <button type="button" class="left-tab" data-left-tab="coverage" role="tab" aria-selected="false">Покрытие</button>
+        <button type="button" class="left-tab" data-left-tab="favorites" role="tab" aria-selected="false">Избранные</button>
       </div>
       <span style="display:flex;gap:4px;align-items:center;">
         <span class="muted small" id="ib-count">0</span>
@@ -125,6 +127,19 @@
       </div>
       <div class="muted small" id="cov-summary" style="padding:6px 10px;border-top:1px solid #243049;"></div>
     </div>
+
+    <!-- ===== Tab pane: Избранные отчёты ===== -->
+    <div class="left-pane" id="left-pane-favorites" hidden>
+      <div class="profiles-controls">
+        <input id="fav-search" type="search" placeholder="Поиск в избранных…" autocomplete="off" />
+        <button id="fav-refresh" type="button" title="Перепроверить актуальность">⟳</button>
+      </div>
+      <div class="profiles-list-wrap">
+        <div id="favorites-list" class="profiles-list">
+          <div class="muted small" style="padding:10px;">Загрузка…</div>
+        </div>
+      </div>
+    </div>
   </aside>
 
   <!-- ============== WORKSPACE (center) ============== -->
@@ -141,6 +156,7 @@
           <button type="button" data-filter="running">в работе</button>
           <button type="button" data-filter="done">готово</button>
           <button type="button" data-filter="failed">ошибка</button>
+          <button type="button" data-filter="favorite">избранные</button>
         </div>
         <button type="button" id="jobs-refresh" class="reports-refresh">⟳</button>
         <button type="button" id="btn-delete-checked" class="reports-refresh" title="Удалить отмеченные отчёты" hidden>🗑 Удалить выбранные</button>
@@ -153,6 +169,7 @@
         <table id="jobs-table" class="dense reports-table">
           <colgroup>
             <col class="jobs-col-check">
+            <col class="jobs-col-star">
             <col class="jobs-col-no">
             <col class="jobs-col-created">
             <col class="jobs-col-name">
@@ -169,6 +186,7 @@
           <thead>
             <tr>
               <th class="col-check"><input type="checkbox" id="jobs-check-all" title="Выбрать все"></th>
+              <th class="col-star"></th>
               <th class="col-num-compact sortable" data-sort="report_no">№</th>
               <th class="sortable" data-sort="mtime">Создан</th>
               <th class="col-rep-name sortable" data-sort="label">Имя</th>
@@ -205,6 +223,7 @@
       <div class="result-rows-wrap">
         <table id="result-rows-table" class="dense reports-table result-rows">
           <colgroup>
+            <col><!-- ★ -->
             <col><!-- № -->
             <col><!-- Создан -->
             <col><!-- Имя -->
@@ -219,6 +238,7 @@
           </colgroup>
           <thead>
             <tr>
+              <th class="col-star"></th>
               <th class="col-num-compact">№</th>
               <th>Создан</th>
               <th class="col-rep-name">Имя</th>
@@ -236,14 +256,15 @@
         </table>
       </div>
 
-      <!-- Mode selector (Итоги / Анализ / График) -->
+      <!-- Mode selector (Итоги / Анализ / optional bars.json chart) -->
       <div class="result-tabs" role="tablist">
         <button type="button" class="rtab active" data-rtab="summary"
                 role="tab" aria-selected="true">Итоги</button>
         <button type="button" class="rtab" data-rtab="analysis"
                 role="tab" aria-selected="false">Анализ</button>
         <button type="button" class="rtab" data-rtab="chart"
-                role="tab" aria-selected="false">График</button>
+                role="tab" aria-selected="false"
+                title="Опционально: загружается только если у отчета есть bars.json">График (опц.)</button>
         <span class="active-job-pill" id="active-job-pill"></span>
       </div>
 
@@ -664,6 +685,7 @@
     <div class="overlay-body">
       <p>Backend: <code id="d-host">…</code></p>
       <p>Project root: <code id="d-root">…</code></p>
+      <p>Jobs dir: <code id="d-jobs">…</code></p>
       <p>NinjaTrader.exe запущен: <span id="d-nt">…</span></p>
       <p>NinjaTrader user dir: <code id="d-ntdir">…</code></p>
       <h3>Каталог стратегий</h3>
@@ -679,7 +701,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=20260508-two-statuses1"></script>
-<script src="market_clock.js?v=20260502-hotfix5"></script>
+  <script src="app.js?v=20260521-cleanup2"></script>
+<script src="market_clock.js?v=20260513-session-api1"></script>
 </body>
 </html>

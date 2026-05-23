@@ -1,11 +1,10 @@
 // =============================================================================
 // NTAMnqMicroOrbOpenScalp
 // -----------------------------------------------------------------------------
-// User-facing wrapper for the MNQ Micro ORB RR150 research baseline.
+// User-facing wrapper for the MNQ Micro ORB open scalping profile.
 //
-// This class does not duplicate trading logic. It locks the profitable research
-// configuration from profile mnq_micro_orb_open_rr150_1m_research_v2 while the
-// profile remains research_baseline, not paper_ready.
+// This class does not duplicate trading logic. It locks the approved CELL-012
+// short-only OrbContinuationScalp configuration from the portfolio profile.
 // =============================================================================
 
 #region Using
@@ -23,24 +22,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (State == State.SetDefaults)
             {
-                Name = "NTA MNQ Micro ORB Open Scalp";
+                Name = "Scalping MNQ 1m v1 c012";
                 Description =
-                    "NTA MNQ Micro ORB Open Scalp - RR150 research baseline. " +
+                    "Scalping MNQ 1m v1 c012 - approved short-only ORB continuation scalp. " +
                     "Profile mnq_micro_orb_open_rr150_1m_research_v2. " +
-                    "Not paper-ready: slip=2 stress is negative; use for research only.";
+                    "Locked CELL-012 paper-forward defaults.";
 
                 // Module lock: only the MICRO_ORB family, as tested.
-                UseSetupModeFilter = false;
+                UseSetupModeFilter = true;
                 SetupMode = MnqScalpSetupMode.OrbContinuationScalp;
                 EnableVwapReclaim = false;
                 EnableEmaMomentum = false;
                 EnableMicroOrb = true;
                 EnableFailedBreakout = false;
 
-                EnableLong = true;
+                EnableLong = false;
                 EnableShort = true;
 
-                // RR150 candidate parameters.
+                // Approved CELL-012 parameters.
                 StartingCapital = 2000.0;
                 RiskPerTradePct = 0.35;
                 UserMaxContracts = 1;
@@ -56,9 +55,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 RoundTurnCommission = 1.90;
                 SlippageTicks = 1;
 
-                AtrStopMult = 0.35;
-                MinStopTicks = 8;
-                MaxStopTicks = 16;
+                AtrStopMult = 0.30;
+                MinStopTicks = 6;
+                MaxStopTicks = 12;
                 RewardRiskRatio = 1.50;
                 MoveToBreakevenAtR = 0.7;
                 TrailAfterR = 1.0;
@@ -66,12 +65,12 @@ namespace NinjaTrader.NinjaScript.Strategies
                 TimeStopBars = 3;
                 MinProgressR = 0.30;
 
-                EntryOffsetTicks = 1;
+                EntryOffsetTicks = 0;
                 EntryTimeoutBars = 2;
 
                 TradeStartTime = 635;
-                TradeEndTime = 830;
-                UseSecondTradeWindow = true;
+                TradeEndTime = 1230;
+                UseSecondTradeWindow = false;
                 SecondTradeStartTime = 1030;
                 SecondTradeEndTime = 1200;
                 ForceFlatTime = 1245;

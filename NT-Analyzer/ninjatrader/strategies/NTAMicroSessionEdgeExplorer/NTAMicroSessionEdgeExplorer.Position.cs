@@ -5,7 +5,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroSessionEdgeExplorer
+    public abstract partial class NTAMicroSessionEdgeExplorer
     {
         private void ManageOpenPosition()
         {
@@ -17,10 +17,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (rMult >= MoveToBreakevenAtR)
             {
+                string signal = ActiveEntrySignalForPosition();
                 if (Position.MarketPosition == MarketPosition.Long)
-                    SetStopLoss("Long",  CalculationMode.Price, _lastEntryPrice, false);
+                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
                 else
-                    SetStopLoss("Short", CalculationMode.Price, _lastEntryPrice, false);
+                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
             }
 
             if (rMult >= TrailAfterR)
@@ -30,13 +31,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     double trail = Close[0] - trailDist;
                     if (trail > _lastEntryPrice)
-                        SetStopLoss("Long", CalculationMode.Price, trail, false);
+                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
                 }
                 else
                 {
                     double trail = Close[0] + trailDist;
                     if (trail < _lastEntryPrice)
-                        SetStopLoss("Short", CalculationMode.Price, trail, false);
+                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
                 }
             }
         }

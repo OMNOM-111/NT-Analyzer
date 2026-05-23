@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import time
 import urllib.request
 import urllib.error
@@ -18,6 +19,43 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA = PROJECT_ROOT / "data"
 BASE = "http://127.0.0.1:8765"
+
+
+def _resolve_jobs_path(raw: Any) -> Optional[Path]:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    p = Path(raw.strip()).expanduser()
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p.resolve()
+
+
+def jobs_root() -> Path:
+    env = os.environ.get("NT_ANALYZER_JOBS_DIR") or os.environ.get("NTA_JOBS_DIR")
+    p = _resolve_jobs_path(env)
+    if p is not None:
+        return p
+
+    cfg_env = os.environ.get("NT_ANALYZER_BRIDGE_CONFIG")
+    if cfg_env:
+        cfg_path = Path(cfg_env).expanduser()
+    else:
+        user_profile = Path(os.environ.get("USERPROFILE") or Path.home())
+        cfg_path = user_profile / "Documents" / "NinjaTrader 8" / "bin" / "Custom" / "NTAnalyzerBridge.config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return PROJECT_ROOT / "jobs"
+    if not isinstance(cfg, dict):
+        return PROJECT_ROOT / "jobs"
+    cfg_project = cfg.get("project_root")
+    if isinstance(cfg_project, str) and cfg_project.strip():
+        try:
+            if Path(cfg_project).expanduser().resolve() != PROJECT_ROOT.resolve():
+                return PROJECT_ROOT / "jobs"
+        except OSError:
+            return PROJECT_ROOT / "jobs"
+    return _resolve_jobs_path(cfg.get("jobs_dir")) or (PROJECT_ROOT / "jobs")
 
 
 # ---------------------------------------------------------------------------
@@ -359,9 +397,10 @@ def poll_batch(batch_id: str, timeout_s: int = 1800,
 def read_job_report(job_id: str) -> Optional[Dict[str, Any]]:
     """Read done/<id>/job.json + result.json from disk (faster than HTTP).
 
-    Note: the live job tree lives at PROJECT_ROOT/jobs/, NOT data/jobs/.
+    Note: the live job tree may be redirected by bridge config `jobs_dir`;
+    it is NOT stored under data/jobs/.
     """
-    base = PROJECT_ROOT / "jobs"
+    base = jobs_root()
     d = base / "done" / job_id
     if not d.exists():
         for sub in ("failed", "cancelled", "running", "pending"):
@@ -370,7 +409,11 @@ def read_job_report(job_id: str) -> Optional[Dict[str, Any]]:
                 d = d2
                 break
         else:
-            return None
+            quarantined = base / "failed" / ".quarantine" / job_id
+            if quarantined.exists():
+                d = quarantined
+            else:
+                return None
     out: Dict[str, Any] = {"job_id": job_id, "_dir": str(d)}
     for fn in ("job.json", "result.json"):
         p = d / fn

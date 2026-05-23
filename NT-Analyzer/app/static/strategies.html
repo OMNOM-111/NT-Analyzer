@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>Стратегии — NT-Analyzer</title>
-<link rel="stylesheet" href="style.css?v=20260508-two-statuses1">
+<link rel="stylesheet" href="style.css?v=20260512-monthly-summary4">
 <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 </head>
 <body class="strategies-page-body">
@@ -14,6 +14,7 @@
   <nav class="top-nav" aria-label="Разделы">
     <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
     <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
     <a href="/ui/strategies.html" class="top-nav-link active">Стратегии</a>
   </nav>
   <div class="status-strip">
@@ -40,19 +41,34 @@
       </p>
       <p class="muted" style="margin-top:6px;">
         На этой странице в портфель считаются только утвержденные ready-профили,
-        привязанные к реальному классу NinjaTrader. Архивные и исследовательские версии не занимают слоты.
+        привязанные к реальному классу NinjaTrader. Исследовательские версии с закрепленной ячейкой
+        отображаются в матрице, но approved-слоты не занимают.
       </p>
       <div class="strategies-name-rule">
         <span>Шаблон имени:</span>
-        <code>ИмяСтратегии Инструмент Таймфрейм vN</code>
-        <span class="muted">пример: Scalping MNQ 5m v1</span>
+        <code>ИмяСтратегии Инструмент Таймфрейм vN cNNN</code>
+        <span class="muted">пример: Scalping MNQ 5m v1 c001</span>
       </div>
       <p class="muted" style="margin-top:6px;">
-        Этот шаблон нужно закрепить для display-имени версии: `profile.name` и параметра `Name` в NinjaTrader runtime.
-        Сам `class_name` лучше оставлять стабильным идентификатором семейства, если это не новая отдельная стратегия в коде.
+        <code>cNNN</code> — номер ячейки, например <code>c001</code>.
       </p>
     </div>
-      <div class="strategies-task-stats" id="strategies-task-stats" aria-live="polite">
+    <section class="strategies-research-panel" id="strategies-research-panel" aria-labelledby="strategies-research-title">
+      <div class="strategies-research-head">
+        <div>
+          <div class="strategies-panel-kicker">Статистика стратегии</div>
+          <h3 id="strategies-research-title">Выберите стратегию</h3>
+          <p class="strategies-research-sub" id="strategies-research-sub">
+            Верхняя панель показывает полный backtest по выбранной стратегии из матрицы.
+          </p>
+        </div>
+        <span class="strategies-counter" id="strategies-research-chip">—</span>
+      </div>
+      <div class="strategies-research-body" id="strategies-research-body">
+        <div class="strategies-empty-state">Выберите стратегию в матрице, чтобы увидеть equity curve и средние доходы.</div>
+      </div>
+    </section>
+    <div class="strategies-task-stats" id="strategies-task-stats" aria-live="polite">
       <div class="strategies-stat-card">
         <span>Инструменты</span>
         <strong id="stat-instruments">—</strong>
@@ -61,9 +77,9 @@
         <span>Слоты стратегий</span>
         <strong id="stat-slots">—</strong>
       </div>
-      <div class="strategies-stat-card">
-        <span>Версии</span>
-        <strong id="stat-ready">—</strong>
+      <div class="strategies-stat-card strategies-stat-card-detail">
+        <span>Сумма</span>
+        <div id="stat-monthly-detail" class="strategies-stat-detail"></div>
       </div>
       <div class="strategies-stat-card">
         <span>Online</span>
@@ -71,6 +87,15 @@
       </div>
     </div>
   </section>
+
+  <div
+    class="strategies-row-resizer"
+    id="strategies-top-resizer"
+    role="separator"
+    aria-orientation="horizontal"
+    aria-label="Изменить высоту верхней панели"
+    tabindex="0"
+  ></div>
 
   <section class="strategies-main-grid" id="strategies-main-grid">
     <aside
@@ -114,7 +139,7 @@
       <div class="strategies-panel-head">
         <div>
           <div class="strategies-panel-kicker">Портфель</div>
-          <h3 id="strategies-matrix-title">Инструменты x 10 стратегий</h3>
+          <h3 id="strategies-matrix-title">Матрица стратегий</h3>
         </div>
         <div class="strategies-legend" aria-label="Легенда">
           <span><i class="legend-dot active"></i>online</span>
@@ -159,7 +184,7 @@
   </section>
 </main>
 
-<script src="strategies.js?v=20260508-ready-portfolio2"></script>
-<script src="market_clock.js?v=20260502-hotfix5"></script>
+<script src="strategies.js?v=20260521-cleanup2"></script>
+<script src="market_clock.js?v=20260513-session-api1"></script>
 </body>
 </html>

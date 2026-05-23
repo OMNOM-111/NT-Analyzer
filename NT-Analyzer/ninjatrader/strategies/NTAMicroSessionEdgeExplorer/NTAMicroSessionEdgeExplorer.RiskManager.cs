@@ -5,7 +5,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroSessionEdgeExplorer
+    public abstract partial class NTAMicroSessionEdgeExplorer
     {
         private class RiskManager
         {

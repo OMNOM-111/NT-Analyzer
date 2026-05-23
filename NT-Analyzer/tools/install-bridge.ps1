@@ -9,7 +9,7 @@
          (NinjaTrader's documented Visual Studio AddOn deploy path.)
       3. Copies the example config to <NinjaTraderUserDir>\bin\Custom\NTAnalyzerBridge.config.json
          IF that file does not exist yet (never overwrites a hand-edited config).
-      4. Ensures the queue layout exists under <ProjectRoot>\jobs\.
+      4. Ensures the queue layout exists under config jobs_dir, or <ProjectRoot>\jobs\ when unset.
 
     No admin rights required.
 
@@ -122,6 +122,21 @@ if (Test-Path $cfgDst) {
 
 # 4. Queue layout
 $jobsDir = Join-Path $ProjectRoot 'jobs'
+if (Test-Path $cfgDst) {
+    try {
+        $cfg = Get-Content -LiteralPath $cfgDst -Raw | ConvertFrom-Json
+        if ($cfg.jobs_dir -and -not [string]::IsNullOrWhiteSpace([string]$cfg.jobs_dir)) {
+            $configuredJobs = [string]$cfg.jobs_dir
+            if ([System.IO.Path]::IsPathRooted($configuredJobs)) {
+                $jobsDir = $configuredJobs
+            } else {
+                $jobsDir = Join-Path $ProjectRoot $configuredJobs
+            }
+        }
+    } catch {
+        Write-Warn "could not read jobs_dir from existing config; using $jobsDir"
+    }
+}
 foreach ($sub in @('pending','pending\.staging','running','done','failed','cancelled')) {
     $p = Join-Path $jobsDir $sub
     if (-not (Test-Path $p)) {

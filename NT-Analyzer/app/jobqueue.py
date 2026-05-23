@@ -14,6 +14,7 @@ This module is read-mostly: the only mutating operation is `create_job`.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import marginrefresh  # informational margin catalog auto-refresh
+from . import portfolio_cells
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -43,8 +45,14 @@ _FALLBACK_STRATEGIES: List[str] = ["SampleMACrossOver"]
 # pre-catalog UI. Always re-evaluated through `whitelisted_strategies()`.
 WHITELISTED_STRATEGIES: List[str] = list(_FALLBACK_STRATEGIES)
 
-JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
+JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
 QUEUE_SUBDIRS = ("pending", "running", "done", "failed", "cancelled")
+BATCH_ID_PATTERN = JOB_ID_PATTERN
+_RESERVED_WINDOWS_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 # Project-level validation status. The bridge path has been manually
 # cross-checked against NinjaTrader Strategy Analyzer and is now the accepted
@@ -67,6 +75,8 @@ VALIDATED_AGAINST_STRATEGY_ANALYZER = True
 
 # job_id -> (signature, summary_dict).  signature == (status, mtime).
 _JOB_SUMMARY_CACHE: Dict[str, Tuple[Tuple[str, float], Dict[str, Any]]] = {}
+_JOB_LOCATION_FP: Optional[Tuple[int, float]] = None
+_JOB_LOCATION_INDEX: Dict[str, Tuple[str, Path, float]] = {}
 
 # batch_id -> (signature, aggregate_dict).  signature combines bdir mtime,
 # child status, and child mtime so aggregate refreshes whenever any child moves.
@@ -76,15 +86,71 @@ _BATCH_METRICS_CACHE: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
 # until the queue itself changes.  Avoids the per-request full scan.
 _REPORT_NUMBERS_FP: Optional[Tuple[int, float]] = None
 _REPORT_NUMBERS_VALUE: Dict[str, int] = {}
+_REPORT_NUMBERS_FILE_SIG: Optional[Tuple[int, int]] = None
+_REPORT_FAVORITES_RAW_SIG: Optional[Tuple[int, int]] = None
+_REPORT_FAVORITES_RAW_VALUE: Optional[Dict[str, Any]] = None
+_REPORT_FAVORITE_KEYS_SIG: Optional[Tuple[int, int]] = None
+_REPORT_FAVORITE_KEYS_VALUE: set[str] = set()
+_JSON_ARRAY_ARTIFACT_CACHE: Dict[str, Tuple[Tuple[int, int], List[Any]]] = {}
+_JSON_ARRAY_ARTIFACT_CACHE_ORDER: List[str] = []
+_JSON_ARRAY_ARTIFACT_CACHE_BYTES: Dict[str, int] = {}
+_JSON_ARRAY_ARTIFACT_CACHE_MAX_BYTES = 180 * 1024 * 1024
+_PORTFOLIO_LAYOUT_FP: Optional[Tuple[int, float]] = None
+_PORTFOLIO_LAYOUT_VALUE: Dict[str, Dict[Any, Dict[str, Any]]] = {
+    "profiles": {},
+    "lookup": {},
+}
+
+
+def _validate_safe_id(value: str, kind: str) -> str:
+    value = str(value or "")
+    if not JOB_ID_PATTERN.fullmatch(value):
+        raise JobValidationError(f"invalid {kind}")
+    if value in (".", "..") or value.startswith(".") or value.endswith("."):
+        raise JobValidationError(f"invalid {kind}")
+    stem = value.split(".", 1)[0].upper()
+    if stem in _RESERVED_WINDOWS_NAMES:
+        raise JobValidationError(f"invalid {kind}")
+    return value
+
+
+def _safe_child_path(parent: Path, child_name: str, kind: str) -> Path:
+    child_name = _validate_safe_id(child_name, kind)
+    base = parent.resolve()
+    target = (base / child_name).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as e:
+        raise JobValidationError(f"invalid {kind}") from e
+    if target.parent != base:
+        raise JobValidationError(f"invalid {kind}")
+    return target
 
 
 def reset_caches() -> None:
     """Drop in-memory list_jobs/list_batches caches (used by tests)."""
+    global _JOB_LOCATION_FP, _JOB_LOCATION_INDEX
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE, _REPORT_NUMBERS_FILE_SIG
+    global _REPORT_FAVORITES_RAW_SIG, _REPORT_FAVORITES_RAW_VALUE
+    global _REPORT_FAVORITE_KEYS_SIG, _REPORT_FAVORITE_KEYS_VALUE
+    global _JSON_ARRAY_ARTIFACT_CACHE_BYTES
+    global _PORTFOLIO_LAYOUT_FP, _PORTFOLIO_LAYOUT_VALUE
     _JOB_SUMMARY_CACHE.clear()
     _BATCH_METRICS_CACHE.clear()
-    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+    _JSON_ARRAY_ARTIFACT_CACHE.clear()
+    _JSON_ARRAY_ARTIFACT_CACHE_ORDER.clear()
+    _JSON_ARRAY_ARTIFACT_CACHE_BYTES = {}
+    _JOB_LOCATION_FP = None
+    _JOB_LOCATION_INDEX = {}
     _REPORT_NUMBERS_FP = None
     _REPORT_NUMBERS_VALUE = {}
+    _REPORT_NUMBERS_FILE_SIG = None
+    _REPORT_FAVORITES_RAW_SIG = None
+    _REPORT_FAVORITES_RAW_VALUE = None
+    _REPORT_FAVORITE_KEYS_SIG = None
+    _REPORT_FAVORITE_KEYS_VALUE = set()
+    _PORTFOLIO_LAYOUT_FP = None
+    _PORTFOLIO_LAYOUT_VALUE = {"profiles": {}, "lookup": {}}
 
 
 def cache_stats() -> Dict[str, int]:
@@ -120,7 +186,55 @@ def project_root() -> Path:
     return here
 
 
+def _bridge_config_path() -> Path:
+    env = os.environ.get("NT_ANALYZER_BRIDGE_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    user_profile = Path(os.environ.get("USERPROFILE") or Path.home())
+    return user_profile / "Documents" / "NinjaTrader 8" / "bin" / "Custom" / "NTAnalyzerBridge.config.json"
+
+
+def _resolve_configured_jobs_dir(raw: Any) -> Optional[Path]:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    p = Path(raw.strip()).expanduser()
+    if not p.is_absolute():
+        p = project_root() / p
+    return p.resolve()
+
+
+def _configured_jobs_dir() -> Optional[Path]:
+    env = os.environ.get("NT_ANALYZER_JOBS_DIR") or os.environ.get("NTA_JOBS_DIR")
+    p = _resolve_configured_jobs_dir(env)
+    if p is not None:
+        return p
+
+    cfg_path = _bridge_config_path()
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(cfg, dict):
+        return None
+
+    # Only honor the user's NinjaTrader bridge config when it points at this
+    # project. Unit tests monkey-patch project_root(), and should keep using
+    # the temporary <project_root>/jobs tree.
+    cfg_project = cfg.get("project_root")
+    if isinstance(cfg_project, str) and cfg_project.strip():
+        try:
+            if Path(cfg_project).expanduser().resolve() != project_root().resolve():
+                return None
+        except OSError:
+            return None
+    return _resolve_configured_jobs_dir(cfg.get("jobs_dir"))
+
+
 def jobs_dir() -> Path:
+    return _configured_jobs_dir() or (project_root() / "jobs")
+
+
+def default_jobs_dir() -> Path:
     return project_root() / "jobs"
 
 
@@ -140,8 +254,547 @@ def report_numbers_file() -> Path:
     return reports_dir() / "report_numbers.json"
 
 
+def report_favorites_file() -> Path:
+    return reports_dir() / "favorites.json"
+
+
 def _report_key(kind: str, report_id: str) -> str:
     return f"{kind}:{report_id}"
+
+
+def _empty_report_favorites() -> Dict[str, Any]:
+    return {"schema_version": "1.0", "favorites": {}}
+
+
+def _file_cache_sig(path: Path) -> Optional[Tuple[int, int]]:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def _invalidate_report_favorites_cache() -> None:
+    global _REPORT_FAVORITES_RAW_SIG, _REPORT_FAVORITES_RAW_VALUE
+    global _REPORT_FAVORITE_KEYS_SIG, _REPORT_FAVORITE_KEYS_VALUE
+    _REPORT_FAVORITES_RAW_SIG = None
+    _REPORT_FAVORITES_RAW_VALUE = None
+    _REPORT_FAVORITE_KEYS_SIG = None
+    _REPORT_FAVORITE_KEYS_VALUE = set()
+
+
+def _write_report_favorites(data: Dict[str, Any]) -> None:
+    _write_json_atomic(report_favorites_file(), data)
+    _invalidate_report_favorites_cache()
+
+
+def _normalize_report_ref(kind: str, report_id: str) -> Tuple[str, str]:
+    kind = str(kind or "").strip().lower()
+    if kind not in {"job", "batch"}:
+        raise JobValidationError("report kind must be 'job' or 'batch'")
+    report_id = _safe_job_id(report_id) if kind == "job" else _safe_batch_id(report_id)
+    return kind, report_id
+
+
+def _read_report_favorites_raw() -> Dict[str, Any]:
+    global _REPORT_FAVORITES_RAW_SIG, _REPORT_FAVORITES_RAW_VALUE
+    p = report_favorites_file()
+    if not p.is_file():
+        return _empty_report_favorites()
+    sig = _file_cache_sig(p)
+    if sig is not None and _REPORT_FAVORITES_RAW_SIG == sig and _REPORT_FAVORITES_RAW_VALUE is not None:
+        return _REPORT_FAVORITES_RAW_VALUE
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return _empty_report_favorites()
+    if not isinstance(data, dict):
+        return _empty_report_favorites()
+    favorites = data.get("favorites")
+    if isinstance(favorites, list):
+        converted: Dict[str, Any] = {}
+        for entry in favorites:
+            if not isinstance(entry, dict):
+                continue
+            kind = str(entry.get("kind") or "").strip().lower()
+            rid = str(entry.get("id") or entry.get("report_id") or "").strip()
+            if kind in {"job", "batch"} and rid:
+                converted[_report_key(kind, rid)] = entry
+        data["favorites"] = converted
+    elif not isinstance(favorites, dict):
+        data["favorites"] = {}
+    data["schema_version"] = "1.0"
+    if sig is not None:
+        _REPORT_FAVORITES_RAW_SIG = sig
+        _REPORT_FAVORITES_RAW_VALUE = data
+    return data
+
+
+def _report_favorite_key_set() -> set[str]:
+    global _REPORT_FAVORITE_KEYS_SIG, _REPORT_FAVORITE_KEYS_VALUE
+    sig = _file_cache_sig(report_favorites_file())
+    if sig is not None and _REPORT_FAVORITE_KEYS_SIG == sig:
+        return set(_REPORT_FAVORITE_KEYS_VALUE)
+    data = _read_report_favorites_raw()
+    keys = {str(k) for k in (data.get("favorites") or {}).keys()}
+    if sig is not None:
+        _REPORT_FAVORITE_KEYS_SIG = sig
+        _REPORT_FAVORITE_KEYS_VALUE = set(keys)
+    return keys
+
+
+def is_report_favorite(kind: str, report_id: str) -> bool:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    return _report_key(kind, report_id) in _report_favorite_key_set()
+
+
+def _json_sha256(value: Any) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _file_artifact_signature(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.is_file():
+        return None
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    out: Dict[str, Any] = {
+        "name": path.name,
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+    }
+    # Full bars/trades files can be large; metadata is enough to detect normal
+    # report churn, while small JSON files get a content hash.
+    if st.st_size <= 5 * 1024 * 1024:
+        try:
+            h = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(chunk)
+            out["sha256"] = h.hexdigest()
+        except OSError:
+            pass
+    return out
+
+
+def _artifact_manifest_for_dir(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for child in sorted(path.glob("*.json"), key=lambda p: p.name):
+        sig = _file_artifact_signature(child)
+        if sig:
+            out.append(sig)
+    return out
+
+
+def _snapshot_strategy_doc(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    if snapshot.get("kind") == "job":
+        full = snapshot.get("full") if isinstance(snapshot.get("full"), dict) else {}
+        job = full.get("job") if isinstance(full.get("job"), dict) else {}
+        strategy = job.get("strategy") if isinstance(job.get("strategy"), dict) else {}
+        return strategy if isinstance(strategy, dict) else {}
+    batch = snapshot.get("batch") if isinstance(snapshot.get("batch"), dict) else {}
+    strategy = batch.get("strategy") if isinstance(batch.get("strategy"), dict) else {}
+    if isinstance(strategy, dict) and strategy:
+        return strategy
+    for child in snapshot.get("children_full") or []:
+        if not isinstance(child, dict):
+            continue
+        job = child.get("job") if isinstance(child.get("job"), dict) else {}
+        strategy = job.get("strategy") if isinstance(job.get("strategy"), dict) else {}
+        if isinstance(strategy, dict) and strategy:
+            return strategy
+    return {}
+
+
+def _build_job_favorite_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
+    job_id = _safe_job_id(job_id)
+    located = find_job_dir(job_id)
+    if not located:
+        return None
+    status, jdir = located
+    summary = read_job_summary(job_id) or {}
+    full = read_job_full(job_id) or {}
+    artifacts = _artifact_manifest_for_dir(jdir)
+    strategy = (summary.get("strategy_name") or summary.get("class_name")
+                or ((full.get("job") or {}).get("strategy") or {}).get("class_name") or "")
+    source_hash = _json_sha256({
+        "kind": "job",
+        "id": job_id,
+        "status": status,
+        "artifacts": artifacts,
+    })
+    return {
+        "kind": "job",
+        "id": job_id,
+        "report_no": full.get("report_no") or summary.get("report_no"),
+        "label": summary.get("instrument") or job_id,
+        "strategy": strategy,
+        "instrument": summary.get("instrument"),
+        "timeframe": summary.get("timeframe"),
+        "period": summary.get("period"),
+        "status": summary.get("status") or status,
+        "summary": summary,
+        "full": full,
+        "artifact_manifest": artifacts,
+        "source_hash": source_hash,
+    }
+
+
+def _build_batch_favorite_snapshot(batch_id: str) -> Optional[Dict[str, Any]]:
+    batch_id = _safe_batch_id(batch_id)
+    bdir = _safe_child_path(batches_dir(), batch_id, "batch_id")
+    if not bdir.is_dir():
+        return None
+    batch = read_batch_results(batch_id)
+    if not batch:
+        return None
+    artifacts = _artifact_manifest_for_dir(bdir)
+    children_full: List[Dict[str, Any]] = []
+    child_artifacts: Dict[str, Any] = {}
+    manifest = read_batch(batch_id) or {}
+    for child in manifest.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        jid = child.get("job_id")
+        if not jid:
+            continue
+        full = read_job_full(jid)
+        if full:
+            children_full.append(full)
+        located = find_job_dir(jid)
+        if located:
+            _status, jdir = located
+            child_artifacts[jid] = _artifact_manifest_for_dir(jdir)
+    insts = []
+    for row in batch.get("rows") or []:
+        inst = row.get("instrument") if isinstance(row, dict) else None
+        if inst and inst not in insts:
+            insts.append(inst)
+    source_hash = _json_sha256({
+        "kind": "batch",
+        "id": batch_id,
+        "batch_artifacts": artifacts,
+        "child_artifacts": child_artifacts,
+    })
+    return {
+        "kind": "batch",
+        "id": batch_id,
+        "report_no": batch.get("report_no"),
+        "label": ", ".join(insts[:3]) + (f" +{len(insts) - 3}" if len(insts) > 3 else "") if insts else batch.get("name") or batch_id,
+        "strategy": (batch.get("strategy") or {}).get("class_name"),
+        "instrument": insts[0] if len(insts) == 1 else None,
+        "instruments": insts,
+        "timeframe": batch.get("timeframe"),
+        "period": batch.get("period"),
+        "status": None,
+        "batch": batch,
+        "children_full": children_full,
+        "artifact_manifest": artifacts,
+        "child_artifact_manifest": child_artifacts,
+        "source_hash": source_hash,
+    }
+
+
+def _build_report_favorite_snapshot(kind: str, report_id: str) -> Optional[Dict[str, Any]]:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    if kind == "job":
+        return _build_job_favorite_snapshot(report_id)
+    return _build_batch_favorite_snapshot(report_id)
+
+
+def _validate_report_favorite(entry: Dict[str, Any],
+                              current: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    kind = str(entry.get("kind") or "").strip().lower()
+    rid = str(entry.get("id") or "").strip()
+    checked_at = utcnow_iso()
+    if current is None:
+        try:
+            current = _build_report_favorite_snapshot(kind, rid)
+        except JobValidationError:
+            current = None
+    saved_hash = entry.get("source_hash") or ((entry.get("snapshot") or {}).get("source_hash"))
+    current_hash = current.get("source_hash") if isinstance(current, dict) else None
+    report_exists = current is not None
+    report_unchanged = bool(report_exists and saved_hash and current_hash == saved_hash)
+    snapshot = current or (entry.get("snapshot") if isinstance(entry.get("snapshot"), dict) else {})
+    strategy_doc = _snapshot_strategy_doc(snapshot)
+    strategy_class = str(strategy_doc.get("class_name") or "").strip()
+    params = strategy_doc.get("parameters") if isinstance(strategy_doc.get("parameters"), dict) else {}
+    strategy_exists = False
+    parameter_names: set[str] = set()
+    unknown_params: List[str] = []
+    if strategy_class:
+        strategy_exists = strategy_class in set(whitelisted_strategies())
+        try:
+            parameter_names = _strategy_parameter_names(strategy_class)
+        except Exception:
+            parameter_names = set()
+        if parameter_names:
+            unknown_params = sorted(k for k in params.keys() if k not in parameter_names)
+    parameters_match_catalog: Optional[bool]
+    if not strategy_class or not parameter_names:
+        parameters_match_catalog = None
+    else:
+        parameters_match_catalog = not unknown_params
+    if not report_exists:
+        status = "missing"
+    elif not report_unchanged:
+        status = "stale"
+    elif strategy_class and not strategy_exists:
+        status = "strategy_missing"
+    elif parameters_match_catalog is False:
+        status = "params_mismatch"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "checked_at_utc": checked_at,
+        "report_exists": report_exists,
+        "report_unchanged": report_unchanged,
+        "saved_source_hash": saved_hash,
+        "current_source_hash": current_hash,
+        "strategy_class": strategy_class,
+        "strategy_exists": strategy_exists if strategy_class else None,
+        "parameters_match_catalog": parameters_match_catalog,
+        "unknown_parameters": unknown_params,
+        "validated_against_strategy_analyzer": VALIDATED_AGAINST_STRATEGY_ANALYZER,
+    }
+
+
+def _public_report_favorite(entry: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(entry)
+    out.pop("snapshot", None)
+    out.pop("source_hash", None)
+    return out
+
+
+def _ensure_report_favorite_allowed(kind: str, snapshot: Dict[str, Any]) -> None:
+    if kind != "batch":
+        return
+    raise JobValidationError(
+        "Пакетный отчёт нельзя добавлять в избранное. "
+        "Выберите конкретный запуск в нижней таблице."
+    )
+
+
+def favorite_report(kind: str, report_id: str, description: Optional[str] = None) -> Dict[str, Any]:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    snapshot = _build_report_favorite_snapshot(kind, report_id)
+    if not snapshot:
+        raise JobValidationError(f"report not found: {kind}:{report_id}")
+    _ensure_report_favorite_allowed(kind, snapshot)
+    data = _read_report_favorites_raw()
+    favorites = data.setdefault("favorites", {})
+    key = _report_key(kind, report_id)
+    existing = favorites.get(key) if isinstance(favorites.get(key), dict) else {}
+    now = utcnow_iso()
+    entry = dict(existing)
+    entry.update({
+        "key": key,
+        "kind": kind,
+        "id": report_id,
+        "report_no": snapshot.get("report_no"),
+        "label": snapshot.get("label"),
+        "strategy": snapshot.get("strategy"),
+        "instrument": snapshot.get("instrument"),
+        "instruments": snapshot.get("instruments") or [],
+        "timeframe": snapshot.get("timeframe"),
+        "period": snapshot.get("period"),
+        "snapshot": snapshot,
+        "source_hash": snapshot.get("source_hash"),
+        "updated_at_utc": now,
+    })
+    entry.setdefault("starred_at_utc", now)
+    if description is not None:
+        entry["description"] = str(description or "").strip()
+    else:
+        entry.setdefault("description", "")
+    entry["validation"] = _validate_report_favorite(entry, current=snapshot)
+    favorites[key] = entry
+    data["schema_version"] = "1.0"
+    _write_report_favorites(data)
+    return {"ok": True, "favorite": _public_report_favorite(entry)}
+
+
+def update_report_favorite(kind: str, report_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    data = _read_report_favorites_raw()
+    favorites = data.setdefault("favorites", {})
+    key = _report_key(kind, report_id)
+    entry = favorites.get(key)
+    if not isinstance(entry, dict):
+        raise JobValidationError(f"favorite not found: {key}")
+    if "description" in (updates or {}):
+        entry["description"] = str((updates or {}).get("description") or "").strip()
+    entry["updated_at_utc"] = utcnow_iso()
+    entry["validation"] = _validate_report_favorite(entry)
+    favorites[key] = entry
+    _write_report_favorites(data)
+    return {"ok": True, "favorite": _public_report_favorite(entry)}
+
+
+def unfavorite_report(kind: str, report_id: str) -> Dict[str, Any]:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    data = _read_report_favorites_raw()
+    favorites = data.setdefault("favorites", {})
+    key = _report_key(kind, report_id)
+    removed = favorites.pop(key, None) is not None
+    if removed:
+        _write_report_favorites(data)
+    return {"ok": True, "removed": removed, "key": key}
+
+
+def read_report_favorites(validate: bool = False) -> Dict[str, Any]:
+    data = _read_report_favorites_raw()
+    out: List[Dict[str, Any]] = []
+    changed = False
+    for key, entry in (data.get("favorites") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        kind = str(entry.get("kind") or "").strip().lower()
+        rid = str(entry.get("id") or "").strip()
+        if kind not in {"job", "batch"} or not rid:
+            continue
+        item = dict(entry)
+        item["key"] = key
+        if validate:
+            item["validation"] = _validate_report_favorite(item)
+            if item.get("validation") != entry.get("validation"):
+                changed = True
+            entry["validation"] = item.get("validation")
+            entry["updated_at_utc"] = utcnow_iso()
+        else:
+            item["validation"] = entry.get("validation") or {}
+        out.append(_public_report_favorite(item))
+    if validate and changed:
+        _write_report_favorites(data)
+    out.sort(key=lambda x: str(x.get("starred_at_utc") or ""), reverse=True)
+    return {"schema_version": "1.0", "favorites": out}
+
+
+def _favorite_timeframe_parts(doc: Dict[str, Any]) -> Tuple[str, int]:
+    timeframe = doc.get("timeframe") if isinstance(doc.get("timeframe"), dict) else {}
+    bars_period_type = str(timeframe.get("bars_period_type") or "Minute")
+    raw_value = timeframe.get("value")
+    if raw_value is None:
+        raw_value = timeframe.get("bars_period_value")
+    try:
+        bars_period_value = int(raw_value or 1)
+    except (TypeError, ValueError):
+        raise JobValidationError("favorite snapshot has invalid timeframe value")
+    return bars_period_type, bars_period_value
+
+
+def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
+    kind, report_id = _normalize_report_ref(kind, report_id)
+    data = _read_report_favorites_raw()
+    favorites = data.setdefault("favorites", {})
+    key = _report_key(kind, report_id)
+    entry = favorites.get(key)
+    if not isinstance(entry, dict):
+        raise JobValidationError(f"favorite not found: {key}")
+    snapshot = entry.get("snapshot") if isinstance(entry.get("snapshot"), dict) else {}
+
+    if kind == "batch":
+        batch = snapshot.get("batch") if isinstance(snapshot.get("batch"), dict) else {}
+        strategy = batch.get("strategy") if isinstance(batch.get("strategy"), dict) else {}
+        execution = batch.get("execution") if isinstance(batch.get("execution"), dict) else {}
+        risk_profile = batch.get("risk_profile") if isinstance(batch.get("risk_profile"), dict) else {}
+        period = batch.get("period") if isinstance(batch.get("period"), dict) else {}
+        bars_period_type, bars_period_value = _favorite_timeframe_parts(batch)
+        instruments: List[str] = []
+        for inst in entry.get("instruments") or snapshot.get("instruments") or []:
+            name = str(inst or "").strip()
+            if name and name not in instruments:
+                instruments.append(name)
+        if not instruments:
+            for row in batch.get("rows") or []:
+                if not isinstance(row, dict):
+                    continue
+                name = str(row.get("instrument") or "").strip()
+                if name and name not in instruments:
+                    instruments.append(name)
+        class_name = str(strategy.get("class_name") or entry.get("strategy") or "").strip()
+        if not class_name:
+            raise JobValidationError("favorite snapshot is missing strategy class")
+        if not instruments:
+            raise JobValidationError("favorite snapshot is missing instruments")
+        req = CreateBatchRequest(
+            class_name=class_name,
+            instruments=instruments,
+            bars_period_type=bars_period_type,
+            bars_period_value=bars_period_value,
+            from_utc=str(period.get("from_utc") or ""),
+            to_utc=str(period.get("to_utc") or ""),
+            parameters=dict(strategy.get("parameters") or {}),
+            risk_profile=dict(risk_profile or {}),
+            calculate=str(execution.get("calculate") or "OnBarClose"),
+            is_tick_replay=bool(execution.get("is_tick_replay") or False),
+            order_fill_resolution=str(execution.get("order_fill_resolution") or "High"),
+            slippage_ticks=int(execution.get("slippage_ticks") or 1),
+            commission=float(execution.get("commission") or 0.0),
+            commission_template=str(execution.get("commission_template") or "None"),
+            session_template=str(execution.get("session_template") or "CME US Index Futures RTH"),
+            timezone=str(execution.get("timezone") or "UTC"),
+            name=(str(batch.get("name")) if batch.get("name") else None),
+            role=str(execution.get("role") or "research"),
+        )
+        batch_id, job_ids = create_batch(req)
+        return {
+            "ok": True,
+            "kind": "batch",
+            "batch_id": batch_id,
+            "job_ids": job_ids,
+            "total": len(job_ids),
+            "source_favorite": key,
+        }
+
+    full = snapshot.get("full") if isinstance(snapshot.get("full"), dict) else {}
+    job = full.get("job") if isinstance(full.get("job"), dict) else {}
+    strategy = job.get("strategy") if isinstance(job.get("strategy"), dict) else {}
+    execution = job.get("execution") if isinstance(job.get("execution"), dict) else {}
+    risk_profile = job.get("risk_profile") if isinstance(job.get("risk_profile"), dict) else {}
+    period = job.get("period") if isinstance(job.get("period"), dict) else {}
+    bars_period_type, bars_period_value = _favorite_timeframe_parts(job)
+    class_name = str(strategy.get("class_name") or entry.get("strategy") or "").strip()
+    instrument = str(job.get("instrument") or entry.get("instrument") or "").strip()
+    if not class_name:
+        raise JobValidationError("favorite snapshot is missing strategy class")
+    if not instrument:
+        raise JobValidationError("favorite snapshot is missing instrument")
+    req = CreateJobRequest(
+        class_name=class_name,
+        instrument=instrument,
+        bars_period_type=bars_period_type,
+        bars_period_value=bars_period_value,
+        from_utc=str(period.get("from_utc") or ""),
+        to_utc=str(period.get("to_utc") or ""),
+        parameters=dict(strategy.get("parameters") or {}),
+        risk_profile=dict(risk_profile or {}),
+        calculate=str(execution.get("calculate") or "OnBarClose"),
+        is_tick_replay=bool(execution.get("is_tick_replay") or False),
+        order_fill_resolution=str(execution.get("order_fill_resolution") or "High"),
+        slippage_ticks=int(execution.get("slippage_ticks") or 1),
+        commission=float(execution.get("commission") or 0.0),
+        commission_template=str(execution.get("commission_template") or "None"),
+        session_template=str(execution.get("session_template") or "CME US Index Futures RTH"),
+        timezone=str(execution.get("timezone") or "UTC"),
+        role=str(execution.get("role") or "research"),
+        job_id=None,
+    )
+    job_id, path = create_job(req)
+    return {
+        "ok": True,
+        "kind": "job",
+        "job_id": job_id,
+        "path": str(path),
+        "source_favorite": key,
+    }
 
 
 def _read_report_numbers() -> Dict[str, Any]:
@@ -163,6 +816,7 @@ def _read_report_numbers() -> Dict[str, Any]:
 
 
 def _write_report_numbers(data: Dict[str, Any]) -> None:
+    global _REPORT_NUMBERS_FILE_SIG
     p = report_numbers_file()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
@@ -170,6 +824,71 @@ def _write_report_numbers(data: Dict[str, Any]) -> None:
         json.dump(data, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
     os.replace(tmp, p)
+    _REPORT_NUMBERS_FILE_SIG = None
+
+
+def _report_numbers_mapping_from_data(data: Dict[str, Any]) -> Dict[str, int]:
+    reports = data.get("reports") if isinstance(data, dict) else {}
+    if not isinstance(reports, dict):
+        return {}
+    out: Dict[str, int] = {}
+    for key, entry in reports.items():
+        try:
+            number = int(entry.get("number") if isinstance(entry, dict) else entry)
+        except (TypeError, ValueError):
+            continue
+        out[str(key)] = number
+    return out
+
+
+def _read_report_numbers_mapping_cached() -> Dict[str, int]:
+    """Read the existing report-number index without scanning every job folder."""
+    global _REPORT_NUMBERS_FILE_SIG, _REPORT_NUMBERS_VALUE
+    p = report_numbers_file()
+    sig = _file_cache_sig(p)
+    if sig is not None and _REPORT_NUMBERS_FILE_SIG == sig and _REPORT_NUMBERS_VALUE:
+        return _REPORT_NUMBERS_VALUE
+    mapping = _report_numbers_mapping_from_data(_read_report_numbers())
+    _REPORT_NUMBERS_FILE_SIG = sig
+    _REPORT_NUMBERS_VALUE = mapping
+    return mapping
+
+
+def _ensure_report_number(kind: str, report_id: str, created_at_utc: Optional[str] = None) -> None:
+    """Assign a report number incrementally for newly-created UI reports.
+
+    Full compaction is intentionally kept out of hot read paths; ordinary
+    /api/reports calls must not rescan thousands of job folders.
+    """
+    global _REPORT_NUMBERS_VALUE, _REPORT_NUMBERS_FP, _REPORT_NUMBERS_FILE_SIG
+    if kind not in {"job", "batch"}:
+        return
+    data = _read_report_numbers()
+    reports = data.setdefault("reports", {})
+    key = _report_key(kind, report_id)
+    if isinstance(reports.get(key), dict) and isinstance(reports[key].get("number"), int):
+        return
+    mapping = _report_numbers_mapping_from_data(data)
+    try:
+        next_number = int(data.get("next_number") or 1)
+    except (TypeError, ValueError):
+        next_number = 1
+    if mapping:
+        next_number = max(next_number, max(mapping.values()) + 1)
+    now = utcnow_iso()
+    reports[key] = {
+        "number": next_number,
+        "kind": kind,
+        "id": report_id,
+        "created_at_utc": created_at_utc,
+        "assigned_at_utc": now,
+    }
+    data["schema_version"] = "1.0"
+    data["next_number"] = next_number + 1
+    _write_report_numbers(data)
+    _REPORT_NUMBERS_VALUE = _report_numbers_mapping_from_data(data)
+    _REPORT_NUMBERS_FILE_SIG = _file_cache_sig(report_numbers_file())
+    _REPORT_NUMBERS_FP = None
 
 
 def _report_sort_time(created_at: Optional[str], fallback_mtime: float) -> float:
@@ -188,7 +907,7 @@ def _collect_report_number_candidates() -> List[Dict[str, Any]]:
         if not d.is_dir():
             continue
         for child in d.iterdir():
-            if not child.is_dir() or child.name == ".staging":
+            if not child.is_dir() or child.name.startswith("."):
                 continue
             job = _read_json_safe(child / "job.json") or {}
             if job.get("batch"):
@@ -207,7 +926,7 @@ def _collect_report_number_candidates() -> List[Dict[str, Any]]:
     bdir = batches_dir()
     if bdir.is_dir():
         for child in bdir.iterdir():
-            if not child.is_dir():
+            if not child.is_dir() or child.name.startswith("."):
                 continue
             meta = _read_json_safe(child / "batch.json") or {}
             try:
@@ -228,6 +947,45 @@ def _collect_report_number_candidates() -> List[Dict[str, Any]]:
 def sync_report_numbers() -> Dict[str, int]:
     data = _read_report_numbers()
     reports = data.setdefault("reports", {})
+    candidates = _collect_report_number_candidates()
+    candidate_keys = [str(c.get("key") or "") for c in candidates]
+    candidate_key_set = set(candidate_keys)
+
+    existing_numbers: Dict[str, int] = {}
+    for key, entry in list(reports.items()):
+        try:
+            num = int(entry.get("number") if isinstance(entry, dict) else entry)
+        except (TypeError, ValueError):
+            continue
+        existing_numbers[str(key)] = num
+
+    visible_numbers = [existing_numbers.get(k) for k in candidate_keys]
+    needs_compact = (
+        set(reports.keys()) != candidate_key_set
+        or any(n is None for n in visible_numbers)
+        or len(set(n for n in visible_numbers if n is not None)) != len(candidate_keys)
+        or sorted(n for n in visible_numbers if n is not None) != list(range(1, len(candidate_keys) + 1))
+    )
+    if needs_compact:
+        now = utcnow_iso()
+        compacted: Dict[str, Any] = {}
+        for number, cand in enumerate(candidates, start=1):
+            key = cand["key"]
+            prev = reports.get(key)
+            prev_assigned = prev.get("assigned_at_utc") if isinstance(prev, dict) else None
+            compacted[key] = {
+                "number": number,
+                "kind": cand["kind"],
+                "id": cand["id"],
+                "created_at_utc": cand.get("created_at_utc"),
+                "assigned_at_utc": prev_assigned or now,
+            }
+        data["reports"] = compacted
+        data["next_number"] = len(compacted) + 1
+        _write_report_numbers(data)
+        return _report_numbers_mapping_from_data(data)
+
+    reports = data.setdefault("reports", {})
     changed = False
     max_seen = 0
     for entry in reports.values():
@@ -236,7 +994,7 @@ def sync_report_numbers() -> Dict[str, int]:
         except (TypeError, ValueError):
             continue
     next_number = max(int(data.get("next_number") or 1), max_seen + 1)
-    for cand in _collect_report_number_candidates():
+    for cand in candidates:
         key = cand["key"]
         entry = reports.get(key)
         if isinstance(entry, dict) and isinstance(entry.get("number"), int):
@@ -260,19 +1018,15 @@ def sync_report_numbers() -> Dict[str, int]:
     data["schema_version"] = "1.0"
     if changed:
         _write_report_numbers(data)
-    out: Dict[str, int] = {}
-    for key, entry in reports.items():
-        try:
-            out[key] = int(entry.get("number") if isinstance(entry, dict) else entry)
-        except (TypeError, ValueError):
-            continue
-    return out
+    return _report_numbers_mapping_from_data(data)
 
 
 def _get_report_numbers_cached() -> Dict[str, int]:
     """Return stable report-number mapping, warming the in-process cache if needed."""
     global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
-    if _REPORT_NUMBERS_FP is None:
+    if not _REPORT_NUMBERS_VALUE:
+        _REPORT_NUMBERS_VALUE = _read_report_numbers_mapping_cached()
+    if not _REPORT_NUMBERS_VALUE:
         _REPORT_NUMBERS_VALUE = sync_report_numbers()
         # Cheap sentinel; list_jobs/list_batches compute a stronger fingerprint.
         _REPORT_NUMBERS_FP = (0, 0.0)
@@ -301,7 +1055,7 @@ def read_strategy_profiles() -> Dict[str, Any]:
         if isinstance(data, dict) and isinstance(data.get("profiles"), list):
             out = dict(data)
             out["profiles"] = [
-                _normalize_strategy_profile_for_ui(x)
+                _apply_portfolio_metadata_to_profile(_normalize_strategy_profile_for_ui(x))
                 for x in data.get("profiles", [])
                 if isinstance(x, dict)
             ]
@@ -320,6 +1074,151 @@ _PROFILE_STATUS_LABELS: Dict[str, str] = {
     "rejected": "Отклонено",
     "archived": "Архив",
 }
+
+_PROFILE_NAME_CLASS_PREFIXES: Dict[str, str] = {
+    "NTAMicroVwapRiskPilot": "VWAP Short",
+    "NTAMicroVwapRiskExplorer": "B1 ShortOnly",
+    "B1ShortOnlyMGC5mV2": "B1 ShortOnly",
+    "VWAPPullbackMGC5mV1": "Scalping Gold",
+    "NTAMicroMnqScalpPilot": "Scalping",
+    "NTAMnqMicroOrbOpenScalp": "Scalping",
+    "NTAMnqMicroOrbRetestScalpC013": "Scalping Orb Retest",
+    "StrategiyaUrovney": "Levels",
+}
+
+_PROFILE_NAME_SETUP_MODE_PREFIXES: Dict[str, str] = {
+    "VwapPullback": "VWAP Pullback",
+    "OrbContinuation": "ORB Continuation",
+    "FailedOrbReversal": "Failed ORB Reversal",
+    "VwapMeanReversion": "VWAP Mean Reversion",
+    "CompressionBreakout": "Compression Breakout",
+    "RollingVwapCrypto": "Rolling VWAP Crypto",
+}
+
+_PROFILE_NAME_WORDS_RE = re.compile(
+    r"^(?P<family>[A-Za-z][A-Za-z0-9]*(?:[ /&-][A-Za-z0-9]+)*) "
+    r"(?P<root>[A-Z0-9]+) "
+    r"(?P<tf>\d+[mhd]) "
+    r"(?P<version>v\d+)"
+    r"(?: (?P<cell>c\d{3}))?$"
+)
+_PROFILE_VERSION_TOKEN_RE = re.compile(r"(?:^|[^A-Za-z0-9_]|_)v\s*(\d+)(?:$|[^A-Za-z0-9_]|_)", re.IGNORECASE)
+_INTERNAL_STRATEGY_CATALOG_CLASSES = frozenset({
+    "NTAMicroSessionEdgeExplorer",
+    "NTAMicroVwapRiskExplorer",
+})
+
+
+def _profile_timeframe_token(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    compact = text.lower().replace(" ", "")
+    if re.fullmatch(r"\d+[mhd]", compact):
+        return compact
+    minute = re.fullmatch(r"(\d+)(?:minute|minutes|min|m)", compact)
+    if minute:
+        return f"{int(minute.group(1))}m"
+    hour = re.fullmatch(r"(\d+)(?:hour|hours|hr|hrs|h)", compact)
+    if hour:
+        return f"{int(hour.group(1))}h"
+    if compact in {"day", "daily", "1day", "1daily", "1d"}:
+        return "1d"
+    day = re.fullmatch(r"(\d+)(?:day|days|d)", compact)
+    if day:
+        return f"{int(day.group(1))}d"
+    return ""
+
+
+def _profile_version_token(profile: Dict[str, Any]) -> str:
+    candidates: List[Any] = [
+        profile.get("name"),
+        profile.get("profile_id"),
+        profile.get("runtime_strategy_id"),
+        profile.get("stable_id"),
+        profile.get("deploy_strategy_class"),
+        profile.get("strategy_class"),
+    ]
+    for value in candidates:
+        match = _PROFILE_VERSION_TOKEN_RE.search(str(value or ""))
+        if match:
+            return f"v{int(match.group(1))}"
+    return "v1"
+
+
+def _profile_cell_suffix(profile: Dict[str, Any], root: str) -> str:
+    cell_id = str(profile.get("cell_id") or "").strip().upper()
+    if not cell_id:
+        slot = portfolio_cells.coerce_slot(profile.get("slot"))
+        if slot is not None:
+            cell_id = portfolio_cells.cell_id_for(root, slot)
+    match = portfolio_cells.CELL_ID_PATTERN.match(cell_id)
+    return f"c{match.group(1)}" if match else ""
+
+
+def _clean_profile_family_candidate(text: Any, root: str) -> str:
+    out = str(text or "").strip()
+    if not out:
+        return ""
+    out = re.sub(r"\([^)]*\)", " ", out)
+    out = re.sub(r"\bc\d{3}\b", " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bv\s*\d+\b", " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\b\d+\s*(minute|minutes|min|m|hour|hours|hr|hrs|h|day|days|d)\b", " ", out, flags=re.IGNORECASE)
+    out = re.sub(
+        r"\b(paper_ready|paper_candidate|paper|locked|profile|research|baseline|current-source|stress|variant|rejected|archived|survivor|summary)\b",
+        " ",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = out.replace("_", " ").replace("-", " ")
+    if root:
+        out = re.sub(rf"\b{re.escape(root)}\b", " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
+def _profile_family_prefix(profile: Dict[str, Any]) -> str:
+    locked = profile.get("locked_parameters")
+    if not isinstance(locked, dict):
+        locked = {}
+    for key in ("deploy_strategy_class", "strategy_class"):
+        cls = str(profile.get(key) or "").strip()
+        if cls and cls in _PROFILE_NAME_CLASS_PREFIXES:
+            return _PROFILE_NAME_CLASS_PREFIXES[cls]
+    for cls in profile.get("runtime_strategy_classes") or []:
+        name = str(cls or "").strip()
+        if name and name in _PROFILE_NAME_CLASS_PREFIXES:
+            return _PROFILE_NAME_CLASS_PREFIXES[name]
+    setup_mode = str(locked.get("SetupMode") or profile.get("setup_mode") or "").strip()
+    if setup_mode and setup_mode in _PROFILE_NAME_SETUP_MODE_PREFIXES:
+        return _PROFILE_NAME_SETUP_MODE_PREFIXES[setup_mode]
+    root = portfolio_cells.normalize_root(profile.get("instrument") or profile.get("current_contract"))
+    for candidate in (
+        profile.get("name"),
+        profile.get("display_name"),
+        profile.get("runtime_strategy_id"),
+        profile.get("stable_id"),
+        profile.get("deploy_strategy_class"),
+        profile.get("strategy_class"),
+    ):
+        cleaned = _clean_profile_family_candidate(candidate, root)
+        if cleaned:
+            return cleaned
+    return "Strategy"
+
+
+def _expected_profile_display_name(profile: Dict[str, Any]) -> str:
+    root = portfolio_cells.normalize_root(profile.get("instrument") or profile.get("current_contract"))
+    timeframe = _profile_timeframe_token(profile.get("timeframe"))
+    version = _profile_version_token(profile)
+    family = _profile_family_prefix(profile)
+    if not root or not timeframe or not version or not family:
+        return ""
+    parts = [family, root, timeframe, version]
+    cell = _profile_cell_suffix(profile, root)
+    if cell:
+        parts.append(cell)
+    return " ".join(parts)
 
 
 def _strategy_profiles_path() -> Path:
@@ -384,6 +1283,18 @@ def update_strategy_profile(profile_id: str,
             value = str(value or "").strip()
             if not value and key == "name":
                 raise JobValidationError("profile name cannot be empty")
+            if key == "name":
+                expected = _expected_profile_display_name(target)
+                if expected:
+                    if not _PROFILE_NAME_WORDS_RE.fullmatch(value):
+                        raise JobValidationError(
+                            "display name must use the template "
+                            "'<Family> <InstrumentRoot> <TimeframeShort> vN cNNN'"
+                        )
+                    if value != expected:
+                        raise JobValidationError(
+                            f"display name for this profile must be exactly: {expected}"
+                        )
             target[key] = value
             changed[key] = value
 
@@ -503,7 +1414,12 @@ def read_instrument_coverage() -> Dict[str, Any]:
                 "runtime_strategy_classes": profile.get("runtime_strategy_classes") or [],
                 "runtime_strategy_id": profile.get("runtime_strategy_id") or "",
                 "instrument":       profile.get("instrument") or "",
+                "instrument_root":  profile.get("instrument_root")
+                                     or _root_from_instrument(profile.get("instrument") or profile.get("current_contract"))
+                                     or "",
                 "timeframe":        profile.get("timeframe") or "",
+                "slot":             profile.get("slot"),
+                "cell_id":          profile.get("cell_id") or "",
                 "metrics":          profile.get("metrics") or {},
                 "test_period":      profile.get("test_period") or profile.get("period") or {},
                 "confidence_score": profile.get("confidence_score") or {},
@@ -529,8 +1445,9 @@ def read_instrument_coverage() -> Dict[str, Any]:
             }
             for prof in profiles:
                 status = str(prof.get("status") or "")
-                counts[_coverage_status(status)] += 1
-                if status in counts:
+                coverage_key = _coverage_status(status)
+                counts[coverage_key] += 1
+                if status in counts and status != coverage_key:
                     counts[status] += 1
                 cls = str(prof.get("strategy_class") or "")
                 available = bool(cls and cls in catalog_classes)
@@ -638,7 +1555,239 @@ def _normalize_strategy_profile_for_ui(profile: Dict[str, Any]) -> Dict[str, Any
             normalized["max_drawdown"] = metrics.get("adj_max_drawdown")
         out["metrics"] = normalized
 
+    expected_name = _expected_profile_display_name(out)
+    out["expected_name"] = expected_name
+    if expected_name:
+        out["name_matches_policy"] = str(out.get("name") or "").strip() == expected_name
+
     return out
+
+
+_PORTFOLIO_READY_STATUSES = {"ready", "paper_ready"}
+
+
+def _portfolio_layout_fingerprint() -> Tuple[int, float]:
+    path = _strategy_profiles_path()
+    if not path.is_file():
+        return (0, 0.0)
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0, 0.0)
+    return (int(stat.st_size), round(stat.st_mtime, 3))
+
+
+def _profile_counts_in_portfolio(profile: Dict[str, Any]) -> bool:
+    return str(profile.get("status") or "").strip() in _PORTFOLIO_READY_STATUSES
+
+
+def _profile_portfolio_root(profile: Dict[str, Any]) -> str:
+    return portfolio_cells.normalize_root(
+        profile.get("instrument") or profile.get("current_contract")
+    )
+
+
+def _profile_portfolio_family_key(profile: Dict[str, Any]) -> str:
+    for key in ("stable_id", "deploy_strategy_class", "strategy_class", "profile_id", "name"):
+        value = str(profile.get(key) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _profile_portfolio_aliases(profile: Dict[str, Any]) -> List[str]:
+    aliases: List[str] = []
+    seen = set()
+
+    def add(value: Any) -> None:
+        alias = str(value or "").strip().lower()
+        if not alias or alias in seen:
+            return
+        seen.add(alias)
+        aliases.append(alias)
+
+    for key in ("stable_id", "profile_id", "deploy_strategy_class", "strategy_class"):
+        add(profile.get(key))
+    for value in profile.get("runtime_strategy_classes") or []:
+        add(value)
+    return aliases
+
+
+def _profile_portfolio_name(profile: Dict[str, Any]) -> str:
+    for key in ("name", "display_name", "profile_id", "stable_id", "deploy_strategy_class", "strategy_class"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _profile_explicit_slot(profile: Dict[str, Any], root: str) -> Optional[int]:
+    slot = portfolio_cells.coerce_slot(profile.get("slot"))
+    if slot is not None:
+        return slot
+    return portfolio_cells.slot_for_cell_id(profile.get("cell_id"), root)
+
+
+def _build_portfolio_layout(profiles: List[Dict[str, Any]]) -> Dict[str, Dict[Any, Dict[str, Any]]]:
+    families_by_root: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    profile_lookup: Dict[str, Dict[str, Any]] = {}
+    match_lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    for profile in profiles:
+        if not isinstance(profile, dict) or not _profile_counts_in_portfolio(profile):
+            continue
+        root = _profile_portfolio_root(profile)
+        family_key = _profile_portfolio_family_key(profile)
+        if not root or root not in portfolio_cells.PORTFOLIO_ROOT_INDEX or not family_key:
+            continue
+        family = families_by_root.setdefault(root, {}).setdefault(family_key, {
+            "family_key": family_key,
+            "strategy_name": _profile_portfolio_name(profile),
+            "aliases": [],
+            "profiles": [],
+            "explicit_slot": None,
+        })
+        family["profiles"].append(profile)
+        for alias in _profile_portfolio_aliases(profile):
+            if alias not in family["aliases"]:
+                family["aliases"].append(alias)
+        if not family["strategy_name"]:
+            family["strategy_name"] = _profile_portfolio_name(profile)
+        slot = _profile_explicit_slot(profile, root)
+        if slot is not None and family["explicit_slot"] is None:
+            family["explicit_slot"] = slot
+
+    for root, families_map in families_by_root.items():
+        families = sorted(families_map.values(), key=lambda item: item["family_key"])
+        assigned: Dict[str, int] = {}
+        used_slots = set()
+        explicit_families = sorted(
+            [item for item in families if item["explicit_slot"] is not None],
+            key=lambda item: (item["explicit_slot"], item["family_key"]),
+        )
+        for family in explicit_families:
+            slot = family["explicit_slot"]
+            if slot in used_slots:
+                continue
+            used_slots.add(slot)
+            assigned[family["family_key"]] = slot
+
+        free_slots = [
+            slot for slot in range(1, portfolio_cells.TARGET_PORTFOLIO_SLOTS + 1)
+            if slot not in used_slots
+        ]
+        for family in families:
+            if family["family_key"] in assigned or not free_slots:
+                continue
+            assigned[family["family_key"]] = free_slots.pop(0)
+
+        for family in families:
+            slot = assigned.get(family["family_key"])
+            if slot is None:
+                continue
+            meta = portfolio_cells.portfolio_metadata(root, slot, family["strategy_name"])
+            if not meta:
+                continue
+            for profile in family["profiles"]:
+                profile_id = str(profile.get("profile_id") or profile.get("id") or "").strip()
+                if profile_id:
+                    profile_lookup[profile_id] = dict(meta)
+            for alias in family["aliases"]:
+                match_lookup[(root, alias)] = dict(meta)
+
+    return {"profiles": profile_lookup, "lookup": match_lookup}
+
+
+def _get_portfolio_layout() -> Dict[str, Dict[Any, Dict[str, Any]]]:
+    global _PORTFOLIO_LAYOUT_FP, _PORTFOLIO_LAYOUT_VALUE
+
+    fp = _portfolio_layout_fingerprint()
+    if fp != _PORTFOLIO_LAYOUT_FP:
+        try:
+            data = _read_strategy_profiles_raw()
+            profiles = [
+                _normalize_strategy_profile_for_ui(x)
+                for x in (data.get("profiles") or [])
+                if isinstance(x, dict)
+            ]
+        except (JobValidationError, OSError, json.JSONDecodeError):
+            profiles = []
+        _PORTFOLIO_LAYOUT_VALUE = _build_portfolio_layout(profiles)
+        _PORTFOLIO_LAYOUT_FP = fp
+    return _PORTFOLIO_LAYOUT_VALUE
+
+
+def _apply_portfolio_metadata_to_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    profile_id = str(profile.get("profile_id") or profile.get("id") or "").strip()
+    if not profile_id:
+        return profile
+    meta = _get_portfolio_layout().get("profiles", {}).get(profile_id)
+    if not meta:
+        return profile
+    out = dict(profile)
+    out["instrument_root"] = meta.get("instrument") or ""
+    out["slot"] = meta.get("slot")
+    out["cell_id"] = meta.get("cell_id") or ""
+    return out
+
+
+def _resolve_portfolio_metadata(instrument: Any, *aliases: Any) -> Dict[str, Any]:
+    root = portfolio_cells.normalize_root(instrument)
+    if not root:
+        return {}
+    lookup = _get_portfolio_layout().get("lookup", {})
+    for alias in aliases:
+        key = str(alias or "").strip().lower()
+        if not key:
+            continue
+        meta = lookup.get((root, key))
+        if meta:
+            return dict(meta)
+    return {}
+
+
+def _job_portfolio_metadata(job: Any) -> Dict[str, Any]:
+    if not isinstance(job, dict):
+        return {}
+    strategy = job.get("strategy") or {}
+    existing = job.get("portfolio")
+    if isinstance(existing, dict):
+        meta = portfolio_cells.portfolio_metadata(
+            existing.get("instrument") or job.get("instrument"),
+            existing.get("slot"),
+            existing.get("strategy_name")
+            or existing.get("display_name")
+            or strategy.get("display_name")
+            or strategy.get("class_name"),
+        )
+        if meta:
+            return meta
+    return _resolve_portfolio_metadata(
+        job.get("instrument"),
+        strategy.get("class_name"),
+        strategy.get("display_name"),
+        strategy.get("strategy_id"),
+        strategy.get("stable_id"),
+    )
+
+
+def _persist_result_portfolio(jdir: Path, result_doc: Any, portfolio: Dict[str, Any]) -> None:
+    if not isinstance(result_doc, dict) or not portfolio:
+        return
+    existing = result_doc.get("portfolio")
+    if isinstance(existing, dict):
+        existing_cell_id = str(existing.get("cell_id") or "").strip()
+        existing_slot = portfolio_cells.coerce_slot(existing.get("slot"))
+        if existing_cell_id == str(portfolio.get("cell_id") or "") and existing_slot == portfolio.get("slot"):
+            return
+    updated = dict(result_doc)
+    updated["portfolio"] = dict(portfolio)
+    try:
+        _write_json_atomic(jdir / "result.json", updated)
+    except OSError:
+        return
+    result_doc.clear()
+    result_doc.update(updated)
 
 
 def _read_catalog_file(name: str) -> Optional[Dict[str, Any]]:
@@ -783,6 +1932,133 @@ def _resolve_strategy_display_name(source_file: Any,
         return fallback
     value = str(m.group(1) or "").strip()
     return value or fallback
+
+
+def _profile_class_candidates(profile: Dict[str, Any]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+
+    def add(value: Any) -> None:
+        cls = str(value or "").strip()
+        if not cls:
+            return
+        key = cls.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(cls)
+
+    add(profile.get("deploy_strategy_class"))
+    add(profile.get("strategy_class"))
+    for value in profile.get("runtime_strategy_classes") or []:
+        add(value)
+    return out
+
+
+def _clone_strategy_parameters(raw: Any) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(dict(item))
+    return out
+
+
+def _visible_catalog_strategies(
+    strat_doc: Optional[Dict[str, Any]],
+    warnings: Optional[List[str]] = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    if warnings is None:
+        warnings = []
+    if strat_doc is None:
+        return ([{
+            "class_name":   name,
+            "display_name": name,
+            "source_file":  None,
+            "parameters":   [],
+            "fallback":     True,
+        } for name in _FALLBACK_STRATEGIES], None)
+
+    raw_strategies = strat_doc.get("strategies") or []
+    generated_at = strat_doc.get("generated_at_utc")
+    normalized_by_class: Dict[str, Dict[str, Any]] = {}
+
+    for raw in raw_strategies:
+        if not isinstance(raw, dict):
+            continue
+        cls_name = str(raw.get("class_name") or "").strip()
+        if not cls_name:
+            continue
+        sf = _resolve_strategy_source_file(cls_name, raw.get("source_file"))
+        if not sf:
+            warnings.append(
+                f"Стратегия {cls_name} исключена из каталога: "
+                "файл .cs удалён/архивирован, но класс ещё в DLL. "
+                "Перекомпилируйте скрипты в NinjaTrader (Tools → Compile)."
+            )
+            continue
+        entry = dict(
+            raw,
+            source_file=sf,
+            display_name=_resolve_strategy_display_name(
+                sf,
+                raw.get("display_name"),
+                cls_name,
+            ),
+        )
+        if os.path.basename(sf).startswith("@"):
+            entry = dict(entry, is_sample=True)
+        normalized_by_class[cls_name.lower()] = entry
+
+    visible: List[Dict[str, Any]] = []
+    visible_keys: set[str] = set()
+    for entry in normalized_by_class.values():
+        cls_name = str(entry.get("class_name") or "").strip()
+        if not cls_name or cls_name in _INTERNAL_STRATEGY_CATALOG_CLASSES:
+            continue
+        key = cls_name.lower()
+        if key in visible_keys:
+            continue
+        visible_keys.add(key)
+        visible.append(entry)
+
+    profiles_doc = read_strategy_profiles()
+    for raw_profile in profiles_doc.get("profiles") or []:
+        if not isinstance(raw_profile, dict):
+            continue
+        deploy_cls = str(raw_profile.get("deploy_strategy_class") or "").strip()
+        if not deploy_cls:
+            continue
+        deploy_key = deploy_cls.lower()
+        if deploy_key in visible_keys or deploy_cls in _INTERNAL_STRATEGY_CATALOG_CLASSES:
+            continue
+        sf = _resolve_strategy_source_file(deploy_cls, None)
+        if not sf:
+            continue
+        donor: Optional[Dict[str, Any]] = None
+        for candidate in _profile_class_candidates(raw_profile):
+            donor = normalized_by_class.get(candidate.lower())
+            if donor:
+                break
+        entry = {
+            "class_name": deploy_cls,
+            "display_name": _resolve_strategy_display_name(
+                sf,
+                raw_profile.get("name") or raw_profile.get("display_name") or deploy_cls,
+                deploy_cls,
+            ),
+            "source_file": sf,
+            "parameters": _clone_strategy_parameters((donor or {}).get("parameters")),
+            "synthesized_from_profile": True,
+        }
+        for key in ("description", "category"):
+            if donor and donor.get(key):
+                entry[key] = donor.get(key)
+        visible.append(entry)
+        visible_keys.add(deploy_key)
+
+    return visible, generated_at
 
 
 def _safe_mtime(p: Path) -> Optional[float]:
@@ -977,13 +2253,12 @@ def whitelisted_strategies() -> List[str]:
     callers (incl. /api/strategies) see fresh values."""
     cat = read_strategies_catalog()
     names: List[str] = []
-    if cat and isinstance(cat.get("strategies"), list):
-        for s in cat["strategies"]:
-            if isinstance(s, dict) and isinstance(s.get("class_name"), str):
-                sf = _resolve_strategy_source_file(s["class_name"], s.get("source_file"))
-                if not sf:
-                    continue
-                names.append(s["class_name"])
+    if cat:
+        visible, _generated_at = _visible_catalog_strategies(cat, warnings=[])
+        for s in visible:
+            cls_name = str(s.get("class_name") or "").strip()
+            if cls_name:
+                names.append(cls_name)
     if not names:
         names = list(_FALLBACK_STRATEGIES)
     # update mutable module-level reference
@@ -1025,44 +2300,7 @@ def build_catalog_response() -> Dict[str, Any]:
             "strategies.json не найден — bridge ещё не запускался "
             "после старта NinjaTrader; показан резервный список."
         )
-        strategies = [{
-            "class_name":   name,
-            "display_name": name,
-            "source_file":  None,
-            "parameters":   [],
-            "fallback":     True,
-        } for name in _FALLBACK_STRATEGIES]
-        strategies_generated_at = None
-    else:
-        raw_strategies = strat_doc.get("strategies") or []
-        strategies_generated_at = strat_doc.get("generated_at_utc")
-        # Filter out ghost strategies: classes that exist in the compiled DLL
-        # but whose source file has been deleted (.cs absent → source_file="").
-        # Also filter out NT template stubs (source_file starts with "@").
-        strategies = []
-        for s in raw_strategies:
-            cls_name = s.get("class_name", "")
-            sf = _resolve_strategy_source_file(cls_name, s.get("source_file"))
-            if not sf:
-                warnings.append(
-                    f"Стратегия {cls_name} исключена из каталога: "
-                    "файл .cs удалён/архивирован, но класс ещё в DLL. "
-                    "Перекомпилируйте скрипты в NinjaTrader (Tools → Compile)."
-                )
-                continue
-            s = dict(
-                s,
-                source_file=sf,
-                display_name=_resolve_strategy_display_name(
-                    sf,
-                    s.get("display_name"),
-                    cls_name,
-                ),
-            )
-            if os.path.basename(sf).startswith("@"):
-                # Sample templates — keep but mark
-                s = dict(s, is_sample=True)
-            strategies.append(s)
+    strategies, strategies_generated_at = _visible_catalog_strategies(strat_doc, warnings)
 
     if instr_doc is None:
         warnings.append(
@@ -1279,6 +2517,16 @@ def _build_instrument_groups_block(
 def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+def _atomic_write_text_existing_parent(path: Path, text: str) -> None:
+    parent = path.parent
+    if not parent.is_dir():
+        raise FileNotFoundError(str(parent))
+    tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     os.replace(tmp, path)
@@ -1556,8 +2804,16 @@ def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
 
 
 def _apply_locked_strategy_parameters(req: "CreateJobRequest") -> None:
-    """Enforce locked production/paper defaults for approved strategies."""
+    """Enforce locked production/paper defaults for approved strategies.
+
+    NTAMicroVwapRiskPilot is locked for smoke/debug queue paths only. Research
+    jobs must keep caller/profile parameters so time-window audits and sweeps
+    are not silently overwritten; paper runtime still autofills from profiles
+    via runtime.submit_command.
+    """
     if req.class_name != "NTAMicroVwapRiskPilot":
+        return
+    if str(req.role or "").strip().lower() == "research":
         return
     if not isinstance(req.parameters, dict):
         req.parameters = {}
@@ -1737,8 +2993,8 @@ def _validate(req: CreateJobRequest) -> None:
         if not isinstance(v, (int, float, bool, str)):
             raise JobValidationError(f"parameter '{k}': only int/float/bool/string allowed")
     req.risk_profile = _normalize_risk_profile(req.risk_profile)
-    if req.job_id is not None and not JOB_ID_PATTERN.match(req.job_id):
-        raise JobValidationError("job_id contains forbidden characters")
+    if req.job_id is not None:
+        _safe_job_id(req.job_id)
 
     # ------------------------------------------------------------------
     # Research-grade execution gate.
@@ -1815,26 +3071,34 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     job_id = req.job_id or gen_job_id("ui")
     pending = jobs_dir() / "pending"
     staging_root = pending / ".staging"
-    staging_job = staging_root / job_id
-    pending_job = pending / job_id
+    staging_job = _safe_child_path(staging_root, job_id, "job_id")
+    pending_job = _safe_child_path(pending, job_id, "job_id")
 
-    if pending_job.exists():
-        raise JobValidationError(f"pending/{job_id} already exists")
+    if _job_id_exists_anywhere(job_id):
+        raise JobValidationError(f"job_id {job_id} already exists")
     if staging_job.exists():
         shutil.rmtree(staging_job)
 
     staging_job.mkdir(parents=True, exist_ok=True)
 
+    portfolio = _resolve_portfolio_metadata(req.instrument, req.class_name)
+    strategy_doc = {
+        "class_name": req.class_name,
+        "source_file_hint": "",
+        "parameters": dict(req.parameters),
+    }
+    if portfolio:
+        strategy_doc["display_name"] = portfolio.get("strategy_name") or req.class_name
+        strategy_doc["slot"] = portfolio.get("slot")
+        strategy_doc["cell_id"] = portfolio.get("cell_id")
+
+    created_at_utc = utcnow_iso()
     job_doc = {
         "schema_version": "0.1",
         "job_id": job_id,
-        "created_at_utc": utcnow_iso(),
+        "created_at_utc": created_at_utc,
         "kind": "historical_backtest",
-        "strategy": {
-            "class_name": req.class_name,
-            "source_file_hint": "",
-            "parameters": dict(req.parameters),
-        },
+        "strategy": strategy_doc,
         "instrument": req.instrument,
         "timeframe": {
             "bars_period_type": req.bars_period_type,
@@ -1855,6 +3119,8 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
             "round_turn_commission": _effective_round_turn_commission(req),
         },
     }
+    if portfolio:
+        job_doc["portfolio"] = dict(portfolio)
     if req.batch_id:
         job_doc["batch"] = {
             "batch_id":    req.batch_id,
@@ -1874,6 +3140,9 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     except OSError:
         pass
 
+    if not req.batch_id:
+        _ensure_report_number("job", job_id, created_at_utc)
+
     return job_id, pending_job
 
 
@@ -1882,16 +3151,28 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
 # ---------------------------------------------------------------------------
 
 def _safe_job_id(job_id: str) -> str:
-    if not JOB_ID_PATTERN.match(job_id or ""):
-        raise JobValidationError("invalid job_id")
-    return job_id
+    return _validate_safe_id(job_id, "job_id")
+
+
+def _job_id_exists_anywhere(job_id: str) -> bool:
+    job_id = _safe_job_id(job_id)
+    for sub in QUEUE_SUBDIRS:
+        if _safe_child_path(jobs_dir() / sub, job_id, "job_id").is_dir():
+            return True
+    return False
+
+
+def _is_batch_child_job_dir(jdir: Path) -> bool:
+    job = _read_json_safe(jdir / "job.json") or {}
+    batch = job.get("batch")
+    return isinstance(batch, dict) and bool(batch.get("batch_id"))
 
 
 def find_job_dir(job_id: str) -> Optional[Tuple[str, Path]]:
     """Return (status, dir) or None."""
     job_id = _safe_job_id(job_id)
     for sub in QUEUE_SUBDIRS:
-        p = jobs_dir() / sub / job_id
+        p = _safe_child_path(jobs_dir() / sub, job_id, "job_id")
         if p.is_dir():
             return sub, p
     return None
@@ -1906,10 +3187,125 @@ def queue_counts() -> Dict[str, int]:
             continue
         n = 0
         for child in d.iterdir():
-            if child.is_dir() and child.name != ".staging":
+            if child.is_dir() and not child.name.startswith("."):
                 n += 1
         out[sub] = n
     return out
+
+
+def _scan_job_location_index() -> Tuple[Tuple[int, float], Dict[str, Tuple[str, Path, float]]]:
+    index: Dict[str, Tuple[str, Path, float]] = {}
+    fp_count = 0
+    fp_sum_mtime = 0.0
+    for sub in QUEUE_SUBDIRS:
+        d = jobs_dir() / sub
+        if not d.is_dir():
+            continue
+        for child in d.iterdir():
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            try:
+                mtime = child.stat().st_mtime
+            except OSError:
+                continue
+            index[child.name] = (sub, child, mtime)
+            fp_count += 1
+            fp_sum_mtime += mtime
+    return (fp_count, round(fp_sum_mtime, 3)), index
+
+
+def _get_job_location_index(force_scan: bool = False) -> Tuple[Tuple[int, float], Dict[str, Tuple[str, Path, float]]]:
+    global _JOB_LOCATION_FP, _JOB_LOCATION_INDEX
+    if not force_scan and _JOB_LOCATION_FP is not None:
+        return _JOB_LOCATION_FP, _JOB_LOCATION_INDEX
+    fp, index = _scan_job_location_index()
+    if _JOB_LOCATION_FP != fp:
+        _JOB_LOCATION_FP = fp
+        _JOB_LOCATION_INDEX = index
+    return _JOB_LOCATION_FP, _JOB_LOCATION_INDEX
+
+
+def _job_loc_from_index(job_id: Any,
+                        loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
+                        ) -> Optional[Tuple[str, Path]]:
+    jid = str(job_id or "")
+    if not jid:
+        return None
+    if loc_index is None:
+        _fp, loc_index = _get_job_location_index()
+    hit = loc_index.get(jid)
+    if not hit:
+        return None
+    return hit[0], hit[1]
+
+
+def listable_queue_counts() -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    report_numbers = _get_report_numbers_cached()
+    for sub in QUEUE_SUBDIRS:
+        d = jobs_dir() / sub
+        if not d.is_dir():
+            out[sub] = 0
+            continue
+        n = 0
+        for child in d.iterdir():
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if _report_key("job", child.name) not in report_numbers:
+                continue
+            n += 1
+        out[sub] = n
+    return out
+
+
+def _indexed_job_rows() -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Return visible standalone/batch-child job rows plus current report numbers."""
+    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
+
+    fp, loc_index = _get_job_location_index(force_scan=True)
+    all_rows: List[Dict[str, Any]] = [
+        {
+            "job_id": jid,
+            "status": status,
+            "path": str(path),
+            "mtime": mtime,
+        }
+        for jid, (status, path, mtime) in loc_index.items()
+    ]
+    if fp != _REPORT_NUMBERS_FP:
+        # Ordinary report-list reads must stay cheap. Use the persisted
+        # report_numbers index; creation paths assign new numbers incrementally.
+        _REPORT_NUMBERS_VALUE = _read_report_numbers_mapping_cached()
+        if not _REPORT_NUMBERS_VALUE:
+            _REPORT_NUMBERS_VALUE = sync_report_numbers()
+        _REPORT_NUMBERS_FP = fp
+    report_numbers = _REPORT_NUMBERS_VALUE
+    rows = [
+        r for r in all_rows
+        if _report_key("job", r["job_id"]) in report_numbers
+    ]
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return rows, report_numbers
+
+
+def _build_job_list_row(index_row: Dict[str, Any],
+                        report_numbers: Dict[str, int],
+                        favorite_keys: set[str]) -> Dict[str, Any]:
+    r = dict(index_row)
+    sig = (r["status"], r["mtime"])
+    cached = _JOB_SUMMARY_CACHE.get(r["job_id"])
+    if cached and cached[0] == sig:
+        meta = cached[1]
+    else:
+        meta = read_job_summary(r["job_id"], include_adjusted=False)
+        if meta:
+            _JOB_SUMMARY_CACHE[r["job_id"]] = (sig, meta)
+    if meta:
+        r.update(meta)
+    if not (r.get("batch") or {}).get("batch_id"):
+        r["report_no"] = report_numbers.get(_report_key("job", r["job_id"]))
+    r["favorite"] = _report_key("job", r["job_id"]) in favorite_keys
+    return r
 
 
 def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
@@ -1919,60 +3315,14 @@ def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     then re-uses cached summaries for every (jid, status, mtime) we've seen
     before. Only changed entries hit disk via read_job_summary().
     """
-    global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
-
-    # Index pass: cheap stat() per entry.
-    rows: List[Dict[str, Any]] = []
-    fp_count = 0
-    fp_sum_mtime = 0.0
-    for sub in QUEUE_SUBDIRS:
-        d = jobs_dir() / sub
-        if not d.is_dir():
-            continue
-        for child in d.iterdir():
-            if not child.is_dir() or child.name == ".staging":
-                continue
-            try:
-                mtime = child.stat().st_mtime
-            except OSError:
-                continue
-            rows.append({
-                "job_id": child.name,
-                "status": sub,
-                "path": str(child),
-                "mtime": mtime,
-            })
-            fp_count += 1
-            fp_sum_mtime += mtime
-
-    # Reuse the previous report-numbers map unless the index actually changed.
-    fp = (fp_count, round(fp_sum_mtime, 3))
-    if fp != _REPORT_NUMBERS_FP:
-        _REPORT_NUMBERS_VALUE = sync_report_numbers()
-        _REPORT_NUMBERS_FP = fp
-    report_numbers = _REPORT_NUMBERS_VALUE
-
-    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    rows, report_numbers = _indexed_job_rows()
+    favorite_keys = _report_favorite_key_set()
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 50))
-    out: List[Dict[str, Any]] = []
-    for r in rows[offset: offset + limit]:
-        sig = (r["status"], r["mtime"])
-        cached = _JOB_SUMMARY_CACHE.get(r["job_id"])
-        if cached and cached[0] == sig:
-            meta = cached[1]
-        else:
-            meta = read_job_summary(r["job_id"])
-            if meta:
-                # Drop transient "status" duplication into the cache;
-                # we'll re-merge below.
-                _JOB_SUMMARY_CACHE[r["job_id"]] = (sig, meta)
-        if meta:
-            r.update(meta)
-        if not (r.get("batch") or {}).get("batch_id"):
-            r["report_no"] = report_numbers.get(_report_key("job", r["job_id"]))
-        out.append(r)
-    return out
+    return [
+        _build_job_list_row(r, report_numbers, favorite_keys)
+        for r in rows[offset: offset + limit]
+    ]
 
 
 def latest_job() -> Optional[Dict[str, Any]]:
@@ -1988,6 +3338,107 @@ def _read_json_safe(path: Path) -> Optional[Any]:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _json_value_after_key(text: str, key: str) -> Optional[Any]:
+    needle = f'"{key}"'
+    pos = text.find(needle)
+    if pos < 0:
+        return None
+    colon = text.find(":", pos + len(needle))
+    if colon < 0:
+        return None
+    fragment = text[colon + 1:].lstrip()
+    try:
+        value, _end = json.JSONDecoder().raw_decode(fragment)
+        return value
+    except json.JSONDecodeError:
+        return None
+
+
+def _read_result_summary_fast(path: Path) -> Dict[str, Any]:
+    """Read only list-view fields from result.json.
+
+    Large Strategy Analyzer results can embed thousands of trades in
+    result.json. Report lists need the header metrics only, so parsing the
+    whole file for every table row creates multi-second stalls.
+    """
+    text = ""
+    metrics: Optional[Any] = None
+    try:
+        with open(path, "rb") as fh:
+            for size in (64 * 1024, 256 * 1024, 1024 * 1024):
+                fh.seek(0)
+                raw = fh.read(size)
+                if not raw:
+                    return {}
+                text = raw.decode("utf-8-sig", errors="ignore")
+                metrics = _json_value_after_key(text, "metrics")
+                if isinstance(metrics, dict):
+                    break
+    except OSError:
+        return {}
+    if not isinstance(metrics, dict):
+        full = _read_json_safe(path) or {}
+        if not isinstance(full, dict):
+            return {}
+        return {
+            "finished_at_utc": full.get("finished_at_utc"),
+            "duration_ms": full.get("duration_ms"),
+            "metrics": full.get("metrics") if isinstance(full.get("metrics"), dict) else {},
+        }
+    return {
+        "finished_at_utc": _json_value_after_key(text, "finished_at_utc"),
+        "duration_ms": _json_value_after_key(text, "duration_ms"),
+        "metrics": metrics,
+    }
+
+
+def _read_json_array_cached(path: Path) -> Optional[List[Any]]:
+    """Read a large JSON array artifact once per file signature.
+
+    bars.json can be tens of megabytes. The UI pages through it, and parsing the
+    full file for every page is the expensive part. Keep a tiny process-local LRU
+    so repeated pages of the same report reuse the parsed array.
+    """
+    global _JSON_ARRAY_ARTIFACT_CACHE_BYTES
+    if not path.is_file():
+        return None
+    sig = _file_cache_sig(path)
+    if sig is None:
+        data = _read_json_safe(path)
+        return data if isinstance(data, list) else None
+    key = str(path.resolve())
+    cached = _JSON_ARRAY_ARTIFACT_CACHE.get(key)
+    if cached and cached[0] == sig:
+        try:
+            _JSON_ARRAY_ARTIFACT_CACHE_ORDER.remove(key)
+        except ValueError:
+            pass
+        _JSON_ARRAY_ARTIFACT_CACHE_ORDER.append(key)
+        return cached[1]
+
+    data = _read_json_safe(path)
+    if not isinstance(data, list):
+        return None
+
+    _JSON_ARRAY_ARTIFACT_CACHE[key] = (sig, data)
+    _JSON_ARRAY_ARTIFACT_CACHE_BYTES[key] = int(sig[0])
+    try:
+        _JSON_ARRAY_ARTIFACT_CACHE_ORDER.remove(key)
+    except ValueError:
+        pass
+    _JSON_ARRAY_ARTIFACT_CACHE_ORDER.append(key)
+
+    total_bytes = sum(_JSON_ARRAY_ARTIFACT_CACHE_BYTES.values())
+    while (
+        len(_JSON_ARRAY_ARTIFACT_CACHE_ORDER) > 1
+        and total_bytes > _JSON_ARRAY_ARTIFACT_CACHE_MAX_BYTES
+    ):
+        old_key = _JSON_ARRAY_ARTIFACT_CACHE_ORDER.pop(0)
+        total_bytes -= _JSON_ARRAY_ARTIFACT_CACHE_BYTES.pop(old_key, 0)
+        _JSON_ARRAY_ARTIFACT_CACHE.pop(old_key, None)
+    return data
 
 
 def _compute_adjusted_metrics(trades: Optional[List[Any]],
@@ -2082,7 +3533,40 @@ def _compute_adjusted_metrics(trades: Optional[List[Any]],
     return out
 
 
-def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
+def _compute_fast_adjusted_metrics(metrics: Dict[str, Any],
+                                   parameters: Optional[Dict[str, Any]],
+                                   round_turn_commission: Optional[Any] = None
+                                   ) -> Optional[Dict[str, Any]]:
+    rtc = 0.0
+    if isinstance(parameters, dict):
+        try:
+            rtc = float(parameters.get("RoundTurnCommission", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            rtc = 0.0
+    if rtc <= 0 and round_turn_commission is not None:
+        try:
+            rtc = float(round_turn_commission or 0.0)
+        except (TypeError, ValueError):
+            rtc = 0.0
+    if rtc <= 0:
+        return None
+    try:
+        trade_count = int(metrics.get("trade_count") or 0)
+        net_profit = float(metrics.get("net_profit") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if trade_count <= 0:
+        return None
+    commission_total = trade_count * rtc
+    return {
+        "round_turn_commission": rtc,
+        "commission_total_adjusted": round(commission_total, 4),
+        "net_profit_after_commission": round(net_profit - commission_total, 4),
+        "commission_template_used": "None (fast list estimate from trade_count)",
+    }
+
+
+def read_job_summary(job_id: str, include_adjusted: bool = True) -> Optional[Dict[str, Any]]:
     located = find_job_dir(job_id)
     if not located:
         return None
@@ -2097,9 +3581,15 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
     summary["period"] = job.get("period")
     summary["created_at_utc"] = job.get("created_at_utc")
     summary["batch"] = job.get("batch")  # None for single jobs
+    portfolio = _job_portfolio_metadata(job)
+    if portfolio:
+        summary["portfolio"] = portfolio
+        summary["slot"] = portfolio.get("slot")
+        summary["cell_id"] = portfolio.get("cell_id")
+        summary["strategy_name"] = portfolio.get("strategy_name")
 
     if status == "done":
-        res = _read_json_safe(jdir / "result.json") or {}
+        res = _read_result_summary_fast(jdir / "result.json")
         summary["finished_at_utc"] = res.get("finished_at_utc")
         summary["duration_ms"] = res.get("duration_ms")
         summary["metrics"] = res.get("metrics") or {}
@@ -2121,15 +3611,22 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
         # NinjaTrader runs use commission_template=None so metrics.net_profit
         # is GROSS. Recompute "real" metrics from per-trade RoundTurnCommission.
         try:
-            trades_doc = _read_json_safe(jdir / "trades.json")
             params = ((job.get("strategy") or {}).get("parameters") or {})
             execution = (job.get("execution") or {})
-            adj = _compute_adjusted_metrics(
-                trades_doc,
-                params,
-                m,
-                execution.get("round_turn_commission"),
-            )
+            if include_adjusted:
+                trades_doc = _read_json_array_cached(jdir / "trades.json")
+                adj = _compute_adjusted_metrics(
+                    trades_doc,
+                    params,
+                    m,
+                    execution.get("round_turn_commission"),
+                )
+            else:
+                adj = _compute_fast_adjusted_metrics(
+                    m,
+                    params,
+                    execution.get("round_turn_commission"),
+                )
             if adj:
                 m.update(adj)
                 summary["net_profit_after_commission"] = adj.get("net_profit_after_commission")
@@ -2144,6 +3641,14 @@ def read_job_summary(job_id: str) -> Optional[Dict[str, Any]]:
         summary["error_type"] = err.get("error_type")
         summary["error_message"] = (err.get("message") or "").splitlines()[0] if err.get("message") else None
         summary["finished_at_utc"] = err.get("finished_at_utc")
+    elif status == "cancelled":
+        res = _read_json_safe(jdir / "result.json") or {}
+        summary["finished_at_utc"] = res.get("finished_at_utc") or res.get("cancelled_at_utc")
+        summary["duration_ms"] = res.get("duration_ms")
+        summary["metrics"] = res.get("metrics") or {}
+        summary["trade_count"] = summary["metrics"].get("trade_count")
+        summary["cancel_reason"] = res.get("reason")
+        summary["verification_warnings"] = res.get("verification_warnings") or []
     elif status == "running":
         hb = _read_json_safe(jdir / "heartbeat.json") or {}
         summary["heartbeat_at_utc"] = hb.get("updated_at_utc")
@@ -2168,15 +3673,30 @@ def read_job_full(job_id: str) -> Optional[Dict[str, Any]]:
     # Lift the batch link (if any) to the top level so the UI can detect
     # batch membership without diving into the raw job.json sub-object.
     job_doc = out["job"]
+    portfolio = _job_portfolio_metadata(job_doc)
+    if portfolio:
+        out["portfolio"] = portfolio
+        out["slot"] = portfolio.get("slot")
+        out["cell_id"] = portfolio.get("cell_id")
+        if isinstance(job_doc, dict):
+            strategy_doc = job_doc.get("strategy")
+            if isinstance(strategy_doc, dict):
+                strategy_doc.setdefault("display_name", portfolio.get("strategy_name") or strategy_doc.get("class_name"))
+                strategy_doc.setdefault("slot", portfolio.get("slot"))
+                strategy_doc.setdefault("cell_id", portfolio.get("cell_id"))
+            job_doc.setdefault("portfolio", dict(portfolio))
     if isinstance(job_doc, dict) and isinstance(job_doc.get("batch"), dict):
         out["batch"] = job_doc["batch"]
     if status == "done":
         out["result"] = _read_json_safe(jdir / "result.json")
+        if portfolio and isinstance(out.get("result"), dict):
+            out["result"]["portfolio"] = dict(portfolio)
+            _persist_result_portfolio(jdir, out["result"], portfolio)
         # Augment metrics with commission-adjusted view (real net etc).
         try:
             res = out["result"] or {}
             m = res.get("metrics") or {}
-            trades_doc = _read_json_safe(jdir / "trades.json")
+            trades_doc = _read_json_array_cached(jdir / "trades.json")
             params = ((job_doc.get("strategy") if isinstance(job_doc, dict) else None) or {}).get("parameters") or {}
             execution = ((job_doc.get("execution") if isinstance(job_doc, dict) else None) or {})
             adj = _compute_adjusted_metrics(
@@ -2194,6 +3714,8 @@ def read_job_full(job_id: str) -> Optional[Dict[str, Any]]:
     elif status == "failed":
         out["error"] = _read_json_safe(jdir / "error.json")
         out["result_partial"] = _read_json_safe(jdir / "result.partial.json")
+    elif status == "cancelled":
+        out["result"] = _read_json_safe(jdir / "result.json")
     elif status == "running":
         out["heartbeat"] = _read_json_safe(jdir / "heartbeat.json")
     return out
@@ -2208,7 +3730,7 @@ def read_trades(job_id: str, offset: int = 0, limit: int = 100) -> Dict[str, Any
     if not tj.is_file():
         return {"job_id": job_id, "status": status, "trades": [], "total": 0,
                 "note": "trades.json missing for this job"}
-    arr = _read_json_safe(tj)
+    arr = _read_json_array_cached(tj)
     if not isinstance(arr, list):
         return {"job_id": job_id, "status": status, "trades": [], "total": 0,
                 "note": "trades.json malformed"}
@@ -2243,7 +3765,7 @@ def read_bars(job_id: str, offset: int = 0, limit: int = 5000) -> Dict[str, Any]
     if not bj.is_file():
         return {"job_id": job_id, "status": status, "bars": [], "total": 0,
                 "note": "bars.json missing for this job"}
-    arr = _read_json_safe(bj)
+    arr = _read_json_array_cached(bj)
     if not isinstance(arr, list):
         return {"job_id": job_id, "status": status, "bars": [], "total": 0,
                 "note": "bars.json malformed"}
@@ -2367,9 +3889,6 @@ def ninjatrader_running() -> Optional[bool]:
 # child jobs.
 # ---------------------------------------------------------------------------
 
-BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
-
-
 def batches_dir() -> Path:
     return project_root() / "data" / "batches"
 
@@ -2422,9 +3941,8 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
 
     risk_profile = _normalize_risk_profile(req.risk_profile)
     batch_id = req.batch_id or gen_batch_id("batch")
-    if not BATCH_ID_PATTERN.match(batch_id):
-        raise JobValidationError("batch_id contains forbidden characters")
-    bdir = batches_dir() / batch_id
+    batch_id = _safe_batch_id(batch_id)
+    bdir = _safe_child_path(batches_dir(), batch_id, "batch_id")
     if bdir.exists():
         raise JobValidationError(f"batch {batch_id} already exists")
 
@@ -2467,19 +3985,24 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             raise JobValidationError(
                 f"batch child {idx} ({instrument}): {e}") from e
         created_job_ids.append(jid)
-        children_meta.append({
+        child_meta = {
             "batch_index": idx,
             "instrument":  instrument,
             "job_id":      jid,
-        })
+        }
+        child_portfolio = _resolve_portfolio_metadata(instrument, req.class_name)
+        if child_portfolio:
+            child_meta["portfolio"] = child_portfolio
+        children_meta.append(child_meta)
 
     # Persist batch manifest.
     bdir.mkdir(parents=True, exist_ok=True)
+    created_at_utc = utcnow_iso()
     manifest = {
         "schema_version": "0.1",
         "batch_id": batch_id,
         "name": req.name or f"{req.class_name} x{total}",
-        "created_at_utc": utcnow_iso(),
+        "created_at_utc": created_at_utc,
         "strategy": {
             "class_name": req.class_name,
             "parameters": dict(req.parameters or {}),
@@ -2507,6 +4030,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
     }
     _atomic_write_text(bdir / "batch.json",
                        json.dumps(manifest, ensure_ascii=False, indent=2))
+    _ensure_report_number("batch", batch_id, created_at_utc)
     return batch_id, created_job_ids
 
 
@@ -2514,17 +4038,15 @@ def _try_remove_pending_job(job_id: str) -> None:
     """Best-effort cleanup of a pending job dir (used to roll back partial
     batch creation)."""
     try:
-        p = jobs_dir() / "pending" / job_id
+        p = _safe_child_path(jobs_dir() / "pending", job_id, "job_id")
         if p.is_dir():
             shutil.rmtree(p, ignore_errors=True)
-    except OSError:
+    except (OSError, JobValidationError):
         pass
 
 
 def _safe_batch_id(batch_id: str) -> str:
-    if not BATCH_ID_PATTERN.match(batch_id or ""):
-        raise JobValidationError("invalid batch_id")
-    return batch_id
+    return _validate_safe_id(batch_id, "batch_id")
 
 
 def count_batches() -> int:
@@ -2533,9 +4055,122 @@ def count_batches() -> int:
         return 0
     n = 0
     for child in bdir.iterdir():
-        if child.is_dir():
+        if child.is_dir() and not child.name.startswith("."):
             n += 1
     return n
+
+
+def _indexed_batch_rows() -> List[Tuple[float, Path]]:
+    rows: List[Tuple[float, Path]] = []
+    bdir = batches_dir()
+    if not bdir.is_dir():
+        return rows
+    for child in bdir.iterdir():
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        try:
+            rows.append((child.stat().st_mtime, child))
+        except OSError:
+            continue
+    rows.sort(reverse=True)
+    return rows
+
+
+def _build_batch_list_row(bdir_mtime: float,
+                          p: Path,
+                          report_numbers: Dict[str, int],
+                          favorite_keys: set[str],
+                          include_metrics: bool = False) -> Dict[str, Any]:
+    bid = p.name
+    m = _read_json_safe(p / "batch.json") or {}
+    children = m.get("children") or []
+    _fp, loc_index = _get_job_location_index()
+    # Compute child status/mtime signature for cache.  Status is part of
+    # the signature because a job directory can move between queue folders
+    # without changing its own mtime.
+    max_child_mtime = 0.0
+    child_status_parts: List[str] = []
+    for c in children:
+        jid = c.get("job_id")
+        if not jid:
+            continue
+        loc = _job_loc_from_index(jid, loc_index)
+        if not loc:
+            child_status_parts.append(f"{jid}:missing:0")
+            continue
+        status, child_dir = loc
+        try:
+            cm = child_dir.stat().st_mtime
+            if cm > max_child_mtime:
+                max_child_mtime = cm
+        except OSError:
+            cm = 0.0
+        child_status_parts.append(f"{jid}:{status}:{round(cm, 3)}")
+    sig = (
+        round(bdir_mtime, 3),
+        round(max_child_mtime, 3),
+        "|".join(child_status_parts),
+        bool(include_metrics),
+    )
+    cached = _BATCH_METRICS_CACHE.get(bid)
+    if cached and cached[0] == sig:
+        agg_payload = cached[1]
+    else:
+        agg = _aggregate_batch_status(children, loc_index)
+        instruments = m.get("instruments")
+        if not instruments:
+            seen, dedup = set(), []
+            for c in children:
+                inst = c.get("instrument")
+                if inst and inst not in seen:
+                    seen.add(inst)
+                    dedup.append(inst)
+            instruments = dedup
+        period = m.get("period") or _aggregate_batch_period(children, loc_index)
+        if include_metrics:
+            agg_metrics = _aggregate_batch_metrics(children, loc_index)
+            finished_at = _aggregate_batch_finished(children, loc_index)
+        else:
+            # Hot path for /api/reports and /api/batches list views: do not
+            # parse every child result.json just to paint the report table.
+            # Full per-child metrics are loaded by /api/batches/{id}/results
+            # when the operator opens a concrete batch.
+            agg_metrics = {}
+            finished_at = m.get("finished_at_utc")
+        agg_payload = {
+            "name":            m.get("name") or bid,
+            "created_at_utc":  m.get("created_at_utc"),
+            "finished_at_utc": finished_at,
+            "class_name":      (m.get("strategy") or {}).get("class_name"),
+            "total":           m.get("total") or len(children),
+            "counts":          agg,
+            "instruments":     instruments,
+            "period":          period,
+            "trade_count":     agg_metrics.get("trade_count"),
+            "winning_pct":     agg_metrics.get("winning_pct"),
+            "net_profit":      agg_metrics.get("net_profit"),
+            "gross_profit":    agg_metrics.get("gross_profit"),
+            "gross_loss":      agg_metrics.get("gross_loss"),
+            "profit_factor":   agg_metrics.get("profit_factor"),
+            "max_drawdown":    agg_metrics.get("max_drawdown"),
+        }
+        _BATCH_METRICS_CACHE[bid] = (sig, agg_payload)
+    favorite_children_count = 0
+    for c in children:
+        if not isinstance(c, dict):
+            continue
+        jid = c.get("job_id")
+        if jid and _report_key("job", str(jid)) in favorite_keys:
+            favorite_children_count += 1
+
+    return {
+        "batch_id":  bid,
+        "report_no": report_numbers.get(_report_key("batch", bid)),
+        "favorite": _report_key("batch", bid) in favorite_keys,
+        "favorite_children_count": favorite_children_count,
+        "mtime": bdir_mtime,
+        **agg_payload,
+    }
 
 
 def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
@@ -2548,106 +4183,288 @@ def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """
     global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
 
-    bdir = batches_dir()
-    if not bdir.is_dir():
+    rows = _indexed_batch_rows()
+    if not rows:
         return []
-    rows: List[Tuple[float, Path]] = []
-    for child in bdir.iterdir():
-        if not child.is_dir():
-            continue
-        try:
-            rows.append((child.stat().st_mtime, child))
-        except OSError:
-            continue
-    rows.sort(reverse=True)
 
     # Reuse cached report-numbers fingerprint computed by list_jobs (or
     # rebuild it cheaply here when the caller hits batches before jobs).
     if _REPORT_NUMBERS_FP is None:
-        _REPORT_NUMBERS_VALUE = sync_report_numbers()
+        _REPORT_NUMBERS_VALUE = _read_report_numbers_mapping_cached()
+        if not _REPORT_NUMBERS_VALUE:
+            _REPORT_NUMBERS_VALUE = sync_report_numbers()
         # Approximate fingerprint that a subsequent list_jobs() will recompute
         # exactly if anything changed.
         _REPORT_NUMBERS_FP = (0, 0.0)
     report_numbers = _REPORT_NUMBERS_VALUE
+    favorite_keys = _report_favorite_key_set()
 
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 50))
 
-    out: List[Dict[str, Any]] = []
-    for bdir_mtime, p in rows[offset: offset + limit]:
-        bid = p.name
-        m = _read_json_safe(p / "batch.json") or {}
-        children = m.get("children") or []
-        # Compute child status/mtime signature for cache.  Status is part of
-        # the signature because a job directory can move between queue folders
-        # without changing its own mtime.
-        max_child_mtime = 0.0
-        child_status_parts: List[str] = []
-        for c in children:
-            jid = c.get("job_id")
-            if not jid:
-                continue
-            loc = find_job_dir(jid)
-            if not loc:
-                child_status_parts.append(f"{jid}:missing:0")
-                continue
-            status, child_dir = loc
-            try:
-                cm = child_dir.stat().st_mtime
-                if cm > max_child_mtime:
-                    max_child_mtime = cm
-            except OSError:
-                cm = 0.0
-            child_status_parts.append(f"{jid}:{status}:{round(cm, 3)}")
-        sig = (
-            round(bdir_mtime, 3),
-            round(max_child_mtime, 3),
-            "|".join(child_status_parts),
-        )
-        cached = _BATCH_METRICS_CACHE.get(bid)
-        if cached and cached[0] == sig:
-            agg_payload = cached[1]
-        else:
-            agg = _aggregate_batch_status(children)
-            agg_metrics = _aggregate_batch_metrics(children)
-            instruments = m.get("instruments")
-            if not instruments:
-                seen, dedup = set(), []
-                for c in children:
-                    inst = c.get("instrument")
-                    if inst and inst not in seen:
-                        seen.add(inst); dedup.append(inst)
-                instruments = dedup
-            period = m.get("period") or _aggregate_batch_period(children)
-            finished_at = _aggregate_batch_finished(children)
-            agg_payload = {
-                "name":            m.get("name") or bid,
-                "created_at_utc":  m.get("created_at_utc"),
-                "finished_at_utc": finished_at,
-                "class_name":      (m.get("strategy") or {}).get("class_name"),
-                "total":           m.get("total") or len(children),
-                "counts":          agg,
-                "instruments":     instruments,
-                "period":          period,
-                "trade_count":     agg_metrics.get("trade_count"),
-                "winning_pct":     agg_metrics.get("winning_pct"),
-                "net_profit":      agg_metrics.get("net_profit"),
-                "gross_profit":    agg_metrics.get("gross_profit"),
-                "gross_loss":      agg_metrics.get("gross_loss"),
-                "profit_factor":   agg_metrics.get("profit_factor"),
-                "max_drawdown":    agg_metrics.get("max_drawdown"),
-            }
-            _BATCH_METRICS_CACHE[bid] = (sig, agg_payload)
+    return [
+        _build_batch_list_row(bdir_mtime, p, report_numbers, favorite_keys)
+        for bdir_mtime, p in rows[offset: offset + limit]
+    ]
 
-        out.append({
-            "batch_id":  bid,
-            "report_no": report_numbers.get(_report_key("batch", bid)),
-            **agg_payload,
+
+def _summarize_report_batch_status(counts: Dict[str, int], total: int) -> str:
+    done = int(counts.get("done") or 0)
+    failed = int(counts.get("failed") or 0)
+    cancelled = int(counts.get("cancelled") or 0)
+    running = int(counts.get("running") or 0)
+    pending = int(counts.get("pending") or 0)
+    missing = int(counts.get("missing") or 0)
+    total = max(0, int(total or 0))
+    if running:
+        return "running"
+    if pending:
+        return "pending"
+    if failed and (done or cancelled):
+        return "partial_failed"
+    if cancelled and done:
+        return "partial_cancelled"
+    if failed or missing:
+        return "failed"
+    if cancelled:
+        return "cancelled"
+    if done or total == 0:
+        return "done"
+    return "pending"
+
+
+def _report_status_matches(status: str, status_filter: str) -> bool:
+    status = str(status or "")
+    status_filter = str(status_filter or "all")
+    if status_filter == "all":
+        return True
+    if status_filter == "failed":
+        return status in {"failed", "partial_failed"}
+    if status_filter == "cancelled":
+        return status in {"cancelled", "partial_cancelled"}
+    return status == status_filter
+
+
+def _coerce_report_sort_col(value: str) -> str:
+    allowed = {
+        "report_no", "mtime", "label", "strategy", "kind", "status", "period",
+        "trades", "winning_pct", "net_profit", "confidence",
+    }
+    col = str(value or "mtime").strip()
+    return col if col in allowed else "mtime"
+
+
+def _coerce_report_sort_dir(value: str) -> str:
+    return "asc" if str(value or "").strip().lower() == "asc" else "desc"
+
+
+def list_reports(limit: int = 100,
+                 offset: int = 0,
+                 sort_col: str = "mtime",
+                 sort_dir: str = "desc",
+                 status_filter: str = "all") -> Dict[str, Any]:
+    """Mixed reports feed with one shared server-side pagination stream.
+
+    The UI scrolls by pages, so sorting must happen before slicing.  The
+    default "created" sort uses the stable report number instead of directory
+    mtime: opening a batch can update its folder mtime and otherwise makes old
+    reports float above newer 4000+ reports.
+    """
+    job_rows, report_numbers = _indexed_job_rows()
+    batch_rows = _indexed_batch_rows()
+    favorite_keys = _report_favorite_key_set()
+    sort_col = _coerce_report_sort_col(sort_col)
+    sort_dir = _coerce_report_sort_dir(sort_dir)
+    status_filter = str(status_filter or "all").strip().lower()
+    if status_filter not in {"all", "pending", "running", "done", "failed", "cancelled", "favorite"}:
+        status_filter = "all"
+
+    counts = {sub: 0 for sub in QUEUE_SUBDIRS}
+    for row in job_rows:
+        status = str(row.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+
+    indexed: List[Dict[str, Any]] = []
+    for row in job_rows:
+        job_id = str(row.get("job_id") or "")
+        key = _report_key("job", job_id)
+        indexed.append({
+            "kind": "job",
+            "mtime": float(row.get("mtime") or 0.0),
+            "id": job_id,
+            "key": key,
+            "report_no": report_numbers.get(key),
+            "status": str(row.get("status") or ""),
+            "favorite": key in favorite_keys,
+            "row": row,
         })
-    return out
+    for bdir_mtime, p in batch_rows:
+        bid = p.name
+        key = _report_key("batch", bid)
+        indexed.append({
+            "kind": "batch",
+            "mtime": float(bdir_mtime or 0.0),
+            "id": bid,
+            "key": key,
+            "report_no": report_numbers.get(key),
+            "status": None,
+            "favorite": key in favorite_keys,
+            "row": (bdir_mtime, p),
+        })
+
+    full_sort_cols = {"label", "strategy", "period", "trades", "winning_pct", "net_profit", "confidence"}
+    need_batch_status = status_filter not in {"all", "favorite"} or sort_col == "status"
+    need_full_row = sort_col in full_sort_cols
+    _fp, loc_index = _get_job_location_index()
+
+    def materialized(item: Dict[str, Any], *, include_metrics: bool = False) -> Dict[str, Any]:
+        cached = item.get("_full_row")
+        if cached is not None and (not include_metrics or item.get("_full_row_has_metrics")):
+            return cached
+        if item["kind"] == "job":
+            row = _build_job_list_row(item["row"], report_numbers, favorite_keys)
+            item["_full_row"] = row
+            item["_full_row_has_metrics"] = True
+            item["status"] = str(row.get("status") or item.get("status") or "")
+            item["favorite"] = bool(row.get("favorite"))
+            return row
+        bdir_mtime, p = item["row"]
+        row = _build_batch_list_row(
+            bdir_mtime,
+            p,
+            report_numbers,
+            favorite_keys,
+            include_metrics=include_metrics,
+        )
+        item["_full_row"] = row
+        item["_full_row_has_metrics"] = include_metrics
+        item["status"] = _summarize_report_batch_status(row.get("counts") or {}, int(row.get("total") or 0))
+        item["favorite"] = bool(row.get("favorite")) or int(row.get("favorite_children_count") or 0) > 0
+        return row
+
+    def ensure_batch_status(item: Dict[str, Any]) -> str:
+        if item["kind"] != "batch":
+            return str(item.get("status") or "")
+        if item.get("status"):
+            return str(item.get("status") or "")
+        bdir_mtime, p = item["row"]
+        meta = _read_json_safe(p / "batch.json") or {}
+        children = meta.get("children") or []
+        counts_local = _aggregate_batch_status(children, loc_index)
+        item["status"] = _summarize_report_batch_status(counts_local, int(meta.get("total") or len(children)))
+        if status_filter == "favorite" and not item.get("favorite"):
+            for child in children:
+                jid = child.get("job_id") if isinstance(child, dict) else None
+                if jid and _report_key("job", str(jid)) in favorite_keys:
+                    item["favorite"] = True
+                    break
+        return str(item.get("status") or "")
+
+    def sort_text(value: Any) -> str:
+        return str(value or "").casefold()
+
+    def metric_value(value: Any, default: float = -1.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def sort_key(item: Dict[str, Any]) -> Tuple[Any, ...]:
+        rn = item.get("report_no")
+        rn_val = int(rn) if isinstance(rn, int) else -1
+        if sort_col in {"mtime", "report_no"}:
+            primary: Any = rn_val
+        elif sort_col == "kind":
+            primary = item["kind"]
+        elif sort_col == "status":
+            primary = ensure_batch_status(item)
+        else:
+            include_metrics = sort_col in {"trades", "winning_pct", "net_profit", "confidence"}
+            row = materialized(item, include_metrics=include_metrics)
+            if item["kind"] == "job":
+                label = row.get("instrument") or row.get("job_id") or ""
+                strategy = row.get("class_name") or ""
+                period = (row.get("period") or {}).get("from_utc") if isinstance(row.get("period"), dict) else ""
+                trades = row.get("trade_count")
+            else:
+                insts = row.get("instruments") if isinstance(row.get("instruments"), list) else []
+                label = ", ".join(str(x) for x in insts) or row.get("name") or row.get("batch_id") or ""
+                strategy = row.get("class_name") or ""
+                period = (row.get("period") or {}).get("from_utc") if isinstance(row.get("period"), dict) else ""
+                trades = row.get("trade_count")
+            if sort_col == "label":
+                primary = sort_text(label)
+            elif sort_col == "strategy":
+                primary = sort_text(strategy)
+            elif sort_col == "period":
+                primary = sort_text(period)
+            elif sort_col == "trades":
+                primary = metric_value(trades)
+            elif sort_col == "winning_pct":
+                primary = metric_value(row.get("winning_pct"))
+            elif sort_col == "net_profit":
+                primary = metric_value(row.get("net_profit"), -10**18)
+            else:
+                # Server keeps confidence sorting deterministic without
+                # duplicating the heavier client-side confidence formula.
+                primary = metric_value(row.get("net_profit"), -10**18)
+        return (primary, rn_val, item["kind"], str(item["id"]))
+
+    if need_batch_status:
+        for item in indexed:
+            if item["kind"] == "batch":
+                ensure_batch_status(item)
+    if status_filter == "favorite":
+        for item in indexed:
+            if item["kind"] == "batch":
+                ensure_batch_status(item)
+
+    filtered: List[Dict[str, Any]] = []
+    for item in indexed:
+        if status_filter == "favorite":
+            if item.get("favorite"):
+                filtered.append(item)
+            continue
+        if status_filter != "all":
+            status = ensure_batch_status(item) if item["kind"] == "batch" else str(item.get("status") or "")
+            if not _report_status_matches(status, status_filter):
+                continue
+        filtered.append(item)
+
+    if need_full_row:
+        include_metrics = sort_col in {"trades", "winning_pct", "net_profit", "confidence"}
+        for item in filtered:
+            materialized(item, include_metrics=include_metrics)
+
+    filtered.sort(key=sort_key, reverse=(sort_dir == "desc"))
+
+    offset = max(0, int(offset or 0))
+    limit = max(1, int(limit or 100))
+    jobs: List[Dict[str, Any]] = []
+    batches: List[Dict[str, Any]] = []
+    for item in filtered[offset: offset + limit]:
+        if item["kind"] == "job":
+            jobs.append(materialized(item))
+        else:
+            batches.append(materialized(item))
+
+    return {
+        "counts": counts,
+        "offset": offset,
+        "limit": limit,
+        "total": len(filtered),
+        "sort": sort_col,
+        "dir": sort_dir,
+        "filter": status_filter,
+        "jobs": jobs,
+        "batches": batches,
+    }
 
 
-def _aggregate_batch_period(children: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+def _aggregate_batch_period(children: List[Dict[str, Any]],
+                            loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
+                            ) -> Optional[Dict[str, str]]:
     """Derive the covering period for a batch from its children's job.json files.
 
     Returns {from_utc, to_utc} spanning min(child.from) → max(child.to), or None
@@ -2660,7 +4477,7 @@ def _aggregate_batch_period(children: List[Dict[str, Any]]) -> Optional[Dict[str
         jid = c.get("job_id")
         if not jid:
             continue
-        loc = find_job_dir(jid)
+        loc = _job_loc_from_index(jid, loc_index)
         if not loc:
             continue
         _, jdir = loc
@@ -2675,8 +4492,10 @@ def _aggregate_batch_period(children: List[Dict[str, Any]]) -> Optional[Dict[str
     return {"from_utc": min(from_dates), "to_utc": max(to_dates)}
 
 
-def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
-    """Return the latest finished_at_utc across done/failed child jobs, or
+def _aggregate_batch_finished(children: List[Dict[str, Any]],
+                              loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
+                              ) -> Optional[str]:
+    """Return the latest finished_at_utc across terminal child jobs, or
     None if no child has finished. Used for the "Финиш / НВ" column on
     batch rows.
     """
@@ -2685,7 +4504,7 @@ def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
         jid = c.get("job_id")
         if not jid:
             continue
-        loc = find_job_dir(jid)
+        loc = _job_loc_from_index(jid, loc_index)
         if not loc:
             continue
         status, jdir = loc
@@ -2693,6 +4512,9 @@ def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
         if status == "done":
             res = _read_json_safe(jdir / "result.json") or {}
             ts = res.get("finished_at_utc")
+        elif status == "cancelled":
+            res = _read_json_safe(jdir / "result.json") or {}
+            ts = res.get("finished_at_utc") or res.get("cancelled_at_utc")
         elif status == "failed":
             err = _read_json_safe(jdir / "error.json") or {}
             ts = err.get("finished_at_utc")
@@ -2701,7 +4523,9 @@ def _aggregate_batch_finished(children: List[Dict[str, Any]]) -> Optional[str]:
     return latest
 
 
-def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
+def _aggregate_batch_status(children: List[Dict[str, Any]],
+                            loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
+                            ) -> Dict[str, int]:
     counts = {"pending": 0, "running": 0, "done": 0, "failed": 0, "cancelled": 0,
               "missing": 0}
     for c in children:
@@ -2709,7 +4533,7 @@ def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
         if not jid:
             counts["missing"] += 1
             continue
-        loc = find_job_dir(jid)
+        loc = _job_loc_from_index(jid, loc_index)
         if not loc:
             counts["missing"] += 1
             continue
@@ -2717,7 +4541,9 @@ def _aggregate_batch_status(children: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _aggregate_batch_metrics(children: List[Dict[str, Any]],
+                             loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
+                             ) -> Dict[str, Any]:
     """Return {trade_count, winning_pct, net_profit, profit_factor, max_drawdown}
     aggregated across all done child jobs.
 
@@ -2740,7 +4566,7 @@ def _aggregate_batch_metrics(children: List[Dict[str, Any]]) -> Dict[str, Any]:
         jid = c.get("job_id")
         if not jid:
             continue
-        loc = find_job_dir(jid)
+        loc = _job_loc_from_index(jid, loc_index)
         if not loc or loc[0] != "done":
             continue
         _, jdir = loc
@@ -2811,7 +4637,7 @@ def _profit_factor_from_gross(gross_profit: Any, gross_loss: Any) -> Optional[fl
 
 def read_batch(batch_id: str) -> Optional[Dict[str, Any]]:
     batch_id = _safe_batch_id(batch_id)
-    p = batches_dir() / batch_id
+    p = _safe_child_path(batches_dir(), batch_id, "batch_id")
     if not p.is_dir():
         return None
     m = _read_json_safe(p / "batch.json")
@@ -2828,6 +4654,7 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
     if not m:
         return None
     report_numbers = _get_report_numbers_cached()
+    favorite_keys = _report_favorite_key_set()
     rows: List[Dict[str, Any]] = []
     for c in m.get("children") or []:
         jid = c.get("job_id")
@@ -2840,6 +4667,7 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
             "metrics":     None,
             "period_check": None,
             "error":       None,
+            "favorite":    _report_key("job", str(jid)) in favorite_keys if jid else False,
         }
         if jid:
             loc = find_job_dir(jid)
@@ -2860,6 +4688,11 @@ def read_batch_results(batch_id: str) -> Optional[Dict[str, Any]]:
                 elif status == "failed":
                     err = _read_json_safe(jdir / "error.json") or {}
                     row["error"] = (err.get("message") or "").splitlines()[0:1]
+                elif status == "cancelled":
+                    res = _read_json_safe(jdir / "result.json") or {}
+                    row["result"] = res
+                    msg = (res.get("reason") or "cancelled").splitlines()[0:1]
+                    row["error"] = msg
         rows.append(row)
     return {
         "batch_id": batch_id,
@@ -2966,8 +4799,12 @@ def cancel_job(job_id: str) -> Dict[str, Any]:
     # status == "running": drop cancel.flag for the bridge to notice.
     flag = jdir / "cancel.flag"
     try:
-        _atomic_write_text(flag, utcnow_iso("ms"))
+        _atomic_write_text_existing_parent(flag, utcnow_iso("ms"))
     except OSError as e:
+        relocated = find_job_dir(job_id)
+        if relocated and relocated[0] in ("done", "failed", "cancelled"):
+            return {"job_id": job_id, "status": relocated[0],
+                    "action": "noop_terminal"}
         raise JobValidationError(
             f"failed to write cancel.flag: {e}") from e
     return {"job_id": job_id, "status": "running",
@@ -3004,6 +4841,14 @@ def delete_job(job_id: str) -> Dict[str, Any]:
     status, p = found
     if status == "running":
         return {"job_id": job_id, "deleted": False, "reason": "running"}
+    if is_report_favorite("job", job_id):
+        return {"job_id": job_id, "deleted": False, "reason": "favorite"}
+    job_doc = _read_json_safe(p / "job.json") or {}
+    batch_id = ((job_doc.get("batch") or {}).get("batch_id")
+                if isinstance(job_doc, dict) else None)
+    if batch_id and is_report_favorite("batch", str(batch_id)):
+        return {"job_id": job_id, "deleted": False,
+                "reason": "favorite_parent_batch", "batch_id": batch_id}
     shutil.rmtree(p, ignore_errors=True)
     return {"job_id": job_id, "deleted": True, "status": status}
 
@@ -3011,10 +4856,22 @@ def delete_job(job_id: str) -> Dict[str, Any]:
 def delete_batch(batch_id: str) -> Dict[str, Any]:
     """Permanently remove a batch directory and all its child job directories."""
     batch_id = _safe_batch_id(batch_id)
-    p = batches_dir() / batch_id
+    p = _safe_child_path(batches_dir(), batch_id, "batch_id")
     if not p.is_dir():
         return {"batch_id": batch_id, "deleted": False, "reason": "not_found"}
+    if is_report_favorite("batch", batch_id):
+        return {"batch_id": batch_id, "deleted": False, "reason": "favorite"}
     m = _read_json_safe(p / "batch.json") or {}
+    favorite_jobs: List[str] = []
+    for c in m.get("children") or []:
+        if not isinstance(c, dict):
+            continue
+        jid = c.get("job_id")
+        if jid and is_report_favorite("job", jid):
+            favorite_jobs.append(jid)
+    if favorite_jobs:
+        return {"batch_id": batch_id, "deleted": False,
+                "reason": "has_favorite_jobs", "favorites": favorite_jobs}
     # Delete child jobs first (any status except running → skip).
     deleted_jobs: List[str] = []
     skipped_jobs: List[str] = []

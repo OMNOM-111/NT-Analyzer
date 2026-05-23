@@ -8,7 +8,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class NTAMicroVwapRiskExplorer
+    public abstract partial class NTAMicroVwapRiskExplorer
     {
         // =====================================================================
         // RiskManager — encapsulates equity, daily limits, sizing, status guard

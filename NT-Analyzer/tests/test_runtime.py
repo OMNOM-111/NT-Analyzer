@@ -70,6 +70,14 @@ def _write_runtime(tmp: Path, *, heartbeat_age_sec: float = 2,
     if strategies is None:
         if params is None:
             params = dict(rt.B1_LOCKED_PARAMS_CHECK)
+            params.update({
+                "StartingCapital": 2000.0,
+                "IntradayOnly": True,
+                "ActiveMarginPerContract": 50.0,
+                "MaxContractsByCapital": 40,
+                "InstrumentStatus": "allowed",
+                "MarginSourceBroker": "NinjaTrader",
+            })
         if extra_params:
             params = {**params, **extra_params}
         strategies = [{
@@ -110,6 +118,15 @@ def _write_hb(tmp: Path, fresh: bool = True):
     (rdir / "heartbeat.json").write_text(json.dumps({
         "timestamp_utc": _now_iso(-age),
         "exporter_version": "1.1.0",
+    }), encoding="utf-8")
+
+
+def _write_profiles_registry(tmp: Path, profiles):
+    pdir = tmp / "data" / "profiles"
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": profiles,
     }), encoding="utf-8")
 
 
@@ -181,14 +198,14 @@ def t04(tmp):
     assert any("PARAM_MISMATCH" in e for e in v["runtime_errors"])
 
 
-@case("live account -> is_live=True, live_locked=False (account-agnostic), confirm allowed")
+@case("live account -> is_live=True, live_locked=True, confirm blocked")
 def t05(tmp):
     _write_runtime(tmp, account="MyLiveAccount", enabled=True)
     v = rt.merge_strategy_view("b1_shortonly")
     assert v["is_live"] is True
-    assert v["live_locked"] is False, "account-agnostic mode: live no longer locked"
+    assert v["live_locked"] is True, "live runtime control must be locked"
     assert v["account_mode"] == "live"
-    # confirm_runtime should NOT raise just because account is live
+    assert v["can_confirm_runtime"] is None
 
 
 @case("executions.jsonl -> quantity-aware daily metrics + journal upsert")
@@ -294,6 +311,86 @@ def t11(tmp):
     assert len(only) == 1 and only[0]["strategy_id"] == "b1_shortonly"
 
 
+@case("execution/order signal class maps to runtime strategy and FIFO PnL")
+def t11b(tmp):
+    strategy_id = "ntamnqopendriveshortscalpc016"
+    strategy_class = "NTAMnqOpenDriveShortScalpC016"
+    signal = strategy_class + ".Short"
+    strategies = [{
+        "timestamp_utc": _now_iso(-5),
+        "account_name": "DEMO3369390",
+        "account_mode": "paper",
+        "strategy_id": strategy_id,
+        "strategy_class": strategy_class,
+        "strategy_name": "Scalping Open Drive Short MNQ 1m v1 c016",
+        "instrument": "MNQ JUN26",
+        "contract_month": "MNQ JUN26",
+        "enabled": True,
+        "state": "Realtime",
+        "data_series_count": 1,
+        "runtime_instance_id": "sha256:c016",
+        "params": {},
+    }]
+    execs = [
+        {"timestamp_utc": _now_iso(-60), "account_name": "DEMO3369390",
+         "strategy_id": "", "strategy_class": "", "instrument": "MNQ JUN26",
+         "order_action": "SellShort", "quantity": 1, "price": 29600.0,
+         "order_name": signal, "from_entry_signal": signal, "realized_pnl": None},
+        {"timestamp_utc": _now_iso(-30), "account_name": "DEMO3369390",
+         "strategy_id": "", "strategy_class": "", "instrument": "MNQ JUN26",
+         "order_action": "BuyToCover", "role": "exit", "exit_reason": "target",
+         "quantity": 1, "price": 29590.0,
+         "order_name": signal, "from_entry_signal": signal, "realized_pnl": None},
+    ]
+    _write_runtime(tmp, strategies=strategies, executions=execs)
+    orders_p = tmp / "data" / "runtime" / "orders.jsonl"
+    orders_p.write_text(json.dumps({
+        "timestamp_utc": _now_iso(-55), "account_name": "DEMO3369390",
+        "strategy_id": "", "strategy_class": "", "instrument": "MNQ JUN26",
+        "order_action": "SellShort", "order_type": "StopMarket",
+        "order_state": "Filled", "quantity": 1, "stop_price": 29600.0,
+        "order_name": signal, "from_entry_signal": signal,
+    }) + "\n", encoding="utf-8")
+
+    rows = rt.read_executions(strategy_id=strategy_id, limit=10)
+    assert len(rows) == 2, rows
+    assert {r["strategy_class"] for r in rows} == {strategy_class}
+    assert {r["runtime_instance_id"] for r in rows} == {"sha256:c016"}
+
+    order_rows = rt.read_orders(strategy_id=strategy_id, limit=10)
+    assert len(order_rows) == 1 and order_rows[0]["strategy_class"] == strategy_class, order_rows
+
+    m = rt.compute_runtime_today_metrics(strategy_id)
+    assert m["trades_count"] == 1, m
+    assert m["total_qty"] == 1, m
+    assert m["gross_pnl"] == 20.0, m
+
+
+@case("execution rows backfill action/type from filled orders")
+def t11c(tmp):
+    execs = [{
+        "timestamp_utc": _now_iso(-30), "account_name": "DEMO3369390",
+        "strategy_id": "", "strategy_class": "", "instrument": "MNQ JUN26",
+        "market_position": "Short", "quantity": 1, "price": 29587.75,
+    }]
+    _write_runtime(tmp, executions=execs)
+    orders_p = tmp / "data" / "runtime" / "orders.jsonl"
+    orders_p.write_text(json.dumps({
+        "timestamp_utc": _now_iso(-25), "order_id": "220",
+        "account_name": "DEMO3369390", "strategy_id": "", "strategy_class": "",
+        "instrument": "MNQ JUN26", "order_state": "Filled",
+        "order_action": "Sell", "order_type": "StopMarket",
+        "quantity": 1, "filled": 1, "stop_price": 29587.75, "avg_fill": 29587.75,
+    }) + "\n", encoding="utf-8")
+
+    rows = rt.read_executions(account_name="DEMO3369390", limit=10)
+    assert len(rows) == 1, rows
+    assert rows[0]["order_id"] == "220", rows
+    assert rows[0]["order_action"] == "Sell", rows
+    assert rows[0]["order_type"] == "StopMarket", rows
+    assert rows[0]["order_state"] == "Filled", rows
+
+
 @case("playback account is treated as paper-class (controllable)")
 def t12(tmp):
     _write_runtime(tmp, account="Playback101", enabled=True)
@@ -327,15 +424,19 @@ def t13(tmp):
     assert cmds[0]["quantity"] == 1
 
 
-@case("phase18: live-named account is queued (account-agnostic); unknown is rejected")
+@case("phase18: live-named and unknown accounts are rejected")
 def t14(tmp):
-    rec = rt.submit_command(
-        command="enable_strategy",
-        strategy_id="b1_shortonly",
-        account_name="LiveAccount1",
-        class_name="NTAMicroVwapRiskPilot",
-    )
-    assert rec["status"] == "queued", "live-named account must be accepted"
+    try:
+        rt.submit_command(
+            command="enable_strategy",
+            strategy_id="b1_shortonly",
+            account_name="LiveAccount1",
+            class_name="NTAMicroVwapRiskPilot",
+        )
+        assert False, "live account should raise"
+    except ops.OpsError as e:
+        assert e.status == 403, e.status
+        assert "live" in str(e).lower(), str(e)
     # unknown name -> reject
     try:
         rt.submit_command(
@@ -582,6 +683,27 @@ def t31(tmp):
     assert out["runtime_match"]["enabled"] is True
 
 
+@case("phase10: get_command_status refuses stale completed runtime confirmation")
+def t31b(tmp):
+    _write_runtime(tmp, heartbeat_age_sec=600, account="Sim101", enabled=True)
+    rec = rt.submit_command(
+        command="enable_strategy",
+        strategy_id="b1_shortonly",
+        account_name="Sim101",
+        class_name="NTAMicroVwapRiskPilot",
+        instrument="MNQ 06-26",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "completed",
+        "message": "enabled",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "failed_bridge_offline", out
+
+
 @case("phase10: get_command_status -> failed_no_instance when bridge says no instance")
 def t32(tmp):
     _write_runtime(tmp, account="Sim101", enabled=False)
@@ -778,6 +900,159 @@ def t44(tmp):
     assert rt_mod._is_paper_account("1267509") is False, "numeric live should not be paper-class"
 
 
+@case("phase24: validate_params prefers strategy profile locked_parameters")
+def t44a(tmp):
+    _write_profiles_registry(tmp, [{
+        "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+        "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "instrument": "MNQ 06-26",
+        "timeframe": "5 Minute",
+        "status": "ready",
+        "stable_id": "vwap_short_mnq_5m_v1",
+        "legacy_strategy_ids": ["b1_shortonly"],
+        "locked_parameters": {
+            "EnableLong": False,
+            "EnableShort": True,
+            "RewardRiskRatio": 3.5,
+            "StartingCapital": 2000.0,
+        },
+    }])
+    bad = dict(rt.B1_LOCKED_PARAMS_CHECK)
+    bad.pop("EnableShort", None)
+    res = rt.validate_params("b1_shortonly", bad)
+    keys = {m["key"] for m in res["mismatches"]}
+    assert "StartingCapital" in keys, f"profile-only param must be validated, got {keys}"
+    fixed = dict(bad, EnableShort=True, StartingCapital=2000.0)
+    res2 = rt.validate_params("b1_shortonly", fixed)
+    assert res2["ok"] is True, res2
+
+
+@case("phase24: merge_all_runtime_strategies validates stopped instance params too")
+def t44b(tmp):
+    _write_profiles_registry(tmp, [{
+        "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+        "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "instrument": "MNQ 06-26",
+        "timeframe": "5 Minute",
+        "status": "ready",
+        "stable_id": "vwap_short_mnq_5m_v1",
+        "legacy_strategy_ids": ["b1_shortonly"],
+        "locked_parameters": {
+            "EnableLong": False,
+            "EnableShort": True,
+            "RewardRiskRatio": 3.5,
+        },
+    }])
+    _write_runtime(tmp, account="DEMO3369390", enabled=False,
+                   extra_params={"EnableLong": True, "EnableShort": False})
+    views = rt.merge_all_runtime_strategies()
+    assert views, "no views"
+    v = views[0]
+    assert v["runtime_enabled"] is False, v
+    assert v["params_ok"] is False, v
+    keys = {m["key"] for m in v["params_check"]["mismatches"]}
+    assert "EnableLong" in keys and "EnableShort" in keys, keys
+
+
+@case("phase24: submit_command blocks enable on runtime param mismatch")
+def t44c(tmp):
+    _write_profiles_registry(tmp, [{
+        "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+        "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "instrument": "MNQ 06-26",
+        "timeframe": "5 Minute",
+        "status": "ready",
+        "stable_id": "vwap_short_mnq_5m_v1",
+        "legacy_strategy_ids": ["b1_shortonly"],
+        "locked_parameters": {
+            "EnableLong": False,
+            "EnableShort": True,
+            "RewardRiskRatio": 3.5,
+        },
+    }])
+    _write_runtime(tmp, account="Sim101", enabled=False,
+                   extra_params={"EnableLong": True, "EnableShort": False})
+    try:
+        rt.submit_command(
+            command="enable_strategy",
+            strategy_id="b1_shortonly",
+            account_name="Sim101",
+            class_name="NTAMicroVwapRiskPilot",
+            instrument="MNQ 06-26",
+        )
+        raise AssertionError("submit_command must block mismatched runtime params")
+    except ops.OpsError as e:
+        assert e.status == 409, f"expected 409, got {e.status}"
+        assert "PARAM_MISMATCH" in str(e), e
+
+
+@case("phase24: profile metadata keys do not create false runtime mismatches")
+def t44d(tmp):
+    _write_profiles_registry(tmp, [{
+        "profile_id": "mnq_micro_orb_open_rr150_1m_research_v2",
+        "name": "Scalping MNQ 1m v1 c012",
+        "strategy_class": "NTAMicroMnqScalpPilot",
+        "deploy_strategy_class": "NTAMnqMicroOrbOpenScalp",
+        "runtime_strategy_classes": ["NTAMnqMicroOrbOpenScalp"],
+        "runtime_strategy_id": "orb_open_scalp_mnq_1m_v1",
+        "instrument": "MNQ 06-26",
+        "timeframe": "1 Minute",
+        "status": "research_baseline",
+        "locked_parameters": {
+            "EnableLong": True,
+            "RewardRiskRatio": 1.5,
+            "TradeEndTime": 830,
+            "_profile_variant": "MNQ Micro ORB Open Scalp RR150",
+            "_research_decision": "research_baseline_not_paper_ready",
+        },
+    }])
+    res = rt.validate_params("orb_open_scalp_mnq_1m_v1", {
+        "EnableLong": True,
+        "RewardRiskRatio": 1.5,
+        "TradeEndTime": 830,
+    })
+    assert res["ok"] is True, res
+    assert res["checked"] == 3, res
+
+
+@case("phase24: submit_command autofills profile locked params for wrapper strategies")
+def t44e(tmp):
+    _write_profiles_registry(tmp, [{
+        "profile_id": "mnq_micro_orb_open_rr150_1m_research_v2",
+        "name": "Scalping MNQ 1m v1 c012",
+        "strategy_class": "NTAMicroMnqScalpPilot",
+        "deploy_strategy_class": "NTAMnqMicroOrbOpenScalp",
+        "runtime_strategy_classes": ["NTAMicroMnqScalpPilot", "NTAMnqMicroOrbOpenScalp"],
+        "runtime_strategy_id": "orb_open_scalp_mnq_1m_v1",
+        "instrument": "MNQ 06-26",
+        "timeframe": "1 Minute",
+        "status": "research_baseline",
+        "locked_parameters": {
+            "EnableLong": True,
+            "EnableShort": True,
+            "RewardRiskRatio": 1.5,
+            "TradeStartTime": 635,
+            "TradeEndTime": 830,
+            "_profile_variant": "MNQ Micro ORB Open Scalp RR150",
+        },
+    }])
+    rt.submit_command(
+        command="enable_strategy",
+        strategy_id="orb_open_scalp_mnq_1m_v1",
+        account_name="Sim101",
+        class_name="NTAMnqMicroOrbOpenScalp",
+        instrument="MNQ 06-26",
+        params={},
+    )
+    saved = rt.read_commands(1)[0]
+    assert saved["params"]["RewardRiskRatio"] == 1.5, saved["params"]
+    assert saved["params"]["TradeEndTime"] == 830, saved["params"]
+    assert "_profile_variant" not in saved["params"], saved["params"]
+
+
 @case("phase23: strategy display prefs mark runtime rows hidden by class")
 def t45(tmp):
     _write_runtime(tmp, account="DEMO3369390", enabled=True,
@@ -832,16 +1107,105 @@ def t46(tmp):
     assert hist["sessions"][0]["duration_sec"] >= 3500, hist["sessions"][0]
 
 
+@case("trade window: HHMM label builder and in-window check")
+def t47_trade_window_helpers(tmp):
+    _ = tmp
+    params = {
+        "TradeStartTime": 635,
+        "TradeEndTime": 830,
+        "UseSecondTradeWindow": True,
+        "SecondTradeStartTime": 1030,
+        "SecondTradeEndTime": 1200,
+    }
+    label = rt._build_trade_window_pt_from_params(params)
+    assert label == "06:35 AM – 08:30 AM + 10:30 AM – 12:00 PM", label
+    cfg = rt._extract_trade_window_config(params)
+    assert rt.is_hhmm_in_trade_window(700, cfg) is True
+    assert rt.is_hhmm_in_trade_window(900, cfg) is False
+    assert rt.is_hhmm_in_trade_window(1100, cfg) is True
+    assert rt._build_trade_window_pt_from_params({"Use24hSession": True}) == "круглосуточно"
+    assert rt._hhmm_to_display(635) == "06:35 AM"
+    assert rt._hhmm_to_display(1230) == "12:30 PM"
+    assert rt._hhmm_to_display(700) == "07:00 AM"
+    assert rt._reformat_trade_window_pt_label("06:35-12:30") == "06:35 AM – 12:30 PM"
+    assert rt._reformat_trade_window_pt_label(
+        "06:35-08:30 + 10:30-12:00 PT (MaxTradesPerDay=20)"
+    ) == "06:35 AM – 08:30 AM + 10:30 AM – 12:00 PM (MaxTradesPerDay=20)"
+
+
+@case("param validation: inactive second window keys are skipped")
+def t49_inactive_second_window_skipped(tmp):
+    _ = tmp
+    expected = {
+        "TradeStartTime": 635,
+        "TradeEndTime": 1230,
+        "UseSecondTradeWindow": False,
+        "SecondTradeStartTime": 1030,
+        "SecondTradeEndTime": 1200,
+    }
+    runtime = dict(expected)
+    runtime["SecondTradeStartTime"] = 9999
+    runtime["SecondTradeEndTime"] = 8888
+    res = rt._validate_expected_params(expected, runtime)
+    assert res["ok"], res
+
+
+@case("param validation: C012/C013 stale NT window shows two mismatches")
+def t50_c012_stale_window_mismatch(tmp):
+    _ = tmp
+    expected = {
+        "TradeStartTime": 635,
+        "TradeEndTime": 1230,
+        "UseSecondTradeWindow": False,
+        "ForceFlatTime": 1245,
+        "SecondTradeStartTime": 1030,
+        "SecondTradeEndTime": 1200,
+    }
+    runtime = {
+        "TradeStartTime": 635,
+        "TradeEndTime": 830,
+        "UseSecondTradeWindow": True,
+        "ForceFlatTime": 1245,
+        "SecondTradeStartTime": 1030,
+        "SecondTradeEndTime": 1200,
+    }
+    res = rt._validate_expected_params(expected, runtime)
+    assert not res["ok"], res
+    keys = {m["key"] for m in res["mismatches"]}
+    assert keys == {"TradeEndTime", "UseSecondTradeWindow"}, keys
+    assert res.get("recommendation"), res
+
+
+@case("trade window: merge_all_runtime_strategies exposes trade_window fields")
+def t48_trade_window_merge(tmp):
+  _write_runtime(tmp, enabled=True, extra_params={
+      "TradeStartTime": 635,
+      "TradeEndTime": 1230,
+      "UseSecondTradeWindow": False,
+  })
+  views = rt.merge_all_runtime_strategies()
+  assert len(views) == 1, views
+  assert views[0].get("trade_window_pt") == "06:35 AM – 12:30 PM", views[0]
+  tw = views[0].get("trade_window") or {}
+  assert tw.get("has_windows") is True, tw
+  assert rt.is_hhmm_in_trade_window(800, tw) is True
+  assert rt.is_hhmm_in_trade_window(1300, tw) is False
+
+
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12,
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t11b, t11c, t12,
              t13, t14, t15, t16, t17, t18,
              t19, t20, t21, t22, t23, t24, t25, t26,
-             t27, t28, t29, t30, t31, t32, t33, t34,
+             t27, t28, t29, t30, t31, t31b, t32, t33, t34,
              t35, t36, t37,
              # Phase 19
              t38, t39, t40, t41, t42, t43, t44,
+             # Phase 24
+             t44a, t44b, t44c, t44d, t44e,
              # Phase 23
-             t45, t46]
+             t45, t46,
+             t47_trade_window_helpers, t48_trade_window_merge,
+             t49_inactive_second_window_skipped, t50_c012_stale_window_mismatch]
     print(f"Running {len(cases)} Phase 17/18/10/19 runtime tests:")
     for c in cases:
         c()
