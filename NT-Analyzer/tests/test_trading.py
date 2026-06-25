@@ -759,12 +759,26 @@ def t36(tmp):
     }), encoding="utf-8")
 
     catalog_dir = tmp / "data" / "catalog"
+    sources_dir = tmp / "sources"
     catalog_dir.mkdir(parents=True, exist_ok=True)
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    mnq_source = sources_dir / "NTAMicroVwapRiskPilot.cs"
+    mgc_source = sources_dir / "VWAPPullbackMGC5mV1.cs"
+    mnq_source.write_text('Name = "VWAP Short MNQ 5m v1 c011";\n', encoding="utf-8")
+    mgc_source.write_text('Name = "Scalping Gold MGC 5m v1 c001";\n', encoding="utf-8")
     (catalog_dir / "strategies.json").write_text(json.dumps({
         "schema_version": "1.0",
         "strategies": [
-            {"class_name": "NTAMicroVwapRiskPilot", "display_name": "VWAP Short MNQ 5m v1 c011"},
-            {"class_name": "VWAPPullbackMGC5mV1", "display_name": "Scalping Gold MGC 5m v1 c001"},
+            {
+                "class_name": "NTAMicroVwapRiskPilot",
+                "display_name": "VWAP Short MNQ 5m v1 c011",
+                "source_file": str(mnq_source),
+            },
+            {
+                "class_name": "VWAPPullbackMGC5mV1",
+                "display_name": "Scalping Gold MGC 5m v1 c001",
+                "source_file": str(mgc_source),
+            },
         ],
     }), encoding="utf-8")
 
