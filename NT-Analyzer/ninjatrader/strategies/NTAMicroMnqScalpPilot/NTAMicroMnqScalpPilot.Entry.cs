@@ -245,6 +245,111 @@ namespace NinjaTrader.NinjaScript.Strategies
             return s;
         }
 
+        private bool IsLiveHistoricalWarmup()
+        {
+            if (State != State.Historical) return false;
+            if (Account == null || string.IsNullOrEmpty(Account.Name)) return false;
+            return !string.Equals(Account.Name, "Backtest", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private double RoundToValidTick(double price)
+        {
+            if (Instrument != null && Instrument.MasterInstrument != null)
+                return Instrument.MasterInstrument.RoundToTickSize(price);
+            if (TickSize > 0)
+                return Math.Round(price / TickSize) * TickSize;
+            return price;
+        }
+
+        private double SafeCurrentBid()
+        {
+            double bid = GetCurrentBid();
+            if (bid <= 0 || double.IsNaN(bid) || double.IsInfinity(bid))
+                bid = Close[0];
+            return bid;
+        }
+
+        private double SafeCurrentAsk()
+        {
+            double ask = GetCurrentAsk();
+            if (ask <= 0 || double.IsNaN(ask) || double.IsInfinity(ask))
+                ask = Close[0];
+            return ask;
+        }
+
+        private bool ValidateRealtimeEntryStop(bool isLong, double trigger, string tag)
+        {
+            if (State != State.Realtime) return true;
+
+            double bid = SafeCurrentBid();
+            double ask = SafeCurrentAsk();
+            double refPx = isLong ? ask : bid;
+            double distTicks = TickSize > 0 ? Math.Abs(trigger - refPx) / TickSize : 0.0;
+            double maxDistTicks = Math.Max(8.0, Math.Max(MinStopTicks, MaxStopTicks) * 2.0);
+            bool sideOk = isLong
+                ? trigger >= RoundToValidTick(ask + TickSize)
+                : trigger <= RoundToValidTick(bid - TickSize);
+
+            if (!sideOk || distTicks > maxDistTicks)
+            {
+                Print(string.Format(
+                    "[SKIP:live_entry_stop_invalid] tag={0} side={1} trigger={2:F2} bid={3:F2} ask={4:F2} distTicks={5:F1} maxTicks={6:F1}",
+                    tag, isLong ? "long" : "short", trigger, bid, ask, distTicks, maxDistTicks));
+                return false;
+            }
+
+            return true;
+        }
+
+        private void SetProtectiveStopLoss(string signal, double desiredStop, string reason)
+        {
+            double stop = RoundToValidTick(desiredStop);
+
+            if (_lastProtectiveStopPrice > 0)
+            {
+                if (Position.MarketPosition == MarketPosition.Long
+                    && stop <= _lastProtectiveStopPrice + (TickSize / 2.0))
+                    return;
+                if (Position.MarketPosition == MarketPosition.Short
+                    && stop >= _lastProtectiveStopPrice - (TickSize / 2.0))
+                    return;
+            }
+
+            if (State == State.Realtime)
+            {
+                double bid = SafeCurrentBid();
+                double ask = SafeCurrentAsk();
+
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    double maxSellStop = RoundToValidTick(bid - TickSize);
+                    if (stop > maxSellStop)
+                    {
+                        Print(string.Format(
+                            "[EXIT:live_stop_guard] reason={0} long desiredStop={1:F2} bid={2:F2} ask={3:F2}; market exit instead of invalid sell stop",
+                            reason, stop, bid, ask));
+                        ExitLong("LiveStopGuard", signal);
+                        return;
+                    }
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    double minBuyStop = RoundToValidTick(ask + TickSize);
+                    if (stop < minBuyStop)
+                    {
+                        Print(string.Format(
+                            "[EXIT:live_stop_guard] reason={0} short desiredStop={1:F2} bid={2:F2} ask={3:F2}; market exit instead of invalid buy stop",
+                            reason, stop, bid, ask));
+                        ExitShort("LiveStopGuard", signal);
+                        return;
+                    }
+                }
+            }
+
+            SetStopLoss(signal, CalculationMode.Price, stop, false);
+            _lastProtectiveStopPrice = stop;
+        }
+
         private void PlaceLongStop(double trigger, int stopTicks, int qty, string tag)
         {
             double protStop = trigger - stopTicks * TickSize;
@@ -262,6 +367,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void PlaceLongStopExplicit(double trigger, double protStop, double target,
                                            int stopTicks, int qty, string tag)
         {
+            trigger = RoundToValidTick(trigger);
+            protStop = RoundToValidTick(protStop);
+            target = RoundToValidTick(target);
+            if (!ValidateRealtimeEntryStop(true, trigger, tag)) return;
+
             string signal = TelemetrySignal("Long");
             SetStopLoss(signal, CalculationMode.Price, protStop, false);
             SetProfitTarget(signal, CalculationMode.Price, target);
@@ -284,6 +394,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void PlaceShortStopExplicit(double trigger, double protStop, double target,
                                             int stopTicks, int qty, string tag)
         {
+            trigger = RoundToValidTick(trigger);
+            protStop = RoundToValidTick(protStop);
+            target = RoundToValidTick(target);
+            if (!ValidateRealtimeEntryStop(false, trigger, tag)) return;
+
             string signal = TelemetrySignal("Short");
             SetStopLoss(signal, CalculationMode.Price, protStop, false);
             SetProfitTarget(signal, CalculationMode.Price, target);

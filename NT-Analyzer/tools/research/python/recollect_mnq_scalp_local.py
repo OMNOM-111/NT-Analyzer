@@ -16,6 +16,13 @@ Usage: python recollect_mnq_scalp_local.py <bundle_dir>
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
+import research_lib as RL  # noqa: E402
+
 import csv
 import json
 import sys
@@ -191,7 +198,7 @@ def classify(row: Dict[str, Any], oos_pf: Optional[float]) -> str:
         (oos_pf or 0.0) >= 1.25,
         row["win_rate"] >= 52.0,
         row["avg_trade_after_commission"] >= 1.50,
-        abs(row["max_drawdown"]) <= 300.0,
+        RL.max_drawdown_within_budget(row["max_drawdown"]),
         row["max_consecutive_losses"] <= 5,
         row["daily_stop_hit_pct"] <= 5.0,
     ]
@@ -209,7 +216,7 @@ def confidence(row: Dict[str, Any], oos_pf: Optional[float]) -> int:
     if (oos_pf or 0.0) >= 1.25: s += 20
     if row["win_rate"] >= 52.0: s += 15
     if row["avg_trade_after_commission"] >= 1.50: s += 10
-    if abs(row["max_drawdown"]) <= 300.0: s += 10
+    if RL.max_drawdown_within_budget(row["max_drawdown"]): s += 10
     if row["max_consecutive_losses"] <= 5: s += 5
     return s
 

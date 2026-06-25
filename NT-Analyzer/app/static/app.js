@@ -4071,6 +4071,7 @@ function _renderJobsPayload(jobsData, batchesData) {
       label: fmtContract(j.instrument) || j.job_id,
       labelTitle: "",
       strategy: j.class_name || "вЂ”",
+      origin: j.origin || null,
       status: j.status,
       period: j.period || null,
       created: j.created_at_utc || "",
@@ -4556,7 +4557,21 @@ function _buildReportRow(it) {
   tr.appendChild(tdName);
 
   // 3) Стратегия
-  tr.appendChild(td(it.strategy));
+  const tdStrat = el("td");
+  tdStrat.appendChild(document.createTextNode(it.strategy || "—"));
+  if (it.origin && it.origin.type === "ai_lab") {
+    const aiPill = el("span", { cls: "job-origin-pill ai", text: "AI" });
+    aiPill.title = `AI Strategy Lab · ${it.origin.experiment_id || ""}`;
+    aiPill.style.cursor = "pointer";
+    aiPill.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const eid = it.origin.experiment_id || "";
+      window.location.href = `/ui/ai-strategy.html?experiment=${encodeURIComponent(eid)}`;
+    });
+    tdStrat.appendChild(document.createTextNode(" "));
+    tdStrat.appendChild(aiPill);
+  }
+  tr.appendChild(tdStrat);
 
   // 4) Тип
   const tdKind = el("td");

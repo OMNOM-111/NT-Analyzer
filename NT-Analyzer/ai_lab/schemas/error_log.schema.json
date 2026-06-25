@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Lab Error Log Record (JSONL line)",
+  "type": "object",
+  "required": ["timestamp_utc", "experiment_id", "phase", "error_type", "severity"],
+  "properties": {
+    "timestamp_utc": { "type": "string", "format": "date-time" },
+    "experiment_id": { "type": "string" },
+    "class_name": { "type": "string" },
+    "target_root": { "type": "string" },
+    "phase": { "type": "string", "enum": ["intake", "memory", "generate", "validate", "compile", "restart", "catalog", "backtest", "analyze", "arbitrate"] },
+    "error_type": { "type": "string" },
+    "raw_message": { "type": "string" },
+    "normalized_pattern": { "type": "string" },
+    "severity": { "type": "string", "enum": ["info", "warn", "error", "blocker"] },
+    "fix_attempt": { "type": ["string", "null"] },
+    "resolved": { "type": "boolean" },
+    "lesson_summary": { "type": ["string", "null"] }
+  }
+}

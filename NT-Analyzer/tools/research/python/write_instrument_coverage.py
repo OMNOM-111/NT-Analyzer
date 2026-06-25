@@ -23,8 +23,12 @@ import os
 import sys
 from datetime import datetime, timezone
 from glob import glob
+from pathlib import Path
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, ROOT)
+
+from app import strategy_families  # noqa: E402
 
 STATUS_RANK = {
     "ready": 5,
@@ -85,6 +89,21 @@ def _current_contract_for_root(root: str, instruments_catalog) -> str | None:
     return best
 
 
+def _root_family_metadata(root: str, families_doc: dict) -> dict:
+    roots = families_doc.get("roots") if isinstance(families_doc, dict) else {}
+    raw = roots.get(root) if isinstance(roots, dict) else None
+    if not isinstance(raw, dict):
+        raw = {}
+    hub = raw.get("primary_research_hub")
+    return {
+        "root_family": raw.get("root_family") or root,
+        "family_status": raw.get("family_status") or "root_stub_unclassified",
+        "family_role": raw.get("family_role") or "root_family",
+        "hub_class": hub,
+        "new_research_allowed": bool(raw.get("new_research_allowed")),
+    }
+
+
 def _summarize_metrics(p: dict) -> dict:
     m = p.get("metrics") or {}
     out = {}
@@ -118,8 +137,13 @@ def _latest_bundle_name(strategies_doc: dict) -> str | None:
 def build_coverage():
     groups = _load_json(os.path.join(ROOT, "data", "catalog", "instrument_groups.json"), {})
     strategies_doc = _load_json(os.path.join(ROOT, "data", "profiles", "strategies.json"), {})
-    profiles = strategies_doc.get("profiles") or []
+    profiles = [
+        strategy_families.apply_family_metadata(p, Path(ROOT))
+        for p in strategies_doc.get("profiles") or []
+        if isinstance(p, dict)
+    ]
     instruments_catalog = _load_json(os.path.join(ROOT, "data", "catalog", "instruments.json"), None)
+    families_doc = strategy_families.read_family_map(Path(ROOT))
 
     bundle_name = _latest_bundle_name(strategies_doc)
 
@@ -149,6 +173,7 @@ def build_coverage():
         group_names = root_to_groups.get(root, [])
         candidates = by_root.get(root, [])
         current_contract = _current_contract_for_root(root, instruments_catalog)
+        root_meta = _root_family_metadata(root, families_doc)
 
         if not candidates:
             st = _coverage_status("missing")
@@ -161,6 +186,8 @@ def build_coverage():
                 "strategy_count": 0,
                 "best_profile_id": None,
                 "strategy_class": None,
+                **root_meta,
+                "strategy_family": None,
                 "setup_mode": None,
                 "timeframe": None,
                 "evidence_bundle": bundle_name,
@@ -199,6 +226,16 @@ def build_coverage():
             "strategy_count": len(candidates),
             "best_profile_id": best.get("profile_id"),
             "strategy_class": best.get("strategy_class"),
+            "root_family": best.get("root_family") or root_meta.get("root_family"),
+            "strategy_family": best.get("strategy_family"),
+            "family_status": best.get("family_status") or root_meta.get("family_status"),
+            "family_role": best.get("family_role") or root_meta.get("family_role"),
+            "hub_class": best.get("hub_class") or root_meta.get("hub_class"),
+            "new_research_allowed": (
+                bool(best.get("new_research_allowed"))
+                if "new_research_allowed" in best
+                else bool(root_meta.get("new_research_allowed"))
+            ),
             "setup_mode": (best.get("locked_parameters") or {}).get("SetupMode")
                           or best.get("setup_mode"),
             "timeframe": best.get("timeframe"),
@@ -227,6 +264,12 @@ def build_coverage():
             "strategy_count": len(plist),
             "best_profile_id": best.get("profile_id"),
             "strategy_class": best.get("strategy_class"),
+            "root_family": best.get("root_family"),
+            "strategy_family": best.get("strategy_family"),
+            "family_status": best.get("family_status"),
+            "family_role": best.get("family_role"),
+            "hub_class": best.get("hub_class"),
+            "new_research_allowed": bool(best.get("new_research_allowed")),
             "setup_mode": (best.get("locked_parameters") or {}).get("SetupMode"),
             "timeframe": best.get("timeframe"),
             "evidence_bundle": bundle_name,
@@ -248,6 +291,7 @@ def build_coverage():
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source_groups": "data/catalog/instrument_groups.json",
         "source_profiles": "data/profiles/strategies.json",
+        "source_strategy_families": "data/profiles/strategy_families.json",
         "evidence_bundle": bundle_name,
         "summary": summary,
         "micros": entries,
@@ -284,8 +328,8 @@ def _fmt_md(doc: dict) -> str:
         f"**Summary:** ✅ {s['ready']} готово · {s['in_progress']} в процессе "
         f"(of {s['total_micros']} Micros)",
         "",
-        "| Root | Current | Status | # | Best profile | Class | Mode | TF | Trades | PF | Net | Next action |",
-        "|---|---|---|---:|---|---|---|---|---:|---:|---:|---|",
+        "| Root | Current | Status | # | Best profile | Family | Hub | Class | Mode | TF | Trades | PF | Net | Next action |",
+        "|---|---|---|---:|---|---|---|---|---|---|---:|---:|---:|---|",
     ]
     for e in doc["micros"]:
         m = e.get("metrics") or {}
@@ -297,6 +341,8 @@ def _fmt_md(doc: dict) -> str:
             f"| {e['root']} | {e.get('current_contract') or '—'} | {e['status_badge']}{lock_mark} | "
             f"{e['strategy_count']} | "
             f"{e.get('best_profile_id') or '—'} | "
+            f"{e.get('strategy_family') or '—'} | "
+            f"{e.get('hub_class') or '—'} | "
             f"{e.get('strategy_class') or '—'} | "
             f"{e.get('setup_mode') or '—'} | "
             f"{e.get('timeframe') or '—'} | "

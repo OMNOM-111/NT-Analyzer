@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import ops
+from . import strategy_families
 
 HEARTBEAT_MAX_AGE_SEC = 60          # heartbeat older than this => stale
 RUNTIME_DIR_NAME      = "runtime"
@@ -393,7 +394,23 @@ STRATEGY_ID_ALIASES = {
     "ntamnqfullsessionorbretestscalpc014": "ntamnqfullsessionorbretestscalpc014",
     "ntamnqliquiditysweepreversalc015": "ntamnqliquiditysweepreversalc015",
     "ntamnqopendriveshortscalpc016": "ntamnqopendriveshortscalpc016",
+    "ntamnqpostactivescalpc017": "ntamnqpostactivescalpc017",
+    "ntamnqdailyopenscalpc018": "ntamnqdailyopenscalpc018",
+    "ntamnqheadshouldersdivergencec019": "ntamnqheadshouldersdivergencec019",
+    "ntamnqheadshouldersdivergencec020": "ntamnqheadshouldersdivergencec020",
+    "ntamnqprecashcompressionbreakoutc019": "ntamnqprecashcompressionbreakoutc019",
+    "ntamnqpostclustersqueezebreakoutc019": "ntamnqpostclustersqueezebreakoutc019",
+    "ntamnqpostclustervwapfadec019": "ntamnqpostclustervwapfadec019",
+    "ntamnqovernightsettlementbreakoutc019": "ntamnqovernightsettlementbreakoutc019",
+    "ntamnqovernightsettlementreversionc019": "ntamnqovernightsettlementreversionc019",
+    "ntamnqrthvwappullbackc019": "ntamnqrthvwappullbackc019",
+    "ntamnqrthtrenddayh1c019": "ntamnqrthtrenddayh1c019",
+    "ntamnqrthorbretesth1c019": "ntamnqrthorbretesth1c019",
+    "ntamnqrthgapgoh1c019": "ntamnqrthgapgoh1c019",
+    "ntamnqresearchhub": "mnq_research_hub",
+    "ntamnqsessionedgeenginec020": "mnq_research_hub",
     "ntamicrogoldsessionsweepreversalpilot": "ntamicrogoldsessionsweepreversalpilot",
+    "ntamgclatemorningsweepc006": "ntamgclatemorningsweepc006",
 }
 
 STRATEGY_CLASS_METADATA = {
@@ -442,6 +459,31 @@ STRATEGY_CLASS_METADATA = {
         "display_name": "Scalping MNQ 1m v1",
         "legacy_strategy_ids": [],
     },
+    "NTAMnqResearchHub": {
+        "strategy_id": "mnq_research_hub",
+        "display_name": "MNQ Research Hub",
+        "legacy_strategy_ids": ["ntamnqsessionedgeenginec020"],
+    },
+    "NTAMnqHeadShouldersDivergenceC126": {
+        "strategy_id": "ntamnqheadshouldersdivergencec126",
+        "display_name": "HeadShoulders Divergence MNQ 1m v1 c126",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqHeadShouldersDivergenceC019": {
+        "strategy_id": "ntamnqheadshouldersdivergencec019",
+        "display_name": "HeadShoulders Divergence MNQ 1m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqHeadShouldersDivergenceC020": {
+        "strategy_id": "ntamnqheadshouldersdivergencec020",
+        "display_name": "HeadShoulders Divergence MNQ 1m v1 c020",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqSessionEdgeEngineC020": {
+        "strategy_id": "mnq_research_hub",
+        "display_name": "MNQ Research Hub (legacy C020 engine)",
+        "legacy_strategy_ids": ["ntamnqresearchhub"],
+    },
     "NTAMnqMicroOrbOpenScalp": {
         "strategy_id": "orb_open_scalp_mnq_1m_v1",
         "display_name": "Scalping MNQ 1m v1 c012",
@@ -467,9 +509,69 @@ STRATEGY_CLASS_METADATA = {
         "display_name": "Scalping Open Drive Short MNQ 1m v1 c016",
         "legacy_strategy_ids": [],
     },
+    "NTAMnqPostActiveScalpC017": {
+        "strategy_id": "ntamnqpostactivescalpc017",
+        "display_name": "Scalping Post-Active MNQ 1m v1 c017",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqDailyOpenScalpC018": {
+        "strategy_id": "ntamnqdailyopenscalpc018",
+        "display_name": "Scalping MNQ 1m v1 c018",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqPreCashCompressionBreakoutC019": {
+        "strategy_id": "ntamnqprecashcompressionbreakoutc019",
+        "display_name": "Compression Breakout MNQ 5m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqPostClusterSqueezeBreakoutC019": {
+        "strategy_id": "ntamnqpostclustersqueezebreakoutc019",
+        "display_name": "Post-Cluster Squeeze MNQ 15m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqPostClusterVwapFadeC019": {
+        "strategy_id": "ntamnqpostclustervwapfadec019",
+        "display_name": "Post-Cluster VWAP Fade MNQ 5m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqOvernightSettlementBreakoutC019": {
+        "strategy_id": "ntamnqovernightsettlementbreakoutc019",
+        "display_name": "Overnight Settlement Breakout MNQ 15m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqOvernightSettlementReversionC019": {
+        "strategy_id": "ntamnqovernightsettlementreversionc019",
+        "display_name": "Overnight Settlement Reversion MNQ 15m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqRthVwapPullbackC019": {
+        "strategy_id": "ntamnqrthvwappullbackc019",
+        "display_name": "RTH VWAP Pullback MNQ 15m v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqRthTrendDayH1C019": {
+        "strategy_id": "ntamnqrthtrenddayh1c019",
+        "display_name": "RTH Trend Day H1 MNQ v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqRthOrbRetestH1C019": {
+        "strategy_id": "ntamnqrthorbretesth1c019",
+        "display_name": "RTH ORB Retest H1 MNQ v1 c019",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqRthGapGoH1C019": {
+        "strategy_id": "ntamnqrthgapgoh1c019",
+        "display_name": "RTH Gap Go H1 MNQ v1 c019",
+        "legacy_strategy_ids": [],
+    },
     "NTAMicroGoldSessionSweepReversalPilot": {
         "strategy_id": "ntamicrogoldsessionsweepreversalpilot",
         "display_name": "Scalping Gold Session Sweep Reversal MGC 5m v1 c001",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMgcLateMorningSweepC006": {
+        "strategy_id": "ntamgclatemorningsweepc006",
+        "display_name": "Scalping Late Morning Sweep MGC 1m v1 c006",
         "legacy_strategy_ids": [],
     },
     "NTASessionVwapReclaimScalper": {
@@ -2477,7 +2579,12 @@ def _read_strategy_profiles_for_runtime() -> List[Dict[str, Any]]:
         return []
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
         return []
-    return [x for x in data["profiles"] if isinstance(x, dict)]
+    root = ops._project_root()
+    return [
+        strategy_families.apply_family_metadata(x, root)
+        for x in data["profiles"]
+        if isinstance(x, dict)
+    ]
 
 
 def _profile_runtime_classes(profile: Dict[str, Any]) -> set:
@@ -2491,6 +2598,17 @@ def _profile_runtime_classes(profile: Dict[str, Any]) -> set:
         if s:
             out.add(s)
     return out
+
+
+def _profile_family_fields(profile: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "root_family": profile.get("root_family") or "",
+        "strategy_family": profile.get("strategy_family") or "",
+        "family_status": profile.get("family_status") or "",
+        "family_role": profile.get("family_role") or "",
+        "hub_class": profile.get("hub_class") or "",
+        "new_research_allowed": bool(profile.get("new_research_allowed")),
+    }
 
 
 def _profile_registry_hit_for_runtime(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -2514,7 +2632,8 @@ def _profile_registry_hit_for_runtime(r: Dict[str, Any]) -> Optional[Dict[str, A
         canonical_sid = canonical_strategy_id(sid)
         if (cls and cls in _profile_runtime_classes(p)) or (runtime_sid and canonical_sid == canonical_strategy_id(runtime_sid)):
             return {
-            "strategy_id": canonical_sid or canonical_strategy_id(runtime_sid) or cls,
+                **_profile_family_fields(p),
+                "strategy_id": canonical_sid or canonical_strategy_id(runtime_sid) or cls,
                 "display_name": p.get("name") or p.get("profile_id") or cls,
                 "class_name": r.get("strategy_class") or p.get("deploy_strategy_class") or p.get("strategy_class"),
                 "status": p.get("status") or "",
@@ -2566,6 +2685,7 @@ def _profile_registry_hit_for_strategy(strategy_id: str) -> Optional[Dict[str, A
         if not match:
             continue
         return {
+            **_profile_family_fields(p),
             "strategy_id": stable_sid or runtime_sid or sid or cls,
             "display_name": p.get("name") or p.get("profile_id") or cls,
             "class_name": p.get("deploy_strategy_class") or p.get("strategy_class") or s.get("class_name") or "",
@@ -3106,8 +3226,8 @@ def submit_command(command: str,
       * command must be in ALLOWED_COMMANDS
       * account must classify as paper, playback or demo (NOT live/unknown)
       * if strategy_id matches a registry entry → registry archived/rejected
-        block applies. Otherwise (any class from the NT Strategies folder)
-        we trust the operator and queue the command.
+        launch block applies to enable_strategy. disable_strategy remains
+        allowed so a frozen strategy can still be stopped from runtime.
       * runtime_instance_id (when provided) targets the exact strategy
         instance the UI selected; the bridge uses it to disambiguate
         multiple instances of the same class on the same account.
@@ -3124,8 +3244,8 @@ def submit_command(command: str,
     resolved_class = class_name or (s.get("class_name") if s else "")
     if not resolved_class:
         raise ops.OpsError("class_name required (catalog strategy)", 400)
-    if s and s.get("status") in ("rejected", "archived"):
-        raise ops.OpsError("strategy is archived/rejected — command refused", 403)
+    if command == "enable_strategy" and s and s.get("status") in ("rejected", "archived"):
+        raise ops.OpsError("strategy is archived/rejected — launch refused", 403)
     acct_mode = _resolve_account_mode_for_command(account_name)
     if acct_mode == "unknown":
         raise ops.OpsError(

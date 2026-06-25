@@ -375,7 +375,7 @@ def select_candidates(rows: List[Dict[str, Any]], limit: int = 4) -> List[Dict[s
         and int(row.get("trade_count") or 0) >= 50
         and float(row.get("adj_net") or 0.0) > 0.0
         and float(row.get("adj_pf") or 0.0) >= 1.20
-        and abs(float(row.get("adj_dd") or 0.0)) <= 300.0
+        and RL.max_drawdown_within_budget(float(row.get("adj_dd") or 0.0))
     ]
     eligible.sort(key=score, reverse=True)
     return eligible[:limit]
@@ -405,7 +405,7 @@ def gates(full: Dict[str, Any], stages: Dict[str, Dict[str, Any]]) -> Dict[str, 
         "full_net_positive": float(full.get("adj_net") or 0.0) > 0.0,
         "full_pf_ge_1_35": float(full.get("adj_pf") or 0.0) >= 1.35,
         "full_trades_ge_50": int(full.get("trade_count") or 0) >= 50,
-        "full_dd_le_300": abs(float(full.get("adj_dd") or 0.0)) <= 300.0,
+        "max_dd_pct_15": RL.max_drawdown_within_budget(float(full.get("adj_dd") or 0.0)),
         "is_net_positive": float((stages.get("is_2024") or {}).get("adj_net") or 0.0) > 0.0,
         "oos_pf_ge_1_25": float((stages.get("oos_2025") or {}).get("adj_pf") or 0.0) >= 1.25,
         "oos_net_positive": float((stages.get("oos_2025") or {}).get("adj_net") or 0.0) > 0.0,

@@ -178,6 +178,66 @@ def t01(tmp: Path) -> None:
     assert instruments["MGC"]["best_strategy"].startswith("003 "), instruments["MGC"]
 
 
+@case("t01b: strategy totals aggregate across runtime instances")
+def t01b_strategy_totals_merge_runtime_instances(tmp: Path) -> None:
+    day = ops._to_pt(datetime.now(timezone.utc)).date().isoformat()
+    strategies = [
+        {
+            "account_name": "DEMO3369390",
+            "account_mode": "demo",
+            "strategy_id": "ntamnqliquiditysweepreversalc015",
+            "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+            "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+            "instrument": "MNQ JUN26",
+            "timeframe": "1 Minute",
+            "runtime_instance_id": "iid-c015-a",
+            "params": {"RoundTurnCommission": 1.90},
+        },
+        {
+            "account_name": "DEMO3369390",
+            "account_mode": "demo",
+            "strategy_id": "ntamnqliquiditysweepreversalc015",
+            "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+            "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+            "instrument": "MNQ JUN26",
+            "timeframe": "1 Minute",
+            "runtime_instance_id": "iid-c015-b",
+            "params": {"RoundTurnCommission": 1.90},
+        },
+    ]
+    executions = [
+        {"timestamp_utc": _iso_for_pt_date(day, 8, 30), "account_name": "DEMO3369390",
+         "runtime_instance_id": "iid-c015-a", "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+         "strategy_id": "ntamnqliquiditysweepreversalc015", "instrument": "MNQ JUN26",
+         "order_action": "Buy", "quantity": 1, "price": 100.0},
+        {"timestamp_utc": _iso_for_pt_date(day, 8, 40), "account_name": "DEMO3369390",
+         "runtime_instance_id": "iid-c015-a", "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+         "strategy_id": "ntamnqliquiditysweepreversalc015", "instrument": "MNQ JUN26",
+         "order_action": "Sell", "quantity": 1, "price": 105.0},
+        {"timestamp_utc": _iso_for_pt_date(day, 9, 30), "account_name": "DEMO3369390",
+         "runtime_instance_id": "iid-c015-b", "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+         "strategy_id": "ntamnqliquiditysweepreversalc015", "instrument": "MNQ JUN26",
+         "order_action": "SellShort", "quantity": 1, "price": 110.0},
+        {"timestamp_utc": _iso_for_pt_date(day, 9, 40), "account_name": "DEMO3369390",
+         "runtime_instance_id": "iid-c015-b", "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+         "strategy_id": "ntamnqliquiditysweepreversalc015", "instrument": "MNQ JUN26",
+         "order_action": "BuyToCover", "quantity": 1, "price": 108.0},
+    ]
+    _write_runtime(tmp, strategies, executions)
+    out = performance.build_performance_response(
+        period="custom",
+        from_date=day,
+        to_date=day,
+        account_name="DEMO3369390",
+    )
+    rows = [row for row in out["strategies"] if row["cell"] == "015"]
+    assert len(rows) == 1, rows
+    assert rows[0]["trades"] == 2, rows[0]
+    assert rows[0]["pnl"] == 10.20, rows[0]
+    assert rows[0]["runtime_instance_count"] == 2, rows[0]
+    assert rows[0]["runtime_instance_ids"] == ["iid-c015-a", "iid-c015-b"], rows[0]
+
+
 @case("t02: empty period returns zero P/L and no PF")
 def t02(tmp: Path) -> None:
     today = ops._to_pt(datetime.now(timezone.utc)).date().isoformat()
@@ -268,7 +328,7 @@ def t04(tmp: Path) -> None:
     assert row["exit_reason"] == "target", row
 
 
-@case("t05: closed trade inherits strategy from mapped entry when exit is unmapped")
+@case("t05: unmapped exit closing a mapped entry is account_level, excluded from strategy PnL")
 def t05_entry_strategy_attribution_for_unmapped_exit(tmp: Path) -> None:
     day = "2026-05-21"
     executions = [
@@ -311,11 +371,15 @@ def t05_entry_strategy_attribution_for_unmapped_exit(tmp: Path) -> None:
     )
     assert len(trades) == 1, trades
     trade = trades[0]
+    # Entry strategy labels are preserved for display/traceability...
     assert trade["unmapped"] is False, trade
     assert trade["strategy_class"] == "NTAMnqLiquiditySweepReversalC015", trade
     assert trade["strategy_id"] == "ntamnqliquiditysweepreversalc015", trade
     assert trade["runtime_instance_id"] == "iid-c015", trade
     assert trade["entry_strategy_class"] == "NTAMnqLiquiditySweepReversalC015", trade
+    # ...but the exit is unmapped, so the pairing is account-level, not a clean
+    # strategy trade (Stage 2 strict attribution).
+    assert trade["category"] == performance.TRADE_CATEGORY_ACCOUNT_LEVEL, trade
 
     out = performance.build_performance_response(
         period="custom",
@@ -323,9 +387,17 @@ def t05_entry_strategy_attribution_for_unmapped_exit(tmp: Path) -> None:
         to_date=day,
         account_name="DEMO3369390",
     )
+    # Account net still sees the trade...
     assert out["summary"]["trades"] == 1, out["summary"]
+    assert out["categories"]["counts"]["account_level"] == 1, out["categories"]
+    # ...but strategy-level scoring excludes it entirely.
+    assert out["strategy_summary"]["trades"] == 0, out["strategy_summary"]
     by_class = {row["strategy_class"]: row for row in out["strategies"]}
-    assert by_class["NTAMnqLiquiditySweepReversalC015"]["pnl"] == 6.10, by_class
+    strat = by_class["NTAMnqLiquiditySweepReversalC015"]
+    assert strat["pnl"] == 0.0, strat
+    assert strat["scored_trade_count"] == 0, strat
+    assert strat["excluded_trade_count"] == 1, strat
+    assert strat["category_breakdown"]["counts"]["account_level"] == 1, strat
 
 
 @case("t06: multiple unmapped exits close mapped strategy lots FIFO")
@@ -404,11 +476,151 @@ def t06_multiple_unmapped_exits_close_strategy_lots_fifo(tmp: Path) -> None:
     ], trades
     assert [t["unmapped"] for t in trades] == [False, False], trades
     assert [t["exit_order_id"] for t in trades] == ["exit-unmapped-1", "exit-unmapped-2"], trades
+    # Unmapped exits closing mapped entries are account-level under strict policy.
+    assert [t["category"] for t in trades] == [
+        performance.TRADE_CATEGORY_ACCOUNT_LEVEL,
+        performance.TRADE_CATEGORY_ACCOUNT_LEVEL,
+    ], trades
+
+
+@case("t07: clean same-strategy round trip is a normal, scored trade")
+def t07_normal_round_trip(tmp: Path) -> None:
+    day = "2026-05-21"
+    base = {
+        "account_name": "DEMO3369390",
+        "runtime_instance_id": "iid-c015",
+        "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+        "strategy_id": "ntamnqliquiditysweepreversalc015",
+        "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+        "instrument": "MNQ JUN26",
+    }
+    executions = [
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 8, 30), "order_action": "SellShort",
+         "quantity": 1, "price": 19000.0, "order_id": "e1", "execution_id": "ex1"},
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 8, 35), "order_action": "BuyToCover",
+         "quantity": 1, "price": 18996.0, "order_id": "x1", "execution_id": "xe1"},
+    ]
+    _write_runtime(tmp, [], executions)
+    _resolved, trades, _dedupe, _all = performance._closed_trades_for_request(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert len(trades) == 1, trades
+    assert trades[0]["category"] == performance.TRADE_CATEGORY_NORMAL, trades[0]
+    out = performance.build_performance_response(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert out["strategy_summary"]["trades"] == 1, out["strategy_summary"]
+    by_class = {row["strategy_class"]: row for row in out["strategies"]}
+    assert by_class["NTAMnqLiquiditySweepReversalC015"]["pnl"] == 6.10, by_class
+
+
+@case("t08: same-root contract roll between entry and exit is rollover_mismatch")
+def t08_rollover_mismatch(tmp: Path) -> None:
+    day = "2026-05-21"
+    base = {
+        "account_name": "DEMO3369390",
+        "runtime_instance_id": "iid-c015",
+        "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+        "strategy_id": "ntamnqliquiditysweepreversalc015",
+        "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+    }
+    executions = [
+        {**base, "instrument": "MNQ JUN26", "timestamp_utc": _iso_for_pt_date(day, 8, 30),
+         "order_action": "SellShort", "quantity": 1, "price": 19000.0, "order_id": "e1", "execution_id": "ex1"},
+        {**base, "instrument": "MNQ SEP26", "timestamp_utc": _iso_for_pt_date(day, 8, 35),
+         "order_action": "BuyToCover", "quantity": 1, "price": 18996.0, "order_id": "x1", "execution_id": "xe1"},
+    ]
+    _write_runtime(tmp, [], executions)
+    _resolved, trades, _dedupe, _all = performance._closed_trades_for_request(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert len(trades) == 1, trades
+    assert trades[0]["category"] == performance.TRADE_CATEGORY_ROLLOVER, trades[0]
+    out = performance.build_performance_response(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert out["strategy_summary"]["trades"] == 0, out["strategy_summary"]
+    assert out["categories"]["counts"]["rollover_mismatch"] == 1, out["categories"]
+
+
+@case("t09: opposing fills from different mapped strategies never cross-pair")
+def t09_cross_strategy_unmatched(tmp: Path) -> None:
+    day = "2026-05-21"
+    executions = [
+        {"account_name": "DEMO3369390", "runtime_instance_id": "iid-c015",
+         "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+         "strategy_id": "ntamnqliquiditysweepreversalc015",
+         "strategy_name": "NTAMnqLiquiditySweepReversalC015", "instrument": "MNQ JUN26",
+         "timestamp_utc": _iso_for_pt_date(day, 8, 30), "order_action": "SellShort",
+         "quantity": 1, "price": 19000.0, "order_id": "e1", "execution_id": "ex1"},
+        {"account_name": "DEMO3369390", "runtime_instance_id": "iid-c016",
+         "strategy_class": "NTAMnqOpenDriveShortScalpC016",
+         "strategy_id": "ntamnqopendriveshortscalpc016",
+         "strategy_name": "NTAMnqOpenDriveShortScalpC016", "instrument": "MNQ JUN26",
+         "timestamp_utc": _iso_for_pt_date(day, 8, 35), "order_action": "BuyToCover",
+         "quantity": 1, "price": 18996.0, "order_id": "x1", "execution_id": "xe1"},
+    ]
+    _write_runtime(tmp, [], executions)
+    _resolved, trades, _dedupe, _all = performance._closed_trades_for_request(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    # Each mapped strategy keeps its own FIFO book: a C016 buy must NOT close a
+    # C015 short. Both positions stay open -> no contaminated closed trade.
+    assert trades == [], trades
+    out = performance.build_performance_response(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert out["strategy_summary"]["trades"] == 0, out["strategy_summary"]
+
+
+@case("t10: impossible multi-day FIFO pairing is unmatched")
+def t10_multi_day_unmatched(tmp: Path) -> None:
+    base = {
+        "account_name": "DEMO3369390",
+        "runtime_instance_id": "iid-c015",
+        "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+        "strategy_id": "ntamnqliquiditysweepreversalc015",
+        "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+        "instrument": "MNQ JUN26",
+    }
+    executions = [
+        {**base, "timestamp_utc": _iso_for_pt_date("2026-05-14", 8, 30), "order_action": "SellShort",
+         "quantity": 1, "price": 19000.0, "order_id": "e1", "execution_id": "ex1"},
+        {**base, "timestamp_utc": _iso_for_pt_date("2026-05-20", 8, 35), "order_action": "BuyToCover",
+         "quantity": 1, "price": 18996.0, "order_id": "x1", "execution_id": "xe1"},
+    ]
+    _write_runtime(tmp, [], executions)
+    _resolved, trades, _dedupe, _all = performance._closed_trades_for_request(
+        period="custom", from_date="2026-05-14", to_date="2026-05-20", account_name="DEMO3369390")
+    assert len(trades) == 1, trades
+    assert trades[0]["category"] == performance.TRADE_CATEGORY_UNMATCHED, trades[0]
+
+
+@case("t11: trading_cycle_id mismatch downgrades a paired trade to unmatched")
+def t11_cycle_mismatch(tmp: Path) -> None:
+    day = "2026-05-21"
+    base = {
+        "account_name": "DEMO3369390",
+        "runtime_instance_id": "iid-c015",
+        "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+        "strategy_id": "ntamnqliquiditysweepreversalc015",
+        "strategy_name": "NTAMnqLiquiditySweepReversalC015",
+        "instrument": "MNQ JUN26",
+    }
+    executions = [
+        {**base, "trading_cycle_id": "CYCLE-A", "timestamp_utc": _iso_for_pt_date(day, 8, 30),
+         "order_action": "SellShort", "quantity": 1, "price": 19000.0, "order_id": "e1", "execution_id": "ex1"},
+        {**base, "trading_cycle_id": "CYCLE-B", "timestamp_utc": _iso_for_pt_date(day, 8, 35),
+         "order_action": "BuyToCover", "quantity": 1, "price": 18996.0, "order_id": "x1", "execution_id": "xe1"},
+    ]
+    _write_runtime(tmp, [], executions)
+    _resolved, trades, _dedupe, _all = performance._closed_trades_for_request(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert len(trades) == 1, trades
+    assert trades[0]["category"] == performance.TRADE_CATEGORY_UNMATCHED, trades[0]
+    assert trades[0]["entry_trading_cycle_id"] == "CYCLE-A", trades[0]
+    assert trades[0]["exit_trading_cycle_id"] == "CYCLE-B", trades[0]
 
 
 def main() -> int:
-    for fn in (t01, t02, t03, t04, t05_entry_strategy_attribution_for_unmapped_exit,
-               t06_multiple_unmapped_exits_close_strategy_lots_fifo):
+    for fn in (t01, t01b_strategy_totals_merge_runtime_instances, t02, t03, t04, t05_entry_strategy_attribution_for_unmapped_exit,
+               t06_multiple_unmapped_exits_close_strategy_lots_fifo,
+               t07_normal_round_trip, t08_rollover_mismatch, t09_cross_strategy_unmatched,
+               t10_multi_day_unmatched, t11_cycle_mismatch):
         fn()
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")
     if FAILED:

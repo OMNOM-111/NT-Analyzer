@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "active_cycle_id": null,
+  "_comment": "Copy to data/ops/cycles.json and set active_cycle_id to open a cycle. The runtime bridge stamps each execution/order with active_cycle_id; the Performance Center refuses to merge PnL across cycles. Set active_cycle_id to null to run cycle-agnostic (legacy) attribution.",
+  "cycles": [
+    {
+      "cycle_id": "CYCLE-2026-06-16-A",
+      "label": "post-audit relaunch gate",
+      "status": "open",
+      "opened_at_utc": "2026-06-16T00:00:00Z",
+      "closed_at_utc": null,
+      "account_names": ["DEMO3369390"],
+      "members": [
+        {
+          "cell_id": "CELL-015",
+          "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+          "strategy_id": "ntamnqliquiditysweepreversalc015",
+          "runtime_instance_id": "iid-c015",
+          "instrument": "MNQ SEP26",
+          "session_template": "CME US Index Futures RTH",
+          "timezone": "UTC",
+          "locked_params_hash": "sha256:..."
+        }
+      ]
+    }
+  ]
+}

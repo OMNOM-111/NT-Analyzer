@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import marginrefresh  # informational margin catalog auto-refresh
 from . import portfolio_cells
+from . import strategy_families
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -151,6 +152,7 @@ def reset_caches() -> None:
     _REPORT_FAVORITE_KEYS_VALUE = set()
     _PORTFOLIO_LAYOUT_FP = None
     _PORTFOLIO_LAYOUT_VALUE = {"profiles": {}, "lookup": {}}
+    strategy_families.reset_caches()
 
 
 def cache_stats() -> Dict[str, int]:
@@ -1065,11 +1067,34 @@ def read_strategy_profiles() -> Dict[str, Any]:
     return {"schema_version": "1.0", "profiles": []}
 
 
+def read_strategy_families() -> Dict[str, Any]:
+    """Return the root/strategy-family map used to annotate profiles."""
+    return strategy_families.read_family_map(project_root())
+
+
+def read_research_modes() -> Dict[str, Any]:
+    """Return the Research Hub Mode registry."""
+    path = project_root() / "data" / "profiles" / "research_modes.json"
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if not isinstance(data.get("modes"), list):
+        data["modes"] = []
+    data.setdefault("schema_version", "1.0")
+    data.setdefault("source", "data/profiles/research_modes.json")
+    return data
+
+
 _PROFILE_STATUS_LABELS: Dict[str, str] = {
     "ready": "Готова",
     "in_progress": "В процессе",
     "paper_ready": "Готово к paper",
     "paper_candidate": "Кандидат",
+    "demo_trial": "Испытательный срок demo",
     "research_baseline": "База исследования",
     "rejected": "Отклонено",
     "archived": "Архив",
@@ -1081,6 +1106,10 @@ _PROFILE_NAME_CLASS_PREFIXES: Dict[str, str] = {
     "B1ShortOnlyMGC5mV2": "B1 ShortOnly",
     "VWAPPullbackMGC5mV1": "Scalping Gold",
     "NTAMicroMnqScalpPilot": "Scalping",
+    "NTAMnqResearchHub": "Session Edge",
+    "NTAMnqSessionEdgeEngineC020": "Session Edge",
+    "NTAMnqPostActiveScalpC017": "Scalping Post-Active",
+    "NTAMnqDailyOpenScalpC018": "Scalping",
     "NTAMnqMicroOrbOpenScalp": "Scalping",
     "NTAMnqMicroOrbRetestScalpC013": "Scalping Orb Retest",
     "StrategiyaUrovney": "Levels",
@@ -1417,6 +1446,12 @@ def read_instrument_coverage() -> Dict[str, Any]:
                 "instrument_root":  profile.get("instrument_root")
                                      or _root_from_instrument(profile.get("instrument") or profile.get("current_contract"))
                                      or "",
+                "root_family":      profile.get("root_family") or "",
+                "strategy_family":  profile.get("strategy_family") or "",
+                "family_status":    profile.get("family_status") or "",
+                "family_role":      profile.get("family_role") or "",
+                "hub_class":        profile.get("hub_class") or "",
+                "new_research_allowed": bool(profile.get("new_research_allowed")),
                 "timeframe":        profile.get("timeframe") or "",
                 "slot":             profile.get("slot"),
                 "cell_id":          profile.get("cell_id") or "",
@@ -1521,6 +1556,7 @@ def _normalize_strategy_profile_for_ui(profile: Dict[str, Any]) -> Dict[str, Any
     profile file does not produce blank cards.
     """
     out = dict(profile)
+    out = strategy_families.apply_family_metadata(out, project_root())
     if "profile_id" not in out and "id" in out:
         out["profile_id"] = out.get("id")
     if "strategy_class" not in out and "strategy" in out:
@@ -1955,6 +1991,25 @@ def _profile_class_candidates(profile: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _catalog_rejected_classes() -> set[str]:
+    """Classes explicitly removed from the working strategy surface.
+
+    The bridge catalog is a technical inventory of compiled NinjaScript classes.
+    A decommissioned class can remain in the DLL/source tree for audit history,
+    but it must not be offered as a launch/backtest choice from the app.
+    """
+    path = project_root() / "data" / "ops" / "scc_classes.json"
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return set()
+    rejected = doc.get("rejected") if isinstance(doc, dict) else None
+    if not isinstance(rejected, list):
+        return set()
+    return {str(x or "").strip().lower() for x in rejected if str(x or "").strip()}
+
+
 def _clone_strategy_parameters(raw: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     if not isinstance(raw, list):
@@ -1983,12 +2038,15 @@ def _visible_catalog_strategies(
     raw_strategies = strat_doc.get("strategies") or []
     generated_at = strat_doc.get("generated_at_utc")
     normalized_by_class: Dict[str, Dict[str, Any]] = {}
+    rejected_classes = _catalog_rejected_classes()
 
     for raw in raw_strategies:
         if not isinstance(raw, dict):
             continue
         cls_name = str(raw.get("class_name") or "").strip()
         if not cls_name:
+            continue
+        if cls_name.lower() in rejected_classes:
             continue
         sf = _resolve_strategy_source_file(cls_name, raw.get("source_file"))
         if not sf:
@@ -2031,6 +2089,8 @@ def _visible_catalog_strategies(
         if not deploy_cls:
             continue
         deploy_key = deploy_cls.lower()
+        if deploy_key in rejected_classes:
+            continue
         if deploy_key in visible_keys or deploy_cls in _INTERNAL_STRATEGY_CATALOG_CLASSES:
             continue
         sf = _resolve_strategy_source_file(deploy_cls, None)
@@ -2561,6 +2621,9 @@ class CreateJobRequest:
     batch_id: Optional[str] = None
     batch_index: Optional[int] = None
     batch_total: Optional[int] = None
+    # Optional provenance metadata, written atomically into job.json before
+    # pending publication. This avoids post-publish races with the bridge.
+    origin: Optional[Dict[str, Any]] = None
 
 
 class JobValidationError(ValueError):
@@ -2801,6 +2864,46 @@ def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
             cur = 0
         if cur < 1:
             req.parameters["SlippageTicks"] = max(1, int(req.slippage_ticks))
+
+
+def _strip_internal_strategy_parameters(req: "CreateJobRequest") -> None:
+    """Remove profile-only metadata keys before publishing job parameters.
+
+    Profile records may carry helper fields such as ``_session_template`` that
+    document how the profile was selected. The bridge is intentionally strict:
+    every key under ``strategy.parameters`` must be an exposed NinjaScript
+    property. Internal keys belong in job/execution metadata, not in the
+    parameter injection payload.
+    """
+    if not isinstance(req.parameters, dict):
+        req.parameters = {}
+        return
+    req.parameters = {
+        str(k): v
+        for k, v in req.parameters.items()
+        if not str(k).startswith("_")
+    }
+
+
+def _align_instrument_strategy_parameters(req: "CreateJobRequest") -> None:
+    """Keep strategy-exposed instrument fields aligned with the job contract.
+
+    Some deploy wrappers expose `ContractName` / `InstrumentName` as strategy
+    parameters and older locked profiles can still point at an expired contract
+    (for example `MNQ 06-26`). A job that says `instrument=MNQ 09-26` but passes
+    `ContractName=MNQ 06-26` is not a reproducible current-contract rerun.
+    """
+    if not isinstance(req.parameters, dict):
+        req.parameters = {}
+        return
+    instrument = str(req.instrument or "").strip()
+    if not instrument:
+        return
+    root = instrument.split()[0].upper() if instrument.split() else instrument.upper()
+    if "ContractName" in req.parameters:
+        req.parameters["ContractName"] = instrument
+    if "InstrumentName" in req.parameters:
+        req.parameters["InstrumentName"] = root
 
 
 def _apply_locked_strategy_parameters(req: "CreateJobRequest") -> None:
@@ -3058,10 +3161,58 @@ def _validate(req: CreateJobRequest) -> None:
             )
 
 
+def stage2_backtest_requirements(req: "CreateJobRequest") -> Dict[str, Any]:
+    """Stage 2 runtime/backtest mismatch repair.
+
+    Record — and warn about — the explicit assumptions a research backtest must
+    carry to be honestly comparable against runtime: session template, timezone,
+    fill model, slippage, commission and the exact contract. The historical data
+    fingerprint itself is produced by the bridge at run time (and now feeds
+    run_hash, contract 0.2); here we assert the job demanded it.
+    """
+    warnings: List[str] = []
+    session = str(getattr(req, "session_template", "") or "")
+    timezone_name = str(getattr(req, "timezone", "") or "")
+    fill = str(getattr(req, "order_fill_resolution", "") or "")
+    slip = int(getattr(req, "slippage_ticks", 0) or 0)
+    commission_template = str(getattr(req, "commission_template", "") or "")
+    instrument = str(getattr(req, "instrument", "") or "")
+
+    if not session:
+        warnings.append("session_template is empty; an explicit trading-hours template is required.")
+    if not timezone_name:
+        warnings.append("timezone is empty; an explicit timezone is required.")
+    if fill != "High":
+        warnings.append(f"order_fill_resolution={fill!r} is optimistic-unfriendly; runtime fills are real, prefer 'High'.")
+    if slip < 2:
+        warnings.append(f"slippage_ticks={slip} is optimistic for stop-market scalps; stress at 2-3 ticks.")
+    if commission_template in ("", "None"):
+        warnings.append("commission is synthetic 0 (commission_template=None); stress real commission >= $2.50 RT.")
+    # An exact contract (root + month) is required so a contract roll cannot be
+    # silently compared across runs (e.g. MNQ 06-26 backtest vs MNQ SEP26 runtime).
+    has_contract_month = bool(re.search(r"\d", instrument)) and len(instrument.split()) > 1
+    if not has_contract_month:
+        warnings.append(f"instrument={instrument!r} lacks an explicit contract month; record exact contract + rollover policy.")
+
+    return {
+        "contract_version": "0.2",
+        "session_template": session,
+        "timezone": timezone_name,
+        "order_fill_resolution": fill,
+        "slippage_ticks": slip,
+        "commission_template": commission_template,
+        "instrument": instrument,
+        "requires_runtime_historical_data_fingerprint": True,
+        "warnings": warnings,
+    }
+
+
 def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     """Create a job in pending/. Returns (job_id, pending_job_dir)."""
     _apply_locked_strategy_parameters(req)
     _inject_research_accounting_parameters(req)
+    _align_instrument_strategy_parameters(req)
+    _strip_internal_strategy_parameters(req)
     # Risk Profile bridge contract (see _inject_risk_profile_parameters):
     # projects normalized risk_profile -> strategy.parameters so the strategy
     # can read capital/margin/intraday/status via [NinjaScriptProperty].
@@ -3117,10 +3268,13 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
             "timezone": req.timezone,
             "role": getattr(req, "role", "research"),
             "round_turn_commission": _effective_round_turn_commission(req),
+            "stage2_requirements": stage2_backtest_requirements(req),
         },
     }
     if portfolio:
         job_doc["portfolio"] = dict(portfolio)
+    if isinstance(getattr(req, "origin", None), dict):
+        job_doc["origin"] = dict(req.origin or {})
     if req.batch_id:
         job_doc["batch"] = {
             "batch_id":    req.batch_id,
@@ -3581,6 +3735,8 @@ def read_job_summary(job_id: str, include_adjusted: bool = True) -> Optional[Dic
     summary["period"] = job.get("period")
     summary["created_at_utc"] = job.get("created_at_utc")
     summary["batch"] = job.get("batch")  # None for single jobs
+    if isinstance(job.get("origin"), dict):
+        summary["origin"] = job["origin"]
     portfolio = _job_portfolio_metadata(job)
     if portfolio:
         summary["portfolio"] = portfolio

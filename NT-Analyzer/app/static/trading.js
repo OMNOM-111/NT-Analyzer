@@ -16,6 +16,7 @@
   const DEFAULT_ROUND_TURN_COMMISSION = 1.90;
   const PERFORMANCE_START_DATE_PT = "2026-05-13";
   const PERFORMANCE_STARTING_CAPITAL = 2000;
+  const MAX_INTRADAY_TRADE_HOLD_SECONDS = 24 * 60 * 60;
   const fmtMoney = (v) =>
     (v == null || isNaN(v)) ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(2);
   const fmtCurrency = (v) =>
@@ -32,12 +33,17 @@
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   const TRADING_SORT_STORAGE_KEY = "nta.trading.tableSorts.v1";
   const DEFAULT_TRADING_TABLE_SORTS = {
+    runtimeStrategies: { col: "cell", dir: "asc" },
     closedTrades: { col: "exit_time", dir: "desc" },
     executions: { col: "timestamp", dir: "desc" },
   };
 
-  function cloneSort(sort) {
-    return { col: String(sort && sort.col || "exit_time"), dir: sort && sort.dir === "asc" ? "asc" : "desc" };
+  function cloneSort(sort, fallback) {
+    const fb = fallback || { col: "exit_time", dir: "desc" };
+    return {
+      col: String(sort && sort.col || fb.col || "exit_time"),
+      dir: sort && sort.dir === "asc" ? "asc" : (fb.dir === "asc" ? "asc" : "desc"),
+    };
   }
 
   function loadTradingTableSorts() {
@@ -49,8 +55,9 @@
     }
     catch (_) { raw = {}; }
     return {
-      closedTrades: cloneSort(raw.closedTrades || DEFAULT_TRADING_TABLE_SORTS.closedTrades),
-      executions: cloneSort(raw.executions || DEFAULT_TRADING_TABLE_SORTS.executions),
+      runtimeStrategies: cloneSort(raw.runtimeStrategies || DEFAULT_TRADING_TABLE_SORTS.runtimeStrategies, DEFAULT_TRADING_TABLE_SORTS.runtimeStrategies),
+      closedTrades: cloneSort(raw.closedTrades || DEFAULT_TRADING_TABLE_SORTS.closedTrades, DEFAULT_TRADING_TABLE_SORTS.closedTrades),
+      executions: cloneSort(raw.executions || DEFAULT_TRADING_TABLE_SORTS.executions, DEFAULT_TRADING_TABLE_SORTS.executions),
     };
   }
 
@@ -329,7 +336,7 @@
 
   function resolveTradeWindow(view) {
     const rt = (view && view.runtime) || {};
-    const prof = (view && view.profile_ref) || {};
+    const prof = profileForStrategyView(view) || {};
     const rtParams = (rt.parameters && typeof rt.parameters === "object") ? rt.parameters
       : (rt.params && typeof rt.params === "object") ? rt.params : {};
     const locked = (view && view.locked_params) || prof.locked_parameters || rt.locked_params || {};
@@ -713,6 +720,81 @@
     return String(lots[0].entry_ts || "");
   }
 
+  function secondsBetweenIso(startIso, endIso) {
+    if (!startIso || !endIso) return null;
+    const a = new Date(String(startIso)).getTime();
+    const b = new Date(String(endIso)).getTime();
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return Math.max(0, (b - a) / 1000);
+  }
+
+  function executionActionToken(row) {
+    return String(row && (row.order_action || row.action) || "")
+      .trim().toLowerCase().replace(/\s+/g, "");
+  }
+
+  function executionLooksCloseOnly(row) {
+    const action = executionActionToken(row);
+    if (action === "buytocover" || action === "sell") return true;
+    if (action === "buy" || action === "sellshort") return false;
+    const role = String(row && (row.role || row.position_action) || "").trim().toLowerCase();
+    if (["exit", "close", "stop", "target", "manual"].includes(role)) return true;
+    const label = String(row && (row.order_name || row.from_entry_signal || row.exit_reason) || "").toLowerCase();
+    return /\b(stop|target|profit|timeexit|flat|exit|guard)\b/.test(label);
+  }
+
+  function tradePairIsTooOld(row, lot) {
+    const durationSec = secondsBetweenIso(lot && lot.entry_ts, row && row.timestamp_utc);
+    return durationSec != null && durationSec > MAX_INTRADAY_TRADE_HOLD_SECONDS
+      ? durationSec
+      : null;
+  }
+
+  function rejectedClosedTradeRecord(row, lot, signedQty, price, durationSec, reason) {
+    const closeQty = Math.min(Math.abs(signedQty || 0), Math.abs(Number(lot && lot.qty) || 0)) || 0;
+    const inst = row && row.instrument || "—";
+    const mult = instrumentMultiplier(inst);
+    const entryPrice = numOrNull(lot && lot.price);
+    const exitPrice = numOrNull(price);
+    let grossPnl = null;
+    if (entryPrice != null && exitPrice != null && closeQty) {
+      grossPnl = Number(lot.qty) > 0
+        ? (exitPrice - entryPrice) * closeQty * mult
+        : (entryPrice - exitPrice) * closeQty * mult;
+    }
+    return {
+      timestamp_utc: row && row.timestamp_utc,
+      exit_time_utc: row && row.timestamp_utc,
+      entry_time_utc: lot && lot.entry_ts || null,
+      date_pt: ptWallCalendarDate(row && row.timestamp_utc),
+      account_name: row && row.account_name,
+      instrument: inst,
+      quantity: closeQty,
+      entry_price: entryPrice,
+      exit_price: exitPrice,
+      gross_pnl: grossPnl,
+      pnl: null,
+      reason,
+      duration_sec: durationSec,
+      duration_label: fmtDurationSec(durationSec),
+      strategy_id: row && row.strategy_id || "",
+      strategy_class: row && row.strategy_class || "",
+      strategy_name: row && row.strategy_name || "",
+      runtime_instance_id: row && row.runtime_instance_id || "",
+      entry_strategy_id: lot && lot.strategy_id || "",
+      entry_strategy_class: lot && lot.strategy_class || "",
+      entry_strategy_name: lot && lot.strategy_name || "",
+      entry_runtime_instance_id: lot && lot.runtime_instance_id || "",
+      entry_order_id: lot && lot.order_id || "",
+      exit_order_id: row && row.order_id || "",
+      entry_execution_id: lot && lot.execution_id || "",
+      exit_execution_id: row && row.execution_id || "",
+      order_name: row && row.order_name || "",
+      from_entry_signal: row && row.from_entry_signal || "",
+      rejected: true,
+    };
+  }
+
   function closingLotsForRow(lotsByKey, activeLotKey, accountLotKey, signedQty, rowUnmapped) {
     const lots = lotsByKey.get(activeLotKey) || [];
     if (lotsOpposeSignedQty(lots, signedQty) || !rowUnmapped) return { key: activeLotKey, lots };
@@ -939,6 +1021,7 @@
     const sorted = out.slice().sort((a, b) => String(a.timestamp_utc || "").localeCompare(String(b.timestamp_utc || "")));
     const lotsByKey = new Map();
     const closedTrades = [];
+    const rejectedClosedTrades = [];
     for (const r of sorted) {
       const inst = r.instrument || "—";
       const qtyAbs = Math.abs(numOrNull(r.quantity) || 0);
@@ -958,11 +1041,22 @@
       let rowPnl = 0;
       let rowGrossPnl = 0;
       let rowCommission = 0;
+      let rowRejectedCount = 0;
       while (signedQty !== 0) {
         const closeMatch = closingLotsForRow(lotsByKey, activeLotKey, accountLotKey, signedQty, rowUnmapped);
         const lots = closeMatch.lots;
         if (!lotsOpposeSignedQty(lots, signedQty)) break;
         const lot = lots[0];
+        const staleDurationSec = tradePairIsTooOld(r, lot);
+        if (staleDurationSec != null) {
+          rejectedClosedTrades.push(rejectedClosedTradeRecord(
+            r, lot, signedQty, price, staleDurationSec, "stale_intraday_pair"));
+          rowRejectedCount += 1;
+          r._pnl_rejected_reason = "stale_intraday_pair";
+          r._pnl_rejected_duration_sec = staleDurationSec;
+          lots.shift();
+          continue;
+        }
         const closeQty = Math.min(Math.abs(signedQty), Math.abs(lot.qty));
         const mult = instrumentMultiplier(inst);
         const grossPnl = lot.qty > 0
@@ -1035,7 +1129,15 @@
       if (Math.abs(rowPnl) > 1e-9) r._estimated_pnl = rowPnl;
       if (Math.abs(rowGrossPnl) > 1e-9) r._gross_pnl = rowGrossPnl;
       if (Math.abs(rowCommission) > 1e-9) r._commission = rowCommission;
+      if (rowRejectedCount) r._pnl_rejected_count = rowRejectedCount;
       if (Math.abs(signedQty) > 1e-9) {
+        if (executionLooksCloseOnly(r) && !r._opened_qty) {
+          r._unmatched_exit_qty = (r._unmatched_exit_qty || 0) + Math.abs(signedQty);
+          r._pnl_rejected_reason = r._pnl_rejected_reason || "unmatched_exit";
+          signedQty = 0;
+          r._fill_role = r._closed_qty ? "exit" : "unmatched_exit";
+          continue;
+        }
         r._opened_qty += Math.abs(signedQty);
         const remainingCommission = Math.max(0, fillCommission - fillCommissionConsumed);
         baseLots.push({
@@ -1057,13 +1159,15 @@
             : 0,
         });
       }
-      r._fill_role = r._closed_qty && r._opened_qty ? "reverse"
+      r._fill_role = r._unmatched_exit_qty ? "unmatched_exit"
+        : r._closed_qty && r._opened_qty ? "reverse"
         : r._closed_qty ? "exit"
         : r._opened_qty ? "entry"
         : "";
     }
     assignTradeNumbers(closedTrades);
-    return { executions: out, closedTrades };
+    assignTradeNumbers(rejectedClosedTrades);
+    return { executions: out, closedTrades, rejectedClosedTrades };
   }
 
   function accountMetricsCacheKey() {
@@ -1097,11 +1201,17 @@
       (!accountName || r.account_name === accountName) &&
       isPerformanceWindowTimestamp(r.timestamp_utc));
     const paired = annotateExecutionsWithPnl(execs, { strategyScoped: false });
+    const strategyPaired = annotateExecutionsWithPnl(execs, { strategyScoped: true });
     const executions = paired.executions;
+    const strategyExecutions = strategyPaired.executions;
     const todayExecs = executions.filter(r => ptWallCalendarDate(r.timestamp_utc) === today);
     const selectedExecs = executions.filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
     const closedToday = paired.closedTrades.filter(r => ptWallCalendarDate(r.timestamp_utc) === today);
     const selectedClosedTrades = paired.closedTrades.filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
+    const strategyTodayExecs = strategyExecutions.filter(r => ptWallCalendarDate(r.timestamp_utc) === today);
+    const strategySelectedExecs = strategyExecutions.filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
+    const strategyClosedToday = strategyPaired.closedTrades.filter(r => ptWallCalendarDate(r.timestamp_utc) === today);
+    const strategySelectedClosedTrades = strategyPaired.closedTrades.filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
     const execNet = closedToday.reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
     const execGross = closedToday.reduce((acc, r) => acc + (numOrNull(r.gross_pnl) ?? numOrNull(r.pnl) ?? 0), 0);
     const execCommission = closedToday.reduce((acc, r) => acc + (numOrNull(r.commission) || 0), 0);
@@ -1289,11 +1399,19 @@
       date_pt: today,
       selectedDatePt: selectedDate,
       executions,
+      strategyExecutions,
       todayExecs,
+      strategyTodayExecs,
       selectedExecs,
+      strategySelectedExecs,
       closedTrades: closedToday,
       allClosedTrades: paired.closedTrades,
+      rejectedClosedTrades: paired.rejectedClosedTrades || [],
+      strategyClosedTrades: strategyClosedToday,
+      allStrategyClosedTrades: strategyPaired.closedTrades,
+      strategyRejectedClosedTrades: strategyPaired.rejectedClosedTrades || [],
       selectedClosedTrades,
+      strategySelectedClosedTrades,
       todayPnl,
       selectedPnl,
       executionGross: execGross,
@@ -1393,6 +1511,8 @@
     orderStatusFilter: "__all__",
     orderInstrumentFilter: "__all__",
     analyticsRenderSeq: 0,
+    runtimeHistorySessions: [],
+    strategyStartDates: {},
     // Approved Strategy Profiles (from /api/profiles). Used to build the
     // "Active strategies" list so that approved cells stay visible even when
     // their NinjaTrader instance is disabled. The list is overlaid with
@@ -1452,6 +1572,79 @@
       for (const v of p.runtime_strategy_classes) push(v);
     }
     return out;
+  }
+  function profileIdentityCandidates(p) {
+    const out = [];
+    const push = (v) => { const s = String(v || "").trim().toLowerCase(); if (s) out.push(s); };
+    push(p && p.profile_id);
+    push(p && p.strategy_id);
+    push(p && p.stable_id);
+    push(p && p.cell_id);
+    return out;
+  }
+  function viewProfileClassCandidates(view) {
+    const out = [];
+    const push = (v) => { const s = String(v || "").trim().toLowerCase(); if (s) out.push(s); };
+    const rt = (view && view.runtime) || {};
+    push(rt.strategy_class);
+    push(view && view.display_key);
+    push(view && view.strategy_id);
+    push(rt.strategy_id);
+    push(rt.strategy_name);
+    push(view && view.cell_id);
+    return [...new Set(out)];
+  }
+  function viewProfileIdentityCandidates(view) {
+    const out = [];
+    const push = (v) => { const s = String(v || "").trim().toLowerCase(); if (s) out.push(s); };
+    const rt = (view && view.runtime) || {};
+    push(view && view.strategy_id);
+    push(rt.strategy_id);
+    push(view && view.runtime_instance_id);
+    push(rt.runtime_instance_id);
+    push(view && view.cell_id);
+    return [...new Set(out)];
+  }
+  function profileForStrategyView(view) {
+    if (!view) return null;
+    const profiles = (STATE.profiles || []).concat(view.profile_ref ? [view.profile_ref] : []);
+    const classKeys = viewProfileClassCandidates(view);
+    const idKeys = viewProfileIdentityCandidates(view);
+    const rt = (view && view.runtime) || {};
+    const root = rootOf(rt.instrument || rt.contract_month || "");
+    const tf = String(rt.timeframe || "").trim().toLowerCase();
+    let best = null;
+    let bestScore = -1;
+    for (const p of profiles) {
+      if (!p || typeof p !== "object") continue;
+      let score = 0;
+      const pDeploy = String(p.deploy_strategy_class || "").trim().toLowerCase();
+      const pStrategy = String(p.strategy_class || "").trim().toLowerCase();
+      const runtimeClasses = Array.isArray(p.runtime_strategy_classes)
+        ? p.runtime_strategy_classes.map(x => String(x || "").trim().toLowerCase()).filter(Boolean)
+        : [];
+      if (pDeploy && classKeys.includes(pDeploy)) score += 120;
+      if (runtimeClasses.some(k => classKeys.includes(k))) score += 110;
+      if (pStrategy && classKeys.includes(pStrategy)) score += 90;
+      if (profileIdentityCandidates(p).some(k => idKeys.includes(k))) score += 80;
+      const pRoot = rootOf(p.instrument || p.current_contract || "");
+      const pTf = String(p.timeframe || "").trim().toLowerCase();
+      if (root && pRoot === root) score += 10;
+      if (tf && pTf === tf) score += 5;
+      if (p.metrics && Object.keys(p.metrics).length) score += 2;
+      if (p === view.profile_ref) score += 1;
+      if (score > bestScore) {
+        best = p;
+        bestScore = score;
+      }
+    }
+    if (best && bestScore > 0) return best;
+    const byInstrTf = profiles.filter(p => {
+      const pRoot = rootOf(p && (p.instrument || p.current_contract || ""));
+      const pTf = String((p && p.timeframe) || "").trim().toLowerCase();
+      return root && pRoot === root && (!tf || !pTf || pTf === tf);
+    });
+    return byInstrTf.length === 1 ? byInstrTf[0] : null;
   }
   function runtimeMatchesProfile(rtRow, profile) {
     const rt = (rtRow && rtRow.runtime) || {};
@@ -2092,6 +2285,7 @@
     const execGross = allTime.gross;
     const execCommission = allTime.commission;
     const allTimeUnmapped = (m.executions || []).filter(isUnmappedTelemetry).length;
+    const rejectedPairs = (m.rejectedClosedTrades || []).length;
     const cash = numOrNull(a.cash_value);
     const net = numOrNull(a.net_liquidation);
     const unreal = numOrNull(a.unrealized_pnl);
@@ -2143,6 +2337,9 @@
       }
       if (allTimeUnmapped) {
         parts.push(`За весь период есть ${allTimeUnmapped} executions без нормальной привязки к стратегии. Они показаны на уровне счёта и не теряются.`);
+      }
+      if (rejectedPairs) {
+        parts.push(`${rejectedPairs} подозрительных FIFO-пар исключены из PnL: длительность слишком большая для intraday-стратегии.`);
       }
       warn.textContent = parts.join(" ");
     }
@@ -2391,7 +2588,8 @@
       const inMonth = day.slice(0, 7) === monthPrefix;
       const pnl = Number(d.pnl || 0);
       const ordCount = ordersCount[day] || 0;
-      const hasActivity = (d.executions || []).length || (d.closedTrades || []).length || ordCount || Math.abs(pnl) > 1e-9;
+      const tradeCount = (d.closedTrades || []).length;
+      const hasActivity = (d.executions || []).length || tradeCount || ordCount || Math.abs(pnl) > 1e-9;
       const cls = [
         "calendar-day",
         inMonth ? "" : "other-month",
@@ -2400,11 +2598,11 @@
         hasActivity && pnl > 0 ? "pos" : "",
         hasActivity && pnl < 0 ? "neg" : "",
       ].filter(Boolean).join(" ");
-      const orderLabel = ordCount ? `${ordCount} ордеров` : "нет ордеров";
+      const tradeLabel = tradeCount ? `${tradeCount} сделок` : "нет закрытых сделок";
       const pnlLine = (hasActivity
         ? `<div class="cal-pnl ${moneyClass(pnl)}">${escapeHtml(fmtMoney(pnl))}</div>`
         : '<div class="cal-empty">—</div>') +
-        `<div class="cal-orders${ordCount ? "" : " empty"}">${escapeHtml(orderLabel)}</div>`;
+        `<div class="cal-orders${tradeCount ? "" : " empty"}">${escapeHtml(tradeLabel)}</div>`;
       return `<button type="button" class="${cls}" data-date="${escapeHtml(day)}">
         <div class="cal-date-row"><span class="cal-date">${escapeHtml(dayNum)}</span></div>
         ${pnlLine}
@@ -2650,6 +2848,26 @@
   }
 
   // ----- runtime strategies table ------------------------------------------
+  async function loadRuntimeHistorySessions() {
+    try {
+      const data = await api("/api/ops/runtime/history?limit=1000");
+      STATE.runtimeHistorySessions = (data && Array.isArray(data.sessions)) ? data.sessions : [];
+    } catch (_) {
+      STATE.runtimeHistorySessions = [];
+    }
+  }
+
+  async function loadStrategyStartDates() {
+    try {
+      const data = await api("/api/ops/strategy-start-dates");
+      STATE.strategyStartDates = (data && data.strategies && typeof data.strategies === "object")
+        ? data.strategies
+        : {};
+    } catch (_) {
+      STATE.strategyStartDates = {};
+    }
+  }
+
   async function loadRuntime() {
     // Pass current selectors so backend can compute selection_diff per row.
     const qp = new URLSearchParams();
@@ -2665,6 +2883,8 @@
       .catch(() => ({ strategies: [] }));
     const profilesPromise = api("/api/profiles")
       .catch(() => null);
+    const historyPromise = loadRuntimeHistorySessions();
+    const startDatesPromise = loadStrategyStartDates();
 
     const hb = await heartbeatPromise;
     STATE.bridgeOnline = !!(hb && hb.fresh);
@@ -2673,7 +2893,7 @@
       "NT runtime: " + (STATE.bridgeOnline ? "онлайн" : "offline"),
       STATE.bridgeOnline ? "ok" : "bad");
 
-    const [all, reg] = await Promise.all([strategiesPromise, profilesPromise, displayPrefsPromise])
+    const [all, reg] = await Promise.all([strategiesPromise, profilesPromise, displayPrefsPromise, historyPromise, startDatesPromise])
       .then(([allResp, regResp]) => [allResp, regResp]);
     STATE.runtimeStrats = (all && all.strategies) || [];
     STATE.runtimeRawStrats = (all && all.raw) || [];
@@ -2725,6 +2945,48 @@
     if (d) return `${d}д ${h}ч`;
     if (h) return `${h}ч ${m}м`;
     return `${m}м`;
+  }
+
+  function historySessionMatchesView(sess, view) {
+    if (!sess || !view) return false;
+    const rt = (view && view.runtime) || {};
+    const viewIid = String(view.runtime_instance_id || rt.runtime_instance_id || "").trim();
+    const sessIid = String(sess.runtime_instance_id || "").trim();
+    if (viewIid && sessIid && viewIid === sessIid) return true;
+    const tokens = strategyTokenSet(view);
+    const candidates = [
+      sess.strategy_id,
+      sess.strategy_class,
+      sess.strategy_name,
+      sess.class_name,
+      sess.runtime_instance_id,
+    ].map(x => String(x || "").trim().toLowerCase()).filter(Boolean);
+    if (!candidates.some(x => tokens.has(x))) return false;
+    const viewAcct = String(rt.account_name || view.account_name || "").trim();
+    const sessAcct = String(sess.account_name || "").trim();
+    if (viewAcct && sessAcct && viewAcct !== sessAcct) return false;
+    const viewRoot = rootOf(rt.instrument || rt.contract_month || "");
+    const sessRoot = rootOf(sess.instrument || "");
+    if (viewRoot && sessRoot && viewRoot !== sessRoot) return false;
+    const viewTf = String(rt.timeframe || "").trim().toLowerCase();
+    const sessTf = String(sess.timeframe || "").trim().toLowerCase();
+    if (viewTf && sessTf && viewTf !== sessTf) return false;
+    return true;
+  }
+
+  function strategyRuntimeDurationSec(view) {
+    const sessions = STATE.runtimeHistorySessions || [];
+    let total = 0;
+    let matched = false;
+    for (const sess of sessions) {
+      if (!historySessionMatchesView(sess, view)) continue;
+      const dur = numOrNull(sess.duration_sec);
+      if (dur != null) {
+        total += dur;
+        matched = true;
+      }
+    }
+    return matched ? total : null;
   }
 
   function tradeDurationValue(t) {
@@ -2804,6 +3066,16 @@
     return `<th class="${[cls, "sortable", dirClass].filter(Boolean).join(" ")}" data-trading-sort-table="${escapeHtml(tableName)}" data-trading-sort="${escapeHtml(col)}">${label}</th>`;
   }
 
+  function updateStaticSortableHeaders(tableName) {
+    const sort = (STATE.tableSorts && STATE.tableSorts[tableName]) || {};
+    document.querySelectorAll(`th[data-trading-sort-table="${tableName}"]`).forEach(th => {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (th.dataset.tradingSort === sort.col) {
+        th.classList.add(sort.dir === "asc" ? "sort-asc" : "sort-desc");
+      }
+    });
+  }
+
   function handleTradingSortClick(th) {
     const table = th && th.dataset ? th.dataset.tradingSortTable : "";
     const col = th && th.dataset ? th.dataset.tradingSort : "";
@@ -2814,13 +3086,15 @@
       : { col, dir: "desc" };
     STATE.tableSorts[table] = next;
     saveTradingTableSorts();
-    if (table === "closedTrades") {
+    if (table === "runtimeStrategies") {
+      renderRuntimeTable();
+    } else if (table === "closedTrades") {
       renderSelectedDayTradesPanel();
       const view = findRuntimeView(STATE.selectedRuntime);
-      if (activeBottomTab() === "orders") renderOrdersPane(view);
+      if (activeBottomTab() === "trades") renderTradesPane(view);
     } else if (table === "executions") {
       const view = findRuntimeView(STATE.selectedRuntime);
-      renderTradesPane(view);
+      if (activeBottomTab() === "trades") renderTradesPane(view);
     }
   }
 
@@ -2854,6 +3128,74 @@
       if (seq !== STATE.analyticsRenderSeq) return;
       renderAnalytics(sid, targetTab);
     }, 50);
+  }
+
+  function runtimeTableCellNumber(view) {
+    if (view && view.cell_num != null) return numOrNull(view.cell_num);
+    const raw = String(view && view.cell_id || "");
+    const m = raw.match(/(\d+)/);
+    return m ? Number(m[1]) : null;
+  }
+
+  function runtimeTableStateRank(view) {
+    if (view && view._is_phantom) return 3;
+    if (!(view && view.runtime_detected)) return 2;
+    return view.runtime_enabled ? 0 : 1;
+  }
+
+  function runtimeTableMetrics(view, ctx) {
+    const rt = (view && view.runtime) || {};
+    const startDatePt = strategyStartDateForView(view);
+    const dayClosed = (ctx.strategyDayClosed || ctx.dayClosed || [])
+      .filter(r => rowMatchesStrategyView(r, view) && rowOnOrAfterDate(r, startDatePt));
+    const dayRows = (ctx.strategyDayRows || ctx.dayRows || [])
+      .filter(r => rowMatchesStrategyView(r, view) && rowOnOrAfterDate(r, startDatePt));
+    const allClosed = (ctx.strategyAllClosed || ctx.allClosed || [])
+      .filter(r => rowMatchesStrategyView(r, view) && rowOnOrAfterDate(r, startDatePt));
+    const selectedIsToday = !!ctx.selectedIsToday;
+    const mappedPnl = dayClosed.reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
+    const pnlDay = dayClosed.length ? mappedPnl : selectedIsToday ? numOrNull(rt.realized_pnl) : 0;
+    const pnlAll = allClosed.reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
+    return { dayClosed, dayRows, allClosed, pnlDay, pnlAll };
+  }
+
+  function runtimeSortValue(view, col, ctx) {
+    const rt = (view && view.runtime) || {};
+    const metrics = runtimeTableMetrics(view, ctx || {});
+    switch (col) {
+      case "cell": return runtimeTableCellNumber(view);
+      case "strategy": return runtimeClassName(view);
+      case "account": return rt.account_name || view.account_name || "";
+      case "mode": return view.account_mode || rt.account_mode || "";
+      case "instrument": return rt.instrument || rt.contract_month || "";
+      case "timeframe": return rt.timeframe || "";
+      case "state": return runtimeTableStateRank(view);
+      case "entry_window": return (computeTradeWindowState(view).label || "");
+      case "params": return view && view._is_phantom ? -1 : (view && view.params_ok ? 1 : 0);
+      case "trades": return metrics.dayClosed.length;
+      case "position": return numOrNull(rt.position_qty) || 0;
+      case "pnl_day": return metrics.pnlDay;
+      case "pnl_all": return metrics.pnlAll;
+      case "last_update": return rt.timestamp_utc || "";
+      case "runtime_duration": return strategyRuntimeDurationSec(view) ?? -1;
+      case "display": return view && view.display_hidden ? 0 : 1;
+      default: return "";
+    }
+  }
+
+  function sortRuntimeRows(rows, ctx) {
+    const sort = (STATE.tableSorts && STATE.tableSorts.runtimeStrategies)
+      || DEFAULT_TRADING_TABLE_SORTS.runtimeStrategies;
+    return (Array.isArray(rows) ? rows : []).slice().sort((a, b) => {
+      const primary = compareSortValues(
+        runtimeSortValue(a, sort.col, ctx),
+        runtimeSortValue(b, sort.col, ctx),
+        sort.dir,
+      );
+      if (primary) return primary;
+      return compareSortValues(runtimeTableCellNumber(a), runtimeTableCellNumber(b), "asc")
+        || String(runtimeClassName(a) || "").localeCompare(String(runtimeClassName(b) || ""), "ru", { numeric: true, sensitivity: "base" });
+    });
   }
 
   function strategyRiskBreachForDay(view, closedRows) {
@@ -2905,7 +3247,8 @@
       const hiddenMsg = hiddenCount && !STATE.showHiddenStrategies
         ? " Все текущие стратегии скрыты фильтром."
         : "";
-      body.innerHTML = `<tr><td colspan="14" class="muted-empty">${escapeHtml(msg + hiddenMsg)}</td></tr>`;
+      body.innerHTML = `<tr><td colspan="16" class="muted-empty">${escapeHtml(msg + hiddenMsg)}</td></tr>`;
+      updateStaticSortableHeaders("runtimeStrategies");
       return;
     }
     const acctMetrics = STATE.accountMetrics || computeAccountMetrics();
@@ -2917,10 +3260,24 @@
       .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
     const dayClosed = acctMetrics.selectedClosedTrades || (acctMetrics.allClosedTrades || [])
       .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
-    body.innerHTML = visible.map(s => {
+    const allClosed = acctMetrics.allClosedTrades || [];
+    const strategyDayRows = acctMetrics.strategySelectedExecs || (acctMetrics.strategyExecutions || acctMetrics.executions || [])
+      .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
+    const strategyDayClosed = acctMetrics.strategySelectedClosedTrades || (acctMetrics.allStrategyClosedTrades || acctMetrics.allClosedTrades || [])
+      .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, selectedDate));
+    const strategyAllClosed = acctMetrics.allStrategyClosedTrades || acctMetrics.allClosedTrades || [];
+    const runtimeSortContext = {
+      dayRows, dayClosed, allClosed,
+      strategyDayRows, strategyDayClosed, strategyAllClosed,
+      selectedIsToday,
+    };
+    updateStaticSortableHeaders("runtimeStrategies");
+    body.innerHTML = sortRuntimeRows(visible, runtimeSortContext).map(s => {
       const rt = s.runtime || {};
-      const mappedRows = dayRows.filter(r => rowMatchesStrategyView(r, s));
-      const closedRows = dayClosed.filter(r => rowMatchesStrategyView(r, s));
+      const startDatePt = strategyStartDateForView(s);
+      const mappedRows = strategyDayRows.filter(r => rowMatchesStrategyView(r, s) && rowOnOrAfterDate(r, startDatePt));
+      const closedRows = strategyDayClosed.filter(r => rowMatchesStrategyView(r, s) && rowOnOrAfterDate(r, startDatePt));
+      const allClosedRows = strategyAllClosed.filter(r => rowMatchesStrategyView(r, s) && rowOnOrAfterDate(r, startDatePt));
       const closedUnmappedRows = dayClosed.filter(r => closedUnmappedTradeMatchesStrategyView(r, s));
       const unmappedRows = closedUnmappedRows;
       const iid = s.runtime_instance_id || s.strategy_id || "";
@@ -2957,6 +3314,9 @@
         : selectedIsToday ? numOrNull(rt.realized_pnl) : 0;
       const pnl = pnlSource != null ? fmtMoney(pnlSource) : "—";
       const pnlCls = moneyClass(pnlSource);
+      const allTimePnl = allClosedRows.reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
+      const allTimePnlCls = moneyClass(allTimePnl);
+      const allTimePnlTitle = `${allClosedRows.length} mapped closed trades за всё время`;
       const tradeBadge = unmappedRows.length
         ? `<span class="badge warn" title="Unmapped fills не входят в PnL стратегии. Их PnL показан отдельно и входит только в PnL счёта.">unmapped ${unmappedRows.length}</span>`
         : isPhantom ? '' : '<span class="badge ok">mapped</span>';
@@ -2983,6 +3343,8 @@
                   data-iid="${escapeHtml(iid)}"
                   title="${escapeHtml(paramsMismatchBadgeTitle(pcheck))}">MISMATCH (${nMis})</span>`;
       const since = isPhantom ? "—" : fmtHms(rt.timestamp_utc);
+      const runtimeDuration = strategyRuntimeDurationSec(s);
+      const runtimeDurationLabel = runtimeDuration == null ? "—" : fmtDurationSec(runtimeDuration);
       const hidden = !!s.display_hidden;
       const displayCls = escapeHtml(runtimeClassName(s));
       const displayToggle = isPhantom
@@ -3013,7 +3375,9 @@
         <td>${tradesCell}</td>
         <td class="num">${escapeHtml(pos)}</td>
         <td class="num ${pnlCls}" title="${escapeHtml(pnlTitle)}"><div>${escapeHtml(pnl)}</div>${pnlSub}</td>
+        <td class="num ${allTimePnlCls}" title="${escapeHtml(allTimePnlTitle)}">${escapeHtml(fmtMoney(allTimePnl))}</td>
         <td><span class="muted small">${escapeHtml(since)}</span></td>
+        <td><span class="muted small">${escapeHtml(runtimeDurationLabel)}</span></td>
         <td class="num">${displayToggle}</td>
       </tr>`;
     }).join("");
@@ -3069,15 +3433,16 @@
     // Banner area reserved for bridge-level warnings (exporter version, offline).
     const hb = (STATE.runtimeStrats[0] || {}).heartbeat || {};
     const ev = hb.exporter_version || "";
-    if (ev && versionLt(ev, "1.2.2")) {
+    if (ev && versionLt(ev, "1.3.0")) {
       banner.innerHTML = `⚠ Bridge версия ${escapeHtml(ev)} устарела. ` +
-        `Нужна 1.2.2+: она пишет strategy_id/class/name/runtime_instance_id/order_name/from_entry_signal в executions/orders. ` +
+        `Нужна 1.3.0+: она пишет strategy_id/class/name/runtime_instance_id/order_name/from_entry_signal, ` +
+        `trading_cycle_id/cell_id/attribution_status/param_snapshot_hash в executions/orders. ` +
         `Закройте NinjaTrader и запустите <b>01_INSTALL_BRIDGE.cmd</b> для обновления.`;
     }
   }
 
   function switchBottomTab(tabName) {
-    const known = new Set(["overview", "orders", "history"]);
+    const known = new Set(["overview", "equity", "trades", "orders", "notes"]);
     let target = tabName || "overview";
     if (!known.has(target)) target = "overview";
     STATE.bottomTab = target;
@@ -3101,15 +3466,14 @@
 
   async function renderAnalyticsTab(view, tabName) {
     switch (tabName || "overview") {
-      case "orders":
-        renderOrdersPane(view);
+      case "equity":
+        renderEquityPane(view);
         break;
-      case "history":
-        if (!view) {
-          $("pane-history").innerHTML = '<div class="muted-empty">Выберите стратегию выше.</div>';
-          break;
-        }
-        await renderStrategyHistoryPane(view);
+      case "trades":
+        renderTradesPane(view);
+        break;
+      case "notes":
+        await renderNotesPane(view);
         break;
       case "overview":
       default:
@@ -3134,25 +3498,29 @@
   function strategyExecutionSets(view, datePt) {
     const m = STATE.accountMetrics || computeAccountMetrics();
     const targetDate = datePt || m.selectedDatePt || m.date_pt;
-    const rows = (m.executions || []).filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
-    const closedRows = (m.allClosedTrades || []).filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
+    const accountRows = (m.executions || []).filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
+    const accountClosedRows = (m.allClosedTrades || []).filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
+    const strategyRows = (m.strategyExecutions || m.executions || [])
+      .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
+    const strategyClosedRows = (m.allStrategyClosedTrades || m.allClosedTrades || [])
+      .filter(r => rowMatchesSelectedActivityDate(r.timestamp_utc, targetDate));
     if (!view) {
       return {
-        account: rows,
-        closedAccount: closedRows,
+        account: accountRows,
+        closedAccount: accountClosedRows,
         mapped: [],
         closedMapped: [],
-        unmapped: rows.filter(isUnmappedTelemetry),
-        closedUnmapped: closedRows.filter(isClosedTradeUnmapped),
+        unmapped: accountRows.filter(isUnmappedTelemetry),
+        closedUnmapped: accountClosedRows.filter(isClosedTradeUnmapped),
       };
     }
     return {
-      account: rows,
-      closedAccount: closedRows,
-      mapped: rows.filter(r => rowMatchesStrategyView(r, view)),
-      closedMapped: closedRows.filter(r => rowMatchesStrategyView(r, view)),
-      unmapped: rows.filter(r => rowIsUnmappedCandidate(r, view)),
-      closedUnmapped: closedRows.filter(r => closedUnmappedTradeMatchesStrategyView(r, view)),
+      account: accountRows,
+      closedAccount: accountClosedRows,
+      mapped: strategyRows.filter(r => rowMatchesStrategyView(r, view)),
+      closedMapped: strategyClosedRows.filter(r => rowMatchesStrategyView(r, view)),
+      unmapped: accountRows.filter(r => rowIsUnmappedCandidate(r, view)),
+      closedUnmapped: accountClosedRows.filter(r => closedUnmappedTradeMatchesStrategyView(r, view)),
     };
   }
 
@@ -3225,7 +3593,7 @@
     const cands = new Set();
     const cls = strategyClassOfView(view);
     if (cls) cands.add(cls.toLowerCase());
-    const profile = view && view.profile_ref;
+    const profile = profileForStrategyView(view);
     if (profile) {
       for (const c of profileClassCandidates(profile)) cands.add(c);
     }
@@ -3254,24 +3622,77 @@
   function instrumentOfView(view) {
     if (!view) return "";
     const rt = view.runtime || {};
-    const profile = view.profile_ref || null;
+    const profile = profileForStrategyView(view);
     return String(rt.instrument || (profile && (profile.instrument || profile.current_contract)) || "").trim();
+  }
+
+  function strategyStartDateForView(view) {
+    if (!view) return "";
+    const rows = STATE.strategyStartDates || {};
+    const tokens = new Set([
+      ...strategyTokenSet(view),
+      ...viewProfileClassCandidates(view),
+      ...viewProfileIdentityCandidates(view),
+    ].map(x => String(x || "").trim().toLowerCase()).filter(Boolean));
+    const validDate = (v) => {
+      const s = String(v || "").trim();
+      return parseDateKey(s) ? s : "";
+    };
+    for (const [key, meta] of Object.entries(rows)) {
+      const direct = String(key || "").trim().toLowerCase();
+      const classes = Array.isArray(meta && meta.strategy_classes)
+        ? meta.strategy_classes.map(x => String(x || "").trim().toLowerCase()).filter(Boolean)
+        : [];
+      const ids = [
+        direct,
+        meta && meta.strategy_id,
+        meta && meta.profile_id,
+        meta && meta.stable_id,
+      ].map(x => String(x || "").trim().toLowerCase()).filter(Boolean);
+      if (ids.concat(classes).some(x => tokens.has(x))) {
+        const d = validDate(meta && meta.start_date_pt);
+        if (d) return d;
+      }
+    }
+    const cell = String(view.cell_id || "").trim().toLowerCase();
+    if (cell) {
+      for (const meta of Object.values(rows)) {
+        if (String(meta && meta.cell_id || "").trim().toLowerCase() === cell) {
+          const d = validDate(meta && meta.start_date_pt);
+          if (d) return d;
+        }
+      }
+    }
+    return "";
+  }
+
+  function rowOnOrAfterDate(row, startDatePt) {
+    if (!startDatePt) return true;
+    const ts = row && (row.exit_time_utc || row.timestamp_utc || row.entry_time_utc);
+    const d = ptWallCalendarDate(ts);
+    return !!d && d >= startDatePt;
   }
 
   function aggregateAllTimeForStrategy(view) {
     const classSet = classCandidatesForView(view);
+    const startDatePt = strategyStartDateForView(view);
     const m = STATE.accountMetrics || computeAccountMetrics();
     const paired = {
-      executions: m.executions || [],
-      closedTrades: m.allClosedTrades || [],
+      executions: m.strategyExecutions || m.executions || [],
+      closedTrades: m.allStrategyClosedTrades || m.allClosedTrades || [],
     };
-    let execs = paired.executions.filter(r => rowBelongsToStrategy(r, classSet));
-    let closed = paired.closedTrades.filter(r => rowBelongsToStrategy(r, classSet));
+    let execs = paired.executions
+      .filter(r => rowBelongsToStrategy(r, classSet))
+      .filter(r => rowOnOrAfterDate(r, startDatePt));
+    let closed = paired.closedTrades
+      .filter(r => rowBelongsToStrategy(r, classSet))
+      .filter(r => rowOnOrAfterDate(r, startDatePt));
     let orders = (STATE.accountOrders || []).filter(r =>
       isPerformanceWindowTimestamp(r.timestamp_utc) &&
-      rowBelongsToStrategy(r, classSet));
+      rowBelongsToStrategy(r, classSet) &&
+      rowOnOrAfterDate(r, startDatePt));
     const instr = instrumentOfView(view);
-    const unmappedAll = paired.executions.filter(r => rowIsUnmappedCandidate(r, view));
+    const unmappedAll = paired.executions.filter(r => rowIsUnmappedCandidate(r, view) && rowOnOrAfterDate(r, startDatePt));
     const totals = {
       fills: execs.length,
       closed: closed.length,
@@ -3280,6 +3701,7 @@
       gross: 0, commission: 0, net: 0,
       best: -Infinity, worst: Infinity,
       firstTs: "", lastTs: "",
+      startDatePt,
       tradingDays: new Set(),
       instruments: new Set(),
       orderCount: orders.length,
@@ -3364,7 +3786,7 @@
     const agg = aggregateAllTimeForStrategy(view);
     const t = agg.totals;
     const rt = view.runtime || {};
-    const profile = view.profile_ref || null;
+    const profile = profileForStrategyView(view);
     const cls = strategyClassOfView(view) || "—";
     const cellLabel = view.cell_id || (profile && profile.cell_id) || "—";
     const winRate = t.closed ? ((t.wins / t.closed) * 100) : null;
@@ -3379,6 +3801,7 @@
     const finalCapital = (profile && profile.metrics && numOrNull(profile.metrics.starting_capital))
       ? (numOrNull(profile.metrics.starting_capital) + t.net)
       : null;
+    const instr = instrumentOfView(view);
     pane.innerHTML = `
       <div class="analytics-grid">
         <section class="analytics-panel">
@@ -3400,7 +3823,7 @@
         </section>
         <section class="analytics-panel">
           <h3>Работа за всё время</h3>
-          <div class="kv"><span class="k">Период</span><span class="v">${escapeHtml(t.firstTs ? (fmtDatePt(t.firstTs) + " — " + fmtDatePt(t.lastTs)) : "—")}</span></div>
+          <div class="kv"><span class="k">Период</span><span class="v">${escapeHtml((t.startDatePt || t.firstTs) ? ((t.startDatePt || fmtDatePt(t.firstTs)) + " — " + (t.lastTs ? fmtDatePt(t.lastTs) : "сейчас")) : "—")}</span></div>
           <div class="kv"><span class="k">Длительность</span><span class="v">${escapeHtml(durationLabel)}</span></div>
           <div class="kv"><span class="k">Торговых дней</span><span class="v">${escapeHtml(daysCount)}</span></div>
           <div class="kv"><span class="k">Инструменты</span><span class="v">${escapeHtml([...t.instruments].sort().join(", ") || "—")}</span></div>
@@ -3432,7 +3855,7 @@
   }
 
   function renderOverviewEmptyHint(view) {
-    const profile = view && view.profile_ref;
+    const profile = profileForStrategyView(view);
     const since = profile && (profile.updated_at_utc || profile.last_updated_utc);
     const allExecs = STATE.accountExecs || [];
     let earliestAll = "";
@@ -3453,25 +3876,295 @@
     </div>`;
   }
 
+  function strategyStartingCapital(view) {
+    const rt = view && view.runtime || {};
+    const profile = profileForStrategyView(view) || {};
+    const params = rt.params || rt.parameters || view && view.locked_params || {};
+    return numOrNull(params.StartingCapital)
+      ?? numOrNull(profile && profile.starting_capital)
+      ?? numOrNull(profile && profile.metrics && profile.metrics.starting_capital)
+      ?? PERFORMANCE_STARTING_CAPITAL;
+  }
+
+  function maxDrawdownFromCurve(values) {
+    let peak = values.length ? values[0] : 0;
+    let maxDd = 0;
+    for (const v of values) {
+      peak = Math.max(peak, v);
+      maxDd = Math.min(maxDd, v - peak);
+    }
+    return maxDd;
+  }
+
+  function currentLosingStreak(trades) {
+    let streak = 0;
+    for (let i = trades.length - 1; i >= 0; i -= 1) {
+      const pnl = Number(trades[i].pnl || 0);
+      if (pnl < 0) streak += 1;
+      else if (pnl > 0) break;
+    }
+    return streak;
+  }
+
+  function daysBetweenDateKeys(startKey, endKey) {
+    const a = parseDateKey(startKey);
+    const b = parseDateKey(endKey);
+    if (!a || !b) return null;
+    const at = Date.UTC(a.year, a.month - 1, a.day);
+    const bt = Date.UTC(b.year, b.month - 1, b.day);
+    return Math.max(0, Math.round((bt - at) / 86400000));
+  }
+
+  function profileBacktestExpectation(view, liveDays, points) {
+    const profile = profileForStrategyView(view) || {};
+    const metrics = profile.metrics || {};
+    const period = profile.test_period || {};
+    const backtestNet = numOrNull(metrics.net_profit_after_commission)
+      ?? numOrNull(metrics.adj_net)
+      ?? numOrNull(metrics.net_profit)
+      ?? numOrNull(metrics.gross_net_profit);
+    const backtestTrades = numOrNull(metrics.trade_count) ?? numOrNull(metrics.trades);
+    const start = period.from_utc ? String(period.from_utc).slice(0, 10) : "";
+    const end = period.to_utc ? String(period.to_utc).slice(0, 10) : "";
+    const testDays = start && end ? ((daysBetweenDateKeys(start, end) || 0) + 1) : null;
+    const expectedNet = backtestNet != null && testDays
+      ? backtestNet / testDays * Math.max(1, liveDays || 1)
+      : null;
+    const expectedTrades = backtestTrades != null && testDays
+      ? backtestTrades / testDays * Math.max(1, liveDays || 1)
+      : null;
+    const n = Math.max(2, Number(points) || 2);
+    const curve = [];
+    for (let i = 0; i < n; i += 1) {
+      curve.push(expectedNet == null ? 0 : expectedNet * (i / Math.max(1, n - 1)));
+    }
+    return {
+      backtestNet,
+      backtestTrades,
+      expectedNet,
+      expectedTrades,
+      testDays,
+      start,
+      end,
+      curve,
+      pf: numOrNull(metrics.profit_factor_after_commission) ?? numOrNull(metrics.profit_factor),
+      winRate: numOrNull(metrics.winning_pct) ?? numOrNull(metrics.win_rate_pct),
+      maxDrawdown: numOrNull(metrics.max_drawdown) ?? numOrNull(metrics.adj_max_drawdown),
+    };
+  }
+
+  function drawPnlCanvas(canvas, values, opts = {}) {
+    const ctx = canvas && canvas.getContext && canvas.getContext("2d");
+    if (!ctx) return;
+    const W = canvas.width = canvas.clientWidth || 640;
+    const H = canvas.height = canvas.clientHeight || 220;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0a1017";
+    ctx.fillRect(0, 0, W, H);
+    if (!values || values.length < 2) {
+      ctx.fillStyle = "#667";
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(opts.emptyText || "Недостаточно данных", W / 2, H / 2);
+      return;
+    }
+    let lo = Math.min(0, ...values);
+    let hi = Math.max(0, ...values);
+    if (Math.abs(hi - lo) < 1e-9) hi = lo + 1;
+    const finalValue = values[values.length - 1] || 0;
+    const positive = finalValue >= 0;
+    const lineColor = positive ? "#45d483" : "#ff7474";
+    const fillColor = positive ? "rgba(69,212,131,0.22)" : "rgba(255,116,116,0.22)";
+    const padL = 54, padR = 10, padT = 12, padB = 24;
+    const innerW = Math.max(1, W - padL - padR);
+    const innerH = Math.max(1, H - padT - padB);
+    const x = i => padL + (i / Math.max(1, values.length - 1)) * innerW;
+    const y = v => padT + innerH - ((v - lo) / (hi - lo)) * innerH;
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i += 1) {
+      const gy = padT + innerH * i / 4;
+      ctx.beginPath();
+      ctx.moveTo(padL, gy);
+      ctx.lineTo(padL + innerW, gy);
+      ctx.stroke();
+    }
+    const zeroY = y(0);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.beginPath();
+    ctx.moveTo(padL, zeroY);
+    ctx.lineTo(padL + innerW, zeroY);
+    ctx.stroke();
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      if (i === 0) ctx.moveTo(x(i), zeroY);
+      ctx.lineTo(x(i), y(v));
+    });
+    ctx.lineTo(x(values.length - 1), zeroY);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.beginPath();
+    values.forEach((v, i) => {
+      if (i === 0) ctx.moveTo(x(i), y(v));
+      else ctx.lineTo(x(i), y(v));
+    });
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#7b8798";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtCurrency(hi), padL - 6, padT + 8);
+    ctx.fillText(fmtCurrency(lo), padL - 6, padT + innerH);
+    ctx.textAlign = "left";
+    ctx.fillText(opts.footer || `${values.length - 1} closed`, padL, H - 7);
+  }
+
+  function renderEquityPane(view) {
+    const pane = $("pane-equity");
+    if (!pane) return;
+    if (!view) {
+      pane.innerHTML = '<div class="muted-empty">Выберите стратегию выше.</div>';
+      return;
+    }
+    const agg = aggregateAllTimeForStrategy(view);
+    const trades = (agg.closed || []).slice().sort((a, b) =>
+      String(a.timestamp_utc || "").localeCompare(String(b.timestamp_utc || "")));
+    let net = 0;
+    const pnlCurve = [0];
+    for (const t of trades) {
+      net += Number(t.pnl || 0);
+      pnlCurve.push(net);
+    }
+    const dd = maxDrawdownFromCurve(pnlCurve);
+    const avg = trades.length ? net / trades.length : null;
+    const winRate = trades.length
+      ? trades.filter(t => Number(t.pnl || 0) > 0).length / trades.length * 100
+      : null;
+    const m = STATE.accountMetrics || computeAccountMetrics();
+    const currentDate = m.date_pt || todayWallPtDate();
+    const startDate = agg.totals.startDatePt || (agg.totals.firstTs ? ptWallCalendarDate(agg.totals.firstTs) : "");
+    const lastTradeDate = agg.totals.lastTs ? ptWallCalendarDate(agg.totals.lastTs) : startDate;
+    const endDate = startDate
+      ? ((view.runtime_enabled || view.runtime_detected) ? currentDate : (lastTradeDate || currentDate))
+      : "";
+    const liveDays = startDate && endDate ? ((daysBetweenDateKeys(startDate, endDate) || 0) + 1) : 0;
+    const bt = profileBacktestExpectation(view, liveDays, pnlCurve.length);
+    const variance = bt.expectedNet == null ? null : net - bt.expectedNet;
+    const variancePct = bt.expectedNet == null || Math.abs(bt.expectedNet) < 1e-9
+      ? null
+      : variance / Math.abs(bt.expectedNet) * 100;
+    pane.innerHTML = `
+      <div class="analytics-grid">
+        <section class="analytics-panel">
+          <h3>Факт: PnL стратегии от нуля</h3>
+          <canvas class="strategy-equity-canvas" id="strategy-pnl-canvas"></canvas>
+        </section>
+        <section class="analytics-panel">
+          <h3>План по бэктесту за тот же срок</h3>
+          <canvas class="strategy-equity-canvas" id="strategy-plan-canvas"></canvas>
+        </section>
+        <section class="analytics-panel">
+          <h3>Факт</h3>
+          <div class="kv"><span class="k">Старт наблюдения</span><span class="v">${escapeHtml(startDate || "—")}</span></div>
+          <div class="kv"><span class="k">Дней в наблюдении</span><span class="v">${escapeHtml(liveDays || "—")}</span></div>
+          <div class="kv"><span class="k">Чистый P/L</span><span class="v ${moneyClass(net)}">${escapeHtml(fmtMoney(net))}</span></div>
+          <div class="kv"><span class="k">Max drawdown</span><span class="v ${moneyClass(dd)}">${escapeHtml(fmtMoney(dd))}</span></div>
+        </section>
+        <section class="analytics-panel">
+          <h3>Отклонение от плана</h3>
+          <div class="kv"><span class="k">Backtest net</span><span class="v ${moneyClass(bt.backtestNet)}">${bt.backtestNet == null ? "—" : escapeHtml(fmtMoney(bt.backtestNet))}</span></div>
+          <div class="kv"><span class="k">Ожидание за ${escapeHtml(liveDays || "—")} дн.</span><span class="v ${moneyClass(bt.expectedNet)}">${bt.expectedNet == null ? "—" : escapeHtml(fmtMoney(bt.expectedNet))}</span></div>
+          <div class="kv"><span class="k">Разница факт - план</span><span class="v ${moneyClass(variance)}">${variance == null ? "—" : escapeHtml(fmtMoney(variance))}</span></div>
+          <div class="kv"><span class="k">Отклонение</span><span class="v ${moneyClass(variance)}">${variancePct == null ? "—" : escapeHtml(variancePct.toFixed(1) + " %")}</span></div>
+        </section>
+        <section class="analytics-panel">
+          <h3>Качество сделок</h3>
+          <div class="kv"><span class="k">Закрытые сделки</span><span class="v">${escapeHtml(trades.length)}</span></div>
+          <div class="kv"><span class="k">Win rate</span><span class="v">${winRate == null ? "—" : escapeHtml(winRate.toFixed(1) + " %")}</span></div>
+          <div class="kv"><span class="k">Avg PnL</span><span class="v ${moneyClass(avg)}">${avg == null ? "—" : escapeHtml(fmtMoney(avg))}</span></div>
+          <div class="kv"><span class="k">Текущая серия убытков</span><span class="v">${escapeHtml(currentLosingStreak(trades))}</span></div>
+        </section>
+        <section class="analytics-panel">
+          <h3>Бэктест-качество</h3>
+          <div class="kv"><span class="k">Период теста</span><span class="v">${escapeHtml(bt.start && bt.end ? `${bt.start} - ${bt.end}` : "—")}</span></div>
+          <div class="kv"><span class="k">Сделки факт / план</span><span class="v">${escapeHtml(trades.length)} / ${bt.expectedTrades == null ? "—" : escapeHtml(bt.expectedTrades.toFixed(1))}</span></div>
+          <div class="kv"><span class="k">PF backtest</span><span class="v">${bt.pf == null ? "—" : escapeHtml(bt.pf.toFixed(2))}</span></div>
+          <div class="kv"><span class="k">Win rate backtest</span><span class="v">${bt.winRate == null ? "—" : escapeHtml(bt.winRate.toFixed(1) + " %")}</span></div>
+        </section>
+      </div>`;
+    drawPnlCanvas($("strategy-pnl-canvas"), pnlCurve, {
+      footer: `${trades.length} closed · ${fmtMoney(net)}`,
+      emptyText: "Нет закрытых сделок",
+    });
+    drawPnlCanvas($("strategy-plan-canvas"), bt.curve, {
+      footer: bt.expectedNet == null ? "нет backtest summary" : `ожидание ${fmtMoney(bt.expectedNet)}`,
+      emptyText: "Нет backtest summary",
+    });
+  }
+
+  function tradesPaneOrderRows(view, mode, selectedDate) {
+    const m = STATE.accountMetrics || computeAccountMetrics();
+    const date = selectedDate || m.selectedDatePt || m.date_pt || todayWallPtDate();
+    const sortDesc = (a, b) => String(b.timestamp_utc || "").localeCompare(String(a.timestamp_utc || ""));
+    if (mode === "strategy" && view) {
+      return (strategyOrderSets(view, date).mapped || []).slice().sort(sortDesc);
+    }
+    if (mode === "unmapped") {
+      const sets = strategyOrderSets(view, date);
+      const unmapped = view
+        ? (sets.unmapped || [])
+        : (sets.account || []).filter(isUnmappedTelemetry);
+      return unmapped.slice().sort(sortDesc);
+    }
+    return selectedDayOrderRows(date);
+  }
+
+  function tradesPaneOrdersSectionHTML(view, mode, selectedDate, executionRows) {
+    const dayOrders = tradesPaneOrderRows(view, mode, selectedDate);
+    const orderSummary = orderSummaryBadges(dayOrders);
+    const missingFilled = filledOrdersMissingExecutions(dayOrders, executionRows || []);
+    const executionGap = missingFilled.length
+      ? `<span class="status-pill rejected" title="Эти Order ID имеют статус Filled, но в executions.jsonl для выбранного дня нет соответствующей записи. PnL по ним посчитать нельзя, пока bridge не пришлёт execution.">filled без executions: ${escapeHtml(missingFilled.length)}</span>`
+      : "";
+    const ordersHead = `<div class="day-orders-head" style="margin-top:12px;">
+      <div class="day-section-title">Ордера</div>
+      <span class="muted small">показан последний статус каждого Order ID · ${escapeHtml(dayOrders.length)} ордеров</span>
+      <span class="day-orders-badges">${orderSummary}${executionGap}</span>
+    </div>`;
+    return ordersHead + (dayOrders.length
+      ? dayOrdersTableHTML(dayOrders)
+      : '<div class="muted-empty">Ордеров за выбранный день не найдено.</div>');
+  }
+
   function renderTradesPane(view) {
     const pane = $("pane-trades");
     if (!pane) return;
     const sets = strategyExecutionSets(view);
     const mode = view ? STATE.tradeMode : "account";
     let rows = sets.account;
+    let closedRows = sets.closedAccount;
     if (mode === "strategy") rows = sets.mapped;
     if (mode === "unmapped") rows = sets.unmapped;
+    if (mode === "strategy") closedRows = sets.closedMapped;
+    if (mode === "unmapped") closedRows = sets.closedUnmapped;
     const m = STATE.accountMetrics || computeAccountMetrics();
+    const selectedDate = m.selectedDatePt || m.date_pt || todayWallPtDate();
+    const dayOrders = tradesPaneOrderRows(view, mode, selectedDate);
     const controls = `<div class="pane-toolbar">
       <button type="button" class="${mode === "account" ? "active" : ""}" data-trade-mode="account">Все сделки счёта</button>
       <button type="button" class="${mode === "strategy" ? "active" : ""}" data-trade-mode="strategy" ${view ? "" : "disabled"}>Выбранная стратегия</button>
       <button type="button" class="${mode === "unmapped" ? "active" : ""}" data-trade-mode="unmapped">Unmapped</button>
-      <span class="toolbar-note">${escapeHtml(m.selectedDatePt || m.date_pt)} · ${escapeHtml(rows.length)} строк</span>
+      <span class="toolbar-note">${escapeHtml(m.selectedDatePt || m.date_pt)} · ${escapeHtml(closedRows.length)} closed · ${escapeHtml(rows.length)} fills · ${escapeHtml(dayOrders.length)} ордеров</span>
     </div>`;
     const empty = view && mode === "strategy" && !rows.length && sets.unmapped.length
       ? '<div class="mapping-warning">Mapped-сделок нет, но есть сделки по этому счёту/инструменту без strategy_id. Переключитесь на Unmapped.</div>'
       : "";
-    pane.innerHTML = controls + mappingNotice(view, sets) + empty + renderExecutionsTable(rows);
+    pane.innerHTML = controls + mappingNotice(view, sets) + empty +
+      `<section class="analytics-panel span-2"><h3>Закрытые сделки</h3>${tradesTableHTML(closedRows, runtimeClassName(view), 500)}</section>` +
+      `<section class="analytics-panel span-2" style="margin-top:8px;"><h3>Fills / executions</h3>${renderExecutionsTable(rows)}</section>` +
+      `<section class="analytics-panel span-2" style="margin-top:8px;">${tradesPaneOrdersSectionHTML(view, mode, selectedDate, rows)}</section>`;
     pane.querySelectorAll("[data-trade-mode]").forEach(btn => {
       btn.addEventListener("click", () => {
         if (btn.disabled) return;
@@ -3485,6 +4178,7 @@
     const explicit = String(row.role || row.position_action || "").trim().toLowerCase();
     const inferred = String(row._fill_role || "").trim().toLowerCase();
     const v = explicit || inferred;
+    if (v.includes("unmatched")) return "Unmatched exit";
     if (v.includes("reverse")) return "Реверс";
     if (v.includes("exit") || v.includes("close") || v.includes("target") || v.includes("stop")) return "Выход";
     if (v.includes("entry") || v.includes("open")) return "Вход";
@@ -3595,8 +4289,10 @@
         <td>${status}</td>
         <td class="num ${moneyClass(pnl)}">${pnl == null ? "—" : escapeHtml(fmtMoney(pnl))}</td>
         <td class="num ${moneyClass(gross)}">${gross == null ? "—" : escapeHtml(fmtMoney(gross))}</td>
-        <td><span class="muted small">${escapeHtml(exitTs ? (fmtDatePt(exitTs) + " " + fmtHms(exitTs)) : "—")}</span></td>
-        <td><span class="muted small">${escapeHtml(entryTs ? (fmtDatePt(entryTs) + " " + fmtHms(entryTs)) : "—")}</span></td>
+        <td><span class="muted small">${escapeHtml(exitTs ? fmtDatePt(exitTs) : "—")}</span></td>
+        <td><span class="muted small">${escapeHtml(exitTs ? fmtHms(exitTs) : "—")}</span></td>
+        <td><span class="muted small">${escapeHtml(entryTs ? fmtDatePt(entryTs) : "—")}</span></td>
+        <td><span class="muted small">${escapeHtml(entryTs ? fmtHms(entryTs) : "—")}</span></td>
         <td>${escapeHtml(duration)}</td>
         <td class="num">${escapeHtml(fmtNum(t.entry_price))}</td>
         <td class="num">${escapeHtml(fmtNum(t.exit_price))}</td>
@@ -3614,8 +4310,10 @@
         <th>Status</th>
         ${sortableHeader("closedTrades", "pnl", "P/L", "num")}
         ${sortableHeader("closedTrades", "gross_pnl", "Gross", "num")}
-        ${sortableHeader("closedTrades", "exit_time", "exit_time")}
-        ${sortableHeader("closedTrades", "entry_time", "entry_time")}
+        ${sortableHeader("closedTrades", "exit_time", "Дата выхода")}
+        ${sortableHeader("closedTrades", "exit_time", "Время выхода PT")}
+        ${sortableHeader("closedTrades", "entry_time", "Дата входа")}
+        ${sortableHeader("closedTrades", "entry_time", "Время входа PT")}
         ${sortableHeader("closedTrades", "duration", "продолжительность")}
         ${sortableHeader("closedTrades", "entry_price", "entry_price", "num")}
         ${sortableHeader("closedTrades", "exit_price", "exit_price", "num")}
@@ -3624,46 +4322,6 @@
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
-  }
-
-  function renderOrdersPane(view) {
-    const pane = $("pane-orders");
-    if (!pane) return;
-    const m = STATE.accountMetrics || computeAccountMetrics();
-    const selectedDate = m.selectedDatePt || m.date_pt || todayWallPtDate();
-    if (!view) {
-      const dayOrders = selectedDayOrderRows(selectedDate);
-      pane.innerHTML = `
-        <div class="pane-toolbar">
-          <span class="toolbar-note">Счёт · ${escapeHtml(dayTitle(selectedDate))} · ордеров: ${escapeHtml(dayOrders.length)}</span>
-        </div>
-        ${dayOrders.length ? dayOrdersTableHTML(dayOrders) : '<div class="muted-empty">Ордеров за выбранный день не найдено.</div>'}
-      `;
-      return;
-    }
-    const sets = strategyExecutionSets(view, selectedDate);
-    const orders = strategyOrderSets(view, selectedDate);
-    const trades = (sets.closedMapped || []).slice().sort((a, b) =>
-      String(b.timestamp_utc || "").localeCompare(String(a.timestamp_utc || "")));
-    const dayOrders = (orders.mapped || []).slice().sort((a, b) =>
-      String(b.timestamp_utc || "").localeCompare(String(a.timestamp_utc || "")));
-    const stratLabel = strategyClassOfView(view) || "—";
-    if (!trades.length) {
-      pane.innerHTML = `
-        <div class="pane-toolbar">
-          <span class="toolbar-note">${escapeHtml(stratLabel)} · ${escapeHtml(dayTitle(selectedDate))} · закрытых сделок: 0 · ордеров: ${escapeHtml(dayOrders.length)}</span>
-        </div>
-        ${dayOrders.length ? dayOrdersTableHTML(dayOrders) : `<div class="muted-empty">Закрытых сделок и ордеров за выбранный день не найдено для стратегии ${escapeHtml(stratLabel)}.</div>`}
-      `;
-      return;
-    }
-    pane.innerHTML = `
-      <div class="pane-toolbar">
-        <span class="toolbar-note">${escapeHtml(stratLabel)} · ${escapeHtml(dayTitle(selectedDate))} · закрытых сделок: ${escapeHtml(trades.length)} · ордеров: ${escapeHtml(dayOrders.length)}${trades.length > 500 ? " (показаны 500 последних)" : ""}</span>
-      </div>
-      ${tradesTableHTML(trades, stratLabel, 500)}
-      ${dayOrders.length ? `<div class="day-section-title">Ордера стратегии</div>${dayOrdersTableHTML(dayOrders)}` : ""}
-    `;
   }
 
   function renderSelectedDayTradesPanel() {
@@ -3685,7 +4343,7 @@
     const missingFilled = filledOrdersMissingExecutions(orders, (m.selectedDay || {}).executions || []);
     card.hidden = false;
     const head = `<div class="session-card-head">
-      <h3 class="grow">День: сделки и ордера за ${escapeHtml(dayTitle(day))}</h3>
+      <h3 class="grow">Календарь: сделки и ордера за ${escapeHtml(dayTitle(day))}</h3>
       <span class="muted small">${escapeHtml(trades.length)} сделок · ${escapeHtml(orders.length)} ордеров</span>
       <button type="button" class="session-btn" id="day-trades-close" title="Закрыть">×</button>
     </div>`;
@@ -3697,12 +4355,12 @@
       ? `<span class="status-pill rejected" title="Эти Order ID имеют статус Filled, но в executions.jsonl для выбранного дня нет соответствующей записи. PnL по ним посчитать нельзя, пока bridge не пришлет execution.">filled без executions: ${escapeHtml(missingFilled.length)}</span>`
       : "";
     const ordersHead = `<div class="day-orders-head">
-      <strong>Все ордера за день</strong>
+      <strong>Календарные ордера за день</strong>
       <span class="muted small">показан последний статус каждого Order ID</span>
       <span class="day-orders-badges">${orderSummary}${executionGap}</span>
     </div>`;
     card.innerHTML = head +
-      `<div class="day-section-title">Закрытые сделки</div>${tradeBody}` +
+      `<div class="day-section-title">Календарные закрытые сделки</div>${tradeBody}` +
       ordersHead + dayOrdersTableHTML(orders);
     const close = $("day-trades-close");
     if (close) close.addEventListener("click", () => {
@@ -3996,6 +4654,74 @@
     } catch (e) {
       pane.innerHTML = '<div class="muted-empty">История недоступна: ' +
         escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function notesStrategyId(view) {
+    if (!view) return "";
+    const rt = view.runtime || {};
+    return String(view.strategy_id || rt.strategy_id || runtimeClassName(view) || "").trim();
+  }
+
+  async function renderNotesPane(view) {
+    const pane = $("pane-notes");
+    if (!pane) return;
+    if (!view) {
+      pane.innerHTML = '<div class="muted-empty">Выберите стратегию выше.</div>';
+      return;
+    }
+    const sid = notesStrategyId(view);
+    if (!sid) {
+      pane.innerHTML = '<div class="muted-empty">У выбранной стратегии нет strategy_id для заметок.</div>';
+      return;
+    }
+    let notes = "";
+    try {
+      const resp = await api("/api/ops/strategies/" + encodeURIComponent(sid) + "/notes");
+      notes = String(resp && resp.notes || "");
+    } catch (e) {
+      pane.innerHTML = '<div class="muted-empty">Заметки недоступны: ' + escapeHtml(e.message) + '</div>';
+      return;
+    }
+    pane.innerHTML = `
+      <div class="analytics-grid">
+        <section class="analytics-panel">
+          <h3>Новая заметка</h3>
+          <div class="notes-editor">
+            <textarea id="strategy-note-text" placeholder="Статус испытания, комментарий по сделке, решение по стратегии"></textarea>
+            <button type="button" id="strategy-note-add">Добавить заметку</button>
+            <div class="muted-small" id="strategy-note-status">${escapeHtml(sid)}</div>
+          </div>
+        </section>
+        <section class="analytics-panel">
+          <h3>История заметок</h3>
+          <div class="notes-body">${notes ? escapeHtml(notes) : "Заметок пока нет."}</div>
+        </section>
+      </div>`;
+    const btn = $("strategy-note-add");
+    const ta = $("strategy-note-text");
+    const status = $("strategy-note-status");
+    if (btn && ta) {
+      btn.addEventListener("click", async () => {
+        const text = String(ta.value || "").trim();
+        if (!text) {
+          if (status) status.textContent = "Введите текст заметки.";
+          return;
+        }
+        btn.disabled = true;
+        if (status) status.textContent = "Сохранение...";
+        try {
+          await api("/api/ops/strategies/" + encodeURIComponent(sid) + "/notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          await renderNotesPane(view);
+        } catch (e) {
+          btn.disabled = false;
+          if (status) status.textContent = "Ошибка: " + e.message;
+        }
+      });
     }
   }
 
@@ -4619,6 +5345,9 @@
           const agg = aggregateAllTimeForStrategy(s);
           const totals = agg.totals || {};
           const pnl = Number(totals.net || 0);
+          const daySets = strategyExecutionSets(s, accountMetrics.selectedDatePt || accountMetrics.date_pt);
+          const dayPnl = (daySets.closedMapped || [])
+            .reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
           const unmappedClosed = (accountMetrics.allClosedTrades || [])
             .filter(r => closedUnmappedTradeMatchesStrategyView(r, s));
           const unmappedPnl = unmappedClosed.reduce((acc, r) => acc + (numOrNull(r.pnl) || 0), 0);
@@ -4629,7 +5358,7 @@
           const twHint = tw.label && tw.label !== "—" ? ` · ${tw.label} PT` : "";
           return `<div class="pc-row">
             <span class="lbl">${escapeHtml((rt.strategy_class || s.strategy_id || "?"))} <span class="muted-small">${escapeHtml((rt.instrument || "") + suffix + twHint)}</span></span>
-            <span class="val ${moneyClass(pnl)}">${escapeHtml(fmtMoney(pnl))}</span>
+            <span class="val ${moneyClass(pnl)}" title="день / всё время">${escapeHtml(fmtMoney(dayPnl))} / ${escapeHtml(fmtMoney(pnl))}</span>
           </div>`;
         });
         const unknownUnmapped = (accountMetrics.allClosedTrades || [])

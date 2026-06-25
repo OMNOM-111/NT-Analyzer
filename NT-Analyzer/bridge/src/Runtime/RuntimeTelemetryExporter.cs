@@ -27,9 +27,10 @@ namespace NTAnalyzerBridge.Runtime
     /// </summary>
     internal sealed class RuntimeTelemetryExporter
     {
-        public const string ExporterVersion = "1.2.2";
+        public const string ExporterVersion = "1.3.0";
         private const int   TickIntervalMs  = 5000;
 
+        private readonly string _projectRoot;
         private readonly string _runtimeDir;
         private readonly Timer  _timer;
         private int _running;
@@ -39,11 +40,15 @@ namespace NTAnalyzerBridge.Runtime
         // Tracks execution_ids already written this session to suppress historical-replay duplicates.
         private readonly HashSet<string> _knownExecutionIds =
             new HashSet<string>(StringComparer.Ordinal);
+        // Cached active trading-cycle id (data/ops/cycles.json), refreshed lazily.
+        private string _activeCycleId = "";
+        private long _activeCycleStamp;
 
         public RuntimeTelemetryExporter(string projectRoot)
         {
             if (string.IsNullOrEmpty(projectRoot))
                 throw new ArgumentNullException(nameof(projectRoot));
+            _projectRoot = projectRoot;
             _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
             Directory.CreateDirectory(_runtimeDir);
             LoadKnownExecutionIds();
@@ -665,6 +670,10 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "strategy_class", stratClass);                             Sep(sb);
             AppendKv(sb, "strategy_name", stratName);                               Sep(sb);
             AppendKv(sb, "runtime_instance_id", runtimeId);                         Sep(sb);
+            AppendKv(sb, "trading_cycle_id", ActiveCycleId());                      Sep(sb);
+            AppendKv(sb, "cell_id",       CellIdFromIdentity(stratClass, stratId, stratName)); Sep(sb);
+            AppendKv(sb, "attribution_status", AttributionStatus(exStrat, stratClass)); Sep(sb);
+            AppendKv(sb, "param_snapshot_hash", ParamSnapshotHash(exStrat));        Sep(sb);
             AppendKv(sb, "order_name",    orderName);                               Sep(sb);
             AppendKv(sb, "from_entry_signal", fromEntrySignal);                     Sep(sb);
             AppendKv(sb, "instrument",    instrument);                              Sep(sb);
@@ -726,6 +735,10 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "strategy_class", stratClass);                     Sep(sb);
             AppendKv(sb, "strategy_name", stratName);                       Sep(sb);
             AppendKv(sb, "runtime_instance_id", runtimeId);                 Sep(sb);
+            AppendKv(sb, "trading_cycle_id", ActiveCycleId());              Sep(sb);
+            AppendKv(sb, "cell_id",       CellIdFromIdentity(stratClass, stratId, stratName)); Sep(sb);
+            AppendKv(sb, "attribution_status", AttributionStatus(orderStrat, stratClass)); Sep(sb);
+            AppendKv(sb, "param_snapshot_hash", ParamSnapshotHash(orderStrat)); Sep(sb);
             AppendKv(sb, "order_name",    orderName);                       Sep(sb);
             AppendKv(sb, "from_entry_signal", fromEntrySignal);             Sep(sb);
             AppendKv(sb, "instrument",    instrument);                      Sep(sb);
@@ -1177,6 +1190,84 @@ namespace NTAnalyzerBridge.Runtime
             int i = 0;
             while (i < s.Length && char.IsLetterOrDigit(s[i])) i++;
             return i <= 0 ? "" : s.Substring(0, i).ToUpperInvariant();
+        }
+
+        // --- Stage 2 attribution hardening -----------------------------------
+
+        /// <summary>
+        /// Active trading-cycle id from {project_root}/data/ops/cycles.json.
+        /// Cached for a few seconds so per-fill attribution stays cheap. Returns
+        /// "" when no cycle file or active cycle is configured.
+        /// </summary>
+        private string ActiveCycleId()
+        {
+            long now = Environment.TickCount;
+            if (!string.IsNullOrEmpty(_activeCycleId) && (now - _activeCycleStamp) < 5000)
+                return _activeCycleId;
+            string id = "";
+            try
+            {
+                string path = Path.Combine(_projectRoot, "data", "ops", "cycles.json");
+                if (File.Exists(path))
+                {
+                    string text = File.ReadAllText(path);
+                    // Lightweight extraction: avoid taking a JSON dependency here.
+                    const string key = "\"active_cycle_id\"";
+                    int k = text.IndexOf(key, StringComparison.Ordinal);
+                    if (k >= 0)
+                    {
+                        int colon = text.IndexOf(':', k + key.Length);
+                        if (colon >= 0)
+                        {
+                            int q1 = text.IndexOf('"', colon + 1);
+                            if (q1 >= 0)
+                            {
+                                int q2 = text.IndexOf('"', q1 + 1);
+                                if (q2 > q1) id = text.Substring(q1 + 1, q2 - q1 - 1);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            _activeCycleId = id ?? "";
+            _activeCycleStamp = now;
+            return _activeCycleId;
+        }
+
+        /// <summary>Derive a CELL-### id from a strategy class/id when it embeds a
+        /// 3-digit cell suffix (e.g. NTAMnq...C015 -&gt; CELL-015).</summary>
+        private static string CellIdFromIdentity(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                string s = value ?? "";
+                for (int i = 0; i + 3 < s.Length + 1 && i < s.Length; i++)
+                {
+                    if ((s[i] != 'c' && s[i] != 'C') || i + 4 > s.Length) continue;
+                    if (char.IsDigit(s[i + 1]) && char.IsDigit(s[i + 2]) && char.IsDigit(s[i + 3]))
+                    {
+                        bool fourthDigit = (i + 4 < s.Length) && char.IsDigit(s[i + 4]);
+                        if (!fourthDigit)
+                            return "CELL-" + s.Substring(i + 1, 3);
+                    }
+                }
+            }
+            return "";
+        }
+
+        private static string AttributionStatus(object resolvedStrat, string stratClass)
+        {
+            if (resolvedStrat != null) return "resolved";
+            if (!string.IsNullOrEmpty(stratClass)) return "from_signal";
+            return "unresolved";
+        }
+
+        private static string ParamSnapshotHash(object strat)
+        {
+            if (strat == null) return "";
+            try { return Sha256.OfString(CanonicalParams(GatherStrategyParams(strat))); }
+            catch { return ""; }
         }
 
         private static bool LooksLikeStrategyMember(string memberName, Type memberType)

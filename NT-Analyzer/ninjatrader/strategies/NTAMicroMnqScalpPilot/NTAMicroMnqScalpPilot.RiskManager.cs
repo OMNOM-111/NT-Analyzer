@@ -106,6 +106,24 @@ namespace NinjaTrader.NinjaScript.Strategies
                 _pauseUntil        = DateTime.MinValue;
             }
 
+            public void ResetForRealtime(int historicalTradeCount)
+            {
+                CumulativeRealizedPnL = 0.0;
+                SessionRealizedPnL = 0.0;
+                WeeklyRealizedPnL = 0.0;
+                SessionStartEquity = _s.StartingCapital;
+                WeekStartEquity = _s.StartingCapital;
+                TradesToday = 0;
+                ConsecutiveLosses = 0;
+                SessionStopped = false;
+                LastProcessedTradeCount = Math.Max(0, historicalTradeCount);
+                _weekStartDate = WeekStart(_s.Time[0].Date);
+                _pauseUntil = DateTime.MinValue;
+                _s.Print(string.Format(
+                    "[RISK:realtime_reset] historicalTrades={0}; live paper risk starts from zero",
+                    LastProcessedTradeCount));
+            }
+
             public void UpdateDailyStops()
             {
                 if (SessionStopped || PermanentlyStopped) return;

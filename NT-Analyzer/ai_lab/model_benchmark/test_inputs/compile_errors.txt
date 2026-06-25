@@ -1,0 +1,11 @@
+bad_strategy_example.cs(3,19): error CS0234: The type or namespace name 'Strategy' does not exist in the namespace 'NinjaTrader' (are you missing an assembly reference?)
+bad_strategy_example.cs(5,23): error CS0234: The type or namespace name 'Strategy' does not exist in the namespace 'NinjaTrader' (are you missing an assembly reference?)
+bad_strategy_example.cs(7,38): error CS0246: The type or namespace name 'Strategy' could not be found (are you missing a using directive or an assembly reference?)
+bad_strategy_example.cs(13,33): error CS0115: 'BadBreakoutShort.Initialize()': no suitable method found to override
+
+Static review notes from NT-Analyzer validator:
+- inputs are public fields instead of [NinjaScriptProperty]
+- no SetStopLoss detected
+- no profit target or force-flat exit detected
+- EnterLong is used inside a short setup branch
+- no max daily loss enforcement detected

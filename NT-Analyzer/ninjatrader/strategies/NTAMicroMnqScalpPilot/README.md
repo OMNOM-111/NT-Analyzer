@@ -73,6 +73,6 @@ Bundle output: `data/research/mnq_scalp_pilot_<timestamp>/`
 - OOS Adj PF ≥ 1.25
 - Win rate ≥ 52%
 - Avg trade after commission ≥ $1.50
-- Max drawdown ≤ $300
+- Max drawdown ≤ 15% × StartingCapital (allocated capital ячейки; при $2000 → $300)
 - Max losing streak ≤ 5
 - Daily stop hits ≤ 5% of trading days

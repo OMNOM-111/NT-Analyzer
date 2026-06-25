@@ -1,0 +1,66 @@
+{
+  "note": "All net values are adjusted after commission and slippage. Conservative fills use High fill, slippage 1, RoundTurnCommission 1.90.",
+  "cases": [
+    {
+      "id": "A",
+      "label": "High profit, low trades",
+      "adjusted_full_net": 3180.0,
+      "adjusted_is_net": 2920.0,
+      "adjusted_oos_net": 260.0,
+      "oos_pf": 1.04,
+      "trade_count": 18,
+      "max_drawdown": -710.0,
+      "same_bar_ambiguity_pct": 22.0,
+      "monthly_oos": [420.0, -180.0, 20.0]
+    },
+    {
+      "id": "B",
+      "label": "OOS negative",
+      "adjusted_full_net": 1680.0,
+      "adjusted_is_net": 1990.0,
+      "adjusted_oos_net": -310.0,
+      "oos_pf": 0.82,
+      "trade_count": 164,
+      "max_drawdown": -620.0,
+      "same_bar_ambiguity_pct": 19.0,
+      "monthly_oos": [-210.0, 90.0, -190.0]
+    },
+    {
+      "id": "C",
+      "label": "High same-bar ambiguity",
+      "adjusted_full_net": 2240.0,
+      "adjusted_is_net": 1340.0,
+      "adjusted_oos_net": 900.0,
+      "oos_pf": 1.31,
+      "trade_count": 96,
+      "max_drawdown": -520.0,
+      "same_bar_ambiguity_pct": 76.0,
+      "monthly_oos": [310.0, 270.0, 320.0]
+    },
+    {
+      "id": "D",
+      "label": "Good IS/OOS, moderate profit",
+      "adjusted_full_net": 1180.0,
+      "adjusted_is_net": 660.0,
+      "adjusted_oos_net": 520.0,
+      "oos_pf": 1.28,
+      "trade_count": 181,
+      "max_drawdown": -290.0,
+      "same_bar_ambiguity_pct": 17.0,
+      "monthly_oos": [170.0, 160.0, 190.0]
+    },
+    {
+      "id": "E",
+      "label": "One lucky month",
+      "adjusted_full_net": 2460.0,
+      "adjusted_is_net": 880.0,
+      "adjusted_oos_net": 1580.0,
+      "oos_pf": 1.46,
+      "trade_count": 52,
+      "max_drawdown": -840.0,
+      "same_bar_ambiguity_pct": 31.0,
+      "monthly_oos": [1740.0, -90.0, -70.0]
+    }
+  ],
+  "expected_robust_candidate": "D"
+}

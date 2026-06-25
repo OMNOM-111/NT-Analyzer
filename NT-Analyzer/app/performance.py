@@ -21,6 +21,32 @@ from . import runtime as rt
 
 MAX_RUNTIME_EXECUTIONS = 250_000
 ALL_ACCOUNTS = "__all__"
+
+# Stage 2 runtime/backtest mismatch repair --------------------------------
+# Formal trade categories. Only ``normal`` trades are eligible for
+# strategy-level scoring; everything else is account-level / unattributable
+# flow that must be excluded from a strategy's PnL.
+TRADE_CATEGORY_NORMAL = "normal"
+TRADE_CATEGORY_ACCOUNT_LEVEL = "account_level"
+TRADE_CATEGORY_UNMAPPED = "unmapped"
+TRADE_CATEGORY_UNMATCHED = "unmatched"
+TRADE_CATEGORY_ROLLOVER = "rollover_mismatch"
+TRADE_CATEGORY_REJECTED = "rejected"
+TRADE_CATEGORY_PARTIAL = "partial"
+TRADE_CATEGORIES = (
+    TRADE_CATEGORY_NORMAL,
+    TRADE_CATEGORY_ACCOUNT_LEVEL,
+    TRADE_CATEGORY_UNMAPPED,
+    TRADE_CATEGORY_UNMATCHED,
+    TRADE_CATEGORY_ROLLOVER,
+    TRADE_CATEGORY_REJECTED,
+    TRADE_CATEGORY_PARTIAL,
+)
+
+# A paired entry/exit whose holding time exceeds this window cannot be a
+# single intraday trade; it is an impossible multi-day FIFO pairing defect
+# (e.g. entry 2026-05-14 -> exit 2026-05-20) and is flagged ``unmatched``.
+MAX_HOLD_SECONDS = 36 * 3600
 _RESPONSE_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _RESPONSE_CACHE_MAX = 16
 TRADE_EXPORT_COLUMNS = (
@@ -48,6 +74,10 @@ TRADE_EXPORT_COLUMNS = (
     "strategy_name",
     "strategy_id",
     "runtime_instance_id",
+    "trading_cycle_id",
+    "cell_id",
+    "attribution_status",
+    "category",
     "entry_strategy_class",
     "entry_strategy_name",
     "entry_strategy_id",
@@ -411,6 +441,139 @@ def _strategy_lot_identity(row: Dict[str, Any]) -> str:
     return "__unmapped__"
 
 
+def _load_cycle_members() -> List[Dict[str, Any]]:
+    """Flatten configured trading cycles into match records used to stamp each
+    runtime execution with a ``trading_cycle_id``. Returns an empty list when
+    no cycle registry is configured, keeping behaviour unchanged by default."""
+    members: List[Dict[str, Any]] = []
+    try:
+        cycles = ops.list_cycles()
+    except Exception:
+        return members
+    for cyc in cycles:
+        cid = str(cyc.get("cycle_id") or "").strip()
+        if not cid:
+            continue
+        opened = str(cyc.get("opened_at_utc") or "")
+        closed = str(cyc.get("closed_at_utc") or "")
+        accounts = {str(a).strip().lower() for a in (cyc.get("account_names") or []) if str(a).strip()}
+        for m in cyc.get("members") or []:
+            if not isinstance(m, dict):
+                continue
+            tokens: set[str] = set()
+            for key in ("runtime_instance_id", "strategy_class", "strategy_id", "cell_id"):
+                val = str(m.get(key) or "").strip().lower()
+                if val:
+                    tokens.add(val)
+                    if key == "strategy_id":
+                        canon = rt.canonical_strategy_id(val)
+                        if canon:
+                            tokens.add(canon.lower())
+            members.append({
+                "cycle_id": cid,
+                "opened_at_utc": opened,
+                "closed_at_utc": closed,
+                "accounts": accounts,
+                "instrument": str(m.get("instrument") or "").strip().lower(),
+                "instrument_root": rt._instrument_root(m.get("instrument") or m.get("instrument_root")),
+                "tokens": tokens,
+            })
+    return members
+
+
+def _cycle_id_for_row(row: Dict[str, Any], members: List[Dict[str, Any]]) -> str:
+    """Resolve the trading cycle for a runtime execution row.
+
+    A row that already carries ``trading_cycle_id`` (written by the bridge)
+    is trusted as-is. Otherwise we match against the configured cycle members
+    by account, strategy identity, instrument root and the cycle time window."""
+    explicit = str(row.get("trading_cycle_id") or "").strip()
+    if explicit:
+        return explicit
+    if not members:
+        return ""
+    tokens = _identity_tokens(row)
+    if not tokens:
+        return ""
+    account = str(row.get("account_name") or "").strip().lower()
+    root = rt._instrument_root(row.get("instrument"))
+    ts = str(row.get("timestamp_utc") or "")
+    for m in members:
+        if not (tokens & m["tokens"]):
+            continue
+        if m["accounts"] and account and account not in m["accounts"]:
+            continue
+        if m["instrument_root"] and root and m["instrument_root"] != root:
+            continue
+        if m["opened_at_utc"] and ts and ts < m["opened_at_utc"]:
+            continue
+        if m["closed_at_utc"] and ts and ts > m["closed_at_utc"]:
+            continue
+        return m["cycle_id"]
+    return ""
+
+
+def _hold_seconds(entry_ts: Any, exit_ts: Any) -> Optional[float]:
+    a = _parse_iso(entry_ts)
+    b = _parse_iso(exit_ts)
+    if a is None or b is None:
+        return None
+    return abs((b - a).total_seconds())
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _classify_trade_category(entry_row: Optional[Dict[str, Any]],
+                             exit_row: Dict[str, Any],
+                             entry_cycle: str,
+                             exit_cycle: str) -> str:
+    """Assign a formal trade category to a paired (or unpaired) closed trade.
+
+    Only ``normal`` trades are eligible for strategy-level scoring."""
+    exit_mapped = not _is_unmapped_strategy(exit_row)
+    if entry_row is None:
+        # Exit-only fallback row (legacy telemetry): the exit fill carries the
+        # realized PnL directly. Trust it only when it is itself mapped.
+        return TRADE_CATEGORY_NORMAL if exit_mapped else TRADE_CATEGORY_UNMAPPED
+
+    entry_mapped = not _is_unmapped_strategy(entry_row)
+    if not entry_mapped and not exit_mapped:
+        return TRADE_CATEGORY_UNMAPPED
+
+    entry_instr = str(entry_row.get("instrument") or "").strip().lower()
+    exit_instr = str(exit_row.get("instrument") or "").strip().lower()
+    entry_root = rt._instrument_root(entry_row.get("instrument"))
+    exit_root = rt._instrument_root(exit_row.get("instrument"))
+    if entry_root and exit_root and entry_root == exit_root and entry_instr and exit_instr and entry_instr != exit_instr:
+        return TRADE_CATEGORY_ROLLOVER
+
+    hold = _hold_seconds(entry_row.get("timestamp_utc"), exit_row.get("timestamp_utc"))
+    if hold is not None and hold > MAX_HOLD_SECONDS:
+        return TRADE_CATEGORY_UNMATCHED
+
+    if not (entry_mapped and exit_mapped):
+        return TRADE_CATEGORY_ACCOUNT_LEVEL
+
+    if _strategy_lot_identity(entry_row) != _strategy_lot_identity(exit_row):
+        return TRADE_CATEGORY_UNMATCHED
+
+    if (entry_cycle or "") != (exit_cycle or ""):
+        return TRADE_CATEGORY_UNMATCHED
+
+    return TRADE_CATEGORY_NORMAL
+
+
+
 def _round_turn_commission_for_execution(row: Dict[str, Any],
                                          metas: Iterable[Dict[str, Any]]) -> float:
     tokens = _identity_tokens(row)
@@ -484,6 +647,9 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
                                   metas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = [dict(r) for r in rows if isinstance(r, dict)]
     out.sort(key=lambda r: str(r.get("timestamp_utc") or ""))
+    cycle_members = _load_cycle_members()
+    for row in out:
+        row["trading_cycle_id"] = str(row.get("trading_cycle_id") or "").strip() or _cycle_id_for_row(row, cycle_members)
     lots_by_key: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
     closed: List[Dict[str, Any]] = []
 
@@ -536,11 +702,13 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
             commission_source = "execution_commission" if actual_commission > 1e-9 else "round_turn_estimate"
             lot_row = {
                 "account_name": row.get("account_name"),
-                "instrument": row.get("instrument"),
+                "instrument": lot.get("instrument") or row.get("instrument"),
+                "timestamp_utc": lot.get("entry_ts"),
                 "strategy_id": lot.get("strategy_id"),
                 "strategy_class": lot.get("strategy_class"),
                 "strategy_name": lot.get("strategy_name"),
                 "runtime_instance_id": lot.get("runtime_instance_id"),
+                "trading_cycle_id": lot.get("trading_cycle_id") or "",
             }
             meta = (
                 _meta_for_row(row, token_map)
@@ -551,6 +719,9 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
             strategy_class = _first_strategy_text(row.get("strategy_class"), lot.get("strategy_class"))
             strategy_name = _first_strategy_text(row.get("strategy_name"), lot.get("strategy_name"))
             runtime_instance_id = _first_text(row.get("runtime_instance_id"), lot.get("runtime_instance_id"))
+            entry_cycle = str(lot.get("trading_cycle_id") or "")
+            exit_cycle = str(row.get("trading_cycle_id") or "")
+            category = _classify_trade_category(lot_row, row, entry_cycle, exit_cycle)
             closed.append({
                 "timestamp_utc": row.get("timestamp_utc"),
                 "exit_time_utc": row.get("timestamp_utc"),
@@ -575,6 +746,12 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
                 "strategy_class": strategy_class,
                 "strategy_name": strategy_name,
                 "runtime_instance_id": runtime_instance_id,
+                "trading_cycle_id": exit_cycle or entry_cycle,
+                "entry_trading_cycle_id": entry_cycle,
+                "exit_trading_cycle_id": exit_cycle,
+                "cell_id": meta.get("cell") or _first_text(row.get("cell_id"), lot.get("cell_id")),
+                "attribution_status": _first_text(row.get("attribution_status"), lot.get("attribution_status")),
+                "category": category,
                 "entry_strategy_id": lot.get("strategy_id") or "",
                 "entry_strategy_class": lot.get("strategy_class") or "",
                 "entry_strategy_name": lot.get("strategy_name") or "",
@@ -607,6 +784,10 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
                 "qty": signed_qty,
                 "price": price,
                 "entry_ts": row.get("timestamp_utc"),
+                "instrument": row.get("instrument") or "",
+                "trading_cycle_id": row.get("trading_cycle_id") or "",
+                "cell_id": row.get("cell_id") or "",
+                "attribution_status": row.get("attribution_status") or "",
                 "order_id": row.get("order_id") or "",
                 "execution_id": row.get("execution_id") or "",
                 "strategy_id": row.get("strategy_id") or "",
@@ -632,6 +813,8 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
             commission = _round_turn_commission_for_execution(row, metas) * qty_abs
         commission_source = "execution_commission" if _execution_commission(row) > 1e-9 else "round_turn_estimate"
         meta = _meta_for_row(row, token_map) or _fallback_meta(row)
+        exit_cycle = str(row.get("trading_cycle_id") or "")
+        category = _classify_trade_category(None, row, "", exit_cycle)
         closed.append({
             "timestamp_utc": row.get("timestamp_utc"),
             "exit_time_utc": row.get("timestamp_utc"),
@@ -656,6 +839,12 @@ def _annotate_executions_with_pnl(rows: List[Dict[str, Any]],
             "strategy_class": row.get("strategy_class") or "",
             "strategy_name": row.get("strategy_name") or "",
             "runtime_instance_id": row.get("runtime_instance_id") or "",
+            "trading_cycle_id": exit_cycle,
+            "entry_trading_cycle_id": "",
+            "exit_trading_cycle_id": exit_cycle,
+            "cell_id": meta.get("cell") or row.get("cell_id") or "",
+            "attribution_status": row.get("attribution_status") or "",
+            "category": category,
             "entry_strategy_id": "",
             "entry_strategy_class": "",
             "entry_strategy_name": "",
@@ -752,6 +941,24 @@ def _metrics(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _trade_category(trade: Dict[str, Any]) -> str:
+    return str(trade.get("category") or TRADE_CATEGORY_NORMAL)
+
+
+def _normal_trades(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [t for t in trades if _trade_category(t) == TRADE_CATEGORY_NORMAL]
+
+
+def _category_breakdown(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    counts: Dict[str, int] = {c: 0 for c in TRADE_CATEGORIES}
+    pnl: Dict[str, float] = {c: 0.0 for c in TRADE_CATEGORIES}
+    for t in trades:
+        c = _trade_category(t)
+        counts[c] = counts.get(c, 0) + 1
+        pnl[c] = pnl.get(c, 0.0) + float(t.get("pnl") or 0.0)
+    return {"counts": counts, "pnl": {k: _round_money(v) for k, v in pnl.items()}}
+
+
 def _daily_series(trades: List[Dict[str, Any]], start: date, end: date) -> List[Dict[str, Any]]:
     by_day: Dict[str, float] = {}
     for trade in trades:
@@ -791,15 +998,35 @@ def _flatten_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, 
     return out
 
 
+def _strategy_report_key(meta: Dict[str, Any]) -> str:
+    """Stable reporting key for strategy-level totals.
+
+    Runtime instance id is intentionally not part of this key: it identifies a
+    launch instance, while the Performance Center strategy row must answer
+    "how did this cell/strategy do over the selected period?"
+    """
+    cell = str(meta.get("cell") or "").strip().upper()
+    cls = str(meta.get("strategy_class") or "").strip().lower()
+    sid = rt.canonical_strategy_id(meta.get("strategy_id")) if meta.get("strategy_id") else ""
+    name = str(meta.get("name") or meta.get("full_name") or "").strip().lower()
+    if cell and (cls or sid or name):
+        return "|".join(("cell", cell, cls or sid or name))
+    if cls:
+        return "class|" + cls
+    if sid:
+        return "strategy|" + sid
+    if name:
+        return "name|" + name
+    return "__unmapped__"
+
+
 def _aggregate_strategies(trades: List[Dict[str, Any]],
                           start: date,
                           end: date) -> List[Dict[str, Any]]:
     groups: Dict[str, Dict[str, Any]] = {}
     for trade in trades:
         meta = trade.get("strategy_meta") or _fallback_meta(trade)
-        key = str(meta.get("key") or "")
-        if not key:
-            key = "__unmapped__"
+        key = _strategy_report_key(meta)
         group = groups.setdefault(key, {
             "key": key,
             "cell": meta.get("cell") or "",
@@ -808,6 +1035,7 @@ def _aggregate_strategies(trades: List[Dict[str, Any]],
             "strategy_class": meta.get("strategy_class") or "",
             "strategy_id": meta.get("strategy_id") or "",
             "runtime_instance_id": meta.get("runtime_instance_id") or "",
+            "runtime_instance_id_set": set(),
             "instrument_set": set(),
             "instrument_full_set": set(),
             "timeframe": meta.get("timeframe") or "",
@@ -815,6 +1043,11 @@ def _aggregate_strategies(trades: List[Dict[str, Any]],
             "status": meta.get("status") or "нет данных",
             "trades_raw": [],
         })
+        iid = str(meta.get("runtime_instance_id") or trade.get("runtime_instance_id") or "").strip()
+        if iid:
+            group["runtime_instance_id_set"].add(iid)
+            if not group.get("runtime_instance_id"):
+                group["runtime_instance_id"] = iid
         root = trade.get("instrument_root") or meta.get("instrument") or rt._instrument_root(trade.get("instrument"))
         full = str(trade.get("instrument") or meta.get("instrument_full") or root)
         if root:
@@ -828,14 +1061,27 @@ def _aggregate_strategies(trades: List[Dict[str, Any]],
         raw = group.pop("trades_raw")
         instruments = sorted(group.pop("instrument_set"))
         instrument_fulls = sorted(group.pop("instrument_full_set"))
+        runtime_instance_ids = sorted(group.pop("runtime_instance_id_set"))
+        normal = _normal_trades(raw)
+        excluded = [t for t in raw if _trade_category(t) != TRADE_CATEGORY_NORMAL]
+        breakdown = _category_breakdown(raw)
         row = {
             **group,
+            "runtime_instance_ids": runtime_instance_ids,
+            "runtime_instance_count": len(runtime_instance_ids),
             "instrument": ", ".join(instruments) if instruments else "—",
             "instrument_full": ", ".join(instrument_fulls) if instrument_fulls else "—",
-            "daily": _daily_series(raw, start, end),
+            "daily": _daily_series(normal, start, end),
             "last_trades": _last_trades(raw),
+            "category_breakdown": breakdown,
+            "scored_trade_count": len(normal),
+            "excluded_trade_count": len(excluded),
+            "excluded_pnl": _round_money(sum(float(t.get("pnl") or 0.0) for t in excluded)),
         }
-        rows.append(_flatten_metrics(row, _metrics(raw)))
+        # Strategy-level scoring counts ONLY ``normal`` trades. Account-level /
+        # unmapped / rollover / multi-day pairings are surfaced via the
+        # category breakdown but never inflate a strategy's PnL.
+        rows.append(_flatten_metrics(row, _metrics(normal)))
     rows.sort(key=lambda r: float(r.get("pnl") or 0.0), reverse=True)
     return rows
 
@@ -858,8 +1104,8 @@ def _aggregate_instruments(trades: List[Dict[str, Any]],
             group["instrument_full_set"].add(full)
         group["trades_raw"].append(trade)
         meta = trade.get("strategy_meta") or _fallback_meta(trade)
-        skey = str(meta.get("key") or "")
-        if skey and skey != "__unmapped__":
+        skey = _strategy_report_key(meta)
+        if skey and skey != "__unmapped__" and _trade_category(trade) == TRADE_CATEGORY_NORMAL:
             group["strategy_pnl"][skey] = group["strategy_pnl"].get(skey, 0.0) + float(trade.get("pnl") or 0.0)
             label = " ".join(x for x in (meta.get("cell"), meta.get("name")) if x)
             group["strategy_names"][skey] = label or meta.get("full_name") or skey
@@ -1021,6 +1267,8 @@ def build_performance_response(period: str = "now",
     all_closed = _assign_trade_numbers(_annotate_executions_with_pnl(executions, token_map, metas))
     period_trades = _filter_period(all_closed, start, end)
     summary = _metrics(period_trades)
+    strategy_summary = _metrics(_normal_trades(period_trades))
+    categories = _category_breakdown(period_trades)
     strategies = _aggregate_strategies(period_trades, start, end)
     instruments = _aggregate_instruments(period_trades, start, end)
 
@@ -1033,6 +1281,8 @@ def build_performance_response(period: str = "now",
         "accounts_source": account_source,
         "dedupe": dedupe_meta,
         "summary": summary,
+        "strategy_summary": strategy_summary,
+        "categories": categories,
         "strategies": strategies,
         "instruments": instruments,
         "has_trades": bool(period_trades),

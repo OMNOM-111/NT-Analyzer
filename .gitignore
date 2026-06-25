@@ -85,11 +85,37 @@
 /NT-Analyzer/data/ops/audit_log.jsonl
 /NT-Analyzer/docs/audit/
 
+# AI Strategy Lab generated/runtime artifacts. Keep source prompts, schemas,
+# reference docs, and app code in Git; keep experiment history and model IO local.
+/NT-Analyzer/ai_lab/experiments/
+/NT-Analyzer/ai_lab/registry/
+/NT-Analyzer/ai_lab/mirrors/
+/NT-Analyzer/ai_lab/quarantine/
+/NT-Analyzer/ai_lab/ui/
+/NT-Analyzer/ai_lab/*_AUDIT.md
+/NT-Analyzer/ai_lab/*_REPORT.md
+/NT-Analyzer/ai_lab/model_benchmark/results/
+/NT-Analyzer/ai_lab/model_benchmark/reports/
+/NT-Analyzer/ai_lab/model_benchmark/AI_SANDBOX_COMPILE_TEST/
+/NT-Analyzer/ai_lab/model_benchmark/**/__pycache__/
+/NT-Analyzer/ai_lab/user_research/*
+!/NT-Analyzer/ai_lab/user_research/README.md
+/NT-Analyzer/ai_lab/reference_strategies/source_acquisition/raw_sources/
+
+# Internal AI task briefs and local strategy research notes.
+/NT-Analyzer/docs/ai/
+/РАЗРАБОТКА СТРАТЕГИЙ/*
+
+# One-off spreadsheet registry update helpers rely on local artifact-tool paths.
+/NT-Analyzer/tools/research/js/
+
 # Personal backlog and local planning notes (not part of the product repo).
 /Планы - не сделано/
 
 # Local Excel backups from registry maintenance.
 **/*.corrupt-backup-*.xlsx
+**/*.backup-*.xlsx
+**/*.tmp-*.xlsx
 
 # OS cruft.
 Thumbs.db

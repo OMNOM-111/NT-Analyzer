@@ -4,7 +4,8 @@ import re
 from typing import Any, Dict, Optional
 
 
-TARGET_PORTFOLIO_SLOTS = 10
+LEGACY_PORTFOLIO_SLOTS = 10
+TARGET_PORTFOLIO_SLOTS = 15
 CELL_ID_PATTERN = re.compile(r"^CELL-(\d{3})$")
 PORTFOLIO_ROOT_ORDER = (
     "MGC",
@@ -23,6 +24,11 @@ PORTFOLIO_ROOT_ORDER = (
 PORTFOLIO_ROOT_INDEX = {
     root: idx for idx, root in enumerate(PORTFOLIO_ROOT_ORDER)
 }
+EXTRA_PORTFOLIO_SLOTS = TARGET_PORTFOLIO_SLOTS - LEGACY_PORTFOLIO_SLOTS
+# Preserve the original 12x10 cell ids (001-120). Extra slots append after the
+# legacy range so existing portfolio cards never get renumbered.
+LEGACY_CELL_COUNT = len(PORTFOLIO_ROOT_ORDER) * LEGACY_PORTFOLIO_SLOTS
+TOTAL_CELL_COUNT = LEGACY_CELL_COUNT + (len(PORTFOLIO_ROOT_ORDER) * EXTRA_PORTFOLIO_SLOTS)
 
 
 def normalize_root(value: Any) -> str:
@@ -51,7 +57,10 @@ def cell_number(value: Any, slot: Any) -> Optional[int]:
     slot_no = coerce_slot(slot)
     if root_index is None or slot_no is None:
         return None
-    return (root_index * TARGET_PORTFOLIO_SLOTS) + slot_no
+    if slot_no <= LEGACY_PORTFOLIO_SLOTS:
+        return (root_index * LEGACY_PORTFOLIO_SLOTS) + slot_no
+    extra_slot = slot_no - LEGACY_PORTFOLIO_SLOTS
+    return LEGACY_CELL_COUNT + (root_index * EXTRA_PORTFOLIO_SLOTS) + extra_slot
 
 
 def cell_id_for(value: Any, slot: Any) -> str:
@@ -66,8 +75,7 @@ def cell_number_from_id(value: Any) -> Optional[int]:
     if not match:
         return None
     number = int(match.group(1))
-    max_number = len(PORTFOLIO_ROOT_ORDER) * TARGET_PORTFOLIO_SLOTS
-    if 1 <= number <= max_number:
+    if 1 <= number <= TOTAL_CELL_COUNT:
         return number
     return None
 
@@ -76,7 +84,10 @@ def root_for_cell_id(value: Any) -> str:
     number = cell_number_from_id(value)
     if number is None:
         return ""
-    root_index = (number - 1) // TARGET_PORTFOLIO_SLOTS
+    if number <= LEGACY_CELL_COUNT:
+        root_index = (number - 1) // LEGACY_PORTFOLIO_SLOTS
+    else:
+        root_index = (number - LEGACY_CELL_COUNT - 1) // EXTRA_PORTFOLIO_SLOTS
     if 0 <= root_index < len(PORTFOLIO_ROOT_ORDER):
         return PORTFOLIO_ROOT_ORDER[root_index]
     return ""
@@ -86,7 +97,10 @@ def slot_for_cell_id(value: Any, root: Any = "") -> Optional[int]:
     number = cell_number_from_id(value)
     if number is None:
         return None
-    slot = ((number - 1) % TARGET_PORTFOLIO_SLOTS) + 1
+    if number <= LEGACY_CELL_COUNT:
+        slot = ((number - 1) % LEGACY_PORTFOLIO_SLOTS) + 1
+    else:
+        slot = LEGACY_PORTFOLIO_SLOTS + (((number - LEGACY_CELL_COUNT - 1) % EXTRA_PORTFOLIO_SLOTS) + 1)
     if root:
         expected_root = root_for_cell_id(value)
         if expected_root and expected_root != normalize_root(root):

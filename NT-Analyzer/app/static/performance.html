@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>Центр доходности — NT-Analyzer</title>
-<link rel="stylesheet" href="style.css?v=20260519-performance-center1">
+<link rel="stylesheet" href="style.css?v=20260524-performance-curves1">
 <script src="page-prefetch.js?v=20260519-performance-center1" defer></script>
 </head>
 <body class="performance-page-body">
@@ -16,6 +16,7 @@
     <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
     <a href="/ui/performance.html" class="top-nav-link active">Центр доходности</a>
     <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
+    <a href="/ui/ai-strategy.html" class="top-nav-link">Стратегия AI</a>
   </nav>
   <div class="status-strip">
     <span class="status-chip" id="pc-status">Загрузка...</span>
@@ -90,6 +91,21 @@
     </div>
   </section>
 
+  <section class="performance-section performance-equity-panel" aria-labelledby="pc-curves-title">
+    <div class="performance-section-head">
+      <h2 id="pc-curves-title">КРИВЫЕ ДОХОДНОСТИ ПО СТРАТЕГИЯМ</h2>
+      <span id="pc-curves-count" class="muted small">—</span>
+      <div class="performance-head-actions">
+        <button type="button" id="pc-curves-all-on" class="hdr-btn">Все</button>
+        <button type="button" id="pc-curves-all-off" class="hdr-btn">Скрыть</button>
+      </div>
+    </div>
+    <div class="performance-equity-layout">
+      <aside id="pc-curves-legend" class="performance-curves-legend" aria-label="Стратегии на графике"></aside>
+      <canvas id="pc-curves-chart" class="performance-equity-chart"></canvas>
+    </div>
+  </section>
+
   <section class="performance-section" aria-labelledby="pc-strategies-title">
     <div class="performance-section-head">
       <h2 id="pc-strategies-title">ДОХОДНОСТЬ ПО СТРАТЕГИЯМ</h2>
@@ -158,6 +174,6 @@
 </main>
 
 <script src="market_clock.js?v=20260513-session-api1"></script>
-<script src="performance.js?v=20260521-trade-export1"></script>
+<script src="performance.js?v=20260524-performance-curves2"></script>
 </body>
 </html>

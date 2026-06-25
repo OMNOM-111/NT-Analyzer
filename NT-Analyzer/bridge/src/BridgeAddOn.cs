@@ -28,6 +28,7 @@ namespace NTAnalyzerBridge
         private StrategyLoader _strategyLoader;
         private JobQueueWatcher _watcher;
         private CatalogRefresher _catalogRefresher;
+        private CompileErrorExporter _compileErrorExporter;
         private RuntimeTelemetryExporter _runtimeExporter;
         private RuntimeCommandProcessor _commandProcessor;
 
@@ -105,6 +106,19 @@ namespace NTAnalyzerBridge
                 _catalogRefresher = new CatalogRefresher(_cfg, _strategyLoader);
                 _catalogRefresher.Start();
 
+                // AI Strategy Lab: stream NT8 compile diagnostics as JSONL so
+                // the AI sandbox can autofix the generated strategy without
+                // requiring the operator to paste error text.
+                try
+                {
+                    _compileErrorExporter = new CompileErrorExporter(_cfg);
+                    _compileErrorExporter.Start();
+                }
+                catch (Exception ceex)
+                {
+                    BridgeLog.Error("CompileErrorExporter start failed", ceex);
+                }
+
                 // Phase 17: NinjaTrader runtime telemetry exporter
                 // Read-only: writes data/runtime/{heartbeat,strategies,positions,executions,orders,errors}
                 // No order placement, no strategy enable/disable.
@@ -146,6 +160,10 @@ namespace NTAnalyzerBridge
             try { _runtimeExporter?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: runtime.Stop failed", ex); }
             finally { _runtimeExporter = null; }
+
+            try { _compileErrorExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: compileErr.Stop failed", ex); }
+            finally { _compileErrorExporter = null; }
 
             try { _catalogRefresher?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: refresher.Stop failed", ex); }

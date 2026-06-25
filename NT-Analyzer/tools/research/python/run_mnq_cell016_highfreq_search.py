@@ -440,7 +440,7 @@ def pass_core(rows: List[Dict[str, Any]], label: str) -> bool:
         float(full.get("adj_net") or 0.0) > 0.0
         and float(full.get("adj_pf") or 0.0) >= 1.25
         and int(full.get("trade_count") or 0) >= 100
-        and float(full.get("max_drawdown") or 0.0) >= -300.0
+        and RL.max_drawdown_within_budget(float(full.get("max_drawdown") or 0.0))
         and float(is_.get("adj_net") or 0.0) > 0.0
         and float(oos.get("adj_net") or 0.0) > 0.0
         and float(oos.get("adj_pf") or 0.0) >= 1.15

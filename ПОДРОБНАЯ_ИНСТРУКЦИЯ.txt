@@ -306,21 +306,45 @@ Runtime telemetry пишет bridge в `NT-Analyzer/data/runtime/`:
 
 14. РАЗРАБОТКА СТРАТЕГИИ С AI
 
-Базовый цикл:
+Новый обязательный цикл: `Research Hub -> Deploy`.
 
-1. Формулируем идею стратегии и критерии успеха.
-2. Создаем или меняем NinjaScript в `NT-Analyzer/ninjatrader/strategies/`.
-3. Переносим/синхронизируем стратегию в рабочую папку NinjaTrader:
+Этап Research Hub:
+
+1. Формулируем идею стратегии, root family, strategy family и критерии успеха.
+2. Если подходящий Hub уже есть, добавляем новую ветку `Mode` / `SetupMode`
+   в этот Hub, а не создаём новый deploy-wrapper на каждую гипотезу.
+3. Синхронизируем Hub в рабочую папку NinjaTrader:
    `%USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\Strategies\NT-Analyzer_strategies`.
 4. Компилируем NinjaScript в NinjaTrader.
-5. Полностью перезапускаем NinjaTrader, если изменились class name,
-   `[NinjaScriptProperty]` параметры или структура стратегии.
-6. Обновляем каталог NT-Analyzer.
-7. Запускаем backtest или batch через UI/API.
-8. AI анализирует `result.json`, `trades.json`, метрики, просадки, периоды,
+5. Обновляем каталог NT-Analyzer.
+6. Запускаем smoke, Full, IS/OOS и stress через один и тот же `class_name`
+   Hub, меняя только параметры job/batch: `Mode`, окна, фильтры, стопы,
+   инструмент, timeframe.
+7. AI анализирует `result.json`, `trades.json`, метрики, просадки, периоды,
    слабые места и сравнение прогонов.
-9. Дорабатываем стратегию и повторяем цикл.
-10. Если стратегия проходит критерии, оформляем или обновляем Strategy Profile.
+8. Если Mode не проходит gates, фиксируем `rejected` / `research_only` и не
+   занимаем ячейку портфеля.
+
+Этап Deploy:
+
+1. Deploy-wrapper создаётся только после survivor/gates и evidence bundle.
+2. Wrapper lock'ит approved defaults под конкретную `CELL-xxx`.
+3. В Strategy Profile фиксируются `root_family`, `strategy_family`,
+   `hub_class`, `deploy_strategy_class`, `cell_id`, locked parameters и
+   evidence job ids.
+4. Компилируем NinjaScript.
+5. Полный restart NinjaTrader нужен только когда появился новый `class_name`,
+   изменилась `[NinjaScriptProperty]` surface, bridge или AppDomain должен
+   увидеть новый класс. Обычные research-прогоны внутри уже загруженного Hub
+   restart не требуют.
+6. После deploy запускается paper-forward на demo по действующим audit-правилам.
+
+Карта процесса и статусов хранится в:
+
+- `NT-Analyzer/data/profiles/strategy_families.json`
+- `NT-Analyzer/data/profiles/research_modes.json`
+- `РАЗРАБОТКА СТРАТЕГИЙ/Двухэтапный цикл Research Hub и Deploy.md`
+- `РАЗРАБОТКА СТРАТЕГИЙ/План перехода стратегий в семьи и новый цикл.md`
 
 Рабочее правило: не считать стратегию готовой по красивому одиночному прогону.
 Нужны IS/OOS, стресс по slippage/fee, проверка количества сделок, drawdown,

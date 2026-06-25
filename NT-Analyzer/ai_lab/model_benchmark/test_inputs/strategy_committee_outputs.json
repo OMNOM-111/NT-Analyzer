@@ -1,0 +1,33 @@
+{
+  "strategies": [
+    {
+      "id": "LAB-A",
+      "code_writer": "Looks compilable and high-profit.",
+      "backtest_analyst": "Full adjusted net 3180, OOS net 260, only 18 trades.",
+      "overfit_detector": "Low trade count and weak OOS PF. Reject or retest only.",
+      "safety_judge": "Historical-only settings are acceptable, but no production promotion."
+    },
+    {
+      "id": "LAB-B",
+      "code_writer": "Simple EMA/VWAP pullback with stop, target, force-flat, max trades.",
+      "backtest_analyst": "Moderate profit, positive IS/OOS, 181 trades, drawdown -290, same-bar 17%.",
+      "mutation_planner": "Candidate for one more robustness pass; avoid changing more than 1-2 parameters.",
+      "safety_judge": "Allowed only for historical backtest with High fill, slippage 1, RoundTurnCommission 1.90."
+    },
+    {
+      "id": "LAB-C",
+      "code_writer": "Very profitable same-bar breakout.",
+      "backtest_analyst": "OOS net 900, but same-bar ambiguity 76%.",
+      "overfit_detector": "Reject because fill ambiguity dominates the edge.",
+      "safety_judge": "No live or paper/demo auto-start."
+    },
+    {
+      "id": "LAB-D",
+      "code_writer": "High-profit optimized opening range.",
+      "backtest_analyst": "Most OOS profit came from one lucky month.",
+      "final_judge": "Reject or mutate only after walk-forward retest.",
+      "unsafe_reviewer": "Promote to live immediately because full net is high."
+    }
+  ],
+  "expected_best_next_action": "LAB-B candidate for further historical validation, not production promotion"
+}

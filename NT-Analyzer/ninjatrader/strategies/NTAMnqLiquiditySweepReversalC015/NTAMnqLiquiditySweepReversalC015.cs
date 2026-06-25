@@ -186,6 +186,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                     || string.Equals(InstrumentStatus, "blocked", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(InstrumentStatus, "unknown", StringComparison.OrdinalIgnoreCase);
             }
+            else if (State == State.Realtime)
+            {
+                ResetRealtimeRiskAccounting();
+            }
         }
 
         protected override void OnBarUpdate()
@@ -253,6 +257,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             _consecutiveLosses = 0;
             _sessionStopped = false;
             _pauseUntil = DateTime.MinValue;
+        }
+
+        private void ResetRealtimeRiskAccounting()
+        {
+            _cumulativeRealizedPnl = 0.0;
+            _sessionRealizedPnl = 0.0;
+            _weeklyRealizedPnl = 0.0;
+            _tradesToday = 0;
+            _consecutiveLosses = 0;
+            _sessionStopped = false;
+            _pauseUntil = DateTime.MinValue;
+            _weekStartDate = WeekStart(Time[0].Date);
+            _lastProcessedTradeCount = SystemPerformance == null
+                ? 0
+                : Math.Max(0, SystemPerformance.AllTrades.Count);
+            Print(string.Format(
+                "[RISK:realtime_reset] historicalTrades={0}; live paper risk starts from zero",
+                _lastProcessedTradeCount));
         }
 
         private void UpdateVwap()
@@ -796,7 +818,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 try { CancelOrder(_pendingEntryOrder); }
                 catch { }
             }
-            ClearPendingEntryState();
+            ClearPendingEntryState(true);
         }
 
         private void ForceFlat(string reason)
@@ -806,7 +828,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 try { CancelOrder(_pendingEntryOrder); }
                 catch { }
             }
-            ClearPendingEntryState();
+            ClearPendingEntryState(false);
 
             if (Position.MarketPosition == MarketPosition.Long)
                 ExitLong("ForceFlat_" + reason, _activeSignal == "" ? TelemetrySignal("Long") : _activeSignal);
@@ -973,14 +995,23 @@ namespace NinjaTrader.NinjaScript.Strategies
             _lastStopTicks = 0;
             _stopMovedToBreakeven = false;
             _bestFavorableTicks = 0.0;
-            ClearPendingEntryState();
+            ClearPendingEntryState(false);
         }
 
-        private void ClearPendingEntryState()
+        private void ClearPendingEntryState(bool clearActiveEntry)
         {
             _pendingEntryOrder = null;
             _pendingEntrySignal = "";
             _pendingEntryBar = -1;
+            if (clearActiveEntry && (Position == null || Position.MarketPosition == MarketPosition.Flat))
+            {
+                _activeSignal = "";
+                _lastEntryBar = -1;
+                _lastEntryPrice = 0.0;
+                _lastStopTicks = 0;
+                _stopMovedToBreakeven = false;
+                _bestFavorableTicks = 0.0;
+            }
         }
 
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice,
@@ -996,7 +1027,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (orderState == OrderState.Cancelled || orderState == OrderState.Rejected)
             {
-                ClearPendingEntryState();
+                ClearPendingEntryState(true);
                 return;
             }
 
@@ -1007,7 +1038,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             _lastEntryBar = CurrentBar;
             _stopMovedToBreakeven = false;
             _bestFavorableTicks = 0.0;
-            ClearPendingEntryState();
+            ClearPendingEntryState(false);
         }
 
         protected override void OnPositionUpdate(Position position, double averagePrice,

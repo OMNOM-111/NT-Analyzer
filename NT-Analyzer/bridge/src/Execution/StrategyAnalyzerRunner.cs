@@ -250,6 +250,34 @@ namespace NTAnalyzerBridge.Execution
             diag.AddRange(barsCollector.Warnings);
             bool barsFileWritten = barsCollector.Bars.Count > 0;
 
+            // Stage 2: compute a REAL historical_data_fingerprint from the exact
+            // OHLCV series the backtest consumed. This replaces the placeholder
+            // and (via ResultBuilder) participates in run_hash, so two runs over
+            // different NT history no longer collide on the same hash. Method is
+            // sha256 over the canonical bar series; falls back to placeholder
+            // only when no bars survived.
+            JObject dataFingerprint;
+            if (barsFileWritten)
+            {
+                string barsCanon = barsCollector.Bars.ToString(Newtonsoft.Json.Formatting.None);
+                dataFingerprint = new JObject
+                {
+                    ["method"] = "sha256_of_primary_bar_series",
+                    ["value"]  = NTAnalyzerBridge.Util.Sha256.OfString(barsCanon),
+                    ["bar_count"] = barsCollector.Bars.Count,
+                    ["files"] = new JArray("bars.json")
+                };
+            }
+            else
+            {
+                dataFingerprint = new JObject
+                {
+                    ["method"] = "placeholder",
+                    ["value"]  = "sha256:placeholder",
+                    ["files"]  = new JArray()
+                };
+            }
+
             // 5b) Best-effort export of strategy Draw.* objects (universal
             // schema). For headless RunBacktest most strategies will export
             // zero objects; we still write the file with the diagnostic so
@@ -279,7 +307,7 @@ namespace NTAnalyzerBridge.Execution
             }
 
             var result = rb.Build(jobId, job, strategyType, finalParams,
-                                  collector.Trades, collector.Metrics, diag);
+                                  collector.Trades, collector.Metrics, diag, dataFingerprint);
             // Patch the artifacts.bars_file pointer to reflect what we
             // actually wrote (null when no bars survived).
             try

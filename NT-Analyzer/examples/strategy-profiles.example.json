@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.1",
+  "profiles": [
+    {
+      "profile_id": "demo_mnq_orb_retest_1m",
+      "name": "Demo MNQ ORB Retest 1m",
+      "strategy_class": "NTAMnqMicroOrbRetestScalpC013",
+      "deploy_strategy_class": "NTAMnqMicroOrbRetestScalpC013",
+      "instrument": "MNQ 06-26",
+      "timeframe": "1 Minute",
+      "status": "example",
+      "status_label": "Example",
+      "locked_parameters": {
+        "StartingCapital": 2000.0,
+        "IntradayOnly": true,
+        "SlippageTicks": 1,
+        "RoundTurnCommission": 1.9
+      },
+      "test_period": {
+        "from_utc": "2026-01-01T00:00:00Z",
+        "to_utc": "2026-03-31T23:59:59Z"
+      },
+      "metrics": {
+        "trade_count": 0,
+        "net_profit": 0.0,
+        "profit_factor": null,
+        "max_drawdown": 0.0
+      },
+      "notes": "Example profile only. Real operator profiles belong in data/profiles and are ignored by Git."
+    },
+    {
+      "profile_id": "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+      "name": "Scalping MNQ 1m v1 c018",
+      "deploy_strategy_class": "NTAMnqDailyOpenScalpC018",
+      "runtime_strategy_classes": ["NTAMnqDailyOpenScalpC018"],
+      "status": "archived",
+      "matrix_hidden": true,
+      "cell_id": "",
+      "archived_cell_id": "CELL-018",
+      "operational_closure": {
+        "final_action": "archived_purged"
+      },
+      "locked_parameters": {},
+      "notes": "Sanitized regression fixture for closed-cell handling."
+    },
+    {
+      "profile_id": "mnq_postactive_allmodules_1m_c017_ready_v1",
+      "name": "Scalping Post-Active MNQ 1m v1 c017",
+      "deploy_strategy_class": "NTAMnqPostActiveScalpC017",
+      "runtime_strategy_classes": ["NTAMnqPostActiveScalpC017"],
+      "status": "archived",
+      "matrix_hidden": true,
+      "cell_id": "",
+      "archived_cell_id": "CELL-017",
+      "operational_closure": {
+        "final_action": "archived_purged"
+      },
+      "locked_parameters": {
+        "TradeStartTime": 1250,
+        "TradeEndTime": 1325,
+        "RewardRiskRatio": 6.0
+      },
+      "notes": "Sanitized regression fixture for closed-cell handling."
+    }
+  ]
+}

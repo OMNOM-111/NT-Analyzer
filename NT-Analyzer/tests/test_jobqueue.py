@@ -202,8 +202,154 @@ def t06(tmp: Path) -> None:
     assert profile["name_matches_policy"] is True, profile
 
 
-@case("favorite reports are snapshotted and deletion-protected")
+@case("strategy profiles receive root and strategy family metadata")
 def t07(tmp: Path) -> None:
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "strategy_families.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "class_map": {
+            "NTAMnqResearchHub": {
+                "root_family": "MNQ",
+                "strategy_family": "mnq_session_edge",
+                "family_status": "research_hub",
+                "family_role": "research_hub",
+                "hub_class": "NTAMnqResearchHub",
+                "new_research_allowed": True,
+            },
+            "B1ShortOnlyMGC5mV2": {
+                "root_family": "MGC",
+                "strategy_family": "mgc_b1_transfer",
+                "family_status": "active",
+                "family_role": "deploy_wrapper",
+                "hub_class": "NTAMicroVwapRiskExplorer",
+                "new_research_allowed": True,
+            },
+        },
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    (profiles_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": [
+            {
+                "profile_id": "mgc_b1_shortonly_5m_paper_v2",
+                "name": "B1 ShortOnly MGC 5m v2 c002",
+                "strategy_class": "NTAMicroVwapRiskExplorer",
+                "deploy_strategy_class": "B1ShortOnlyMGC5mV2",
+                "runtime_strategy_classes": [
+                    "NTAMicroVwapRiskExplorer",
+                    "B1ShortOnlyMGC5mV2",
+                ],
+                "instrument": "MGC 06-26",
+                "timeframe": "5 Minute",
+                "slot": 2,
+                "cell_id": "CELL-002",
+                "status": "ready",
+            }
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    jq.project_root = lambda: tmp  # type: ignore[assignment]
+    jq.reset_caches()
+
+    profile = (jq.read_strategy_profiles().get("profiles") or [])[0]
+    assert profile["root_family"] == "MGC", profile
+    assert profile["strategy_family"] == "mgc_b1_transfer", profile
+    assert profile["family_status"] == "active", profile
+    assert profile["hub_class"] == "NTAMicroVwapRiskExplorer", profile
+    assert profile["new_research_allowed"] is True, profile
+
+
+@case("same strategy family profiles keep explicit portfolio cells")
+def t08(tmp: Path) -> None:
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "strategy_families.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "class_map": {
+            "B1ShortOnlyMGC5mV2": {
+                "root_family": "MGC",
+                "strategy_family": "mgc_b1_transfer",
+                "family_status": "active",
+                "family_role": "deploy_wrapper",
+                "hub_class": "NTAMicroVwapRiskExplorer",
+                "new_research_allowed": True,
+            },
+            "B1Stop24MGC5mC003": {
+                "root_family": "MGC",
+                "strategy_family": "mgc_b1_transfer",
+                "family_status": "active",
+                "family_role": "deploy_wrapper",
+                "hub_class": "NTAMicroVwapRiskExplorer",
+                "new_research_allowed": True,
+            },
+        },
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    (profiles_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": [
+            {
+                "profile_id": "mgc_b1_shortonly_5m_paper_v2",
+                "name": "B1 ShortOnly MGC 5m v2 c002",
+                "strategy_class": "NTAMicroVwapRiskExplorer",
+                "deploy_strategy_class": "B1ShortOnlyMGC5mV2",
+                "instrument": "MGC 06-26",
+                "timeframe": "5 Minute",
+                "slot": 2,
+                "cell_id": "CELL-002",
+                "status": "ready",
+            },
+            {
+                "profile_id": "mgc_b1_stop24_5m_paper_c003",
+                "name": "B1 Stop24 MGC 5m c003",
+                "strategy_class": "NTAMicroVwapRiskExplorer",
+                "deploy_strategy_class": "B1Stop24MGC5mC003",
+                "instrument": "MGC 06-26",
+                "timeframe": "5 Minute",
+                "slot": 3,
+                "cell_id": "CELL-003",
+                "status": "ready",
+            },
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    jq.project_root = lambda: tmp  # type: ignore[assignment]
+    jq.reset_caches()
+
+    profiles = jq.read_strategy_profiles().get("profiles") or []
+    by_id = {p["profile_id"]: p for p in profiles}
+    assert by_id["mgc_b1_shortonly_5m_paper_v2"]["cell_id"] == "CELL-002", profiles
+    assert by_id["mgc_b1_stop24_5m_paper_c003"]["cell_id"] == "CELL-003", profiles
+    assert by_id["mgc_b1_shortonly_5m_paper_v2"]["strategy_family"] == "mgc_b1_transfer", profiles
+    assert by_id["mgc_b1_stop24_5m_paper_c003"]["strategy_family"] == "mgc_b1_transfer", profiles
+
+
+@case("research modes registry is readable")
+def t08b(tmp: Path) -> None:
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "research_modes.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "modes": [
+            {
+                "root_family": "MNQ",
+                "strategy_family": "mnq_session_edge",
+                "hub_class": "NTAMnqResearchHub",
+                "mode": "FailedBreak",
+                "status": "active",
+            }
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    jq.project_root = lambda: tmp  # type: ignore[assignment]
+
+    doc = jq.read_research_modes()
+    assert doc["schema_version"] == "1.0", doc
+    assert doc["modes"][0]["hub_class"] == "NTAMnqResearchHub", doc
+    assert doc["modes"][0]["mode"] == "FailedBreak", doc
+
+
+@case("favorite reports are snapshotted and deletion-protected")
+def t09(tmp: Path) -> None:
     jdir = tmp / "jobs" / "done" / "job_fav"
     jdir.mkdir(parents=True)
     (jdir / "job.json").write_text(json.dumps({
@@ -247,7 +393,7 @@ def t07(tmp: Path) -> None:
 
 
 @case("favorite repeat reuses stored snapshot")
-def t08(tmp: Path) -> None:
+def t10(tmp: Path) -> None:
     jdir = tmp / "jobs" / "done" / "job_repeat"
     jdir.mkdir(parents=True)
     (jdir / "job.json").write_text(json.dumps({
@@ -327,7 +473,7 @@ def t08(tmp: Path) -> None:
 
 
 @case("batch favorite is blocked in favor of concrete child runs")
-def t09(tmp: Path) -> None:
+def t11(tmp: Path) -> None:
     for jid, instrument in (("job_child_a", "MNQ 06-26"), ("job_child_b", "MES 06-26")):
         jdir = tmp / "jobs" / "done" / jid
         jdir.mkdir(parents=True)
@@ -384,7 +530,7 @@ def t09(tmp: Path) -> None:
 
 
 @case("research jobs keep NTAMicroVwapRiskPilot submitted time window")
-def t10(tmp: Path) -> None:
+def t12(tmp: Path) -> None:
     req = jq.CreateJobRequest(
         class_name="NTAMicroVwapRiskPilot",
         instrument="MNQ 06-26",
@@ -413,7 +559,7 @@ def t10(tmp: Path) -> None:
 
 
 @case("reports are paged by stable report number, not folder mtime")
-def t11(tmp: Path) -> None:
+def t13(tmp: Path) -> None:
     for i in range(1, 61):
         minute = i // 2
         second = i % 60
@@ -451,8 +597,145 @@ def t11(tmp: Path) -> None:
     assert second["jobs"][-1]["report_no"] == 1, second["jobs"][-3:]
 
 
+@case("stage2 backtest requirements flag optimistic assumptions")
+def t14(tmp: Path) -> None:
+    # Optimistic defaults: Standard fill, slip 0, synthetic 0 commission, no
+    # contract month -> every Stage 2 honesty check should warn.
+    req = jq.CreateJobRequest(
+        class_name="SampleMACrossOver",
+        instrument="MNQ",
+        bars_period_type="Minute",
+        bars_period_value=1,
+        from_utc="2026-05-08T00:00:00Z",
+        to_utc="2026-05-09T00:00:00Z",
+        parameters={},
+        order_fill_resolution="Standard",
+        slippage_ticks=0,
+        commission_template="None",
+        session_template="",
+        timezone="",
+    )
+    reqs = jq.stage2_backtest_requirements(req)
+    assert reqs["contract_version"] == "0.2", reqs
+    assert reqs["requires_runtime_historical_data_fingerprint"] is True, reqs
+    blob = " ".join(reqs["warnings"]).lower()
+    assert "session_template" in blob, reqs
+    assert "timezone" in blob, reqs
+    assert "high" in blob, reqs
+    assert "slippage" in blob, reqs
+    assert "commission" in blob, reqs
+    assert "contract month" in blob, reqs
+
+    # Honest, explicit assumptions: no warnings.
+    ok = jq.CreateJobRequest(
+        class_name="SampleMACrossOver",
+        instrument="MNQ SEP26",
+        bars_period_type="Minute",
+        bars_period_value=1,
+        from_utc="2026-05-08T00:00:00Z",
+        to_utc="2026-05-09T00:00:00Z",
+        parameters={},
+        order_fill_resolution="High",
+        slippage_ticks=3,
+        commission_template="NinjaTrader Micro",
+        session_template="CME US Index Futures RTH",
+        timezone="UTC",
+    )
+    ok_reqs = jq.stage2_backtest_requirements(ok)
+    assert ok_reqs["warnings"] == [], ok_reqs
+
+
+@case("internal profile metadata keys are stripped from bridge strategy parameters")
+def t15(tmp: Path) -> None:
+    req = jq.CreateJobRequest(
+        class_name="SampleMACrossOver",
+        instrument="MNQ 09-26",
+        bars_period_type="Minute",
+        bars_period_value=1,
+        from_utc="2026-05-08T00:00:00Z",
+        to_utc="2026-05-09T00:00:00Z",
+        parameters={
+            "Fast": 10,
+            "_session_template": "Nymex Metals RTH1",
+            "_profile_note": "metadata only",
+        },
+    )
+    jq._strip_internal_strategy_parameters(req)  # type: ignore[attr-defined]
+    assert req.parameters == {"Fast": 10}, req.parameters
+
+
+@case("current-contract jobs align ContractName and InstrumentName parameters")
+def t16(tmp: Path) -> None:
+    req = jq.CreateJobRequest(
+        class_name="NTAMnqLiquiditySweepReversalC015",
+        instrument="MNQ 09-26",
+        bars_period_type="Minute",
+        bars_period_value=1,
+        from_utc="2026-05-08T00:00:00Z",
+        to_utc="2026-05-09T00:00:00Z",
+        parameters={
+            "ContractName": "MNQ 06-26",
+            "InstrumentName": "MNQ",
+            "RoundTurnCommission": 1.90,
+        },
+    )
+    jq._align_instrument_strategy_parameters(req)  # type: ignore[attr-defined]
+    assert req.parameters["ContractName"] == "MNQ 09-26", req.parameters
+    assert req.parameters["InstrumentName"] == "MNQ", req.parameters
+
+
+@case("catalog excludes rejected/decommissioned strategy classes")
+def t17(tmp: Path) -> None:
+    jq.project_root = lambda: tmp  # type: ignore[assignment]
+    jq.reset_caches()
+
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": [{
+            "profile_id": "mgc_b1_shortonly_5m_paper_v2",
+            "name": "B1 ShortOnly MGC 5m v2 c002",
+            "strategy_class": "NTAMicroVwapRiskExplorer",
+            "deploy_strategy_class": "B1ShortOnlyMGC5mV2",
+            "instrument": "MGC 08-26",
+            "timeframe": "5 Minute",
+            "status": "archived",
+        }],
+    }), encoding="utf-8")
+
+    ops_dir = tmp / "data" / "ops"
+    ops_dir.mkdir(parents=True, exist_ok=True)
+    (ops_dir / "scc_classes.json").write_text(json.dumps({
+        "rejected": ["B1ShortOnlyMGC5mV2"],
+    }), encoding="utf-8")
+
+    src = (
+        tmp / "NTUser" / "bin" / "Custom" / "Strategies" /
+        "NT-Analyzer_strategies" / "B1ShortOnlyMGC5mV2" / "B1ShortOnlyMGC5mV2.cs"
+    )
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("public class B1ShortOnlyMGC5mV2 { }", encoding="utf-8")
+
+    catalog_dir = tmp / "data" / "catalog"
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+    (catalog_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "strategies": [{
+            "class_name": "B1ShortOnlyMGC5mV2",
+            "display_name": "B1 ShortOnly MGC 5m v2 c002",
+            "source_file": str(src),
+            "parameters": [],
+        }],
+    }), encoding="utf-8")
+
+    out = jq.build_catalog_response()
+    classes = {s.get("class_name") for s in out.get("strategies") or []}
+    assert "B1ShortOnlyMGC5mV2" not in classes, out
+
+
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11]
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17]
     print(f"Running {len(cases)} queue contract tests:")
     for c in cases:
         c()

@@ -1,0 +1,21 @@
+# NT-Analyzer — Python dependencies.
+#
+# The backend itself is stdlib-only (no FastAPI / no third-party web stack);
+# it binds to 127.0.0.1 and serves the UI from app/static.
+#
+# The packages below are required for correct runtime behaviour and for
+# running the test suite in a clean virtualenv.
+#
+#   python -m pip install -r requirements.txt
+#
+# --- runtime ---------------------------------------------------------------
+# IANA time-zone database. Without it, zoneinfo.ZoneInfo("America/Los_Angeles")
+# raises ZoneInfoNotFoundError on Windows (no system tz DB shipped). The code
+# falls back to a fixed UTC-8 offset, but that is DST-unaware; install tzdata
+# so Pacific-time conversions (metrics / performance / runtime) are correct.
+tzdata>=2024.1
+
+# --- dev / tests -----------------------------------------------------------
+# Test runner. The suite can also be launched without pytest via the custom
+# runner: `python -m tests` (see tests/__main__.py).
+pytest>=8.0

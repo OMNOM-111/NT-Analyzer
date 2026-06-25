@@ -241,7 +241,7 @@ def direction_passes(rows: List[Dict[str, Any]], direction: str) -> bool:
         full.get("adj_net", 0.0) > 0.0
         and full.get("adj_pf", 0.0) >= 1.35
         and oos.get("adj_pf", 0.0) >= 1.25
-        and abs(full.get("max_drawdown", 0.0)) <= 300.0
+        and RL.max_drawdown_within_budget(full.get("max_drawdown", 0.0))
         and full.get("trade_count", 0) >= 20
     )
 

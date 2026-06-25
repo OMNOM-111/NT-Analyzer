@@ -722,7 +722,7 @@ def pass_core_gates(validation: List[Dict[str, Any]], label: str) -> bool:
         full.get("adj_net", 0.0) > 0.0
         and full.get("adj_pf", 0.0) >= 1.35
         and int(full.get("trade_count") or 0) >= 30
-        and full.get("max_drawdown", 0.0) >= -300.0
+        and RL.max_drawdown_within_budget(full.get("max_drawdown", 0.0))
         and is_.get("adj_net", 0.0) > 0.0
         and oos.get("adj_net", 0.0) > 0.0
         and oos.get("adj_pf", 0.0) >= 1.25
@@ -794,7 +794,7 @@ def main(argv: List[str]) -> int:
         "class_name": CLASS_NAME,
         "current_contract": CURRENT_CONTRACT,
         "acceptance_gates": {
-            "full_2024_2025": "adj_net > 0, adj_pf >= 1.35, trades >= 30, max_dd >= -300",
+            "full_2024_2025": "adj_net > 0, adj_pf >= 1.35, trades >= 30, max_dd <= 15% StartingCapital",
             "is_2024": "adj_net > 0",
             "oos_2025": "adj_net > 0, adj_pf >= 1.25",
             "stress": "slip=2 positive, fee=2.40 positive, combined desired positive",

@@ -1,0 +1,72 @@
+{
+  "case_id": "OVERFIT-001",
+  "strategy": "NTAAiSandboxOpenRangeOptimizedPeak",
+  "instrument": "MNQ",
+  "timeframe": "5m",
+  "commission_per_round_turn": 1.9,
+  "slippage_ticks": 1,
+  "fill_type": "High",
+  "optimized_parameter": "OpeningRangeMinutes",
+  "best_parameter_value": 17,
+  "parameter_sweep": [
+    {
+      "value": 12,
+      "adjusted_full_net": -410.0,
+      "adjusted_oos_net": -260.0,
+      "trade_count": 74
+    },
+    {
+      "value": 15,
+      "adjusted_full_net": 90.0,
+      "adjusted_oos_net": -80.0,
+      "trade_count": 63
+    },
+    {
+      "value": 17,
+      "adjusted_full_net": 1860.0,
+      "adjusted_oos_net": -120.0,
+      "trade_count": 31
+    },
+    {
+      "value": 20,
+      "adjusted_full_net": -155.0,
+      "adjusted_oos_net": -210.0,
+      "trade_count": 57
+    },
+    {
+      "value": 25,
+      "adjusted_full_net": -530.0,
+      "adjusted_oos_net": -390.0,
+      "trade_count": 69
+    }
+  ],
+  "monthly_oos": [
+    {
+      "month": "2026-01",
+      "adjusted_net": 740.0,
+      "trades": 4
+    },
+    {
+      "month": "2026-02",
+      "adjusted_net": -180.0,
+      "trades": 7
+    },
+    {
+      "month": "2026-03",
+      "adjusted_net": -260.0,
+      "trades": 8
+    },
+    {
+      "month": "2026-04",
+      "adjusted_net": -420.0,
+      "trades": 6
+    }
+  ],
+  "same_bar_ambiguity_pct": 68.0,
+  "max_drawdown": -910.0,
+  "notes": [
+    "Most of the full-sample profit comes from one month with only four OOS trades.",
+    "The optimized value is surrounded by losing parameter neighbors.",
+    "OOS adjusted net is negative at the optimized value despite strong full-sample net."
+  ]
+}

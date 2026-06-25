@@ -125,8 +125,8 @@ def t05(tmp):
     ops.arm("b1_shortonly", "t")
     ops.start_intent("b1_shortonly", "t")
     ops.confirm_manual("b1_shortonly", "started", "t")
-    from datetime import datetime, timezone, timedelta
-    today_pt = (datetime.now(timezone.utc) - timedelta(hours=8)).date().isoformat()
+    from datetime import datetime, timezone
+    today_pt = ops._to_pt(datetime.now(timezone.utc)).date().isoformat()
     ops.append_journal_day("b1_shortonly", {
         "date_pt": today_pt, "trading_day_number": "1", "session_status": "ok",
         "trades_count": "3", "gross_pnl": "-250", "total_qty": "3", "notes": "test breach",
@@ -230,12 +230,43 @@ def t12(tmp):
     assert raised, "mark_paper_passed before review_due must be denied"
 
 
+@case("trading cycle registry: empty by default, round-trips active cycle")
+def t13(tmp):
+    # No cycles.json yet -> cycle-agnostic empty registry.
+    assert ops.list_cycles() == [], ops.list_cycles()
+    assert ops.get_active_cycle() is None
+    ops.save_cycles({
+        "active_cycle_id": "CYCLE-2026-06-16-A",
+        "cycles": [
+            {
+                "cycle_id": "CYCLE-2026-06-16-A",
+                "label": "post-audit relaunch gate",
+                "status": "open",
+                "opened_at_utc": "2026-06-16T00:00:00Z",
+                "closed_at_utc": None,
+                "account_names": ["DEMO3369390"],
+                "members": [
+                    {"cell_id": "CELL-015", "strategy_class": "NTAMnqLiquiditySweepReversalC015",
+                     "runtime_instance_id": "iid-c015", "instrument": "MNQ SEP26"},
+                ],
+            },
+        ],
+    })
+    assert [c["cycle_id"] for c in ops.list_cycles()] == ["CYCLE-2026-06-16-A"]
+    active = ops.get_active_cycle()
+    assert active is not None and active["cycle_id"] == "CYCLE-2026-06-16-A", active
+    assert ops.get_cycle("CYCLE-2026-06-16-A")["label"] == "post-audit relaunch gate"
+    assert ops.get_cycle("missing") is None
+    # Schema version is normalized on save.
+    assert ops.load_cycles()["schema_version"] == ops.CYCLE_SCHEMA_VERSION
+
+
 # --------------------------------------------------------------------------
 # Run all
 # --------------------------------------------------------------------------
 
 def main() -> int:
-    tests = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12]
+    tests = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12, t13]
     print(f"Running {len(tests)} Phase 16 tests:")
     for t in tests:
         t()

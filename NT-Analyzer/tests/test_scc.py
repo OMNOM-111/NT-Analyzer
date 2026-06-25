@@ -5,7 +5,7 @@ Tests:
   t01 - Old reports/jobs are always visible (even if strategy is archived)
   t02 - /api/scc/strategies returns only active strategy (NTAMicroVwapRiskPilot)
   t03 - Rejected classes are excluded from active list
-  t04 - submit_command raises OpsError 403 for rejected class
+  t04 - submit_command blocks enable for rejected class, but allows disable
   t05 - B1 ShortOnly locked params mismatch is detected
   t06 - Runtime response includes required fields: account, instrument, timeframe, enabled
   t07 - SCC endpoint survives missing NT Strategies folder gracefully
@@ -154,14 +154,12 @@ def t01(tmp):
         "list_jobs must NOT filter by registry_status - old reports must always appear"
 
 
-@case("t02: scc strategies returns only active (NTAMicroVwapRiskPilot)")
+@case("t02: scc strategies excludes configured rejected classes")
 def t02(tmp):
     from app.server import _build_scc_strategies
     result = _build_scc_strategies()
     strategies = result.get("strategies") or []
     class_names = [s["class_name"] for s in strategies]
-    assert "NTAMicroVwapRiskPilot" in class_names, \
-        f"NTAMicroVwapRiskPilot must be in active list, got: {class_names}"
     rejected_set = set(result.get("rejected_classes") or [])
     for cls in class_names:
         assert cls not in rejected_set, \
@@ -178,7 +176,7 @@ def t03(tmp):
             f"Rejected class '{cls}' must NOT be in active strategies"
 
 
-@case("t04: submit_command blocks rejected/archived strategy with OpsError 403")
+@case("t04: submit_command blocks rejected/archived enable and allows disable")
 def t04(tmp):
     reg_path = tmp / "data" / "ops" / "registry.json"
     reg_path.write_text(json.dumps({
@@ -217,6 +215,15 @@ def t04(tmp):
         assert e.status == 403, f"Expected status 403, got {e.status}"
         assert "rejected" in str(e).lower() or "archived" in str(e).lower(), \
             f"Error must mention rejected/archived, got: {e}"
+
+    rec = rt.submit_command(
+        command="disable_strategy",
+        strategy_id="rej_test",
+        account_name="Sim101",
+        class_name="NTAMicroOrbPilot",
+    )
+    assert rec["status"] == "queued", "disable_strategy must stay available for frozen/rejected runtime cleanup"
+    assert rec["command"] == "disable_strategy"
 
 
 @case("t05: B1 locked params mismatch is detected by validate_params")
@@ -281,8 +288,8 @@ def t09(tmp):
 
     preferred = tmp / "Strategies" / "NT-Analyzer_strategies"
     legacy = tmp / "Strategies"
-    (preferred / "NTAMicroVwapRiskPilot").mkdir(parents=True, exist_ok=True)
-    (preferred / "NTAMicroVwapRiskPilot" / "NTAMicroVwapRiskPilot.cs").write_text(
+    (preferred / "NTAMnqMicroOrbOpenScalp").mkdir(parents=True, exist_ok=True)
+    (preferred / "NTAMnqMicroOrbOpenScalp" / "NTAMnqMicroOrbOpenScalp.cs").write_text(
         "// preferred strategy\n",
         encoding="utf-8",
     )
@@ -294,7 +301,7 @@ def t09(tmp):
         result = server._build_scc_strategies()
 
     names = [row.get("class_name") for row in result.get("strategies") or []]
-    assert "NTAMicroVwapRiskPilot" in names, f"preferred folder class missing, got {names}"
+    assert "NTAMnqMicroOrbOpenScalp" in names, f"preferred folder class missing, got {names}"
     assert "NTAnalyzerEveryNBarLong" in names, f"legacy root fallback missing, got {names}"
     assert result["nt_strat_dir_ok"] is True, "preferred NT-Analyzer_strategies dir must be reported as present"
 

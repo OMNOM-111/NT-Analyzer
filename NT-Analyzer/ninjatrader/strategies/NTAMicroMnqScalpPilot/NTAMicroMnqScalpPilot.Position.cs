@@ -21,9 +21,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 string signal = ActiveEntrySignalForPosition();
                 if (Position.MarketPosition == MarketPosition.Long)
-                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
+                    SetProtectiveStopLoss(signal, _lastEntryPrice, "breakeven");
                 else
-                    SetStopLoss(signal, CalculationMode.Price, _lastEntryPrice, false);
+                    SetProtectiveStopLoss(signal, _lastEntryPrice, "breakeven");
             }
 
             // ----- Trail after R -----
@@ -34,13 +34,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     double trail = Close[0] - trailDist;
                     if (trail > _lastEntryPrice)
-                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
+                        SetProtectiveStopLoss(ActiveEntrySignalForPosition(), trail, "trail");
                 }
                 else
                 {
                     double trail = Close[0] + trailDist;
                     if (trail < _lastEntryPrice)
-                        SetStopLoss(ActiveEntrySignalForPosition(), CalculationMode.Price, trail, false);
+                        SetProtectiveStopLoss(ActiveEntrySignalForPosition(), trail, "trail");
                 }
             }
 

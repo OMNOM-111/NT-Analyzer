@@ -426,6 +426,51 @@ def read_job_report(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Promotion gates — max drawdown budget vs allocated starting capital
+# ---------------------------------------------------------------------------
+
+DEFAULT_STARTING_CAPITAL = 2000.0
+MAX_DRAWDOWN_BUDGET_PCT = 0.15  # 15% of per-strategy allocated capital
+
+
+def starting_capital_from_params(params: Optional[Dict[str, Any]]) -> float:
+    """Read allocated starting capital from job/strategy params."""
+    if not params:
+        return DEFAULT_STARTING_CAPITAL
+    for key in ("StartingCapital", "starting_capital"):
+        raw = params.get(key)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0.0:
+            return value
+    return DEFAULT_STARTING_CAPITAL
+
+
+def max_drawdown_budget(starting_capital: Optional[float] = None) -> float:
+    """Absolute USD budget for Full-period max drawdown gate."""
+    cap = float(starting_capital if starting_capital is not None else DEFAULT_STARTING_CAPITAL)
+    if cap <= 0.0:
+        cap = DEFAULT_STARTING_CAPITAL
+    return cap * MAX_DRAWDOWN_BUDGET_PCT
+
+
+def max_drawdown_within_budget(
+    drawdown: Any,
+    starting_capital: Optional[float] = None,
+) -> bool:
+    """True when |drawdown| is within 15% of allocated starting capital."""
+    try:
+        dd = float(drawdown or 0.0)
+    except (TypeError, ValueError):
+        dd = 0.0
+    return abs(dd) <= max_drawdown_budget(starting_capital)
+
+
+# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 

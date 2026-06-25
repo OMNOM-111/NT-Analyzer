@@ -486,7 +486,7 @@ def gate_decision(rows_by_stage: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     gates = {
         "full_net_positive": float(full.get("adj_net") or 0.0) > 0.0,
         "full_pf_ge_1_35": float(full.get("adj_pf") or 0.0) >= 1.35,
-        "full_dd_le_300": abs(float(full.get("adj_dd") or 0.0)) <= 300.0,
+        "max_dd_pct_15": RL.max_drawdown_within_budget(float(full.get("adj_dd") or 0.0)),
         "full_trades_ge_50": int(full.get("trade_count") or 0) >= 50,
         "is_net_positive": float(is_row.get("adj_net") or 0.0) > 0.0,
         "oos_net_positive": float(oos.get("adj_net") or 0.0) > 0.0,

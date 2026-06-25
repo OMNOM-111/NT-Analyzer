@@ -146,7 +146,15 @@ def _to_pt(dt_utc: datetime) -> datetime:
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
     if ZoneInfo is not None:
-        return dt_utc.astimezone(ZoneInfo("America/Los_Angeles"))
+        # ZoneInfo import can succeed while the actual IANA lookup fails at
+        # call time when the tz database is unavailable (e.g. Windows venv
+        # without the `tzdata` package). Fall back to a fixed offset instead
+        # of letting ZoneInfoNotFoundError bubble up and silently turn every
+        # metrics/performance/runtime computation into `metrics_failed`.
+        try:
+            return dt_utc.astimezone(ZoneInfo("America/Los_Angeles"))
+        except Exception:
+            pass
     return dt_utc - timedelta(hours=8)
 
 
@@ -395,6 +403,70 @@ def get_strategy(strategy_id: str) -> Optional[Dict[str, Any]]:
 def _canonical_strategy_id(strategy_id: str) -> str:
     s = get_strategy(strategy_id)
     return str((s or {}).get("strategy_id") or strategy_id)
+
+
+# ---------------------------------------------------------------------------
+# Trading cycles (Stage 2 runtime/backtest mismatch repair)
+#
+# A "trading cycle" is an explicit, immutable launch window that groups the
+# runtime strategy instances that were started together. Attaching a
+# trading_cycle_id to profiles, runtime instances, orders, executions and
+# closed trades lets the Performance Center refuse to merge PnL across
+# different launches (or across a contract roll inside one launch).
+# ---------------------------------------------------------------------------
+
+CYCLE_SCHEMA_VERSION = "1.0"
+
+
+def cycles_path() -> Path: return _ops_dir() / "cycles.json"
+
+
+def _default_cycles() -> Dict[str, Any]:
+    return {"schema_version": CYCLE_SCHEMA_VERSION, "active_cycle_id": None, "cycles": []}
+
+
+def load_cycles() -> Dict[str, Any]:
+    """Load the trading-cycle registry. Returns an empty registry when the
+    file is missing so the rest of the system stays cycle-agnostic until an
+    operator actually opens a cycle."""
+    doc = _read_json(cycles_path(), None)
+    if not isinstance(doc, dict):
+        return _default_cycles()
+    doc.setdefault("schema_version", CYCLE_SCHEMA_VERSION)
+    doc.setdefault("active_cycle_id", None)
+    cycles = doc.get("cycles")
+    doc["cycles"] = [c for c in cycles if isinstance(c, dict)] if isinstance(cycles, list) else []
+    return doc
+
+
+def list_cycles() -> List[Dict[str, Any]]:
+    return list(load_cycles().get("cycles", []))
+
+
+def get_cycle(cycle_id: str) -> Optional[Dict[str, Any]]:
+    needle = str(cycle_id or "").strip()
+    if not needle:
+        return None
+    for c in list_cycles():
+        if str(c.get("cycle_id") or "").strip() == needle:
+            return c
+    return None
+
+
+def get_active_cycle() -> Optional[Dict[str, Any]]:
+    doc = load_cycles()
+    active = str(doc.get("active_cycle_id") or "").strip()
+    if not active:
+        return None
+    return get_cycle(active)
+
+
+def save_cycles(doc: Dict[str, Any]) -> None:
+    payload = dict(doc or {})
+    payload["schema_version"] = CYCLE_SCHEMA_VERSION
+    payload.setdefault("active_cycle_id", None)
+    payload["cycles"] = [c for c in payload.get("cycles", []) if isinstance(c, dict)]
+    _write_json_atomic(cycles_path(), payload)
 
 
 def load_states() -> Dict[str, Any]:

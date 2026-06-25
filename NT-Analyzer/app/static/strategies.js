@@ -5,7 +5,9 @@
 (() => {
   "use strict";
 
-  const TARGET_SLOTS = 10;
+  const LEGACY_TARGET_SLOTS = 10;
+  const EXTRA_TARGET_SLOTS = 5;
+  const TARGET_SLOTS = LEGACY_TARGET_SLOTS + EXTRA_TARGET_SLOTS;
   const TARGET_MONTHLY_PROFIT = 2000;
   const TARGET_TRADES_30D = 60;
   const PAGE_LIMIT = 1000;
@@ -26,6 +28,9 @@
     "MYM",
   ];
   const PORTFOLIO_ROOT_INDEX = new Map(PORTFOLIO_ROOT_ORDER.map((root, index) => [root, index]));
+  // Keep the legacy 12x10 cell ids stable and append slots 11-15 after CELL-120.
+  const LEGACY_CELL_COUNT = PORTFOLIO_ROOT_ORDER.length * LEGACY_TARGET_SLOTS;
+  const TOTAL_CELL_COUNT = LEGACY_CELL_COUNT + (PORTFOLIO_ROOT_ORDER.length * EXTRA_TARGET_SLOTS);
   const CELL_ID_PATTERN = /^CELL-(\d{3})$/i;
   const PROFILE_DISPLAY_NAME_RE = /^([A-Za-z][A-Za-z0-9]*(?:[ /&-][A-Za-z0-9]+)*) [A-Z0-9]+ \d+[mhd] v\d+( c\d{3})?$/;
   const VERSION_TOKEN_RE = /(?:^|[^A-Za-z0-9_]|_)v\s*(\d+)(?:$|[^A-Za-z0-9_]|_)/i;
@@ -54,8 +59,10 @@
     in_progress: "В процессе",
     baseline: "Исследование",
     candidate: "Кандидат",
+    demo_trial: "Испытательный срок",
     rejected: "Отклонена",
     archived: "Архив",
+    closed: "Закрыто",
     runtime_online: "Online",
   };
   const STATUS_ORDER = {
@@ -63,6 +70,29 @@
     runtime_online: 1,
     in_progress: 2,
   };
+  const STRATEGY_PLANNER_COLORS = [
+    "#58d889", "#5b9cf5", "#f0b429", "#ff8585", "#c77dff",
+    "#45c7b8", "#f97316", "#38bdf8", "#a3e635", "#f472b6",
+  ];
+  const ROOT_SESSION_WINDOWS = {
+    MNQ: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    MES: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    M2K: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    MYM: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    MGC: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    MET: { start: 1500, end: 1400, label: "Биржевая сессия" },
+    MCL: { start: 1500, end: 1400, label: "Биржевая сессия" },
+  };
+  const SESSION_TEMPLATE_WINDOWS = [
+    { pattern: /CME US Index Futures RTH/i, start: 1500, end: 1400, label: "Биржевая сессия" },
+    { pattern: /Nymex Metals RTH/i, start: 1500, end: 1400, label: "Биржевая сессия" },
+    { pattern: /NYMEX.*Energy|Energy.*RTH/i, start: 1500, end: 1400, label: "Биржевая сессия" },
+  ];
+  const DAY_PLANNER_PARAM_KEYS = [
+    "TradeStartTime", "TradeEndTime",
+    "UseSecondTradeWindow", "SecondTradeStartTime", "SecondTradeEndTime",
+    "Use24hSession", "IntradayOnly", "ForceFlatTime",
+  ];
 
   const STATE = {
     coverage: null,
@@ -140,19 +170,28 @@
     const index = portfolioRootIndex(root);
     const slotNo = portfolioSlotNumber(slot);
     if (index < 0 || !slotNo) return "";
-    return `CELL-${String((index * TARGET_SLOTS) + slotNo).padStart(3, "0")}`;
+    if (slotNo <= LEGACY_TARGET_SLOTS) {
+      return `CELL-${String((index * LEGACY_TARGET_SLOTS) + slotNo).padStart(3, "0")}`;
+    }
+    const extraSlot = slotNo - LEGACY_TARGET_SLOTS;
+    return `CELL-${String(LEGACY_CELL_COUNT + (index * EXTRA_TARGET_SLOTS) + extraSlot).padStart(3, "0")}`;
   }
 
   function slotFromCellId(cellId, root = "") {
     const match = String(cellId || "").trim().match(CELL_ID_PATTERN);
     if (!match) return 0;
     const number = Number.parseInt(match[1], 10);
-    if (!Number.isInteger(number) || number < 1 || number > PORTFOLIO_ROOT_ORDER.length * TARGET_SLOTS) return 0;
+    if (!Number.isInteger(number) || number < 1 || number > TOTAL_CELL_COUNT) return 0;
     if (root) {
-      const expectedRoot = PORTFOLIO_ROOT_ORDER[Math.floor((number - 1) / TARGET_SLOTS)] || "";
+      const expectedRoot = number <= LEGACY_CELL_COUNT
+        ? (PORTFOLIO_ROOT_ORDER[Math.floor((number - 1) / LEGACY_TARGET_SLOTS)] || "")
+        : (PORTFOLIO_ROOT_ORDER[Math.floor((number - LEGACY_CELL_COUNT - 1) / EXTRA_TARGET_SLOTS)] || "");
       if (expectedRoot !== portfolioRoot(root)) return 0;
     }
-    return ((number - 1) % TARGET_SLOTS) + 1;
+    if (number <= LEGACY_CELL_COUNT) {
+      return ((number - 1) % LEGACY_TARGET_SLOTS) + 1;
+    }
+    return LEGACY_TARGET_SLOTS + (((number - LEGACY_CELL_COUNT - 1) % EXTRA_TARGET_SLOTS) + 1);
   }
 
   function profilePortfolioSortKey(profile) {
@@ -185,10 +224,12 @@
 
   function profileVisibleInMatrix(profile) {
     if (!profile || profile.runtimeOnly || profile.catalogOnly) return false;
+    if (profile.matrix_hidden) return false;
     if (isReadyStatus(profile.status)) return true;
     switch (String(profile?.status || "").trim()) {
       case "research_baseline":
       case "paper_candidate":
+      case "demo_trial":
       case "in_progress":
       case "rejected":
         return profileHasExplicitSlot(profile);
@@ -1050,7 +1091,7 @@
   }
 
   function profileRoot(profile) {
-    return rootOf(profile && (profile.instrument || profile.current_contract || profile.root));
+    return rootOf(profile && (profile.root_family || profile.instrument_root || profile.instrument || profile.current_contract || profile.root));
   }
 
   function profilePeriodDays(profile) {
@@ -1280,6 +1321,8 @@
         return "ready";
       case "runtime_online":
         return "runtime_online";
+      case "closed":
+        return "closed";
       default:
         return "in_progress";
     }
@@ -1291,10 +1334,14 @@
         return "baseline";
       case "paper_candidate":
         return "candidate";
+      case "demo_trial":
+        return "demo_trial";
       case "rejected":
         return "rejected";
       case "archived":
         return "archived";
+      case "closed":
+        return "closed";
       case "runtime_online":
         return "runtime";
       case "ready":
@@ -1320,6 +1367,42 @@
 
   function statusClass(status) {
     return statusVisualKey(status);
+  }
+
+  function profileFreeze(profile) {
+    const freeze = profile && (profile.paper_freeze || profile.forward_freeze || profile.paper_forward_freeze);
+    if (!freeze || typeof freeze !== "object") return null;
+    const state = String(freeze.state || freeze.status || "").toLowerCase();
+    return state === "closed" || state === "frozen" ? freeze : null;
+  }
+
+  function profileClosedSummary(profile) {
+    const freeze = profileFreeze(profile);
+    if (!freeze) return "";
+    const pnl = Number(freeze.may_mapped_net_pnl ?? freeze.net_pnl ?? freeze.demo_net_pnl ?? freeze.pnl);
+    const days = Number(freeze.may_losing_days ?? freeze.losing_days ?? freeze.demo_losing_days);
+    const pnlText = Number.isFinite(pnl) ? fmtMoney2(pnl) : "убыток";
+    const dayText = Number.isFinite(days) ? ` / ${days} дн.` : "";
+    return `Закрыто: убыток ${pnlText}${dayText}`;
+  }
+
+  function profileClosedTitle(profile) {
+    const freeze = profileFreeze(profile);
+    if (!freeze) return "";
+    const parts = ["Закрыто: стратегия остановлена"];
+    if (freeze.reason) parts.push(`Причина: ${freeze.reason}`);
+    if (freeze.source) parts.push(`Источник: ${freeze.source}`);
+    const hasMappedPnl = Number.isFinite(Number(freeze.may_mapped_net_pnl));
+    const pnl = Number(freeze.may_mapped_net_pnl ?? freeze.net_pnl ?? freeze.demo_net_pnl ?? freeze.pnl);
+    if (Number.isFinite(pnl)) parts.push(`${hasMappedPnl ? "Май mapped Net P/L" : "Net P/L"}: ${fmtMoney2(pnl)}`);
+    const hasMappedTrades = Number.isFinite(Number(freeze.may_mapped_trades));
+    const trades = Number(freeze.may_mapped_trades ?? freeze.trades ?? freeze.demo_trades);
+    if (Number.isFinite(trades)) parts.push(`${hasMappedTrades ? "Mapped сделки" : "Сделки"}: ${trades}`);
+    const days = Number(freeze.may_losing_days ?? freeze.losing_days ?? freeze.demo_losing_days);
+    if (Number.isFinite(days)) parts.push(`Убыточных дней: ${days}`);
+    if (freeze.runtime_stop_state) parts.push(`Runtime: ${freeze.runtime_stop_state}`);
+    if (freeze.runtime_stop_command_id) parts.push(`Command: ${freeze.runtime_stop_command_id}`);
+    return parts.join("\n");
   }
 
   function strategyKey(root, ntClass) {
@@ -1395,6 +1478,20 @@
       "",
     ).trim();
     return direct || "Strategy";
+  }
+
+  function profileLineageLabel(profile) {
+    if (!profile) return "";
+    const rootFamily = String(profile.root_family || profileRoot(profile) || "").trim();
+    const strategyFamily = String(profile.strategy_family || "").trim();
+    const familyStatus = String(profile.family_status || "").trim();
+    const hubClass = String(profile.hub_class || "").trim();
+    const parts = [];
+    if (rootFamily) parts.push(`root: ${rootFamily}`);
+    if (strategyFamily) parts.push(`family: ${strategyFamily}`);
+    if (familyStatus) parts.push(`status: ${familyStatus}`);
+    if (hubClass) parts.push(`hub: ${hubClass}`);
+    return parts.join(" · ");
   }
 
   function familyProfileVersionCount(family) {
@@ -1595,6 +1692,10 @@
       const selectedCell = document.querySelector(".strategies-matrix-table .strategy-cell.selected");
       if (selectedCell && selectedCell.scrollIntoView) {
         selectedCell.scrollIntoView({ block: "nearest", inline: "center" });
+      }
+      const selectedPlannerBar = document.querySelector(".strategies-day-track-scroll .strategies-session-bar.selected");
+      if (selectedPlannerBar && selectedPlannerBar.scrollIntoView) {
+        selectedPlannerBar.scrollIntoView({ block: "center", inline: "nearest" });
       }
     });
   }
@@ -1817,7 +1918,7 @@
     body.replaceChildren();
 
     const htr = el("tr");
-    htr.appendChild(el("th", { text: "Инструмент" }));
+    htr.appendChild(el("th", { text: "Семья (root)" }));
     for (let i = 1; i <= TARGET_SLOTS; i += 1) {
       htr.appendChild(el("th", { text: `Стратегия ${i}` }));
     }
@@ -1861,7 +1962,7 @@
           td.appendChild(el("button", {
             type: "button",
             class: "strategy-cell empty",
-            title: `${cellId}\nИнструмент: ${root}\nСтратегия ${slotNo}\nСвободный слот`,
+            title: `${cellId}\nСемья (root): ${root}\nСтратегия ${slotNo}\nСвободный слот`,
           }, [
             el("span", { class: "strategy-cell-id", text: cellId }),
             el("strong", { text: "пусто" }),
@@ -1871,18 +1972,23 @@
           const familyName = familyDisplayName(family);
           const profileName = versionDisplayName(primary, family, family.slot || slotNo);
           const versionCount = familyProfileVersionCount(family);
-          const cls = family.online.state === "active" ? "active"
+          const freeze = profileFreeze(primary);
+          const cls = freeze ? "closed"
+            : family.online.state === "active" ? "active"
             : family.online.state === "mismatch" ? "mismatch"
             : statusClass(primary?.status || family.bestStatus);
+          const closedTitle = profileClosedTitle(primary);
           const cell = el("button", {
             type: "button",
             class: `strategy-cell ${cls} ${family.key === STATE.selectedKey ? "selected" : ""}`,
-            title: `${cellId}\nИнструмент: ${root}\n${family.slotLabel || `Стратегия ${slotNo}`}\nNinjaTrader: ${familyName}\nКласс: ${family.ntClass}\nВерсия: ${profileName}`,
+            title: `${cellId}\nСемья (root): ${root}\n${family.slotLabel || `Стратегия ${slotNo}`}\nNinjaTrader: ${familyName}\nКласс: ${family.ntClass}\nВерсия: ${profileName}${closedTitle ? `\n${closedTitle}` : ""}`,
           }, [
             el("span", { class: "strategy-cell-id", text: cellId }),
             el("strong", { text: profileName }),
             el("span", {
-              text: family.online.state === "active"
+              text: freeze
+                ? profileClosedSummary(primary)
+                : family.online.state === "active"
                 ? `online${versionCount > 1 ? ` · версий ${versionCount}` : ""}`
                 : `${statusLabel(family.bestStatus)}${!family.approved ? " · слот свободен" : ""}${versionCount > 1 ? ` · версий ${versionCount}` : ""}`,
             }),
@@ -2614,7 +2720,481 @@
     return el("div", { class: "strategies-research-facts-col" }, rows);
   }
 
+  function plannerTruthyParam(value) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    const s = String(value == null ? "" : value).trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "on";
+  }
+
+  function plannerParseHhmm(value) {
+    if (value == null || value === "") return null;
+    if (typeof value === "boolean") return null;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const n = Math.trunc(value);
+      return n >= 0 && n <= 2359 ? n : null;
+    }
+    const s = String(value).trim();
+    if (!s) return null;
+    const ampm = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (ampm) {
+      let hh = Number.parseInt(ampm[1], 10);
+      const mm = Number.parseInt(ampm[2] || "0", 10);
+      const period = ampm[3].toUpperCase();
+      if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 1 || hh > 12 || mm < 0 || mm > 59) return null;
+      if (period === "PM" && hh < 12) hh += 12;
+      if (period === "AM" && hh === 12) hh = 0;
+      return hh * 100 + mm;
+    }
+    if (s.includes(":")) {
+      const parts = s.split(":", 2);
+      const hh = Number.parseInt(parts[0], 10);
+      const mm = Number.parseInt(parts[1], 10);
+      if (Number.isFinite(hh) && Number.isFinite(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+        return hh * 100 + mm;
+      }
+      return null;
+    }
+    const n = Number.parseInt(s, 10);
+    return Number.isFinite(n) && n >= 0 && n <= 2359 ? n : null;
+  }
+
+  function plannerHhmmToMinutes(hhmm) {
+    const n = plannerParseHhmm(hhmm);
+    if (n == null) return null;
+    const hh = Math.floor(n / 100);
+    const mm = n % 100;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return hh * 60 + mm;
+  }
+
+  function plannerMinutesToLabel(minutes) {
+    const total = Math.max(0, Math.round(Number(minutes) || 0));
+    const hh = Math.floor((total % 1440) / 60);
+    const mm = total % 60;
+    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  }
+
+  function plannerTickStepMinutes(startMinutes) {
+    const minute = Math.max(0, Number(startMinutes) || 0) % 60;
+    if (minute === 0) return 60;
+    if (minute % 30 === 0) return 30;
+    if (minute % 20 === 0) return 20;
+    if (minute % 15 === 0) return 15;
+    if (minute % 10 === 0) return 10;
+    if (minute % 5 === 0) return 5;
+    return 30;
+  }
+
+  function plannerAlignedSessionEnd(startMinutes, endMinutes) {
+    const start = Math.max(0, Number(startMinutes) || 0);
+    const end = Math.max(start + 60, Number(endMinutes) || start + 60);
+    const step = plannerTickStepMinutes(start);
+    const cells = Math.ceil((end - start) / step);
+    return start + Math.max(1, cells) * step;
+  }
+
+  function plannerShiftMinutesIntoSession(minutes, sessionStart) {
+    if (!Number.isFinite(minutes)) return null;
+    const start = Math.max(0, Number(sessionStart) || 0);
+    let value = Number(minutes);
+    while (value < start) value += 1440;
+    while (value >= start + 1440) value -= 1440;
+    return value;
+  }
+
+  function plannerWindowInSession(window, sessionStart) {
+    const rawStart = Number(window?.start);
+    const rawEnd = Number(window?.end);
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || rawEnd <= rawStart) return null;
+    const start = plannerShiftMinutesIntoSession(rawStart, sessionStart);
+    if (!Number.isFinite(start)) return null;
+    return {
+      ...window,
+      start,
+      end: start + (rawEnd - rawStart),
+    };
+  }
+
+  function plannerMergeParams(...sources) {
+    const merged = {};
+    for (const source of sources) {
+      if (!source || typeof source !== "object") continue;
+      for (const key of DAY_PLANNER_PARAM_KEYS) {
+        if (source[key] != null && source[key] !== "") merged[key] = source[key];
+      }
+    }
+    return merged;
+  }
+
+  function plannerRuntimeParams(row) {
+    const rec = runtimeRecord(row);
+    if (rec.parameters && typeof rec.parameters === "object") return rec.parameters;
+    if (rec.params && typeof rec.params === "object") return rec.params;
+    if (row?.locked_params && typeof row.locked_params === "object") return row.locked_params;
+    return {};
+  }
+
+  function plannerConfigFromParams(params) {
+    if (!params || typeof params !== "object") return { windows: [], use24h: false };
+    if (plannerTruthyParam(params.Use24hSession)) return { windows: [], use24h: true };
+    const windows = [];
+    const start = plannerParseHhmm(params.TradeStartTime);
+    const end = plannerParseHhmm(params.TradeEndTime);
+    if (start != null && end != null && end !== start) windows.push({ start, end });
+    if (plannerTruthyParam(params.UseSecondTradeWindow)) {
+      const start2 = plannerParseHhmm(params.SecondTradeStartTime);
+      const end2 = plannerParseHhmm(params.SecondTradeEndTime);
+      if (start2 != null && end2 != null && end2 !== start2) windows.push({ start: start2, end: end2 });
+    }
+    return { windows, use24h: false };
+  }
+
+  function plannerForceFlatMinutes(profile, family) {
+    const runtimeRows = matchingRuntimeRows(profile || family?.primary || {});
+    const profileParams = plannerMergeParams(
+      profile?.locked_parameters,
+      profile?.parameters,
+      profile?.final_parameters,
+    );
+    const sources = [
+      profileParams,
+      ...(runtimeRows || []).map(plannerRuntimeParams),
+    ];
+    let latest = null;
+    for (const params of sources) {
+      const flat = plannerHhmmToMinutes(params?.ForceFlatTime);
+      if (flat == null) continue;
+      latest = latest == null ? flat : Math.max(latest, flat);
+    }
+    return latest;
+  }
+
+  function plannerParseWindowLabel(label) {
+    let s = String(label || "").trim();
+    if (!s) return [];
+    if (s.toLowerCase() === "круглосуточно") return [{ start: 0, end: 2359 }];
+    s = s.replace(/\s+PT\s*$/i, "").replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    const windows = [];
+    s.split(/\s*\+\s*/).map(part => part.trim()).filter(Boolean).forEach(part => {
+      const m = part.match(/^(.+?)\s*[-–]\s*(.+?)$/);
+      if (!m) return;
+      const start = plannerParseHhmm(m[1].trim());
+      const end = plannerParseHhmm(m[2].trim());
+      if (start != null && end != null && start !== end) windows.push({ start, end });
+    });
+    return windows;
+  }
+
+  function plannerNormalizeWindow(window) {
+    const start = plannerHhmmToMinutes(window?.start);
+    let end = plannerHhmmToMinutes(window?.end);
+    if (start == null || end == null || start === end) return null;
+    if (end < start) end += 1440;
+    return { start, end };
+  }
+
+  function plannerWindowsFromProfile(profile, family) {
+    const runtimeRows = matchingRuntimeRows(profile || family?.primary || {});
+    const profileParams = plannerMergeParams(
+      profile?.locked_parameters,
+      profile?.parameters,
+      profile?.final_parameters,
+    );
+    const paramSources = [
+      profileParams,
+      ...(runtimeRows || []).map(plannerRuntimeParams),
+    ];
+    for (const params of paramSources) {
+      const config = plannerConfigFromParams(params);
+      if (config.use24h) return [{ start: 0, end: 1440 }];
+      const windows = config.windows.map(plannerNormalizeWindow).filter(Boolean);
+      if (windows.length) return dedupePlannerWindows(windows);
+    }
+    const labelSources = [
+      profile?.trade_window_pt,
+      ...(runtimeRows || []).map(row => runtimeRecord(row).trade_window_pt || row?.trade_window_pt),
+    ];
+    for (const label of labelSources) {
+      const windows = plannerParseWindowLabel(label).map(plannerNormalizeWindow).filter(Boolean);
+      if (windows.length) return dedupePlannerWindows(windows);
+    }
+    return [];
+  }
+
+  function dedupePlannerWindows(windows) {
+    const seen = new Set();
+    const out = [];
+    for (const window of windows || []) {
+      const key = `${window.start}:${window.end}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(window);
+    }
+    return out.sort((a, b) => a.start - b.start || a.end - b.end);
+  }
+
+  function plannerSessionTemplate(profile) {
+    return String(
+      profile?.execution?.session_template ||
+      profile?.locked_parameters?._session_template ||
+      profile?.session_template ||
+      "",
+    ).trim();
+  }
+
+  function plannerSessionForRoot(root, items) {
+    const templates = (items || [])
+      .map(item => plannerSessionTemplate(item.profile))
+      .filter(Boolean);
+    let session = null;
+    for (const template of templates) {
+      const found = SESSION_TEMPLATE_WINDOWS.find(row => row.pattern.test(template));
+      if (found) {
+        session = { start: found.start, end: found.end, label: found.label };
+        break;
+      }
+    }
+    const rootKey = String(root || "").toUpperCase();
+    if (!session) session = ROOT_SESSION_WINDOWS[rootKey] || { start: 1500, end: 1400, label: "Биржевая сессия" };
+    let startMin = plannerHhmmToMinutes(session.start) ?? 360;
+    let endMin = plannerHhmmToMinutes(session.end) ?? 780;
+    if (endMin <= startMin) endMin += 1440;
+    return {
+      start: startMin,
+      end: plannerAlignedSessionEnd(startMin, endMin),
+      label: session.label,
+    };
+  }
+
+  function plannerColorForFamily(family, index) {
+    const slot = Number(family?.slot || 0);
+    const pick = slot > 0 ? slot - 1 : index;
+    return STRATEGY_PLANNER_COLORS[pick % STRATEGY_PLANNER_COLORS.length];
+  }
+
+  function plannerCellLabel(family, profile) {
+    const raw = String(family?.cellId || profile?.cell_id || "").trim();
+    const match = raw.match(/(\d{3})/);
+    return match ? `C${match[1]}` : "C—";
+  }
+
+  function plannerStrategyLabel(family, profile) {
+    const direct = versionDisplayName(profile, family, family?.slot || 1);
+    const cleaned = normalizeFamilyName(direct || familyDisplayName(family), family?.root);
+    return cleaned || familyDisplayName(family);
+  }
+
+  function plannerItemsForRoot(root) {
+    const { families } = familiesForRoot(root);
+    return families.map((family, index) => {
+      const profile = selectedResearchProfile(family);
+      const windows = plannerWindowsFromProfile(profile, family);
+      return {
+        key: family.key,
+        family,
+        profile,
+        cell: plannerCellLabel(family, profile),
+        label: plannerStrategyLabel(family, profile),
+        status: family.online.state === "active" ? "online" : statusLabel(family.bestStatus),
+        color: plannerColorForFamily(family, index),
+        selected: family.key === STATE.selectedKey,
+        forceFlat: plannerForceFlatMinutes(profile, family),
+        windows,
+      };
+    }).filter(item => item.windows.length);
+  }
+
+  function plannerAssignLanes(segments) {
+    const lanes = [];
+    const out = [];
+    segments.slice().sort((a, b) => a.start - b.start || a.end - b.end).forEach(segment => {
+      let lane = lanes.findIndex(end => end <= segment.start);
+      if (lane < 0) {
+        lane = lanes.length;
+        lanes.push(segment.end);
+      } else {
+        lanes[lane] = segment.end;
+      }
+      out.push({ ...segment, lane });
+    });
+    return { segments: out, laneCount: Math.max(1, lanes.length) };
+  }
+
+  function plannerCoverageGaps(segments, session) {
+    const intervals = segments
+      .map(segment => ({
+        start: Math.max(session.start, segment.start),
+        end: Math.min(session.end, segment.end),
+      }))
+      .filter(segment => segment.end > segment.start)
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    const gaps = [];
+    let cursor = session.start;
+    for (const interval of intervals) {
+      if (interval.start > cursor) gaps.push({ start: cursor, end: interval.start });
+      cursor = Math.max(cursor, interval.end);
+    }
+    if (cursor < session.end) gaps.push({ start: cursor, end: session.end });
+    return gaps.filter(gap => gap.end - gap.start >= 10);
+  }
+
+  function plannerTicks(session) {
+    const ticks = [];
+    const step = plannerTickStepMinutes(session.start);
+    for (let t = session.start; t <= session.end; t += step) {
+      ticks.push(t);
+    }
+    return Array.from(new Set(ticks)).sort((a, b) => a - b);
+  }
+
+  function pctInSession(value, session) {
+    return ((value - session.start) / Math.max(1, session.end - session.start)) * 100;
+  }
+
+  function plannerTimeSlots(session) {
+    const ticks = plannerTicks(session);
+    const slots = [];
+    for (let i = 0; i < ticks.length - 1; i += 1) {
+      const start = ticks[i];
+      const end = ticks[i + 1];
+      if (end <= start) continue;
+      const label = plannerMinutesToLabel(start);
+      slots.push({
+        start,
+        end,
+        label,
+        endLabel: plannerMinutesToLabel(end),
+        isMajor: start % 60 === 0,
+        isSessionStart: i === 0,
+      });
+    }
+    return slots;
+  }
+
+  function renderStrategyDayPlanner(root) {
+    const safeRoot = String(root || "").toUpperCase();
+    const items = plannerItemsForRoot(safeRoot);
+    if (!safeRoot) {
+      return el("section", { class: "strategies-day-planner-card" }, [
+        el("div", { class: "strategies-empty-state", text: "Root-семья не выбрана." }),
+      ]);
+    }
+    const session = plannerSessionForRoot(safeRoot, items);
+    const rawSegments = [];
+    items.forEach(item => {
+      item.windows.forEach(window => {
+        const normalized = plannerWindowInSession(window, session.start);
+        if (!normalized) return;
+        const start = Math.max(session.start, normalized.start);
+        const end = Math.min(session.end, normalized.end);
+        if (end <= start) return;
+        rawSegments.push({ ...item, start, end });
+      });
+    });
+    const assigned = plannerAssignLanes(rawSegments);
+    const laneCount = assigned.laneCount;
+    const segments = assigned.segments;
+    const gaps = plannerCoverageGaps(segments, session);
+    const slots = plannerTimeSlots(session);
+    const trackChildren = [];
+
+    slots.forEach((slot, index) => {
+      const top = pctInSession(slot.start, session);
+      const height = pctInSession(slot.end, session) - top;
+      trackChildren.push(el("div", {
+        class: `strategies-day-slot${slot.isMajor ? " major" : ""}${slot.isSessionStart ? " start" : ""}${index % 2 ? " alt" : ""}`,
+        style: `top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;`,
+      }, [
+        el("div", { class: "strategies-day-slot-time" }, [
+          el("strong", { text: slot.label }),
+          el("span", { text: slot.endLabel }),
+        ]),
+        el("div", { class: "strategies-day-slot-cell" }),
+      ]));
+    });
+
+    const laneChildren = [];
+    gaps.forEach(gap => {
+      const top = pctInSession(gap.start, session);
+      const height = pctInSession(gap.end, session) - top;
+      const gapLabel = `${plannerMinutesToLabel(gap.start)}-${plannerMinutesToLabel(gap.end)}`;
+      laneChildren.push(el("div", {
+        class: "strategies-day-gap",
+        style: `top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;`,
+        title: `Нет стратегий ${gapLabel} PT`,
+      }, [
+        height > 5 ? el("strong", { text: gapLabel }) : null,
+        height > 11 ? el("span", { text: "нет стратегий" }) : null,
+      ]));
+    });
+    segments.forEach(segment => {
+      const top = pctInSession(segment.start, session);
+      const height = pctInSession(segment.end, session) - top;
+      laneChildren.push(el("button", {
+        type: "button",
+        class: `strategies-session-bar ${segment.selected ? "selected" : ""}`,
+        style: `--lane:${segment.lane};--lane-count:${laneCount};--bar-color:${segment.color};top:${top.toFixed(3)}%;height:${Math.max(4, height).toFixed(3)}%;`,
+        title: `${segment.cell} ${segment.label}\n${plannerMinutesToLabel(segment.start)}-${plannerMinutesToLabel(segment.end)} PT\n${segment.status}`,
+        dataset: { key: segment.key },
+      }, [
+        el("strong", { text: `${segment.cell} ${segment.label}` }),
+        el("span", { text: `${plannerMinutesToLabel(segment.start)}-${plannerMinutesToLabel(segment.end)}` }),
+      ]));
+    });
+    trackChildren.push(el("div", {
+      class: "strategies-session-lanes",
+      style: `--lane-count:${laneCount};`,
+    }, laneChildren));
+
+    const activeCount = items.length;
+    const overlapLabel = laneCount > 1 ? ` · дорожек ${laneCount}` : "";
+    const durationHours = Math.max(1, (session.end - session.start) / 60);
+    const pixelsPerHour = durationHours >= 20 ? 54 : durationHours >= 12 ? 64 : 88;
+    const trackHeight = Math.max(640, Math.round(durationHours * pixelsPerHour));
+    return el("section", { class: "strategies-day-planner-card" }, [
+      el("div", { class: "strategies-day-planner-head" }, [
+        el("div", {}, [
+          el("div", { class: "strategies-panel-kicker", text: "Дневной план" }),
+          el("h3", { text: `${safeRoot} · ${session.label}` }),
+          el("div", {
+            class: "strategies-day-planner-sub",
+            text: `${plannerMinutesToLabel(session.start)}-${plannerMinutesToLabel(session.end)} PT`,
+          }),
+        ]),
+        el("span", { class: "strategies-counter", text: `${activeCount} окон${overlapLabel}` }),
+      ]),
+      segments.length ? el("div", { class: "strategies-day-track-scroll" }, [
+        el("div", {
+          class: "strategies-day-track",
+          style: `--lane-count:${laneCount};--planner-track-height:${trackHeight}px;`,
+        }, trackChildren),
+      ]) : el("div", {
+        class: "strategies-empty-state",
+        text: "Для стратегий этой root-семьи не указаны окна входа.",
+      }),
+    ]);
+  }
+
+  function renderStrategyDayPlannerHost() {
+    const host = $("strategies-day-planner-host");
+    if (!host) return;
+    host.replaceChildren(renderStrategyDayPlanner(STATE.selectedRoot));
+    host.querySelectorAll(".strategies-session-bar[data-key]").forEach(button => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.key || "";
+        if (!key || key === STATE.selectedKey) return;
+        STATE.selectedKey = key;
+        requestSelectedStrategyReveal();
+        renderTaskResearch();
+        renderDetail();
+        renderMatrix();
+      });
+    });
+  }
+
   function renderTaskResearch() {
+    renderStrategyDayPlannerHost();
     const title = $("strategies-research-title");
     const sub = $("strategies-research-sub");
     const chip = $("strategies-research-chip");
@@ -2893,10 +3473,11 @@
         continue;
       }
       const primary = family.primary;
+      const freeze = profileFreeze(primary);
       const f = forecast30(family.planning);
       const row = el("button", {
         type: "button",
-        class: `strategies-slot-row ${family.online.state} ${family.key === STATE.selectedKey ? "selected" : ""}`,
+        class: `strategies-slot-row ${freeze ? "closed" : family.online.state} ${family.key === STATE.selectedKey ? "selected" : ""}`,
       });
       row.addEventListener("click", () => {
         STATE.selectedKey = family.key;
@@ -2907,15 +3488,19 @@
       });
       const familyName = familyDisplayName(family);
       const primaryName = versionDisplayName(primary, family, family.slot || slotNo);
-      row.title = `${cellId}\nИнструмент: ${root}\n${family.slotLabel || slotLabel}\nКласс: ${family.ntClass}\nВерсия: ${primaryName}`;
+      const closedTitle = profileClosedTitle(primary);
+      const lineage = profileLineageLabel(primary);
+      row.title = `${cellId}\nСемья (root): ${root}\n${family.slotLabel || slotLabel}\nКласс: ${family.ntClass}\nВерсия: ${primaryName}${lineage ? `\n${lineage}` : ""}${closedTitle ? `\n${closedTitle}` : ""}`;
       row.appendChild(el("span", { class: "slot-no", text: String(slotNo) }));
       row.appendChild(el("div", { class: "slot-main" }, [
         el("small", { class: "slot-cell-id", text: `${cellId} · ${root} · ${family.slotLabel || slotLabel}` }),
         el("strong", { text: primaryName, title: `Класс: ${family.ntClass}\nВерсия: ${primaryName}` }),
         el("small", {
-          text: family.approved
-            ? `Класс: ${family.ntClass} · версия: ${primaryName}`
-            : `Класс: ${family.ntClass} · исследовательская версия, approved-слот еще свободен`,
+          text: freeze
+            ? profileClosedSummary(primary)
+            : family.approved
+            ? `Класс: ${family.ntClass} · ${lineage || `версия: ${primaryName}`}`
+            : `Класс: ${family.ntClass} · ${lineage || "исследовательская версия, approved-слот еще свободен"}`,
         }),
       ]));
       row.appendChild(el("div", { class: "slot-metrics" }, [
@@ -2923,8 +3508,8 @@
         el("small", { text: `${fmtNum(f.trades, 1)} сделок/30д` }),
       ]));
       row.appendChild(el("span", {
-        class: `strategies-status-pill ${family.online.state === "active" ? "runtime" : statusClass(family.bestStatus)}`,
-        text: family.online.state === "active" ? "online" : statusLabel(family.bestStatus),
+        class: `strategies-status-pill ${freeze ? "closed" : family.online.state === "active" ? "runtime" : statusClass(family.bestStatus)}`,
+        text: freeze ? "закрыто" : family.online.state === "active" ? "online" : statusLabel(family.bestStatus),
       }));
       list.appendChild(row);
     }
@@ -2951,18 +3536,33 @@
       const rows = matchingRuntimeRows(profile);
       const online = onlineStateForRows(rows);
       const familyName = familyDisplayName(family);
+      const freeze = profileFreeze(profile);
       const card = el("div", { class: "strategies-version-card" });
       card.appendChild(el("div", { class: "strategies-version-head" }, [
         el("strong", { text: versionDisplayName(profile, family, idx + 1) }),
         el("span", {
-          class: `strategies-status-pill ${online.state === "active" ? "runtime" : statusClass(profile.status)}`,
-          text: online.state === "active" ? "online" : statusLabel(profile.status),
+          class: `strategies-status-pill ${freeze ? "closed" : online.state === "active" ? "runtime" : statusClass(profile.status)}`,
+          text: freeze ? "закрыто" : online.state === "active" ? "online" : statusLabel(profile.status),
         }),
       ]));
       card.appendChild(el("div", {
         class: "strategies-version-sub",
         text: `Ячейка: ${family.cellId || "—"} · ${family.root} · ${family.slotLabel || "—"} · NinjaTrader: ${familyName} · класс: ${family.ntClass}`,
       }));
+      const lineage = profileLineageLabel(profile);
+      if (lineage) {
+        card.appendChild(el("div", {
+          class: "strategies-version-sub",
+          text: lineage,
+        }));
+      }
+      if (freeze) {
+        card.appendChild(el("div", {
+          class: "strategies-freeze-note",
+          text: profileClosedSummary(profile),
+          title: profileClosedTitle(profile),
+        }));
+      }
       card.appendChild(el("div", { class: "strategies-version-metrics" }, [
         metricBox("Бэктестов", stats.count || evidenceIds(profile).length || 0),
         metricBox("Чистый", fmtMoney(metric(profile, ["net_profit_after_commission", "adj_net", "net_profit"]))),
@@ -3018,7 +3618,7 @@
 
     box.appendChild(el("div", {
       class: "strategies-goal-note",
-      text: `Найдено отчетов: ${rows.length}. Список фильтруется по NT-классу ${family.ntClass} и инструменту ${family.root}.`,
+      text: `Найдено отчетов: ${rows.length}. Список фильтруется по NT-классу ${family.ntClass} и root-семье ${family.root}.`,
     }));
 
     const table = el("table", { class: "strategies-history-table" });
@@ -3071,7 +3671,7 @@
     if (!orphans.length) {
       box.appendChild(el("div", {
         class: "strategies-goal-note",
-        text: "Для выбранного инструмента все профили привязаны к существующим классам NinjaTrader.",
+        text: "Для выбранной root-семьи все профили привязаны к существующим классам NinjaTrader.",
       }));
       return box;
     }
@@ -3110,17 +3710,17 @@
     const family = selectedFamily();
 
     if (family && !STATE.selectedKey) STATE.selectedKey = family.key;
-    title.textContent = root ? `${root} стратегии` : "Инструмент";
+    title.textContent = root ? `${root} root-семья` : "Root-семья";
     status.textContent = row ? statusLabel(row.best_status) : "—";
     body.replaceChildren();
     if (!root) {
-      body.appendChild(el("div", { class: "strategies-empty-state", text: "Нет выбранного инструмента." }));
+      body.appendChild(el("div", { class: "strategies-empty-state", text: "Нет выбранной root-семьи." }));
       return;
     }
 
     const goal = goalForRoot(root);
     const summary = el("section", { class: "strategies-detail-section" });
-    summary.appendChild(el("div", { class: "strategies-detail-title", text: "Цель по инструменту" }));
+    summary.appendChild(el("div", { class: "strategies-detail-title", text: "Цель по root-семье" }));
     summary.appendChild(progressBar("Чистая прибыль за 30 дней", goal.net, TARGET_MONTHLY_PROFIT, true));
     summary.appendChild(progressBar("Сделки за 30 дней", goal.trades, TARGET_TRADES_30D, false));
     const collection = familiesForRoot(root);
@@ -3140,13 +3740,16 @@
     details.appendChild(el("div", { class: "strategies-detail-title", text: family ? "Версии выбранной стратегии" : "Версии" }));
     if (family) {
       const f = forecast30(family.planning);
+      const freeze = profileFreeze(family.primary);
       const familyName = familyDisplayName(family);
       const primaryName = versionDisplayName(family.primary, family, family.slot || 1);
-      details.appendChild(el("div", { class: `strategies-selected-card ${family.online.state}` }, [
-        el("small", { class: "strategies-selected-cell", text: `Ячейка: ${family.cellId || "—"} · Инструмент: ${family.root} · Слот: ${family.slotLabel || "—"}` }),
+      details.appendChild(el("div", { class: `strategies-selected-card ${freeze ? "closed" : family.online.state}` }, [
+        el("small", { class: "strategies-selected-cell", text: `Ячейка: ${family.cellId || "—"} · Семья (root): ${family.root} · Слот: ${family.slotLabel || "—"}` }),
         el("strong", { text: familyName }),
         el("span", {
-          text: `${family.online.state === "active" ? "online active" : statusLabel(family.bestStatus)} · версия: ${primaryName} · класс: ${family.ntClass} · прогноз ${fmtMoney(f.net)} / ${fmtNum(f.trades, 1)} сделок за 30 дней`,
+          text: freeze
+            ? `${profileClosedSummary(family.primary)} · версия: ${primaryName} · класс: ${family.ntClass}`
+            : `${family.online.state === "active" ? "online active" : statusLabel(family.bestStatus)} · версия: ${primaryName} · класс: ${family.ntClass} · прогноз ${fmtMoney(f.net)} / ${fmtNum(f.trades, 1)} сделок за 30 дней`,
         }),
       ]));
     }

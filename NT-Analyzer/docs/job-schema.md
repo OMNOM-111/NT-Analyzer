@@ -211,14 +211,55 @@ JSON Schema может быть добавлена позже, но текущи
   `source_file_sha256`, `ninjatrader_custom_dll_sha256` и `final_parameters` —
   result.json должен быть полностью самодостаточным для истории/AI/повторного открытия.
 - `run_hash` считается по каноническому job context.
-  Текущий контракт: `historical_data_fingerprint` НЕ входит в `run_hash`,
-  поэтому два прогона с одинаковым `run_hash`, но изменившейся NT history,
-  могут дать разные метрики. Это явно фиксируется отдельным полем
-  `historical_data_fingerprint` и должно учитываться при сравнении прогонов.
-  При изменении этого правила нужно явно поднять/описать версию контракта.
+  **Контракт 0.2 (Stage 2 runtime/backtest mismatch repair):** `historical_data_fingerprint`
+  ТЕПЕРЬ входит в `run_hash` вместе с `execution` (session_template, timezone,
+  order_fill_resolution, slippage_ticks, commission). Поэтому два прогона по
+  разной NT history / session / fill-модели больше не сталкиваются на одном
+  `run_hash`. Если `historical_data_fingerprint` остаётся `placeholder`, bridge
+  добавляет запись в `verification_warnings`: прогон не воспроизводимо сравним.
+  При изменении этого правила нужно явно поднять/описать версию контракта
+  (`RunHashCalculator.ContractVersion`).
 - Все timestamps в UTC.
 - Если bridge не смог посчитать какое-то поле metrics — ставит `null`,
   а не выдумывает значение, и добавляет запись в `verification_warnings`.
+
+---
+
+## Strategy Profiles family metadata
+
+`data/profiles/strategies.json` keeps locked strategy/profile cards. Family
+metadata is overlaid from `data/profiles/strategy_families.json` when profiles
+are exposed through `/api/profiles`, `/api/coverage`, and runtime registry
+matching. The same family map also contains root-level stubs for Micros roots
+that have no profile or Research Hub yet.
+
+Current profile family fields:
+
+```jsonc
+{
+  "root_family": "MNQ",
+  "strategy_family": "mnq_session_edge",
+  "family_status": "research_hub | active | active_locked | legacy_ready_frozen | legacy_rejected_frozen | research_only_standalone | archived | root_stub_no_hub",
+  "family_role": "research_hub | deploy_wrapper | locked_profile | legacy_wrapper | standalone_research_engine | root_family",
+  "hub_class": "NTAMnqResearchHub",
+  "new_research_allowed": true
+}
+```
+
+Rules:
+
+- `root_family` groups instrument-level portfolio cells (`MNQ`, `MGC`, ...).
+- `strategy_family` tracks lineage; it must not be used to collapse different
+  deploy profiles into one portfolio cell.
+- `hub_class` is the research source class. A deploy wrapper must still use
+  `deploy_strategy_class` and locked parameters after promotion gates.
+- `new_research_allowed=false` means the family can be maintained or audited,
+  but should not receive new hypotheses without a separate re-approval.
+
+`data/profiles/research_modes.json` keeps the Research Hub Mode registry and is
+exposed through `/api/research-modes`. Mode status is independent from profile
+status: a Mode can be `stub`, `active`, `research_only`, `promoted`,
+`rejected`, or `archived`.
 
 ---
 

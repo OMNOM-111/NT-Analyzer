@@ -6,6 +6,13 @@ too sensitive to one extra tick of slippage for current online use.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
+import research_lib as RL  # noqa: E402
+
 import csv
 import hashlib
 import json
@@ -102,7 +109,7 @@ def main() -> int:
         "oos_adj_pf_ge_1_25": oos["adj_pf"] >= 1.25,
         "win_rate_ge_52": full["win_rate"] >= 52.0,
         "avg_trade_ge_1_50": full["avg_trade_after_commission"] >= 1.50,
-        "abs_max_dd_le_300": abs(full["max_drawdown"]) <= 300.0,
+        "max_dd_pct_15": RL.max_drawdown_within_budget(full["max_drawdown"]),
         "max_losing_streak_le_5": full["max_consecutive_losses"] <= 5,
         "daily_stop_hits_le_5_pct_days": full["daily_stop_hit_pct"] <= 5.0,
     }

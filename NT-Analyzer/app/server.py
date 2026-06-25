@@ -27,6 +27,7 @@ import socket
 import subprocess
 import sys
 import threading
+import traceback
 import urllib.parse
 from datetime import timezone
 from email.utils import formatdate, parsedate_to_datetime
@@ -43,12 +44,38 @@ if __package__ is None or __package__ == "":
     from app import ops  # type: ignore[no-redef]
     from app import performance  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
+    from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
+    from app.ai_lab import registry as ai_registry  # type: ignore[no-redef]
+    from app.ai_lab import orchestrator as ai_orchestrator  # type: ignore[no-redef]
+    from app.ai_lab import analysis_pack as ai_analysis_pack  # type: ignore[no-redef]
+    from app.ai_lab import backtest as ai_backtest  # type: ignore[no-redef]
+    from app.ai_lab import lm_studio as ai_lm_studio  # type: ignore[no-redef]
+    from app.ai_lab import runner as ai_runner  # type: ignore[no-redef]
+    from app.ai_lab import activity as ai_activity  # type: ignore[no-redef]
+    from app.ai_lab import compile_errors as ai_compile_errors  # type: ignore[no-redef]
+    from app.ai_lab import operator_notes as ai_operator_notes  # type: ignore[no-redef]
+    from app.ai_lab import errors as ai_errors  # type: ignore[no-redef]
+    from app.ai_lab import lessons as ai_lessons  # type: ignore[no-redef]
+    from app.ai_lab import stale_sweep as ai_stale_sweep  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import marginrefresh
     from . import ops
     from . import performance
     from . import runtime as ops_runtime
+    from .ai_lab import read_model as ai_read_model
+    from .ai_lab import registry as ai_registry
+    from .ai_lab import orchestrator as ai_orchestrator
+    from .ai_lab import analysis_pack as ai_analysis_pack
+    from .ai_lab import backtest as ai_backtest
+    from .ai_lab import lm_studio as ai_lm_studio
+    from .ai_lab import runner as ai_runner
+    from .ai_lab import activity as ai_activity
+    from .ai_lab import compile_errors as ai_compile_errors
+    from .ai_lab import operator_notes as ai_operator_notes
+    from .ai_lab import errors as ai_errors
+    from .ai_lab import lessons as ai_lessons
+    from .ai_lab import stale_sweep as ai_stale_sweep
 
 
 HOST = "127.0.0.1"
@@ -94,7 +121,19 @@ def _default_ninjatrader_user_dir() -> Path:
 _NT_USER_DIR = _default_ninjatrader_user_dir()
 _NT_STRATEGIES_DIR = _NT_USER_DIR / "bin" / "Custom" / "Strategies" / "NT-Analyzer_strategies"
 _NT_STRATEGIES_LEGACY_DIR = _NT_USER_DIR / "bin" / "Custom" / "Strategies"
-_SCC_ACTIVE_CLASSES: set = {
+
+# Strategy Control Center curated class lists.
+#
+# These used to be hard-coded sets that had to be edited in Python every time a
+# strategy was promoted/rejected. They are now seeded from a JSON config so new
+# strategies can be wired into SCC by editing data/ops/scc_classes.json (or by
+# whatever tooling writes it) — no code change / server rebuild required.
+#
+# The built-in defaults below remain the fallback when the config file is
+# missing or malformed, so behaviour is unchanged on a fresh checkout.
+_SCC_CLASSES_CONFIG_PATH = _PROJECT_ROOT / "data" / "ops" / "scc_classes.json"
+
+_SCC_ACTIVE_CLASSES_DEFAULT = {
     "PullbackMNQ5mV2",
     "VWAPPullbackMGC5mV1",
     "B1ShortOnlyMGC5mV2",
@@ -102,15 +141,61 @@ _SCC_ACTIVE_CLASSES: set = {
     "B1Stop20MGC5mC004",
     "NTAMicroVwapRiskPilot",
     "NTAMicroMnqScalpPilot",
+    "NTAMnqPostActiveScalpC017",
+    "NTAMnqDailyOpenScalpC018",
     "NTAMnqMicroOrbOpenScalp",
     "NTAnalyzerEveryNBarLong",
     "StrategiyaUrovney",
 }
-_SCC_REJECTED_CLASSES: set = {
+_SCC_REJECTED_CLASSES_DEFAULT = {
     "NTAMicroOrbPilot",
     "NTAMicroVwapGapMirrorPilot",
     "NTAMicroVwapMeanRevertPilot",
+    "NTAMnqLiquiditySweepReversalC015",
+    "NTAMnqOpenDriveShortScalpC016",
+    "NTAMnqLateVwapLongScalpC017",
 }
+
+
+def _load_scc_classes() -> "tuple[set, set]":
+    """Return (active, rejected) SCC class sets.
+
+    Starts from the built-in defaults and merges in data/ops/scc_classes.json
+    when present. Config schema (all keys optional):
+        {
+          "active":   ["ClassA", ...],   # added to (or replacing) defaults
+          "rejected": ["ClassB", ...],
+          "replace_defaults": false       # when true, ignore built-in defaults
+        }
+    A class listed as rejected always wins over active. Read fresh on every
+    call so edits take effect without restarting the backend.
+    """
+    active = set(_SCC_ACTIVE_CLASSES_DEFAULT)
+    rejected = set(_SCC_REJECTED_CLASSES_DEFAULT)
+    try:
+        with open(_SCC_CLASSES_CONFIG_PATH, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        doc = None
+    if isinstance(doc, dict):
+        if doc.get("replace_defaults"):
+            active = set()
+            rejected = set()
+        a = doc.get("active")
+        r = doc.get("rejected")
+        if isinstance(a, list):
+            active.update(str(x) for x in a if isinstance(x, str) and x)
+        if isinstance(r, list):
+            rejected.update(str(x) for x in r if isinstance(x, str) and x)
+    active -= rejected  # rejected always wins
+    return active, rejected
+
+
+# Module-level snapshots (defaults merged with config present at import time).
+# Kept for backward compatibility and external importers; request handlers call
+# _load_scc_classes() directly so they pick up live config edits.
+_SCC_ACTIVE_CLASSES, _SCC_REJECTED_CLASSES = _load_scc_classes()
+
 
 
 def _iter_nt_strategy_entries():
@@ -127,6 +212,7 @@ def _iter_nt_strategy_entries():
 
 def _build_scc_strategies() -> Dict[str, Any]:
     """Scan active NinjaTrader strategy roots + merge runtime telemetry."""
+    active_classes, rejected_classes = _load_scc_classes()
     folder_strats: list = []
     seen_classes = set()
     for entry in _iter_nt_strategy_entries():
@@ -145,8 +231,8 @@ def _build_scc_strategies() -> Dict[str, Any]:
         seen_classes.add(name)
         folder_strats.append({
             "class_name": name,
-            "is_active":  name in _SCC_ACTIVE_CLASSES,
-            "is_rejected": name in _SCC_REJECTED_CLASSES,
+            "is_active":  name in active_classes,
+            "is_rejected": name in rejected_classes,
             "cs_files":   [f.name for f in cs_files],
         })
 
@@ -160,7 +246,7 @@ def _build_scc_strategies() -> Dict[str, Any]:
     # Some deploy wrappers live in nested source paths under their research
     # engine folder. Surface them anyway so SCC matches the real strategy
     # inventory instead of only the top-level directory layout.
-    for cls in sorted(_SCC_ACTIVE_CLASSES):
+    for cls in sorted(active_classes):
         if cls in seen_classes:
             continue
         sf = jobqueue._resolve_strategy_source_file(
@@ -173,7 +259,7 @@ def _build_scc_strategies() -> Dict[str, Any]:
         folder_strats.append({
             "class_name": cls,
             "is_active": True,
-            "is_rejected": cls in _SCC_REJECTED_CLASSES,
+            "is_rejected": cls in rejected_classes,
             "cs_files": [Path(sf).name],
         })
 
@@ -213,13 +299,13 @@ def _build_scc_strategies() -> Dict[str, Any]:
     rejected_running = [
         {"class_name": str(r.get("strategy_class")), "account_name": r.get("account_name")}
         for r in rt_raw
-        if str(r.get("strategy_class") or "") in _SCC_REJECTED_CLASSES and r.get("enabled")
+        if str(r.get("strategy_class") or "") in rejected_classes and r.get("enabled")
     ]
 
     return {
         "strategies":       active_strategies,
         "rejected_running": rejected_running,
-        "rejected_classes": sorted(_SCC_REJECTED_CLASSES),
+        "rejected_classes": sorted(rejected_classes),
         "heartbeat":        hb,
         "nt_strat_dir":     str(_NT_STRATEGIES_DIR),
         "nt_strat_dir_ok":  _NT_STRATEGIES_DIR.is_dir(),
@@ -471,7 +557,52 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- routing -------------------------------------------------
 
+    def send_response(self, code, message=None):  # type: ignore[override]
+        # Track whether the response line has been emitted so the top-level
+        # error guard knows if it can still send a clean 500 JSON body.
+        self._response_started = True
+        super().send_response(code, message)
+
+    def _handle_unexpected(self, method: str) -> None:
+        """Last-resort handler: turn any uncaught exception into a 500 JSON
+        response instead of letting it abort the socket with a bare traceback.
+        """
+        tb = traceback.format_exc()
+        try:
+            sys.stderr.write(f"[NT-Analyzer] unhandled {method} error:\n{tb}")
+        except Exception:
+            pass
+        if getattr(self, "_response_started", False):
+            # Headers/body already (partially) sent — we can no longer emit a
+            # well-formed error. Nothing safe left to do; connection closes.
+            return
+        try:
+            self._err(HTTPStatus.INTERNAL_SERVER_ERROR, "internal server error")
+        except OSError:
+            pass
+
     def do_GET(self) -> None:  # noqa: N802
+        self._response_started = False
+        try:
+            self._route_get()
+        except Exception:
+            self._handle_unexpected("GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._response_started = False
+        try:
+            self._route_post()
+        except Exception:
+            self._handle_unexpected("POST")
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._response_started = False
+        try:
+            self._route_delete()
+        except Exception:
+            self._handle_unexpected("DELETE")
+
+    def _route_get(self) -> None:
         url = urllib.parse.urlparse(self.path)
         path = url.path
         qs = urllib.parse.parse_qs(url.query)
@@ -511,6 +642,14 @@ class Handler(BaseHTTPRequestHandler):
         # Phase 22e — Strategy Profiles registry (best-of/locked configs).
         if path == "/api/profiles":
             self._json(HTTPStatus.OK, jobqueue.read_strategy_profiles())
+            return
+
+        if path == "/api/strategy-families":
+            self._json(HTTPStatus.OK, jobqueue.read_strategy_families())
+            return
+
+        if path == "/api/research-modes":
+            self._json(HTTPStatus.OK, jobqueue.read_research_modes())
             return
 
         # Phase 24 — Instrument coverage (which symbols have a strategy).
@@ -699,6 +838,11 @@ class Handler(BaseHTTPRequestHandler):
             if handled:
                 return
 
+        # /api/ai-lab/* read model
+        if path.startswith("/api/ai-lab"):
+            if self._ai_lab_get(path, qs):
+                return
+
         self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
 
     # ------------- /api/ops/* GET dispatcher --------------------------------
@@ -736,6 +880,17 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/ops/runtime/strategy-display":
             self._json(HTTPStatus.OK, ops_runtime.read_strategy_display_prefs())
+            return True
+        if path == "/api/ops/strategy-start-dates":
+            p = _PROJECT_ROOT / "data" / "ops" / "strategy_start_dates.json"
+            try:
+                data = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {
+                    "schema_version": 1,
+                    "strategies": {},
+                }
+            except Exception:
+                data = {"schema_version": 1, "strategies": {}}
+            self._json(HTTPStatus.OK, data)
             return True
         if path == "/api/ops/runtime/strategy-history":
             try:
@@ -912,6 +1067,10 @@ class Handler(BaseHTTPRequestHandler):
         # /api/ops/strategies/{id}[/sub]
         if sub == "strategies" and len(parts) >= 4:
             sid = parts[3]
+            tail = parts[4] if len(parts) >= 5 else None
+            if tail == "notes":
+                self._json(HTTPStatus.OK, ops.get_notes(sid))
+                return True
             s = ops.get_strategy(sid)
             if not s:
                 self._err(HTTPStatus.NOT_FOUND, f"strategy not found: {sid}")
@@ -948,11 +1107,485 @@ class Handler(BaseHTTPRequestHandler):
                     "consec_losing_days": m.get("consec_losing_days"),
                 })
                 return True
-            if tail == "notes":
-                self._json(HTTPStatus.OK, ops.get_notes(sid))
-                return True
 
         return False
+
+    # ------------- /api/ai-lab/* GET dispatcher -----------------------------
+
+    def _ai_lab_get(self, path: str, qs: Dict[str, Any]) -> bool:
+        parts = [p for p in path.split("/") if p]
+        # parts[0]="api", parts[1]="ai-lab", parts[2..]=...
+        if len(parts) < 3:
+            self._err(HTTPStatus.NOT_FOUND, f"no ai-lab route: {path}")
+            return True
+        sub = parts[2]
+
+        if path == "/api/ai-lab/summary":
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.summary())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"summary error: {e}")
+            return True
+
+        if path == "/api/ai-lab/matrix":
+            roots_q = (qs.get("roots") or [None])[0]
+            roots = [r.strip().upper() for r in roots_q.split(",")] if roots_q else None
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.matrix(roots=roots))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"matrix error: {e}")
+            return True
+
+        if path == "/api/ai-lab/performance":
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.performance_board())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"performance error: {e}")
+            return True
+
+        if path == "/api/ai-lab/portfolio":
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.portfolio_board())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"portfolio error: {e}")
+            return True
+
+        if path == "/api/ai-lab/calendar":
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.calendar())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"calendar error: {e}")
+            return True
+
+        if path == "/api/ai-lab/lm-studio/health":
+            try:
+                self._json(HTTPStatus.OK, ai_lm_studio.lm_status(allow_probe=False))
+            except Exception as e:
+                self._json(HTTPStatus.OK, {
+                    "available": False,
+                    "ready": False,
+                    "run_allowed": False,
+                    "status": "server_unavailable",
+                    "message_ru": "LM Studio недоступна — запустите сервер (порт 1234).",
+                    "error": str(e),
+                })
+            return True
+
+        if path == "/api/ai-lab/lm-studio/readiness":
+            try:
+                url = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(url.query or "")
+                force = qs.get("force", ["0"])[0] in ("1", "true", "yes")
+                self._json(
+                    HTTPStatus.OK,
+                    ai_lm_studio.lm_status(allow_probe=True, force=force),
+                )
+            except Exception as e:
+                self._json(HTTPStatus.OK, {
+                    "available": False,
+                    "ready": False,
+                    "run_allowed": False,
+                    "status": "server_unavailable",
+                    "message_ru": "Не удалось проверить AI-модели.",
+                    "error": str(e),
+                })
+            return True
+
+        if path == "/api/ai-lab/current":
+            self._json(HTTPStatus.OK, {"current": ai_runner.current()})
+            return True
+
+        if path == "/api/ai-lab/run/status":
+            try:
+                status = ai_runner.run_status()
+                self._json(HTTPStatus.OK, {"ok": True, "run": status})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run status failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/errors/summary":
+            try:
+                payload = {
+                    "patterns": ai_errors.top_repeated_patterns(threshold=1)[:30],
+                    "recent_errors": ai_errors.recent_errors(limit=50),
+                    "lessons_recent": ai_lessons.all_lessons(limit=20),
+                    "global_operator_notes": ai_operator_notes.list_global_notes(limit=20),
+                    "lessons_count": len(ai_lessons.all_lessons(limit=10_000)),
+                }
+                self._json(HTTPStatus.OK, payload)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"errors summary failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/compile-source-status":
+            try:
+                self._json(HTTPStatus.OK, ai_compile_errors.source_status())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"source_status failed: {e}")
+            return True
+
+        # /api/ai-lab/experiments
+        if path == "/api/ai-lab/experiments":
+            root = (qs.get("root") or [None])[0]
+            status = (qs.get("status") or [None])[0]
+            try:
+                limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError:
+                limit = 200
+            items = ai_registry.list_experiments(target_root=root, status=status, limit=limit)
+            self._json(HTTPStatus.OK, {"experiments": items, "total": len(items)})
+            return True
+
+        # /api/ai-lab/experiments/{id}[/history]
+        if sub == "experiments" and len(parts) >= 4:
+            exp_id = parts[3]
+            if len(parts) == 4:
+                exp = ai_registry.read_experiment(exp_id)
+                if not exp:
+                    self._err(HTTPStatus.NOT_FOUND, f"experiment not found: {exp_id}")
+                    return True
+                self._json(HTTPStatus.OK, exp)
+                return True
+            if len(parts) == 5 and parts[4] == "history":
+                self._json(HTTPStatus.OK, {"history": ai_registry.history_for(exp_id)})
+                return True
+            if len(parts) == 5 and parts[4] == "activity":
+                try:
+                    since = int((qs.get("since") or ["0"])[0])
+                except ValueError:
+                    since = 0
+                try:
+                    limit = int((qs.get("limit") or ["500"])[0])
+                except ValueError:
+                    limit = 500
+                exp = ai_registry.read_experiment(exp_id) or {}
+                data = ai_activity.tail(exp_id, since_line=since, limit=limit)
+                data["status"] = exp.get("status")
+                data["ai_cell_id"] = exp.get("ai_cell_id")
+                data["class_name"] = exp.get("class_name")
+                data["sandbox_path"] = (exp.get("strategy_source") or {}).get("sandbox_path")
+                data["terminal"] = ai_registry.is_terminal(exp.get("status", "draft"))
+                self._json(HTTPStatus.OK, data)
+                return True
+            if len(parts) == 5 and parts[4] == "notes":
+                try:
+                    self._json(HTTPStatus.OK, {"notes": ai_operator_notes.list_all(exp_id)})
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"notes list failed: {e}")
+                return True
+            if len(parts) == 5 and parts[4] == "backtest":
+                try:
+                    self._json(HTTPStatus.OK, ai_read_model.backtest_payload(exp_id))
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"backtest payload failed: {e}")
+                return True
+
+        # /api/ai-lab/jobs/{job_id}/analysis-pack
+        if sub == "jobs" and len(parts) == 5 and parts[4] == "analysis-pack":
+            job_id = parts[3]
+            job_dir = ai_backtest.find_job_dir(job_id)
+            if not job_dir:
+                self._err(HTTPStatus.NOT_FOUND, f"job not found: {job_id}")
+                return True
+            try:
+                capital = float((qs.get("capital") or ["5000"])[0])
+            except ValueError:
+                capital = 5000.0
+            try:
+                pack = ai_analysis_pack.build(job_dir, capital=capital)
+                self._json(HTTPStatus.OK, pack)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"analysis-pack failed: {e}")
+            return True
+
+        self._err(HTTPStatus.NOT_FOUND, f"no ai-lab route: {path}")
+        return True
+
+    # ------------- /api/ai-lab/* POST dispatcher ----------------------------
+
+    def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
+        if path == "/api/ai-lab/run":
+            try:
+                capital_value = body.get("capital")
+                if capital_value in (None, ""):
+                    capital_value = body.get("user_capital")
+                # New schema (preferred): strategy_count + iterations_per_strategy.
+                # Legacy aliases (max_cells_per_run, max_mutations_per_cell) still
+                # accepted; runner.start() normalizes them.
+                strategy_count_raw = body.get("strategy_count")
+                if strategy_count_raw in (None, ""):
+                    strategy_count_raw = body.get("max_cells_per_run", 1)
+                iterations_raw = body.get("iterations_per_strategy")
+                iterations_unlimited = bool(body.get("iterations_unlimited", False))
+                if iterations_raw in (None, "") and not iterations_unlimited:
+                    legacy_mut = body.get("max_mutations_per_cell")
+                    if legacy_mut in (None, ""):
+                        iterations_raw = 3  # new sane default
+                    else:
+                        iterations_raw = max(1, int(legacy_mut) + 1)
+                raw_runtime = body.get("max_total_runtime_minutes")
+                # New ceiling: 1440 min (24h). 0 means unlimited.
+                if raw_runtime in (None, "", 0):
+                    normalized_runtime = None
+                else:
+                    normalized_runtime = max(1, min(1440, int(raw_runtime)))
+
+                args = {
+                    "user_pref_root": (
+                        body.get("target_root") or body.get("root")
+                        or body.get("user_pref_root") or body.get("instrument_root") or None
+                    ),
+                    "user_capital": (float(capital_value) if capital_value not in (None, "") else None),
+                    "user_goal": body.get("goal") or body.get("user_goal"),
+                    "dry_run": bool(body.get("dry_run", False)),
+                    "skip_compile": bool(body.get("skip_compile", False)),
+                    "skip_backtest": bool(body.get("skip_backtest", False)),
+                    "use_llm": bool(body.get("use_llm", True)),
+                    "allow_template_fallback": bool(body.get("allow_template_fallback", False)),
+                    "verify_poll_sec": int(body.get("verify_poll_sec", 0)),
+                    "research_mode": body.get("research_mode") or "research_until_candidate_or_budget_exhausted",
+                    "strategy_count": max(1, min(10, int(strategy_count_raw))),
+                    "iterations_per_strategy": (
+                        None if iterations_unlimited else max(1, min(20, int(iterations_raw)))
+                    ),
+                    "iterations_unlimited": iterations_unlimited,
+                    "max_compile_fix_attempts_per_cell": max(1, min(10, int(body.get("max_compile_fix_attempts_per_cell", 5)))),
+                    "max_total_runtime_minutes": normalized_runtime,
+                    "stop_on_first_candidate": bool(body.get("stop_on_first_candidate", False)),
+                    "target_candidate_count": max(1, min(5, int(body.get("target_candidate_count", 1)))),
+                    "backtest_instrument": body.get("backtest_instrument") or body.get("instrument"),
+                    "smoke_days": max(14, min(45, int(body.get("smoke_days", 30)))),
+                    "smoke_timeout_sec": max(30, min(1800, int(body.get("smoke_timeout_sec", 180)))),
+                    "min_signal_sanity": max(1, min(100, int(body.get("min_signal_sanity", 8)))),
+                }
+            except (TypeError, ValueError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, f"invalid run parameters: {e}")
+                return
+            try:
+                out = ai_runner.start(args)
+                self._json(HTTPStatus.OK, {"ok": True, **out})
+            except ai_runner.RunBlockedLMStudio as e:
+                self._json(HTTPStatus.CONFLICT,
+                           {"ok": False, "blocked_lm_studio": True,
+                            "preflight": e.preflight,
+                            "hint": ("LM Studio preflight failed. Start LM Studio with the "
+                                     "configured judge+coder models, or pass "
+                                     "allow_template_fallback=true to proceed with the "
+                                     "non-LLM template (research only).")})
+            except ai_runner.RunnerBusy as e:
+                self._json(HTTPStatus.CONFLICT,
+                           {"ok": False, "busy": True, "current": e.current})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run failed: {e}")
+            return
+
+        if path == "/api/ai-lab/cancel":
+            exp_id = body.get("experiment_id")
+            if not exp_id:
+                self._err(HTTPStatus.BAD_REQUEST, "experiment_id required")
+                return
+            try:
+                self._json(HTTPStatus.OK, ai_runner.request_cancel(exp_id))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"cancel failed: {e}")
+            return
+
+        if path == "/api/ai-lab/run/cancel":
+            run_id = body.get("run_id")
+            try:
+                self._json(HTTPStatus.OK, ai_runner.request_run_cancel(run_id))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run cancel failed: {e}")
+            return
+
+        if path == "/api/ai-lab/maintenance/sweep-stale":
+            try:
+                ttl = float(body.get("heartbeat_ttl_hours") or 6.0)
+                out = ai_stale_sweep.sweep_stale(heartbeat_ttl_hours=ttl)
+                self._json(HTTPStatus.OK, out)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"sweep failed: {e}")
+            return
+
+        if path == "/api/ai-lab/lessons":
+            text = str(body.get("text") or body.get("summary") or "").strip()
+            if not text:
+                self._err(HTTPStatus.BAD_REQUEST, "text required")
+                return
+            scope = str(body.get("scope") or "global")
+            scope_key = body.get("scope_key")
+            rule = body.get("rule")
+            source = str(body.get("source") or "user_research")
+            try:
+                rec = ai_lessons.record_lesson(
+                    summary=text, source=source,
+                    scope=scope, scope_key=scope_key, rule=rule,
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "lesson": rec})
+            except ValueError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"lesson save failed: {e}")
+            return
+
+        if path == "/api/ai-lab/operator-notes/global":
+            text = str(body.get("text") or "").strip()
+            if not text:
+                self._err(HTTPStatus.BAD_REQUEST, "text required")
+                return
+            priority = str(body.get("priority") or "high")
+            try:
+                rec = ai_operator_notes.promote_to_global(
+                    text=text, priority=priority,
+                    source_experiment_id=body.get("experiment_id"),
+                    trigger="ui_manual",
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "note": rec})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"global note failed: {e}")
+            return
+
+        # /api/ai-lab/experiments/{id}/resume-compile
+        parts = [p for p in path.split("/") if p]
+        if (len(parts) == 5 and parts[1] == "ai-lab" and parts[2] == "experiments"
+                and parts[4] == "cancel"):
+            exp_id = parts[3]
+            try:
+                self._json(HTTPStatus.OK, ai_runner.request_cancel(exp_id))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"cancel failed: {e}")
+            return
+
+        if (len(parts) == 5 and parts[1] == "ai-lab" and parts[2] == "experiments"
+                and parts[4] == "notes"):
+            exp_id = parts[3]
+            text = str(body.get("text") or "").strip()
+            if not text:
+                self._err(HTTPStatus.BAD_REQUEST, "text required")
+                return
+            priority = str(body.get("priority") or "normal")
+            try:
+                entry = ai_operator_notes.add(exp_id, text, priority=priority)
+                try:
+                    ai_activity.log(
+                        exp_id, "runner", "operator_note_received", level="info",
+                        text_preview=text[:80], priority=priority,
+                    )
+                except Exception:
+                    pass
+                self._json(HTTPStatus.OK, {"ok": True, "index": entry.get("index"), "entry": entry})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"note failed: {e}")
+            return
+
+        if (len(parts) == 6 and parts[1] == "ai-lab" and parts[2] == "experiments"
+                and parts[4] == "compile-errors" and parts[5] == "paste"):
+            exp_id = parts[3]
+            class_name = str(body.get("class_name") or "").strip()
+            text = str(body.get("text") or "")
+            if not class_name or not text.strip():
+                self._err(HTTPStatus.BAD_REQUEST, "class_name and text required")
+                return
+            try:
+                count = ai_compile_errors.append_manual(exp_id, class_name, text)
+                try:
+                    ai_activity.log(
+                        exp_id, "compile", "errors_manual_paste",
+                        level="warn", count=count, class_name=class_name,
+                    )
+                except Exception:
+                    pass
+                self._json(HTTPStatus.OK, {"ok": True, "count": count})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"paste failed: {e}")
+            return
+
+        if (len(parts) == 6 and parts[1] == "ai-lab" and parts[2] == "experiments"
+                and parts[4] == "portfolio"):
+            exp_id = parts[3]
+            raw_action = parts[5].replace("-", "_")
+            action_map = {
+                "candidate": "candidate",
+                "approve": "approve",
+                "approved": "approve",
+                "promote": "promote",
+                "promoted": "promote",
+                "paper_ready": "paper_ready",
+                "remove": "remove",
+            }
+            action = action_map.get(raw_action)
+            if not action:
+                self._err(HTTPStatus.BAD_REQUEST, f"invalid portfolio action: {raw_action}")
+                return
+            approved_by = str(body.get("approved_by") or body.get("operator") or "ui")
+            try:
+                exp = ai_registry.set_portfolio_membership(
+                    exp_id, action=action, approved_by=approved_by,
+                )
+                try:
+                    ai_activity.log(
+                        exp_id, "portfolio", action, level="success",
+                        portfolio=exp.get("portfolio") or {},
+                    )
+                except Exception:
+                    pass
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "experiment": ai_read_model.experiment_row(exp),
+                })
+            except ValueError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"portfolio action failed: {e}")
+            return
+
+        if (len(parts) == 5 and parts[1] == "ai-lab" and parts[2] == "experiments"
+                and parts[4] == "resume-compile"):
+            exp_id = parts[3]
+            exp = ai_registry.read_experiment(exp_id)
+            if not exp:
+                self._err(HTTPStatus.NOT_FOUND, f"experiment not found: {exp_id}")
+                return
+            if exp.get("status") != "awaiting_compile_timeout":
+                self._err(HTTPStatus.BAD_REQUEST,
+                          f"cannot resume from status {exp.get('status')}")
+                return
+            try:
+                ai_registry.transition_status(exp_id, "awaiting_compile",
+                                              reason="user requested extension")
+                args = {"skip_compile": False, "skip_backtest": bool(body.get("skip_backtest", False))}
+                # Best-effort re-entry: kick a new runner cycle that re-enters compile only.
+                # Simpler: just transition; the bridge will refresh on next F5.
+                self._json(HTTPStatus.OK, {"ok": True, "status": "awaiting_compile"})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"resume failed: {e}")
+            return
+
+        if path == "/api/ai-lab/finalize":
+            exp_id = body.get("experiment_id")
+            job_id = body.get("job_id")
+            if not exp_id or not job_id:
+                self._err(HTTPStatus.BAD_REQUEST, "experiment_id and job_id required")
+                return
+            try:
+                result = ai_orchestrator.finalize_backtest(exp_id, job_id)
+                self._json(HTTPStatus.OK, result)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"finalize failed: {e}")
+            return
+
+        if path == "/api/ai-lab/user-research/scan":
+            try:
+                from .ai_lab import user_research as ur  # type: ignore
+            except Exception:
+                from app.ai_lab import user_research as ur  # type: ignore
+            try:
+                self._json(HTTPStatus.OK, ur.scan())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"scan failed: {e}")
+            return
+
+        self._err(HTTPStatus.NOT_FOUND, f"no ai-lab POST route: {path}")
 
     # ------------- /api/ops/* POST dispatcher -------------------------------
 
@@ -1060,7 +1693,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
-    def do_DELETE(self) -> None:  # noqa: N802
+    def _route_delete(self) -> None:
         """DELETE /api/jobs/<id>, /api/batches/<id>, or report favorite refs."""
         url = urllib.parse.urlparse(self.path)
         path = url.path
@@ -1134,7 +1767,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(HTTPStatus.OK, result)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def _route_post(self) -> None:
         url = urllib.parse.urlparse(self.path)
         path = url.path
 
@@ -1149,17 +1782,26 @@ class Handler(BaseHTTPRequestHandler):
         is_server_restart = (path == "/api/server/restart")
         is_ops = path.startswith("/api/ops/")
         is_report_favorites = path == "/api/report-favorites" or path.startswith("/api/report-favorites/")
+        is_ai_lab = path.startswith("/api/ai-lab/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
-                or is_ops or is_report_favorites):
+                or is_ops or is_report_favorites
+                or is_ai_lab):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
         if not self._check_local_post():
             return  # _check_local_post already wrote an error
+
+        if is_ai_lab:
+            body = self._read_body()
+            if body is None:
+                return
+            self._ai_lab_post(path, body)
+            return
 
         if is_ops:
             body = self._read_body()
@@ -1353,6 +1995,12 @@ def run(port: Optional[int] = None) -> None:
     print(f"[nta-backend] UI:           http://{HOST}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
     print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
+    # Start the AI Lab stale-experiment sweeper on a daemon thread.
+    try:
+        ai_stale_sweep.start_background_sweeper(interval_sec=1800, ttl_hours=6.0)
+        print("[nta-backend] ai-lab stale sweeper started (TTL=6h, every 30 min)")
+    except Exception as e:
+        print(f"[nta-backend] ai-lab stale sweeper NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()

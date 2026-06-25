@@ -1,6 +1,13 @@
 """Rank MNQ MICRO_ORB follow-up variants with soft edge-first gates."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
+import research_lib as RL  # noqa: E402
+
 import json
 import sys
 from collections import defaultdict
@@ -65,7 +72,7 @@ def soft_decision(row: Dict[str, Any], quarters: List[Dict[str, Any]]) -> str:
         and f(row, "adj_pf") >= 1.25
         and f(row, "oos_adj_pf") >= 1.25
         and f(row, "win_rate") >= 60
-        and abs(f(row, "max_drawdown")) <= 300
+        and RL.max_drawdown_within_budget(f(row, "max_drawdown"))
         and positive_quarters >= 5
     )
     robust = (

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>Стратегии — NT-Analyzer</title>
-<link rel="stylesheet" href="style.css?v=20260512-monthly-summary4">
+<link rel="stylesheet" href="style.css?v=20260525-paper-freeze1">
 <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 </head>
 <body class="strategies-page-body">
@@ -16,6 +16,7 @@
     <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
     <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
     <a href="/ui/strategies.html" class="top-nav-link active">Стратегии</a>
+    <a href="/ui/ai-strategy.html" class="top-nav-link">Стратегия AI</a>
   </nav>
   <div class="status-strip">
     <span class="status-chip" id="strategies-data-chip">Загрузка данных...</span>
@@ -32,26 +33,29 @@
 
 <main class="strategies-page" id="strategies-page" data-testid="strategies-page">
   <section class="strategies-task-panel" aria-labelledby="strategies-task-title">
-    <div class="strategies-task-copy">
-      <div class="strategies-panel-kicker">Задача</div>
-      <h2 id="strategies-task-title">Собрать стратегии для первого списка инструментов</h2>
-      <p>
-        Для каждого инструмента нужно довести портфель до 10 рабочих стратегий.
-        Усредненная цель портфеля: больше $2 000 чистой прибыли за 30 дней и не меньше 60 сделок за 30 дней.
-      </p>
-      <p class="muted" style="margin-top:6px;">
-        На этой странице в портфель считаются только утвержденные ready-профили,
-        привязанные к реальному классу NinjaTrader. Исследовательские версии с закрепленной ячейкой
-        отображаются в матрице, но approved-слоты не занимают.
-      </p>
-      <div class="strategies-name-rule">
-        <span>Шаблон имени:</span>
-        <code>ИмяСтратегии Инструмент Таймфрейм vN cNNN</code>
-        <span class="muted">пример: Scalping MNQ 5m v1 c001</span>
+    <div class="strategies-task-copy" id="strategies-task-copy">
+      <div id="strategies-day-planner-host"></div>
+      <div class="strategies-task-intro">
+        <div class="strategies-panel-kicker">Задача</div>
+        <h2 id="strategies-task-title">Собрать стратегии для первого списка инструментов</h2>
+        <p>
+          Для каждой root-семьи инструмента нужно довести портфель до 10 рабочих стратегий.
+          Усредненная цель портфеля: больше $2 000 чистой прибыли за 30 дней и не меньше 60 сделок за 30 дней.
+        </p>
+        <p class="muted" style="margin-top:6px;">
+          На этой странице в портфель считаются только утвержденные ready-профили,
+          привязанные к реальному классу NinjaTrader. Исследовательские версии с закрепленной ячейкой
+          отображаются в матрице, но approved-слоты не занимают.
+        </p>
+        <div class="strategies-name-rule">
+          <span>Шаблон имени:</span>
+          <code>ИмяСтратегии Инструмент Таймфрейм vN cNNN</code>
+          <span class="muted">пример: Scalping MNQ 5m v1 c001</span>
+        </div>
+        <p class="muted" style="margin-top:6px;">
+          <code>cNNN</code> — номер ячейки, например <code>c001</code>.
+        </p>
       </div>
-      <p class="muted" style="margin-top:6px;">
-        <code>cNNN</code> — номер ячейки, например <code>c001</code>.
-      </p>
     </div>
     <section class="strategies-research-panel" id="strategies-research-panel" aria-labelledby="strategies-research-title">
       <div class="strategies-research-head">
@@ -173,7 +177,7 @@
       <div class="strategies-panel-head">
         <div>
           <div class="strategies-panel-kicker">Детализация</div>
-          <h3 id="strategies-detail-title">Инструмент</h3>
+          <h3 id="strategies-detail-title">Root-семья</h3>
         </div>
         <span class="strategies-counter" id="strategies-selected-status">—</span>
       </div>
@@ -184,7 +188,7 @@
   </section>
 </main>
 
-<script src="strategies.js?v=20260521-cleanup2"></script>
+<script src="strategies.js?v=20260525-paper-freeze1"></script>
 <script src="market_clock.js?v=20260513-session-api1"></script>
 </body>
 </html>

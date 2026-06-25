@@ -96,6 +96,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double _lastEntryPrice;
         private int    _lastEntryQty;
         private int    _lastStopTicks;
+        private double _lastProtectiveStopPrice;
         private int    _lastEntryBar;     // for time-stop
         private string _activeEntrySignal = null;
 
@@ -258,6 +259,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                     + ",filter=" + UseSetupModeFilter
                     + ",mode=" + SetupMode + " " + _risk.Describe());
             }
+            else if (State == State.Realtime)
+            {
+                int historicalTrades = (SystemPerformance == null)
+                    ? 0
+                    : SystemPerformance.AllTrades.Count;
+                if (_risk != null)
+                    _risk.ResetForRealtime(historicalTrades);
+            }
         }
         #endregion
 
@@ -293,6 +302,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             // ----- Update ORB state -----
             UpdateOrbState();
+
+            if (IsLiveHistoricalWarmup()) return;
 
             if (CurrentBar < BarsRequiredToTrade) return;
             if (_risk.PermanentlyStopped) return;

@@ -10,8 +10,9 @@
 //   - full active-session window 06:35-12:45 PT, force-flat 13:00 PT
 //   - RR=1.75 after cost/stress validation
 //
-// Current status: paper_ready after direct wrapper validation on 2026-05-13.
-// Existing paper-ready c011-c013 wrappers are intentionally untouched.
+// Current registry status: rejected/frozen after later audit. The wrapper is
+// retained as evidence only; do not use it as a new deploy baseline.
+// Existing ready c011-c013 wrappers are intentionally untouched.
 // =============================================================================
 
 #region Using

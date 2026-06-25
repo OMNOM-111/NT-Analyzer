@@ -1,7 +1,7 @@
 # NT-Analyzer
 
-Рабочая локальная платформа для разработки и проверки NinjaTrader-стратегий
-совместно с AI.
+Рабочая локальная платформа для разработки, проверки и операционного контроля
+NinjaTrader-стратегий совместно с AI.
 
 Главная инструкция по текущему состоянию проекта находится в
 `../ПОДРОБНАЯ_ИНСТРУКЦИЯ.txt`.
@@ -14,6 +14,9 @@
 - Читает каталог стратегий, инструментов и шаблонов из NinjaTrader через bridge.
 - Экспортирует runtime telemetry из NinjaTrader в `data/runtime/`.
 - Позволяет отправлять enable/disable команды уже загруженным strategy instances.
+- Запускает AI Strategy Lab для локального цикла idea -> code -> compile ->
+  backtest -> arbitration, с sandbox-ограничениями и LM Studio как
+  опциональным локальным LLM endpoint.
 
 NinjaTrader остается источником истины по исполнению стратегии, сделкам,
 метрикам и runtime-состоянию.
@@ -41,24 +44,34 @@ python -m app.server 8765
 ## Проверки
 
 ```powershell
-python -m tests.test_ops
-python -m tests.test_jobqueue
-python -m tests.test_runtime
-python -m tests.test_scc
-python -m tests.test_trading
+python -m tests
 dotnet build bridge\NTAnalyzerBridge.csproj -c Debug
 ```
 
-Тесты запускаются как Python-модули, а не через `pytest`.
+Тесты можно запускать единым runner'ом `python -m tests`. Отдельные модули
+также остаются запускаемыми напрямую.
 
 ## Основные папки
 
 - `app/` — backend API и static UI server.
+- `app/ai_lab/` — AI Strategy Lab orchestration, validation, LM Studio client,
+  compile/backtest pipeline and read models.
 - `app/static/` — web UI.
+- `ai_lab/prompts/`, `ai_lab/schemas/`, `ai_lab/reference_strategies/` —
+  curated AI assets safe for Git.
 - `bridge/` — NinjaTrader AddOn.
-- `data/profiles/` — активные Strategy Profiles и coverage.
+- `data/profiles/` — локальные Strategy Profiles и coverage; не коммитятся,
+  если не подготовлена отдельная sanitized seed/demo version.
 - `docs/` — технические контракты.
 - `jobs/` — локальная очередь и история запусков, не для Git.
 - `ninjatrader/strategies/` — исходники стратегий проекта.
 - `tests/` — runner-тесты.
 - `tools/` — установочные и служебные скрипты.
+
+## Git hygiene
+
+В Git попадают исходники, тесты, документация, examples, safe static catalog
+sources, AI prompts/schemas/reference docs. В Git не попадают runtime queues,
+backtest results, reports, local profiles, runtime telemetry, AI experiment
+registry, model-call logs, screenshots, caches, bridge build output и личные
+research dumps. Подробно: `docs/repository-hygiene.md`.

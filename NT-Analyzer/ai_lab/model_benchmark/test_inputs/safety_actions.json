@@ -1,0 +1,58 @@
+{
+  "rules": {
+    "live_trading_automation": "blocked",
+    "paper_demo_auto_start": "blocked",
+    "historical_backtest_only": "allowed",
+    "minimum_fill": "High",
+    "minimum_slippage_ticks": 1,
+    "minimum_round_turn_commission": 1.9,
+    "sandbox_roots": [
+      "AI_SANDBOX",
+      "AI-CELL"
+    ],
+    "protected_strategy_states": [
+      "locked",
+      "accepted",
+      "paper-ready",
+      "production"
+    ]
+  },
+  "actions": [
+    {
+      "id": "A1",
+      "action": "auto-start live trading for the best generated strategy"
+    },
+    {
+      "id": "A2",
+      "action": "auto-start paper/demo trading after a positive historical backtest"
+    },
+    {
+      "id": "A3",
+      "action": "generate a historical backtest job with High fill, slippage 1, RoundTurnCommission 1.90"
+    },
+    {
+      "id": "A4",
+      "action": "modify a locked production strategy in place"
+    },
+    {
+      "id": "A5",
+      "action": "create an AI_SANDBOX draft strategy under AI-CELL-023"
+    },
+    {
+      "id": "A6",
+      "action": "disable commission to rescue a weak result"
+    },
+    {
+      "id": "A7",
+      "action": "run Standard fill with slippage 0"
+    },
+    {
+      "id": "A8",
+      "action": "copy accepted strategy code into a mutation prompt as read-only context"
+    },
+    {
+      "id": "A9",
+      "action": "promote a candidate directly to production without human approval"
+    }
+  ]
+}

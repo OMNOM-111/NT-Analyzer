@@ -27,6 +27,8 @@ namespace NTAnalyzerBridge.Execution
         private Type _strategyBaseType;
         private List<Type> _whitelist;
         private DateTime _customAssemblyDiskMtimeUtc = DateTime.MinValue;
+        private bool _customAssemblyLoadedFromDisk;
+        private bool _assemblyResolveInstalled;
 
         public StrategyLoader(string ninjaTraderUserDir)
         {
@@ -42,12 +44,13 @@ namespace NTAnalyzerBridge.Execution
         /// </summary>
         public void Refresh()
         {
-            // Prefer the assembly already loaded by NinjaTrader. Strategy
-            // Analyzer execution expects strategy types from NT's AppDomain;
-            // byte-loaded copies can enumerate incorrectly because their base
-            // Strategy type is not the same runtime identity.
-            _customAssembly = FindLoadedCustomAssembly()
-                              ?? TryLoadCurrentCustomDllBytes();
+            // Refreshes after a NinjaScript compile must see the newly built
+            // NinjaTrader.Custom.dll. The assembly NinjaTrader loaded at
+            // startup can remain stale in AppDomain, so prefer the current
+            // disk DLL and only fall back to the already-loaded assembly if
+            // the file is temporarily unreadable during NT's compile swap.
+            _customAssembly = TryLoadCurrentCustomDllBytes()
+                              ?? FindLoadedCustomAssembly();
 
             if (_customAssembly == null)
                 throw new InvalidOperationException(
@@ -90,7 +93,8 @@ namespace NTAnalyzerBridge.Execution
                 .ToList();
 
             BridgeLog.Info("Strategy whitelist refreshed: " + _whitelist.Count +
-                           " strategies [" + string.Join(", ", WhitelistedClassNames()) + "]");
+                           " strategies (source=" + (_customAssemblyLoadedFromDisk ? "disk" : "loaded") +
+                           ") [" + string.Join(", ", WhitelistedClassNames()) + "]");
         }
 
         public IReadOnlyList<string> WhitelistedClassNames()
@@ -137,7 +141,9 @@ namespace NTAnalyzerBridge.Execution
             if (mtime == DateTime.MinValue)
                 return null;
 
-            if (_customAssembly != null && mtime == _customAssemblyDiskMtimeUtc)
+            if (_customAssemblyLoadedFromDisk &&
+                _customAssembly != null &&
+                mtime == _customAssemblyDiskMtimeUtc)
                 return _customAssembly;
 
             Exception lastError = null;
@@ -145,9 +151,11 @@ namespace NTAnalyzerBridge.Execution
             {
                 try
                 {
+                    EnsureAssemblyResolver();
                     byte[] raw = ReadAllBytesShared(_expectedCustomDllFullPath);
                     var asm = Assembly.Load(raw);
                     _customAssemblyDiskMtimeUtc = mtime;
+                    _customAssemblyLoadedFromDisk = true;
                     BridgeLog.Info("StrategyLoader: loaded NinjaTrader.Custom from disk bytes " +
                                    "(mtime=" + mtime.ToString("o") +
                                    ", bytes=" + raw.Length + ")");
@@ -173,7 +181,90 @@ namespace NTAnalyzerBridge.Execution
             if (lastError != null)
                 BridgeLog.Warn("StrategyLoader: could not load current NinjaTrader.Custom.dll bytes; " +
                                "falling back to AppDomain assembly: " + lastError.Message);
+            _customAssemblyLoadedFromDisk = false;
             return null;
+        }
+
+        private void EnsureAssemblyResolver()
+        {
+            if (_assemblyResolveInstalled) return;
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveNinjaTraderDependency;
+            _assemblyResolveInstalled = true;
+        }
+
+        private Assembly ResolveNinjaTraderDependency(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                string simpleName = new AssemblyName(args.Name).Name;
+                if (string.IsNullOrWhiteSpace(simpleName))
+                    return null;
+                if (string.Equals(simpleName, "NinjaTrader.Custom", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                var already = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => string.Equals(
+                        a.GetName().Name, simpleName, StringComparison.OrdinalIgnoreCase));
+                if (already != null)
+                    return already;
+
+                string dllName = simpleName + ".dll";
+                foreach (string dir in CandidateDependencyDirs())
+                {
+                    if (string.IsNullOrWhiteSpace(dir)) continue;
+                    string candidate = System.IO.Path.Combine(dir, dllName);
+                    if (!File.Exists(candidate)) continue;
+                    try
+                    {
+                        BridgeLog.Info("StrategyLoader: resolving dependency " +
+                                       simpleName + " from " + candidate);
+                        return Assembly.LoadFrom(candidate);
+                    }
+                    catch (Exception ex)
+                    {
+                        BridgeLog.Warn("StrategyLoader: dependency load failed " +
+                                       candidate + ": " + ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("StrategyLoader: dependency resolver failed: " + ex.Message);
+            }
+            return null;
+        }
+
+        private IEnumerable<string> CandidateDependencyDirs()
+        {
+            var dirs = new List<string>();
+            string customDir = null;
+            try { customDir = System.IO.Path.GetDirectoryName(_expectedCustomDllFullPath); }
+            catch { }
+            if (!string.IsNullOrWhiteSpace(customDir))
+                dirs.Add(customDir);
+
+            try
+            {
+                string processPath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                string processDir = System.IO.Path.GetDirectoryName(processPath);
+                if (!string.IsNullOrWhiteSpace(processDir))
+                    dirs.Add(processDir);
+            }
+            catch { }
+
+            try
+            {
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    string loc = TryGetAssemblyLocation(a);
+                    if (string.IsNullOrWhiteSpace(loc)) continue;
+                    string dir = System.IO.Path.GetDirectoryName(loc);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                        dirs.Add(dir);
+                }
+            }
+            catch { }
+            return dirs.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         private static Assembly FindLoadedCustomAssembly()
@@ -186,6 +277,16 @@ namespace NTAnalyzerBridge.Execution
 
         private static Type ResolveStrategyBaseType(Assembly customAssembly)
         {
+            // When NinjaTrader.Custom.dll is byte-loaded after a compile,
+            // strategy classes derive from the Strategy type inside that same
+            // loaded copy. Prefer it, otherwise IsAssignableFrom compares
+            // against the older AppDomain copy and rejects every strategy.
+            if (customAssembly != null)
+            {
+                var ownBase = SafeGetType(customAssembly, "NinjaTrader.NinjaScript.Strategies.Strategy");
+                if (ownBase != null) return ownBase;
+            }
+
             var t = Type.GetType(
                 "NinjaTrader.NinjaScript.Strategies.Strategy, NinjaTrader.Core",
                 throwOnError: false);
@@ -196,9 +297,7 @@ namespace NTAnalyzerBridge.Execution
                 .FirstOrDefault(x => x != null);
             if (t != null) return t;
 
-            return customAssembly == null
-                ? null
-                : SafeGetType(customAssembly, "NinjaTrader.NinjaScript.Strategies.Strategy");
+            return null;
         }
 
         private static DateTime SafeGetFileMtimeUtc(string path)

@@ -30,7 +30,8 @@ namespace NTAnalyzerBridge.Reporting
         public JObject Build(string jobId, JObject job, Type strategyType,
                              JObject finalParameters,
                              JArray trades, JObject metrics,
-                             IEnumerable<string> verificationWarnings)
+                             IEnumerable<string> verificationWarnings,
+                             JObject historicalDataFingerprint = null)
         {
             DateTime finished = DateTime.UtcNow;
             int duration = (int)Math.Max(0, (finished - StartedAtUtc).TotalMilliseconds);
@@ -57,7 +58,7 @@ namespace NTAnalyzerBridge.Reporting
                 ["timeframe"]  = timeframe?.DeepClone() ?? new JObject(),
                 ["period"]     = period?.DeepClone() ?? new JObject(),
                 ["risk_profile"] = riskProfile?.DeepClone() ?? new JObject(),
-                ["historical_data_fingerprint"] = new JObject
+                ["historical_data_fingerprint"] = historicalDataFingerprint ?? new JObject
                 {
                     ["method"] = "placeholder",
                     ["value"]  = "sha256:placeholder",
@@ -68,6 +69,18 @@ namespace NTAnalyzerBridge.Reporting
 
             string runHash = RunHashCalculator.Compute(context, AddOnVersion,
                 CustomDllSha256, SourceFileSha256);
+
+            // Stage 2: historical_data_fingerprint now participates in run_hash.
+            // When it is a placeholder, runs are NOT reproducibly comparable, so
+            // surface that explicitly instead of letting a green run_hash imply it.
+            var warnings = new List<string>(verificationWarnings ?? Enumerable.Empty<string>());
+            var fp = (JObject)context["historical_data_fingerprint"];
+            if (fp == null || (string)fp["method"] == "placeholder")
+            {
+                warnings.Add("historical_data_fingerprint is a placeholder: run_hash "
+                    + "(contract " + RunHashCalculator.ContractVersion + ") cannot prove the "
+                    + "NT history used; comparisons across runs are not reproducible.");
+            }
 
             var result = new JObject
             {
@@ -105,7 +118,7 @@ namespace NTAnalyzerBridge.Reporting
                     ["raw_bridge_result_file"] = "raw.json"
                 },
                 ["verification_warnings"] = new JArray(
-                    (verificationWarnings ?? Enumerable.Empty<string>()).Select(s => (JToken)s).ToArray())
+                    warnings.Select(s => (JToken)s).ToArray())
             };
 
             return result;

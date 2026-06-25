@@ -10,20 +10,28 @@ using NTAnalyzerBridge.Util;
 namespace NTAnalyzerBridge.Reporting
 {
     /// <summary>
-    /// Computes run_hash per docs/job-schema.md, raw 0.1 rule:
+    /// Computes run_hash per docs/job-schema.md, contract 0.2 rule:
     /// hash of the canonical job context (strategy class + final parameters
     /// + instrument + timeframe + period + execution + addon_version
-    /// + ninjatrader_custom_dll_sha256 + source_file_sha256).
-    /// historical_data_fingerprint is intentionally NOT mixed in.
+    /// + ninjatrader_custom_dll_sha256 + source_file_sha256
+    /// + historical_data_fingerprint).
+    ///
+    /// Contract change vs 0.1: historical_data_fingerprint, session_template,
+    /// slippage, commission and fill model (carried inside execution) ARE now
+    /// mixed in, so two runs over different NT history / session / fill
+    /// assumptions no longer collide on the same run_hash. See the Stage 2
+    /// runtime/backtest mismatch audit.
     /// </summary>
     internal static class RunHashCalculator
     {
+        public const string ContractVersion = "0.2";
+
         public static string Compute(JObject jobContext, string addonVersion,
             string customDllSha256, string sourceFileSha256)
         {
             var canonical = new JObject
             {
-                ["schema_version"]              = "0.1",
+                ["schema_version"]              = ContractVersion,
                 ["addon_version"]               = addonVersion ?? string.Empty,
                 ["ninjatrader_custom_dll_sha256"] = customDllSha256 ?? string.Empty,
                 ["source_file_sha256"]          = sourceFileSha256 ?? string.Empty,
@@ -31,7 +39,8 @@ namespace NTAnalyzerBridge.Reporting
                 ["instrument"]                  = jobContext["instrument"],
                 ["timeframe"]                   = jobContext["timeframe"],
                 ["period"]                      = jobContext["period"],
-                ["execution"]                   = jobContext["execution"]
+                ["execution"]                   = jobContext["execution"],
+                ["historical_data_fingerprint"] = jobContext["historical_data_fingerprint"]
             };
             // Stable serialization: indented, properties sorted alphabetically.
             string canon = SortedJson(canonical);

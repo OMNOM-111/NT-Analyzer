@@ -478,14 +478,40 @@ def t19(tmp):
 @case("t20: /api/catalog has multiple strategies (not filtered to one)")
 def t20(tmp):
     from app import jobqueue
-    cat = jobqueue.build_catalog_response()
+    catalog_dir = tmp / "data" / "catalog"
+    sources_dir = tmp / "sources"
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    alpha = sources_dir / "NTAAlpha.cs"
+    beta = sources_dir / "NTABeta.cs"
+    rejected = sources_dir / "NTAMicroVwapRiskPilot.cs"
+    alpha.write_text('Name = "NTA Alpha";\n', encoding="utf-8")
+    beta.write_text('Name = "NTA Beta";\n', encoding="utf-8")
+    rejected.write_text('Name = "Rejected C011";\n', encoding="utf-8")
+    (catalog_dir / "strategies.json").write_text(json.dumps({
+        "generated_at_utc": _now_iso(),
+        "strategies": [
+            {"class_name": "NTAAlpha", "display_name": "NTAAlpha", "source_file": str(alpha)},
+            {"class_name": "NTABeta", "display_name": "NTABeta", "source_file": str(beta)},
+            {"class_name": "NTAMicroVwapRiskPilot", "display_name": "Rejected C011", "source_file": str(rejected)},
+        ],
+    }), encoding="utf-8")
+    (tmp / "data" / "ops" / "scc_classes.json").write_text(json.dumps({
+        "rejected": ["NTAMicroVwapRiskPilot"],
+    }), encoding="utf-8")
+
+    saved_project_root = jobqueue.project_root
+    jobqueue.project_root = lambda: tmp  # type: ignore[assignment]
+    try:
+        cat = jobqueue.build_catalog_response()
+    finally:
+        jobqueue.project_root = saved_project_root  # type: ignore[assignment]
     strats = cat.get("strategies") or []
-    # Real Custom\Strategies must contain at least NTAMicroVwapRiskPilot.
-    # If the directory is missing in CI we skip the count assertion.
     names = [s.get("class_name") for s in strats]
     if names:
-        assert "NTAMicroVwapRiskPilot" in names, \
-            f"NTAMicroVwapRiskPilot must be present, got {names}"
+        assert len(names) > 1, f"catalog must not collapse to one strategy, got {names}"
+        assert "NTAMicroVwapRiskPilot" not in names, \
+            f"decommissioned C011 class must be filtered from catalog, got {names}"
 
 
 @case("t21: NTAnalyzerEveryNBarLong job creation does NOT fail on missing RoundTurnCommission")
@@ -627,9 +653,11 @@ def t32(tmp):
     html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
     js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
     assert 'id="chk-show-hidden"' in html, "missing show-hidden toggle"
-    assert 'id="pane-history"' in html, "missing history tab pane"
+    assert 'id="pane-history"' not in html, "strategy history must be hidden from bottom tabs"
     assert "/api/ops/runtime/strategy-display" in js, "missing display prefs endpoint"
     assert "/api/ops/runtime/strategy-history" in js, "missing strategy history endpoint"
+    assert "/api/ops/runtime/history?limit=1000" in js, "runtime sessions must still feed strategy work-time analytics"
+    assert "/api/ops/strategy-start-dates" in js, "strategy start-date registry must feed per-strategy all-time stats"
 
 
 @case("t33: strategies page is served and wired to profile/coverage/runtime data")
@@ -675,7 +703,7 @@ def t34(tmp):
     assert resolved == str(preferred_file), f"expected moved file path, got {resolved!r}"
 
 
-@case("t35: portfolio cell ids stay stable for the 12x10 strategies grid")
+@case("t35: portfolio cell ids keep legacy 001-120 stable while extra slots append after 120")
 def t35(tmp):
     from app import portfolio_cells
 
@@ -685,12 +713,18 @@ def t35(tmp):
         for slot in range(1, portfolio_cells.TARGET_PORTFOLIO_SLOTS + 1)
     ]
 
-    assert len(cell_ids) == 120, f"expected 120 cell ids, got {len(cell_ids)}"
-    assert len(set(cell_ids)) == 120, "cell ids must be unique across the full matrix"
+    assert len(cell_ids) == 180, f"expected 180 cell ids, got {len(cell_ids)}"
+    assert len(set(cell_ids)) == 180, "cell ids must be unique across the full matrix"
     assert cell_ids[0] == "CELL-001", f"first cell id mismatch: {cell_ids[0]!r}"
-    assert cell_ids[-1] == "CELL-120", f"last cell id mismatch: {cell_ids[-1]!r}"
+    assert cell_ids[9] == "CELL-010", f"legacy MGC slot 10 mismatch: {cell_ids[9]!r}"
     assert portfolio_cells.cell_id_for("MNQ", 1) == "CELL-011"
     assert portfolio_cells.cell_id_for("MNQ 06-26", 10) == "CELL-020"
+    assert portfolio_cells.cell_id_for("MGC", 11) == "CELL-121"
+    assert portfolio_cells.cell_id_for("MNQ", 11) == "CELL-126"
+    assert portfolio_cells.cell_id_for("MYM", 15) == "CELL-180"
+    assert portfolio_cells.slot_for_cell_id("CELL-121", "MGC") == 11
+    assert portfolio_cells.slot_for_cell_id("CELL-126", "MNQ") == 11
+    assert portfolio_cells.root_for_cell_id("CELL-180") == "MYM"
 
 
 @case("t36: profiles and job reports surface portfolio cell metadata")
@@ -763,11 +797,16 @@ def t36(tmp):
 def t37(tmp):
     html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
     js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "Инструменты x 10 стратегий" not in html, "old x10 matrix heading must be removed"
     assert "portfolioCellId" in js, "strategies.js must compute deterministic cell ids"
     assert "strategy-cell-id" in js, "matrix cells must render a visible cell id label"
     assert "Ячейка:" in js, "detail panel must show the selected cell id"
+    assert "Семья (root)" in js, "matrix first column must use root-family terminology"
+    assert "Семья (root):" in js, "matrix tooltips must use root-family terminology"
+    assert "profileFreeze" in js and "Закрыто" in js, "closed paper-freeze profiles must render explicit closed text"
+    assert "strategy-cell.closed" in css, "closed paper-freeze cells must have a red matrix style"
 
 
 @case("t38: strategies slot assignment guards against duplicate family placement")
@@ -1093,6 +1132,59 @@ def t48(tmp):
         "matrix must style reserved research cells distinctly"
 
 
+@case("t48b: strategies matrix can hide explicitly closed cells without renumbering live slots")
+def t48b(tmp):
+    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+
+    assert "if (profile.matrix_hidden) return false;" in js, \
+        "matrix must allow explicitly removed profiles to stop occupying their reserved cell"
+
+
+@case("t48c: CELL-018 is operationally closed but keeps archive evidence")
+def t48c(tmp):
+    raw = json.loads((ROOT / "examples" / "strategy-profiles.example.json").read_text(encoding="utf-8"))
+    profiles = raw.get("profiles") or []
+    profile = next(p for p in profiles if p.get("profile_id") == "mnq_daily_open_allmodules_2h_1m_c018_ready_v1")
+
+    assert profile["name"] == "Scalping MNQ 1m v1 c018", profile
+    assert profile["deploy_strategy_class"] == "NTAMnqDailyOpenScalpC018", profile
+    assert "NTAMnqDailyOpenScalpC018" in (profile.get("runtime_strategy_classes") or []), profile
+    assert profile["status"] == "archived", profile
+    assert profile["matrix_hidden"] is True, profile
+    assert profile["cell_id"] == "", profile
+    assert profile["archived_cell_id"] == "CELL-018", profile
+    assert (profile.get("operational_closure") or {}).get("final_action") == "archived_purged", profile
+
+    wrapper = ROOT / "ninjatrader" / "strategies" / "NTAMnqDailyOpenScalpC018" / "NTAMnqDailyOpenScalpC018.cs"
+    assert wrapper.exists(), wrapper
+    assert 'Name = "Scalping MNQ 1m v1 c018";' in wrapper.read_text(encoding="utf-8")
+
+
+@case("t48d: CELL-017 post-active profile is operationally closed")
+def t48d(tmp):
+    raw = json.loads((ROOT / "examples" / "strategy-profiles.example.json").read_text(encoding="utf-8"))
+    profiles = raw.get("profiles") or []
+    profile = next(p for p in profiles if p.get("profile_id") == "mnq_postactive_allmodules_1m_c017_ready_v1")
+
+    assert profile["name"] == "Scalping Post-Active MNQ 1m v1 c017", profile
+    assert profile["deploy_strategy_class"] == "NTAMnqPostActiveScalpC017", profile
+    assert "NTAMnqPostActiveScalpC017" in (profile.get("runtime_strategy_classes") or []), profile
+    assert profile["status"] == "archived", profile
+    assert profile["matrix_hidden"] is True, profile
+    assert profile["cell_id"] == "", profile
+    assert profile["archived_cell_id"] == "CELL-017", profile
+    assert (profile.get("operational_closure") or {}).get("final_action") == "archived_purged", profile
+    assert profile["locked_parameters"]["TradeStartTime"] == 1250, profile
+    assert profile["locked_parameters"]["TradeEndTime"] == 1325, profile
+    assert profile["locked_parameters"]["RewardRiskRatio"] == 6.0, profile
+
+    wrapper = ROOT / "ninjatrader" / "strategies" / "NTAMnqPostActiveScalpC017" / "NTAMnqPostActiveScalpC017.cs"
+    assert wrapper.exists(), wrapper
+    text = wrapper.read_text(encoding="utf-8")
+    assert 'Name = "Scalping Post-Active MNQ 1m v1 c017";' in text
+    assert "TradeStartTime = 1250;" in text and "TradeEndTime = 1325;" in text
+
+
 @case("t49: trading UI reads locked params from runtime-backed profile data")
 def t49(tmp):
     js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
@@ -1163,12 +1255,20 @@ def t51(tmp):
     assert "Доход по инструментам с 13.05" in html, "instrument income panel must be in Performance Center"
     assert 'id="trade-calendar"' in html, "missing per-day trading calendar"
     assert 'id="snapshot-working-orders"' in html, "missing working orders snapshot"
-    # New 3-tab layout: Обзор / Orders / История
+    # Expanded strategy analytics layout: Обзор / Капитал / Сделки / Заметки
     assert 'id="pane-overview"' in html, "missing Обзор tab pane"
-    assert 'id="pane-orders"' in html, "missing Orders tab pane"
-    assert 'id="pane-history"' in html, "missing История tab pane"
-    assert 'id="pane-strategies"' not in html, "Strategies tab pane must be removed in 3-tab layout"
-    assert 'id="pane-trades"' not in html, "Trades tab pane must be removed in 3-tab layout"
+    assert 'id="pane-equity"' in html, "missing Капитал tab pane"
+    assert 'id="pane-trades"' in html, "missing Сделки tab pane"
+    assert 'id="pane-orders"' not in html, "Orders tab must be merged into Сделки"
+    assert 'id="pane-history"' not in html, "История tab must be hidden from strategy analytics"
+    assert 'id="pane-notes"' in html, "missing Заметки tab pane"
+    assert 'id="pane-strategies"' not in html, "Strategies tab pane must stay removed"
+    assert "renderEquityPane" in js and "renderTradesPane" in js and "renderNotesPane" in js, \
+        "expanded strategy analytics panes must be wired in trading.js"
+    assert "Факт: PnL стратегии от нуля" in js and "План по бэктесту за тот же срок" in js, \
+        "capital tab must compare actual zero-based strategy PnL against backtest expectation"
+    assert "tradesPaneOrdersSectionHTML" in js, "Сделки tab must include orders section"
+    assert "renderOrdersPane" not in js, "standalone Orders pane must be removed"
     assert "rowIsUnmappedCandidate" in js, "UI must still surface unmapped candidates for selected strategy"
     assert "renderTradingCalendar" in js, "UI must expose selectable daily trading calendar"
 
@@ -1290,9 +1390,10 @@ def t55(tmp):
 def t56(tmp):
     js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function versionLt" in js, "bridge version comparison must be numeric, not string-based"
-    assert 'versionLt(ev, "1.2.2")' in js, \
-        "bridge < 1.2.2 must be flagged because it can miss strategy signal fields in executions/orders"
+    assert 'versionLt(ev, "1.3.0")' in js, \
+        "bridge < 1.3.0 must be flagged because it can miss cycle/cell attribution fields in executions/orders"
     assert "strategy_id/class/name/runtime_instance_id/order_name/from_entry_signal" in js
+    assert "trading_cycle_id/cell_id/attribution_status/param_snapshot_hash" in js
 
 
 @case("t57: account headline re-renders without deleting its currency node")
@@ -1331,9 +1432,9 @@ def t59(tmp):
     assert details_pos < trades_pos < positions_pos, \
         "#session-day-trades must live inside .session-details, before positions"
     assert "cal-orders" in html and "cal-fills" not in html, \
-        "calendar order count label must not be styled as fills"
-    assert "нет ордеров" in js and "cal-fills" not in js, \
-        "calendar cells must show order counts from orders, not fills/executions"
+        "calendar trade count label must not be styled as fills"
+    assert "нет закрытых сделок" in js and "сделок" in js and "cal-fills" not in js, \
+        "calendar cells must show closed trade counts from dailyWall.closedTrades, not orders or raw fills"
     assert "tradesTableHTML(trades, \"\", 500)" in js, \
         "selected-day trades panel must reuse the Orders closed-trades table"
 
@@ -1402,7 +1503,7 @@ def t65_account_level_fifo_handles_unmapped_exits(tmp):
         "calendar and account metrics must ignore pre-start activity"
 
 
-@case("t66: strategies selection reveals the active matrix cell")
+@case("t66: strategies selection reveals the active matrix cell and planner bar")
 def t66_strategies_selection_reveals_matrix_cell(tmp):
     js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
     assert "function requestSelectedStrategyReveal" in js
@@ -1411,6 +1512,8 @@ def t66_strategies_selection_reveals_matrix_cell(tmp):
         "selected family key must be synchronized before the matrix renders"
     assert ".strategies-matrix-table .strategy-cell.selected" in js
     assert "selectedCell.scrollIntoView({ block: \"nearest\", inline: \"center\" })" in js
+    assert ".strategies-day-track-scroll .strategies-session-bar.selected" in js
+    assert "selectedPlannerBar.scrollIntoView({ block: \"center\", inline: \"nearest\" })" in js
     assert "requestSelectedStrategyReveal();" in js
 
 
@@ -1559,8 +1662,8 @@ def t69_performance_center_all_time_selected_day_tabs(tmp):
         "Active strategies table must refresh from the selected calendar day"
     assert "const daySets = strategyExecutionSets(view, selectedDate);" in js, \
         "Strategy Overview must expose selected-day stats"
-    assert "const sets = strategyExecutionSets(view, selectedDate);" in js, \
-        "Orders tab must use selected-day closed trades"
+    assert "tradesPaneOrderRows" in js and "tradesPaneOrdersSectionHTML" in js, \
+        "Сделки tab must expose selected-day orders alongside trades"
     assert "function strategyRiskBreachForDay" in js and ">HALT</span>" in js, \
         "Selected-day strategy rows must expose risk-limit breaches"
 
@@ -1597,6 +1700,46 @@ def t60_trade_windows_ui(tmp):
         "trading.js must format entry windows in 12-hour AM/PM"
 
 
+@case("t70: strategies day planner keeps the full exchange session")
+def t70_strategies_day_planner_full_session(tmp):
+    _ = tmp
+    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    assert 'MNQ: { start: 1500, end: 1400, label: "Биржевая сессия" }' in js, \
+        "planner must show the full CME-style exchange session, not just the RTH morning block"
+    assert "if (minute === 0) return 60;" in js, \
+        "full-session planner should render one-hour time cells when the session starts on the hour"
+    assert "function plannerWindowInSession" in js and "plannerWindowInSession(window, session.start)" in js, \
+        "morning strategy windows must be shifted into the 15:00->14:00 trading-day timeline"
+
+
+@case("t71: runtime strategies table has all-time PnL and sortable headers")
+def t71_runtime_table_all_time_pnl_and_sorting(tmp):
+    _ = tmp
+    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    assert "PnL за всё время" in html, "runtime strategies table must show all-time strategy PnL"
+    assert "Работает" in html and 'data-trading-sort="runtime_duration"' in html, \
+        "runtime strategies table must show total strategy work time after Last update"
+    assert 'colspan="16"' in html and 'colspan="15"' not in html and 'colspan="14"' not in html, \
+        "runtime strategies empty row colspan must match the new column count"
+    assert 'data-trading-sort-table="runtimeStrategies"' in html, \
+        "runtime strategies headers must be wired into the shared sort handler"
+    assert "runtimeStrategies: { col: \"cell\", dir: \"asc\" }" in js, \
+        "runtime table must have a deterministic default sort"
+    assert "function runtimeSortValue" in js and "function sortRuntimeRows" in js, \
+        "runtime table must sort rows client-side"
+    assert "const strategyAllClosed = acctMetrics.allStrategyClosedTrades || acctMetrics.allClosedTrades || [];" in js, \
+        "runtime table must use strategy-scoped closed trades for all-time PnL"
+    assert "const allClosedRows = strategyAllClosed.filter(r => rowMatchesStrategyView(r, s) && rowOnOrAfterDate(r, startDatePt));" in js, \
+        "all-time PnL must stay mapped to the current strategy row without account-level FIFO bleed"
+    assert 'data-trading-sort="pnl_all"' in html and 'case "pnl_all": return metrics.pnlAll;' in js, \
+        "all-time PnL column must be sortable"
+    assert 'case "runtime_duration": return strategyRuntimeDurationSec(view) ?? -1;' in js, \
+        "runtime duration column must be sortable"
+    assert "function strategyStartDateForView" in js and "rowOnOrAfterDate(r, startDatePt)" in js, \
+        "strategy all-time stats must honor the established strategy start date"
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1605,13 +1748,14 @@ def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t12,
              t13, t14, t15, t16, t17, t18, t19, t20, t21, t22, t23, t24,
              t25, t26, t27, t28, t29, t30, t31, t32, t33, t34, t35, t36,
-             t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t48, t49,
+             t37, t38, t39, t40, t41, t42, t43, t44, t45, t46, t47, t48, t48b, t48c, t48d, t49,
              t50, t51, t52, t53, t54, t55, t56, t57, t58, t59, t60_trade_windows_ui,
              t61_no_instrument_fill_fallback, t62_unmapped_excluded_from_strategy_pnl,
              t63_reports_server_sorted_pagination, t64_selected_day_orders_are_visible,
              t65_account_level_fifo_handles_unmapped_exits, t66_strategies_selection_reveals_matrix_cell,
              t67_legacy_short_strategy_attribution, t68_closed_trade_inherits_entry_strategy_when_exit_unmapped,
-             t69_performance_center_all_time_selected_day_tabs]
+             t69_performance_center_all_time_selected_day_tabs, t70_strategies_day_planner_full_session,
+             t71_runtime_table_all_time_pnl_and_sorting]
     print(f"Running {len(cases)} Trading Online tests:")
     for c in cases:
         c()

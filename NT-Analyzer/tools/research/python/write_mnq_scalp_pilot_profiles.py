@@ -10,6 +10,13 @@ pilot profile is preserved hash-stable.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
+import research_lib as RL  # noqa: E402
+
 import csv
 import hashlib
 import json
@@ -117,7 +124,7 @@ def main() -> int:
         "oos_adj_pf_ge_1_25": oos_m["profit_factor_after_commission"] >= 1.25,
         "win_pct_ge_52": full_m["winning_pct"] >= 52.0,
         "avg_trade_ge_1_50": full_m["avg_trade_after_commission"] >= 1.50,
-        "abs_max_dd_le_300": abs(full_m["max_drawdown"]) <= 300.0,
+        "max_dd_pct_15": RL.max_drawdown_within_budget(full_m["max_drawdown"]),
         "max_consec_losses_le_5": full_m["max_consecutive_losses"] <= 5,
         "daily_stop_pct_le_5": full_m["daily_stop_hit_pct"] <= 5.0,
     }

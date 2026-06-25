@@ -23,7 +23,7 @@ namespace NTAnalyzerBridge.Runtime
     /// Hard safety:
     ///   * unknown account names are rejected (no defaulting to live);
     ///   * live account control is rejected; live telemetry is read-only;
-    ///   * archived/rejected strategy classes are rejected;
+    ///   * archived/rejected strategy classes cannot be launched;
     ///   * we never place orders, never modify orders, never bypass NinjaScript
     ///     state machine. We only call Strategy.SetState(State.Active|Terminated)
     ///     on existing instances enumerated from Account.Strategies.
@@ -48,12 +48,15 @@ namespace NTAnalyzerBridge.Runtime
         private readonly object _lock = new object();
         private int _running;
 
-        // Classes the bridge must refuse, per Phase 18 spec.
+        // Classes the bridge must refuse for enable_strategy, per Phase 18 spec.
         private static readonly HashSet<string> RejectedClasses = new HashSet<string>(StringComparer.Ordinal)
         {
             "NTAMicroOrbPilot",
             "NTAMicroVwapGapMirrorPilot",
             "NTAMicroVwapMeanRevertPilot",
+            "NTAMnqLiquiditySweepReversalC015",
+            "NTAMnqOpenDriveShortScalpC016",
+            "NTAMnqLateVwapLongScalpC017",
         };
 
         // B1 ShortOnly locked params - must match exactly when the operator
@@ -164,10 +167,10 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     return WriteResult(cid, "rejected", "strategy_class is required", "");
                 }
-                if (RejectedClasses.Contains(strategyClass))
+                if (command == "enable_strategy" && RejectedClasses.Contains(strategyClass))
                 {
                     return WriteResult(cid, "rejected",
-                        "strategy class '" + strategyClass + "' is archived/rejected by registry",
+                        "strategy class '" + strategyClass + "' is archived/rejected by registry - launch refused",
                         "");
                 }
 

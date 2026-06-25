@@ -1,0 +1,44 @@
+{
+  "note": "Adjusted net includes commission. Same-bar ambiguity above 60% is a major risk.",
+  "strategies": [
+    {
+      "id": "A",
+      "label": "High full profit but OOS negative",
+      "adjusted_full_net": 1480.0,
+      "adjusted_is_net": 1720.0,
+      "adjusted_oos_net": -240.0,
+      "full_pf": 1.34,
+      "oos_pf": 0.78,
+      "max_drawdown": -690.0,
+      "trade_count": 162,
+      "same_bar_ambiguity_pct": 21.0,
+      "commission_per_round_turn": 1.9
+    },
+    {
+      "id": "B",
+      "label": "Moderate profit, positive IS/OOS, acceptable DD",
+      "adjusted_full_net": 920.0,
+      "adjusted_is_net": 540.0,
+      "adjusted_oos_net": 380.0,
+      "full_pf": 1.41,
+      "oos_pf": 1.26,
+      "max_drawdown": -310.0,
+      "trade_count": 184,
+      "same_bar_ambiguity_pct": 18.0,
+      "commission_per_round_turn": 1.9
+    },
+    {
+      "id": "C",
+      "label": "Huge profit, low trade count, high same-bar ambiguity",
+      "adjusted_full_net": 2240.0,
+      "adjusted_is_net": 2100.0,
+      "adjusted_oos_net": 140.0,
+      "full_pf": 2.1,
+      "oos_pf": 1.08,
+      "max_drawdown": -470.0,
+      "trade_count": 19,
+      "same_bar_ambiguity_pct": 74.0,
+      "commission_per_round_turn": 1.9
+    }
+  ]
+}

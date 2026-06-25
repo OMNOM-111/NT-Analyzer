@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Lab Experiment",
+  "type": "object",
+  "required": ["experiment_id", "ai_cell_id", "target_root", "class_name", "created_at_utc", "status"],
+  "properties": {
+    "experiment_id": { "type": "string", "pattern": "^EXP-[0-9]{8}-[0-9]{4}$" },
+    "ai_cell_id": { "type": "string", "pattern": "^AI-CELL-[A-Z0-9]+-[0-9]{3}$" },
+    "target_root": { "type": "string" },
+    "lab_namespace": { "type": "string", "const": "AI_SANDBOX" },
+    "class_name": { "type": "string" },
+    "lane": { "type": "string" },
+    "family": { "type": "string" },
+    "capital_scenarios": { "type": "array", "items": { "type": "number" } },
+    "primary_capital": { "type": "number" },
+    "created_at_utc": { "type": "string", "format": "date-time" },
+    "updated_at_utc": { "type": "string", "format": "date-time" },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "validating", "compiling", "compile_failed", "ready", "backtesting", "analyzed", "rejected", "mutation_candidate", "sandbox_candidate", "portfolio_contributor", "champion_candidate", "human_review_candidate", "archived", "blocked_lm_studio", "cancelled"]
+    },
+    "parent_experiment_id": { "type": ["string", "null"] },
+    "lineage": { "type": "array", "items": { "type": "string" } },
+    "current_iteration": { "type": "integer", "minimum": 1, "description": "1-based index of the latest in-cell mutation iteration." },
+    "mirror_history_dir": { "type": ["string", "null"], "description": "Directory under ai_lab/mirrors/{cell_id}/history/ holding v1.cs..vN.cs snapshots." },
+    "iteration_history": {
+      "type": "array",
+      "description": "One record per in-cell iteration (initial generation + each mutation).",
+      "items": {
+        "type": "object",
+        "required": ["iteration"],
+        "properties": {
+          "iteration": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": ["string", "null"] },
+          "verdict": { "type": ["string", "null"] },
+          "rejection_code": { "type": ["string", "null"] },
+          "status": { "type": ["string", "null"] },
+          "pf_after_commission": { "type": ["number", "null"] },
+          "trades_total": { "type": ["integer", "null"] },
+          "score": { "type": ["number", "null"] },
+          "mirror_history_path": { "type": ["string", "null"] },
+          "mutation_of_iteration": { "type": ["integer", "null"] },
+          "created_utc": { "type": ["string", "null"] },
+          "recorded_utc": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "hypothesis": { "type": "string" },
+    "rationale": { "type": "string" },
+    "user_research_refs": { "type": "array", "items": { "type": "string" } },
+    "memory_intake": {
+      "type": "object",
+      "properties": {
+        "user_research_files_read": { "type": "array", "items": { "type": "string" } },
+        "similar_rejected": { "type": "array", "items": { "type": "string" } },
+        "similar_demo_mismatch": { "type": "array", "items": { "type": "string" } },
+        "similar_compile_fails": { "type": "array", "items": { "type": "string" } },
+        "reference_strategy_id": { "type": ["string", "null"], "pattern": "^REF-[0-9]{3}$|^null$", "description": "REF-XXX from reference_registry.json used as design basis" },
+        "reference_strategy_name": { "type": ["string", "null"], "description": "Human-readable name of reference strategy" },
+        "failed_cell_lesson_applied": { "type": ["string", "null"], "description": "Specific lesson from FAILED_CELL_LESSONS.md applied in this design" },
+        "modification_hypothesis": { "type": ["string", "null"], "description": "How this strategy differs from the reference" },
+        "gross_per_trade_estimate_usd": { "type": ["number", "null"], "description": "Estimated gross per trade before commission (must be >= 5.0)" },
+        "commission_viability_ok": { "type": ["boolean", "null"], "description": "true if gross_per_trade_estimate_usd >= 1.90 * 2" },
+        "position_sizing_ok": { "type": ["boolean", "null"], "description": "true if stop ticks will produce qty >= 1 on $2k account" }
+      }
+    },
+    "model_chain": { "type": "array", "items": { "type": "string" } },
+    "strategy_source": {
+      "type": "object",
+      "properties": {
+        "sandbox_path": { "type": "string" },
+        "mirror_path": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "sha256": { "type": "string" }
+      }
+    },
+    "parameters": { "type": "object" },
+    "risk_profile": { "type": "object" },
+    "session_template": { "type": "string" },
+    "compile": {
+      "type": "object",
+      "properties": {
+        "attempts": { "type": "integer" },
+        "last_status": { "type": "string", "enum": ["pending", "ok", "failed", "blocker"] },
+        "errors": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "properties": {
+        "visible_in_whitelist": { "type": "boolean" },
+        "visible_in_catalog": { "type": "boolean" },
+        "last_checked_utc": { "type": "string", "format": "date-time" }
+      }
+    },
+    "backtests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["job_id", "submitted_at_utc"],
+        "properties": {
+          "job_id": { "type": "string" },
+          "submitted_at_utc": { "type": "string", "format": "date-time" },
+          "instrument": { "type": "string" },
+          "from_utc": { "type": "string", "format": "date-time" },
+          "to_utc": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["pending", "running", "done", "failed", "cancelled"] },
+          "analysis_pack_path": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "avg_per_day": { "type": ["number", "null"] },
+        "avg_per_week": { "type": ["number", "null"] },
+        "avg_per_month": { "type": ["number", "null"] },
+        "avg_per_quarter": { "type": ["number", "null"] },
+        "avg_per_year": { "type": ["number", "null"] },
+        "monthly_growth_pct": { "type": ["number", "null"] },
+        "quarterly_growth_pct": { "type": ["number", "null"] },
+        "annualized_growth_estimate_pct": { "type": ["number", "null"] },
+        "compounded_growth_estimate_pct": { "type": ["number", "null"] },
+        "trades_per_day": { "type": ["number", "null"] },
+        "trades_per_week": { "type": ["number", "null"] },
+        "trades_per_month": { "type": ["number", "null"] },
+        "trades_total": { "type": ["integer", "null"] },
+        "years_tested": { "type": ["number", "null"] },
+        "pf_after_commission": { "type": ["number", "null"] },
+        "dd_after_commission": { "type": ["number", "null"] },
+        "profitable_months_pct": { "type": ["number", "null"] },
+        "profitable_quarters_pct": { "type": ["number", "null"] },
+        "profitable_years_pct": { "type": ["number", "null"] },
+        "stress_pass_flag": { "type": ["boolean", "null"] }
+      }
+    },
+    "arbitration": {
+      "type": "object",
+      "properties": {
+        "score": { "type": ["number", "null"] },
+        "growth_score": { "type": ["number", "null"] },
+        "robustness_score": { "type": ["number", "null"] },
+        "longevity_score": { "type": ["number", "null"] },
+        "trade_confidence_score": { "type": ["number", "null"] },
+        "portfolio_fit_score": { "type": ["number", "null"] },
+        "risk_penalty": { "type": ["number", "null"] },
+        "overfit_penalty": { "type": ["number", "null"] },
+        "demo_mismatch_penalty": { "type": ["number", "null"] },
+        "repeat_mistake_penalty": { "type": ["number", "null"] },
+        "rationale": { "type": "string" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "properties": {
+        "outcome": { "type": "string", "enum": ["pending", "reject", "mutate", "keep"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "rejection_code": { "type": ["string", "null"], "enum": [null, "DUPLICATE_REJECTED", "DEMO_MISMATCH_FAMILY", "REPEAT_COMPILE_FAIL", "UNSAFE_API", "STRUCTURAL_NEGATIVE", "OUT_OF_RANGE_PARAMS", "NO_REFERENCE_PATTERN", "COMMISSION_ECONOMICS_FAIL", "POSITION_SIZING_UNFEASIBLE", "REJECTED_PATTERN", "HIGH_FREQ_MEAN_REVERSION"] },
+        "structural": { "type": "boolean" }
+      }
+    }
+  }
+}

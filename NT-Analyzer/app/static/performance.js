@@ -3,6 +3,13 @@
 (() => {
   const ALL_ACCOUNTS = "__all__";
   const SORT_STORAGE_KEY = "nta.performance.sorts.v1";
+  const CURVE_STORAGE_KEY = "nta.performance.curves.v1";
+  const CURVE_PALETTE = [
+    "#58d889", "#5b9cf5", "#f0b429", "#ff8585", "#c77dff",
+    "#45c7b8", "#f97316", "#e879f9", "#38bdf8", "#a3e635",
+    "#fb7185", "#facc15", "#2dd4bf", "#818cf8", "#c084fc",
+    "#f472b6", "#84cc16", "#60a5fa", "#f59e0b", "#34d399",
+  ];
   const $ = (id) => document.getElementById(id);
 
   function loadStoredSorts() {
@@ -15,7 +22,18 @@
     }
   }
 
+  function loadStoredCurveVisibility() {
+    try {
+      if (!window.localStorage) return {};
+      const raw = JSON.parse(window.localStorage.getItem(CURVE_STORAGE_KEY) || "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
   const STORED_SORTS = loadStoredSorts();
+  const STORED_CURVE_VISIBILITY = loadStoredCurveVisibility();
 
   const STATE = {
     period: "month",
@@ -23,10 +41,13 @@
     to: "",
     account: ALL_ACCOUNTS,
     data: null,
+    profiles: [],
     strategiesSort: STORED_SORTS.strategies || { col: "pnl", dir: "desc" },
     instrumentsSort: STORED_SORTS.instruments || { col: "pnl", dir: "desc" },
     selectedStrategyKey: null,
     selectedInstrument: null,
+    curveVisible: STORED_CURVE_VISIBILITY,
+    focusedCurveKey: null,
   };
 
   function escapeHtml(value) {
@@ -188,11 +209,22 @@
     } catch (_) { /* ignore storage failures */ }
   }
 
+  function saveCurveVisibility() {
+    try {
+      if (!window.localStorage) return;
+      window.localStorage.setItem(CURVE_STORAGE_KEY, JSON.stringify(STATE.curveVisible || {}));
+    } catch (_) { /* ignore storage failures */ }
+  }
+
   async function loadPerformance() {
     setChip("pc-status", "Загрузка данных...", "warn");
     try {
-      const data = await getJson(buildPerformanceUrl());
+      const [data, profilesDoc] = await Promise.all([
+        getJson(buildPerformanceUrl()),
+        getJson("/api/profiles").catch(() => ({ profiles: [] })),
+      ]);
       STATE.data = data;
+      STATE.profiles = Array.isArray(profilesDoc?.profiles) ? profilesDoc.profiles : [];
       render();
       setChip("pc-status", "Данные загружены", "ok");
     } catch (error) {
@@ -423,6 +455,219 @@
       </table>`;
   }
 
+  function hashText(value) {
+    let hash = 0;
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash);
+  }
+
+  function colorForStrategy(row, index) {
+    const cellNumber = num(normalizeCellNumber(row?.cell || row?.cell_id));
+    if (cellNumber != null) return CURVE_PALETTE[(Math.max(1, Math.floor(cellNumber)) - 1) % CURVE_PALETTE.length];
+    return CURVE_PALETTE[hashText(row?.key || row?.strategy || index) % CURVE_PALETTE.length];
+  }
+
+  function normalizeCellNumber(value) {
+    const match = String(value || "").trim().match(/(\d{1,3})/);
+    return match ? match[1].padStart(3, "0") : "";
+  }
+
+  function curveCellLabel(row) {
+    const cell = normalizeCellNumber(row?.cell || row?.cell_id);
+    return cell ? `C${cell}` : "Без ячейки";
+  }
+
+  function cleanCurveLabel(value, row) {
+    const cell = normalizeCellNumber(row?.cell || row?.cell_id);
+    let text = String(value || "").trim();
+    if (cell) {
+      const numeric = String(Number(cell));
+      text = text
+        .replace(new RegExp(`^0*${numeric}\\s+`, "i"), "")
+        .replace(new RegExp(`\\s+c0*${numeric}\\b`, "i"), "")
+        .replace(new RegExp(`\\s+cell-?0*${numeric}\\b`, "i"), "");
+    }
+    return text.trim() || "—";
+  }
+
+  function stableCurveKey(row) {
+    const cell = normalizeCellNumber(row?.cell || row?.cell_id);
+    if (cell) return `cell:${cell}`;
+    const strategy = String(row?.strategy || "").trim();
+    if (!strategy || strategy === "Без привязки к стратегии") return "__unmapped__";
+    return `strategy:${String(row?.strategy_id || row?.strategy_class || row?.runtime_instance_id || strategy || row?.key || "").trim()}`;
+  }
+
+  function compareCurveRows(a, b) {
+    const ac = num(normalizeCellNumber(a?.cell || a?.cell_id));
+    const bc = num(normalizeCellNumber(b?.cell || b?.cell_id));
+    if (ac != null || bc != null) {
+      if (ac == null) return -1;
+      if (bc == null) return 1;
+      if (ac !== bc) return ac - bc;
+    }
+    const an = String(a?.strategy || a?.strategy_class || a?.key || "");
+    const bn = String(b?.strategy || b?.strategy_class || b?.key || "");
+    return an.localeCompare(bn, "ru");
+  }
+
+  function toCumulativeCurve(rows) {
+    let cumulative = 0;
+    return (rows || []).map((row) => {
+      cumulative += Number(row?.pnl || 0);
+      return {
+        date: row?.date || "",
+        value: cumulative,
+      };
+    });
+  }
+
+  function parseYmdUtc(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function formatYmdUtc(date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  function emptyDailyForPeriod(data) {
+    const start = parseYmdUtc(data?.period?.from);
+    const end = parseYmdUtc(data?.period?.to);
+    if (!start || !end || start > end) return [{ date: "", pnl: 0 }];
+    const rows = [];
+    const cur = new Date(start.getTime());
+    for (let i = 0; i < 370 && cur <= end; i += 1) {
+      rows.push({ date: formatYmdUtc(cur), pnl: 0 });
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return rows.length ? rows : [{ date: "", pnl: 0 }];
+  }
+
+  function profileReadyForCurves(profile) {
+    const status = String(profile?.status || "").trim();
+    return !!normalizeCellNumber(profile?.cell_id) && (status === "ready" || status === "paper_ready");
+  }
+
+  function profileCurveRow(profile, data) {
+    const cell = normalizeCellNumber(profile?.cell_id);
+    const strategy = cleanCurveLabel(
+      profile?.name ||
+      profile?.expected_name ||
+      profile?.runtime_strategy_id ||
+      profile?.deploy_strategy_class ||
+      profile?.strategy_class ||
+      profile?.profile_id,
+      { cell },
+    );
+    return {
+      key: `cell:${cell}`,
+      cell,
+      strategy,
+      strategy_full: profile?.name || strategy,
+      strategy_class: profile?.deploy_strategy_class || profile?.strategy_class || "",
+      strategy_id: profile?.runtime_strategy_id || profile?.profile_id || "",
+      instrument: profile?.instrument || profile?.current_contract || "—",
+      pnl: 0,
+      daily: emptyDailyForPeriod(data),
+      profile_only: true,
+    };
+  }
+
+  function buildCurveRows(data) {
+    const rows = (data?.strategies || []).map((row) => ({
+      ...row,
+      key: stableCurveKey(row),
+      cell: normalizeCellNumber(row?.cell) || row?.cell || "",
+      strategy: cleanCurveLabel(row?.strategy || row?.strategy_class || row?.strategy_id, row),
+    }));
+    const seenKeys = new Set(rows.map((row) => stableCurveKey(row)));
+    const seenCells = new Set(rows.map((row) => normalizeCellNumber(row.cell)).filter(Boolean));
+    (STATE.profiles || []).filter(profileReadyForCurves).forEach((profile) => {
+      const cell = normalizeCellNumber(profile.cell_id);
+      const key = `cell:${cell}`;
+      if (!cell || seenKeys.has(key) || seenCells.has(cell)) return;
+      rows.push(profileCurveRow(profile, data));
+      seenKeys.add(key);
+      seenCells.add(cell);
+    });
+    return rows.sort(compareCurveRows);
+  }
+
+  function buildCurveSeries(data) {
+    return buildCurveRows(data).map((row, index) => {
+      const key = String(row.key || stableCurveKey(row) || index);
+      const points = toCumulativeCurve(row.daily || []);
+      const fallbackPnl = num(row.pnl);
+      if (!points.length && fallbackPnl != null) {
+        points.push({ date: "", value: fallbackPnl });
+      }
+      return {
+        key,
+        cellLabel: curveCellLabel(row),
+        label: cleanCurveLabel(row.strategy || row.strategy_class || row.strategy_id, row),
+        total: fallbackPnl || 0,
+        color: colorForStrategy(row, index),
+        points,
+      };
+    });
+  }
+
+  function isCurveVisible(key) {
+    return STATE.curveVisible[String(key)] !== false;
+  }
+
+  function updateCurveCount(series) {
+    const total = (series || []).length;
+    const visible = (series || []).filter((item) => isCurveVisible(item.key)).length;
+    setText("pc-curves-count", total ? `${visible}/${total} линий` : "—");
+  }
+
+  function renderCurveLegend(series) {
+    const root = $("pc-curves-legend");
+    if (!root) return;
+    updateCurveCount(series);
+    if (!series.length) {
+      root.innerHTML = '<div class="performance-empty-inline">Нет стратегий за выбранный период.</div>';
+      return;
+    }
+    root.innerHTML = series.map((item) => `
+      <label class="performance-curve-row${STATE.focusedCurveKey === item.key ? " focused" : ""}" data-key="${escapeHtml(item.key)}" style="--curve-color:${item.color}">
+        <input type="checkbox" data-key="${escapeHtml(item.key)}"${isCurveVisible(item.key) ? " checked" : ""}>
+        <span class="performance-curve-color"></span>
+        <span class="performance-curve-text">
+          <span class="performance-curve-cell">${escapeHtml(item.cellLabel)}</span>
+          <span class="performance-curve-name">${escapeHtml(item.label)}</span>
+        </span>
+        <span class="performance-curve-pnl ${valueClass(item.total)}">${escapeHtml(fmtMoney(item.total))}</span>
+      </label>
+    `).join("");
+    root.querySelectorAll("input[type='checkbox'][data-key]").forEach((input) => {
+      input.addEventListener("change", () => {
+        STATE.curveVisible[input.dataset.key] = input.checked;
+        saveCurveVisibility();
+        renderCharts(STATE.data);
+      });
+    });
+    root.querySelectorAll(".performance-curve-row[data-key]").forEach((row) => {
+      row.addEventListener("mouseenter", () => {
+        STATE.focusedCurveKey = row.dataset.key;
+        row.classList.add("focused");
+        drawMultiEquityCurves($("pc-curves-chart"), buildCurveSeries(STATE.data));
+      });
+      row.addEventListener("mouseleave", () => {
+        if (STATE.focusedCurveKey === row.dataset.key) STATE.focusedCurveKey = null;
+        row.classList.remove("focused");
+        drawMultiEquityCurves($("pc-curves-chart"), buildCurveSeries(STATE.data));
+      });
+    });
+  }
+
   function prepareCanvas(canvas, fallbackHeight) {
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -573,9 +818,134 @@
     ctx.fillText(shortDate(data[data.length - 1].date), width - padR, height - 12);
   }
 
+  function drawMultiEquityCurves(canvas, series) {
+    const c = prepareCanvas(canvas, 420);
+    if (!c) return;
+    const { ctx, width, height } = c;
+    const rows = (series || []).filter((item) => (item.points || []).length);
+    if (!rows.length) {
+      drawEmptyCanvas(canvas, "Нет стратегий за выбранный период.");
+      return;
+    }
+    const visible = rows.filter((item) => isCurveVisible(item.key));
+    if (!visible.length) {
+      drawEmptyCanvas(canvas, "Все линии скрыты.");
+      return;
+    }
+
+    const padL = 66;
+    const padR = 18;
+    const padT = 22;
+    const padB = 38;
+    const innerW = Math.max(1, width - padL - padR);
+    const innerH = Math.max(1, height - padT - padB);
+    const longest = Math.max(1, ...visible.map((item) => item.points.length));
+
+    let min = 0;
+    let max = 0;
+    visible.forEach((item) => {
+      item.points.forEach((point) => {
+        const value = Number(point.value || 0);
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+      });
+    });
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    } else {
+      const pad = (max - min) * 0.08;
+      min -= pad;
+      max += pad;
+    }
+    const span = max - min || 1;
+    const x = (i, length) => padL + (length <= 1 ? innerW / 2 : i * innerW / (length - 1));
+    const y = (value) => padT + innerH - ((value - min) / span) * innerH;
+    const zeroY = y(0);
+
+    ctx.strokeStyle = "rgba(143,162,189,0.13)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i += 1) {
+      const gy = padT + innerH * i / 4;
+      ctx.beginPath();
+      ctx.moveTo(padL, gy);
+      ctx.lineTo(width - padR, gy);
+      ctx.stroke();
+    }
+    for (let i = 0; i <= 4; i += 1) {
+      const gx = padL + innerW * i / 4;
+      ctx.beginPath();
+      ctx.moveTo(gx, padT);
+      ctx.lineTo(gx, padT + innerH);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = "#3b465c";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(padL, zeroY);
+    ctx.lineTo(width - padR, zeroY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#7e8da5";
+    ctx.font = "11px Segoe UI, sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtMoney(max), padL - 8, y(max) + 4);
+    ctx.fillText("$0.00", padL - 8, zeroY + 4);
+    ctx.fillText(fmtMoney(min), padL - 8, y(min) + 4);
+
+    visible.forEach((item) => {
+      const focused = STATE.focusedCurveKey === item.key;
+      const dimmed = STATE.focusedCurveKey && !focused;
+      const points = item.points || [];
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padL, padT, innerW, innerH);
+      ctx.clip();
+      ctx.beginPath();
+      points.forEach((point, i) => {
+        const px = x(i, points.length);
+        const py = y(Number(point.value || 0));
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.strokeStyle = item.color;
+      ctx.lineWidth = focused ? 3 : 1.7;
+      ctx.globalAlpha = dimmed ? 0.22 : 0.95;
+      ctx.stroke();
+      const last = points[points.length - 1];
+      if (focused && last) {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = item.color;
+        ctx.beginPath();
+        ctx.arc(x(points.length - 1, points.length), y(Number(last.value || 0)), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    });
+
+    const firstSeries = visible.find((item) => item.points.length >= longest) || visible[0];
+    const dates = firstSeries?.points || [];
+    ctx.fillStyle = "#7e8da5";
+    ctx.font = "11px Segoe UI, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(shortDate(dates[0]?.date), padL, height - 13);
+    if (dates.length > 2) {
+      const mid = Math.floor((dates.length - 1) / 2);
+      ctx.textAlign = "center";
+      ctx.fillText(shortDate(dates[mid]?.date), padL + innerW / 2, height - 13);
+    }
+    ctx.textAlign = "right";
+    ctx.fillText(shortDate(dates[dates.length - 1]?.date), width - padR, height - 13);
+  }
+
   function renderCharts(data) {
+    if (!data) return;
     const strategyRows = sortRows(data.strategies || [], { col: "pnl", dir: "desc" });
     const instrumentRows = sortRows(data.instruments || [], { col: "pnl", dir: "desc" });
+    const curveSeries = buildCurveSeries(data);
+    renderCurveLegend(curveSeries);
+    drawMultiEquityCurves($("pc-curves-chart"), curveSeries);
     drawHorizontalBars($("pc-strategies-chart"), strategyRows, "strategy");
     drawHorizontalBars($("pc-instruments-chart"), instrumentRows, "instrument");
     if (STATE.selectedStrategyKey) renderStrategyDetail(findStrategy(STATE.selectedStrategyKey));
@@ -651,6 +1021,24 @@
         window.location.href = buildTradesDownloadUrl();
       });
     }
+    const curvesAllOn = $("pc-curves-all-on");
+    if (curvesAllOn) {
+      curvesAllOn.addEventListener("click", () => {
+        if (!STATE.data) return;
+        buildCurveSeries(STATE.data).forEach((item) => { STATE.curveVisible[item.key] = true; });
+        saveCurveVisibility();
+        renderCharts(STATE.data);
+      });
+    }
+    const curvesAllOff = $("pc-curves-all-off");
+    if (curvesAllOff) {
+      curvesAllOff.addEventListener("click", () => {
+        if (!STATE.data) return;
+        buildCurveSeries(STATE.data).forEach((item) => { STATE.curveVisible[item.key] = false; });
+        saveCurveVisibility();
+        renderCharts(STATE.data);
+      });
+    }
 
     document.querySelectorAll("th.sortable").forEach((th) => {
       th.addEventListener("click", () => {
@@ -692,4 +1080,41 @@
     await loadAccounts();
     await loadPerformance();
   });
+
+  // Expose chart functions for reuse by ai-strategy.js.
+  // Helper resolves either a <canvas>, a container DOM element, or an element id.
+  function _resolveCanvas(target, height) {
+    if (!target) return null;
+    let el = (typeof target === "string") ? document.getElementById(target) : target;
+    if (!el) return null;
+    if (el.tagName === "CANVAS") return el;
+    let canvas = el.querySelector("canvas");
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      canvas.style.width = "100%";
+      canvas.style.height = (height || 220) + "px";
+      el.appendChild(canvas);
+    }
+    return canvas;
+  }
+
+  window.drawDailyLineChart = function (target, rows) {
+    const c = _resolveCanvas(target, 210);
+    if (c) drawDailyLineChart(c, rows || []);
+  };
+  window.drawMultiEquityCurves = function (target, series) {
+    const c = _resolveCanvas(target, 240);
+    if (c) drawMultiEquityCurves(c, series || []);
+  };
+  window.drawHorizontalBars = function (target, rows, labelKey) {
+    const c = _resolveCanvas(target, 220);
+    if (c) drawHorizontalBars(c, rows || [], labelKey || "label");
+  };
+  window.renderLastTrades = function (target, trades) {
+    if (!target) return;
+    if (typeof target === "string") return renderLastTrades(target, trades || []);
+    // target is a DOM element — assign id if missing and delegate
+    if (!target.id) target.id = "tmp-trades-" + Math.random().toString(36).slice(2);
+    renderLastTrades(target.id, trades || []);
+  };
 })();

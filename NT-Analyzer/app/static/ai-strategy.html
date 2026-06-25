@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
+<title>ИИ-стратегии — NT-Analyzer</title>
+<link rel="stylesheet" href="style.css?v=20260604-ai-lab4">
+<link rel="stylesheet" href="ai-strategy.css?v=20260617-loops1">
+<script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
+<script src="performance.js?v=20260604-ai-lab4" defer></script>
+<script src="ai-strategy.js?v=20260617-loops1" defer></script>
+</head>
+<body class="ai-lab-page-body">
+<header>
+  <h1>NT-Analyzer <span class="muted">— ИИ-стратегии</span> <span class="ai-badge">AI Lab</span></h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
+    <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
+    <a href="/ui/ai-strategy.html" class="top-nav-link active">ИИ-стратегии</a>
+  </nav>
+  <div class="status-strip">
+    <span class="status-chip ai-status-chip" id="ai-lm-chip" title="LM Studio">LM Studio: ...</span>
+    <span class="status-chip ai-status-chip" id="ai-totals-chip">Эксперименты: ...</span>
+    <span class="status-chip ai-status-chip" id="ai-research-chip">User research: ...</span>
+  </div>
+  <div class="header-actions">
+    <button type="button" id="ai-refresh-btn" class="hdr-btn">Обновить</button>
+    <button type="button" id="ai-run-btn" class="hdr-btn" title="Запустить один research-цикл AI Strategy Lab">Запустить цикл</button>
+    <button type="button" id="ai-cancel-btn" class="hdr-btn ai-cancel-btn" title="Остановить текущий цикл" hidden>Остановить</button>
+    <button type="button" id="ai-scan-btn" class="hdr-btn" title="Пересканировать user_research">Сканировать research</button>
+  </div>
+</header>
+
+<main class="ai-lab-page">
+  <div id="ai-busy-banner" class="ai-busy-banner" hidden></div>
+  <div id="ai-compile-banner" class="ai-compile-banner" hidden></div>
+
+  <section class="ai-hero" aria-labelledby="ai-hero-title">
+    <div class="ai-hero-copy">
+      <div class="ai-hero-kicker">AI Strategy Lab</div>
+      <h2 id="ai-hero-title">Автономный исследовательский контур</h2>
+      <p>
+        Эта страница — только AI. Сюда не попадают production-стратегии и нет live/runtime control.
+        Все backtests — только historical, intraday only, no overnight, с adjusted metrics
+        (commission ≥ 1.90, slippage ≥ 1, fill = High).
+      </p>
+      <p class="muted">
+        Sandbox compile path:
+        <code>~/Documents/NinjaTrader 8/bin/Custom/Strategies/NT-Analyzer_AI Labstrategies</code>
+      </p>
+    </div>
+    <div class="ai-hero-stats" id="ai-hero-stats">
+      <div class="ai-stat-card"><span>Эксперименты</span><strong id="ai-stat-experiments">—</strong></div>
+      <div class="ai-stat-card"><span>Запущенные jobs</span><strong id="ai-stat-running">—</strong></div>
+      <div class="ai-stat-card"><span>Кандидаты</span><strong id="ai-stat-candidates">—</strong></div>
+      <div class="ai-stat-card"><span>Champions</span><strong id="ai-stat-champions">—</strong></div>
+      <div class="ai-stat-card"><span>Compile fail</span><strong id="ai-stat-compile-fail">—</strong></div>
+      <div class="ai-stat-card"><span>Отклонены</span><strong id="ai-stat-rejects">—</strong></div>
+      <div class="ai-stat-card"><span>Portfolio</span><strong id="ai-stat-portfolio">—</strong></div>
+    </div>
+  </section>
+
+  <nav class="ai-tabs" aria-label="Секции AI Lab">
+    <button type="button" class="ai-tab active" data-tab="experiments">Эксперименты</button>
+    <button type="button" class="ai-tab" data-tab="portfolio">Портфолио</button>
+    <button type="button" class="ai-tab" data-tab="error-memory">Память ошибок</button>
+    <button type="button" class="ai-tab" data-tab="lm-studio">LM Studio</button>
+  </nav>
+
+  <section class="ai-run-panel" aria-labelledby="ai-run-title">
+    <h3 id="ai-run-title">Запуск цикла</h3>
+    <p class="muted">
+      Скажи цель и реши <strong>сколько разных стратегий</strong> создать и
+      <strong>сколько итераций доработки</strong> провести внутри каждой.
+    </p>
+    <p class="ai-lm-gate-banner" id="ai-lm-gate-banner" hidden role="status"></p>
+    <form id="ai-run-form" class="ai-run-form" autocomplete="off">
+      <label>Цель (свободно)
+        <input type="text" id="ai-run-goal" placeholder="Сделай лучшую стратегию">
+      </label>
+      <label>Instrument root
+        <select id="ai-run-root">
+          <option value="">авто</option>
+          <option value="MNQ">MNQ</option>
+          <option value="MGC">MGC</option>
+          <option value="MES">MES</option>
+          <option value="MCL">MCL</option>
+        </select>
+      </label>
+      <label>Капитал (USD)
+        <select id="ai-run-capital">
+          <option value="">авто</option>
+          <option value="2000">2 000</option>
+          <option value="3000">3 000</option>
+          <option value="5000" selected>5 000</option>
+          <option value="10000">10 000</option>
+        </select>
+      </label>
+      <label title="Сколько разных стратегий создать за этот запуск (внешний цикл)">
+        Стратегий за запуск
+        <select id="ai-strategy-count">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="5">5</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+      <label title="Сколько раз дорабатывать каждую стратегию до reject/candidate/stop (внутренний цикл)">
+        Итераций на стратегию
+        <select id="ai-iterations-per-strategy">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="unlimited">Без лимита (до остановки)</option>
+        </select>
+      </label>
+      <label title="Жёсткий потолок времени на весь запуск">
+        Макс. время
+        <select id="ai-max-runtime-min">
+          <option value="30">30 мин</option>
+          <option value="60" selected>1 ч</option>
+          <option value="360">6 ч</option>
+          <option value="720">12 ч</option>
+          <option value="1440">24 ч</option>
+          <option value="0">Без лимита</option>
+        </select>
+      </label>
+      <label class="ai-checkbox" title="Остановить весь run при первом кандидате">
+        <input type="checkbox" id="ai-stop-on-first-candidate"> Стоп на первом кандидате
+      </label>
+      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden>
+        <input type="checkbox" id="ai-skip-compile"> skip_compile
+      </label>
+      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden>
+        <input type="checkbox" id="ai-skip-backtest"> skip_backtest
+      </label>
+      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden title="Разрешить fallback_template когда LM Studio не отвечает (только для отладки)">
+        <input type="checkbox" id="ai-allow-template-fallback"> allow_template_fallback
+      </label>
+      <button type="submit" class="hdr-btn ai-submit" id="ai-run-submit">Запустить</button>
+    </form>
+    <div class="ai-run-result" id="ai-run-result" hidden></div>
+    <div class="ai-run-progress muted" id="ai-run-progress" hidden></div>
+  </section>
+
+  <section class="ai-process-panel" aria-labelledby="ai-process-title">
+    <div class="ai-process-head">
+      <h3 id="ai-process-title">Ход работы AI</h3>
+      <span class="muted">Действия, файлы, статусы, prompt/response preview. Внутренние рассуждения модели скрыты.</span>
+      <span id="ai-compile-source-status" class="ai-compile-source-status muted" title="Источник compile-ошибок">…</span>
+    </div>
+
+    <div id="ai-model-coord" class="ai-model-coord" hidden></div>
+    <div id="ai-heartbeat-pill" class="ai-heartbeat-pill" hidden></div>
+
+    <div id="ai-process-log" class="ai-process-log"><div class="ai-empty">Запустите цикл или выберите эксперимент, чтобы увидеть живой лог.</div></div>
+
+    <div id="ai-operator-notes" class="ai-operator-notes" hidden>
+      <h4>Заметка для AI (живая инструкция)</h4>
+      <form id="ai-note-form" class="ai-note-form">
+        <textarea id="ai-note-text" rows="2" placeholder="Например: увеличь StopLossTicks, используй MAX(High,30) вместо 20…"></textarea>
+        <button type="submit" class="hdr-btn">Отправить</button>
+      </form>
+      <div id="ai-note-list" class="ai-note-list muted">Пока нет заметок.</div>
+    </div>
+
+    <div id="ai-paste-errors" class="ai-paste-errors" hidden>
+      <h4>Вставить compile-ошибки вручную</h4>
+      <p class="muted">Если bridge не подобрал текст компиляции (нет CompileErrors.txt и нет CS-строк в trace), вставьте сюда вывод NinjaScript Editor.</p>
+      <form id="ai-paste-form" class="ai-paste-form">
+        <input type="text" id="ai-paste-class" placeholder="Class name (NTAAiSandbox…)">
+        <textarea id="ai-paste-text" rows="4" placeholder="…CS0103: имя 'foo' не определено…"></textarea>
+        <button type="submit" class="hdr-btn">Добавить</button>
+      </form>
+    </div>
+
+    <div id="ai-backtest-visuals" class="ai-backtest-visuals" hidden></div>
+  </section>
+
+  <section class="ai-grid">
+    <div class="ai-grid-left">
+      <h3>AI Experiment History Matrix</h3>
+      <div class="ai-matrix-wrap" id="ai-matrix-wrap">
+        <div class="ai-empty">Загрузка матрицы...</div>
+      </div>
+
+      <h3 class="ai-section-title">AI Portfolio / Selected Strategies</h3>
+      <div class="ai-table-wrap ai-portfolio-wrap" id="ai-portfolio-wrap">
+        <div class="ai-empty">Загрузка selected portfolio...</div>
+      </div>
+
+      <h3 class="ai-section-title">AI Experiment History Table</h3>
+      <div class="ai-filter-bar" id="ai-history-filters" aria-label="AI experiment history filters"></div>
+      <div class="ai-table-wrap" id="ai-performance-wrap">
+        <div class="ai-empty">Загрузка experiment history...</div>
+      </div>
+
+      <h3 class="ai-section-title">AI Research Calendar</h3>
+      <div class="ai-calendar-wrap" id="ai-calendar-wrap">
+        <div class="ai-empty">Пока пусто.</div>
+      </div>
+    </div>
+
+    <aside class="ai-grid-right">
+      <h3>Детали эксперимента</h3>
+      <div id="ai-detail" class="ai-detail-empty">Выберите AI-стратегию в матрице или performance-таблице.</div>
+    </aside>
+  </section>
+
+  <section id="ai-error-memory-panel" class="ai-error-memory-panel" hidden aria-labelledby="ai-error-memory-title">
+    <div class="ai-error-memory-head">
+      <h3 id="ai-error-memory-title">Память ошибок</h3>
+      <span class="muted">Шаблоны ошибок, уроки и глобальные правила пользователя — всё, что AI читает перед каждым новым кодом.</span>
+      <button type="button" class="hdr-btn" id="ai-error-memory-refresh">Обновить</button>
+      <button type="button" class="hdr-btn" id="ai-stale-sweep-btn" title="Пометить нетерминальные эксперименты без heartbeat > 6 ч как cancelled">Очистить зависшие</button>
+    </div>
+
+    <div class="ai-error-memory-grid">
+      <div class="ai-error-memory-block">
+        <h4>Повторяющиеся паттерны (последние 30)</h4>
+        <div id="ai-error-patterns-wrap" class="ai-error-list muted">Загрузка…</div>
+      </div>
+      <div class="ai-error-memory-block">
+        <h4>Уроки (lessons, последние 20)</h4>
+        <div id="ai-lessons-wrap" class="ai-error-list muted">Загрузка…</div>
+      </div>
+      <div class="ai-error-memory-block">
+        <h4>Глобальные правила оператора</h4>
+        <div id="ai-global-notes-wrap" class="ai-error-list muted">Загрузка…</div>
+        <form id="ai-global-note-form" class="ai-note-form">
+          <textarea id="ai-global-note-text" rows="2" placeholder="Например: никогда не используй family SessionEdgeBreakout без VWAP фильтра"></textarea>
+          <button type="submit" class="hdr-btn">Добавить глобальное правило</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section id="ai-lm-studio-panel" class="ai-lm-studio-panel" hidden aria-labelledby="ai-lm-studio-title">
+    <h3 id="ai-lm-studio-title">LM Studio</h3>
+    <div id="ai-lm-studio-wrap" class="muted">Загрузка статуса LM Studio…</div>
+  </section>
+</main>
+</body>
+</html>

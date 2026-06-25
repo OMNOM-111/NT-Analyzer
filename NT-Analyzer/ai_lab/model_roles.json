@@ -1,0 +1,15 @@
+{
+  "idea_generator": "qwen3-coder-30b-a3b-instruct",
+  "strategy_researcher": "qwen3-coder-30b-a3b-instruct",
+  "strategy_spec_writer": "qwen3-coder-30b-a3b-instruct",
+  "code_writer": "qwen3-coder-30b-a3b-instruct",
+  "code_reviewer": "openai/gpt-oss-20b",
+  "compile_error_fixer": "openai/gpt-oss-20b",
+  "backtest_analyst": "qwen3-coder-30b-a3b-instruct",
+  "mutation_planner": "qwen3-coder-30b-a3b-instruct",
+  "overfit_detector": "openai/gpt-oss-20b",
+  "safety_judge": "openai/gpt-oss-20b",
+  "final_judge": "qwen3-coder-30b-a3b-instruct",
+  "fast_assistant": "openai/gpt-oss-20b",
+  "embedding_model": "text-embedding-nomic-embed-text-v1.5"
+}

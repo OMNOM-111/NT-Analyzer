@@ -23,6 +23,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 _lastEntryPrice = averageFillPrice;
                 _lastEntryQty   = filled > 0 ? filled : _pendingEntryQty;
                 _lastStopTicks  = _pendingStopTicks;
+                _lastProtectiveStopPrice = _pendingEntryProtStopPx;
                 _lastEntryBar   = CurrentBar;
                 _activeEntrySignal = order.Name;
                 ClearPendingEntryState();
@@ -54,6 +55,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             _lastStopTicks  = 0;
             _lastEntryPrice = 0;
             _lastEntryQty   = 0;
+            _lastProtectiveStopPrice = 0;
             _lastEntryBar   = -1;
             _activeEntrySignal = null;
         }

@@ -274,7 +274,7 @@ def classify(row: Dict[str, Any], oos_pf_by_key: Dict[str, Optional[float]]) -> 
         (oos_pf or 0.0) >= 1.25,
         row["win_rate"] >= 52.0,
         row["avg_trade_after_commission"] >= 1.50,
-        abs(row["max_drawdown"]) <= 300.0,
+        RL.max_drawdown_within_budget(row["max_drawdown"]),
         row["max_consecutive_losses"] <= 5,
         row["daily_stop_hit_pct"] <= 5.0,
     ]
@@ -297,7 +297,7 @@ def confidence(row: Dict[str, Any], oos_pf: Optional[float]) -> int:
         score += 15
     if row["avg_trade_after_commission"] >= 1.50:
         score += 10
-    if abs(row["max_drawdown"]) <= 300.0:
+    if RL.max_drawdown_within_budget(row["max_drawdown"]):
         score += 10
     if row["max_consecutive_losses"] <= 5:
         score += 5
