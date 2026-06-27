@@ -532,14 +532,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 : MaxContractsByCapital;
             int byUser   = UserMaxContracts > 0 ? UserMaxContracts : MaxContractsByCapital;
             int qty      = Math.Min(Math.Min(byRisk, byMargin), Math.Min(byUser, MaxContractsByCapital));
-            if (qty < 1
-                && byMargin >= 1
-                && byUser   >= 1
-                && MaxContractsByCapital >= 1
-                && (MaxDailyLossUsd <= 0.0 || contractRisk <= MaxDailyLossUsd))
-            {
-                qty = 1;
-            }
             return Math.Max(0, qty);
         }
 

@@ -306,6 +306,12 @@ def validate_source(text: str, expected_class_name: str = "") -> ValidationRepor
             "and compare CumProfit minus that baseline"
         )
 
+    stripped = _strip_comments(text)
+    entry_calls = list(re.finditer(
+        r"\bEnter(?:Long|Short)(?:Limit|StopMarket|StopLimit)?\s*\((.*?)\)\s*;",
+        stripped,
+        re.I | re.S,
+    ))
     first_entry = min(
         [pos for pos in (
             text.find("EnterLong("),
@@ -322,6 +328,28 @@ def validate_source(text: str, expected_class_name: str = "") -> ValidationRepor
                 "deterministic risk shell requires SetStopLoss and "
                 "SetProfitTarget to be configured before the first entry call"
             )
+    if entry_calls and (
+        any("TelemetrySignal(" not in match.group(1) for match in entry_calls)
+        or not re.search(r"GetType\s*\(\s*\)\s*\.\s*Name", stripped)
+    ):
+        rep.ok = False
+        rep.violations.append(
+            "every entry signal must use TelemetrySignal(...), backed by "
+            "GetType().Name + '.Long/.Short'"
+        )
+
+    forced_minimum_risk_patterns = (
+        re.compile(r"byRisk\s*=\s*Math\.Max\s*\(\s*1\s*,", re.I),
+        re.compile(r"return\s+Math\.Max\s*\(\s*1\s*,[^;\r\n]*\bbyRisk\b", re.I),
+        re.compile(r"if\s*\([^)]*qty\s*==\s*0[^)]*\)\s*\{[^}]*qty\s*=\s*1\s*;", re.I | re.S),
+        re.compile(r"^\s*qty\s*=\s*1\s*;", re.I | re.M),
+    )
+    if any(pattern.search(stripped) for pattern in forced_minimum_risk_patterns):
+        rep.ok = False
+        rep.violations.append(
+            "position sizing must return qty=0 when one contract exceeds the "
+            "per-trade risk budget; never force the minimum quantity to 1"
+        )
 
     for value in re.findall(
         r"\bMaxTradesPerDay\s*=\s*(\d+)\s*;",

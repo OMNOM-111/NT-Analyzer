@@ -50,7 +50,7 @@ momentum shifts with reduced lag compared to SMA variants.
 ## Stop Loss Logic
 - ATR-based (same position sizing warning as REF-001)
 - MinStopTicks = 8, MaxStopTicks = 20
-- $2k account: floor qty to 1 when risk budget allows
+- $2k account: qty may be 1 only when one contract fits the risk budget after costs
 
 ## Parameters
 | Parameter | Default | Range |

@@ -23,6 +23,7 @@ SUITES = [
     "test_scc",
     "test_trading",
     "test_server_errors",
+    "test_strategy_safety",
 ]
 
 

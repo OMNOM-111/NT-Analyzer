@@ -296,6 +296,28 @@ def t_generator_fallback_template_validates() -> None:
     assert "public int MaxTradesPerDay" in src
     assert "public double RoundTurnCommission" in src
     assert "public int SlippageTicks" in src
+    assert 'TelemetrySignal("Long")' in src
+    assert 'TelemetrySignal("Short")' in src
+    assert 'GetType().Name + "." + side' in src
+
+
+def t_validator_blocks_anonymous_signals_and_forced_minimum_risk() -> None:
+    class_name = "NTAAiSandboxRiskIdentity"
+    src = generator.fallback_template(class_name, "AI-CELL-MNQ-098", "MNQ")
+
+    anonymous = src.replace('TelemetrySignal("Long")', '"AnonymousLong"', 1)
+    rep = validator.validate_source(anonymous, expected_class_name=class_name)
+    assert not rep.ok
+    assert any("every entry signal" in value for value in rep.violations), rep.violations
+
+    forced = src.replace(
+        "private void ForceFlat()",
+        "private int ComputeQuantity(int byRisk) { return Math.Max(1, byRisk); }\n\n"
+        "private void ForceFlat()",
+    )
+    rep = validator.validate_source(forced, expected_class_name=class_name)
+    assert not rep.ok
+    assert any("never force the minimum quantity" in value for value in rep.violations), rep.violations
 
 
 def t_validator_allows_ai_cell_identifier_suffix() -> None:
@@ -2092,6 +2114,8 @@ def main() -> int:
         ("t08 validator blocks production CELL id", t_validator_blocks_production_cell_id),
         ("t09 validator blocks known NT8 compile errors", t_validator_blocks_known_nt8_compile_errors),
         ("t10 generator fallback template validates", t_generator_fallback_template_validates),
+        ("t10a validator blocks anonymous signals and forced minimum risk",
+         t_validator_blocks_anonymous_signals_and_forced_minimum_risk),
         ("t10b validator allows AI-CELL identifier suffix",
          t_validator_allows_ai_cell_identifier_suffix),
         ("t10c static autofix prompt contains prior source and identity",

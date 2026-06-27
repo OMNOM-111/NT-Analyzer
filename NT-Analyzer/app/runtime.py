@@ -579,6 +579,33 @@ STRATEGY_CLASS_METADATA = {
         "display_name": "Session VWAP Reclaim Scalper",
         "legacy_strategy_ids": [],
     },
+    "NTACapitulationSnapbackPilot": {
+        "strategy_id": "ntacapitulationsnapbackpilot",
+        "display_name": "Capitulation Snapback Research Pilot",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMgcCapitulationSnapbackC007": {
+        "strategy_id": "mgc_capitulation_snapback_5m_c007",
+        "display_name": "Capitulation Snapback MGC 5m c007",
+        "cell_id": "CELL-007",
+        "legacy_strategy_ids": [],
+    },
+    "NTAEntropyTransitionFieldPilot": {
+        "strategy_id": "ntaentropytransitionfieldpilot",
+        "display_name": "Entropy Transition Field Research Pilot",
+        "legacy_strategy_ids": [],
+    },
+    "NTAMnqEntropyTransitionFieldC127": {
+        "strategy_id": "mnq_entropy_transition_field_5m_c127_paper_v1",
+        "display_name": "Entropy Transition Field MNQ 5m c127",
+        "cell_id": "CELL-127",
+        "legacy_strategy_ids": [],
+    },
+    "NTAGeodesicPhasePressurePilot": {
+        "strategy_id": "ntageodesicphasepressurepilot",
+        "display_name": "Geodesic Phase Pressure Research Pilot",
+        "legacy_strategy_ids": [],
+    },
     "NTAnalyzerEveryNBarLong": {
         "strategy_id": "every_n_bar_long_generic_any_v1",
         "display_name": "Every N Bar Long Generic Any v1",
@@ -595,6 +622,15 @@ _UNMAPPED_STRATEGY_MARKERS = frozenset({
     "", "short", "long", "entry", "exit", "target", "stop", "manual",
     "buy", "sell", "sellshort", "buytocover",
 })
+
+_LEGACY_SIGNAL_CLASS_MAP = {
+    "capsnapl": "NTAMgcCapitulationSnapbackC007",
+    "capsnaps": "NTAMgcCapitulationSnapbackC007",
+    "entfieldl": "NTAMnqEntropyTransitionFieldC127",
+    "entfields": "NTAMnqEntropyTransitionFieldC127",
+    "gpp_long": "NTAGeodesicPhasePressurePilot",
+    "gpp_short": "NTAGeodesicPhasePressurePilot",
+}
 
 _LEGACY_STRATEGY_ATTRIBUTIONS = (
     # Bridge builds before 1.2.2 exported old account-level fills with only
@@ -980,10 +1016,24 @@ def _placeholder_strategy_value(value: Any) -> bool:
     return str(value or "").strip().lower() in _UNMAPPED_STRATEGY_MARKERS
 
 
+def _legacy_strategy_class_from_signal_value(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for token in re.split(r"[\s\.:|/#\\]+", text):
+        cls = _LEGACY_SIGNAL_CLASS_MAP.get(token.lower())
+        if cls:
+            return cls
+    return None
+
+
 def _strategy_class_from_signal_value(value: Any) -> Optional[str]:
     text = str(value or "").strip()
     if not text:
         return None
+    legacy = _legacy_strategy_class_from_signal_value(text)
+    if legacy:
+        return legacy
     if text in STRATEGY_CLASS_METADATA:
         return text
     # NinjaScript entry signals are exported as ClassName.Long/Short. Keep the
@@ -1139,6 +1189,13 @@ def _enrich_runtime_activity_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, 
         if not isinstance(row, dict):
             continue
         out = dict(row)
+        legacy_signal_class = None
+        legacy_signal_value = ""
+        for key in ("from_entry_signal", "order_name", "signal_name", "entry_signal"):
+            legacy_signal_class = _legacy_strategy_class_from_signal_value(out.get(key))
+            if legacy_signal_class:
+                legacy_signal_value = str(out.get(key) or "").strip()
+                break
         cls = _strategy_class_from_activity_row(out)
         match = _single_matching_runtime_strategy(out, strategies, cls) if strategies else None
         if cls:
@@ -1150,6 +1207,14 @@ def _enrich_runtime_activity_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, 
             out["strategy_class"] = cls
             if name and _placeholder_strategy_value(out.get("strategy_name")):
                 out["strategy_name"] = name
+            cell_id = str(meta.get("cell_id") or "")
+            if cell_id and not str(out.get("cell_id") or "").strip():
+                out["cell_id"] = cell_id
+            if legacy_signal_class == cls:
+                if str(out.get("attribution_status") or "").strip().lower() in {"", "unresolved"}:
+                    out["attribution_status"] = "resolved_legacy_signal"
+                out["_strategy_attribution_confidence"] = "exact"
+                out["_strategy_attribution_source"] = f"legacy_signal:{legacy_signal_value}"
         elif _placeholder_strategy_value(out.get("strategy_id")) and _placeholder_strategy_value(out.get("strategy_class")):
             match = _single_matching_runtime_strategy(out, strategies, None) if strategies else None
             if match is not None:

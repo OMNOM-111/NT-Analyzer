@@ -362,7 +362,7 @@ def fallback_template(
                         && Close[0] > trendEma && trendEma > priorTrendEma)
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_VWAP_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (volumeConfirmed && High[0] > sessionVwap
                         && Close[0] < sessionVwap && Close[0] < Open[0]
@@ -370,7 +370,7 @@ def fallback_template(
                         && Close[0] < trendEma && trendEma < priorTrendEma)
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_VWAP_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
         signal_logic = (
@@ -387,12 +387,12 @@ def fallback_template(
                     if (Low[0] < priorLow && Close[0] > priorLow && Close[0] > Open[0])
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_SWEEP_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (High[0] > priorHigh && Close[0] < priorHigh && Close[0] < Open[0])
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_SWEEP_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     elif any(token in family_text for token in ("pullback", "trend", "momentum")):
@@ -403,12 +403,12 @@ def fallback_template(
                     if (fast > slow && Low[0] <= fast && Close[0] > fast && Close[0] > Open[0])
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_PULLBACK_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (fast < slow && High[0] >= fast && Close[0] < fast && Close[0] < Open[0])
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_PULLBACK_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     else:
@@ -418,12 +418,12 @@ def fallback_template(
                     if (Close[0] > hi)
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_Brk_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (Close[0] < lo)
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_Brk_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     return dedent(f'''\
@@ -541,6 +541,11 @@ def fallback_template(
                         ExitShort();
                 }}
 
+                private string TelemetrySignal(string side)
+                {{
+                    return GetType().Name + "." + side;
+                }}
+
                 #region Properties
                 [NinjaTrader.NinjaScript.NinjaScriptProperty]
                 public int Quantity {{ get; set; }}
@@ -637,6 +642,10 @@ def build_user_prompt(
         "SessionEndTimePT=123000.",
         "- Configure SetStopLoss(CalculationMode.Ticks, StopLossTicks) and "
         "SetProfitTarget(CalculationMode.Ticks, ProfitTargetTicks) before any entry.",
+        "- Every entry signal must be TelemetrySignal(\"Long\"/\"Short\"), where "
+        "TelemetrySignal returns GetType().Name + \".\" + side.",
+        "- If position sizing is dynamic, return qty=0 when one contract exceeds "
+        "the per-trade risk budget. Never force byRisk or qty up to 1.",
         "- At Bars.IsFirstBarOfSession snapshot CumProfit and reset tradesToday.",
         "- Use int nowPt = ToTime(Time[0]); block entries before start; at/after "
         "end call ForceFlat and return.",

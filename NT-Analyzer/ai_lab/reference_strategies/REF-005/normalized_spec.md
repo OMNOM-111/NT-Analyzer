@@ -52,7 +52,7 @@ stop levels that expand in volatile conditions and contract in quiet ones.
 - Key: SuperTrend stop is usually 2-3x ATR away on entry — WIDE stop
 
 **$2k account concern:** Wide stops on MNQ may push quantity to 0 via ComputeQuantity.
-Must use MaxStopTicks cap or floor qty=1.
+Use a justified MaxStopTicks cap or skip the entry; never force qty to 1.
 
 ## Parameters
 | Parameter | Default | Range |

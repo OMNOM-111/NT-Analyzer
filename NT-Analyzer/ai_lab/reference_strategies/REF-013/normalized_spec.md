@@ -53,7 +53,7 @@ but the statistical properties differ significantly from the daily system.
 ## Stop Loss Logic
 - Turtle system: 2 * ATR(20) from entry (WIDE stop)
 - For $2k MNQ: 2 * ATR can be 40-80 ticks → qty = 0 via ComputeQuantity
-- **ADAPTATION NEEDED:** MaxStopTicks = 25 cap with floor qty=1
+- **ADAPTATION NEEDED:** use a risk-feasible stop cap or skip the entry when qty=0
 - This changes the system significantly from original
 
 ## Parameters

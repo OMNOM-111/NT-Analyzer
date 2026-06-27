@@ -283,7 +283,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (qty < 1)
                 return;
 
-            string signal = isLong ? "CapSnapL" : "CapSnapS";
+            string signal = TelemetrySignal(isLong ? "Long" : "Short");
             SetStopLoss(signal, CalculationMode.Ticks, stopTicks, false);
             SetProfitTarget(signal, CalculationMode.Ticks, targetTicks);
 
@@ -306,12 +306,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return 0;
 
             double riskDollars = StartingCapital * RiskPerTradePct / 100.0;
-            int byRisk = Math.Max(1, (int)Math.Floor(riskDollars / (stopTicks * tickValue)));
+            double contractRisk = stopTicks * tickValue
+                + RoundTurnCommission
+                + SlippageTicks * tickValue;
+            if (riskDollars <= 0.0 || contractRisk <= 0.0)
+                return 0;
+
+            int byRisk = (int)Math.Floor(riskDollars / contractRisk);
             int byMargin = ActiveMarginPerContract > 0.0
-                ? Math.Max(1, (int)Math.Floor(StartingCapital / ActiveMarginPerContract))
-                : 1;
-            int cap = Math.Max(1, Math.Min(UserMaxContracts, Math.Min(MaxContractsByCapital, byMargin)));
-            return Math.Max(1, Math.Min(byRisk, cap));
+                ? (int)Math.Floor(StartingCapital / ActiveMarginPerContract)
+                : MaxContractsByCapital;
+            int cap = Math.Min(UserMaxContracts, Math.Min(MaxContractsByCapital, byMargin));
+            return Math.Max(0, Math.Min(byRisk, cap));
+        }
+
+        private string TelemetrySignal(string side)
+        {
+            return GetType().Name + "." + side;
         }
 
         private void ManageOpenPosition()

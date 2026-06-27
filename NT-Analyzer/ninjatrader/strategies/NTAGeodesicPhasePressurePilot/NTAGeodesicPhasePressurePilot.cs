@@ -249,7 +249,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (forecast.Direction > 0)
             {
-                string signal = "GPP_Long";
+                string signal = TelemetrySignal("Long");
                 SetStopLoss(signal, CalculationMode.Price, entryPrice - stopTicks * TickSize, false);
                 SetProfitTarget(signal, CalculationMode.Price, entryPrice + targetTicks * TickSize);
                 TrackEntry(signal, entryPrice, stopTicks);
@@ -257,7 +257,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else
             {
-                string signal = "GPP_Short";
+                string signal = TelemetrySignal("Short");
                 SetStopLoss(signal, CalculationMode.Price, entryPrice + stopTicks * TickSize, false);
                 SetProfitTarget(signal, CalculationMode.Price, entryPrice - targetTicks * TickSize);
                 TrackEntry(signal, entryPrice, stopTicks);
@@ -438,12 +438,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return 0;
 
             double riskDollars = StartingCapital * RiskPerTradePct / 100.0;
-            int byRisk = Math.Max(1, (int)Math.Floor(riskDollars / (stopTicks * tickValue)));
+            double contractRisk = stopTicks * tickValue
+                + RoundTurnCommission
+                + SlippageTicks * tickValue;
+            if (riskDollars <= 0.0 || contractRisk <= 0.0)
+                return 0;
+
+            int byRisk = (int)Math.Floor(riskDollars / contractRisk);
             int byMargin = ActiveMarginPerContract > 0.0
-                ? Math.Max(1, (int)Math.Floor(StartingCapital / ActiveMarginPerContract))
-                : 1;
-            int cap = Math.Max(1, Math.Min(UserMaxContracts, Math.Min(MaxContractsByCapital, byMargin)));
-            return Math.Max(1, Math.Min(byRisk, cap));
+                ? (int)Math.Floor(StartingCapital / ActiveMarginPerContract)
+                : MaxContractsByCapital;
+            int cap = Math.Min(UserMaxContracts, Math.Min(MaxContractsByCapital, byMargin));
+            return Math.Max(0, Math.Min(byRisk, cap));
+        }
+
+        private string TelemetrySignal(string side)
+        {
+            return GetType().Name + "." + side;
         }
 
         private void ManageOpenPosition()

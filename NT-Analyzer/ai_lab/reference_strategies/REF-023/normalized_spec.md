@@ -55,7 +55,8 @@ while the stack is aligned, catching continuation moves in high-probability tren
 - Wide stop compensated by R:R target (ATR * 2.5)
 
 **$2k Account concern:** EMA50 stop can be 20-40 ticks → position sizing risk.
-Floor qty=1 with MaxDailyLossUsd cap required.
+Skip the entry whenever one contract exceeds the per-trade risk budget; never
+substitute the MaxDailyLossUsd session cap for per-trade sizing.
 
 ## Parameters
 | Parameter | Default | Range |

@@ -544,20 +544,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             int byUser = UserMaxContracts > 0 ? UserMaxContracts : MaxContractsByCapital;
             int qty = Math.Min(Math.Min(byRisk, byMargin), Math.Min(byUser, MaxContractsByCapital));
 
-            // Floor to a single permitted contract when the fractional risk budget
-            // rounds below one but the account can margin one contract and the
-            // trade's absolute dollar risk stays within the hard daily-loss cap.
-            // Without this, a small $2000 account with ATR-sized (16-40 tick) stops
-            // would round qty to 0 and never trade, even though one micro is allowed.
-            if (qty < 1
-                && byMargin >= 1
-                && byUser >= 1
-                && MaxContractsByCapital >= 1
-                && (MaxDailyLossUsd <= 0.0 || contractRisk <= MaxDailyLossUsd))
-            {
-                qty = 1;
-            }
-
             return Math.Max(0, qty);
         }
 

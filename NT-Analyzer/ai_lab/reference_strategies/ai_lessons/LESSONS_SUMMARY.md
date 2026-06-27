@@ -29,7 +29,7 @@ Math:
 
 ## 2. The Position Sizing Trap
 
-**RULE:** Always verify ComputeQuantity produces qty >= 1 before trusting backtest results.
+**RULE:** Always verify whether one contract fits the per-trade risk budget before trusting backtest results.
 
 The silent qty=0 bug:
 - With StartingCapital=$2000, RiskPerTradePct=0.5-0.75%: riskBudget = $10-15
@@ -37,11 +37,15 @@ The silent qty=0 bug:
 - byRisk = floor($12 / $12) = 1 → barely OK
 - But ATR=30 ticks: contractRisk=$17 → byRisk=0 → silent no-trade
 
-**Fix (required in all NT8 strategies for $2k account):**
+**Required behavior in all NT8 strategies for a $2k account:**
 ```csharp
-if (byMargin >= 1 && byUser >= 1 && contractRisk <= MaxDailyLossUsd)
-    qty = Math.Max(1, (int)byRisk);
+int byRisk = (int)Math.Floor(riskBudget / contractRisk);
+if (byRisk < 1)
+    return 0; // setup is too large for this account; skip the entry
 ```
+
+Never force `qty` to 1 when `byRisk` is 0. `MaxDailyLossUsd` is a session cap,
+not permission to violate the risk budget on one trade.
 
 **Diagnostic:** Run ONE wide-open job (window 0000-2359, all filters off).
 If trade_count = 0 → check qty computation first.

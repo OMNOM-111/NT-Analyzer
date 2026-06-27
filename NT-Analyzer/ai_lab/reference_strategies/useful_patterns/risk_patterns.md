@@ -42,20 +42,14 @@ private int ComputeQuantity(double stopTicks)
     // User cap
     int byUser = UserMaxContracts;
 
-    // CRITICAL FIX: floor to 1 when risk budget rounds to 0
-    // Without this, wide ATR stops silently produce 0 contracts
     int qty = Math.Min(byUser, Math.Min(byRisk, byMargin));
-
-    // Floor fix: use 1 if all capacity checks pass but risk rounds down
-    if (qty == 0 && byMargin >= 1 && byUser >= 1
-        && contractRisk <= MaxDailyLossUsd)
-    {
-        qty = 1; // minimum 1 contract with MaxDailyLossUsd as hard cap
-    }
-
-    return qty;
+    return Math.Max(0, qty);
 }
 ```
+
+If `byRisk == 0`, the setup is not tradable for this account and stop width.
+Skip the entry. Never force one contract and never use `MaxDailyLossUsd` as a
+replacement for the per-trade risk budget.
 
 ---
 
@@ -183,4 +177,4 @@ If value is outside Range, NT8 silently aborts the backtest (trade_count=0, fast
 
 ---
 
-*Last updated: 2026-06-06*
+*Last updated: 2026-06-26*

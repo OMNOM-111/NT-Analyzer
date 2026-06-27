@@ -55,6 +55,8 @@ HARD SAFETY RULES (no exceptions):
 - NEVER use TimeZones.PacificStandardTime. Use TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time").
 - Do not assign Time[0] to a variable named/treated as UTC and pass it to ConvertTimeFromUtc. NinjaTrader bar time follows the platform/chart timezone; convert with TimeZoneInfo.ConvertTime(...) or use ToTime(Time[0]) when the platform timezone is Pacific.
 - NEVER override OnExecutionUpdate in AI Lab. The deterministic risk shell configures SetStopLoss/SetProfitTarget before EnterLong/EnterShort.
+- Every EnterLong/EnterShort signal MUST identify the concrete runtime class. Use `TelemetrySignal("Long")` / `TelemetrySignal("Short")`, where the helper returns `GetType().Name + "." + side`.
+- If position sizing is dynamic, ComputeQuantity MUST return 0 when one contract exceeds the per-trade risk budget after stop, commission, and slippage. NEVER force byRisk or qty from 0 to 1; MaxDailyLoss is not a substitute for per-trade risk.
 
 OUTPUT FORMAT:
 Return ONLY raw C# source between ```csharp and ``` fences. No prose around it.

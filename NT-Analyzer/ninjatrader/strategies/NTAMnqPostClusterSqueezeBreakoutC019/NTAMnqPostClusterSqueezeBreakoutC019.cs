@@ -517,17 +517,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             int byUser = UserMaxContracts > 0 ? UserMaxContracts : MaxContractsByCapital;
             int qty = Math.Min(Math.Min(byRisk, byMargin), Math.Min(byUser, MaxContractsByCapital));
 
-            // Floor to one contract when fractional budget rounds below one but
-            // margin & user caps allow one and the absolute dollar risk stays
-            // within the daily-loss cap. See repo memory note for derivation.
-            if (qty < 1
-                && byMargin >= 1
-                && byUser >= 1
-                && MaxContractsByCapital >= 1
-                && (MaxDailyLossUsd <= 0.0 || contractRisk <= MaxDailyLossUsd))
-            {
-                qty = 1;
-            }
             return Math.Max(0, qty);
         }
 
