@@ -7,10 +7,13 @@ experiments,...}. Pure read functions; no side effects.
 from __future__ import annotations
 
 from collections import defaultdict
+import json
+import math
+import statistics
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from . import lm_studio, registry
+from . import lm_studio, registry, paths
 from . import errors as ai_errors
 from . import lessons as ai_lessons
 from . import user_research
@@ -273,6 +276,90 @@ def performance_board() -> Dict[str, Any]:
         "generated_at_utc": _now(),
         "view": "experiment_history",
         "rows": rows,
+    }
+
+
+def model_performance(days: int = 30) -> Dict[str, Any]:
+    """Aggregate auditable LM round trips by model and role."""
+    paths.ensure_dirs()
+    files = sorted(paths.PROMPTS_LOG_DIR.glob("*.jsonl"))[-max(1, min(int(days), 365)):]
+    records: List[Dict[str, Any]] = []
+    for path in files:
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    records.append(row)
+        except OSError:
+            continue
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    role_groups: Dict[str, Dict[str, Any]] = {}
+    experiment_index = {str(row.get("experiment_id")): row for row in registry.list_experiments() if row.get("experiment_id")}
+
+    def add(target: Dict[str, Dict[str, Any]], key: str, row: Dict[str, Any]) -> None:
+        item = target.setdefault(key or "unknown", {
+            "key": key or "unknown", "requests": 0, "successes": 0, "errors": 0,
+            "latencies": [], "prompt_tokens": 0, "completion_tokens": 0,
+            "total_tokens": 0, "response_chars": 0, "experiments": set(),
+        })
+        item["requests"] += 1
+        success = row.get("success") if "success" in row else not bool(row.get("error"))
+        item["successes" if success else "errors"] += 1
+        try:
+            item["latencies"].append(float(row.get("elapsed_sec") or 0))
+        except (TypeError, ValueError):
+            pass
+        usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+        for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            try:
+                item[name] += int(usage.get(name) or 0)
+            except (TypeError, ValueError):
+                pass
+        item["response_chars"] += int(row.get("response_chars") or len(str(row.get("response_preview") or "")))
+        if row.get("experiment_id"):
+            item["experiments"].add(str(row["experiment_id"]))
+
+    for row in records:
+        add(groups, str(row.get("model") or "unknown"), row)
+        add(role_groups, str(row.get("role") or "unknown"), row)
+
+    def finish(source: Dict[str, Dict[str, Any]], label: str) -> List[Dict[str, Any]]:
+        result = []
+        for item in source.values():
+            latencies = sorted(item.pop("latencies"))
+            experiments = item.pop("experiments")
+            requests = item["requests"]
+            item[label] = item.pop("key")
+            item["success_rate_pct"] = round(item["successes"] / requests * 100, 1) if requests else None
+            item["avg_latency_sec"] = round(statistics.mean(latencies), 2) if latencies else None
+            p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+            item["p95_latency_sec"] = round(latencies[p95_index], 2) if latencies else None
+            item["experiment_count"] = len(experiments)
+            linked = [experiment_index[eid] for eid in experiments if eid in experiment_index]
+            terminal = [row for row in linked if str(row.get("status") or "") not in {"draft", "generating", "awaiting_compile", "backtesting", "analyzing"}]
+            accepted = [row for row in terminal if str(row.get("status") or "") in {"sandbox_candidate", "champion_candidate", "human_review_candidate", "portfolio_contributor"}]
+            scores = [float((row.get("arbitration") or {}).get("score")) for row in linked if (row.get("arbitration") or {}).get("score") is not None]
+            item["terminal_experiments"] = len(terminal)
+            item["accepted_experiments"] = len(accepted)
+            item["result_rate_pct"] = round(len(accepted) / len(terminal) * 100, 1) if terminal else None
+            item["avg_arbitration_score"] = round(statistics.mean(scores), 1) if scores else None
+            item["tokens_reported"] = item["total_tokens"] > 0
+            result.append(item)
+        result.sort(key=lambda row: (-row["requests"], str(row[label])))
+        return result
+
+    return {
+        "generated_at_utc": _now(),
+        "window_days": max(1, min(int(days), 365)),
+        "log_files": len(files),
+        "requests": len(records),
+        "models": finish(groups, "model"),
+        "roles": finish(role_groups, "role"),
+        "latest": records[-20:][::-1],
     }
 
 
@@ -555,4 +642,134 @@ def backtest_payload(experiment_id: str) -> Dict[str, Any]:
         "trades": trades[-200:],
         "job_url": f"/ui/index.html?job={job_id}",
         "origin": "AI",
+    }
+
+
+def lifecycle_cards() -> Dict[str, Any]:
+    """AI Lab strategies projected onto the 4-stage portfolio lifecycle board.
+
+    Aggregates experiments to one card per ``ai_cell_id`` (latest attempt) and
+    maps the AI status onto trial / approved_demo / approved_live /
+    failed_archived so AI-built strategies appear next to production ones under
+    the "AI / LM Studio" origin filter.
+    """
+    from .. import strategy_lifecycle as sl
+
+    experiments = registry.list_experiments()
+    by_cell: Dict[str, Dict[str, Any]] = {}
+    counts: Dict[str, int] = defaultdict(int)
+    for e in experiments:
+        cid = str(e.get("ai_cell_id") or e.get("experiment_id") or "")
+        if not cid:
+            continue
+        counts[cid] += 1
+        cur = by_cell.get(cid)
+        stamp = e.get("updated_at_utc") or e.get("created_at_utc") or ""
+        cur_stamp = (cur.get("updated_at_utc") or cur.get("created_at_utc") or "") if cur else ""
+        if cur is None or stamp >= cur_stamp:
+            by_cell[cid] = e
+
+    cards: List[Dict[str, Any]] = []
+    for cid, e in by_cell.items():
+        status = e.get("status")
+        lifecycle = sl.lifecycle_for_ai_status(status)
+        verdict = e.get("verdict") or {}
+        reasons = verdict.get("reasons") or []
+        reason = "; ".join(str(r) for r in reasons) or verdict.get("rejection_code") \
+            or sl.ai_status_label_ru(status)
+        card: Dict[str, Any] = {
+            "profile_id": e.get("experiment_id"),
+            "experiment_id": e.get("experiment_id"),
+            "cell_id": cid,
+            "name": e.get("class_name") or cid,
+            "instrument": e.get("target_root") or "",
+            "timeframe": "",
+            "strategy_family": e.get("family"),
+            "origin": sl.ORIGIN_AI_LAB,
+            "origin_label": sl.ORIGIN_LABELS[sl.ORIGIN_AI_LAB],
+            "is_ai_lab": True,
+            "lifecycle": lifecycle,
+            "lifecycle_label": sl.LIFECYCLE_LABELS[lifecycle],
+            "ai_status": status,
+            "ai_status_label": sl.ai_status_label_ru(status),
+            "attempts": counts[cid],
+            "updated_at_utc": e.get("updated_at_utc") or e.get("created_at_utc"),
+        }
+        if lifecycle == sl.FAILED_ARCHIVED:
+            card["archive_reason"] = reason
+            card["failed_archive"] = {
+                "reason": reason,
+                "removal_method": "ai_quarantine",
+                "removed_from_ninjatrader": True,
+                "ai_status": status,
+            }
+        elif lifecycle == sl.TRIAL:
+            card["trial_progress"] = {
+                "state": "running",
+                "label": sl.ai_status_label_ru(status),
+                "remaining_days": None, "percent": None, "basis": "ai_pipeline",
+            }
+            card["portfolio_reserved"] = True
+        cards.append(card)
+
+    cards.sort(key=lambda c: (sl.LIFECYCLE_ORDER.index(c["lifecycle"]),
+                              str(c.get("instrument") or ""), str(c.get("name") or "")))
+    by_lifecycle: Dict[str, int] = defaultdict(int)
+    for c in cards:
+        by_lifecycle[c["lifecycle"]] += 1
+    return {
+        "generated_at_utc": _now(),
+        "count": len(cards),
+        "by_lifecycle": dict(by_lifecycle),
+        "cards": cards,
+    }
+
+
+def cell_history(ai_cell_id: str) -> Dict[str, Any]:
+    """All AI experiments ever tried for one ``ai_cell_id`` (attempt history).
+
+    Mirrors the production cell history: every variant tried for a cell, with its
+    lifecycle stage and reject reason, so the operator can see e.g. "100 tries
+    failed, the 101st passed".
+    """
+    from .. import strategy_lifecycle as sl
+
+    cid = str(ai_cell_id or "").strip().upper()
+    attempts: List[Dict[str, Any]] = []
+    for e in registry.list_experiments():
+        if str(e.get("ai_cell_id") or "").strip().upper() != cid:
+            continue
+        status = e.get("status")
+        verdict = e.get("verdict") or {}
+        reasons = verdict.get("reasons") or []
+        analysis = e.get("analysis") or {}
+        attempts.append({
+            "experiment_id": e.get("experiment_id"),
+            "ai_cell_id": e.get("ai_cell_id"),
+            "name": e.get("class_name") or e.get("experiment_id"),
+            "class_name": e.get("class_name"),
+            "instrument": e.get("target_root"),
+            "family": e.get("family"),
+            "lifecycle": sl.lifecycle_for_ai_status(status),
+            "lifecycle_label": sl.LIFECYCLE_LABELS[sl.lifecycle_for_ai_status(status)],
+            "ai_status": status,
+            "ai_status_label": sl.ai_status_label_ru(status),
+            "verdict": verdict.get("outcome"),
+            "rejection_code": verdict.get("rejection_code"),
+            "reason": "; ".join(str(r) for r in reasons) or verdict.get("rejection_code") or "",
+            "net_pnl": analysis.get("net_pnl") or analysis.get("avg_per_month"),
+            "trade_count": analysis.get("trade_count"),
+            "created_at_utc": e.get("created_at_utc"),
+            "updated_at_utc": e.get("updated_at_utc"),
+            "report_path": _report_path_for(e),
+        })
+    attempts.sort(key=lambda a: str(a.get("created_at_utc") or ""))
+    by_lifecycle: Dict[str, int] = defaultdict(int)
+    for a in attempts:
+        by_lifecycle[a["lifecycle"]] += 1
+    return {
+        "ai_cell_id": cid,
+        "count": len(attempts),
+        "by_lifecycle": dict(by_lifecycle),
+        "attempts": attempts,
     }

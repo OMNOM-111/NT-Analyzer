@@ -114,7 +114,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (State == State.SetDefaults)
             {
                 Description = @"NTAMicroMnqScalpPilot v0.4 — multi-mode high-frequency intraday scalp for MNQ. Independent from locked B1 ShortOnly Pilot.";
-                Name        = "NTAMicroMnqScalpPilot";
+                Name        = "Research Hub MNQ Scalp 1m";
                 Calculate   = Calculate.OnBarClose;
                 EntriesPerDirection                  = 1;
                 EntryHandling                        = EntryHandling.AllEntries;

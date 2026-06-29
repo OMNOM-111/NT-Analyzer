@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Документы — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+<style>
+  .docs-grid { display:grid; grid-template-columns: 280px minmax(0,1fr) 300px; gap:18px; align-items:start; }
+  @media (max-width: 1200px){ .docs-grid { grid-template-columns: 260px minmax(0,1fr); } .docs-hist { display:none; } }
+  @media (max-width: 860px){ .docs-grid { grid-template-columns: minmax(0,1fr); } }
+</style>
+</head>
+<body data-page="docs" data-title="Документы и законы" data-kicker="NT-Analyzer · Governance">
+
+  <div class="docs-grid">
+    <!-- list -->
+    <aside class="panel" style="position:sticky; top:78px;">
+      <div class="panel-b" style="padding:12px;">
+        <label class="tb-search" style="width:100%; margin:0;">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input type="search" id="doc-search" placeholder="Поиск по документам…">
+        </label>
+      </div>
+      <div class="list" id="doc-list"></div>
+    </aside>
+
+    <!-- viewer -->
+    <section class="panel">
+      <div class="panel-h">
+        <h2 id="doc-cat">—</h2><span class="sub" id="doc-meta"></span>
+        <div class="spacer"></div>
+        <button class="btn sm" id="edit-btn">Редактировать</button>
+      </div>
+      <div class="panel-b">
+        <article class="doc" id="doc-view"></article>
+        <div id="doc-edit" hidden class="col gap-lg">
+          <div class="field"><label for="edit-area">Содержимое (markdown)</label><textarea id="edit-area" style="min-height:340px; font-family:var(--mono); font-size:12.5px"></textarea></div>
+          <div class="grid cols-2">
+            <div class="field"><label for="edit-actor">Подпись (кто)</label><input id="edit-actor" value="dimon"></div>
+            <div class="field"><label for="edit-reason">Основание поправки *</label><input id="edit-reason" placeholder="например: уточнение лимита риска"></div>
+          </div>
+          <div class="flex gap-sm"><button class="btn primary" id="save-btn">Сохранить поправку</button><button class="btn ghost" id="cancel-btn">Отмена</button><span class="sub" id="edit-status"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- history -->
+    <aside class="panel docs-hist" style="position:sticky; top:78px;">
+      <div class="panel-h"><h2>Поправки и журнал</h2><span class="sub" id="hist-scope"></span></div>
+      <div class="panel-b"><div class="timeline" id="history"></div></div>
+      <div class="panel-h" style="border-top:1px solid var(--line); border-bottom:none"><h2>Действующие параметры</h2></div>
+      <div class="panel-b col gap-sm" id="runtime-defaults"></div>
+    </aside>
+  </div>
+
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/documents.js?v=20260629-final3"></script>
+</body>
+</html>

@@ -1169,9 +1169,14 @@ def t48c(tmp):
     assert profile["archived_cell_id"] == "CELL-018", profile
     assert (profile.get("operational_closure") or {}).get("final_action") == "archived_purged", profile
 
-    wrapper = ROOT / "ninjatrader" / "strategies" / "NTAMnqDailyOpenScalpC018" / "NTAMnqDailyOpenScalpC018.cs"
-    assert wrapper.exists(), wrapper
-    assert 'Name = "Scalping MNQ 1m v1 c018";' in wrapper.read_text(encoding="utf-8")
+    # New architecture: archived strategies are removed from the NinjaTrader
+    # compile path; their source is preserved as evidence under _quarantine/.
+    active_path = ROOT / "ninjatrader" / "strategies" / "NTAMnqDailyOpenScalpC018"
+    assert not active_path.exists(), "archived strategy must be removed from NinjaTrader"
+    quarantined = list((ROOT / "ninjatrader" / "strategies" / "_quarantine").glob(
+        "CELL-018_*/NTAMnqDailyOpenScalpC018/NTAMnqDailyOpenScalpC018.cs"))
+    assert quarantined, "archived wrapper evidence must be preserved in quarantine"
+    assert 'Name = "Scalping MNQ 1m v1 c018";' in quarantined[0].read_text(encoding="utf-8")
 
 
 @case("t48d: CELL-017 post-active profile is operationally closed")
@@ -1192,9 +1197,14 @@ def t48d(tmp):
     assert profile["locked_parameters"]["TradeEndTime"] == 1325, profile
     assert profile["locked_parameters"]["RewardRiskRatio"] == 6.0, profile
 
-    wrapper = ROOT / "ninjatrader" / "strategies" / "NTAMnqPostActiveScalpC017" / "NTAMnqPostActiveScalpC017.cs"
-    assert wrapper.exists(), wrapper
-    text = wrapper.read_text(encoding="utf-8")
+    # New architecture: archived strategy removed from NinjaTrader; source kept
+    # as evidence in _quarantine/.
+    active_path = ROOT / "ninjatrader" / "strategies" / "NTAMnqPostActiveScalpC017"
+    assert not active_path.exists(), "archived strategy must be removed from NinjaTrader"
+    quarantined = list((ROOT / "ninjatrader" / "strategies" / "_quarantine").glob(
+        "CELL-017_*/NTAMnqPostActiveScalpC017/NTAMnqPostActiveScalpC017.cs"))
+    assert quarantined, "archived wrapper evidence must be preserved in quarantine"
+    text = quarantined[0].read_text(encoding="utf-8")
     assert 'Name = "Scalping Post-Active MNQ 1m v1 c017";' in text
     assert "TradeStartTime = 1250;" in text and "TradeEndTime = 1325;" in text
 

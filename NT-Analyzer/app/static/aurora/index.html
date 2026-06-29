@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Обзор — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+</head>
+<body data-page="overview" data-title="Командный центр" data-kicker="NT-Analyzer · Обзор">
+
+  <!-- KPI row -->
+  <div class="grid cols-6" id="kpis"></div>
+
+  <div class="grid" style="grid-template-columns: 1.7fr 1fr;">
+    <!-- portfolio equity -->
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Накопленный P&amp;L портфеля</h2>
+        <span class="sub" id="eq-sub">все одобренные стратегии</span>
+        <div class="spacer"></div>
+        <div class="seg" id="eq-range">
+          <button data-range="month" class="active">Месяц</button><button data-range="q">3 мес</button><button data-range="h">6 мес</button><button data-range="year">Год</button>
+        </div>
+      </div>
+      <div class="panel-b">
+        <div class="chart-box" id="eq-chart-box"><canvas id="eq-chart" style="height:300px"></canvas></div>
+      </div>
+    </section>
+
+    <!-- today -->
+    <section class="panel">
+      <div class="panel-h"><h2>Сегодня</h2><span class="sub" id="today-date"></span></div>
+      <div class="panel-b col" id="today"></div>
+    </section>
+  </div>
+
+  <div class="grid" style="grid-template-columns: 1.25fr 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>Счета и движения средств</h2><span class="sub" id="account-overview-sub"></span><div class="spacer"></div><a class="btn sm ghost" href="performance.html">Финансовый центр →</a></div>
+      <div class="panel-b col">
+        <div class="grid cols-2" id="account-overview-cards"></div>
+        <div class="chart-box" id="account-balance-box"><canvas id="account-balance-chart" style="height:220px"></canvas></div>
+        <div class="finance-note" id="account-flow-note"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>Ритм результата за год</h2><span class="sub" id="rhythm-sub"></span><div class="spacer"></div><div class="seg" id="rhythm-range"><button class="active" data-rhythm="daily">Дни</button><button data-rhythm="weekly">Недели</button><button data-rhythm="monthly">Месяцы</button></div></div>
+      <div class="panel-b"><div class="chart-box" id="rhythm-box"><canvas id="rhythm-chart" style="height:300px"></canvas></div></div>
+    </section>
+  </div>
+
+  <div class="grid" style="grid-template-columns: 1fr 1fr;">
+    <!-- top strategies -->
+    <section class="panel">
+      <div class="panel-h"><h2>Топ стратегий месяца</h2><div class="spacer"></div><a class="btn sm ghost" href="strategies.html">Все стратегии →</a></div>
+      <div class="panel-b tight"><div class="list" id="top-strats"></div></div>
+    </section>
+
+    <!-- recent reports -->
+    <section class="panel">
+      <div class="panel-h"><h2>Последние отчёты</h2><div class="spacer"></div><a class="btn sm ghost" href="backtesting.html">Бэктест →</a></div>
+      <div class="panel-b tight"><div class="list" id="recent"></div></div>
+    </section>
+  </div>
+
+  <!-- system + AI -->
+  <div class="grid cols-3" id="systems"></div>
+
+<script src="assets/charts.js?v=20260629-final3"></script>
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/overview.js?v=20260629-final3"></script>
+</body>
+</html>

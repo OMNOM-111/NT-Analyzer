@@ -16,6 +16,7 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8765,
+    [string]$UiPath = '/ui/',
     [switch]$NoBrowser
 )
 
@@ -26,6 +27,7 @@ if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.P
 if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
 $projectRoot = $scriptDir
 Set-Location $projectRoot
+if (-not $UiPath.StartsWith('/')) { $UiPath = '/' + $UiPath }
 
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {
@@ -89,7 +91,7 @@ function Test-PortInUse([int]$p) {
 if (Test-PortInUse $Port) {
     Write-Host "[NT-Analyzer] backend already running on port $Port." -ForegroundColor Cyan
     if (-not $NoBrowser) {
-        $url = "http://127.0.0.1:$Port/ui/"
+        $url = "http://127.0.0.1:$Port$UiPath"
         Write-Host "[NT-Analyzer] opening browser: $url"
         Start-Process $url | Out-Null
     }
@@ -121,12 +123,13 @@ try {
                 if (-not $urlOpened -and -not $NoBrowser) {
                     $m = $uiUrlRegex.Match($line)
                     if ($m.Success) {
-                        Start-Process $m.Value | Out-Null
+                        $base = $m.Value -replace '/ui/$', ''
+                        Start-Process ($base + $UiPath) | Out-Null
                         $urlOpened = $true
                     } else {
                         $m = $baseUrlRegex.Match($line)
                         if ($m.Success) {
-                            Start-Process ($m.Value.TrimEnd('/') + '/ui/') | Out-Null
+                            Start-Process ($m.Value.TrimEnd('/') + $UiPath) | Out-Null
                             $urlOpened = $true
                         }
                     }

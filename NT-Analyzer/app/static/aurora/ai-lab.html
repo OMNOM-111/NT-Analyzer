@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>AI Lab — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+<style>
+  .ai-matrix { display:grid; grid-template-columns: repeat(auto-fill, 26px); gap:5px; }
+  .ai-cell { width:26px; height:26px; border-radius:7px; cursor:pointer; border:1px solid var(--line-2); transition:.1s; }
+  .ai-cell:hover { transform:scale(1.18); z-index:2; }
+  .ai-cell.champion { background:var(--pos); } .ai-cell.candidate { background:var(--warn); }
+  .ai-cell.running { background:var(--info); animation:pulse 1.4s infinite; } .ai-cell.rejected { background:var(--neg); opacity:.65; }
+  .ai-cell.compileFail { background:var(--tx-4); }
+</style>
+</head>
+<body data-page="ai" data-title="AI Strategy Lab" data-kicker="NT-Analyzer · Автономный контур">
+
+  <!-- hero -->
+  <section class="hero">
+    <div class="flex between" style="align-items:flex-start">
+      <div>
+        <div class="kick">AI Strategy Lab</div>
+        <h1>Автономный исследовательский контур</h1>
+        <p>Генерация стратегий локальной LLM, авто-компиляция NinjaScript, бэктест и итеративное улучшение — пока не появится «чемпион» по правилам портфеля. Память ошибок не даёт повторять прошлые провалы.</p>
+      </div>
+      <span class="badge" id="ai-run-badge" style="font-size:12px"><span class="dot"></span>—</span>
+    </div>
+  </section>
+
+  <!-- KPI -->
+  <div class="grid cols-5" id="ai-kpis"></div>
+
+  <!-- launcher + process -->
+  <div class="grid" style="grid-template-columns: 360px 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>Новый цикл</h2><div class="spacer"></div><span class="badge" id="lm-badge"><span class="dot"></span>LM Studio</span></div>
+      <div class="panel-b col gap-lg">
+        <div id="lm-panel" class="col gap-sm"></div>
+        <div class="field"><label for="ai-goal">Цель (свободно)</label><textarea id="ai-goal" placeholder="Например: скальп MNQ с просадкой < $300"></textarea></div>
+        <div class="grid cols-2">
+          <div class="field"><label for="ai-root">Инструмент</label><select id="ai-root"><option value="">авто</option><option>MNQ</option><option>MGC</option><option>MES</option><option>MCL</option></select></div>
+          <div class="field"><label for="ai-capital">Капитал</label><select id="ai-capital"><option value="5000">$5 000</option><option value="3000">$3 000</option><option value="10000">$10 000</option><option value="2000">$2 000</option></select></div>
+          <div class="field"><label for="ai-count">Стратегий / запуск</label><select id="ai-count"><option>3</option><option>1</option><option>5</option><option>10</option></select></div>
+          <div class="field"><label for="ai-iter">Итераций</label><select id="ai-iter"><option value="5">5</option><option value="3">3</option><option value="10">10</option><option value="">без лимита</option></select></div>
+        </div>
+        <button class="btn primary" id="ai-launch" style="width:100%; justify-content:center">Запустить цикл</button>
+        <div class="divider"></div>
+        <div class="field"><label for="ai-note">Заметка оператора → AI (глобальная)</label><textarea id="ai-note" placeholder="Урок/правило для будущих циклов…"></textarea></div>
+        <button class="btn" style="width:100%; justify-content:center" id="ai-note-send">Отправить заметку</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Ход работы</h2><div class="spacer"></div><span class="sub" id="ai-prog-label"></span></div>
+      <div class="panel-b col gap-lg">
+        <div class="progress"><span id="ai-prog" style="width:0%"></span></div>
+        <div class="grid cols-4" id="ai-run-meta"></div>
+        <div class="role-timeline" id="ai-role-timeline"></div>
+        <pre class="logbox" id="ai-log"></pre>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid" style="grid-template-columns: 1.35fr 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>Качество исследовательского контура</h2><span class="sub" id="ai-performance-sub"></span></div>
+      <div class="panel-b tight"><div class="tbl-wrap" style="max-height:360px"><table class="tbl">
+        <thead><tr><th>Эксперимент</th><th>Инстр.</th><th class="num">PF</th><th class="num">DD</th><th class="num">В месяц</th><th class="num">Лет теста</th><th>Допуск</th></tr></thead>
+        <tbody id="ai-performance-body"></tbody>
+      </table></div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>AI P&amp;L по окнам</h2><span class="sub" id="ai-calendar-sub"></span></div>
+      <div class="panel-b">
+        <div class="chart-box" id="ai-calendar-chart"><canvas style="height:240px"></canvas></div>
+        <div class="finance-note" id="ai-compile-source"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="panel-h"><h2>Эффективность моделей и ролей</h2><span class="sub" id="ai-model-sub">последние 30 дней</span></div>
+    <div class="panel-b col">
+      <div class="grid cols-4" id="ai-model-kpis"></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr">
+        <div class="chart-box" id="ai-model-chart"><canvas style="height:230px"></canvas></div>
+        <div class="tbl-wrap" style="max-height:300px"><table class="tbl"><thead><tr><th>Модель</th><th class="num">Запросов</th><th class="num">Успех</th><th class="num">Avg / P95</th><th class="num">Результат</th><th class="num">Токены</th></tr></thead><tbody id="ai-model-body"></tbody></table></div>
+      </div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Роль</th><th class="num">Запросов</th><th class="num">Ошибок</th><th class="num">Успех</th><th class="num">Средняя задержка</th><th class="num">Экспериментов</th></tr></thead><tbody id="ai-role-stats"></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- experiment matrix + portfolio -->
+  <div class="grid" style="grid-template-columns: 1fr 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>История экспериментов</h2><div class="spacer"></div>
+        <div class="legend">
+          <span class="legend-item"><span class="sw" style="background:var(--pos)"></span>Чемпион</span>
+          <span class="legend-item"><span class="sw" style="background:var(--warn)"></span>Кандидат</span>
+          <span class="legend-item"><span class="sw" style="background:var(--info)"></span>В работе</span>
+          <span class="legend-item"><span class="sw" style="background:var(--neg)"></span>Отклонён</span>
+        </div>
+      </div>
+      <div class="panel-b"><div class="ai-matrix" id="ai-matrix"></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Портфель кандидатов</h2><span class="sub">готовы к одобрению</span></div>
+      <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Эксперимент</th><th>Инстр.</th><th class="num">Score</th><th>Статус</th></tr></thead>
+        <tbody id="port-body"></tbody>
+      </table></div></div>
+    </section>
+  </div>
+
+  <!-- full history table -->
+  <section class="panel">
+    <div class="panel-h"><h2>Журнал экспериментов</h2><span class="sub" id="exp-count"></span></div>
+    <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl" id="exp-table">
+      <thead><tr><th>ID</th><th>Создан</th><th>Класс</th><th>Инстр.</th><th>Семейство</th><th class="num">Score</th><th>Статус</th></tr></thead>
+      <tbody id="exp-body"></tbody>
+    </table></div></div>
+  </section>
+
+  <!-- error memory + lessons -->
+  <div class="grid" style="grid-template-columns: 1fr 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>Память ошибок</h2><span class="sub" id="err-count"></span></div>
+      <div class="panel-b tight"><div class="list" id="err-list"></div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>Уроки (lessons)</h2><span class="sub" id="lesson-count"></span></div>
+      <div class="panel-b tight"><div class="list" id="lesson-list"></div></div>
+    </section>
+  </div>
+
+<script src="assets/charts.js?v=20260629-final3"></script>
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/ai-lab.js?v=20260629-final3"></script>
+</body>
+</html>

@@ -27,9 +27,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from . import governance
 from . import marginrefresh  # informational margin catalog auto-refresh
 from . import portfolio_cells
 from . import strategy_families
+from . import strategy_lifecycle
+from . import ninjatrader_ops
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -1294,10 +1297,49 @@ def update_strategy_profile(profile_id: str,
     if target is None:
         raise JobValidationError(f"profile not found: {pid}")
 
-    allowed = {"name", "status", "status_label", "notes"}
+    allowed = {"name", "status", "status_label", "notes",
+               "lifecycle", "origin", "trial_plan", "demo_plan", "failed_archive"}
     changed: Dict[str, Any] = {}
     for key, value in (updates or {}).items():
         if key not in allowed:
+            continue
+        if key == "failed_archive":
+            if not isinstance(value, dict):
+                raise JobValidationError("failed_archive must be an object")
+            current = target.get("failed_archive") if isinstance(target.get("failed_archive"), dict) else {}
+            current.update(value)
+            target["failed_archive"] = current
+            changed["failed_archive"] = current
+            continue
+        if key == "lifecycle":
+            value = str(value or "").strip().lower()
+            if value not in strategy_lifecycle.LIFECYCLE_SET:
+                raise JobValidationError(f"unsupported lifecycle: {value}")
+            target["lifecycle"] = value
+            target["lifecycle_label"] = strategy_lifecycle.LIFECYCLE_LABELS[value]
+            # Keep legacy status in sync so launch gate / coverage still work.
+            synced_status = strategy_lifecycle.status_for_lifecycle(value)
+            target["status"] = synced_status
+            target["status_label"] = _PROFILE_STATUS_LABELS.get(synced_status, synced_status)
+            changed["lifecycle"] = value
+            changed["status"] = synced_status
+            continue
+        if key == "origin":
+            value = str(value or "").strip().lower()
+            if value not in (strategy_lifecycle.ORIGIN_PRODUCTION, strategy_lifecycle.ORIGIN_AI_LAB):
+                raise JobValidationError(f"unsupported origin: {value}")
+            target["origin"] = value
+            changed["origin"] = value
+            continue
+        if key in ("trial_plan", "demo_plan"):
+            if value in (None, {}, ""):
+                target.pop(key, None)
+                changed[key] = None
+                continue
+            if not isinstance(value, dict):
+                raise JobValidationError(f"{key} must be an object")
+            target[key] = value
+            changed[key] = value
             continue
         if key == "status":
             value = str(value or "").strip()
@@ -1330,6 +1372,36 @@ def update_strategy_profile(profile_id: str,
     if not changed:
         raise JobValidationError("no supported profile fields to update")
 
+    archived_now = strategy_lifecycle.classify_lifecycle(target) == strategy_lifecycle.FAILED_ARCHIVED
+    target["lifecycle"] = strategy_lifecycle.classify_lifecycle(target)
+    target["lifecycle_label"] = strategy_lifecycle.LIFECYCLE_LABELS[target["lifecycle"]]
+    if archived_now:
+        target["matrix_hidden"] = True
+        if not str(target.get("archive_reason") or "").strip():
+            note = str((updates or {}).get("notes") or "").strip()
+            if note:
+                target["archive_reason"] = note
+        archive_entry = record_archived_strategy(
+            target,
+            reason=str(target.get("archive_reason") or ""),
+            removal_method=("ai_quarantine"
+                            if strategy_lifecycle.is_ai_lab(target)
+                            else "production_checklist"),
+        )
+        fa = target.get("failed_archive") if isinstance(target.get("failed_archive"), dict) else {}
+        fa.update({
+            "archived_at_utc": target.get("updated_at_utc") or utcnow_iso(),
+            "fingerprint": archive_entry["fingerprint"],
+            "removal_method": archive_entry["removal_method"],
+            "reason": archive_entry["reason"],
+            "removed_from_ninjatrader": bool(fa.get("removed_from_ninjatrader", False)),
+        })
+        target["failed_archive"] = fa
+        changed["archived_fingerprint"] = archive_entry["fingerprint"]
+    elif ("lifecycle" in changed or "status" in changed) and target.get("matrix_hidden"):
+        # Re-activating a profile un-hides it from the portfolio matrix.
+        target["matrix_hidden"] = False
+
     target["updated_at_utc"] = utcnow_iso()
     log = target.get("ui_decisions")
     if not isinstance(log, list):
@@ -1341,7 +1413,23 @@ def update_strategy_profile(profile_id: str,
     })
     target["ui_decisions"] = log[-20:]
     _write_json_atomic(_strategy_profiles_path(), data)
-    return {"ok": True, "profile_id": pid, "profile": _normalize_strategy_profile_for_ui(target)}
+
+    cleanup: Optional[Dict[str, Any]] = None
+    if archived_now:
+        try:
+            cleanup = remove_archived_from_ninjatrader(pid)
+        except Exception as exc:  # noqa: BLE001
+            cleanup = {"ok": False, "error": str(exc), "count": 0, "removed": 0, "results": []}
+        refreshed = _read_strategy_profiles_raw().get("profiles") or []
+        for profile in refreshed:
+            if isinstance(profile, dict) and str(profile.get("profile_id") or profile.get("id") or "") == pid:
+                target = profile
+                break
+
+    out = {"ok": True, "profile_id": pid, "profile": _normalize_strategy_profile_for_ui(target)}
+    if cleanup is not None:
+        out["ninjatrader_cleanup"] = cleanup
+    return out
 
 
 def delete_strategy_profile(profile_id: str) -> Dict[str, Any]:
@@ -1358,6 +1446,143 @@ def delete_strategy_profile(profile_id: str) -> Dict[str, Any]:
     data["updated_at_utc"] = utcnow_iso()
     _write_json_atomic(_strategy_profiles_path(), data)
     return {"ok": True, "profile_id": pid, "deleted": True}
+
+
+def _archived_strategies_path() -> Path:
+    return profiles_dir() / "archived_strategies.json"
+
+
+def read_archived_strategies() -> Dict[str, Any]:
+    """Do-not-recreate registry: ideas that already failed all trials.
+
+    Keyed by a stable :func:`strategy_lifecycle.archive_fingerprint` so the UI
+    can warn when an operator/AI tries to rebuild a previously-failed strategy.
+    """
+    path = _archived_strategies_path()
+    if not path.is_file():
+        return {"schema_version": "1.0", "entries": []}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": "1.0", "entries": []}
+    if not isinstance(data, dict):
+        return {"schema_version": "1.0", "entries": []}
+    if not isinstance(data.get("entries"), list):
+        data["entries"] = []
+    data.setdefault("schema_version", "1.0")
+    return data
+
+
+def find_archived_by_fingerprint(fingerprint: str) -> Optional[Dict[str, Any]]:
+    fp = str(fingerprint or "").strip()
+    if not fp:
+        return None
+    for entry in read_archived_strategies().get("entries", []):
+        if isinstance(entry, dict) and str(entry.get("fingerprint") or "") == fp:
+            return entry
+    return None
+
+
+def record_archived_strategy(profile: Dict[str, Any],
+                             reason: str = "",
+                             failure_codes: Optional[List[str]] = None,
+                             removal_method: str = "production_checklist") -> Dict[str, Any]:
+    """Append/refresh a do-not-recreate entry for a failed strategy idea."""
+    fingerprint = strategy_lifecycle.archive_fingerprint(profile)
+    data = read_archived_strategies()
+    entries = data.get("entries") or []
+    now = utcnow_iso()
+    entry = {
+        "fingerprint": fingerprint,
+        "profile_id": str(profile.get("profile_id") or profile.get("id") or "").strip(),
+        "name": str(profile.get("name") or "").strip(),
+        "strategy_class": str(profile.get("deploy_strategy_class")
+                              or profile.get("strategy_class")
+                              or profile.get("strategy") or "").strip(),
+        "instrument": str(profile.get("instrument") or profile.get("current_contract") or "").strip(),
+        "timeframe": str(profile.get("timeframe") or "").strip(),
+        "origin": strategy_lifecycle.detect_origin(profile),
+        "reason": str(reason or profile.get("archive_reason") or "").strip(),
+        "failure_codes": [str(c).strip() for c in (failure_codes or []) if str(c).strip()],
+        "removal_method": removal_method,
+        "archived_at_utc": now,
+    }
+    existing_idx = next(
+        (i for i, e in enumerate(entries)
+         if isinstance(e, dict) and str(e.get("fingerprint") or "") == fingerprint),
+        None,
+    )
+    if existing_idx is None:
+        entries.append(entry)
+    else:
+        first_seen = entries[existing_idx].get("archived_at_utc") or now
+        entry["first_archived_at_utc"] = first_seen
+        entries[existing_idx] = entry
+    data["entries"] = entries
+    data["updated_at_utc"] = now
+    _write_json_atomic(_archived_strategies_path(), data)
+    return entry
+
+
+def remove_archived_from_ninjatrader(profile_id: Optional[str] = None) -> Dict[str, Any]:
+    """Quarantine the CELL ``.cs`` of failed/archived strategies out of NinjaTrader.
+
+    Pass ``profile_id`` to remove a single archived profile, or omit it to process
+    every ``failed_archived`` profile. Updates each profile's ``failed_archive``
+    block with the result and persists the registry.
+    """
+    pid_filter = str(profile_id or "").strip()
+    data = _read_strategy_profiles_raw()
+    profiles = data.get("profiles") or []
+    active_used = ninjatrader_ops.active_class_usage(profiles)
+    results: List[Dict[str, Any]] = []
+    changed = False
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        if strategy_lifecycle.classify_lifecycle(profile) != strategy_lifecycle.FAILED_ARCHIVED:
+            continue
+        pid = str(profile.get("profile_id") or profile.get("id") or "").strip()
+        if pid_filter and pid != pid_filter:
+            continue
+        res = ninjatrader_ops.remove_strategy_from_ninjatrader(profile, active_used)
+        fa = profile.get("failed_archive") if isinstance(profile.get("failed_archive"), dict) else {}
+        fa["removed_from_ninjatrader"] = bool(res.get("removed"))
+        fa["removal"] = {k: res[k] for k in
+                         ("class_name", "reason", "source_reason", "source_removed",
+                          "ui_state_reason", "ui_state_removed", "ui_nodes_removed",
+                          "workspace_entries_removed", "moved_files", "quarantine_dir", "at_utc")
+                         if k in res}
+        profile["failed_archive"] = fa
+        if res.get("removed"):
+            profile["removed_from_ninjatrader_at_utc"] = res["at_utc"]
+        results.append(res)
+        changed = True
+    if changed:
+        data["updated_at_utc"] = utcnow_iso()
+        _write_json_atomic(_strategy_profiles_path(), data)
+    removed = sum(1 for r in results if r.get("removed"))
+    return {"ok": True, "count": len(results), "removed": removed, "results": results}
+
+
+def cleanup_ninjatrader_to_approved(dry_run: bool = True,
+                                    include_ai_sandbox: bool = True,
+                                    include_ref_lib: bool = True) -> Dict[str, Any]:
+    """Quarantine every NinjaTrader strategy that is not approved (or its base).
+
+    Leaves only approved (demo/live) strategies plus the engine classes they
+    inherit from in the NinjaTrader Custom compile folders. ``dry_run=True``
+    previews the plan without moving anything. The repo source tree is preserved.
+    """
+    data = _read_strategy_profiles_raw()
+    profiles = data.get("profiles") or []
+    return ninjatrader_ops.cleanup_to_approved(
+        profiles,
+        include_ai_sandbox=include_ai_sandbox,
+        include_ref_lib=include_ref_lib,
+        dry_run=dry_run,
+    )
 
 
 def read_instrument_coverage() -> Dict[str, Any]:
@@ -1596,6 +1821,7 @@ def _normalize_strategy_profile_for_ui(profile: Dict[str, Any]) -> Dict[str, Any
     if expected_name:
         out["name_matches_policy"] = str(out.get("name") or "").strip() == expected_name
 
+    out = strategy_lifecycle.annotate(out)
     return out
 
 
@@ -1614,7 +1840,7 @@ def _portfolio_layout_fingerprint() -> Tuple[int, float]:
 
 
 def _profile_counts_in_portfolio(profile: Dict[str, Any]) -> bool:
-    return str(profile.get("status") or "").strip() in _PORTFOLIO_READY_STATUSES
+    return strategy_lifecycle.classify_lifecycle(profile) in strategy_lifecycle.PORTFOLIO_COUNTED
 
 
 def _profile_portfolio_root(profile: Dict[str, Any]) -> str:
@@ -2784,7 +3010,21 @@ RISK_PROFILE_PARAM_KEYS = (
     "MarginSourceBroker",
 )
 
-RESEARCH_ROUND_TURN_COMMISSION = 1.90
+
+def _research_runtime_defaults() -> Dict[str, Any]:
+    return governance.runtime_defaults()
+
+
+def _research_round_turn_commission() -> float:
+    return float(_research_runtime_defaults().get("round_turn_commission", 1.90) or 1.90)
+
+
+def _research_slippage_floor() -> int:
+    return int(_research_runtime_defaults().get("slippage_ticks", 1) or 1)
+
+
+def _research_fill_resolution() -> str:
+    return str(_research_runtime_defaults().get("order_fill_resolution", "High") or "High")
 
 LOCKED_B1_SHORTONLY_PARAMS: Dict[str, Any] = {
     "StartingCapital": 2000.0,
@@ -2836,7 +3076,8 @@ def _effective_round_turn_commission(req: "CreateJobRequest") -> float:
         rtc = float((req.parameters or {}).get("RoundTurnCommission", 0.0) or 0.0)
     except (TypeError, ValueError):
         rtc = 0.0
-    return rtc if rtc >= RESEARCH_ROUND_TURN_COMMISSION else RESEARCH_ROUND_TURN_COMMISSION
+    floor = _research_round_turn_commission()
+    return rtc if rtc >= floor else floor
 
 
 def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
@@ -2855,15 +3096,17 @@ def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
             cur = float(req.parameters.get("RoundTurnCommission", 0.0) or 0.0)
         except (TypeError, ValueError):
             cur = 0.0
-        if cur < RESEARCH_ROUND_TURN_COMMISSION:
-            req.parameters["RoundTurnCommission"] = RESEARCH_ROUND_TURN_COMMISSION
+        floor = _research_round_turn_commission()
+        if cur < floor:
+            req.parameters["RoundTurnCommission"] = floor
     if "SlippageTicks" in exposed:
         try:
             cur = int(req.parameters.get("SlippageTicks", 0) or 0)
         except (TypeError, ValueError):
             cur = 0
-        if cur < 1:
-            req.parameters["SlippageTicks"] = max(1, int(req.slippage_ticks))
+        floor = _research_slippage_floor()
+        if cur < floor:
+            req.parameters["SlippageTicks"] = max(floor, int(req.slippage_ticks))
 
 
 def _strip_internal_strategy_parameters(req: "CreateJobRequest") -> None:
@@ -3116,14 +3359,16 @@ def _validate(req: CreateJobRequest) -> None:
     if role == "research":
         errs: List[str] = []
         exposed_params = _strategy_parameter_names(req.class_name)
-        if req.order_fill_resolution != "High":
+        required_fill = _research_fill_resolution()
+        if req.order_fill_resolution != required_fill:
             errs.append(
-                "order_fill_resolution must be 'High' for research jobs "
+                f"order_fill_resolution must be '{required_fill}' for research jobs "
                 f"(got {req.order_fill_resolution!r}). Use role='smoke' to bypass."
             )
-        if int(req.slippage_ticks) < 1:
+        slip_floor = _research_slippage_floor()
+        if int(req.slippage_ticks) < slip_floor:
             errs.append(
-                "slippage_ticks must be >=1 for research jobs "
+                f"slippage_ticks must be >={slip_floor} for research jobs "
                 f"(got {req.slippage_ticks!r})."
             )
         if req.commission_template != "None":
@@ -3139,9 +3384,11 @@ def _validate(req: CreateJobRequest) -> None:
                 rtc_v = float(rtc) if rtc is not None else None
             except (TypeError, ValueError):
                 rtc_v = None
-            if rtc_v is None or rtc_v < RESEARCH_ROUND_TURN_COMMISSION:
+            fee_floor = _research_round_turn_commission()
+            if rtc_v is None or rtc_v < fee_floor:
                 errs.append(
-                    "parameters.RoundTurnCommission must be >=1.90 for research jobs "
+                    "parameters.RoundTurnCommission must be >="
+                    f"{fee_floor:.2f} for research jobs "
                     f"(got {rtc!r}). Micro futures minimum honest round-turn."
                 )
         if "SlippageTicks" in exposed_params:
@@ -3150,9 +3397,10 @@ def _validate(req: CreateJobRequest) -> None:
                 pst_v = int(pst) if pst is not None else None
             except (TypeError, ValueError):
                 pst_v = None
-            if pst_v is None or pst_v < 1:
+            if pst_v is None or pst_v < slip_floor:
                 errs.append(
-                    "parameters.SlippageTicks must be >=1 for research jobs "
+                    "parameters.SlippageTicks must be >="
+                    f"{slip_floor} for research jobs "
                     f"(got {pst!r}). Must match top-level slippage_ticks."
                 )
         if errs:

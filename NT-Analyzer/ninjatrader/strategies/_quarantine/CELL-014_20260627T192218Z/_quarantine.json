@@ -1,0 +1,10 @@
+{
+  "class_name": "NTAMnqFullSessionOrbRetestScalpC014",
+  "cell_id": "CELL-014",
+  "profile_id": "mnq_full_session_orb_retest_1m_c014_candidate_v1",
+  "reason": "",
+  "quarantined_at_utc": "2026-06-27T19:22:18Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-014_20260627T192218Z\\NTAMnqFullSessionOrbRetestScalpC014"
+  ]
+}

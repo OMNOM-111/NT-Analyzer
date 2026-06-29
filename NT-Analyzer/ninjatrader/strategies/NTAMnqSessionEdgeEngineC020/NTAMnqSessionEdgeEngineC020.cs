@@ -60,7 +60,7 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public class NTAMnqSessionEdgeEngineC020 : Strategy
+    public abstract class NTAMnqSessionEdgeEngineC020 : Strategy
     {
         private EMA _emaFast;
         private EMA _emaMid;

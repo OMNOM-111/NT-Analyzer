@@ -977,6 +977,59 @@ def _daily_series(trades: List[Dict[str, Any]], start: date, end: date) -> List[
     return days
 
 
+def _time_breakdowns(trades: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    weekday_labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+    def aggregate(kind: str) -> List[Dict[str, Any]]:
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        labels: Dict[str, str] = {}
+        order: Dict[str, int] = {}
+        for trade in trades:
+            day = _parse_ymd(str(trade.get("date_pt") or ""))
+            time_pt = str(trade.get("time_pt") or "")
+            if kind == "daily":
+                key = day.isoformat() if day else "unknown"
+                label = key
+            elif kind == "weekly":
+                if not day:
+                    key = label = "unknown"
+                else:
+                    monday = day - timedelta(days=day.weekday())
+                    key = monday.isoformat()
+                    label = f"с {monday.isoformat()}"
+            elif kind == "monthly":
+                key = day.strftime("%Y-%m") if day else "unknown"
+                label = key
+            elif kind == "hourly":
+                try:
+                    hour = max(0, min(23, int(time_pt[:2])))
+                    key = f"{hour:02d}"
+                    label = f"{hour:02d}:00–{hour:02d}:59 PT"
+                    order[key] = hour
+                except (TypeError, ValueError):
+                    key = label = "unknown"
+            elif kind == "weekday":
+                index = day.weekday() if day else 7
+                key = str(index)
+                label = weekday_labels[index] if index < 7 else "неизвестно"
+                order[key] = index
+            elif kind == "direction":
+                key = str(trade.get("direction") or "unknown")
+                label = {"long": "Long", "short": "Short"}.get(key, "Не определено")
+            else:
+                continue
+            groups.setdefault(key, []).append(trade)
+            labels[key] = label
+        keys = sorted(groups, key=lambda key: (order.get(key, 999), key))
+        result = []
+        for key in keys:
+            metrics = _metrics(groups[key])
+            result.append({"key": key, "label": labels[key], **metrics})
+        return result
+
+    return {kind: aggregate(kind) for kind in ("daily", "weekly", "monthly", "hourly", "weekday", "direction")}
+
+
 def _last_trades(trades: List[Dict[str, Any]], limit: int = 10) -> List[Dict[str, Any]]:
     out = []
     for trade in sorted(trades, key=lambda r: str(r.get("timestamp_utc") or ""), reverse=True)[:limit]:
@@ -1200,6 +1253,28 @@ def build_trades_csv(period: str = "month",
     return filename, ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
+def build_trades_response(period: str = "month", from_date: Optional[str] = None,
+                          to_date: Optional[str] = None, account_name: Optional[str] = None,
+                          offset: int = 0, limit: int = 200) -> Dict[str, Any]:
+    resolved, trades, dedupe_meta, all_count = _closed_trades_for_request(
+        period=period, from_date=from_date, to_date=to_date, account_name=account_name,
+    )
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    ordered = sorted(trades, key=lambda row: str(row.get("timestamp_utc") or ""), reverse=True)
+    return {
+        "ok": True,
+        "period": resolved,
+        "account": account_name or ALL_ACCOUNTS,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "total": len(ordered),
+        "all_trade_count": all_count,
+        "dedupe": dedupe_meta,
+        "trades": [_export_trade_row(row) for row in ordered[safe_offset:safe_offset + safe_limit]],
+    }
+
+
 def _file_sig(name: str) -> Tuple[str, Optional[int], Optional[int]]:
     path = rt.runtime_dir() / name
     try:
@@ -1224,10 +1299,12 @@ def _accounts_payload() -> Tuple[List[Dict[str, Any]], str]:
         doc = rt.read_accounts_with_source()
     except Exception:
         return [], "error"
-    accounts = doc.get("online_accounts") or doc.get("accounts") or []
+    accounts = doc.get("accounts") or doc.get("online_accounts") or []
     safe_accounts = []
     for acc in accounts:
         if not isinstance(acc, dict):
+            continue
+        if acc.get("is_system"):
             continue
         safe_accounts.append({
             "account_name": acc.get("account_name") or "",
@@ -1283,6 +1360,8 @@ def build_performance_response(period: str = "now",
         "summary": summary,
         "strategy_summary": strategy_summary,
         "categories": categories,
+        "breakdowns": _time_breakdowns(period_trades),
+        "strategy_breakdowns": _time_breakdowns(_normal_trades(period_trades)),
         "strategies": strategies,
         "instruments": instruments,
         "has_trades": bool(period_trades),

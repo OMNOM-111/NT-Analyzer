@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from .. import governance
 from . import errors, lessons, operator_notes, paths, registry, user_research
 from .io_utils import write_json_atomic
 
@@ -60,17 +61,24 @@ def _iter_existing(paths_in: Iterable[Path]) -> Iterable[Path]:
 
 
 def _project_docs() -> List[Path]:
-    root = paths.PROJECT_ROOT.parent / "РАЗРАБОТКА СТРАТЕГИЙ"
-    names = [
-        "Общие правила разработки стратегий.md",
-        "Правила для новых стратегий по итогам аудита 2026-05-31.md",
-        "Реестр стратегий.md",
-        "Аудит действующих стратегий на демо 2026-05-31.md",
-        "top_50_patterns_for_nt_analyzer.md",
-        "top_50_indicators_for_nt_analyzer.md",
-        "top_50_chart_figures_for_nt_analyzer.md",
+    governance.ensure_governance_files()
+    legacy_root = paths.PROJECT_ROOT.parent / "РАЗРАБОТКА СТРАТЕГИЙ"
+    candidates = [
+        paths.PROJECT_ROOT / "docs" / "governance" / "CHARTER.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "ROLES.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "LAWS.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "LOCAL_AI_LAWS.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "REGISTRY_POLICY.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "SYNC_MAP.md",
+        paths.PROJECT_ROOT / "docs" / "risk-profile.md",
+        paths.PROJECT_ROOT / "docs" / "AI_STRATEGY_LAB_RUN_CONTROLS.md",
+        paths.PROJECT_ROOT / "docs" / "AI_STRATEGY_LAB_QUALITY.md",
+        legacy_root / "Общие правила разработки стратегий.md",
+        legacy_root / "Реестр стратегий.md",
+        legacy_root / "Двухэтапный цикл Research Hub и Deploy.md",
+        legacy_root / "План перехода стратегий в семьи и новый цикл.md",
     ]
-    return list(_iter_existing(root / n for n in names))
+    return list(_iter_existing(candidates))
 
 
 def _reference_docs() -> List[Path]:
@@ -233,6 +241,7 @@ def _recent_experiment_lessons(target_root: str, limit: int = 12) -> List[Dict[s
 
 
 def _hard_constraints(goal_constraints: Dict[str, Any]) -> List[str]:
+    defaults = governance.runtime_defaults()
     freq = goal_constraints.get("trade_frequency")
     max_trade_rule = "Use MaxTradesPerDay <= 3; if user asks high trade count, still cap overtrading and justify."
     if freq == "lower":
@@ -241,7 +250,10 @@ def _hard_constraints(goal_constraints: Dict[str, Any]) -> List[str]:
         "Historical research only. Do not start live, paper, demo, account, or runtime trading.",
         "AI_SANDBOX source only; never write production strategy classes or production CELL ids.",
         "Evaluate after commission/slippage; gross metrics are insufficient.",
-        "Use RoundTurnCommission >= 1.90, SlippageTicks >= 1, High fill assumptions.",
+        "Use RoundTurnCommission >="
+        f" {defaults.get('round_turn_commission', 1.90):.2f}, "
+        f"SlippageTicks >= {int(defaults.get('slippage_ticks', 1))}, "
+        f"{defaults.get('order_fill_resolution', 'High')} fill assumptions.",
         "Always include stop loss, profit target, max daily loss, max trades/day, force-flat/no overnight.",
         max_trade_rule,
         "Reject 0-trade and insufficient-signal ideas before historical backtest.",

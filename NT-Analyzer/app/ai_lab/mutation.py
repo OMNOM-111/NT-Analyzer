@@ -105,10 +105,12 @@ def build_mutation_prompt(
         "Hard mutation rules:",
         "- Change hypothesis and entry filter, not only BreakoutLookback/SL/TP/MaxTradesPerDay.",
         "- Keep the same class_name and namespace (this is an in-cell iteration).",
-        "- Must improve on the specific rejection_code above; explain in a comment header what changed.",
+        "- Must improve on the specific rejection_code above; explain in a Russian comment header what changed.",
         "- Respect every hard constraint and acceptance gate from the knowledge context.",
         "- If the previous iteration produced 0 trades, change setup conditions (timeframe, lookback regime, filter), not only thresholds.",
         "- If PF after commission < 1.0, propose either a new filter or a different time-of-day window — do not just tighten stops.",
+        "- Keep C# identifiers, NinjaTrader API names, property names, and error codes in English.",
+        "- Write all human-readable explanation comments in Russian.",
         "",
         "Return ONE corrected NT8 C# strategy in a ```csharp fence.",
     ]
@@ -155,7 +157,8 @@ def prepare_next(experiment_id: str, prev_iteration_idx: int) -> Dict[str, Any]:
     activity.log(
         experiment_id, "generate", "mutation_prompt",
         level="info", iteration=next_iter,
-        prompt_preview=user_prompt[:200],
+        prompt_preview="Prepare the next iteration: change hypothesis and filter, not only risk parameters.",
+        prompt_preview_ru="Подготовить следующую итерацию: изменить гипотезу и фильтр, а не только параметры риска.",
     )
 
     # 3) Reset orchestrator-driving fields for the next pipeline call.

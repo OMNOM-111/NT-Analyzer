@@ -24,6 +24,9 @@
     renderKeys: {},
     detailCache: {},
     runActive: false,
+    bootstrap: null,
+    bootstrapRunning: false,
+    governance: null,
   };
 
   let _lmReadinessTimer = null;
@@ -40,6 +43,35 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  async function loadGovernanceDefaults() {
+    try {
+      const response = await fetch("/api/governance/runtime-defaults");
+      STATE.governance = await response.json();
+      if (!response.ok) throw new Error(STATE.governance.error || `${response.status}`);
+    } catch {
+      STATE.governance = null;
+    }
+    applyGovernanceDefaults();
+  }
+
+  function applyGovernanceDefaults() {
+    const select = $("#ai-run-capital");
+    if (!select || !STATE.governance) return;
+    const cap = Number(STATE.governance.starting_capital);
+    if (!Number.isFinite(cap) || cap <= 0) return;
+    const value = String(Math.round(cap));
+    let option = Array.from(select.options).find((row) => row.value === value);
+    if (!option) {
+      option = document.createElement("option");
+      option.value = value;
+      option.textContent = Number(cap).toLocaleString("ru-RU");
+      select.appendChild(option);
+    }
+    if (select.dataset.userEdited !== "1") {
+      select.value = value;
+    }
+  }
 
   const PERFORMANCE_COLUMNS = [
     { key: "ai_cell_id", label: "AI-CELL", text: true },
@@ -73,6 +105,148 @@
     ["zero_trades", "0 trades"],
   ];
 
+  const ACTIVITY_STAGE_RU = {
+    intake: "Подготовка",
+    generate: "Генерация",
+    validate: "Проверка",
+    write: "Запись файла",
+    compile: "Компиляция",
+    catalog: "Каталог NT",
+    signal_sanity: "Проверка сигналов",
+    backtest: "Бэктест",
+    analyze: "Анализ",
+    arbitrate: "Оценка",
+    verdict: "Вердикт",
+    runner: "Запуск",
+    status: "Статус",
+  };
+
+  const ACTIVITY_ACTION_RU = {
+    skeleton_created: "создана заготовка эксперимента",
+    memory_loaded: "загружена память исследований",
+    hypothesis_model_health_failed: "модель гипотез недоступна",
+    hypothesis_prompt: "отправлен запрос на гипотезу",
+    hypothesis_response: "получена гипотеза",
+    hypothesis_contract_rejected: "ответ гипотезы не прошел контракт",
+    hypothesis_lm_failed: "ошибка модели гипотез",
+    hypothesis_fallback: "использована запасная гипотеза",
+    class_assigned: "назначен класс стратегии",
+    coder_invoke: "запущена генерация кода",
+    coder_prompt: "отправлен запрос кодеру",
+    coder_response: "получен ответ кодера",
+    coder_done: "генерация кода завершена",
+    blocked_lm_studio: "LM Studio недоступна",
+    blocked_lm_studio_autofix: "LM Studio недоступна для автоисправления",
+    rejected_static: "статическая проверка отклонила код",
+    ok: "проверка пройдена",
+    sandbox_written: "файл записан в песочницу",
+    skipped: "шаг пропущен",
+    awaiting_nt_compile: "ожидание компиляции NinjaTrader",
+    timeout_no_dll_change: "тайм-аут: DLL не изменилась",
+    compile_failed: "компиляция не удалась",
+    autofix_invoke: "запущено автоисправление",
+    autofix_rewrite: "файл переписан автоисправлением",
+    visible: "класс виден в каталоге",
+    evaluated: "проверка выполнена",
+    submitting: "отправка бэктеста",
+    submitted: "бэктест отправлен",
+    submit_failed: "отправка бэктеста не удалась",
+    awaiting_result: "ожидание результата",
+    result_seen: "результат найден",
+    result_timeout: "тайм-аут ожидания результата",
+    job_failed_or_cancelled: "задача упала или отменена",
+    building_pack: "сбор пакета анализа",
+    score_computed: "оценка рассчитана",
+    set: "вердикт установлен",
+    finalized: "вердикт финализирован",
+    finalize_failed: "финализация не удалась",
+    finalize_blocked: "финализация заблокирована",
+    strategy_started: "стратегия запущена",
+    strategy_finished: "стратегия завершена",
+    iteration_started: "итерация запущена",
+    iteration_finished: "итерация завершена",
+    mutation_prepare: "подготовка мутации",
+    mutation_prompt: "подготовлен запрос мутации",
+    mutation_failed: "мутация не удалась",
+    pipeline_crashed: "пайплайн аварийно завершился",
+    cancel_requested: "запрошена отмена",
+    run_cancel_requested: "запрошена отмена запуска",
+    parse_error: "ошибка чтения строки лога",
+  };
+
+  const ACTIVITY_STATUS_RU = {
+    draft: "черновик",
+    generating: "генерация",
+    generated: "код сгенерирован",
+    validation_failed: "проверка не пройдена",
+    compile_requested: "компиляция запрошена",
+    awaiting_compile: "ожидание компиляции",
+    compile_failed: "ошибка компиляции",
+    compile_failed_after_fix_loop: "компиляция не исправлена",
+    awaiting_compile_timeout: "тайм-аут компиляции",
+    compiled: "скомпилировано",
+    catalog_visible: "видно в каталоге",
+    signal_sanity_failed: "проверка сигналов не пройдена",
+    backtest_submitted: "бэктест отправлен",
+    backtest_done: "бэктест завершен",
+    backtest_failed: "бэктест упал",
+    blocked_by_real_environment_issue: "заблокировано проблемой окружения",
+    blocked_lm_studio: "заблокировано LM Studio",
+    pipeline_failed: "ошибка пайплайна",
+    rejected: "отклонено",
+    mutation_candidate: "кандидат на мутацию",
+    sandbox_candidate: "кандидат песочницы",
+    champion_candidate: "сильный кандидат",
+    human_review_candidate: "нужна ручная проверка",
+    portfolio_contributor: "добавлено в портфель",
+    archived: "архив",
+    cancelled: "отменено",
+  };
+
+  const ACTIVITY_ROLE_RU = {
+    judge: "судья",
+    coder: "кодер",
+    "coder-autofix": "автоисправление",
+    validator: "валидатор",
+    arbitrator: "арбитр",
+  };
+
+  const ACTIVITY_FIELD_RU = {
+    role: "роль",
+    model_role: "роль модели",
+    model: "модель",
+    purpose: "цель",
+    prompt_preview: "превью запроса",
+    response_summary: "краткий ответ",
+    from_status: "статус был",
+    to_status: "статус стал",
+    final_status: "итоговый статус",
+    status: "статус",
+    reason: "причина",
+    run_id: "запуск",
+    strategy_idx: "стратегия",
+    strategy_total: "всего стратегий",
+    iteration: "итерация",
+    iteration_idx: "итерация",
+    iteration_total: "всего итераций",
+    candidate_count: "кандидатов",
+    class_name: "класс",
+    target_root: "инструмент",
+    capital: "капитал",
+    user_goal: "цель пользователя",
+    research_mode: "режим исследования",
+    attempt_index: "попытка",
+    path: "путь",
+    sandbox_path: "песочница",
+    mirror_path: "зеркало",
+    job_id: "задача",
+    job_dir: "папка задачи",
+    score: "оценка",
+    error: "ошибка",
+    trace: "trace",
+    waited_sec: "ожидание, сек",
+  };
+
   function fmt(v, opts = {}) {
     if (v === null || v === undefined) return "—";
     if (typeof v === "boolean") return v ? "yes" : "no";
@@ -83,6 +257,116 @@
       return v.toFixed(2);
     }
     return String(v);
+  }
+
+  function activityStatusLabel(status) {
+    const raw = String(status || "");
+    return ACTIVITY_STATUS_RU[raw] || raw;
+  }
+
+  function activityTransitionLabel(action) {
+    const raw = String(action || "");
+    if (!raw.includes(" -> ")) return null;
+    const [from, to] = raw.split(" -> ");
+    return `${activityStatusLabel(from)} → ${activityStatusLabel(to)}`;
+  }
+
+  function activityStageRu(e) {
+    return e.stage_ru || ACTIVITY_STAGE_RU[e.stage] || e.stage || "";
+  }
+
+  function activityActionRu(e) {
+    return e.action_ru || activityTransitionLabel(e.action) || ACTIVITY_ACTION_RU[e.action] || e.action || "";
+  }
+
+  function activityRoleRu(role) {
+    return ACTIVITY_ROLE_RU[role] || role;
+  }
+
+  function activityStageEn(e) {
+    return e.stage || "";
+  }
+
+  function activityActionEn(e) {
+    return e.action || "";
+  }
+
+  function activityRoleEn(role) {
+    return role || "";
+  }
+
+  function translateActivityReason(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return s;
+    const exact = {
+      "entering intake": "переход к подготовке эксперимента",
+      "dry_run only": "сухой запуск без полной цепочки",
+      "skip_compile=true, waiting on manual F5": "компиляция пропущена: ожидается ручной F5",
+      "class visible in NT catalog": "класс найден в каталоге NinjaTrader",
+      "compile chain did not succeed": "цепочка компиляции не завершилась успешно",
+      "autofix loop exhausted": "лимит автоисправлений исчерпан",
+      "coder returned no contract-valid C#": "кодер не вернул C# по контракту",
+      "autofix produced invalid source": "автоисправление вернуло некорректный исходный код",
+      "user requested extension": "пользователь запросил продление",
+      "user cancelled": "пользователь отменил запуск",
+      "no result.json within 30 min": "result.json не появился за 30 минут",
+      "ok": "все нормально",
+      "overtrading_risk": "риск слишком частых сделок",
+      "zero_theoretical_signals": "нет теоретических сигналов",
+      "below_min_theoretical_signals": "меньше минимального числа теоретических сигналов",
+      "compile_failed": "ошибка компиляции",
+    };
+    if (exact[s]) return exact[s];
+    let m = s.match(/^compile attempt (\d+)$/);
+    if (m) return `попытка компиляции ${m[1]}`;
+    m = s.match(/^job (.+) submitted$/);
+    if (m) return `задача ${m[1]} отправлена`;
+    m = s.match(/^job (.+)$/);
+    if (m) return `задача ${m[1]}`;
+    if (s.startsWith("verdict ") && s.includes("mutating same cell")) {
+      const verdict = s.slice("verdict ".length).split(" ")[0];
+      return `вердикт ${verdict}: пробуем мутацию той же ячейки`;
+    }
+    if (s.startsWith("signal sanity failed: ")) return "проверка сигналов не пройдена: " + s.split(": ", 2)[1];
+    if (s.startsWith("signal sanity blocked by environment: ")) return "проверка сигналов заблокирована окружением: " + s.split(": ", 2)[1];
+    if (s.startsWith("submit error: ")) return "ошибка отправки: " + s.split(": ", 2)[1];
+    if (s.startsWith("smoke submit error: ")) return "ошибка smoke-submit: " + s.split(": ", 2)[1];
+    if (s.startsWith("unhandled pipeline error: ")) return "необработанная ошибка пайплайна: " + s.split(": ", 2)[1];
+    return s;
+  }
+
+  function activityFieldLines(k, v, e) {
+    const raw = typeof v === "string" ? v : JSON.stringify(v);
+    const label = ACTIVITY_FIELD_RU[k] || k;
+    let ruValue = e[`${k}_ru`] || null;
+    let enValue = raw;
+    if (k === "reason" && e.reason_ru) ruValue = e.reason_ru;
+    if (k === "reason") {
+      const translated = translateActivityReason(v);
+      if (!ruValue && translated && translated !== String(v)) ruValue = translated;
+    }
+    if (k === "from_status" || k === "to_status" || k === "final_status" || k === "status") {
+      const translated = activityStatusLabel(v);
+      if (!ruValue && translated && translated !== String(v)) ruValue = translated;
+    }
+    return { label, enValue, ruValue };
+  }
+
+  function bilingualBlock(en, ru, cls = "") {
+    const enText = en == null ? "" : String(en);
+    const ruText = ru == null ? "" : String(ru);
+    const safeCls = cls ? ` ${cls}` : "";
+    return `<span class="ai-bi${safeCls}">`
+      + (ruText && ruText !== enText ? `<span class="ai-bi-ru">${escape(ruText)}</span>` : "")
+      + `<span class="ai-bi-en">${escape(enText)}</span>`
+      + `</span>`;
+  }
+
+  function bilingualFieldHtml(k, v, e) {
+    const lines = activityFieldLines(k, v, e);
+    const en = `${k}=${lines.enValue}`;
+    const ru = lines.ruValue ? `${lines.label}: ${lines.ruValue}` : lines.label;
+    return bilingualBlock(en, ru, "ai-bi-field");
   }
 
   async function fetchJson(url, init = {}) {
@@ -176,7 +460,7 @@
   }
 
   function lmRunBypassAllowed() {
-    return DEBUG && !!$("#ai-allow-template-fallback")?.checked;
+    return false;
   }
 
   function renderLmGate() {
@@ -186,17 +470,22 @@
     const runSubmit = $("#ai-run-submit");
     const banner = $("#ai-lm-gate-banner");
     const bypass = lmRunBypassAllowed();
-    const runAllowed = bypass || lm.run_allowed === true;
+    const lazyAllowed = lm.status === "server_unavailable" || lm.status === "standby_lazy";
+    const runAllowed = bypass || lm.run_allowed === true || lazyAllowed;
     const probing = lm.probe_pending === true || lm.status === "pending_check";
 
     let chipText = "LM Studio: …";
     let chipClass = "bad";
 
     if (!lm.available) {
-      chipText = "LM Studio: недоступна";
+      chipText = "LM Studio: standby";
+      chipClass = "warn";
     } else if (lm.ready === true) {
       chipText = `LM Studio: готово (${(lm.models || []).length} моделей)`;
       chipClass = "ok";
+    } else if (lm.status === "standby_lazy") {
+      chipText = "LM Studio: standby (lazy)";
+      chipClass = "warn";
     } else if (probing) {
       chipText = "LM Studio: проверка моделей…";
       chipClass = "warn";
@@ -224,6 +513,10 @@
         banner.hidden = false;
         banner.textContent = "Debug: запуск без LLM (шаблон), очередь исследований не использует AI.";
         banner.classList.add("is-debug");
+      } else if (lazyAllowed && !lm.run_allowed) {
+        banner.hidden = false;
+        banner.textContent = "Lazy mode: модели не загружены. При запуске цикла LM Studio/server и нужная модель включатся автоматически, после завершения модели выгрузятся.";
+        banner.classList.add("is-probing");
       } else if (!runAllowed) {
         banner.hidden = false;
         banner.textContent = lm.message_ru || "Подождите включения AI-моделей. Очередь не создаётся.";
@@ -269,7 +562,10 @@
       renderLmGate();
       return;
     }
-    if (lm.probe_pending || lm.status === "pending_check" || !lm.run_allowed) {
+    if (!STATE.runActive && (lm.status === "server_unavailable" || lm.status === "standby_lazy")) {
+      renderLmGate();
+      scheduleLmReadinessPoll();
+    } else if (lm.probe_pending || lm.status === "pending_check" || !lm.run_allowed) {
       refreshLmReadiness().catch(e => console.error("refreshLmReadiness", e));
     } else {
       renderLmGate();
@@ -408,7 +704,7 @@
         } else {
           const selected = c.experiment_id && c.experiment_id === STATE.selectedExperimentId ? " selected" : "";
           const portfolio = c.is_portfolio_member ? " portfolio-member" : "";
-          html += `<td class="${statusToken(status)} ai-matrix-cell${selected}${portfolio}" data-experiment-id="${escape(c.experiment_id || "")}" title="${escape(c.ai_cell_id || "")} ${escape(c.class_name || "")}">
+          html += `<td class="${statusToken(status)} ai-matrix-cell${selected}${portfolio}" data-experiment-id="${escape(c.experiment_id || "")}" data-ai-cell-id="${escape(c.ai_cell_id || "")}" title="${escape(c.ai_cell_id || "")} ${escape(c.class_name || "")}">
             <span class="score">${score || status.slice(0, 4)}</span>
             <span class="class">${escape(cls)}</span>
             ${c.is_portfolio_member ? "<span class=\"portfolio-dot\">P</span>" : ""}
@@ -423,9 +719,67 @@
       td.addEventListener("click", () => {
         const id = td.getAttribute("data-experiment-id");
         if (id) selectExperiment(id);
+        const cellId = td.getAttribute("data-ai-cell-id");
+        if (cellId) loadAiCellHistory(cellId);
       });
     });
     markSelectedRows();
+  }
+
+  const AI_LIFECYCLE_LABEL = {
+    trial: "Испытание",
+    approved_demo: "Утверждено для демо",
+    approved_live: "Утверждено для реальной торговли",
+    failed_archived: "Провалено → Архив",
+  };
+
+  async function loadAiCellHistory(cellId) {
+    const wrap = $("#ai-cell-history-wrap");
+    if (!wrap) return;
+    wrap.hidden = false;
+    wrap.innerHTML = `<div class="ai-empty">Загрузка истории ячейки ${escape(cellId)}...</div>`;
+    let data;
+    try {
+      data = await fetchJson(`/api/ai-lab/cell-history?cell=${encodeURIComponent(cellId)}`);
+    } catch (e) {
+      wrap.innerHTML = `<div class="ai-empty">Не удалось загрузить историю: ${escape(String(e))}</div>`;
+      return;
+    }
+    const attempts = (data && data.attempts) || [];
+    const by = (data && data.by_lifecycle) || {};
+    const approved = (by.approved_demo || 0) + (by.approved_live || 0);
+    const failed = by.failed_archived || 0;
+    let html = `<div class="ai-cell-history-head">
+      <strong>История AI-ячейки ${escape(cellId)}</strong>
+      <span class="ai-cell-history-counter">${attempts.length} попыток · ${approved} утв. · ${failed} архив</span>
+      <button type="button" class="ai-cell-history-close" id="ai-cell-history-close">✕</button>
+    </div>`;
+    if (!attempts.length) {
+      html += `<div class="ai-empty">Для этой ячейки ещё нет экспериментов.</div>`;
+    } else {
+      html += `<div class="ai-cell-history-note">Все варианты, которые ИИ пробовал для этой ячейки: что не подошло и что в итоге прошло гейты.</div>`;
+      html += `<div class="ai-cell-history-list">`;
+      attempts.forEach((a, i) => {
+        const lc = a.lifecycle || "failed_archived";
+        const metrics = [
+          a.net_pnl != null ? `Net ${Number(a.net_pnl).toFixed(0)}` : null,
+          a.trade_count != null ? `${a.trade_count} сд.` : null,
+        ].filter(Boolean).join(" · ");
+        html += `<div class="ai-cell-attempt ${lc}">
+          <div class="ai-cell-attempt-head">
+            <span class="ai-cell-attempt-idx">#${i + 1}</span>
+            <span class="ai-cell-attempt-name">${escape(a.name || a.experiment_id || "—")}</span>
+            <span class="ai-cell-attempt-stage lc-pill-${lc}">${escape(AI_LIFECYCLE_LABEL[lc] || lc)}</span>
+          </div>
+          <div class="ai-cell-attempt-sub">${escape(a.experiment_id || "")} · ${escape(a.ai_status_label || a.ai_status || "")}${metrics ? " · " + escape(metrics) : ""}</div>
+          ${a.reason ? `<div class="ai-cell-attempt-reason">Причина: ${escape(a.reason)}</div>` : ""}
+        </div>`;
+      });
+      html += `</div>`;
+    }
+    wrap.innerHTML = html;
+    const close = $("#ai-cell-history-close");
+    if (close) close.addEventListener("click", () => { wrap.hidden = true; wrap.innerHTML = ""; });
   }
 
   function renderTableCell(row, col) {
@@ -644,21 +998,41 @@
         const warn = document.createElement("div");
         warn.className = "ai-log-row ai-log-fallback-warn";
         warn.innerHTML = e.path === "fallback_template" || e.model === "fallback_template"
-          ? "⚠️ Код сгенерирован ШАБЛОНОМ, не LLM (fallback_template). Включена опция allow_template_fallback."
-          : "🛑 LM Studio недоступна — пайплайн заблокирован. Запустите LM Studio с настроенными моделями.";
+          ? bilingualBlock(
+              "Generated by TEMPLATE, not LLM (fallback_template). allow_template_fallback is enabled.",
+              "Код сгенерирован шаблоном, не LLM. Включена опция allow_template_fallback.",
+              "ai-bi-action"
+            )
+          : bilingualBlock(
+              "LM Studio is unavailable; the pipeline is blocked. Start LM Studio with configured models.",
+              "LM Studio недоступна; пайплайн заблокирован. Запустите LM Studio с настроенными моделями.",
+              "ai-bi-action"
+            );
         logEl.appendChild(warn);
       }
       const ts = (e.ts || "").slice(11, 19);
-      const fields = Object.keys(e).filter(k => !["ts","line","stage","action","level","role","model_role","heartbeat"].includes(k))
-                       .map(k => `${k}=${typeof e[k] === "string" ? e[k] : JSON.stringify(e[k])}`)
+      const hiddenFields = [
+        "ts", "line", "stage", "action", "level", "role", "model_role", "heartbeat",
+        "stage_ru", "action_ru", "level_ru", "from_status_ru", "to_status_ru",
+        "final_status_ru", "status_ru", "reason_ru", "prompt_preview_ru", "response_summary_ru",
+      ];
+      const fields = Object.keys(e).filter(k => !hiddenFields.includes(k))
+                       .map(k => bilingualFieldHtml(k, e[k], e))
                        .join(" ");
+      const stageRu = activityStageRu(e);
+      const actionRu = activityActionRu(e);
+      const stageEn = activityStageEn(e);
+      const actionEn = activityActionEn(e);
       const chip = role
-        ? `<span class="role-chip role-${escape(role)}">${escape(role)}</span>`
-        : `<span class="role-chip role-stage">${escape(e.stage || "")}</span>`;
+        ? `<span class="role-chip role-${escape(role)}" title="${escape(activityRoleRu(role))}">${escape(activityRoleEn(role))}</span>`
+        : `<span class="role-chip role-stage" title="${escape(stageRu)}">${escape(stageEn)}</span>`;
+      const chipRu = role ? activityRoleRu(role) : stageRu;
       row.innerHTML = `<span class="t">${escape(ts)}</span>`
-        + `<span class="s">${chip}</span>`
-        + `<span class="a">${escape(e.action || "")}</span>`
-        + (fields ? `<span class="f">${escape(fields)}</span>` : "");
+        + `<span class="s"><span class="ai-bi ai-bi-chip-wrap">`
+        + (chipRu && chipRu !== (role ? activityRoleEn(role) : stageEn) ? `<span class="ai-bi-ru">${escape(chipRu)}</span>` : "")
+        + `<span class="ai-bi-en">${chip}</span></span></span>`
+        + `<span class="a">${bilingualBlock(actionEn, actionRu, "ai-bi-action")}</span>`
+        + (fields ? `<span class="f">${fields}</span>` : "");
       logEl.appendChild(row);
     }
     while (logEl.childNodes.length > 400) logEl.removeChild(logEl.firstChild);
@@ -672,8 +1046,16 @@
     const pill = $("#ai-heartbeat-pill");
     if (!pill) return;
     const secs = e.elapsed_sec ?? 0;
+    const stageEn = activityStageEn(e);
+    const actionEn = activityActionEn(e);
+    const stageRu = activityStageRu(e);
+    const actionRu = activityActionRu(e);
     pill.hidden = false;
-    pill.textContent = `⌛ ${e.stage || ""} · ${e.action || ""} · ${secs}s`;
+    pill.innerHTML = bilingualBlock(
+      `⌛ ${stageEn} · ${actionEn} · ${secs}s`,
+      `${stageRu} · ${actionRu}`,
+      "ai-bi-heartbeat"
+    );
   }
   function hideHeartbeat() {
     const pill = $("#ai-heartbeat-pill");
@@ -686,11 +1068,15 @@
     const roles = ["judge", "coder", "coder-autofix", "validator", "arbitrator"];
     const cells = roles.map(r => {
       const e = STATE.lastByRole[r];
-      if (!e) return `<div class="ai-model-coord-cell"><span class="lbl">${escape(r)}</span><span class="val muted">—</span></div>`;
+      if (!e) return `<div class="ai-model-coord-cell"><span class="lbl">${bilingualBlock(activityRoleEn(r), activityRoleRu(r))}</span><span class="val muted">—</span></div>`;
       const ts = (e.ts || "").slice(11, 19);
+      const actionEn = activityActionEn(e);
+      const actionRu = activityActionRu(e);
+      const roleRu = activityRoleRu(r);
+      const roleEn = activityRoleEn(r);
       return `<div class="ai-model-coord-cell">
-        <span class="lbl"><span class="role-chip role-${escape(r)}">${escape(r)}</span></span>
-        <span class="val">${escape(e.action || "")} <span class="muted">${escape(ts)}</span></span>
+        <span class="lbl"><span class="ai-bi ai-bi-chip-wrap">${roleRu && roleRu !== roleEn ? `<span class="ai-bi-ru">${escape(roleRu)}</span>` : ""}<span class="ai-bi-en"><span class="role-chip role-${escape(r)}" title="${escape(roleRu)}">${escape(roleEn)}</span></span></span></span>
+        <span class="val">${bilingualBlock(actionEn, actionRu)} <span class="muted">${escape(ts)}</span></span>
       </div>`;
     });
     wrap.innerHTML = cells.join("");
@@ -948,10 +1334,12 @@
       : Math.max(1, Math.min(20, Number(itersRaw) || 3));
     const runtimeRaw = Number($("#ai-max-runtime-min")?.value || 60);
     const runtimeMinutes = runtimeRaw <= 0 ? null : Math.max(1, Math.min(1440, runtimeRaw));
-    const stopOnFirst = !!$("#ai-stop-on-first-candidate")?.checked;
-    const skipCompile = DEBUG ? !!$("#ai-skip-compile")?.checked : false;
-    const skipBacktest = DEBUG ? !!$("#ai-skip-backtest")?.checked : false;
-    const allowTemplateFallback = DEBUG ? !!$("#ai-allow-template-fallback")?.checked : false;
+    // Fixed run defaults: always compile + backtest (real data), no template
+    // fallback. "Стоп на первом кандидате" is redundant — set strategy_count=1.
+    const stopOnFirst = strategyCount === 1;
+    const skipCompile = false;
+    const skipBacktest = false;
+    const allowTemplateFallback = false;
     resultBox.hidden = false;
     resultBox.textContent = "Запуск цикла...";
     STATE.runActive = true;
@@ -1222,13 +1610,29 @@
     document.querySelectorAll(".ai-tab").forEach(b => {
       b.classList.toggle("active", b.getAttribute("data-tab") === tab);
     });
-    // Always keep run-panel + hero visible. Hide/show the optional dedicated panels.
+    // Optional dedicated panels (error memory / LM Studio) live at the bottom of
+    // the page. The experiments + portfolio data are always rendered in the
+    // grid; for those tabs we just scroll to the relevant section.
     const errorPanel = document.getElementById("ai-error-memory-panel");
     const lmPanel = document.getElementById("ai-lm-studio-panel");
     if (errorPanel) errorPanel.hidden = tab !== "error-memory";
     if (lmPanel) lmPanel.hidden = tab !== "lm-studio";
+
+    const targets = {
+      experiments: "ai-matrix-wrap",
+      portfolio: "ai-portfolio-wrap",
+      "error-memory": "ai-error-memory-panel",
+      "lm-studio": "ai-lm-studio-panel",
+    };
     if (tab === "error-memory") loadErrorMemory();
     if (tab === "lm-studio") loadLmStudioPanel();
+
+    const target = document.getElementById(targets[tab] || "");
+    if (target) {
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }
 
   async function loadErrorMemory() {
@@ -1267,6 +1671,7 @@
   }
 
   async function loadLmStudioPanel() {
+    await loadBootstrapStatus();
     const wrap = document.getElementById("ai-lm-studio-wrap");
     if (!wrap) return;
     wrap.textContent = "Проверяем LM Studio и AI-модели…";
@@ -1303,6 +1708,136 @@
       `;
     } catch (e) {
       wrap.textContent = `Ошибка: ${e}`;
+    }
+  }
+
+  function renderBootstrapStatus(data, options = {}) {
+    const wrap = document.getElementById("ai-bootstrap-wrap");
+    if (!wrap) return;
+    wrap.classList.remove("is-running", "is-ok", "is-warn");
+    if (options.running || STATE.bootstrapRunning) {
+      wrap.classList.add("is-running");
+      wrap.textContent = "Подготовка среды: запускаем/проверяем NinjaTrader, LM Studio и модели…";
+      return;
+    }
+    const status = data || STATE.bootstrap;
+    if (!status) {
+      wrap.textContent = "Подготовка среды ещё не запускалась.";
+      return;
+    }
+    const components = status.components || status.status?.components || {};
+    const lm = components.lm_studio_server || status.readiness || {};
+    const nt = components.ninjatrader || {};
+    const lms = components.lms_cli || {};
+    const steps = status.steps || [];
+    const ok = status.ok === true || lm.run_allowed === true;
+    wrap.classList.add(ok ? "is-ok" : "is-warn");
+    const stepRows = steps.length
+      ? `<ul>${steps.map(s => `<li>${s.ok ? "✅" : "⚠️"} ${escape(s.component || "?")} — ${escape(s.status || s.message_ru || "?")}${s.model ? ` · ${escape(s.model)}` : ""}</li>`).join("")}</ul>`
+      : "";
+    wrap.innerHTML = `
+      <div><strong>Подготовка среды:</strong> ${ok ? "готово" : "требует внимания"}</div>
+      <div><strong>NinjaTrader:</strong> ${nt.running === true ? "запущен" : (nt.running === false ? "не найден процесс" : "неизвестно")}</div>
+      <div><strong>LM Studio readiness:</strong> ${escape(lm.message_ru || lm.status || "—")}</div>
+      <div><strong>LMS CLI:</strong> ${lms.available ? "доступен" : "не найден (автозагрузка моделей недоступна)"}</div>
+      ${stepRows}
+    `;
+  }
+
+  async function loadBootstrapStatus() {
+    try {
+      const data = await fetchJson("/api/ai-lab/bootstrap/status");
+      STATE.bootstrap = data;
+      renderBootstrapStatus(data);
+      return data;
+    } catch (e) {
+      const wrap = document.getElementById("ai-bootstrap-wrap");
+      if (wrap) {
+        wrap.classList.add("is-warn");
+        wrap.textContent = `Bootstrap status error: ${e}`;
+      }
+      return null;
+    }
+  }
+
+  async function startBootstrap() {
+    if (STATE.bootstrapRunning) return;
+    const btn = document.getElementById("ai-bootstrap-btn");
+    STATE.bootstrapRunning = true;
+    if (btn) { btn.disabled = true; btn.textContent = "Готовлю…"; }
+    renderBootstrapStatus(null, { running: true });
+    try {
+      const r = await fetch("/api/ai-lab/bootstrap/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_ninjatrader: true,
+          start_lm_studio: true,
+          start_lm_server: true,
+          load_models: false,
+          wait_readiness: false,
+          timeout_sec: 300,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      STATE.bootstrap = data;
+      renderBootstrapStatus(data);
+      await refreshLmReadiness({ force: true });
+      await refreshAll({ preserveScroll: true, force: true });
+    } catch (e) {
+      const wrap = document.getElementById("ai-bootstrap-wrap");
+      if (wrap) {
+        wrap.classList.remove("is-running", "is-ok");
+        wrap.classList.add("is-warn");
+        wrap.textContent = `Подготовка среды не завершена: ${e}`;
+      }
+    } finally {
+      STATE.bootstrapRunning = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Подготовить среду"; }
+    }
+  }
+
+  async function unloadLmStudio() {
+    const btn = document.getElementById("ai-unload-lm-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "Выгружаю…"; }
+    try {
+      const r = await fetch("/api/ai-lab/bootstrap/unload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stop_server: true }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      STATE.bootstrap = data;
+      renderBootstrapStatus({
+        ok: data.ok,
+        steps: [
+          { component: "lms unload --all", ok: data.unload?.ok, status: data.unload?.status },
+          { component: "lms server stop", ok: data.server_stop?.ok, status: data.server_stop?.status },
+        ],
+        readiness: { status: "server_unavailable", message_ru: "AI-модели выгружены; server остановлен." },
+      });
+      STATE.summary = {
+        ...(STATE.summary || {}),
+        lm_studio: {
+          available: false,
+          ready: false,
+          run_allowed: false,
+          status: "server_unavailable",
+          message_ru: "AI-модели выгружены; server будет запущен автоматически при новом цикле.",
+        },
+      };
+      renderLmGate();
+    } catch (e) {
+      const wrap = document.getElementById("ai-bootstrap-wrap");
+      if (wrap) {
+        wrap.classList.remove("is-running", "is-ok");
+        wrap.classList.add("is-warn");
+        wrap.textContent = `Не удалось освободить AI-память: ${e}`;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Освободить AI-память"; }
     }
   }
 
@@ -1404,9 +1939,15 @@
       if (!STATE.restoringScroll) STATE.lastScrollAt = Date.now();
     }, { passive: true });
     $("#ai-refresh-btn")?.addEventListener("click", () => refreshAll({ preserveScroll: true, force: true }));
+    $("#ai-bootstrap-btn")?.addEventListener("click", startBootstrap);
+    $("#ai-unload-lm-btn")?.addEventListener("click", unloadLmStudio);
     $("#ai-run-btn")?.addEventListener("click", () => $("#ai-run-form").requestSubmit());
     $("#ai-scan-btn")?.addEventListener("click", scanResearch);
     $("#ai-run-form")?.addEventListener("submit", submitRun);
+    $("#ai-run-capital")?.addEventListener("change", () => {
+      const select = $("#ai-run-capital");
+      if (select) select.dataset.userEdited = "1";
+    });
     $("#ai-cancel-btn")?.addEventListener("click", requestCancel);
     $("#ai-note-form")?.addEventListener("submit", submitNote);
     $("#ai-paste-form")?.addEventListener("submit", submitPaste);
@@ -1419,10 +1960,7 @@
     $("#ai-global-note-form")?.addEventListener("submit", submitGlobalNote);
     // Kick off run-status polling — it'll auto-hide when no run is active.
     startRunStatusPolling();
-    if (DEBUG) {
-      document.querySelectorAll(".ai-debug-only").forEach(el => { el.hidden = false; });
-      $("#ai-allow-template-fallback")?.addEventListener("change", renderLmGate);
-    }
+    loadGovernanceDefaults().catch(() => {});
     refreshAll({ force: true, reloadDetail: false }).then(() => {
       if (STATE.selectedExperimentId) {
         return loadDetail(STATE.selectedExperimentId);

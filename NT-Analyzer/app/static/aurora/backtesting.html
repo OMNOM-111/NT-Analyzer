@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Бэктестирование — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+<style>
+  .bt-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 1100px){ .bt-grid { grid-template-columns: minmax(0, 1fr); } }
+  .inst-row { display:flex; align-items:center; gap:10px; padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .inst-row:hover { background: var(--bg-3); }
+  .inst-row.on { background: var(--brand-soft); }
+  .inst-sym { font-family: var(--mono); font-weight:700; min-width:42px; }
+  .composer { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:14px; }
+  @media (max-width: 900px){ .composer { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  @media (max-width: 520px){ .composer { grid-template-columns: minmax(0,1fr); } }
+</style>
+</head>
+<body data-page="backtest" data-title="Бэктестирование" data-kicker="NT-Analyzer · Прогон стратегий">
+
+  <div class="bt-grid">
+    <!-- left: instruments / favorites -->
+    <aside class="panel" style="position:sticky; top:78px;">
+      <div class="panel-h" style="padding:8px 10px;">
+        <div class="seg" id="side-tabs" style="flex:1;">
+          <button class="active" data-tab="inst">Инструменты</button>
+          <button data-tab="prof">Профили</button>
+          <button data-tab="cov">Покрытие</button>
+          <button data-tab="fav">Избранное</button>
+        </div>
+      </div>
+
+      <div id="pane-prof" hidden><div class="list" id="profile-list" style="max-height:560px;overflow:auto"></div></div>
+      <div id="pane-cov" hidden><div class="list" id="coverage-list" style="max-height:560px;overflow:auto"></div></div>
+
+      <!-- instruments pane -->
+      <div id="pane-inst">
+        <div class="panel-b" style="padding:10px 12px; display:flex; gap:8px;">
+          <label class="tb-search" style="flex:1; margin:0;">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input type="search" id="inst-search" placeholder="MNQ, ES, золото…">
+          </label>
+          <button class="btn icon ghost" id="econ-btn" title="Стоимость шага и маржа (из NinjaTrader)">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+          </button>
+        </div>
+        <div class="flex between" style="padding:0 14px 8px;">
+          <span class="sub muted" id="inst-count"></span>
+          <button class="btn sm ghost" id="add-all">+ все видимые</button>
+        </div>
+        <div id="inst-list" style="max-height:480px; overflow:auto;"></div>
+      </div>
+
+      <!-- favorites pane -->
+      <div id="pane-fav" hidden>
+        <div class="panel-b" style="padding:10px 12px;">
+          <label class="tb-search" style="width:100%; margin:0;">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input type="search" id="fav-search" placeholder="Поиск в избранном…">
+          </label>
+        </div>
+        <div class="list" id="fav-list" style="max-height:520px; overflow:auto;"></div>
+      </div>
+    </aside>
+
+    <!-- right -->
+    <div class="col gap-lg" style="min-width:0;">
+      <!-- composer -->
+      <section class="panel">
+        <div class="panel-h">
+          <h2>Новый бэктест</h2>
+          <span class="sub">выберите стратегию, инструменты и период</span>
+          <div class="spacer"></div>
+          <button class="btn primary" id="run-btn">Запустить прогон</button>
+        </div>
+        <div class="panel-b col gap-lg">
+          <div class="composer">
+            <div class="field"><label for="f-strategy">Стратегия</label><select id="f-strategy"></select></div>
+            <div class="field"><label for="f-instrument">Инструмент</label><input id="f-instrument" placeholder="MNQ 06-26"></div>
+            <div class="field"><label for="f-period">Период</label><select id="f-period"><option value="30">Последние 30 дней</option><option value="90" selected>Последние 90 дней</option><option value="365">Последний год</option><option value="custom">Свой диапазон…</option></select></div>
+            <div class="field"><label for="f-capital">Капитал</label><select id="f-capital"><option value="5000">$5 000</option><option value="3000">$3 000</option><option value="10000">$10 000</option><option value="2000">$2 000</option></select></div>
+            <div class="field" id="f-custom-from" hidden><label for="f-from">С даты</label><input type="date" id="f-from"></div>
+            <div class="field" id="f-custom-to" hidden><label for="f-to">По дату</label><input type="date" id="f-to"></div>
+            <div class="field"><label for="f-tf">Таймфрейм</label><select id="f-tf"><option value="Minute:1">1 мин</option><option value="Minute:5" selected>5 мин</option><option value="Minute:15">15 мин</option><option value="Minute:60">60 мин</option></select></div>
+            <div class="field"><label for="f-commission">Комиссия (round-turn)</label><select id="f-commission"><option value="1.90">$1.90</option><option value="2.50">$2.50</option><option value="0">$0</option></select></div>
+            <div class="field"><label for="f-slippage">Проскальзывание (тиков)</label><select id="f-slippage"><option>1</option><option>2</option><option>0</option></select></div>
+            <div class="field"><label for="f-fill">Заполнение ордера</label><select id="f-fill"><option>High</option><option>Low</option><option>Close</option></select></div>
+            <div class="field"><label class="flex gap-sm" style="cursor:pointer;align-items:center"><input type="checkbox" id="f-tickreplay"> Tick Replay</label></div>
+          </div>
+          <div class="field"><label>Корзина инструментов (пакет)</label><div class="chips-in" id="basket"></div></div>
+          <details><summary>Параметры выбранной стратегии</summary><div class="composer" id="strategy-params" style="margin-top:12px"></div></details>
+        </div>
+      </section>
+
+      <!-- active queue -->
+      <section class="panel" id="queue-panel" hidden>
+        <div class="panel-h"><h2>Активные задания</h2><span class="sub" id="queue-sub"></span></div>
+        <div class="panel-b tight"><div class="list" id="queue-list"></div></div>
+      </section>
+
+      <!-- reports -->
+      <section class="panel">
+        <div class="panel-h">
+          <h2>Отчёты</h2>
+          <span class="sub" id="rep-counts"></span>
+          <div class="spacer"></div>
+          <div class="seg" id="rep-filter">
+            <button class="active" data-f="all">Все</button>
+            <button data-f="running">В работе</button>
+            <button data-f="done">Готово</button>
+            <button data-f="failed">Ошибки</button>
+            <button data-f="fav">★</button>
+          </div>
+        </div>
+        <div class="panel-b tight">
+          <div class="tbl-wrap">
+            <table class="tbl" id="rep-table">
+              <thead><tr>
+                <th style="width:34px"></th>
+                <th class="sortable" data-sort="no">№</th>
+                <th class="sortable" data-sort="created">Создан</th>
+                <th class="sortable" data-sort="label">Отчёт</th>
+                <th class="sortable" data-sort="status">Статус</th>
+                <th class="num sortable" data-sort="trades">Сделки</th>
+                <th class="num sortable" data-sort="win">Win%</th>
+                <th class="num">PF</th>
+                <th class="num sortable" data-sort="net">Чистый P&L</th>
+              </tr></thead>
+              <tbody id="rep-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script src="assets/charts.js?v=20260629-final3"></script>
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/backtesting.js?v=20260629-final3"></script>
+</body>
+</html>

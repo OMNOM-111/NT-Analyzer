@@ -1,0 +1,10 @@
+{
+  "class_name": "NTAMnqVwapReclaimScalperLongC013",
+  "cell_id": "CELL-013",
+  "profile_id": "mnq_vwap_reclaim_scalper_c013_rejected_v1",
+  "reason": "Superseded in active CELL-013 by ready OrbRetestScalp profile; original VWAP Reclaim evidence remains rejected.",
+  "quarantined_at_utc": "2026-06-27T19:22:19Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-013_20260627T192219Z\\NTAMnqVwapReclaimScalperLongC013"
+  ]
+}

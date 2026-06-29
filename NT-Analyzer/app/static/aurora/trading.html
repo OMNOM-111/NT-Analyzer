@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Торговля онлайн — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+</head>
+<body data-page="trading" data-title="Центр управления торговлей" data-kicker="NT-Analyzer · Control Center">
+
+  <!-- account band -->
+  <div class="grid cols-4" id="acct"></div>
+
+  <section class="panel" id="account-analytics">
+    <div class="panel-h"><h2>Капитал и торговый результат</h2><span class="sub" id="account-analytics-sub"></span></div>
+    <div class="panel-b">
+      <div class="grid cols-4" id="account-analytics-kpis"></div>
+      <div class="finance-note" id="cashflow-note"></div>
+      <div class="chart-box" id="account-pnl-box" style="margin-top:12px"><canvas id="account-pnl-curve" style="height:240px"></canvas></div>
+    </div>
+  </section>
+
+  <section class="panel" id="account-ledger">
+    <div class="panel-h"><h2>Журнал средств счёта</h2><span class="sub" id="account-ledger-sub"></span><div class="spacer"></div><button class="btn sm" id="ledger-add">Добавить движение</button><button class="btn sm ghost" id="ledger-import">Импорт CSV</button></div>
+    <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Время PT</th><th>Тип</th><th class="num">Сумма</th><th class="num">Изменение NetLiq</th><th class="num">Объяснено P&amp;L</th><th>Комментарий</th><th></th></tr></thead>
+      <tbody id="account-ledger-body"></tbody>
+    </table></div></div>
+  </section>
+
+  <!-- control center: runtime strategies -->
+  <section class="panel">
+    <div class="panel-h">
+      <h2>Управление стратегиями</h2><span class="sub" id="ctrl-sub"></span>
+      <div class="spacer"></div>
+      <select class="field" id="ctrl-account" style="padding:6px 10px;font-size:12px" aria-label="Счёт для управления"></select>
+      <button class="btn sm ghost" id="ctrl-show-hidden">Показать скрытые / внешние</button>
+      <button class="btn sm primary" id="ctrl-launch">Запустить стратегию</button>
+      <button class="btn sm" id="ctrl-refresh" title="Обновить">Обновить</button>
+    </div>
+    <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl" id="ctrl-table">
+      <thead><tr><th>Стратегия</th><th>Класс</th><th>Инстр.</th><th>Счёт</th><th>Позиция</th><th class="num">P&L дня</th><th>Статус</th><th></th></tr></thead>
+      <tbody id="ctrl-body"></tbody>
+    </table></div></div>
+  </section>
+
+  <section class="panel" id="runtime-audit">
+    <div class="panel-h"><h2>История и аудит стратегий</h2><span class="sub" id="runtime-audit-sub"></span><div class="spacer"></div><button class="btn sm" id="hidden-classes-btn">Скрытые классы</button></div>
+    <div class="panel-b">
+      <div class="grid cols-4" id="runtime-audit-kpis"></div>
+      <div class="tbl-wrap" style="margin-top:12px;max-height:360px"><table class="tbl">
+        <thead><tr><th>Старт PT</th><th>Стратегия</th><th>Инстр.</th><th>Счёт</th><th class="num">Длительность</th><th class="num">Сделок</th><th class="num">Gross P&amp;L</th><th>Статус</th></tr></thead>
+        <tbody id="runtime-history-body"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- positions / orders / executions -->
+  <section class="panel">
+    <div class="panel-h">
+      <h2>Рантайм NinjaTrader</h2>
+      <div class="spacer"></div>
+      <div class="seg" id="rt-tabs">
+        <button class="active" data-t="positions">Позиции</button>
+        <button data-t="orders">Ордера</button>
+        <button data-t="executions">Исполнения</button>
+        <button data-t="errors">Ошибки</button>
+      </div>
+    </div>
+    <div class="panel-b tight"><div class="tbl-wrap" style="max-height:360px"><table class="tbl" id="rt-table">
+      <thead id="rt-head"></thead><tbody id="rt-body"></tbody>
+    </table></div></div>
+  </section>
+
+  <div class="grid" style="grid-template-columns: 1fr 1fr;">
+    <!-- command queue + results -->
+    <section class="panel">
+      <div class="panel-h"><h2>Очередь команд</h2><span class="sub" id="cmd-sub"></span></div>
+      <div class="panel-b tight"><div class="finance-note" id="command-status" hidden></div><div class="list" id="cmd-list"></div></div>
+    </section>
+    <!-- bridge log -->
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Журнал моста</h2>
+        <span class="badge" id="bridge-state"><span class="dot"></span>—</span>
+        <div class="spacer"></div>
+        <button class="btn sm ghost" id="bridge-pause">Пауза</button>
+        <button class="btn sm ghost" id="bridge-clear">Очистить</button>
+      </div>
+      <div class="panel-b"><pre class="logbox" id="bridge-log"></pre></div>
+    </section>
+  </div>
+
+  <!-- today by strategy -->
+  <section class="panel">
+    <div class="panel-h"><h2>Сегодня по стратегиям</h2><span class="sub" id="today-sub"></span></div>
+    <div class="panel-b tight"><div class="list" id="today-strats"></div></div>
+  </section>
+
+  <!-- calendar + day trades -->
+  <div class="grid" style="grid-template-columns: 1fr 1.15fr;">
+    <section class="panel">
+      <div class="panel-h"><button class="btn icon ghost" id="cal-prev" aria-label="Предыдущий месяц">‹</button><h2 id="cal-title">Календарь</h2><button class="btn sm ghost" id="cal-today">Сегодня</button><button class="btn icon ghost" id="cal-next" aria-label="Следующий месяц">›</button><div class="spacer"></div><span class="sub" id="cal-sum"></span></div>
+      <div class="panel-b">
+        <div class="cal" id="cal-dow"></div>
+        <div class="cal mt" id="cal"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h">
+        <h2 id="day-title">Сделки за день</h2>
+        <div class="spacer"></div>
+        <select class="field" id="day-strat" style="padding:6px 10px; font-size:12px;" aria-label="Фильтр по стратегии"></select>
+      </div>
+      <div class="panel-b" id="day-summary" style="padding-bottom:0;"></div>
+      <div class="panel-b tight"><div class="tbl-wrap" style="max-height:320px"><table class="tbl" id="day-table">
+        <thead><tr><th>Время</th><th>Стратегия</th><th>Инстр.</th><th>Сторона</th><th class="num">Размер</th><th class="num">Цена</th><th class="num">Комис.</th><th class="num">P&amp;L</th><th>Статус</th></tr></thead>
+        <tbody id="day-body"></tbody>
+      </table></div></div>
+    </section>
+  </div>
+
+<script src="assets/charts.js?v=20260629-final3"></script>
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/trading.js?v=20260629-final3"></script>
+</body>
+</html>

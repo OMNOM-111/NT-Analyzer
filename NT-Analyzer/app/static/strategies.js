@@ -98,14 +98,17 @@
     coverage: null,
     catalog: null,
     profiles: [],
+    aiStrategies: [],
     jobs: [],
     runtimeRows: [],
     instruments: [],
     selectedRoot: "",
     selectedKey: "",
+    selectedCellId: "",
     revealSelectionAfterRender: false,
     search: "",
     statusFilter: "all",
+    lifecycleOrigin: "all",
     selectedHistoryJobId: "",
     historyViewerTab: "summary",
     historyLoadingJobId: "",
@@ -1776,11 +1779,12 @@
     setChip("Загрузка данных...", "warn");
     await refreshHealth();
 
-    const [coverageRes, catalogRes, profilesRes, runtimeRes] = await Promise.allSettled([
+    const [coverageRes, catalogRes, profilesRes, runtimeRes, aiRes] = await Promise.allSettled([
       api("/api/coverage"),
       api("/api/catalog"),
       api("/api/profiles"),
       api("/api/ops/runtime/strategies"),
+      api("/api/ai-lab/lifecycle"),
     ]);
     if (token !== STATE.loadToken) return;
 
@@ -1798,6 +1802,12 @@
     } else {
       STATE.profiles = [];
       STATE.errors.push(`profiles: ${profilesRes.reason.message}`);
+    }
+
+    if (aiRes.status === "fulfilled") {
+      STATE.aiStrategies = Array.isArray(aiRes.value?.cards) ? aiRes.value.cards : [];
+    } else {
+      STATE.aiStrategies = [];
     }
 
     if (runtimeRes.status === "fulfilled") {
@@ -1959,14 +1969,29 @@
         const family = slots[i];
         const td = el("td");
         if (!family) {
-          td.appendChild(el("button", {
+          const history = cellHistory(cellId);
+          const archivedCount = history.length;
+          const emptyCell = el("button", {
             type: "button",
-            class: "strategy-cell empty",
-            title: `${cellId}\nСемья (root): ${root}\nСтратегия ${slotNo}\nСвободный слот`,
+            class: `strategy-cell empty ${archivedCount ? "has-history" : ""} ${STATE.selectedCellId === cellId && !STATE.selectedKey ? "selected" : ""}`,
+            title: archivedCount
+              ? `${cellId}\nСемья (root): ${root}\nСтратегия ${slotNo}\nСвободный слот · история: ${archivedCount} архивных стратегий — нажмите, чтобы открыть`
+              : `${cellId}\nСемья (root): ${root}\nСтратегия ${slotNo}\nСвободный слот`,
           }, [
             el("span", { class: "strategy-cell-id", text: cellId }),
-            el("strong", { text: "пусто" }),
-          ]));
+            el("strong", { text: archivedCount ? "пусто" : "пусто" }),
+            archivedCount ? el("span", { class: "strategy-cell-archive", text: `архив: ${archivedCount}` }) : null,
+          ]);
+          if (archivedCount) {
+            emptyCell.addEventListener("click", () => {
+              STATE.selectedRoot = root;
+              STATE.selectedKey = "";
+              STATE.selectedCellId = cellId;
+              renderDetail();
+              renderMatrix();
+            });
+          }
+          td.appendChild(emptyCell);
         } else {
           const primary = family.primary;
           const familyName = familyDisplayName(family);
@@ -1996,6 +2021,7 @@
           cell.addEventListener("click", () => {
             STATE.selectedRoot = root;
             STATE.selectedKey = family.key;
+            STATE.selectedCellId = family.cellId || cellId;
             requestSelectedStrategyReveal();
             renderTaskResearch();
             renderDetail();
@@ -2239,7 +2265,7 @@
     const params = profile?.locked_parameters || profile?.parameters || {};
     if (params && Object.keys(params).length) qp.set("params", JSON.stringify(params));
     qp.set("period", "1d");
-    window.location.href = `/ui/index.html?${qp.toString()}`;
+    window.location.href = `/ui/legacy/index.html?${qp.toString()}`;
   }
 
   function renderProfileActions(profile, family) {
@@ -3698,6 +3724,92 @@
     return box;
   }
 
+  // ----- Cell attempt history (all strategies tried for one portfolio cell) --
+
+  function lifecycleLabelFor(p) {
+    const lc = profileLifecycle(p);
+    const col = LIFECYCLE_COLUMNS.find(c => c.key === lc);
+    return col ? col.label : (statusLabel(p && p.status) || lc);
+  }
+
+  function cellHistory(cellId) {
+    const cid = String(cellId || "").trim().toUpperCase();
+    if (!cid) return [];
+    return (STATE.profiles || [])
+      .filter(p => {
+        const c = String(p.cell_id || "").trim().toUpperCase();
+        const ac = String(p.archived_cell_id || "").trim().toUpperCase();
+        return c === cid || ac === cid;
+      })
+      .sort((a, b) => String(a.updated_at_utc || a.created_at_utc || "")
+        .localeCompare(String(b.updated_at_utc || b.created_at_utc || "")));
+  }
+
+  function cellAttemptCard(p, index) {
+    const lc = profileLifecycle(p);
+    const net = metric(p, ["net_profit_after_commission", "adj_net", "gross_net_profit"]);
+    const trades = metric(p, ["trade_count", "trades"]);
+    const pf = metric(p, ["profit_factor_after_commission", "adj_pf", "profit_factor"]);
+    const dd = metric(p, ["max_drawdown", "adj_max_drawdown"]);
+    const reason = (p.failed_archive && p.failed_archive.reason)
+      || p.archive_reason
+      || (p.decision && p.decision.reason) || "";
+    const criteria = (p.decision && p.decision.next_test) || p.success_criteria || "";
+    const dateRaw = p.updated_at_utc || p.created_at_utc || "";
+    const date = dateRaw ? fmtDate(dateRaw) : "";
+    const metricsLine = [
+      net != null ? `Net ${fmtMoney(net)}` : null,
+      trades != null ? `${fmtNum(trades, 0)} сд.` : null,
+      pf != null ? `PF ${fmtNum(pf, 2)}` : null,
+      dd != null ? `DD ${fmtMoney(dd)}` : null,
+    ].filter(Boolean).join(" · ");
+
+    const head = el("div", { class: "cell-attempt-head" }, [
+      el("span", { class: "cell-attempt-idx", text: `#${index + 1}` }),
+      el("span", { class: "cell-attempt-name", text: p.name || p.profile_id || p.strategy_class || "—" }),
+      el("span", { class: `lc-badge cell-attempt-stage lc-pill-${lc}`, text: lifecycleLabelFor(p) }),
+    ]);
+    const sub = el("div", { class: "cell-attempt-sub", text:
+      [p.strategy_class || p.deploy_strategy_class, p.timeframe ? tfShort(p.timeframe) : "", date]
+        .filter(Boolean).join(" · ") });
+    const children = [head, sub];
+    if (metricsLine) children.push(el("div", { class: "cell-attempt-metrics", text: metricsLine }));
+    if (reason) children.push(el("div", { class: "cell-attempt-reason", text: `Причина: ${reason}` }));
+    if (criteria) children.push(el("div", { class: "cell-attempt-criteria", text: `Критерий: ${criteria}` }));
+    if (p.last_job_id) {
+      const link = el("a", { class: "cell-attempt-link", href: `/ui/legacy/index.html?job=${encodeURIComponent(p.last_job_id)}`, text: "Открыть отчёт" });
+      link.target = "_blank";
+      children.push(link);
+    }
+    return el("div", { class: `cell-attempt ${lc}` }, children);
+  }
+
+  function renderCellHistory(cellId, root, openByDefault) {
+    const items = cellHistory(cellId);
+    const wrap = el("details", { class: "strategies-detail-section cell-history" });
+    if (openByDefault) wrap.open = true;
+    const approved = items.filter(p => {
+      const lc = profileLifecycle(p);
+      return lc === "approved_demo" || lc === "approved_live";
+    }).length;
+    const failed = items.filter(p => profileLifecycle(p) === "failed_archived").length;
+    const summary = el("summary", { class: "cell-history-summary" }, [
+      el("span", { class: "strategies-detail-title", text: `История ячейки ${cellId}` }),
+      el("span", { class: "cell-history-counter", text: `${items.length} стратегий · ${approved} утв. · ${failed} архив` }),
+    ]);
+    wrap.appendChild(summary);
+    if (!items.length) {
+      wrap.appendChild(el("div", { class: "muted small", text: "Для этой ячейки ещё нет зафиксированных стратегий." }));
+      return wrap;
+    }
+    wrap.appendChild(el("div", { class: "cell-history-note muted small", text:
+      "Все варианты, которые пробовали для этой ячейки: что не подошло (архив) и что в итоге утверждено. Критерии успеха задаются индивидуально для каждой стратегии." }));
+    const list = el("div", { class: "cell-history-list" });
+    items.forEach((p, i) => list.appendChild(cellAttemptCard(p, i)));
+    wrap.appendChild(list);
+    return wrap;
+  }
+
   function renderDetail(options = {}) {
     const title = $("strategies-detail-title");
     const status = $("strategies-selected-status");
@@ -3707,7 +3819,8 @@
     const savedScrollLeft = preserveScroll ? body.scrollLeft : 0;
     const root = STATE.selectedRoot;
     const row = STATE.instruments.find(x => x.root === root);
-    const family = selectedFamily();
+    const explicitEmptyCell = !STATE.selectedKey && !!STATE.selectedCellId;
+    const family = explicitEmptyCell ? null : selectedFamily();
 
     if (family && !STATE.selectedKey) STATE.selectedKey = family.key;
     title.textContent = root ? `${root} root-семья` : "Root-семья";
@@ -3755,6 +3868,10 @@
     }
     details.appendChild(renderVersionCards(family));
     body.appendChild(details);
+    const historyCellId = explicitEmptyCell
+      ? STATE.selectedCellId
+      : ((family && family.cellId) || STATE.selectedCellId || "");
+    if (historyCellId) body.appendChild(renderCellHistory(historyCellId, root, explicitEmptyCell || !family));
     body.appendChild(renderBacktestHistory(family));
     body.appendChild(renderOrphans(root));
     if (preserveScroll) {
@@ -3772,6 +3889,140 @@
     renderMatrix();
     renderTaskResearch();
     renderDetail();
+    renderLifecycleBoard();
+  }
+
+  // ----- Lifecycle board (4-state pipeline) ---------------------------------
+
+  const LIFECYCLE_COLUMNS = [
+    { key: "trial", label: "Испытание", cls: "lc-trial" },
+    { key: "approved_demo", label: "Утверждено для демо", cls: "lc-demo" },
+    { key: "approved_live", label: "Утверждено для реальной торговли", cls: "lc-live" },
+    { key: "failed_archived", label: "Провалено → Архив", cls: "lc-archived" },
+  ];
+
+  const LIFECYCLE_STATUS_MAP = {
+    ready: "approved_demo", paper_ready: "approved_demo", approved_demo: "approved_demo",
+    approved_live: "approved_live", live: "approved_live",
+    rejected: "failed_archived", archived: "failed_archived",
+  };
+
+  function profileLifecycle(p) {
+    const explicit = String(p && p.lifecycle || "").trim();
+    if (explicit) return explicit;
+    const st = String(p && p.status || "").trim().toLowerCase();
+    if (LIFECYCLE_STATUS_MAP[st]) return LIFECYCLE_STATUS_MAP[st];
+    if (p && (p.matrix_hidden || p.archive_reason || p.failed_archive)) return "failed_archived";
+    return "trial";
+  }
+
+  function planHoverTitle(plan) {
+    if (!plan || typeof plan !== "object") return "План не задан";
+    const lines = [];
+    if (plan.basis) lines.push(`Основание: ${plan.basis}`);
+    if (plan.started_at_utc) lines.push(`Старт: ${plan.started_at_utc}`);
+    if (plan.planned_end_utc) lines.push(`Плановое завершение: ${plan.planned_end_utc}`);
+    if (plan.duration && plan.duration.value != null) lines.push(`Длительность: ${plan.duration.value} ${plan.duration.unit || ""}`.trim());
+    if (plan.total_gates != null) lines.push(`Гейты: ${plan.completed_gates || 0}/${plan.total_gates}`);
+    if (plan.forecast_net != null) lines.push(`Прогноз net: ${fmtMoney(plan.forecast_net)}`);
+    if (plan.condition_text) lines.push(`Условие: ${plan.condition_text}`);
+    if (plan.notes) lines.push(plan.notes);
+    return lines.length ? lines.join("\n") : "План задан";
+  }
+
+  function lifecycleCardLines(p, lifecycle) {
+    const lines = [];
+    if (lifecycle === "trial") {
+      const tp = p.trial_progress || {};
+      lines.push({ cls: `lc-progress lc-${tp.state || "no_data"}`, text: tp.label || "нет данных" });
+      lines.push({ cls: "lc-muted", text: "идёт тестирование · ячейка зарезервирована" });
+    } else if (lifecycle === "approved_demo") {
+      const r = p.demo_reconciliation;
+      if (r) {
+        const vmap = { on_track: "в норме", underperforming: "ниже плана", insufficient: "нет факта" };
+        lines.push({
+          cls: `lc-recon lc-${r.verdict}`,
+          text: `Ист.: ${fmtMoney(r.expected_net)} · Факт: ${fmtMoney(r.actual_net)} · ${vmap[r.verdict] || r.verdict}`,
+        });
+      } else {
+        lines.push({ cls: "lc-muted", text: "демо · сверка истории и факта" });
+      }
+      const dp = p.demo_progress;
+      if (dp && dp.label) lines.push({ cls: "lc-muted", text: `срок демо: ${dp.label}` });
+    } else if (lifecycle === "approved_live") {
+      lines.push({ cls: "lc-live-line", text: "реальная торговля" });
+    } else if (lifecycle === "failed_archived") {
+      const reason = (p.failed_archive && p.failed_archive.reason) || p.archive_reason || "причина не указана";
+      const removed = p.failed_archive && p.failed_archive.removed_from_ninjatrader;
+      lines.push({ cls: "lc-archived-reason", text: reason });
+      lines.push({
+        cls: removed ? "lc-ok" : "lc-warn",
+        text: removed ? "исходник удалён из NinjaTrader · нажмите F5 в NinjaTrader" : "ожидает удаления из NinjaTrader",
+      });
+    }
+    return lines;
+  }
+
+  function lifecycleCard(p) {
+    const lifecycle = profileLifecycle(p);
+    const isAi = !!(p.is_ai_lab || String(p.origin || "").toLowerCase() === "ai_lab");
+    const name = p.name || p.profile_id || p.stable_id || "—";
+    const instr = [p.instrument, p.timeframe ? tfShort(p.timeframe) : ""].filter(Boolean).join(" · ");
+    const planTitle = lifecycle === "trial" ? planHoverTitle(p.trial_plan)
+      : (lifecycle === "approved_demo" || lifecycle === "approved_live") ? planHoverTitle(p.demo_plan)
+      : "";
+
+    const head = el("div", { class: "lc-card-head" }, [
+      el("span", { class: "lc-card-name", text: name }),
+      isAi ? el("span", { class: "lc-badge lc-badge-ai", text: "AI / LM Studio", title: "Стратегия создана локальным ИИ (LM Studio)" })
+           : el("span", { class: "lc-badge lc-badge-prod", text: "Production", title: "Ручная разработка" }),
+    ]);
+    const sub = el("div", { class: "lc-card-sub", text: instr || "—" });
+    const lines = lifecycleCardLines(p, lifecycle).map(l => el("div", { class: l.cls, text: l.text }));
+
+    const card = el("div", {
+      class: `lc-card ${isAi ? "is-ai" : "is-prod"}`,
+      title: planTitle ? `${name}\n${planTitle}` : name,
+    }, [head, sub, ...lines]);
+    return card;
+  }
+
+  function renderLifecycleBoard() {
+    const host = $("lc-columns");
+    if (!host) return;
+    const originFilter = STATE.lifecycleOrigin || "all";
+    const allStrategies = [...(STATE.profiles || []), ...(STATE.aiStrategies || [])];
+    const profiles = allStrategies.filter(p => {
+      if (originFilter === "all") return true;
+      const isAi = !!(p.is_ai_lab || String(p.origin || "").toLowerCase() === "ai_lab");
+      return originFilter === "ai_lab" ? isAi : !isAi;
+    });
+
+    const buckets = { trial: [], approved_demo: [], approved_live: [], failed_archived: [] };
+    for (const p of profiles) {
+      const lc = profileLifecycle(p);
+      (buckets[lc] || (buckets[lc] = [])).push(p);
+    }
+
+    host.replaceChildren();
+    for (const col of LIFECYCLE_COLUMNS) {
+      const items = buckets[col.key] || [];
+      const column = el("div", { class: `lc-column ${col.cls}` });
+      column.appendChild(el("div", { class: "lc-column-head" }, [
+        el("span", { class: "lc-column-title", text: col.label }),
+        el("span", { class: "lc-column-count", text: String(items.length) }),
+      ]));
+      const list = el("div", { class: "lc-column-body" });
+      if (!items.length) {
+        list.appendChild(el("div", { class: "lc-empty", text: "—" }));
+      } else {
+        items
+          .sort((a, b) => String(a.instrument || "").localeCompare(String(b.instrument || ""), "ru"))
+          .forEach(p => list.appendChild(lifecycleCard(p)));
+      }
+      column.appendChild(list);
+      host.appendChild(column);
+    }
   }
 
   function bind() {
@@ -3789,6 +4040,81 @@
       renderInstrumentList();
       renderMatrix();
     });
+    const originFilter = $("lc-origin-filter");
+    if (originFilter) originFilter.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-origin]");
+      if (!btn) return;
+      STATE.lifecycleOrigin = btn.dataset.origin || "all";
+      originFilter.querySelectorAll("button").forEach(b =>
+        b.classList.toggle("active", b === btn));
+      renderLifecycleBoard();
+    });
+    const cleanupBtn = $("lc-nt-cleanup");
+    if (cleanupBtn) cleanupBtn.addEventListener("click", () => ntCleanupPreview());
+  }
+
+  async function ntCleanupRun(dryRun) {
+    const r = await fetch("/api/profiles/ninjatrader/cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: dryRun, include_ai_sandbox: true, include_ref_lib: true }),
+    });
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const j = await r.json(); msg = j.error || msg; } catch {}
+      throw new Error(msg);
+    }
+    return r.json();
+  }
+
+  async function ntCleanupPreview() {
+    const box = $("lc-nt-cleanup-result");
+    if (!box) return;
+    box.hidden = false;
+    box.replaceChildren(el("div", { class: "muted small", text: "Анализ NinjaTrader…" }));
+    let plan;
+    try {
+      plan = await ntCleanupRun(true);
+    } catch (e) {
+      box.replaceChildren(el("div", { class: "lc-warn", text: `Ошибка: ${e.message}` }));
+      return;
+    }
+    const removedSample = (plan.removed || []).slice(0, 12)
+      .map(x => x.item.split(/[\\/]/).pop()).join(", ");
+    const confirmBtn = el("button", { type: "button", class: "lc-nt-cleanup-confirm",
+      text: `Убрать ${plan.removed_count} и оставить только актуальные` });
+    confirmBtn.addEventListener("click", () => ntCleanupExecute());
+    const cancelBtn = el("button", { type: "button", class: "lc-nt-cleanup-cancel", text: "Отмена" });
+    cancelBtn.addEventListener("click", () => { box.hidden = true; box.replaceChildren(); });
+    box.replaceChildren(
+      el("div", { class: "lc-nt-cleanup-head", text:
+        `Останется ${plan.kept_count} (утверждённые + базовые движки), в карантин уйдёт ${plan.removed_count}.` }),
+      el("div", { class: "muted small", text: `Будут убраны: ${removedSample}${plan.removed_count > 12 ? " …" : ""}` }),
+      el("div", { class: "muted small", text:
+        "После уборки нужно нажать F5 в NinjaTrader (или перезапустить его), чтобы список обновился. Действие обратимо (карантин)." }),
+      el("div", { class: "lc-nt-cleanup-actions" }, [confirmBtn, cancelBtn]),
+    );
+  }
+
+  async function ntCleanupExecute() {
+    const box = $("lc-nt-cleanup-result");
+    if (!box) return;
+    box.replaceChildren(el("div", { class: "muted small", text: "Перенос в карантин…" }));
+    let res;
+    try {
+      res = await ntCleanupRun(false);
+    } catch (e) {
+      box.replaceChildren(el("div", { class: "lc-warn", text: `Ошибка: ${e.message}` }));
+      return;
+    }
+    const running = res.ninjatrader_running
+      ? "NinjaTrader запущен — нажмите F5 в NinjaScript Editor (Новое → NinjaScript Editor → F5) для перекомпиляции."
+      : "Откройте NinjaTrader и нажмите F5 (или он перекомпилирует при старте).";
+    box.replaceChildren(
+      el("div", { class: "lc-ok", text: `Готово: убрано ${res.removed_count}, осталось ${res.kept_count}.` }),
+      el("div", { class: "lc-archived-reason", text: `⚠ ${running}` }),
+      res.quarantine_dir ? el("div", { class: "muted small", text: `Карантин: ${res.quarantine_dir}` }) : null,
+    );
   }
 
   document.addEventListener("DOMContentLoaded", () => {

@@ -14,9 +14,19 @@ from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
 
+from .. import governance
 
-AI_COMMISSION_FLOOR = 1.90
-AI_SLIPPAGE_FLOOR = 1
+
+def _runtime_defaults() -> Dict[str, Any]:
+    return governance.runtime_defaults()
+
+
+def _ai_commission_floor() -> float:
+    return float(_runtime_defaults().get("round_turn_commission", 1.90) or 1.90)
+
+
+def _ai_slippage_floor() -> int:
+    return int(_runtime_defaults().get("slippage_ticks", 1) or 1)
 
 
 def _now() -> str:
@@ -83,6 +93,8 @@ def submit(
         return {"ok": False, "error": "jobqueue API missing CreateJobRequest/create_job"}
 
     safe_parameters = dict(parameters or {})
+    safe_parameters.setdefault("RoundTurnCommission", _ai_commission_floor())
+    safe_parameters.setdefault("SlippageTicks", _ai_slippage_floor())
     try:
         exposed = jobqueue._strategy_parameter_names(class_name)
         if exposed:
@@ -111,10 +123,10 @@ def submit(
         risk_profile=risk_profile,
         calculate="OnBarClose",
         is_tick_replay=False,
-        order_fill_resolution="High",
+        order_fill_resolution=str(_runtime_defaults().get("order_fill_resolution", "High") or "High"),
         slippage_ticks=max(
-            AI_SLIPPAGE_FLOOR,
-            int(parameters.get("SlippageTicks", parameters.get("slippage_ticks", AI_SLIPPAGE_FLOOR))),
+            _ai_slippage_floor(),
+            int(parameters.get("SlippageTicks", parameters.get("slippage_ticks", _ai_slippage_floor()))),
         ),
         # jobqueue rejects numeric commissions; the honest research floor is
         # carried through execution.round_turn_commission / strategy params.

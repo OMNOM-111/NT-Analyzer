@@ -1,0 +1,10 @@
+{
+  "class_name": "B1Stop24MGC5mC003",
+  "cell_id": "CELL-003",
+  "profile_id": "mgc_b1_stop24_5m_paper_c003",
+  "reason": "Archived/purged from working portfolio: current-contract High-fill sample has only three trades and tick-replay produced zero trades; no durable edge or relaunch evidence.",
+  "quarantined_at_utc": "2026-06-27T19:22:18Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-003_20260627T192218Z\\B1Stop24MGC5mC003"
+  ]
+}

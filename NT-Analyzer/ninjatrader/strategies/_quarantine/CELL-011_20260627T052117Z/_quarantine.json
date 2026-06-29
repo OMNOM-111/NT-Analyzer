@@ -1,0 +1,11 @@
+{
+  "class_name": "NTAMicroVwapRiskPilot",
+  "cell_id": "CELL-011",
+  "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+  "reason": "Archived/purged from working portfolio: only one strict runtime trade and no honest current-contract edge sample; no relaunch evidence.",
+  "quarantined_at_utc": "2026-06-27T05:21:17Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-011_20260627T052117Z\\NTAMicroVwapRiskPilot",
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-011_20260627T052117Z\\NTAMicroVwapRiskPilot"
+  ]
+}

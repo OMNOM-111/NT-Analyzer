@@ -28,6 +28,18 @@ NinjaTrader остается источником истины по исполн
 3. Запусти `00_START_NT_ANALYZER.cmd`.
 4. Открой web UI: `http://127.0.0.1:8765/ui/`.
 
+Для AI Strategy Lab есть отдельный best-effort launcher:
+
+```powershell
+.\00_START_AI_LAB.cmd
+```
+
+Он пытается запустить NinjaTrader, LM Studio и `lms server start`, затем
+открыть `/ui/ai-lab.html`. Модели не грузятся заранее: нужная модель
+поднимается только перед конкретным LLM-запросом и выгружается после run.
+Если пути отличаются, задайте `NINJATRADER_EXE`, `LM_STUDIO_EXE`, `LMS_CLI`
+или создайте `ai_lab/bootstrap.json`.
+
 Прямой запуск backend:
 
 ```powershell

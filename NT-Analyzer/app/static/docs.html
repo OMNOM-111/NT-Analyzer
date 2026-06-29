@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NT-Analyzer — Документы</title>
+  <link rel="stylesheet" href="style.css?v=20260627-governance2">
+  <script src="page-prefetch.js?v=20260627-governance2" defer></script>
+  <script src="docs.js?v=20260627-governance2" defer></script>
+</head>
+<body>
+<header>
+  <h1>Документы и правила</h1>
+  <nav class="top-nav" aria-label="Разделы">
+    <a href="/ui/legacy/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/legacy/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/legacy/performance.html" class="top-nav-link">Центр доходности</a>
+    <a href="/ui/legacy/strategies.html" class="top-nav-link">Стратегии</a>
+    <a href="/ui/legacy/docs.html" class="top-nav-link active">Документы</a>
+    <a href="/ui/legacy/ai-strategy.html" class="top-nav-link">Стратегия AI</a>
+  </nav>
+  <div class="header-actions">
+    <span id="docs-status" class="status-pill">Загрузка…</span>
+  </div>
+</header>
+
+<main class="docs-page">
+  <aside class="docs-sidebar">
+    <div class="docs-search-wrap">
+      <input id="docs-search" class="docs-search" type="search" placeholder="Поиск по документам и законам">
+    </div>
+    <div id="docs-list" class="docs-list"></div>
+  </aside>
+
+  <section class="docs-main">
+    <section id="docs-runtime-band" class="docs-runtime-band"></section>
+
+    <section class="docs-viewer">
+      <div class="docs-viewer-head">
+        <div>
+          <h2 id="docs-title">Документ</h2>
+          <div id="docs-meta" class="docs-meta"></div>
+        </div>
+        <div class="docs-actions">
+          <button id="docs-edit-doc-btn" type="button" class="btn" hidden>Редактировать документ</button>
+        </div>
+      </div>
+
+      <section id="docs-law-editor" class="docs-editor" hidden>
+        <h3>Редактирование закона</h3>
+        <form id="docs-law-form">
+          <input id="docs-law-id" type="hidden">
+          <label class="field">
+            <span class="lbl">Значение</span>
+            <input id="docs-law-value" type="text">
+          </label>
+          <label class="field">
+            <span class="lbl">Краткая суть</span>
+            <textarea id="docs-law-summary" rows="3"></textarea>
+          </label>
+          <label class="field">
+            <span class="lbl">Предупреждение / ручная проверка</span>
+            <textarea id="docs-law-warning" rows="3"></textarea>
+          </label>
+          <label class="field">
+            <span class="lbl">Подпись / инициатор</span>
+            <input id="docs-law-actor" type="text" placeholder="Например: dimon">
+          </label>
+          <label class="field">
+            <span class="lbl">Основание поправки</span>
+            <textarea id="docs-law-reason" rows="2" placeholder="Что именно меняется и почему"></textarea>
+          </label>
+          <div class="docs-editor-actions">
+            <button type="submit" class="btn primary">Сохранить закон</button>
+            <button id="docs-law-cancel" type="button" class="btn">Отмена</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="docs-markdown-editor" class="docs-editor" hidden>
+        <h3>Редактирование документа</h3>
+        <form id="docs-markdown-form">
+          <input id="docs-markdown-id" type="hidden">
+          <textarea id="docs-markdown-content" rows="20"></textarea>
+          <label class="field">
+            <span class="lbl">Подпись / инициатор</span>
+            <input id="docs-markdown-actor" type="text" placeholder="Например: dimon">
+          </label>
+          <label class="field">
+            <span class="lbl">Основание поправки</span>
+            <textarea id="docs-markdown-reason" rows="2" placeholder="Что именно меняется и почему"></textarea>
+          </label>
+          <div class="docs-editor-actions">
+            <button type="submit" class="btn primary">Сохранить документ</button>
+            <button id="docs-markdown-cancel" type="button" class="btn">Отмена</button>
+          </div>
+        </form>
+      </section>
+
+      <div id="docs-content" class="docs-content"></div>
+    </section>
+
+    <section class="docs-history">
+      <div class="docs-consistency-head">
+        <h3>Поправки и журнал</h3>
+      </div>
+      <div id="docs-history-body"></div>
+    </section>
+
+    <section class="docs-consistency">
+      <div class="docs-consistency-head">
+        <h3>Где проверять после изменения</h3>
+        <button id="docs-refresh-summary" type="button" class="btn">Обновить</button>
+      </div>
+      <div id="docs-consistency-body"></div>
+    </section>
+  </section>
+</main>
+<script src="legacy_switch.js"></script>
+</body>
+</html>

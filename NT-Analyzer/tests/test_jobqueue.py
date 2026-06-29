@@ -734,8 +734,64 @@ def t17(tmp: Path) -> None:
     assert "B1ShortOnlyMGC5mV2" not in classes, out
 
 
+@case("archiving profile auto-triggers NinjaTrader cleanup")
+def t18(tmp: Path) -> None:
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": [
+            {
+                "profile_id": "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+                "name": "Scalping MNQ 1m v1 c018",
+                "strategy_class": "NTAMicroMnqScalpPilot",
+                "deploy_strategy_class": "NTAMnqDailyOpenScalpC018",
+                "instrument": "MNQ 09-26",
+                "timeframe": "1 Minute",
+                "cell_id": "CELL-018",
+                "status": "ready",
+                "notes": "old",
+            }
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    calls: list[str | None] = []
+    original = jq.remove_archived_from_ninjatrader
+
+    def fake_cleanup(profile_id: str | None = None) -> dict:
+        calls.append(profile_id)
+        data = json.loads((profiles_dir / "strategies.json").read_text(encoding="utf-8"))
+        prof = data["profiles"][0]
+        prof.setdefault("failed_archive", {})
+        prof["failed_archive"]["removed_from_ninjatrader"] = True
+        prof["failed_archive"]["removal"] = {"reason": "already_absent"}
+        (profiles_dir / "strategies.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {"ok": True, "count": 1, "removed": 1, "results": [{"profile_id": profile_id, "removed": True}]}
+
+    jq.remove_archived_from_ninjatrader = fake_cleanup  # type: ignore[assignment]
+    try:
+        out = jq.update_strategy_profile(
+            "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+            {"status": "archived", "notes": "Rejected in paper"},
+            action="archive",
+        )
+    finally:
+        jq.remove_archived_from_ninjatrader = original  # type: ignore[assignment]
+
+    assert calls == ["mnq_daily_open_allmodules_2h_1m_c018_ready_v1"], calls
+    assert out["ok"] is True, out
+    assert out["profile"]["status"] == "archived", out
+    assert out["profile"]["matrix_hidden"] is True, out
+    assert out["profile"]["failed_archive"]["removed_from_ninjatrader"] is True, out
+    assert out["ninjatrader_cleanup"]["removed"] == 1, out
+    assert out["profile"]["failed_archive"]["fingerprint"], out
+
+
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17]
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17, t18]
     print(f"Running {len(cases)} queue contract tests:")
     for c in cases:
         c()

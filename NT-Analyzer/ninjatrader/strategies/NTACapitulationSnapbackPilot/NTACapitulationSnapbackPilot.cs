@@ -49,7 +49,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Name = "NTACapitulationSnapbackPilot";
+                Name = "Research Hub MGC Capitulation 5m";
                 Description = "Cross-root research pilot: abnormal volume displacement bar, then confirmed snapback toward session VWAP.";
                 Calculate = Calculate.OnBarClose;
                 EntriesPerDirection = 1;

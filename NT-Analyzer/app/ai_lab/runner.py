@@ -154,7 +154,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     global _CURRENT, _THREAD, _RUN_STATE
 
     from . import orchestrator  # lazy import to avoid cycle at import time
-    from . import lm_studio  # lazy import; preflight only used at run start
+    from . import bootstrap, lm_studio  # lazy import; preflight only used at run start
 
     # Normalize the new outer/inner schema. ``strategy_count`` (outer) and
     # ``iterations_per_strategy`` (inner) are the canonical names; the
@@ -205,20 +205,46 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
             assert _CURRENT is not None
             raise RunnerBusy(_CURRENT)
 
+    bootstrap_result: Dict[str, Any] = {"skipped": True}
+    if (
+        use_llm
+        and not allow_template_fallback
+        and not bool(args.get("dry_run", False))
+        and bootstrap.auto_bootstrap_enabled()
+    ):
+        bootstrap_result = bootstrap.start(load_models=False, wait_readiness=False)
+
     # LM Studio hard gate — first thing, BEFORE start_skeleton, so a failed
     # preflight leaves zero experiments behind.
     preflight: Dict[str, Any] = {"ok": True, "skipped": True}
     if use_llm and not allow_template_fallback and not bool(args.get("dry_run", False)):
-        try:
-            preflight = lm_studio.preflight_all_required_roles(
-                list(lm_studio.RUN_REQUIRED_ROLES), purpose="runner_preflight",
-            )
-        except Exception as e:  # noqa: BLE001
-            preflight = {"ok": False, "missing_roles": [
-                {"role": "judge", "reason": "preflight_exception", "error": str(e)},
-            ], "error": str(e)}
+        if lm_studio.lazy_mode_enabled():
+            try:
+                h = lm_studio.lm_status(allow_probe=False)
+                missing = h.get("missing_run_roles") or []
+                preflight = {
+                    "ok": bool(h.get("available")) and not missing,
+                    "missing_roles": missing,
+                    "checked_via": "models_list_lazy_no_chat",
+                    "base_url": h.get("base_url"),
+                    "checked_at_utc": _now(),
+                    "lazy_mode": True,
+                }
+            except Exception as e:  # noqa: BLE001
+                preflight = {"ok": False, "missing_roles": [
+                    {"role": "judge", "reason": "lazy_preflight_exception", "error": str(e)},
+                ], "error": str(e), "lazy_mode": True}
+        else:
+            try:
+                preflight = lm_studio.preflight_all_required_roles(
+                    list(lm_studio.RUN_REQUIRED_ROLES), purpose="runner_preflight",
+                )
+            except Exception as e:  # noqa: BLE001
+                preflight = {"ok": False, "missing_roles": [
+                    {"role": "judge", "reason": "preflight_exception", "error": str(e)},
+                ], "error": str(e)}
         if not preflight.get("ok"):
-            _write_run_log("preflight_blocked", preflight=preflight)
+            _write_run_log("preflight_blocked", preflight=preflight, bootstrap=bootstrap_result)
             raise RunBlockedLMStudio(preflight)
 
     with _LOCK:
@@ -262,6 +288,14 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
             "use_llm": use_llm,
             "allow_template_fallback": allow_template_fallback,
             "preflight": preflight,
+            "bootstrap": bootstrap_result,
+            "llm_efficiency": {
+                "lazy_mode": lm_studio.lazy_mode_enabled(),
+                "reuse_loaded_model": lm_studio.reuse_loaded_model_enabled(),
+                "unload_after_each_request": lm_studio.unload_after_request_enabled(),
+                "run_end_unload": bootstrap.auto_unload_enabled(),
+                "prompt_cache_marker": lm_studio.prompt_cache_marker(),
+            },
             "cancel_event": cancel_event,
         }
         _persist_run_state_locked()
@@ -458,6 +492,13 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
         except Exception:
             pass
     finally:
+        try:
+            from . import bootstrap
+            if bootstrap.auto_unload_enabled():
+                unload = bootstrap.unload_models()
+                _write_run_log("lm_studio_unloaded", unload=unload)
+        except Exception as exc:  # noqa: BLE001
+            _write_run_log("lm_studio_unload_failed", error=str(exc)[:500])
         try:
             with _LOCK:
                 ev = _CURRENT.get("cancel_event") if _CURRENT else None

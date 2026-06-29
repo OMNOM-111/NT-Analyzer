@@ -40,15 +40,19 @@ from typing import Any, Dict, Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import jobqueue  # type: ignore[no-redef]
+    from app import governance  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
     from app import performance  # type: ignore[no-redef]
+    from app import account_ledger  # type: ignore[no-redef]
+    from app import portfolio_registry  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
     from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
     from app.ai_lab import registry as ai_registry  # type: ignore[no-redef]
     from app.ai_lab import orchestrator as ai_orchestrator  # type: ignore[no-redef]
     from app.ai_lab import analysis_pack as ai_analysis_pack  # type: ignore[no-redef]
     from app.ai_lab import backtest as ai_backtest  # type: ignore[no-redef]
+    from app.ai_lab import bootstrap as ai_bootstrap  # type: ignore[no-redef]
     from app.ai_lab import lm_studio as ai_lm_studio  # type: ignore[no-redef]
     from app.ai_lab import runner as ai_runner  # type: ignore[no-redef]
     from app.ai_lab import activity as ai_activity  # type: ignore[no-redef]
@@ -59,15 +63,19 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import stale_sweep as ai_stale_sweep  # type: ignore[no-redef]
 else:
     from . import jobqueue
+    from . import governance
     from . import marginrefresh
     from . import ops
     from . import performance
+    from . import account_ledger
+    from . import portfolio_registry
     from . import runtime as ops_runtime
     from .ai_lab import read_model as ai_read_model
     from .ai_lab import registry as ai_registry
     from .ai_lab import orchestrator as ai_orchestrator
     from .ai_lab import analysis_pack as ai_analysis_pack
     from .ai_lab import backtest as ai_backtest
+    from .ai_lab import bootstrap as ai_bootstrap
     from .ai_lab import lm_studio as ai_lm_studio
     from .ai_lab import runner as ai_runner
     from .ai_lab import activity as ai_activity
@@ -82,6 +90,15 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Uniform Content-Security-Policy for all served static UI (new Aurora + legacy).
+# Both UIs externalize JS and use no inline <script>/onclick, so `script-src 'self'`
+# blocks injected inline script while inline style attributes remain allowed.
+STATIC_CSP = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+    "object-src 'none'; frame-ancestors 'self'"
+)
 
 
 def _do_restart_server() -> None:
@@ -504,6 +521,9 @@ class Handler(BaseHTTPRequestHandler):
         if not rel or rel == "/":
             rel = "index.html"
         rel = rel.lstrip("/")
+        # Directory requests (e.g. "legacy/") serve the folder's index.html.
+        if rel.endswith("/"):
+            rel += "index.html"
         # Disallow path traversal: resolve and ensure inside STATIC_DIR.
         target = (STATIC_DIR / rel).resolve()
         try:
@@ -539,6 +559,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", cache_control)
                 self.send_header("Last-Modified", last_modified)
                 self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", STATIC_CSP)
                 self.end_headers()
                 return
             data = target.read_bytes()
@@ -548,6 +569,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", cache_control)
             self.send_header("Last-Modified", last_modified)
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", STATIC_CSP)
             self.end_headers()
             self.wfile.write(data)
         except OSError as e:
@@ -615,6 +637,38 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/ui"):
             rel = path[len("/ui"):] or "/"
+            suffix = ("?" + url.query) if url.query else ""
+            # Back-compat redirects: old page URLs → new Aurora pages (keep deep links).
+            _aliases = {
+                "/ai-strategy.html": "/ui/ai-lab.html", "/ai-strategy": "/ui/ai-lab.html",
+                "/ops.html": "/ui/trading.html", "/ops": "/ui/trading.html",
+                "/docs.html": "/ui/documents.html", "/docs": "/ui/documents.html",
+            }
+            if rel in _aliases:
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header("Location", _aliases[rel] + suffix)
+                self.end_headers()
+                return
+            # Canonicalise the old staging path /ui/aurora/* → /ui/*.
+            if rel == "/aurora" or rel.startswith("/aurora/"):
+                new_rel = rel[len("/aurora"):] or "/"
+                self.send_response(HTTPStatus.FOUND)
+                self.send_header("Location", "/ui" + new_rel + suffix)
+                self.end_headers()
+                return
+            # Legacy (classic) UI lives at app/static/<file>; serve it under /ui/legacy/.
+            if rel == "/legacy" or rel.startswith("/legacy/"):
+                self._serve_static(rel[len("/legacy"):] or "/")
+                return
+            # New Aurora UI is primary: its pages + assets are served from app/static/aurora/.
+            _new_pages = {
+                "/", "/index.html", "/backtesting.html", "/trading.html",
+                "/performance.html", "/strategies.html", "/ai-lab.html", "/documents.html",
+            }
+            if rel in _new_pages or rel.startswith("/assets/"):
+                self._serve_static("aurora/index.html" if rel == "/" else "aurora" + rel)
+                return
+            # Fallback: any other path resolves against the static root (legacy-named files).
             self._serve_static(rel)
             return
 
@@ -635,6 +689,14 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/portfolio/cells":
+            self._json(HTTPStatus.OK, portfolio_registry.read_registry())
+            return
+
+        if path.startswith("/api/governance"):
+            if self._governance_get(path, qs):
+                return
+
         if path == "/api/catalog":
             self._json(HTTPStatus.OK, jobqueue.build_catalog_response())
             return
@@ -642,6 +704,11 @@ class Handler(BaseHTTPRequestHandler):
         # Phase 22e — Strategy Profiles registry (best-of/locked configs).
         if path == "/api/profiles":
             self._json(HTTPStatus.OK, jobqueue.read_strategy_profiles())
+            return
+
+        # Do-not-recreate registry: ideas that failed all trials.
+        if path == "/api/profiles/archive":
+            self._json(HTTPStatus.OK, jobqueue.read_archived_strategies())
             return
 
         if path == "/api/strategy-families":
@@ -665,6 +732,21 @@ class Handler(BaseHTTPRequestHandler):
                 account_name=(qs.get("account") or [None])[0],
             )
             self._bytes(HTTPStatus.OK, data, "text/csv; charset=utf-8", filename)
+            return
+
+        if path == "/api/performance/trades":
+            try:
+                offset = int((qs.get("offset") or ["0"])[0])
+                limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError:
+                offset, limit = 0, 200
+            self._json(HTTPStatus.OK, performance.build_trades_response(
+                period=(qs.get("period") or ["month"])[0],
+                from_date=(qs.get("from") or [None])[0],
+                to_date=(qs.get("to") or [None])[0],
+                account_name=(qs.get("account") or [None])[0],
+                offset=offset, limit=limit,
+            ))
             return
 
         if path == "/api/performance":
@@ -845,6 +927,55 @@ class Handler(BaseHTTPRequestHandler):
 
         self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
 
+    def _governance_get(self, path: str, qs: Dict[str, Any]) -> bool:
+        parts = [p for p in path.split("/") if p]
+        if len(parts) < 2 or parts[0] != "api" or parts[1] != "governance":
+            return False
+
+        if path == "/api/governance/runtime-defaults":
+            self._json(HTTPStatus.OK, governance.runtime_defaults())
+            return True
+
+        if path == "/api/governance/summary":
+            self._json(HTTPStatus.OK, {
+                "documents": governance.list_documents(),
+                "runtime_defaults": governance.runtime_defaults(),
+                "consistency": governance.consistency_report(),
+                "history": governance.read_change_log(80),
+            })
+            return True
+
+        if path == "/api/governance/documents":
+            self._json(HTTPStatus.OK, {"documents": governance.list_documents()})
+            return True
+
+        if path == "/api/governance/history":
+            try:
+                limit = int((qs.get("limit") or ["80"])[0])
+            except ValueError:
+                limit = 80
+            entity_id = (qs.get("entity_id") or [None])[0]
+            document_id = (qs.get("document_id") or [None])[0]
+            self._json(HTTPStatus.OK, {
+                "entries": governance.read_change_log(limit, entity_id=entity_id, document_id=document_id),
+            })
+            return True
+
+        if path == "/api/governance/consistency":
+            self._json(HTTPStatus.OK, governance.consistency_report())
+            return True
+
+        if len(parts) == 4 and parts[2] == "documents":
+            doc_id = urllib.parse.unquote(parts[3])
+            doc = governance.read_document(doc_id)
+            if not doc:
+                self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
+                return True
+            self._json(HTTPStatus.OK, doc)
+            return True
+
+        return False
+
     # ------------- /api/ops/* GET dispatcher --------------------------------
 
     def _ops_get(self, path: str, qs: Dict[str, Any]) -> bool:
@@ -948,7 +1079,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, ops_runtime.read_positions())
             return True
         if path == "/api/ops/runtime/accounts":
-            self._json(HTTPStatus.OK, ops_runtime.read_accounts_with_source())
+            payload = ops_runtime.read_accounts_with_source()
+            try:
+                account_ledger.record_accounts(payload)
+            except Exception:
+                payload.setdefault("warnings", []).append("account ledger snapshot could not be recorded")
+            self._json(HTTPStatus.OK, payload)
+            return True
+        if path == "/api/ops/runtime/account-history":
+            account = (qs.get("account") or [""])[0]
+            try:
+                limit = int((qs.get("limit") or ["500"])[0])
+            except ValueError:
+                limit = 500
+            self._json(HTTPStatus.OK, account_ledger.account_history(account, limit))
             return True
         if path == "/api/ops/runtime/executions":
             sid = (qs.get("strategy_id") or [None])[0]
@@ -1127,6 +1271,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"summary error: {e}")
             return True
 
+        if path == "/api/ai-lab/lifecycle":
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.lifecycle_cards())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"lifecycle error: {e}")
+            return True
+
+        if path == "/api/ai-lab/cell-history":
+            cell = (qs.get("cell") or [""])[0]
+            try:
+                self._json(HTTPStatus.OK, ai_read_model.cell_history(cell))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"cell-history error: {e}")
+            return True
+
         if path == "/api/ai-lab/matrix":
             roots_q = (qs.get("roots") or [None])[0]
             roots = [r.strip().upper() for r in roots_q.split(",")] if roots_q else None
@@ -1141,6 +1300,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, ai_read_model.performance_board())
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"performance error: {e}")
+            return True
+
+        if path == "/api/ai-lab/model-performance":
+            try:
+                days = int((qs.get("days") or ["30"])[0])
+                self._json(HTTPStatus.OK, ai_read_model.model_performance(days=days))
+            except ValueError:
+                self._err(HTTPStatus.BAD_REQUEST, "days must be an integer")
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"model performance error: {e}")
             return True
 
         if path == "/api/ai-lab/portfolio":
@@ -1189,6 +1358,16 @@ class Handler(BaseHTTPRequestHandler):
                     "message_ru": "Не удалось проверить AI-модели.",
                     "error": str(e),
                 })
+            return True
+
+        if path == "/api/ai-lab/bootstrap/status":
+            try:
+                url = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(url.query or "")
+                probe = qs.get("probe", ["0"])[0] in ("1", "true", "yes")
+                self._json(HTTPStatus.OK, ai_bootstrap.status(probe=probe))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"bootstrap status failed: {e}")
             return True
 
         if path == "/api/ai-lab/current":
@@ -1304,6 +1483,31 @@ class Handler(BaseHTTPRequestHandler):
     # ------------- /api/ai-lab/* POST dispatcher ----------------------------
 
     def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
+        if path == "/api/ai-lab/bootstrap/start":
+            try:
+                out = ai_bootstrap.start(
+                    timeout_sec=max(30, min(900, int(body.get("timeout_sec", 300)))),
+                    start_ninjatrader=bool(body.get("start_ninjatrader", True)),
+                    start_lm_studio=bool(body.get("start_lm_studio", True)),
+                    start_lm_server=bool(body.get("start_lm_server", True)),
+                    load_models=bool(body.get("load_models", False)),
+                    wait_readiness=bool(body.get("wait_readiness", False)),
+                )
+                self._json(HTTPStatus.OK, out)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"bootstrap start failed: {e}")
+            return
+
+        if path == "/api/ai-lab/bootstrap/unload":
+            try:
+                out = ai_bootstrap.unload_models(
+                    stop_server=bool(body.get("stop_server", True))
+                )
+                self._json(HTTPStatus.OK, out)
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"bootstrap unload failed: {e}")
+            return
+
         if path == "/api/ai-lab/run":
             try:
                 capital_value = body.get("capital")
@@ -1629,6 +1833,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(e.status, str(e)); return
             except Exception as e:  # pragma: no cover
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"display prefs error: {e}"); return
+        # /api/profiles/archive/remove-from-nt  (batch or single via {"profile_id": ...})
+        if parts == ["api", "profiles", "archive", "remove-from-nt"]:
+            try:
+                pid = str(body.get("profile_id") or "").strip() or None
+                self._json(HTTPStatus.OK, jobqueue.remove_archived_from_ninjatrader(pid)); return
+            except jobqueue.JobValidationError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"nt removal error: {e}"); return
+        # /api/profiles/ninjatrader/cleanup  — keep only approved strategies in NT.
+        if parts == ["api", "profiles", "ninjatrader", "cleanup"]:
+            try:
+                dry_run = bool(body.get("dry_run", True))
+                include_ai = bool(body.get("include_ai_sandbox", True))
+                include_ref = bool(body.get("include_ref_lib", True))
+                self._json(HTTPStatus.OK, jobqueue.cleanup_ninjatrader_to_approved(
+                    dry_run=dry_run, include_ai_sandbox=include_ai, include_ref_lib=include_ref)); return
+            except Exception as e:  # pragma: no cover
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"nt cleanup error: {e}"); return
         # /api/ops/profiles/{profile_id}/{update|delete}
         if len(parts) == 5 and parts[0] == "api" and parts[1] == "ops" and parts[2] == "profiles":
             profile_id = urllib.parse.unquote(parts[3])
@@ -1692,6 +1915,44 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # pragma: no cover
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
+
+    def _governance_post(self, path: str, body: Dict[str, Any]) -> None:
+        parts = [p for p in path.split("/") if p]
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "governance":
+            if parts[2] == "laws":
+                law_id = urllib.parse.unquote(parts[3])
+                try:
+                    result = governance.update_law(
+                        law_id,
+                        body if isinstance(body, dict) else {},
+                        actor=str(body.get("actor") or "ui"),
+                    )
+                except KeyError as e:
+                    self._err(HTTPStatus.NOT_FOUND, str(e)); return
+                except ValueError as e:
+                    self._err(HTTPStatus.BAD_REQUEST, str(e)); return
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR,
+                              f"governance law update failed: {e}"); return
+                self._json(HTTPStatus.OK, result); return
+            if parts[2] == "documents":
+                doc_id = urllib.parse.unquote(parts[3])
+                try:
+                    result = governance.update_markdown_document(
+                        doc_id,
+                        str(body.get("content") or ""),
+                        actor=str(body.get("actor") or "ui"),
+                        reason=str(body.get("reason") or ""),
+                    )
+                except KeyError as e:
+                    self._err(HTTPStatus.NOT_FOUND, str(e)); return
+                except ValueError as e:
+                    self._err(HTTPStatus.BAD_REQUEST, str(e)); return
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR,
+                              f"governance document update failed: {e}"); return
+                self._json(HTTPStatus.OK, result); return
+        self._err(HTTPStatus.NOT_FOUND, f"no governance route: {path}")
 
     def _route_delete(self) -> None:
         """DELETE /api/jobs/<id>, /api/batches/<id>, or report favorite refs."""
@@ -1781,15 +2042,18 @@ class Handler(BaseHTTPRequestHandler):
         is_margins_refresh = (path == "/api/margins/refresh")
         is_server_restart = (path == "/api/server/restart")
         is_ops = path.startswith("/api/ops/")
+        is_profiles = path.startswith("/api/profiles/")
         is_report_favorites = path == "/api/report-favorites" or path.startswith("/api/report-favorites/")
         is_ai_lab = path.startswith("/api/ai-lab/")
+        is_governance = path.startswith("/api/governance/")
+        is_portfolio = path.startswith("/api/portfolio/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
-                or is_ops or is_report_favorites
-                or is_ai_lab):
+                or is_ops or is_profiles or is_report_favorites
+                or is_ai_lab or is_governance or is_portfolio):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
@@ -1803,7 +2067,66 @@ class Handler(BaseHTTPRequestHandler):
             self._ai_lab_post(path, body)
             return
 
-        if is_ops:
+        if is_governance:
+            body = self._read_body()
+            if body is None:
+                return
+            self._governance_post(path, body)
+            return
+
+        if path.startswith("/api/ops/runtime/account-history/"):
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                if path == "/api/ops/runtime/account-history/classify":
+                    out = account_ledger.classify_event(
+                        str(body.get("account_name") or ""), str(body.get("event_id") or ""),
+                        str(body.get("kind") or ""), str(body.get("actor") or "ui"), str(body.get("note") or ""),
+                    )
+                elif path == "/api/ops/runtime/account-history/events":
+                    out = account_ledger.add_event(
+                        str(body.get("account_name") or ""), str(body.get("kind") or ""), body.get("amount"),
+                        str(body.get("actor") or "ui"), str(body.get("note") or ""), body.get("at_utc"),
+                        str(body.get("source") or "manual"), str(body.get("source_id") or ""),
+                    )
+                elif path == "/api/ops/runtime/account-history/import":
+                    out = account_ledger.import_events(
+                        str(body.get("account_name") or ""), body.get("rows") or [],
+                        str(body.get("actor") or "ui"), str(body.get("source") or "broker_statement"),
+                    )
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no account-history route: {path}"); return
+                self._json(HTTPStatus.OK, out); return
+            except ValueError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e)); return
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"account ledger error: {e}"); return
+
+        if is_portfolio:
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                if path == "/api/portfolio/roots":
+                    out = portfolio_registry.add_root(body.get("root"), body.get("slots", 15), body.get("start_id"), str(body.get("actor") or "ui"))
+                elif path == "/api/portfolio/cells":
+                    out = portfolio_registry.add_cell(body.get("root"), body.get("cell_id"), str(body.get("actor") or "ui"))
+                elif len(parts) == 5 and parts[:3] == ["api", "portfolio", "cells"] and parts[4] == "archive":
+                    out = portfolio_registry.archive_cell(urllib.parse.unquote(parts[3]), str(body.get("actor") or "ui"))
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no portfolio route: {path}")
+                    return
+            except ValueError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except Exception as exc:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"portfolio registry error: {exc}")
+                return
+            self._json(HTTPStatus.OK, out)
+            return
+
+        if is_ops or is_profiles:
             body = self._read_body()
             if body is None:
                 return

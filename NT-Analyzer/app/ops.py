@@ -39,6 +39,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import governance
+
 try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover - Python < 3.9 fallback
@@ -575,10 +577,29 @@ def _read_journal_csv(csv_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
 
 
 def _row_adj_pnl(row: Dict[str, Any]) -> Optional[float]:
+    return _row_adj_pnl_with_commission(row, ROUND_TURN_COMMISSION)
+
+
+def _strategy_round_turn_commission(strategy: Optional[Dict[str, Any]]) -> float:
+    params = (strategy or {}).get("locked_params") or {}
+    if isinstance(params, dict):
+        try:
+            value = float(params.get("RoundTurnCommission"))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(governance.runtime_defaults().get("round_turn_commission", ROUND_TURN_COMMISSION))
+    except Exception:
+        return ROUND_TURN_COMMISSION
+
+
+def _row_adj_pnl_with_commission(row: Dict[str, Any], commission: float) -> Optional[float]:
     g = row.get("gross_pnl"); q = row.get("total_qty")
     if g is None or q is None:
         return None
-    return float(g) - ROUND_TURN_COMMISSION * float(q)
+    return float(g) - float(commission) * float(q)
 
 
 def compute_metrics_safe(strategy: Dict[str, Any]) -> Dict[str, Any]:
@@ -596,11 +617,12 @@ def compute_metrics(strategy: Dict[str, Any]) -> Dict[str, Any]:
                 "risk_state": "n/a"}
 
     rows, warnings = _read_journal_csv(strategy.get("journal_csv_path", ""))
+    round_turn_commission = _strategy_round_turn_commission(strategy)
 
     # Per-day adjusted pnl in chronological order
     days: List[Dict[str, Any]] = []
     for r in rows:
-        adj = _row_adj_pnl(r)
+        adj = _row_adj_pnl_with_commission(r, round_turn_commission)
         if adj is None:
             continue
         days.append({"date": r.get("date_pt"), "adj": adj,
@@ -773,10 +795,11 @@ def get_trades(strategy_id: str) -> Dict[str, Any]:
         return {"trades": [], "warnings": [f"trades.json read error: {e}"]}
 
     out: List[Dict[str, Any]] = []
+    round_turn_commission = _strategy_round_turn_commission(s)
     for t in raw[:5000]:
         q = float(t.get("quantity") or 0)
         gross = float(t.get("pnl_currency") or 0)
-        adj = gross - ROUND_TURN_COMMISSION * q
+        adj = gross - round_turn_commission * q
         et = t.get("entry_time_utc"); xt = t.get("exit_time_utc")
         try: et_pt = _to_pt(datetime.fromisoformat(et.replace("Z", "+00:00"))).isoformat() if et else ""
         except Exception: et_pt = et or ""
@@ -788,7 +811,7 @@ def get_trades(strategy_id: str) -> Dict[str, Any]:
             "entry_pt": et_pt, "exit_pt": xt_pt,
             "entry_price": t.get("entry_price"), "exit_price": t.get("exit_price"),
             "quantity": q, "gross_pnl": gross,
-            "commission_est": ROUND_TURN_COMMISSION * q,
+            "commission_est": round_turn_commission * q,
             "adjusted_pnl": round(adj, 2),
         })
     return {"trades": out, "count": len(out), "source_job_id": job_id}
@@ -801,8 +824,9 @@ def get_journal(strategy_id: str) -> Dict[str, Any]:
     rows, warnings = _read_journal_csv(s.get("journal_csv_path", ""))
     # add adjusted_pnl per row
     enriched = []
+    round_turn_commission = _strategy_round_turn_commission(s)
     for r in rows:
-        adj = _row_adj_pnl(r)
+        adj = _row_adj_pnl_with_commission(r, round_turn_commission)
         rr = dict(r); rr["adjusted_pnl"] = (round(adj, 2) if adj is not None else None)
         enriched.append(rr)
     csv_p = s.get("journal_csv_path", "")

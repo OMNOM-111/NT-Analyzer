@@ -1,0 +1,58 @@
+{
+  "cleaned_at_utc": "2026-06-27T21:10:59Z",
+  "approved": [
+    "B1EarlyWindowMGC5mC006",
+    "NTACapitulationSnapbackPilot",
+    "NTAEntropyTransitionFieldPilot",
+    "NTAMgcCapitulationSnapbackC007",
+    "NTAMicroMnqScalpPilot",
+    "NTAMicroVwapRiskExplorer",
+    "NTAMnqEntropyTransitionFieldC127",
+    "NTAMnqHeadShouldersDivergenceC019",
+    "NTAMnqHeadShouldersDivergenceC020",
+    "NTAMnqHeadShouldersDivergenceC126",
+    "NTAMnqMicroOrbOpenScalp",
+    "NTAMnqMicroOrbRetestScalpC013"
+  ],
+  "keep_closure": [
+    "B1EarlyWindowMGC5mC006",
+    "NTACapitulationSnapbackPilot",
+    "NTAEntropyTransitionFieldPilot",
+    "NTAMgcCapitulationSnapbackC007",
+    "NTAMicroMnqScalpPilot",
+    "NTAMicroVwapRiskExplorer",
+    "NTAMnqEntropyTransitionFieldC127",
+    "NTAMnqHeadShouldersDivergenceC019",
+    "NTAMnqHeadShouldersDivergenceC020",
+    "NTAMnqHeadShouldersDivergenceC126",
+    "NTAMnqMicroOrbOpenScalp",
+    "NTAMnqMicroOrbRetestScalpC013",
+    "NTAMnqResearchHub",
+    "NTAMnqSessionEdgeEngineC020"
+  ],
+  "removed": [
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMicroSessionEdgeExplorer",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMicroSessionEdgeExplorer",
+        "RiskManager"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTASessionVwapReclaimScalper",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAM2kVwapReclaimScalperLong",
+        "NTAM2kVwapReclaimScalperShort",
+        "NTAMesVwapReclaimScalperLong",
+        "NTAMesVwapReclaimScalperShort",
+        "NTAMgcVwapReclaimScalperLongBranch",
+        "NTAMgcVwapReclaimScalperShortBranch",
+        "NTAMnqVwapReclaimScalperShortC013",
+        "NTASessionVwapReclaimScalper",
+        "RiskManager"
+      ]
+    }
+  ]
+}

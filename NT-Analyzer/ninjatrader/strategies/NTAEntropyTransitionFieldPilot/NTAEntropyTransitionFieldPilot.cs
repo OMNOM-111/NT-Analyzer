@@ -84,7 +84,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Name = "NTAEntropyTransitionFieldPilot";
+                Name = "Research Hub MNQ Entropy Field 5m";
                 Description = "Cross-root research pilot: entropy-gated empirical state-transition field for next-bar signal prediction.";
                 Calculate = Calculate.OnBarClose;
                 EntriesPerDirection = 1;

@@ -60,6 +60,78 @@
 3. На вкладке **«LM Studio»** в UI — должно быть `available: ✅` и пустой
    список `missing_roles`. После этого «Запустить» снова станет активной.
 
+### 2.1. Автоподготовка среды
+
+Быстрый запуск:
+
+```powershell
+.\00_START_AI_LAB.cmd
+```
+
+Что делает launcher:
+
+1. Проверяет/запускает NinjaTrader.
+2. Проверяет/запускает LM Studio.
+3. Если доступен `lms`, выполняет `lms server start`.
+4. Запускает backend и открывает `/ui/ai-strategy.html`.
+
+Модели работают в lazy-режиме:
+
+- при простое модели не загружаются в RAM/VRAM;
+- перед конкретным `/chat/completions` backend делает `lms load <model>`;
+- между соседними LLM-вызовами одного run модель по умолчанию **остаётся
+  загруженной**, чтобы LM Studio мог повторно использовать стабильный prompt
+  prefix / KV-cache;
+- повторный `lms load <model>` для уже активной модели пропускается;
+- после завершения research run выполняется `lms unload --all`;
+- по умолчанию затем выполняется `lms server stop`;
+- кнопка **«Освободить AI-память»** делает то же вручную.
+
+В UI есть кнопка **«Подготовить среду»**. Она вызывает:
+
+- `GET /api/ai-lab/bootstrap/status`;
+- `POST /api/ai-lab/bootstrap/start`.
+
+Автоподготовка внутри кнопки «Запустить» включается только явно:
+
+```powershell
+$env:AI_LAB_AUTO_BOOTSTRAP = "1"
+$env:AI_LAB_LAZY_LM_STUDIO = "1"
+$env:AI_LAB_AUTO_UNLOAD_MODELS = "1"
+$env:AI_LAB_REUSE_LOADED_MODEL = "1"
+$env:AI_LAB_UNLOAD_AFTER_EACH_REQUEST = "0"
+$env:AI_LAB_AUTO_STOP_LM_SERVER = "1"
+```
+
+### 2.2. Prompt / prefix caching discipline
+
+Для локального LM Studio это в первую очередь ускорение prefill/GPU, а для
+облачных API — ещё и снижение стоимости input tokens. Правило проекта:
+
+- большие стабильные блоки (`system_*`, `knowledge_prompt_context`, lessons,
+  reference shortlist) идут **в начале** prompt;
+- динамические поля (`AI Cell`, `class_name`, hypothesis, compile errors,
+  operator notes) идут **после** маркера
+  `<<<AI_LAB_PROMPT_CACHE_STABLE_PREFIX_END>>>`;
+- prompt log пишет `prompt_cache.stable_prefix_sha256`,
+  `stable_prefix_chars` и `dynamic_suffix_chars`, чтобы видеть, не сломался ли
+  reusable prefix;
+- не включать `AI_LAB_UNLOAD_AFTER_EACH_REQUEST=1` для обычных research runs:
+  это освобождает VRAM раньше, но убивает выигрыш от повторного prefix/KV reuse.
+
+Пути можно задать env-переменными или `ai_lab/bootstrap.json`:
+
+```json
+{
+  "ninjatrader_exe": "C:\\Program Files\\NinjaTrader 8\\bin64\\NinjaTrader.exe",
+  "lm_studio_exe": "%LOCALAPPDATA%\\Programs\\LM Studio\\LM Studio.exe",
+  "lms_cli": "lms"
+}
+```
+
+Не автоматизируется: первый логин NinjaTrader, установка/обновление bridge,
+скачивание моделей LM Studio, paper/live trading.
+
 ---
 
 ## 3. Как читать прогресс

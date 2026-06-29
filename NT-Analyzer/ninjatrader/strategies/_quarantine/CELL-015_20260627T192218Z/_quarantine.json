@@ -1,0 +1,10 @@
+{
+  "class_name": "NTAMnqLiquiditySweepReversalC015",
+  "cell_id": "CELL-015",
+  "profile_id": "mnq_open_pressure_stop_scalp_1m_c015_v1",
+  "reason": "Archived/purged from working portfolio: current-contract tick replay proved the High-fill backtest edge was a same-bar artifact.",
+  "quarantined_at_utc": "2026-06-27T19:22:18Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-015_20260627T192218Z\\NTAMnqLiquiditySweepReversalC015"
+  ]
+}

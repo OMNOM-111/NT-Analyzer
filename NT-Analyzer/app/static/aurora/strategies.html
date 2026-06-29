@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Стратегии — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+</head>
+<body data-page="strategies" data-title="Портфель стратегий" data-kicker="NT-Analyzer · Жизненный цикл и покрытие">
+
+  <!-- KPIs -->
+  <div class="grid cols-5" id="kpis"></div>
+
+  <!-- lifecycle kanban -->
+  <section class="panel">
+    <div class="panel-h">
+      <h2>Жизненный цикл</h2><span class="sub">испытание → демо → реальная торговля</span>
+      <div class="spacer"></div>
+      <button class="btn sm" id="rejected-btn">Архив / отклонённые</button>
+      <div class="seg" id="origin">
+        <button class="active" data-o="all">Все</button>
+        <button data-o="production">Production</button>
+        <button data-o="ai_lab">AI Lab</button>
+      </div>
+    </div>
+    <div class="panel-b"><div class="kanban" id="kanban"></div></div>
+  </section>
+
+  <!-- coverage matrix -->
+  <div class="grid" style="grid-template-columns: 1.5fr 1fr;">
+    <section class="panel">
+      <div class="panel-h"><h2>Матрица покрытия</h2><span class="sub">стабильные portfolio cells, существующие ID не перенумеровываются</span>
+        <div class="spacer"></div>
+        <button class="btn sm primary" id="add-root-btn">Добавить инструмент</button>
+        <button class="btn sm" id="add-cell-btn">Добавить ячейку</button>
+        <label class="flex gap-sm" style="font-size:12px; cursor:pointer; color:var(--tx-2)"><input type="checkbox" id="hide-rejected" checked> скрыть отклонённые</label>
+      </div>
+      <div class="panel-b col gap-lg">
+        <div class="legend">
+          <span class="legend-item"><span class="sw" style="background:var(--pos)"></span>Реальный</span>
+          <span class="legend-item"><span class="sw" style="background:var(--info)"></span>Демо</span>
+          <span class="legend-item"><span class="sw" style="background:var(--warn)"></span>Испытание</span>
+          <span class="legend-item"><span class="sw" style="background:var(--brand)"></span>Исследование</span>
+          <span class="legend-item"><span class="sw" style="background:var(--neg)"></span>Отклонён</span>
+          <span class="legend-item"><span class="sw" style="background:var(--bg-3)"></span>Свободно</span>
+        </div>
+        <div class="matrix" id="matrix"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Цели по инструментам</h2></div>
+      <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl" id="goal-table">
+        <thead><tr><th>Инстр.</th><th class="num">Слоты</th><th>Прогресс</th><th>Статус</th></tr></thead>
+        <tbody id="goal-body"></tbody>
+      </table></div></div>
+    </section>
+  </div>
+
+<script src="assets/charts.js?v=20260629-final3"></script>
+<script src="assets/api.js?v=20260629-final3"></script>
+<script src="assets/domain.js?v=20260629-final3"></script>
+<script src="assets/ui.js?v=20260629-final3"></script>
+<script src="assets/pages/strategies.js?v=20260629-final4"></script>
+</body>
+</html>
