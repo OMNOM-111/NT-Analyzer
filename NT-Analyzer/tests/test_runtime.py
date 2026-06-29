@@ -226,7 +226,11 @@ def t06(tmp):
          "price": 20002.0, "realized_pnl": -10.0, "slippage_ticks": 2.0},
     ]
     _write_runtime(tmp, executions=execs)
-    m = rt.compute_runtime_today_metrics("b1_shortonly")
+    # The test can run just after Pacific midnight, while the synthetic
+    # executions intentionally span the previous 20 minutes. Pin the audit day
+    # to the last execution instead of relying on the wall-clock date.
+    execution_date_pt = ops._to_pt(datetime.fromisoformat(execs[-1]["timestamp_utc"])).date().isoformat()
+    m = rt.compute_runtime_today_metrics("b1_shortonly", on_date_pt=execution_date_pt)
     assert m["trades_count"] == 2, m
     assert m["total_qty"] == 3, m
     assert m["gross_pnl"] == 40.0, m
@@ -236,13 +240,13 @@ def t06(tmp):
     assert m["daily_win_count"] == 1 and m["daily_loss_count"] == 1
     assert m["stop_hit_count"] == 1 and m["target_hit_count"] == 1
 
-    res = rt.journal_autofill("b1_shortonly")
+    res = rt.journal_autofill("b1_shortonly", on_date_pt=execution_date_pt)
     # Accept either "created" or "updated" — isolated-path vs shared-path tests
     # both indicate success; the important check is that the row data is correct.
     assert res["ok"] and res["action"] in ("created", "updated"), res
     assert res.get("cumulative_adjusted_pnl") is not None, res
     # second call must update
-    res2 = rt.journal_autofill("b1_shortonly")
+    res2 = rt.journal_autofill("b1_shortonly", on_date_pt=execution_date_pt)
     assert res2["action"] == "updated", res2
 
 

@@ -1,0 +1,11 @@
+{
+  "class_name": "NTAMnqDailyOpenScalpC018",
+  "cell_id": "CELL-018",
+  "profile_id": "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+  "reason": "Archived/purged from working portfolio: current-contract tick replay proved the High-fill backtest edge was a same-bar artifact.",
+  "quarantined_at_utc": "2026-06-27T05:21:17Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-018_20260627T052117Z\\NTAMnqDailyOpenScalpC018",
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-018_20260627T052117Z\\NTAMnqDailyOpenScalpC018"
+  ]
+}

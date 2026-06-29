@@ -5,21 +5,22 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>ИИ-стратегии — NT-Analyzer</title>
-<link rel="stylesheet" href="style.css?v=20260604-ai-lab4">
-<link rel="stylesheet" href="ai-strategy.css?v=20260617-loops1">
+<link rel="stylesheet" href="style.css?v=20260627-lifecycle4">
+<link rel="stylesheet" href="ai-strategy.css?v=20260627-bilingual-log1">
 <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 <script src="performance.js?v=20260604-ai-lab4" defer></script>
-<script src="ai-strategy.js?v=20260617-loops1" defer></script>
+<script src="ai-strategy.js?v=20260627-cellhistory2" defer></script>
 </head>
 <body class="ai-lab-page-body">
 <header>
   <h1>NT-Analyzer <span class="muted">— ИИ-стратегии</span> <span class="ai-badge">AI Lab</span></h1>
   <nav class="top-nav" aria-label="Разделы">
-    <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
-    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
-    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
-    <a href="/ui/strategies.html" class="top-nav-link">Стратегии</a>
-    <a href="/ui/ai-strategy.html" class="top-nav-link active">ИИ-стратегии</a>
+    <a href="/ui/legacy/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/legacy/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/legacy/performance.html" class="top-nav-link">Центр доходности</a>
+    <a href="/ui/legacy/strategies.html" class="top-nav-link">Стратегии</a>
+    <a href="/ui/legacy/docs.html" class="top-nav-link">Документы</a>
+    <a href="/ui/legacy/ai-strategy.html" class="top-nav-link active">ИИ-стратегии</a>
   </nav>
   <div class="status-strip">
     <span class="status-chip ai-status-chip" id="ai-lm-chip" title="LM Studio">LM Studio: ...</span>
@@ -28,6 +29,8 @@
   </div>
   <div class="header-actions">
     <button type="button" id="ai-refresh-btn" class="hdr-btn">Обновить</button>
+    <button type="button" id="ai-bootstrap-btn" class="hdr-btn" title="Запустить/проверить NinjaTrader, LM Studio и модели">Подготовить среду</button>
+    <button type="button" id="ai-unload-lm-btn" class="hdr-btn" title="Выгрузить модели LM Studio и остановить локальный server">Освободить AI-память</button>
     <button type="button" id="ai-run-btn" class="hdr-btn" title="Запустить один research-цикл AI Strategy Lab">Запустить цикл</button>
     <button type="button" id="ai-cancel-btn" class="hdr-btn ai-cancel-btn" title="Остановить текущий цикл" hidden>Остановить</button>
     <button type="button" id="ai-scan-btn" class="hdr-btn" title="Пересканировать user_research">Сканировать research</button>
@@ -131,18 +134,6 @@
           <option value="0">Без лимита</option>
         </select>
       </label>
-      <label class="ai-checkbox" title="Остановить весь run при первом кандидате">
-        <input type="checkbox" id="ai-stop-on-first-candidate"> Стоп на первом кандидате
-      </label>
-      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden>
-        <input type="checkbox" id="ai-skip-compile"> skip_compile
-      </label>
-      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden>
-        <input type="checkbox" id="ai-skip-backtest"> skip_backtest
-      </label>
-      <label class="ai-checkbox ai-debug-only" data-debug-only="1" hidden title="Разрешить fallback_template когда LM Studio не отвечает (только для отладки)">
-        <input type="checkbox" id="ai-allow-template-fallback"> allow_template_fallback
-      </label>
       <button type="submit" class="hdr-btn ai-submit" id="ai-run-submit">Запустить</button>
     </form>
     <div class="ai-run-result" id="ai-run-result" hidden></div>
@@ -152,7 +143,7 @@
   <section class="ai-process-panel" aria-labelledby="ai-process-title">
     <div class="ai-process-head">
       <h3 id="ai-process-title">Ход работы AI</h3>
-      <span class="muted">Действия, файлы, статусы, prompt/response preview. Внутренние рассуждения модели скрыты.</span>
+      <span class="muted">Действия, файлы, статусы, превью запросов и краткие ответы. Внутренние рассуждения модели скрыты.</span>
       <span id="ai-compile-source-status" class="ai-compile-source-status muted" title="Источник compile-ошибок">…</span>
     </div>
 
@@ -189,6 +180,8 @@
       <div class="ai-matrix-wrap" id="ai-matrix-wrap">
         <div class="ai-empty">Загрузка матрицы...</div>
       </div>
+
+      <div class="ai-cell-history" id="ai-cell-history-wrap" hidden></div>
 
       <h3 class="ai-section-title">AI Portfolio / Selected Strategies</h3>
       <div class="ai-table-wrap ai-portfolio-wrap" id="ai-portfolio-wrap">
@@ -243,8 +236,10 @@
 
   <section id="ai-lm-studio-panel" class="ai-lm-studio-panel" hidden aria-labelledby="ai-lm-studio-title">
     <h3 id="ai-lm-studio-title">LM Studio</h3>
+    <div id="ai-bootstrap-wrap" class="ai-bootstrap-wrap muted">Подготовка среды ещё не запускалась.</div>
     <div id="ai-lm-studio-wrap" class="muted">Загрузка статуса LM Studio…</div>
   </section>
 </main>
+<script src="legacy_switch.js"></script>
 </body>
 </html>

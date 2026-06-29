@@ -62,8 +62,8 @@ counter-trend consolidations.
 
 **IMPORTANT for $2k MNQ account:**
 - ComputeQuantity must handle ATR-sized stops
-- If ATR stop * tickValue > riskBudget → qty = 0 silently
-- FIX: floor qty to 1 when byMargin >= 1 and MaxDailyLossUsd not exceeded
+- If ATR stop plus costs exceeds riskBudget, qty must be 0 and the entry must be skipped
+- Never use MaxDailyLossUsd to override a per-trade risk-budget failure
 
 ## Take Profit / Trailing / Time Stop
 - Fixed R:R = 1.5 or use trailing stop (ATR * 1.0 trail)
@@ -98,7 +98,7 @@ counter-trend consolidations.
 
 ## Failure Modes
 1. **Choppy market:** SMAs whipsaw → rapid losing streaks
-2. **Large ATR:** stop sizing pushes qty to 0 (position sizing bug)
+2. **Large ATR:** stop sizing pushes qty to 0; this setup is infeasible for the account
 3. **Late entry:** crossover already happened, signal stale by entry bar
 4. **Commission drag:** crossover at 15m requires gross/trade >= $5 minimum
 

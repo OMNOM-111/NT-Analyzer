@@ -13,9 +13,9 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const DEFAULT_ROUND_TURN_COMMISSION = 1.90;
+  let DEFAULT_ROUND_TURN_COMMISSION = 1.90;
   const PERFORMANCE_START_DATE_PT = "2026-05-13";
-  const PERFORMANCE_STARTING_CAPITAL = 2000;
+  let PERFORMANCE_STARTING_CAPITAL = 2000;
   const MAX_INTRADAY_TRADE_HOLD_SECONDS = 24 * 60 * 60;
   const fmtMoney = (v) =>
     (v == null || isNaN(v)) ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(2);
@@ -31,6 +31,22 @@
   const escapeHtml = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  async function loadGovernanceDefaults() {
+    try {
+      const payload = await api("/api/governance/runtime-defaults");
+      const commission = Number(payload.round_turn_commission);
+      const capital = Number(payload.starting_capital);
+      if (Number.isFinite(commission) && commission > 0) {
+        DEFAULT_ROUND_TURN_COMMISSION = commission;
+      }
+      if (Number.isFinite(capital) && capital > 0) {
+        PERFORMANCE_STARTING_CAPITAL = capital;
+      }
+    } catch (_) {
+      // Keep static fallbacks.
+    }
+  }
   const TRADING_SORT_STORAGE_KEY = "nta.trading.tableSorts.v1";
   const DEFAULT_TRADING_TABLE_SORTS = {
     runtimeStrategies: { col: "cell", dir: "asc" },
@@ -5417,11 +5433,16 @@
   function renderPerformanceEvents(rows) {
     const elE = $("pc-events");
     if (!elE) return;
-    if (!rows || !rows.length) {
-      elE.innerHTML = '<div class="muted-empty" style="padding:6px;">нет</div>';
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recent = (rows || []).filter(row => {
+      const stamp = Date.parse(row.timestamp_utc || '');
+      return Number.isFinite(stamp) && stamp >= cutoff;
+    });
+    if (!recent.length) {
+      elE.innerHTML = '<div class="muted-empty" style="padding:6px;">нет событий за 7 дней</div>';
       return;
     }
-    elE.innerHTML = rows.slice(-8).reverse().map(r => {
+    elE.innerHTML = recent.slice(-8).reverse().map(r => {
       const ts = fmtHms(r.timestamp_utc);
       const k = String(r.kind || "").toLowerCase();
       const kindCls = (k === "error" || k === "rejected") ? "kind-error"
@@ -5584,7 +5605,7 @@
         try { qp.set("params", JSON.stringify(rtParams)); }
         catch (_) { /* ignore non-serialisable values */ }
       }
-      window.open("/ui/index.html?" + qp.toString(), "_blank");
+      window.open("/ui/legacy/index.html?" + qp.toString(), "_blank");
     });
     document.querySelectorAll("#bot-tabs button").forEach(b => {
       b.addEventListener("click", () => switchBottomTab(b.dataset.tab));
@@ -5602,6 +5623,7 @@
 
   async function init() {
     wire();
+    await loadGovernanceDefaults();
     await Promise.all([
       loadCatalog(),
       loadAccounts(),

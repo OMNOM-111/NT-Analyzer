@@ -21,6 +21,45 @@ DATA = PROJECT_ROOT / "data"
 BASE = "http://127.0.0.1:8765"
 
 
+def _load_runtime_defaults() -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {
+        "starting_capital": 2000.0,
+        "max_drawdown_pct": 0.15,
+        "round_turn_commission": 1.90,
+        "slippage_ticks": 1,
+        "intraday_only": True,
+        "order_fill_resolution": "High",
+    }
+    path = DATA / "governance" / "laws.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    laws = payload.get("laws") if isinstance(payload, dict) else None
+    if not isinstance(laws, list):
+        return defaults
+    by_key = {
+        str(row.get("key") or ""): row
+        for row in laws
+        if isinstance(row, dict)
+    }
+
+    def law_value(key: str, fallback: Any) -> Any:
+        row = by_key.get(key)
+        return row.get("value") if isinstance(row, dict) and "value" in row else fallback
+
+    defaults["starting_capital"] = float(law_value("starting_capital_usd", defaults["starting_capital"]))
+    defaults["max_drawdown_pct"] = float(law_value("max_drawdown_pct", 15.0)) / 100.0
+    defaults["round_turn_commission"] = float(law_value("round_turn_commission_floor_usd", defaults["round_turn_commission"]))
+    defaults["slippage_ticks"] = int(law_value("slippage_ticks_floor", defaults["slippage_ticks"]))
+    defaults["intraday_only"] = bool(law_value("intraday_only_default", defaults["intraday_only"]))
+    defaults["order_fill_resolution"] = str(law_value("order_fill_resolution", defaults["order_fill_resolution"]))
+    return defaults
+
+
+RUNTIME_DEFAULTS = _load_runtime_defaults()
+
+
 def _resolve_jobs_path(raw: Any) -> Optional[Path]:
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -77,8 +116,11 @@ ROUND_TURN_FEES: Dict[str, float] = {
     "MBT": 2.84, "MET": 0.94,
 }
 
-# Backend currently requires RoundTurnCommission >= 1.90. We honor that floor.
-RTC_FLOOR = 1.90
+# Backend currently requires RoundTurnCommission >= project floor.
+RTC_FLOOR = float(RUNTIME_DEFAULTS["round_turn_commission"])
+SLIPPAGE_FLOOR = int(RUNTIME_DEFAULTS["slippage_ticks"])
+DEFAULT_STARTING_CAPITAL = float(RUNTIME_DEFAULTS["starting_capital"])
+MAX_DRAWDOWN_BUDGET_PCT = float(RUNTIME_DEFAULTS["max_drawdown_pct"])
 
 
 def fee_for(root: str) -> float:
@@ -117,8 +159,8 @@ def base_risk_params(root: str) -> Dict[str, Any]:
     common across the Pilot and Explorer forks.
     """
     return {
-        "StartingCapital": 2000.0,
-        "IntradayOnly": True,
+        "StartingCapital": DEFAULT_STARTING_CAPITAL,
+        "IntradayOnly": bool(RUNTIME_DEFAULTS["intraday_only"]),
         "ActiveMarginPerContract": margin_for(root),
         "MaxContractsByCapital": 20,
         "InstrumentStatus": "allowed",
@@ -129,7 +171,7 @@ def base_risk_params(root: str) -> Dict[str, Any]:
         "MaxConsecutiveLosses": 3,
         "UserMaxContracts": 5,
         "RoundTurnCommission": fee_for(root),
-        "SlippageTicks": 1,
+        "SlippageTicks": SLIPPAGE_FLOOR,
         # Indicator periods (Pilot defaults).
         "EmaFastPeriod": 50,
         "EmaSlowPeriod": 200,
@@ -294,7 +336,7 @@ def build_job_body(*, class_name: str, instrument: str, params: Dict[str, Any],
         "session_template": session_template,
         "timezone": "UTC",
         "role": role,
-        "risk_profile": risk_profile or {"starting_capital": 2000.0,
+        "risk_profile": risk_profile or {"starting_capital": DEFAULT_STARTING_CAPITAL,
                                          "max_position_size": 1,
                                          "fitness": "AdjustedNetProfit"},
     }
@@ -306,7 +348,7 @@ def build_risk_profile_for(roots_or_instruments: List[str]) -> Dict[str, Any]:
     InstrumentStatus into strategy params (otherwise they get zeroed and the
     Explorer strategy refuses to trade).
     """
-    starting_capital = 2000.0
+    starting_capital = DEFAULT_STARTING_CAPITAL
     inst_margins: Dict[str, Any] = {}
     for raw in roots_or_instruments:
         root = raw.split()[0]
@@ -324,7 +366,7 @@ def build_risk_profile_for(roots_or_instruments: List[str]) -> Dict[str, Any]:
         "mode": "informational",
         "currency": "USD",
         "starting_capital": starting_capital,
-        "intraday_only": True,
+        "intraday_only": bool(RUNTIME_DEFAULTS["intraday_only"]),
         "margin_source": {"broker": "NinjaTrader",
                           "source": "research_lib.ACTIVE_MARGIN",
                           "fetched_at_utc": utcnow_iso()},
@@ -428,10 +470,6 @@ def read_job_report(job_id: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Promotion gates — max drawdown budget vs allocated starting capital
 # ---------------------------------------------------------------------------
-
-DEFAULT_STARTING_CAPITAL = 2000.0
-MAX_DRAWDOWN_BUDGET_PCT = 0.15  # 15% of per-strategy allocated capital
-
 
 def starting_capital_from_params(params: Optional[Dict[str, Any]]) -> float:
     """Read allocated starting capital from job/strategy params."""

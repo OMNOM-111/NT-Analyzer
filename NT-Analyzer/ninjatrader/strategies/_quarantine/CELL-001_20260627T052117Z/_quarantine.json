@@ -1,0 +1,10 @@
+{
+  "class_name": "VWAPPullbackMGC5mV1",
+  "cell_id": "CELL-001",
+  "profile_id": "sev2_mgc_vwappullback_shortonly_paper_v1",
+  "reason": "Archived/purged from working portfolio: current-contract High-fill sample has only three trades and tick-replay produced zero trades; no durable edge or relaunch evidence.",
+  "quarantined_at_utc": "2026-06-27T05:21:17Z",
+  "moved": [
+    "C:\\Users\\dimon\\Documents\\Анализатор стратегий NinjaTrader\\NT-Analyzer\\ninjatrader\\strategies\\_quarantine\\CELL-001_20260627T052117Z\\VWAPPullbackMGC5mV1"
+  ]
+}

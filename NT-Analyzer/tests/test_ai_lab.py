@@ -27,6 +27,7 @@ from app.ai_lab import (  # noqa: E402
 )
 from app.ai_lab import compile_pipeline as ai_compile_pipeline  # noqa: E402
 from app.ai_lab import compile_errors as ai_compile_errors  # noqa: E402
+from app.ai_lab import bootstrap as ai_bootstrap  # noqa: E402
 from app.ai_lab import operator_notes as ai_operator_notes  # noqa: E402
 from app.ai_lab import heartbeat as ai_heartbeat  # noqa: E402
 from app.ai_lab import lm_studio as ai_lm_studio  # noqa: E402
@@ -108,7 +109,7 @@ def t_arbitration_repeat_mistake_penalizes() -> None:
 def t_arbitration_no_trades_rejects() -> None:
     out = arbitration.compute({"monthly_growth_pct": 100.0, "trades_total": 0})
     assert out["score"] == 0.0
-    assert "no completed trades" in out["rationale"]
+    assert "нет завершенных сделок" in out["rationale"]
 
 
 def t_arbitration_quality_classification_is_calibrated() -> None:
@@ -296,6 +297,28 @@ def t_generator_fallback_template_validates() -> None:
     assert "public int MaxTradesPerDay" in src
     assert "public double RoundTurnCommission" in src
     assert "public int SlippageTicks" in src
+    assert 'TelemetrySignal("Long")' in src
+    assert 'TelemetrySignal("Short")' in src
+    assert 'GetType().Name + "." + side' in src
+
+
+def t_validator_blocks_anonymous_signals_and_forced_minimum_risk() -> None:
+    class_name = "NTAAiSandboxRiskIdentity"
+    src = generator.fallback_template(class_name, "AI-CELL-MNQ-098", "MNQ")
+
+    anonymous = src.replace('TelemetrySignal("Long")', '"AnonymousLong"', 1)
+    rep = validator.validate_source(anonymous, expected_class_name=class_name)
+    assert not rep.ok
+    assert any("every entry signal" in value for value in rep.violations), rep.violations
+
+    forced = src.replace(
+        "private void ForceFlat()",
+        "private int ComputeQuantity(int byRisk) { return Math.Max(1, byRisk); }\n\n"
+        "private void ForceFlat()",
+    )
+    rep = validator.validate_source(forced, expected_class_name=class_name)
+    assert not rep.ok
+    assert any("never force the minimum quantity" in value for value in rep.violations), rep.violations
 
 
 def t_validator_allows_ai_cell_identifier_suffix() -> None:
@@ -1065,6 +1088,58 @@ def t_ai_strategy_ui_hides_terminal_heartbeat() -> None:
     assert "STATE.activityTimer = setInterval(tick, 2000);\n    tick();" in js
 
 
+def t_bootstrap_status_shape_without_side_effects() -> None:
+    original_lm_status = ai_bootstrap.lm_studio.lm_status
+    original_tasklist = ai_bootstrap._tasklist_contains
+    original_lms = ai_bootstrap._lms_cli
+    original_nt = ai_bootstrap._ninjatrader_exe
+    original_lm = ai_bootstrap._lm_studio_exe
+
+    def fake_lm_status(*, allow_probe=False, force=False):
+        return {
+            "available": True,
+            "ready": True,
+            "run_allowed": True,
+            "status": "ready",
+            "models": ["qwen3-coder-30b-a3b-instruct", "openai/gpt-oss-20b"],
+        }
+
+    try:
+        ai_bootstrap.lm_studio.lm_status = fake_lm_status  # type: ignore[assignment]
+        ai_bootstrap._tasklist_contains = lambda needle: needle == "ninjatrader"  # type: ignore[assignment]
+        ai_bootstrap._lms_cli = lambda: "lms"  # type: ignore[assignment]
+        ai_bootstrap._ninjatrader_exe = lambda: r"C:\NT\NinjaTrader.exe"  # type: ignore[assignment]
+        ai_bootstrap._lm_studio_exe = lambda: r"C:\LM Studio\LM Studio.exe"  # type: ignore[assignment]
+        out = ai_bootstrap.status()
+        assert out["ok"] is True
+        assert out["components"]["ninjatrader"]["running"] is True
+        assert out["components"]["lms_cli"]["available"] is True
+        assert out["components"]["lm_studio_server"]["run_allowed"] is True
+        assert isinstance(out["required_models"], list)
+        assert out["required_models"], out
+    finally:
+        ai_bootstrap.lm_studio.lm_status = original_lm_status  # type: ignore[assignment]
+        ai_bootstrap._tasklist_contains = original_tasklist  # type: ignore[assignment]
+        ai_bootstrap._lms_cli = original_lms  # type: ignore[assignment]
+        ai_bootstrap._ninjatrader_exe = original_nt  # type: ignore[assignment]
+        ai_bootstrap._lm_studio_exe = original_lm  # type: ignore[assignment]
+
+
+def t_ai_strategy_ui_has_bootstrap_controls() -> None:
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "app" / "static" / "ai-strategy.html").read_text(encoding="utf-8")
+    js = (root / "app" / "static" / "ai-strategy.js").read_text(encoding="utf-8")
+    assert 'id="ai-bootstrap-btn"' in html
+    assert 'id="ai-unload-lm-btn"' in html
+    assert 'id="ai-bootstrap-wrap"' in html
+    assert "/api/ai-lab/bootstrap/status" in js
+    assert "/api/ai-lab/bootstrap/start" in js
+    assert "/api/ai-lab/bootstrap/unload" in js
+    assert "load_models: false" in js
+    assert "startBootstrap" in js
+    assert "unloadLmStudio" in js
+
+
 def t_heartbeat_emits_during_long_stage() -> None:
     import time
     with tempfile.TemporaryDirectory() as td:
@@ -1422,6 +1497,10 @@ def t_lm_studio_preflight_blocks_run_without_models() -> None:
     with tempfile.TemporaryDirectory() as td:
         _redirect_paths(Path(td))
         runner.reset_for_tests()
+        old_lazy = os.environ.get("AI_LAB_LAZY_LM_STUDIO")
+        old_bootstrap = os.environ.get("AI_LAB_AUTO_BOOTSTRAP")
+        os.environ["AI_LAB_LAZY_LM_STUDIO"] = "0"
+        os.environ["AI_LAB_AUTO_BOOTSTRAP"] = "0"
 
         def fake_preflight(*args, **kwargs):
             return {"ok": False, "missing_roles": [
@@ -1445,6 +1524,14 @@ def t_lm_studio_preflight_blocks_run_without_models() -> None:
                 "experiment must NOT be created when preflight fails"
         finally:
             ai_lm_studio.preflight_all_required_roles = original  # type: ignore[assignment]
+            if old_lazy is None:
+                os.environ.pop("AI_LAB_LAZY_LM_STUDIO", None)
+            else:
+                os.environ["AI_LAB_LAZY_LM_STUDIO"] = old_lazy
+            if old_bootstrap is None:
+                os.environ.pop("AI_LAB_AUTO_BOOTSTRAP", None)
+            else:
+                os.environ["AI_LAB_AUTO_BOOTSTRAP"] = old_bootstrap
             runner.reset_for_tests()
 
 
@@ -1509,7 +1596,7 @@ def t_blocked_lm_studio_is_terminal_status() -> None:
 
 
 def t_lm_status_pending_without_probe() -> None:
-  """Summary/health must not block on chat; UI probes via /readiness."""
+  """Summary/health must not block on chat in lazy mode."""
   import time as _time
   judge = ai_lm_studio.model_for("judge")
   coder = ai_lm_studio.model_for("coder")
@@ -1525,10 +1612,10 @@ def t_lm_status_pending_without_probe() -> None:
   }
   try:
       out = ai_lm_studio.lm_status(allow_probe=False)
-      assert out["probe_pending"] is True
-      assert out["run_allowed"] is False
-      assert out["status"] == "pending_check"
-      assert "Проверяем" in out["message_ru"]
+      assert out["probe_pending"] is False
+      assert out["run_allowed"] is True
+      assert out["status"] == "standby_lazy"
+      assert "lazy-режиме" in out["message_ru"]
       ai_lm_studio._READINESS_CACHE = {  # type: ignore[attr-defined]
           "ready": True,
           "run_allowed": True,
@@ -1541,7 +1628,7 @@ def t_lm_status_pending_without_probe() -> None:
       ai_lm_studio._READINESS_CACHE_AT = _time.time()  # type: ignore[attr-defined]
       cached = ai_lm_studio.lm_status(allow_probe=False)
       assert cached["run_allowed"] is True
-      assert cached["ready"] is True
+      assert cached["status"] == "standby_lazy"
   finally:
       ai_lm_studio.health = original_health  # type: ignore[assignment]
       ai_lm_studio.reset_readiness_cache_for_tests()
@@ -1586,7 +1673,8 @@ def t_read_model_summary_includes_lm_run_allowed() -> None:
       lm = s.get("lm_studio") or {}
       assert "run_allowed" in lm
       assert "message_ru" in lm
-      assert lm.get("probe_pending") is True
+      assert lm.get("probe_pending") is False
+      assert lm.get("status") == "standby_lazy"
   finally:
       ai_lm_studio.health = original_health  # type: ignore[assignment]
       ai_lm_studio.reset_readiness_cache_for_tests()
@@ -2050,6 +2138,10 @@ def t_runner_normalizes_legacy_max_cells_to_strategy_count() -> None:
     with tempfile.TemporaryDirectory() as td:
         _redirect_paths(Path(td))
         runner.reset_for_tests()
+        old_lazy = os.environ.get("AI_LAB_LAZY_LM_STUDIO")
+        old_bootstrap = os.environ.get("AI_LAB_AUTO_BOOTSTRAP")
+        os.environ["AI_LAB_LAZY_LM_STUDIO"] = "0"
+        os.environ["AI_LAB_AUTO_BOOTSTRAP"] = "0"
 
         captured = {}
         original_skel = None  # we won't reach start_skeleton
@@ -2072,6 +2164,14 @@ def t_runner_normalizes_legacy_max_cells_to_strategy_count() -> None:
             assert captured.get("called") is True
         finally:
             ai_lm_studio.preflight_all_required_roles = original  # type: ignore[assignment]
+            if old_lazy is None:
+                os.environ.pop("AI_LAB_LAZY_LM_STUDIO", None)
+            else:
+                os.environ["AI_LAB_LAZY_LM_STUDIO"] = old_lazy
+            if old_bootstrap is None:
+                os.environ.pop("AI_LAB_AUTO_BOOTSTRAP", None)
+            else:
+                os.environ["AI_LAB_AUTO_BOOTSTRAP"] = old_bootstrap
             runner.reset_for_tests()
 
 
@@ -2092,6 +2192,8 @@ def main() -> int:
         ("t08 validator blocks production CELL id", t_validator_blocks_production_cell_id),
         ("t09 validator blocks known NT8 compile errors", t_validator_blocks_known_nt8_compile_errors),
         ("t10 generator fallback template validates", t_generator_fallback_template_validates),
+        ("t10a validator blocks anonymous signals and forced minimum risk",
+         t_validator_blocks_anonymous_signals_and_forced_minimum_risk),
         ("t10b validator allows AI-CELL identifier suffix",
          t_validator_allows_ai_cell_identifier_suffix),
         ("t10c static autofix prompt contains prior source and identity",
@@ -2143,6 +2245,10 @@ def main() -> int:
          t_ai_strategy_ui_preserves_ready_state_during_background_probe),
         ("t33d AI UI hides terminal heartbeat",
          t_ai_strategy_ui_hides_terminal_heartbeat),
+        ("t33e bootstrap status shape without side effects",
+         t_bootstrap_status_shape_without_side_effects),
+        ("t33f AI UI has bootstrap controls",
+         t_ai_strategy_ui_has_bootstrap_controls),
         ("t34 heartbeat emits during long stage", t_heartbeat_emits_during_long_stage),
         ("t35 operator notes roundtrip", t_operator_notes_roundtrip),
         ("t36 operator notes apply_checkpoint logs+marks", t_operator_notes_apply_checkpoint_logs_and_marks),

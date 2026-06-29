@@ -33,6 +33,7 @@ SUITES = [
     "test_mismatch_report",
     "test_data_fingerprint",
     "test_final_decision",
+    "test_strategy_safety",
 ]
 
 

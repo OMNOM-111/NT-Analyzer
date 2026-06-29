@@ -1101,6 +1101,8 @@ namespace NTAnalyzerBridge.Runtime
             {
                 string s = (raw ?? "").Trim();
                 if (string.IsNullOrEmpty(s)) continue;
+                string legacyClass = LegacyStrategyClassFromSignal(s);
+                if (!string.IsNullOrEmpty(legacyClass)) return legacyClass;
                 foreach (var sep in new[] { '.', ':', '|' })
                 {
                     int idx = s.IndexOf(sep);
@@ -1110,6 +1112,20 @@ namespace NTAnalyzerBridge.Runtime
                 }
                 if (LooksLikeStrategyClassName(s)) return s;
             }
+            return "";
+        }
+
+        private static string LegacyStrategyClassFromSignal(string value)
+        {
+            if (string.Equals(value, "CapSnapL", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "CapSnapS", StringComparison.OrdinalIgnoreCase))
+                return "NTAMgcCapitulationSnapbackC007";
+            if (string.Equals(value, "EntFieldL", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "EntFieldS", StringComparison.OrdinalIgnoreCase))
+                return "NTAMnqEntropyTransitionFieldC127";
+            if (string.Equals(value, "GPP_Long", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "GPP_Short", StringComparison.OrdinalIgnoreCase))
+                return "NTAGeodesicPhasePressurePilot";
             return "";
         }
 

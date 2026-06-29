@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "owner": "Черевко Дмитро",
+  "updated_at_utc": "2026-06-27T23:34:40Z",
+  "documents": [
+    {
+      "id": "project-overview",
+      "title": "OVERVIEW",
+      "label": "Главное: краткое предисловие",
+      "category": "governance",
+      "path": "docs/governance/OVERVIEW.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "governance-readme",
+      "title": "README",
+      "label": "Индекс governance-документов",
+      "category": "governance",
+      "path": "docs/governance/README.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "charter",
+      "title": "CHARTER",
+      "label": "Устав проекта",
+      "category": "governance",
+      "path": "docs/governance/CHARTER.md",
+      "editable_kind": "markdown"
+    },
+    {
+      "id": "roles",
+      "title": "ROLES",
+      "label": "Роли людей и ИИ",
+      "category": "governance",
+      "path": "docs/governance/ROLES.md",
+      "editable_kind": "markdown"
+    },
+    {
+      "id": "laws",
+      "title": "LAWS",
+      "label": "Законы проекта",
+      "category": "governance",
+      "path": "docs/governance/LAWS.md",
+      "editable_kind": "laws",
+      "audience": "project"
+    },
+    {
+      "id": "local-ai-laws",
+      "title": "LOCAL_AI_LAWS",
+      "label": "Законы локального ИИ",
+      "category": "governance",
+      "path": "docs/governance/LOCAL_AI_LAWS.md",
+      "editable_kind": "laws",
+      "audience": "local_ai"
+    },
+    {
+      "id": "registry-policy",
+      "title": "REGISTRY_POLICY",
+      "label": "Политика реестра стратегий",
+      "category": "governance",
+      "path": "docs/governance/REGISTRY_POLICY.md",
+      "editable_kind": "markdown"
+    },
+    {
+      "id": "sync-map",
+      "title": "SYNC_MAP",
+      "label": "Карта синхронизации правил",
+      "category": "governance",
+      "path": "docs/governance/SYNC_MAP.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "legacy-rules",
+      "title": "Legacy Rules",
+      "label": "Старые общие правила",
+      "category": "legacy",
+      "path": "../РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "legacy-registry",
+      "title": "Legacy Registry",
+      "label": "Старый реестр стратегий",
+      "category": "legacy",
+      "path": "../РАЗРАБОТКА СТРАТЕГИЙ/Реестр стратегий.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "legacy-hub-deploy",
+      "title": "Legacy Hub Deploy",
+      "label": "Переход: Research Hub -> Deploy",
+      "category": "legacy",
+      "path": "../РАЗРАБОТКА СТРАТЕГИЙ/Двухэтапный цикл Research Hub и Deploy.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "legacy-family-plan",
+      "title": "Legacy Family Plan",
+      "label": "Переход в семьи и новый цикл",
+      "category": "legacy",
+      "path": "../РАЗРАБОТКА СТРАТЕГИЙ/План перехода стратегий в семьи и новый цикл.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "risk-profile",
+      "title": "risk-profile",
+      "label": "Technical risk profile contract",
+      "category": "technical",
+      "path": "docs/risk-profile.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-lab-run-controls",
+      "title": "AI_STRATEGY_LAB_RUN_CONTROLS",
+      "label": "AI Lab run controls",
+      "category": "technical",
+      "path": "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-lab-quality",
+      "title": "AI_STRATEGY_LAB_QUALITY",
+      "label": "AI Lab quality pipeline",
+      "category": "technical",
+      "path": "docs/AI_STRATEGY_LAB_QUALITY.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-lab-system-coder",
+      "title": "system_coder",
+      "label": "Локальный AI prompt contract",
+      "category": "technical",
+      "path": "ai_lab/prompts/system_coder.txt",
+      "editable_kind": "none"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 
+from .. import governance
 from . import activity, lm_studio, paths
 from .guards import assert_sandbox_only
 from .validator import ValidationReport, validate_source
@@ -37,6 +38,30 @@ def _log_activity(experiment_id: Optional[str], action: str, **fields: Any) -> N
         activity.log(experiment_id, "generate", action, level="info", **fields)
     except Exception:
         pass
+
+
+def _runtime_defaults() -> Dict[str, Any]:
+    return governance.runtime_defaults()
+
+
+def _default_ai_session_bounds() -> Tuple[str, str, int, int]:
+    raw = str(_runtime_defaults().get("ai_lab_session_window_pt", "06:30-12:30 PT") or "")
+    match = re.search(r"(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})", raw)
+    start_text, end_text = ("06:30", "12:30")
+    if match:
+        start_text, end_text = match.group(1), match.group(2)
+
+    def hhmmss(value: str, fallback: int) -> int:
+        digits = re.sub(r"[^0-9]", "", value or "")
+        if len(digits) == 4:
+            digits += "00"
+        try:
+            parsed = int(digits)
+        except ValueError:
+            return fallback
+        return parsed if 0 <= parsed <= 235959 else fallback
+
+    return start_text, end_text, hhmmss(start_text, 63000), hhmmss(end_text, 123000)
 
 
 def class_name_for(target_root: str, ai_cell_id: str, family: str = "OrbFade") -> str:
@@ -296,15 +321,19 @@ def fallback_template(
     mdl = int(p.get("MaxDailyLoss", 400))
     max_trades = int(p.get("MaxTradesPerDay", 3))
     breakout_lookback = int(p.get("BreakoutLookback", 20))
-    round_turn_commission = float(p.get("RoundTurnCommission", 1.90))
-    slippage_ticks = int(p.get("SlippageTicks", 1))
-    session_start_pt = p.get("SessionStartPT", "06:30")
-    session_end_pt = p.get("SessionEndPT", "12:30")
+    defaults = _runtime_defaults()
+    round_turn_commission = float(
+        p.get("RoundTurnCommission", defaults.get("round_turn_commission", 1.90))
+    )
+    slippage_ticks = int(p.get("SlippageTicks", defaults.get("slippage_ticks", 1)))
+    default_start_pt, default_end_pt, default_start_time, default_end_time = _default_ai_session_bounds()
+    session_start_pt = p.get("SessionStartPT", default_start_pt)
+    session_end_pt = p.get("SessionEndPT", default_end_pt)
     session_start_time = _hhmmss(
-        p.get("SessionStartTimePT", session_start_pt), 63000
+        p.get("SessionStartTimePT", session_start_pt), default_start_time
     )
     session_end_time = _hhmmss(
-        p.get("SessionEndTimePT", session_end_pt), 123000
+        p.get("SessionEndTimePT", session_end_pt), default_end_time
     )
     family_text = f"{family} {hypothesis}".lower()
     deterministic_mode = "breakout"
@@ -362,7 +391,7 @@ def fallback_template(
                         && Close[0] > trendEma && trendEma > priorTrendEma)
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_VWAP_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (volumeConfirmed && High[0] > sessionVwap
                         && Close[0] < sessionVwap && Close[0] < Open[0]
@@ -370,7 +399,7 @@ def fallback_template(
                         && Close[0] < trendEma && trendEma < priorTrendEma)
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_VWAP_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
         signal_logic = (
@@ -387,12 +416,12 @@ def fallback_template(
                     if (Low[0] < priorLow && Close[0] > priorLow && Close[0] > Open[0])
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_SWEEP_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (High[0] > priorHigh && Close[0] < priorHigh && Close[0] < Open[0])
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_SWEEP_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     elif any(token in family_text for token in ("pullback", "trend", "momentum")):
@@ -403,12 +432,12 @@ def fallback_template(
                     if (fast > slow && Low[0] <= fast && Close[0] > fast && Close[0] > Open[0])
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_PULLBACK_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (fast < slow && High[0] >= fast && Close[0] < fast && Close[0] < Open[0])
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_PULLBACK_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     else:
@@ -418,12 +447,12 @@ def fallback_template(
                     if (Close[0] > hi)
                     {
                         _tradesToday++;
-                        EnterLong(Quantity, "AI_Brk_L");
+                        EnterLong(Quantity, TelemetrySignal("Long"));
                     }
                     else if (Close[0] < lo)
                     {
                         _tradesToday++;
-                        EnterShort(Quantity, "AI_Brk_S");
+                        EnterShort(Quantity, TelemetrySignal("Short"));
                     }
 """
     return dedent(f'''\
@@ -541,6 +570,11 @@ def fallback_template(
                         ExitShort();
                 }}
 
+                private string TelemetrySignal(string side)
+                {{
+                    return GetType().Name + "." + side;
+                }}
+
                 #region Properties
                 [NinjaTrader.NinjaScript.NinjaScriptProperty]
                 public int Quantity {{ get; set; }}
@@ -623,20 +657,24 @@ def build_user_prompt(
     user_research_excerpts: List[Dict[str, str]],
     rejected_patterns: List[Dict[str, Any]],
 ) -> str:
+    _start_text, _end_text, _start_time, _end_time = _default_ai_session_bounds()
     parts = [
-        f"AI Cell:   {ai_cell_id}",
-        f"Class:     {class_name}",
-        f"Instrument: {instrument}",
-        f"Hypothesis: {hypothesis}",
-        f"Parameter hints: {parameters}",
+        "Russian-language reporting contract:",
+        "- Write the strategy header comment and all human-readable comments in Russian.",
+        "- Keep C# identifiers, NinjaTrader API names, property names, paths, and error codes in English.",
+        "- Do not reveal hidden chain-of-thought; use only concise final summaries in comments.",
         "",
         "Deterministic NT8 shell contract (copy this behavior exactly):",
         "- Single primary series only; no AddDataSeries and no OnExecutionUpdate override.",
         "- Expose Quantity, StopLossTicks, ProfitTargetTicks, MaxDailyLoss, "
-        "MaxTradesPerDay (default <= 3), SessionStartTimePT=63000, "
-        "SessionEndTimePT=123000.",
+        f"MaxTradesPerDay (default <= 3), SessionStartTimePT={_start_time}, "
+        f"SessionEndTimePT={_end_time} ({_start_text}-{_end_text} PT).",
         "- Configure SetStopLoss(CalculationMode.Ticks, StopLossTicks) and "
         "SetProfitTarget(CalculationMode.Ticks, ProfitTargetTicks) before any entry.",
+        "- Every entry signal must be TelemetrySignal(\"Long\"/\"Short\"), where "
+        "TelemetrySignal returns GetType().Name + \".\" + side.",
+        "- If position sizing is dynamic, return qty=0 when one contract exceeds "
+        "the per-trade risk budget. Never force byRisk or qty up to 1.",
         "- At Bars.IsFirstBarOfSession snapshot CumProfit and reset tradesToday.",
         "- Use int nowPt = ToTime(Time[0]); block entries before start; at/after "
         "end call ForceFlat and return.",
@@ -671,7 +709,21 @@ def build_user_prompt(
         parts.append(ex.get("snippet", "")[:1500])
         parts.append("")
     parts.append("")
-    parts.append("Now produce the single C# strategy file. Output only csharp inside a code fence.")
+    parts.append(lm_studio.prompt_cache_marker())
+    parts.append("")
+    parts.extend([
+        "Dynamic strategy request:",
+        f"AI Cell:   {ai_cell_id}",
+        f"Class:     {class_name}",
+        f"Instrument: {instrument}",
+        f"Hypothesis: {hypothesis}",
+        f"Parameter hints: {parameters}",
+        "",
+    ])
+    parts.append(
+        "Now produce the single C# strategy file. Output only csharp inside a code fence. "
+        "Human-readable comments inside the file must be in Russian."
+    )
     return "\n".join(parts)
 
 
@@ -698,7 +750,7 @@ def generate(
 
     ``mode`` controls which prompt is built:
       - "initial": fresh strategy from hypothesis + memory + user research.
-        ``operator_notes`` are prepended to the user prompt if non-empty.
+        ``operator_notes`` are appended after the cacheable prefix if non-empty.
       - "autofix": rewrite of ``prior_source`` to clear ``prior_compile_errors``.
         Class/namespace must not be renamed. ``operator_notes`` are included.
     """
@@ -729,7 +781,8 @@ def generate(
                 "coder_prompt",
                 role=meta["role"],
                 purpose="autofix_compile",
-                prompt_preview=_preview(user_prompt),
+                prompt_preview="Fix compile errors and return one complete C# file with Russian human-readable comments.",
+                prompt_preview_ru="Исправить ошибки компиляции и вернуть полный C# файл с русскими поясняющими комментариями.",
             )
             resp = lm_studio.chat(
                 role="compile_error_fixer",
@@ -753,7 +806,8 @@ def generate(
                 "coder_response",
                 role=meta["role"],
                 model=resp.get("model"),
-                response_summary=_preview(resp.get("content", "")),
+                response_summary="Model returned a corrected strategy; extracting C# and validating it.",
+                response_summary_ru="Модель вернула исправленный вариант стратегии; выполняется извлечение C# и проверка.",
             )
         except lm_studio.LMStudioCancelled:
             raise
@@ -795,13 +849,18 @@ def generate(
                 rejected_patterns=rejected_patterns or [],
             )
             if operator_notes:
-                user_prompt = operator_notes + "\n\n" + user_prompt
+                user_prompt = (
+                    user_prompt
+                    + "\n\nOperator notes for this dynamic request:\n"
+                    + operator_notes
+                )
             _log_activity(
                 experiment_id,
                 "coder_prompt",
                 role=meta["role"],
                 purpose="generate_strategy",
-                prompt_preview=_preview(user_prompt),
+                prompt_preview="Generate a NinjaTrader 8 strategy from the hypothesis; keep C# APIs untranslated.",
+                prompt_preview_ru="Сгенерировать стратегию NinjaTrader 8 по гипотезе; C# API не переводить.",
             )
             resp = lm_studio.chat(
                 role="coder",
@@ -825,7 +884,8 @@ def generate(
                 "coder_response",
                 role=meta["role"],
                 model=resp.get("model"),
-                response_summary=_preview(resp.get("content", "")),
+                response_summary="Model returned strategy code; extracting C# and running static validation.",
+                response_summary_ru="Модель вернула код стратегии; выполняется извлечение C# и статическая проверка.",
             )
         except lm_studio.LMStudioCancelled:
             raise
@@ -873,20 +933,13 @@ def generate(
                 "coder_prompt",
                 role=meta["role"],
                 purpose="static_validation_autofix",
-                prompt_preview=_preview(fix_prompt),
+                prompt_preview="Fix static-validation violations without renaming the class or namespace.",
+                prompt_preview_ru="Исправить нарушения статической проверки без переименования класса и namespace.",
             )
             resp = lm_studio.chat(
                 role="code_reviewer",
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You repair NinjaTrader 8 C# strategies. Preserve "
-                            "the exact requested class and namespace. Fix every "
-                            "listed violation. Output only one complete C# file "
-                            "inside a csharp fence."
-                        ),
-                    },
+                    {"role": "system", "content": _read_system_prompt()},
                     {"role": "user", "content": fix_prompt},
                 ],
                 temperature=0.1,
@@ -903,7 +956,8 @@ def generate(
                 "coder_response",
                 role=meta["role"],
                 model=resp.get("model"),
-                response_summary=_preview(resp.get("content", "")),
+                response_summary="Model returned a static-validation fix; code will be checked again.",
+                response_summary_ru="Модель вернула исправление после статической проверки; код будет перепроверен.",
             )
             if fixed:
                 src, more_repairs = repair_common_nt8_source(fixed)
@@ -950,6 +1004,8 @@ def _build_static_validation_autofix_prompt(
         f"Repair the complete strategy below. The public class MUST remain "
         f"exactly {class_name} and the namespace MUST remain "
         "NinjaTrader.NinjaScript.Strategies.\n\n"
+        "Keep C# identifiers, NinjaTrader API names, property names, paths, and "
+        "error codes in English. Write human-readable comments in Russian only.\n\n"
         "Fix every static-validation violation:\n- "
         + "\n- ".join(violations)
         + "\n\nRequired concrete fixes:\n"
@@ -990,7 +1046,8 @@ def _build_autofix_prompt(
     header = (
         f"Your prior strategy {class_name} failed to compile. Below are the NT8 "
         "compiler diagnostics. Produce ONE corrected C# file in a ```csharp "
-        "fence. Do not rename the class or namespace."
+        "fence. Do not rename the class or namespace. Keep identifiers and APIs "
+        "in English, but write human-readable comments in Russian."
     )
     err_lines = []
     for e in (prior_compile_errors or [])[:30]:

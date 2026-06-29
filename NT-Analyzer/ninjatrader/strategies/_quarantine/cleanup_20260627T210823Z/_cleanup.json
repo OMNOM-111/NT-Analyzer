@@ -1,0 +1,355 @@
+{
+  "cleaned_at_utc": "2026-06-27T21:08:23Z",
+  "approved": [
+    "B1EarlyWindowMGC5mC006",
+    "NTACapitulationSnapbackPilot",
+    "NTAEntropyTransitionFieldPilot",
+    "NTAMgcCapitulationSnapbackC007",
+    "NTAMicroMnqScalpPilot",
+    "NTAMicroVwapRiskExplorer",
+    "NTAMnqEntropyTransitionFieldC127",
+    "NTAMnqHeadShouldersDivergenceC019",
+    "NTAMnqHeadShouldersDivergenceC020",
+    "NTAMnqHeadShouldersDivergenceC126",
+    "NTAMnqMicroOrbOpenScalp",
+    "NTAMnqMicroOrbRetestScalpC013"
+  ],
+  "keep_closure": [
+    "B1EarlyWindowMGC5mC006",
+    "NTACapitulationSnapbackPilot",
+    "NTAEntropyTransitionFieldPilot",
+    "NTAMgcCapitulationSnapbackC007",
+    "NTAMicroMnqScalpPilot",
+    "NTAMicroSessionEdgeExplorer",
+    "NTAMicroVwapRiskExplorer",
+    "NTAMnqEntropyTransitionFieldC127",
+    "NTAMnqHeadShouldersDivergenceC019",
+    "NTAMnqHeadShouldersDivergenceC020",
+    "NTAMnqHeadShouldersDivergenceC126",
+    "NTAMnqMicroOrbOpenScalp",
+    "NTAMnqMicroOrbRetestScalpC013",
+    "NTAMnqResearchHub",
+    "NTAMnqSessionEdgeEngineC020",
+    "NTASessionVwapReclaimScalper",
+    "RiskManager",
+    "as",
+    "for"
+  ],
+  "removed": [
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAGeodesicPhasePressurePilot",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAGeodesicPhasePressurePilot"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMicroGoldSessionSweepReversalPilot",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMicroGoldSessionSweepReversalPilot"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqOvernightSettlementBreakoutC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqOvernightSettlementBreakoutC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqOvernightSettlementReversionC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqOvernightSettlementReversionC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqPostClusterSqueezeBreakoutC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqPostClusterSqueezeBreakoutC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqPostClusterVwapFadeC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqPostClusterVwapFadeC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqPreCashCompressionBreakoutC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqPreCashCompressionBreakoutC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqRthGapGoH1C019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqRthGapGoH1C019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqRthOrbRetestH1C019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqRthOrbRetestH1C019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqRthTrendDayH1C019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqRthTrendDayH1C019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_strategies\\NTAMnqRthVwapPullbackC019",
+      "folder": "NT-Analyzer_strategies",
+      "classes": [
+        "NTAMnqRthVwapPullbackC019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxBollingerBandMnq025.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxBollingerBandMnq025"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxDonchianChannelMnq001.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxDonchianChannelMnq001"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxDonchianChannelMnq019.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxDonchianChannelMnq019"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxDonchianChannelMnq020.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxDonchianChannelMnq020"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxDonchianChannelMnq021.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxDonchianChannelMnq021"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxDonchianChannelMnq022.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxDonchianChannelMnq022"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxMomentumBreakoutMes005.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxMomentumBreakoutMes005"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxOrbBreakoutMnq001.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxOrbBreakoutMnq001"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxPriceDirectionMnq012.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxPriceDirectionMnq012"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxPriceMovementMnq013.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxPriceMovementMnq013"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxPullbackReversalMes004.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxPullbackReversalMes004"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxRsiEmaPullbackMnq017.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxRsiEmaPullbackMnq017"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxSessionEdgeBreakoutMes007.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxSessionEdgeBreakoutMes007"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxSessionEdgeBreakoutMgc004.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxSessionEdgeBreakoutMgc004"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxSessionEdgeBreakoutMgc005.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxSessionEdgeBreakoutMgc005"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxSessionEdgeBreakoutMgc006.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxSessionEdgeBreakoutMgc006"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxSessionEdgeBreakoutMgc007.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxSessionEdgeBreakoutMgc007"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxTrendBreakoutMes006.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxTrendBreakoutMes006"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxTrendFollowingMgc011.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxTrendFollowingMgc011"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxTrendPullbackMgc010.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxTrendPullbackMgc010"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVolatilityMnq011.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVolatilityMnq011"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVolumeWeightedMomentumMnq028.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVolumeWeightedMomentumMnq028"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVwapPullbackMes010.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVwapPullbackMes010"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVwapPullbackMnq034.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVwapPullbackMnq034"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVwapPullbackMnq035.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVwapPullbackMnq035"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVwapPullbackMnq036.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVwapPullbackMnq036"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_AI Labstrategies\\NTAAiSandboxVwapPullbackMnq037.cs",
+      "folder": "NT-Analyzer_AI Labstrategies",
+      "classes": [
+        "NTAAiSandboxVwapPullbackMnq037"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibBbEmaStochW004.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibBbEmaStochW004"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibDonchianBreakoutW007.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibDonchianBreakoutW007"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibEmaPullbackW002.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibEmaPullbackW002"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibInsideBarW003.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibInsideBarW003"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibMacdRsiTrendW006.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibMacdRsiTrendW006"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibRsiAdxW005.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibRsiAdxW005"
+      ]
+    },
+    {
+      "item": "C:\\Users\\dimon\\Documents\\NinjaTrader 8\\bin\\Custom\\Strategies\\NT-Analyzer_Ref Lib\\NTARefLibSmaCrossoverW001.cs",
+      "folder": "NT-Analyzer_Ref Lib",
+      "classes": [
+        "NTARefLibSmaCrossoverW001"
+      ]
+    }
+  ]
+}

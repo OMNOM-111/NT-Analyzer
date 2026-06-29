@@ -1,0 +1,343 @@
+{
+  "schema_version": "1.0",
+  "updated_at_utc": "2026-06-27T23:12:37Z",
+  "laws": [
+    {
+      "id": "GOV-RISK-001",
+      "key": "starting_capital_usd",
+      "group": "capital_risk",
+      "audience": "project",
+      "title": "Базовый StartingCapital на одну deploy-ячейку",
+      "summary": "Новые исследования и новые профили стартуют от одного общего allocated capital.",
+      "kind": "number",
+      "unit": "USD",
+      "value": 2000,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/docs/risk-profile.md"
+      ],
+      "dynamic_targets": [
+        "app/jobqueue.py research gate",
+        "app/ai_lab/backtest.py",
+        "app/ai_lab/generator.py",
+        "app/ai_lab/knowledge.py",
+        "tools/research/python/research_lib.py",
+        "ui backtest defaults",
+        "ui AI Lab capital presets"
+      ],
+      "review_targets": [
+        "existing ready/paper profiles with locked StartingCapital",
+        "data/ops/registry.json and trading runtime cards",
+        "historical research bundles and legacy strategy registry docs"
+      ],
+      "warning": "Смена capital меняет только общий дефолт. Исторические результаты и существующие locked profiles требуют ручной ревалидации."
+    },
+    {
+      "id": "GOV-RISK-002",
+      "key": "max_drawdown_pct",
+      "group": "capital_risk",
+      "audience": "project",
+      "title": "Promotion gate по MaxDD",
+      "summary": "Абсолютный drawdown не должен превышать долю от зафиксированного StartingCapital.",
+      "kind": "number",
+      "unit": "%",
+      "value": 15,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "tools/research/python/research_lib.py"
+      ],
+      "dynamic_targets": [
+        "tools/research/python/research_lib.py drawdown gate",
+        "ui docs sync"
+      ],
+      "review_targets": [
+        "legacy reports that mention fixed -$300 drawdown budget"
+      ]
+    },
+    {
+      "id": "GOV-RISK-003",
+      "key": "round_turn_commission_floor_usd",
+      "group": "execution_costs",
+      "audience": "project",
+      "title": "Минимальная честная комиссия backtest",
+      "summary": "Research и AI Lab не используют значение ниже project floor за round turn на контракт.",
+      "kind": "number",
+      "unit": "USD",
+      "value": 1.9,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/jobqueue.py research gate",
+        "app/ai_lab/backtest.py",
+        "app/ai_lab/generator.py",
+        "app/ai_lab/knowledge.py",
+        "tools/research/python/research_lib.py"
+      ],
+      "review_targets": [
+        "ops metrics that depend on per-strategy locked params",
+        "legacy paper/demo profiles with older fee assumptions"
+      ]
+    },
+    {
+      "id": "GOV-RISK-004",
+      "key": "slippage_ticks_floor",
+      "group": "execution_costs",
+      "audience": "project",
+      "title": "Минимальный slippage для research",
+      "summary": "Рабочие проверки не используют slippage ниже project floor.",
+      "kind": "number",
+      "unit": "ticks",
+      "value": 1,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/jobqueue.py research gate",
+        "app/ai_lab/backtest.py",
+        "app/ai_lab/generator.py",
+        "app/ai_lab/knowledge.py",
+        "tools/research/python/research_lib.py"
+      ],
+      "review_targets": [
+        "legacy reports with slip=1/slip=2 commentary"
+      ]
+    },
+    {
+      "id": "GOV-RISK-005",
+      "key": "order_fill_resolution",
+      "group": "execution_costs",
+      "audience": "project",
+      "title": "Базовый fill mode",
+      "summary": "Research-grade проверки идут только через High fill.",
+      "kind": "string",
+      "value": "High",
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+      ],
+      "dynamic_targets": [
+        "app/jobqueue.py validation",
+        "tools/research/python/research_lib.py build_job_body"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-PROC-001",
+      "key": "research_flow",
+      "group": "process",
+      "audience": "project",
+      "title": "Канонический цикл разработки",
+      "summary": "Новые стратегии проходят путь Research Hub -> Deploy wrapper.",
+      "kind": "string",
+      "value": "Research Hub -> Deploy wrapper",
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "РАЗРАБОТКА СТРАТЕГИЙ/Реестр стратегий.md"
+      ],
+      "dynamic_targets": [
+        "governance docs only"
+      ],
+      "review_targets": [
+        "legacy references to missing transition documents"
+      ]
+    },
+    {
+      "id": "GOV-PROC-002",
+      "key": "intraday_only_default",
+      "group": "process",
+      "audience": "project",
+      "title": "IntradayOnly по умолчанию",
+      "summary": "Новые исследования и новые профили по умолчанию считаются без overnight-hold.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/docs/risk-profile.md"
+      ],
+      "dynamic_targets": [
+        "ui backtest risk profile defaults",
+        "tools/research/python/research_lib.py"
+      ],
+      "review_targets": [
+        "existing profiles with explicit IntradayOnly=false"
+      ]
+    },
+    {
+      "id": "GOV-PROC-003",
+      "key": "paper_before_live_required",
+      "group": "promotion",
+      "audience": "project",
+      "title": "Paper forward обязателен до live",
+      "summary": "Live запрещён без paper_ready, журнала и отдельного ручного решения владельца.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/app/ops.py"
+      ],
+      "dynamic_targets": [
+        "governance docs",
+        "ui docs sync"
+      ],
+      "review_targets": [
+        "manual operating procedures"
+      ]
+    },
+    {
+      "id": "GOV-PROC-004",
+      "key": "runtime_locked_params_must_match",
+      "group": "promotion",
+      "audience": "project",
+      "title": "Runtime instance должен совпадать с locked params",
+      "summary": "Перед paper/demo запуском runtime-параметры не должны расходиться с утвержденным профилем.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
+        "NT-Analyzer/app/static/trading.js"
+      ],
+      "dynamic_targets": [
+        "governance docs"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-PROC-005",
+      "key": "nt_source_of_truth",
+      "group": "promotion",
+      "audience": "project",
+      "title": "NinjaTrader — источник истины по backtest",
+      "summary": "Результаты принимаются только из канонического пути NT-Analyzer bridge -> NinjaTrader.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md"
+      ],
+      "dynamic_targets": [
+        "governance docs"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-001",
+      "key": "ai_lab_sandbox_only",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ пишет только в sandbox",
+      "summary": "AI Lab не пишет production class, production CELL и не трогает рабочие стратегии напрямую.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/knowledge.py",
+        "app/ai_lab/generator.py",
+        "app/ai_lab/guards.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-002",
+      "key": "ai_lab_runtime_actions_forbidden",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ не запускает live/paper/demo/account actions",
+      "summary": "AI Lab делает только историческое исследование и не имеет права на runtime/account операции.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/knowledge.py",
+        "app/ai_lab/goal_parser.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-003",
+      "key": "ai_lab_no_add_data_series",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ не использует AddDataSeries",
+      "summary": "Sandbox-стратегии только single instrument / single timeframe.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/knowledge.py",
+        "app/ai_lab/validator.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-004",
+      "key": "ai_lab_session_window_pt",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ обязан задавать явное PT-окно входа",
+      "summary": "По умолчанию sandbox shell использует фиксированное PT entry window и force-flat на конце окна.",
+      "kind": "string",
+      "value": "06:30-12:30 PT",
+      "source_refs": [
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/generator.py",
+        "app/ai_lab/knowledge.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-005",
+      "key": "ai_lab_stop_target_required",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ обязан задавать stop/target/daily loss/force-flat",
+      "summary": "Без явной risk shell стратегия считается невалидной.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/generator.py",
+        "app/ai_lab/knowledge.py",
+        "app/ai_lab/validator.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-006",
+      "key": "ai_lab_reference_grounding_required",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Локальный ИИ обязан опираться на reference library",
+      "summary": "Новая стратегия не генерируется из пустого контекста; сначала reference + lessons + rejected patterns.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/ai_lab/prompts/system_coder.txt",
+        "NT-Analyzer/app/ai_lab/knowledge.py"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/knowledge.py",
+        "app/ai_lab/prompts/system_coder.txt"
+      ],
+      "review_targets": []
+    }
+  ]
+}

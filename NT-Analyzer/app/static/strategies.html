@@ -5,18 +5,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
 <title>Стратегии — NT-Analyzer</title>
-<link rel="stylesheet" href="style.css?v=20260525-paper-freeze1">
+<link rel="stylesheet" href="style.css?v=20260627-lifecycle5">
 <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 </head>
 <body class="strategies-page-body">
 <header>
   <h1>NT-Analyzer <span class="muted">— Стратегии</span></h1>
   <nav class="top-nav" aria-label="Разделы">
-    <a href="/ui/index.html" class="top-nav-link">Бэктестирование</a>
-    <a href="/ui/trading.html" class="top-nav-link">Торговля онлайн</a>
-    <a href="/ui/performance.html" class="top-nav-link">Центр доходности</a>
-    <a href="/ui/strategies.html" class="top-nav-link active">Стратегии</a>
-    <a href="/ui/ai-strategy.html" class="top-nav-link">Стратегия AI</a>
+    <a href="/ui/legacy/index.html" class="top-nav-link">Бэктестирование</a>
+    <a href="/ui/legacy/trading.html" class="top-nav-link">Торговля онлайн</a>
+    <a href="/ui/legacy/performance.html" class="top-nav-link">Центр доходности</a>
+    <a href="/ui/legacy/strategies.html" class="top-nav-link active">Стратегии</a>
+    <a href="/ui/legacy/docs.html" class="top-nav-link">Документы</a>
+    <a href="/ui/legacy/ai-strategy.html" class="top-nav-link">Стратегия AI</a>
   </nav>
   <div class="status-strip">
     <span class="status-chip" id="strategies-data-chip">Загрузка данных...</span>
@@ -92,6 +93,23 @@
     </div>
   </section>
 
+  <section class="lc-board" id="lc-board" aria-label="Жизненный цикл стратегий">
+    <div class="lc-board-head">
+      <div>
+        <div class="strategies-panel-kicker">Жизненный цикл</div>
+        <h3>Стратегии по этапам</h3>
+      </div>
+      <div class="lc-origin-filter" id="lc-origin-filter" role="group" aria-label="Источник стратегии">
+        <button type="button" data-origin="all" class="active">Все</button>
+        <button type="button" data-origin="production">Production</button>
+        <button type="button" data-origin="ai_lab">AI / LM Studio</button>
+        <button type="button" id="lc-nt-cleanup" class="lc-nt-cleanup" title="Оставить в NinjaTrader только утверждённые стратегии (остальное в карантин). Затем нажмите F5 в NinjaTrader.">Очистить NinjaTrader</button>
+      </div>
+    </div>
+    <div class="lc-nt-cleanup-result" id="lc-nt-cleanup-result" hidden></div>
+    <div class="lc-columns" id="lc-columns"></div>
+  </section>
+
   <div
     class="strategies-row-resizer"
     id="strategies-top-resizer"
@@ -118,8 +136,8 @@
         <input id="strategies-search" type="search" placeholder="Поиск: MNQ, MGC..." autocomplete="off">
         <select id="strategies-status-filter" aria-label="Фильтр статуса">
           <option value="all">Все статусы</option>
-          <option value="ready">Готовые</option>
-          <option value="in_progress">В процессе</option>
+          <option value="ready">Утверждённые</option>
+          <option value="in_progress">На испытании</option>
         </select>
       </div>
       <div class="strategies-instrument-list" id="strategies-instrument-list"></div>
@@ -147,8 +165,8 @@
         </div>
         <div class="strategies-legend" aria-label="Легенда">
           <span><i class="legend-dot active"></i>online</span>
-          <span><i class="legend-dot ready"></i>готова</span>
-          <span><i class="legend-dot progress"></i>в процессе</span>
+          <span><i class="legend-dot ready"></i>утверждена (демо/лайв)</span>
+          <span><i class="legend-dot progress"></i>на испытании</span>
         </div>
       </div>
       <div class="strategies-matrix-wrap" data-testid="strategies-matrix">
@@ -188,7 +206,8 @@
   </section>
 </main>
 
-<script src="strategies.js?v=20260525-paper-freeze1"></script>
+<script src="strategies.js?v=20260627-lifecycle7"></script>
 <script src="market_clock.js?v=20260513-session-api1"></script>
+<script src="legacy_switch.js"></script>
 </body>
 </html>

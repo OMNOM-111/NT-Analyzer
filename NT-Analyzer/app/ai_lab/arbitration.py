@@ -152,21 +152,21 @@ def classify_quality(
     reasons: List[str] = []
 
     if trades <= 0:
-        return {"decision": "reject", "code": "NO_TRADES", "reasons": ["no completed trades"]}
+        return {"decision": "reject", "code": "NO_TRADES", "reasons": ["нет завершенных сделок"]}
     if per_day > 3.25:
         return {
             "decision": "reject", "code": "OVERTRADING",
-            "reasons": [f"trades/day {per_day:.2f} exceeds 3.25"],
+            "reasons": [f"сделок в день {per_day:.2f} больше лимита 3.25"],
         }
     if pf < 0.80 and net < 0:
         return {
             "decision": "reject", "code": "NO_EDGE",
-            "reasons": [f"PF {pf:.3f} and net {net:.2f} show no after-cost edge"],
+            "reasons": [f"PF {pf:.3f} и net {net:.2f} не показывают преимущества после комиссии"],
         }
     if dd > max(1000.0, capital * 0.60):
         return {
             "decision": "reject", "code": "EXCESSIVE_DRAWDOWN",
-            "reasons": [f"drawdown {dd:.2f} exceeds risk ceiling"],
+            "reasons": [f"просадка {dd:.2f} выше риск-лимита"],
         }
 
     candidate_gates = {
@@ -183,7 +183,7 @@ def classify_quality(
     if not failed:
         return {
             "decision": "candidate", "code": None,
-            "reasons": ["all after-cost candidate gates passed"],
+            "reasons": ["все фильтры кандидата после комиссии пройдены"],
             "gates": candidate_gates,
         }
 
@@ -193,7 +193,7 @@ def classify_quality(
         and per_day <= 3.25
         and dd <= max(1000.0, capital * 0.60)
     )
-    reasons.append("failed candidate gates: " + ", ".join(failed))
+    reasons.append("не пройдены фильтры кандидата: " + ", ".join(failed))
     return {
         "decision": "mutate" if near_miss else "reject",
         "code": "NEAR_MISS" if near_miss else "LOW_QUALITY",
@@ -241,7 +241,7 @@ def compute(
             "demo_mismatch_penalty": round(demo_mismatch_penalty(similar_demo_mismatch_count), 2),
             "repeat_mistake_penalty": round(repeat_mistake_penalty(similar_rejected_count, similar_compile_fail_count), 2),
             "weights": w,
-            "rationale": "no completed trades => reject",
+            "rationale": "нет завершенных сделок => отклонить",
         }
     g = growth_score(analysis)
     r = robustness_score(analysis)
@@ -264,9 +264,9 @@ def compute(
         - w["repeat_mistake_penalty"] * mp
     )
     rationale = (
-        f"growth={g:.1f}(w{w['growth']}) robust={r:.1f} long={lv:.1f} "
-        f"trades={tc:.1f} fit={pf:.1f} | risk-{rp:.1f} overfit-{op:.1f} "
-        f"demo-{dp:.1f} repeat-{mp:.1f} => {score:.1f}"
+        f"рост={g:.1f}(вес {w['growth']}) устойчивость={r:.1f} длительность={lv:.1f} "
+        f"сделки={tc:.1f} портфель={pf:.1f} | риск-{rp:.1f} переобучение-{op:.1f} "
+        f"демо-{dp:.1f} повторы-{mp:.1f} => {score:.1f}"
     )
     return {
         "score": round(score, 2),

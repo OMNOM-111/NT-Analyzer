@@ -145,6 +145,32 @@
   border-color: #5a3d78;
 }
 
+.ai-bootstrap-wrap {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0b1224;
+  border: 1px solid #26395d;
+  color: #c4d4ee;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ai-bootstrap-wrap.is-running {
+  color: #c8daf8;
+  border-color: #2f4f7a;
+}
+
+.ai-bootstrap-wrap.is-ok {
+  color: #b8f0c8;
+  border-color: #2d6b3a;
+}
+
+.ai-bootstrap-wrap.is-warn {
+  color: #f5d9a8;
+  border-color: #6b5428;
+}
+
 .ai-run-form {
   display: flex;
   flex-wrap: wrap;
@@ -605,14 +631,62 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }
-.ai-log-row { display: grid; grid-template-columns: 60px 80px 1fr; gap: 6px; padding: 1px 0; border-bottom: 1px dotted #142036; }
+.ai-log-row { display: grid; grid-template-columns: 60px 96px 1fr; gap: 6px; padding: 3px 0; border-bottom: 1px dotted #142036; }
 .ai-log-row .t { color: #6b7da0; }
 .ai-log-row .s { color: #8aa7e0; text-transform: uppercase; font-size: 10px; }
 .ai-log-row .a { color: #e1ebff; }
-.ai-log-row .f { grid-column: 1 / -1; color: #8aa7e0; font-size: 10px; padding-left: 64px; }
+.ai-log-row .f { grid-column: 3 / -1; color: #8aa7e0; font-size: 10px; display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .ai-log-row.level-error .a { color: #ffb3b3; }
 .ai-log-row.level-warn  .a { color: #ffd6a5; }
 .ai-log-row.level-success .a { color: #b9f5cd; }
+
+.ai-bi {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.ai-bi-ru {
+  color: #7f93bb;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+}
+
+.ai-bi-en {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.ai-bi-action .ai-bi-en {
+  color: #e1ebff;
+  font-size: 12px;
+}
+
+.ai-bi-field {
+  max-width: min(100%, 520px);
+}
+
+.ai-bi-field .ai-bi-en {
+  color: #a8c5ee;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ai-bi-chip-wrap {
+  align-items: flex-start;
+}
+
+.ai-log-row.level-error .ai-bi-action .ai-bi-en { color: #ffb3b3; }
+.ai-log-row.level-warn  .ai-bi-action .ai-bi-en { color: #ffd6a5; }
+.ai-log-row.level-success .ai-bi-action .ai-bi-en { color: #b9f5cd; }
 
 /* Role chips: judge / coder / coder-autofix / validator / arbitrator */
 .role-chip {
@@ -650,6 +724,11 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.ai-heartbeat-pill .ai-bi-en {
+  font-size: 12px;
+  color: #d3f0ff;
+}
+
 /* Model coordination strip */
 .ai-model-coord {
   display: grid;
@@ -665,6 +744,7 @@
 .ai-model-coord-cell { display: flex; flex-direction: column; gap: 2px; }
 .ai-model-coord-cell .lbl { color: #8aa7e0; font-size: 10px; }
 .ai-model-coord-cell .val { color: #e1ebff; }
+.ai-model-coord-cell .val .ai-bi-en { color: #e1ebff; }
 
 /* Compile source status chip */
 .ai-compile-source-status {

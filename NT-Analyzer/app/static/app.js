@@ -68,6 +68,24 @@ let _submitInFlight = false;
 //   }
 let _activeRunPollTimer = null;
 let _ntRunning = null;  // null=unknown, true/false from /api/health
+let _governanceDefaults = null;
+
+async function loadGovernanceDefaults() {
+  try {
+    _governanceDefaults = await api.get("/api/governance/runtime-defaults");
+  } catch {
+    _governanceDefaults = null;
+  }
+}
+
+function applyGovernanceDefaultsToRiskForm() {
+  const input = document.getElementById("f-starting-capital");
+  if (!input || !_governanceDefaults) return;
+  const cap = Number(_governanceDefaults.starting_capital);
+  if (!Number.isFinite(cap) || cap <= 0) return;
+  if (input.dataset.userEdited === "1") return;
+  input.value = String(cap);
+}
 
 function isTerminalStatus(s) {
   return s === "done" || s === "failed" || s === "cancelled" ||
@@ -381,6 +399,8 @@ async function bootstrap() {
     setStatusChip("ss-nt", "Backend: недоступен", "bad");
   }
 
+  await loadGovernanceDefaults();
+  applyGovernanceDefaultsToRiskForm();
   await loadCatalog();
 
   // Phase 22c — accept prefill from "Открыть в бэктесте" on the Trading page.
@@ -400,6 +420,9 @@ async function bootstrap() {
     .forEach(id => {
       const node = document.getElementById(id);
       if (!node) return;
+      if (id === "f-starting-capital") {
+        node.addEventListener("input", () => { node.dataset.userEdited = "1"; });
+      }
       node.addEventListener("input", updateRiskProfilePanel);
       node.addEventListener("change", updateRiskProfilePanel);
     });
@@ -717,7 +740,7 @@ function applyDatePreset(period) {
     b.classList.toggle("active", b.dataset.period === period));
 }
 
-// Phase 22c — accept "Open in backtest" prefill from /ui/trading.html.
+// Phase 22c — accept "Open in backtest" prefill from the classic trading page.
 // Reads strategy / instrument / timeframe / params from the URL query string,
 // applies them to the form. Safe to call when no params are present (no-op).
 function applyTradingPrefillFromURL() {
@@ -1618,6 +1641,29 @@ function _covStatus(status) {
   return ["ready", "paper_ready"].includes(String(status || "")) ? "ready" : "in_progress";
 }
 
+const _LIFECYCLE_LABEL = {
+  trial: "Испытание",
+  approved_demo: "Утверждено для демо",
+  approved_live: "Утверждено для реальной торговли",
+  failed_archived: "Провалено → Архив",
+};
+const _LIFECYCLE_STATUS_MAP = {
+  ready: "approved_demo", paper_ready: "approved_demo", approved_demo: "approved_demo",
+  approved_live: "approved_live", live: "approved_live",
+  rejected: "failed_archived", archived: "failed_archived",
+};
+function _profileLifecycle(p) {
+  const explicit = String(p && p.lifecycle || "").trim();
+  if (explicit) return explicit;
+  const st = String(p && p.status || "").trim().toLowerCase();
+  if (_LIFECYCLE_STATUS_MAP[st]) return _LIFECYCLE_STATUS_MAP[st];
+  if (p && (p.matrix_hidden || p.archive_reason || p.failed_archive)) return "failed_archived";
+  return "trial";
+}
+function _isAiProfile(p) {
+  return !!(p && (p.is_ai_lab || String(p.origin || "").toLowerCase() === "ai_lab"));
+}
+
 const _COVERAGE_TARGETS = {
   trades_per_day: 3,
   monthly_profit: 2000,
@@ -2042,7 +2088,7 @@ function renderProfilesList() {
   const q = (_profilesState.search || "").trim().toLowerCase();
   const sf = _profilesState.statusFilter || "all";
   const filtered = profiles.filter(p => {
-    if (sf !== "all" && _covStatus(p.status) !== sf) return false;
+    if (sf !== "all" && _profileLifecycle(p) !== sf) return false;
     if (!q) return true;
     const hay = [
       p.name, p.strategy_class, p.instrument, p.timeframe,
@@ -2075,10 +2121,15 @@ function renderProfileCard(p) {
   const head = el("div", { cls: "profile-head" });
   const title = el("div", { cls: "profile-title", text: p.name || p.profile_id });
   const badge = el("span");
-  const displayStatus = _covStatus(p.status);
-  badge.className = "profile-status " + displayStatus;
-  badge.textContent = _PROF_STATUS_LABEL[displayStatus] || "В процессе";
+  const lc = _profileLifecycle(p);
+  badge.className = "profile-status lc-pill-" + lc;
+  badge.textContent = _LIFECYCLE_LABEL[lc] || "Испытание";
   head.appendChild(title);
+  if (_isAiProfile(p)) {
+    const ai = el("span", { cls: "profile-ai-badge", text: "AI / LM Studio" });
+    ai.title = "Стратегия создана локальным ИИ (LM Studio)";
+    head.appendChild(ai);
+  }
   head.appendChild(badge);
   card.appendChild(head);
 
@@ -4566,7 +4617,7 @@ function _buildReportRow(it) {
     aiPill.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const eid = it.origin.experiment_id || "";
-      window.location.href = `/ui/ai-strategy.html?experiment=${encodeURIComponent(eid)}`;
+      window.location.href = `/ui/legacy/ai-strategy.html?experiment=${encodeURIComponent(eid)}`;
     });
     tdStrat.appendChild(document.createTextNode(" "));
     tdStrat.appendChild(aiPill);

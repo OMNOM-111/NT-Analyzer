@@ -1,0 +1,1646 @@
+{
+  "schema_version": 1,
+  "updated_at_utc": "2026-06-28T23:45:11Z",
+  "cells": [
+    {
+      "cell_id": "CELL-001",
+      "root": "MGC",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-002",
+      "root": "MGC",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-003",
+      "root": "MGC",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-004",
+      "root": "MGC",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-005",
+      "root": "MGC",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-006",
+      "root": "MGC",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-007",
+      "root": "MGC",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-008",
+      "root": "MGC",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-009",
+      "root": "MGC",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-010",
+      "root": "MGC",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-121",
+      "root": "MGC",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-122",
+      "root": "MGC",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-123",
+      "root": "MGC",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-124",
+      "root": "MGC",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-125",
+      "root": "MGC",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-011",
+      "root": "MNQ",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-012",
+      "root": "MNQ",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-013",
+      "root": "MNQ",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-014",
+      "root": "MNQ",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-015",
+      "root": "MNQ",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-016",
+      "root": "MNQ",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-017",
+      "root": "MNQ",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-018",
+      "root": "MNQ",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-019",
+      "root": "MNQ",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-020",
+      "root": "MNQ",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-126",
+      "root": "MNQ",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-127",
+      "root": "MNQ",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-128",
+      "root": "MNQ",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-129",
+      "root": "MNQ",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-130",
+      "root": "MNQ",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-021",
+      "root": "M2K",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-022",
+      "root": "M2K",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-023",
+      "root": "M2K",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-024",
+      "root": "M2K",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-025",
+      "root": "M2K",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-026",
+      "root": "M2K",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-027",
+      "root": "M2K",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-028",
+      "root": "M2K",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-029",
+      "root": "M2K",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-030",
+      "root": "M2K",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-131",
+      "root": "M2K",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-132",
+      "root": "M2K",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-133",
+      "root": "M2K",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-134",
+      "root": "M2K",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-135",
+      "root": "M2K",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-031",
+      "root": "M6A",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-032",
+      "root": "M6A",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-033",
+      "root": "M6A",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-034",
+      "root": "M6A",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-035",
+      "root": "M6A",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-036",
+      "root": "M6A",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-037",
+      "root": "M6A",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-038",
+      "root": "M6A",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-039",
+      "root": "M6A",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-040",
+      "root": "M6A",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-136",
+      "root": "M6A",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-137",
+      "root": "M6A",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-138",
+      "root": "M6A",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-139",
+      "root": "M6A",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-140",
+      "root": "M6A",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-041",
+      "root": "M6B",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-042",
+      "root": "M6B",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-043",
+      "root": "M6B",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-044",
+      "root": "M6B",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-045",
+      "root": "M6B",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-046",
+      "root": "M6B",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-047",
+      "root": "M6B",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-048",
+      "root": "M6B",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-049",
+      "root": "M6B",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-050",
+      "root": "M6B",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-141",
+      "root": "M6B",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-142",
+      "root": "M6B",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-143",
+      "root": "M6B",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-144",
+      "root": "M6B",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-145",
+      "root": "M6B",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-051",
+      "root": "M6E",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-052",
+      "root": "M6E",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-053",
+      "root": "M6E",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-054",
+      "root": "M6E",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-055",
+      "root": "M6E",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-056",
+      "root": "M6E",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-057",
+      "root": "M6E",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-058",
+      "root": "M6E",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-059",
+      "root": "M6E",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-060",
+      "root": "M6E",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-146",
+      "root": "M6E",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-147",
+      "root": "M6E",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-148",
+      "root": "M6E",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-149",
+      "root": "M6E",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-150",
+      "root": "M6E",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-061",
+      "root": "M6J",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-062",
+      "root": "M6J",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-063",
+      "root": "M6J",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-064",
+      "root": "M6J",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-065",
+      "root": "M6J",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-066",
+      "root": "M6J",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-067",
+      "root": "M6J",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-068",
+      "root": "M6J",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-069",
+      "root": "M6J",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-070",
+      "root": "M6J",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-151",
+      "root": "M6J",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-152",
+      "root": "M6J",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-153",
+      "root": "M6J",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-154",
+      "root": "M6J",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-155",
+      "root": "M6J",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-071",
+      "root": "MBT",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-072",
+      "root": "MBT",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-073",
+      "root": "MBT",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-074",
+      "root": "MBT",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-075",
+      "root": "MBT",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-076",
+      "root": "MBT",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-077",
+      "root": "MBT",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-078",
+      "root": "MBT",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-079",
+      "root": "MBT",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-080",
+      "root": "MBT",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-156",
+      "root": "MBT",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-157",
+      "root": "MBT",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-158",
+      "root": "MBT",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-159",
+      "root": "MBT",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-160",
+      "root": "MBT",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-081",
+      "root": "MCL",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-082",
+      "root": "MCL",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-083",
+      "root": "MCL",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-084",
+      "root": "MCL",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-085",
+      "root": "MCL",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-086",
+      "root": "MCL",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-087",
+      "root": "MCL",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-088",
+      "root": "MCL",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-089",
+      "root": "MCL",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-090",
+      "root": "MCL",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-161",
+      "root": "MCL",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-162",
+      "root": "MCL",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-163",
+      "root": "MCL",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-164",
+      "root": "MCL",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-165",
+      "root": "MCL",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-091",
+      "root": "MES",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-092",
+      "root": "MES",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-093",
+      "root": "MES",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-094",
+      "root": "MES",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-095",
+      "root": "MES",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-096",
+      "root": "MES",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-097",
+      "root": "MES",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-098",
+      "root": "MES",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-099",
+      "root": "MES",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-100",
+      "root": "MES",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-166",
+      "root": "MES",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-167",
+      "root": "MES",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-168",
+      "root": "MES",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-169",
+      "root": "MES",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-170",
+      "root": "MES",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-101",
+      "root": "MET",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-102",
+      "root": "MET",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-103",
+      "root": "MET",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-104",
+      "root": "MET",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-105",
+      "root": "MET",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-106",
+      "root": "MET",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-107",
+      "root": "MET",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-108",
+      "root": "MET",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-109",
+      "root": "MET",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-110",
+      "root": "MET",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-171",
+      "root": "MET",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-172",
+      "root": "MET",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-173",
+      "root": "MET",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-174",
+      "root": "MET",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-175",
+      "root": "MET",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-111",
+      "root": "MYM",
+      "slot": 1,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-112",
+      "root": "MYM",
+      "slot": 2,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-113",
+      "root": "MYM",
+      "slot": 3,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-114",
+      "root": "MYM",
+      "slot": 4,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-115",
+      "root": "MYM",
+      "slot": 5,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-116",
+      "root": "MYM",
+      "slot": 6,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-117",
+      "root": "MYM",
+      "slot": 7,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-118",
+      "root": "MYM",
+      "slot": 8,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-119",
+      "root": "MYM",
+      "slot": 9,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-120",
+      "root": "MYM",
+      "slot": 10,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-176",
+      "root": "MYM",
+      "slot": 11,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-177",
+      "root": "MYM",
+      "slot": 12,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-178",
+      "root": "MYM",
+      "slot": 13,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-179",
+      "root": "MYM",
+      "slot": 14,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-180",
+      "root": "MYM",
+      "slot": 15,
+      "status": "active",
+      "legacy": true,
+      "created_at_utc": "2026-06-28T00:00:00Z",
+      "archived_at_utc": null
+    },
+    {
+      "cell_id": "CELL-181",
+      "root": "MGC",
+      "slot": 16,
+      "status": "active",
+      "legacy": false,
+      "created_at_utc": "2026-06-28T23:45:11Z",
+      "archived_at_utc": null
+    }
+  ],
+  "history": [
+    {
+      "at_utc": "2026-06-28T23:45:11Z",
+      "actor": "ui",
+      "action": "add_cell",
+      "root": "MGC",
+      "cell_ids": [
+        "CELL-181"
+      ]
+    }
+  ]
+}

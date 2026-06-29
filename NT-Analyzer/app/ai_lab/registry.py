@@ -158,6 +158,15 @@ def write_experiment(experiment: Dict[str, Any]) -> None:
         if state and state not in PORTFOLIO_APPROVAL_STATES:
             raise ValueError(f"Invalid portfolio_status: {state}")
     experiment["updated_at_utc"] = now_iso()
+    # Stamp the portfolio lifecycle stage on every write so the AI experiment's
+    # current stage (Испытание / Утверждено для демо / Реальная торговля /
+    # Провалено→Архив) is persisted and shows up in the lifecycle board.
+    try:
+        from .. import strategy_lifecycle as _sl
+        experiment["lifecycle"] = _sl.lifecycle_for_ai_status(status)
+        experiment["lifecycle_label"] = _sl.LIFECYCLE_LABELS[experiment["lifecycle"]]
+    except Exception:  # noqa: BLE001 — lifecycle stamping must never block a write
+        pass
     write_json_atomic(_experiment_path(eid), experiment)
     _refresh_index_entry(experiment)
 

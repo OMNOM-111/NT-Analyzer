@@ -597,8 +597,45 @@ def t13(tmp: Path) -> None:
     assert second["jobs"][-1]["report_no"] == 1, second["jobs"][-3:]
 
 
-@case("stage2 backtest requirements flag optimistic assumptions")
+@case("report filters use frequency, statistical confidence, and column metrics")
 def t14(tmp: Path) -> None:
+    fixtures = [
+        ("job_rare", 1, 80, 2.0, 120),
+        ("job_normal", 4, 55, 1.3, 90),
+        ("job_frequent", 10, 40, 0.8, 60),
+    ]
+    for index, (job_id, trades, win, profit_factor, drawdown) in enumerate(fixtures, start=1):
+        jdir = tmp / "jobs" / "done" / job_id
+        jdir.mkdir(parents=True)
+        (jdir / "job.json").write_text(json.dumps({
+            "job_id": job_id,
+            "created_at_utc": f"2026-05-0{index}T12:00:00Z",
+            "strategy": {"class_name": "SampleMACrossOver"},
+            "instrument": "MNQ 06-26",
+            "timeframe": {"bars_period_type": "Minute", "bars_period_value": 5},
+            "period": {"from_utc": "2026-05-01T00:00:00Z", "to_utc": "2026-05-08T00:00:00Z"},
+        }), encoding="utf-8")
+        (jdir / "result.json").write_text(json.dumps({
+            "status": "done",
+            "metrics": {
+                "trade_count": trades, "winning_pct": win, "profit_factor": profit_factor,
+                "max_drawdown": drawdown, "net_profit": 100,
+            },
+        }), encoding="utf-8")
+    jq.sync_report_numbers()
+    jq.reset_caches()
+
+    normal = jq.list_reports(limit=20, frequency="normal")
+    assert [row["job_id"] for row in normal["jobs"]] == ["job_normal"], normal
+    strong = jq.list_reports(limit=20, min_win=50, min_pf=1.0)
+    assert {row["job_id"] for row in strong["jobs"]} == {"job_rare", "job_normal"}, strong
+    confidence = jq.list_reports(limit=20, sort_col="confidence", sort_dir="desc")
+    scores = [row["confidence"]["score"] for row in confidence["jobs"]]
+    assert scores == sorted(scores, reverse=True), confidence
+
+
+@case("stage2 backtest requirements flag optimistic assumptions")
+def t15(tmp: Path) -> None:
     # Optimistic defaults: Standard fill, slip 0, synthetic 0 commission, no
     # contract month -> every Stage 2 honesty check should warn.
     req = jq.CreateJobRequest(
@@ -646,7 +683,7 @@ def t14(tmp: Path) -> None:
 
 
 @case("internal profile metadata keys are stripped from bridge strategy parameters")
-def t15(tmp: Path) -> None:
+def t16(tmp: Path) -> None:
     req = jq.CreateJobRequest(
         class_name="SampleMACrossOver",
         instrument="MNQ 09-26",
@@ -665,7 +702,7 @@ def t15(tmp: Path) -> None:
 
 
 @case("current-contract jobs align ContractName and InstrumentName parameters")
-def t16(tmp: Path) -> None:
+def t17(tmp: Path) -> None:
     req = jq.CreateJobRequest(
         class_name="NTAMnqLiquiditySweepReversalC015",
         instrument="MNQ 09-26",
@@ -685,7 +722,7 @@ def t16(tmp: Path) -> None:
 
 
 @case("catalog excludes rejected/decommissioned strategy classes")
-def t17(tmp: Path) -> None:
+def t18(tmp: Path) -> None:
     jq.project_root = lambda: tmp  # type: ignore[assignment]
     jq.reset_caches()
 
@@ -734,8 +771,64 @@ def t17(tmp: Path) -> None:
     assert "B1ShortOnlyMGC5mV2" not in classes, out
 
 
+@case("archiving profile auto-triggers NinjaTrader cleanup")
+def t19(tmp: Path) -> None:
+    profiles_dir = tmp / "data" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    (profiles_dir / "strategies.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "profiles": [
+            {
+                "profile_id": "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+                "name": "Scalping MNQ 1m v1 c018",
+                "strategy_class": "NTAMicroMnqScalpPilot",
+                "deploy_strategy_class": "NTAMnqDailyOpenScalpC018",
+                "instrument": "MNQ 09-26",
+                "timeframe": "1 Minute",
+                "cell_id": "CELL-018",
+                "status": "ready",
+                "notes": "old",
+            }
+        ],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    calls: list[str | None] = []
+    original = jq.remove_archived_from_ninjatrader
+
+    def fake_cleanup(profile_id: str | None = None) -> dict:
+        calls.append(profile_id)
+        data = json.loads((profiles_dir / "strategies.json").read_text(encoding="utf-8"))
+        prof = data["profiles"][0]
+        prof.setdefault("failed_archive", {})
+        prof["failed_archive"]["removed_from_ninjatrader"] = True
+        prof["failed_archive"]["removal"] = {"reason": "already_absent"}
+        (profiles_dir / "strategies.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {"ok": True, "count": 1, "removed": 1, "results": [{"profile_id": profile_id, "removed": True}]}
+
+    jq.remove_archived_from_ninjatrader = fake_cleanup  # type: ignore[assignment]
+    try:
+        out = jq.update_strategy_profile(
+            "mnq_daily_open_allmodules_2h_1m_c018_ready_v1",
+            {"status": "archived", "notes": "Rejected in paper"},
+            action="archive",
+        )
+    finally:
+        jq.remove_archived_from_ninjatrader = original  # type: ignore[assignment]
+
+    assert calls == ["mnq_daily_open_allmodules_2h_1m_c018_ready_v1"], calls
+    assert out["ok"] is True, out
+    assert out["profile"]["status"] == "archived", out
+    assert out["profile"]["matrix_hidden"] is True, out
+    assert out["profile"]["failed_archive"]["removed_from_ninjatrader"] is True, out
+    assert out["ninjatrader_cleanup"]["removed"] == 1, out
+    assert out["profile"]["failed_archive"]["fingerprint"], out
+
+
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17]
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17, t18]
     print(f"Running {len(cases)} queue contract tests:")
     for c in cases:
         c()

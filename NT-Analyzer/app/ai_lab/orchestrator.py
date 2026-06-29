@@ -15,6 +15,17 @@ and short response summaries — never full chain-of-thought.
 
 Auto-finalize (analysis + arbitration after the backtest result.json lands) is
 driven by :mod:`runner` after this module returns from :func:`run_pipeline`.
+
+Portfolio lifecycle: every experiment write goes through
+:func:`registry.write_experiment`, which stamps a ``lifecycle`` stage derived
+from the experiment ``status`` (see :func:`app.strategy_lifecycle.lifecycle_for_ai_status`):
+generating/backtesting/candidate → *Испытание*, portfolio_contributor →
+*Утверждено для демо*, rejected/cancelled/*_failed/blocked → *Провалено → Архив*.
+The lifecycle board reads these via ``/api/ai-lab/lifecycle`` so an AI strategy
+appears under the "AI / LM Studio" branch and moves between the four columns as
+its status advances. Rule: every started idea must be driven to a terminal
+stage (approved or archived) — never left dangling mid-pipeline. See
+``docs/STRATEGY_LIFECYCLE.md``.
 """
 
 from __future__ import annotations
@@ -176,23 +187,22 @@ def choose_hypothesis(
     if requested_pattern:
         fallback_family = str(requested_pattern)
         fallback_hypothesis = (
-            f"{requested_pattern} intraday setup on {target_root} with strict signal sanity, "
-            "directional confirmation, low-turnover risk shell, and after-commission gates."
+            f"Внутридневная схема {requested_pattern} на {target_root}: строгая проверка сигналов, "
+            "подтверждение направления, низкая частота сделок и фильтры после комиссии."
         )
     elif target_root == "MNQ":
         fallback_family = str(preferred_ref.get("family") or "SessionLiquidityReversal")
         fallback_hypothesis = (
-            f"Adapt {preferred_ref.get('reference_id') or 'the approved reference shortlist'} "
-            f"into a regime-specific {fallback_family} setup for MNQ. Require an explicit "
-            "market regime, confirmation, and per-trade economics above commission; "
-            "do not use a generic breakout."
+            f"Адаптировать {preferred_ref.get('reference_id') or 'утвержденный список референсов'} "
+            f"в режимную схему {fallback_family} для MNQ. Нужны явный рыночный режим, "
+            "подтверждение входа и экономика сделки выше комиссии; не использовать generic breakout."
         )
     else:
         fallback_family = "SessionLiquidityReversal"
         fallback_hypothesis = (
-            f"Intraday session liquidity reversal on {target_root} with a named regime, "
-            "failed-auction confirmation, limited trades/day, fixed risk shell, "
-            "and after-commission evaluation."
+            f"Внутридневной разворот сессионной ликвидности на {target_root}: именованный режим, "
+            "подтверждение failed-auction, ограничение сделок в день, фиксированный риск-каркас "
+            "и оценка результата после комиссии."
         )
     max_trades = 2 if constraints.get("trade_frequency") == "lower" else 3
     fallback = {
@@ -213,9 +223,9 @@ def choose_hypothesis(
         },
         "_source": "fallback",
         "reference_id": preferred_ref.get("reference_id"),
-        "market_regime": "explicit regime required",
-        "entry_trigger": "reference-specific confirmation required",
-        "why_not_generic": "generic breakout is forbidden",
+        "market_regime": "требуется явный рыночный режим",
+        "entry_trigger": "требуется подтверждение из выбранного референса",
+        "why_not_generic": "generic breakout запрещен без режима и подтверждения",
     }
     if not use_llm:
         return fallback
@@ -224,6 +234,9 @@ def choose_hypothesis(
             "/no_think\nYou are a strict trading research spec writer. Output ONLY JSON with "
             "keys: reference_id, hypothesis, family, market_regime, entry_trigger, "
             "exit_economics, why_not_generic, expected_trades_per_day, parameters. "
+            "Write all human-readable JSON string values in Russian. Keep JSON keys, "
+            "reference IDs, parameter names, and metric names in English. "
+            "Do not expose hidden chain-of-thought; provide concise final reasoning only. "
             "Choose exactly one reference_id from the approved shortlist. WEX and "
             "rejected AI-CELL rows are negative evidence, not code templates. "
             "Reject generic breakout/crossover ideas that lack a named regime and "
@@ -240,20 +253,27 @@ def choose_hypothesis(
         selected_role = model_gate.get("selected_role") or "judge"
         selected_model = model_gate.get("selected_model")
         user_prompt = (
-            f"Target root: {target_root}\n"
-            f"User goal constraints: {constraints}\n"
+            f"{intake.get('knowledge_prompt_context', '')}\n\n"
             f"Approved references: {shortlist}\n"
             f"Avoid recent failure patterns: {intake.get('rejected_patterns', [])[:5]}\n"
-            f"User research files just read: {intake.get('user_research_files_read', [])}\n"
-            "\n"
-            f"{intake.get('knowledge_prompt_context', '')}\n\n"
+            f"User research files just read: {intake.get('user_research_files_read', [])}\n\n"
+            f"{lm_studio.prompt_cache_marker()}\n\n"
+            f"Target root: {target_root}\n"
+            f"User goal constraints: {constraints}\n"
             "Propose one structurally distinct intraday hypothesis. State why it is "
-            "not another generic breakout and target 0.2-3.0 trades/day."
+            "not another generic breakout and target 0.2-3.0 trades/day. "
+            "All explanations must be in Russian."
         )
         if operator_notes_block:
-            user_prompt = operator_notes_block + "\n\n" + user_prompt
+            user_prompt = (
+                user_prompt
+                + "\n\nOperator notes for this dynamic request:\n"
+                + operator_notes_block
+            )
         activity.log(experiment_id, "generate", "hypothesis_prompt", level="info",
-                     role=selected_role, model=selected_model, prompt_preview=sys_prompt)
+                     role=selected_role, model=selected_model,
+                     prompt_preview="Propose one structurally distinct intraday hypothesis in Russian.",
+                     prompt_preview_ru="Сформировать одну структурно отличающуюся внутридневную гипотезу на русском языке.")
         resp = lm_studio.chat(
             role=selected_role,
             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
@@ -1187,7 +1207,7 @@ def finalize_backtest(experiment_id: str, job_id: str) -> Dict[str, Any]:
     if decision == "reject":
         exp["status"] = "rejected"
         rejection_code = str(quality.get("code") or "LOW_QUALITY")
-        rejection_reasons = list(quality.get("reasons") or ["quality gates failed"])
+        rejection_reasons = list(quality.get("reasons") or ["фильтры качества не пройдены"])
         exp["verdict"] = {
             "outcome": "reject", "reasons": rejection_reasons,
             "rejection_code": rejection_code, "structural": False,
@@ -1200,12 +1220,12 @@ def finalize_backtest(experiment_id: str, job_id: str) -> Dict[str, Any]:
             family = exp.get("family") or "?"
             an = exp.get("analysis") or {}
             lessons.record_lesson(
-                summary=(f"{family} on {exp.get('target_root')}: "
+                summary=(f"{family} на {exp.get('target_root')}: "
                          f"score={score:.1f} PF={an.get('pf_after_commission')} "
-                         f"trades={an.get('trades_total')} → rejected ({rejection_code})"),
+                         f"trades={an.get('trades_total')} → отклонено ({rejection_code})"),
                 source="rejection", scope="family", scope_key=family,
-                rule=(f"avoid: low-edge {family} variants on {exp.get('target_root')} "
-                      "with similar hypothesis/parameters; require stronger filter."),
+                rule=(f"избегать низкоэффективных вариантов {family} на {exp.get('target_root')} "
+                      "с похожей гипотезой/параметрами; нужен более сильный фильтр."),
             )
         except Exception:
             pass
@@ -1213,20 +1233,20 @@ def finalize_backtest(experiment_id: str, job_id: str) -> Dict[str, Any]:
         exp["status"] = "mutation_candidate"
         exp["verdict"] = {
             "outcome": "mutate",
-            "reasons": list(quality.get("reasons") or ["near miss"]),
+            "reasons": list(quality.get("reasons") or ["почти кандидат, нужна мутация"]),
             "rejection_code": quality.get("code"),
             "structural": False,
         }
     elif score < 100:
         exp["status"] = "sandbox_candidate"
-        exp["verdict"] = {"outcome": "keep", "reasons": ["candidate gates passed"],
+        exp["verdict"] = {"outcome": "keep", "reasons": ["фильтры кандидата пройдены"],
                           "rejection_code": None, "structural": False}
     else:
         exp["status"] = "champion_candidate"
-        exp["verdict"] = {"outcome": "keep", "reasons": ["high arbitration score"],
+        exp["verdict"] = {"outcome": "keep", "reasons": ["высокая оценка арбитража"],
                           "rejection_code": None, "structural": False}
         lessons.record_lesson(
-            summary=f"{experiment_id} reached champion candidate with score {score:.1f}",
+            summary=f"{experiment_id} стал сильным кандидатом с оценкой {score:.1f}",
             source="rejection", scope="experiment", scope_key=experiment_id, weight=1.5,
         )
 

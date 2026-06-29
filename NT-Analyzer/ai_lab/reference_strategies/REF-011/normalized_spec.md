@@ -54,8 +54,8 @@ on these breakouts, betting that the initial directional move will continue.
 ## Stop Loss Logic
 - ORB midpoint or opposite side of ORB as natural stop
 - For $2k MNQ: ORB range can be 20-60 ticks → stop may be 15-50 ticks
-- Position sizing critical: must floor qty=1 with MaxDailyLossUsd cap
-- MaxStopTicks = 30 (cap to avoid qty=0 from wide ORB days)
+- Position sizing critical: skip the entry when one contract exceeds the per-trade budget
+- MaxStopTicks must be justified by market geometry and the one-contract risk budget
 
 ## Parameters
 | Parameter | Default | Range |

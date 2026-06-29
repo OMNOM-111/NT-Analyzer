@@ -616,11 +616,57 @@ def t11_cycle_mismatch(tmp: Path) -> None:
     assert trades[0]["exit_trading_cycle_id"] == "CYCLE-B", trades[0]
 
 
+@case("t12: legacy C007/C127 signals resolve exact strategy attribution")
+def t12_legacy_c007_c127_signal_attribution(tmp: Path) -> None:
+    day = "2026-06-25"
+    base = {
+        "account_name": "DEMO3369390",
+        "runtime_instance_id": "",
+        "strategy_class": "",
+        "strategy_id": "",
+        "strategy_name": "",
+        "attribution_status": "unresolved",
+        "quantity": 1,
+    }
+    executions = [
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 8, 30),
+         "instrument": "MGC AUG26", "order_action": "SellShort", "price": 4042.7,
+         "order_name": "CapSnapS", "from_entry_signal": "",
+         "order_id": "1716", "execution_id": "542849220920_1"},
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 8, 52),
+         "instrument": "MGC AUG26", "order_action": "BuyToCover", "price": 4054.7,
+         "order_name": "Stop loss", "from_entry_signal": "CapSnapS",
+         "order_id": "1717", "execution_id": "542849220931_1"},
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 9, 5),
+         "instrument": "MNQ SEP26", "order_action": "SellShort", "price": 29684.0,
+         "order_name": "EntFieldS", "from_entry_signal": "",
+         "order_id": "1719", "execution_id": "542849220948_1"},
+        {**base, "timestamp_utc": _iso_for_pt_date(day, 9, 6),
+         "instrument": "MNQ SEP26", "order_action": "BuyToCover", "price": 29713.25,
+         "order_name": "Stop loss", "from_entry_signal": "EntFieldS",
+         "order_id": "1720", "execution_id": "542849220958_1"},
+    ]
+    _write_runtime(tmp, [], executions)
+
+    out = performance.build_performance_response(
+        period="custom", from_date=day, to_date=day, account_name="DEMO3369390")
+    assert out["summary"]["trades"] == 2, out["summary"]
+    assert out["summary"]["pnl"] == -182.3, out["summary"]
+    assert out["strategy_summary"]["trades"] == 2, out["strategy_summary"]
+    assert out["categories"]["counts"]["normal"] == 2, out["categories"]
+    assert out["categories"]["counts"]["unmapped"] == 0, out["categories"]
+
+    by_class = {row["strategy_class"]: row for row in out["strategies"]}
+    assert by_class["NTAMgcCapitulationSnapbackC007"]["pnl"] == -121.9, by_class
+    assert by_class["NTAMnqEntropyTransitionFieldC127"]["pnl"] == -60.4, by_class
+
+
 def main() -> int:
     for fn in (t01, t01b_strategy_totals_merge_runtime_instances, t02, t03, t04, t05_entry_strategy_attribution_for_unmapped_exit,
                t06_multiple_unmapped_exits_close_strategy_lots_fifo,
                t07_normal_round_trip, t08_rollover_mismatch, t09_cross_strategy_unmatched,
-               t10_multi_day_unmatched, t11_cycle_mismatch):
+               t10_multi_day_unmatched, t11_cycle_mismatch,
+               t12_legacy_c007_c127_signal_attribution):
         fn()
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")
     if FAILED:

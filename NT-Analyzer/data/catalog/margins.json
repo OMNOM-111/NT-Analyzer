@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-06-25T04:37:46Z",
+  "fetched_at_utc": "2026-06-28T21:11:43Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",
@@ -191,7 +191,7 @@
       "display_name": "E-Mini S&P 500",
       "exchange": "CME",
       "intraday_margin": 500.0,
-      "initial_margin": 27718.0,
+      "initial_margin": 27590.0,
       "maintenance_margin": null
     },
     "ET": {
@@ -303,7 +303,7 @@
       "display_name": "Gold",
       "exchange": "COMEX",
       "intraday_margin": 2000.0,
-      "initial_margin": 23485.0,
+      "initial_margin": 22049.0,
       "maintenance_margin": null
     },
     "GE": {
@@ -471,7 +471,7 @@
       "display_name": "Micro E-mini S&P 500",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 2772.0,
+      "initial_margin": 2759.0,
       "maintenance_margin": null
     },
     "MET": {
@@ -492,7 +492,7 @@
       "display_name": "E-Micro Gold",
       "exchange": "COMEX",
       "intraday_margin": 200.0,
-      "initial_margin": 2332.0,
+      "initial_margin": 2206.0,
       "maintenance_margin": null
     },
     "MHG": {
@@ -534,7 +534,7 @@
       "display_name": "Micro E-mini NASDAQ-100",
       "exchange": "CME",
       "intraday_margin": 100.0,
-      "initial_margin": 4142.0,
+      "initial_margin": 4234.0,
       "maintenance_margin": null
     },
     "MSC": {
@@ -646,7 +646,7 @@
       "display_name": "E-Mini NASDAQ 100",
       "exchange": "CME",
       "intraday_margin": 1000.0,
-      "initial_margin": 41411.0,
+      "initial_margin": 42344.0,
       "maintenance_margin": null
     },
     "PA": {
@@ -835,21 +835,21 @@
       "display_name": "Silver",
       "exchange": "COMEX",
       "intraday_margin": 4000.0,
-      "initial_margin": 35882.0,
+      "initial_margin": 32070.0,
       "maintenance_margin": null
     },
     "SIC": {
       "display_name": "100-Ounce Silver",
       "exchange": "COMEX",
       "intraday_margin": 400.0,
-      "initial_margin": 724.0,
+      "initial_margin": 652.0,
       "maintenance_margin": null
     },
     "SIL": {
       "display_name": "Micro Silver",
       "exchange": "COMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 7205.0,
+      "initial_margin": 6415.0,
       "maintenance_margin": null
     },
     "SOL": {

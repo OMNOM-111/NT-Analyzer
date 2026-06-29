@@ -102,14 +102,14 @@
 | 8 | $5.90 | 2 ✓ | Yes |
 | 12 | $7.90 | 1 ✓ | Yes (minimum) |
 | 16 | $9.90 | 1 ✓ | Yes (marginal) |
-| 20 | $11.90 | 1 ✓ | Yes (floor=1) |
-| 30 | $16.90 | 0 ✗ | Need floor=1 |
-| 40 | $21.90 | 0 ✗ | Need floor=1 |
+| 20 | $11.90 | 1 ✓ | Yes (barely) |
+| 30 | $16.90 | 0 ✗ | No — skip entry |
+| 40 | $21.90 | 0 ✗ | No — skip entry |
 
 *contractRisk = stopTicks * $0.50 + $1.90 commission + $0.50 slippage*
 *riskBudget = $2000 * 0.6% = $12 (approximate)*
-*Floor fix required when stopTicks > 24*
+*No floor override is allowed: stopTicks > 24 is infeasible at this risk budget.*
 
 ---
 
-*Last updated: 2026-06-06*
+*Last updated: 2026-06-26*

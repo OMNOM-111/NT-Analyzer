@@ -12,6 +12,7 @@ Roles:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -39,6 +40,8 @@ DEFAULT_CHAT_RETRIES = int(os.environ.get("LM_STUDIO_CHAT_RETRIES", "0"))
 DEFAULT_MODEL_PROBE_TIMEOUT = int(os.environ.get("AI_LAB_MODEL_PROBE_TIMEOUT", "60"))
 READINESS_CACHE_TTL_SEC = int(os.environ.get("AI_LAB_READINESS_CACHE_SEC", "60"))
 RUN_REQUIRED_ROLES = ("judge", "coder", "compile_error_fixer")
+RUN_START_REQUIRED_ROLES = ("judge", "coder")
+PROMPT_CACHE_MARKER = "<<<AI_LAB_PROMPT_CACHE_STABLE_PREFIX_END>>>"
 
 _READINESS_CACHE: Optional[Dict[str, Any]] = None
 _READINESS_CACHE_AT: float = 0.0
@@ -211,9 +214,48 @@ def _readiness_message(status: str, *, missing_run: Optional[List[Dict[str, str]
         )
     if status == "ready":
         return "AI-модели готовы — можно запускать цикл."
+    if status == "standby_lazy":
+        return (
+            "LM Studio готова в lazy-режиме: нужная модель загружается автоматически "
+            "при запросе и переиспользуется в пределах активного цикла."
+        )
     if status == "pending_check":
         return "Проверяем готовность AI-моделей…"
     return "Статус AI-моделей неизвестен."
+
+
+def _env_bool(name: str, default: str) -> bool:
+    return os.environ.get(name, default).strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def lazy_mode_enabled() -> bool:
+    return _env_bool("AI_LAB_LAZY_LM_STUDIO", "1")
+
+
+def unload_after_request_enabled() -> bool:
+    # Default off: the runner still unloads at the end of a run, while adjacent
+    # prompts can reuse the loaded model and any server-side prefix/KV cache.
+    return _env_bool("AI_LAB_UNLOAD_AFTER_EACH_REQUEST", "0")
+
+
+def reuse_loaded_model_enabled() -> bool:
+    return _env_bool("AI_LAB_REUSE_LOADED_MODEL", "1")
+
+
+def prompt_cache_marker() -> str:
+    return PROMPT_CACHE_MARKER
+
+
+def _release_model_after_request() -> None:
+    if not (lazy_mode_enabled() and unload_after_request_enabled()):
+        return
+    try:
+        from . import bootstrap  # lazy import to avoid module cycle
+        bootstrap.unload_models(stop_server=False)
+    except Exception:
+        pass
 
 
 def lm_status(
@@ -255,6 +297,21 @@ def lm_status(
         return out
 
     now = time.time()
+    if lazy_mode_enabled():
+        snap = {
+            "ready": False,
+            "run_allowed": True,
+            "status": "standby_lazy",
+            "message_ru": _readiness_message("standby_lazy"),
+            "preflight": None,
+            "preflight_checked_at_utc": None,
+            "probe_pending": False,
+        }
+        _READINESS_CACHE = snap
+        _READINESS_CACHE_AT = now
+        out.update(snap)
+        return out
+
     cache_fresh = (
         _READINESS_CACHE is not None
         and not force
@@ -467,8 +524,14 @@ def chat(
     if cancel_event is not None and cancel_event.is_set():
         raise LMStudioCancelled("cancelled before first attempt")
     url = f"{base_url()}/chat/completions"
+    model_id = model_override or model_for(role)
+    if lazy_mode_enabled():
+        from . import bootstrap  # lazy import to avoid module cycle
+        load = bootstrap.ensure_model_loaded(model_id, timeout_sec=max(60, timeout))
+        if not load.get("ok"):
+            raise LMStudioError(f"model load failed for {model_id}: {load}")
     payload: Dict[str, Any] = {
-        "model": model_override or model_for(role),
+        "model": model_id,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -494,6 +557,7 @@ def chat(
                 model=payload["model"], messages=messages, response=resp,
                 content=content, attempt=attempt, elapsed_sec=elapsed, error=None,
             )
+            _release_model_after_request()
             return {
                 "content": content,
                 "model": payload["model"],
@@ -510,6 +574,7 @@ def chat(
         model=payload["model"], messages=messages, response=None, content="",
         attempt=retries, elapsed_sec=elapsed, error=str(last_exc),
     )
+    _release_model_after_request()
     raise LMStudioError(f"chat failed after {retries + 1} attempts: {last_exc}")
 
 
@@ -540,6 +605,20 @@ def probe_chat_completion(
         "temperature": 0.0,
         "max_tokens": max_tokens,
     }
+    if lazy_mode_enabled():
+        from . import bootstrap  # lazy import to avoid module cycle
+        load = bootstrap.ensure_model_loaded(model, timeout_sec=max(60, timeout))
+        if not load.get("ok"):
+            return {
+                "model": model,
+                "status": "model_load_failed",
+                "ok": False,
+                "attempts": [{"attempt": 0, "ok": False, "error": str(load)[:500]}],
+                "elapsed_sec": 0,
+                "timeout_sec": timeout,
+                "max_tokens": max_tokens,
+                "prompt": "Reply with OK and one sentence.",
+            }
     child_script = r'''
 import json
 import sys
@@ -605,6 +684,7 @@ print(raw)
             }
             attempt_rows.append(row)
             if content:
+                _release_model_after_request()
                 return {
                     "model": model,
                     "status": "available",
@@ -644,6 +724,7 @@ print(raw)
             })
     errors = " ".join(str(row.get("error") or "") for row in attempt_rows).lower()
     status = "model_unavailable_timeout" if "timed out" in errors or "timeout" in errors else "model_unavailable_error"
+    _release_model_after_request()
     return {
         "model": model,
         "status": status,
@@ -666,6 +747,11 @@ def embed(
 ) -> List[List[float]]:
     url = f"{base_url()}/embeddings"
     payload = {"model": model_for("embedder"), "input": texts}
+    if lazy_mode_enabled():
+        from . import bootstrap  # lazy import to avoid module cycle
+        load = bootstrap.ensure_model_loaded(payload["model"], timeout_sec=max(60, timeout))
+        if not load.get("ok"):
+            raise LMStudioError(f"embedding model load failed for {payload['model']}: {load}")
     last_exc: Optional[BaseException] = None
     started = time.time()
     for attempt in range(retries + 1):
@@ -680,10 +766,12 @@ def embed(
                 response={"vectors": len(vecs)}, content=f"vectors={len(vecs)}",
                 attempt=attempt, elapsed_sec=elapsed, error=None,
             )
+            _release_model_after_request()
             return vecs
         except (urllib.error.URLError, urllib.error.HTTPError, LMStudioError, TimeoutError) as e:
             last_exc = e
             time.sleep(min(2 ** attempt, 5))
+    _release_model_after_request()
     raise LMStudioError(f"embed failed: {last_exc}")
 
 
@@ -699,6 +787,7 @@ def _log_round_trip(
     elapsed_sec: float,
     error: Optional[str],
 ) -> None:
+    usage = response.get("usage") if isinstance(response, dict) and isinstance(response.get("usage"), dict) else {}
     rec = {
         "timestamp_utc": _now(),
         "experiment_id": experiment_id,
@@ -710,13 +799,51 @@ def _log_round_trip(
         "messages_preview": [
             {"role": m.get("role"), "content": (m.get("content") or "")[:1200]} for m in messages
         ],
+        "prompt_cache": _prompt_cache_audit(messages),
         "response_preview": (content or "")[:1200] if content else None,
+        "response_chars": len(content or ""),
+        "success": error is None,
+        "usage": {
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        },
         "error": error,
     }
     try:
         append_jsonl(_today_log(), rec)
     except OSError:
         pass
+
+
+def _prompt_cache_audit(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Describe the stable prompt prefix used by cache-aware prompt builders."""
+    rendered: List[str] = []
+    total_chars = 0
+    stable_content_chars = 0
+    marker_present = False
+    for msg in messages:
+        role = str(msg.get("role") or "")
+        content = str(msg.get("content") or "")
+        total_chars += len(content)
+        if PROMPT_CACHE_MARKER in content:
+            before, _sep, _after = content.partition(PROMPT_CACHE_MARKER)
+            rendered.append(f"{role}\n{before}{PROMPT_CACHE_MARKER}")
+            stable_content_chars += len(before) + len(PROMPT_CACHE_MARKER)
+            marker_present = True
+            break
+        rendered.append(f"{role}\n{content}")
+        stable_content_chars += len(content)
+    stable_prefix = "\n\n".join(rendered)
+    return {
+        "marker_present": marker_present,
+        "stable_prefix_chars": stable_content_chars,
+        "dynamic_suffix_chars": max(0, total_chars - stable_content_chars),
+        "total_prompt_chars": total_chars,
+        "stable_prefix_sha256": hashlib.sha256(
+            stable_prefix.encode("utf-8")
+        ).hexdigest()[:16],
+    }
 
 
 def extract_json_block(text: str) -> Optional[Any]:
