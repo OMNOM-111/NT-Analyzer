@@ -4612,7 +4612,7 @@ function _buildReportRow(it) {
   tdStrat.appendChild(document.createTextNode(it.strategy || "—"));
   if (it.origin && it.origin.type === "ai_lab") {
     const aiPill = el("span", { cls: "job-origin-pill ai", text: "AI" });
-    aiPill.title = `AI Strategy Lab · ${it.origin.experiment_id || ""}`;
+    aiPill.title = `StratForge AI Lab · ${it.origin.experiment_id || ""}`;
     aiPill.style.cursor = "pointer";
     aiPill.addEventListener("click", (ev) => {
       ev.stopPropagation();

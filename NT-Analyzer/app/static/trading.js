@@ -5090,11 +5090,11 @@
               });
             } else {
               renderCmdStatus({ state: "failed_other", command_id: cid,
-                reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите NT-Analyzer backend." });
+                reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите StratForge AI backend." });
             }
           } catch (e2) {
             renderCmdStatus({ state: "failed_other", command_id: cid,
-              reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите NT-Analyzer backend." });
+              reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите StratForge AI backend." });
           }
           stopCmdPolling();
         } else {

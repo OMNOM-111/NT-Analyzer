@@ -47,6 +47,9 @@
     book: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2V5Z"/><path d="M8 7h7M8 11h7"/>',
   };
   function icon(name, cls) { return `<svg class="${cls || 'ic'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[name] || ''}</svg>`; }
+  const APP_NAME = 'StratForge AI';
+  const APP_KICKER = 'StratForge AI · NTA Edition';
+  const BRAND_MARK = 'brand/stratforge-mark.png';
 
   const NAV = [
     { id: 'overview', label: 'Обзор', href: 'index.html', icon: 'overview' },
@@ -81,14 +84,128 @@
   function qs(s, r) { return (r || document).querySelector(s); }
   function qsa(s, r) { return Array.from((r || document).querySelectorAll(s)); }
 
+  function newsEta(ms) {
+    const min = Math.max(0, Math.round(ms / 60000));
+    if (min < 60) return `через ${min} мин`;
+    const hours = Math.floor(min / 60);
+    if (hours < 24) return `через ${hours} ч ${min % 60} мин`;
+    return `через ${Math.floor(hours / 24)} дн ${hours % 24} ч`;
+  }
+
+  function newsAge(minutes) {
+    if (minutes == null) return '';
+    if (minutes < 1) return 'только что';
+    if (minutes < 60) return `${Math.round(minutes)} мин назад`;
+    return `${Math.floor(minutes / 60)} ч назад`;
+  }
+
+  function renderGlobalNewsStrip(strip, calendar, live) {
+    const label = qs('.global-news-label', strip);
+    const track = qs('.global-news-track', strip);
+    const now = Date.now();
+    const events = (calendar && calendar.items) || [];
+    const liveItems = (live && live.items) || [];
+    const severity = item => ['high', 'medium', 'low'].includes(String(item.severity || item.impact || '').toLowerCase())
+      ? String(item.severity || item.impact).toLowerCase() : 'low';
+    const eventMs = item => new Date(item.event_time_utc || 0).getTime();
+    const activeCritical = events.filter(item => {
+      const at = eventMs(item);
+      return item.is_confirmed && severity(item) === 'high' &&
+        now >= at - Number(item.block_before_min || 0) * 60000 &&
+        now <= at + Number(item.block_after_min || 0) * 60000;
+    });
+    const imminentCritical = events.filter(item => {
+      const remaining = eventMs(item) - now;
+      return item.is_confirmed && severity(item) === 'high' && remaining > 0 && remaining <= 60 * 60000;
+    });
+    const upcoming = events.filter(item => {
+      const remaining = eventMs(item) - now;
+      return severity(item) === 'high' && remaining > 0 && remaining <= 7 * 24 * 3600000;
+    }).sort((a, b) => eventMs(a) - eventMs(b));
+
+    const critical = activeCritical.length > 0 || imminentCritical.length > 0;
+    const warning = !critical && upcoming.some(item => eventMs(item) - now <= 24 * 3600000);
+    strip.classList.toggle('critical', critical);
+    strip.classList.toggle('warning', warning);
+    label.textContent = critical ? '🔴 СТОП' : warning ? '⚠ ВАЖНО' : 'РЫНОК';
+
+    const rows = [];
+    activeCritical.forEach(item => rows.push({
+      severity: 'high',
+      text: `⛔ ОТКЛЮЧИТЕ СТРАТЕГИИ: ${item.title} — защитное окно активно`,
+      url: item.url || item.source_url || '',
+    }));
+    imminentCritical.forEach(item => rows.push({
+      severity: 'high',
+      text: `🔴 ОЧЕНЬ СРОЧНО — ${newsEta(eventMs(item) - now)}: ${item.title}. Отключите затронутые стратегии`,
+      url: item.url || item.source_url || '',
+    }));
+    liveItems.filter(item => severity(item) === 'high').slice(0, 8).forEach(item => rows.push({
+      severity: 'high',
+      text: `🔴 ВАЖНАЯ НОВОСТЬ · ${item.source || 'источник'}: ${item.title}${item.age_min == null ? '' : ' · ' + newsAge(item.age_min)}`,
+      url: item.url || item.source_url || '',
+    }));
+    upcoming.slice(0, 8).forEach(item => rows.push({
+      severity: item.is_confirmed ? 'high' : 'medium',
+      text: `${item.is_confirmed ? '📅' : '⚠ оценка'} ${newsEta(eventMs(item) - now)}: ${item.title}`,
+      url: item.url || item.source_url || '',
+    }));
+    liveItems.filter(item => severity(item) === 'medium').slice(0, 8).forEach(item => rows.push({
+      severity: 'medium',
+      text: `${item.source || 'источник'}: ${item.title}${item.age_min == null ? '' : ' · ' + newsAge(item.age_min)}`,
+      url: item.url || item.source_url || '',
+    }));
+
+    const seen = new Set();
+    const unique = rows.filter(row => {
+      const key = row.text.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    }).slice(0, 18);
+    if (!unique.length) {
+      track.classList.add('paused');
+      track.innerHTML = '<span class="global-news-static">Нет свежих важных сообщений; календарь доступен на вкладке «Новости».</span>';
+      return;
+    }
+    track.classList.remove('paused');
+    const html = unique.map(row => {
+      const content = `<span class="dot"></span><b>${esc(row.text)}</b>`;
+      return row.url
+        ? `<a class="global-news-item ${row.severity}" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${content}</a>`
+        : `<span class="global-news-item ${row.severity}">${content}</span>`;
+    }).join('');
+    const copies = unique.length < 3 ? 8 : unique.length < 6 ? 4 : 2;
+    track.innerHTML = html.repeat(copies);
+  }
+
+  function wireGlobalNewsStrip(strip) {
+    if (!strip || !window.API || !API.http) return;
+    const refresh = async () => {
+      try {
+        const [calendar, live] = await Promise.all([
+          API.http.news({ limit: 120 }, { signal: signal() }),
+          API.http.newsLive({ max_age_min: 180, limit: 40 }, { signal: signal() }).catch(() => null),
+        ]);
+        renderGlobalNewsStrip(strip, calendar, live);
+      } catch (error) {
+        if (error && error.name === 'AbortError') return;
+        const track = qs('.global-news-track', strip);
+        if (track) track.innerHTML = '<span class="global-news-static">Новостная лента временно недоступна.</span>';
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 180000);
+    onLeave(() => clearInterval(timer));
+  }
+
   // ---- shell ------------------------------------------------------------------
   function buildShell() {
     const page = document.body.dataset.page;
-    const title = document.body.dataset.title || 'NT-Analyzer';
-    const kicker = document.body.dataset.kicker || 'NT-ANALYZER';
+    const title = document.body.dataset.title || APP_NAME;
+    const kicker = document.body.dataset.kicker || APP_KICKER;
 
     const rail = el(`<nav class="rail">
-      <a class="rail-logo" href="index.html" title="NT-Analyzer">NT</a>
+      <a class="rail-logo" href="index.html" title="${APP_NAME}"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}"></a>
       <div class="rail-nav">
         ${NAV.map(n => `<a class="rail-item ${n.id === page ? 'active' : ''}" href="${n.href}" title="${n.label}">${icon(n.icon)}<span class="lb">${n.label}</span></a>`).join('')}
       </div>
@@ -117,6 +234,8 @@
     const app = el('<div class="app"></div>');
     const main = el('<div class="main"></div>');
     main.appendChild(topbar);
+    const newsStrip = page === 'news' ? null : el('<div class="global-news-strip" data-global-news-strip><span class="global-news-label">РЫНОК</span><div class="global-news-window"><div class="global-news-track"><span class="global-news-static">Загрузка новостей…</span></div></div></div>');
+    if (newsStrip) main.appendChild(newsStrip);
     // move existing body content into <main class=content>
     const content = el('<div class="content"></div>');
     while (document.body.firstChild) content.appendChild(document.body.firstChild);
@@ -131,6 +250,7 @@
     wireSearch();
     wireDelegatedActions();
     wireA11y();
+    wireGlobalNewsStrip(newsStrip);
     // run page initializers (await async ones; route rejections to the global handler)
     requestAnimationFrame(() => { runReady(); });
   }
@@ -342,7 +462,7 @@
 
   async function showEnvironment(start) {
     if (!window.API || API.config.offline) { toast('Управление окружением недоступно в офлайн-превью'); return; }
-    const d = drawer('<h3>Окружение NT-Analyzer</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка компонентов…</div>');
+    const d = drawer('<h3>Окружение StratForge AI</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка компонентов…</div>');
     const body = qs('.drawer-b', d);
     async function refresh() {
       try {

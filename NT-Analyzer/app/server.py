@@ -62,6 +62,8 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import errors as ai_errors  # type: ignore[no-redef]
     from app.ai_lab import lessons as ai_lessons  # type: ignore[no-redef]
     from app.ai_lab import stale_sweep as ai_stale_sweep  # type: ignore[no-redef]
+    from app import local_secrets as _local_secrets  # type: ignore[no-redef]
+    from app import news_refresh  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import governance
@@ -86,6 +88,10 @@ else:
     from .ai_lab import errors as ai_errors
     from .ai_lab import lessons as ai_lessons
     from .ai_lab import stale_sweep as ai_stale_sweep
+    from . import local_secrets as _local_secrets
+    from . import news_refresh
+
+_local_secrets.apply()
 
 
 HOST = "127.0.0.1"
@@ -961,6 +967,18 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 50
             self._json(HTTPStatus.OK, integrations.news(limit))
+            return
+
+        if path == "/api/news/live":
+            try:
+                max_age = int((qs.get("max_age_min") or ["60"])[0])
+            except ValueError:
+                max_age = 60
+            try:
+                limit = int((qs.get("limit") or ["40"])[0])
+            except ValueError:
+                limit = 40
+            self._json(HTTPStatus.OK, integrations.live_news(max_age, limit))
             return
 
         if path == "/api/ai-lab/external-agents/status":
@@ -2375,6 +2393,11 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] ai-lab stale sweeper started (TTL=6h, every 30 min)")
     except Exception as e:
         print(f"[nta-backend] ai-lab stale sweeper NOT started: {e}")
+    try:
+        news_refresh.start_background_refresher()
+        print("[nta-backend] news refresher started (live every 15 min)")
+    except Exception as e:
+        print(f"[nta-backend] news refresher NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()

@@ -1,6 +1,6 @@
 # Aurora UI API map
 
-Актуально на 2026-06-28 после финального parity-аудита. Единственный HTTP-адаптер интерфейса находится в
+Актуально на 2026-06-29 после финального parity-аудита. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
 ## Страницы
@@ -13,7 +13,7 @@
 | Доход | performance, performance/trades, accounts, account-history, CSV | фильтры, пагинация, drilldown и выгрузка; финансовые данные не изменяются |
 | Стратегии | profiles/archive, AI lifecycle/cell history, coverage, instruments, persistent portfolio registry | статус/удаление профиля, add root/cell, archive cell, hide runtime class, NinjaTrader cleanup |
 | AI Lab | summary, experiments/activity, run/current status, performance board, model-performance, external-agent status, calendar, compile source, errors, LM Studio | run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; внешние агенты read-only и execution-disabled |
-| Новости | `/api/news` | read-only; пустое состояние без вымышленных событий, пока источники не настроены |
+| Новости | `/api/news`, `/api/news/live` | read-only; официальный календарь, явно помеченные оценки, здоровье живых источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
@@ -40,7 +40,13 @@
   доверию, а также фильтры по всем операторским колонкам. Частота едина для UI и
   backend: `<2`, `2–7`, `>7` сделок в неделю. Тяжёлые metric-фильтры имеют
   явный охват `500/2000/all`; точный номер отчёта всегда ищется во всём архиве.
-- `GET /api/integrations/status`, `/api/topstep/status`, `/api/news` и
+- `GET /api/news` разделяет подтверждённые расписания Fed/BLS/BEA/Census/EIA
+  и оценки стандартного графика. Только подтверждённый high-impact может
+  включить красный STOP/blackout. `GET /api/news/live` возвращает свежие
+  заголовки и статус каждого провайдера; фоновое обновление запускается вместе
+  с backend и записывает runtime-файлы атомарно.
+- `GET /api/integrations/status`, `/api/topstep/status`, `/api/news`,
+  `/api/news/live` и
   `/api/ai-lab/external-agents/status` не возвращают токены/API-ключи и не
   создают демонстрационные события.
 

@@ -69,6 +69,7 @@
     integrationsStatus: (o) => getJSON('/api/integrations/status', o),
     topstepStatus: (o) => getJSON('/api/topstep/status', o),
     news: (q, o) => getJSON('/api/news' + qs(q), o),
+    newsLive: (q, o) => getJSON('/api/news/live' + qs(q), o),
     externalAgentsStatus: (o) => getJSON('/api/ai-lab/external-agents/status', o),
     restartServer: () => send('/api/server/restart', 'POST', {}),
     refreshCatalog: () => send('/api/catalog/refresh', 'POST', {}),

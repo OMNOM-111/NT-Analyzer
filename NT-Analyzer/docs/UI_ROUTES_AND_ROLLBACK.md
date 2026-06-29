@@ -6,7 +6,7 @@
 |---|---|
 | `/`, `/ui/`, `/ui/index.html` | Aurora Overview (primary) |
 | `/ui/backtesting.html` ... `/ui/documents.html` | Aurora operational pages |
-| `/ui/news.html` | real-news aggregator scaffold (no mock feed) |
+| `/ui/news.html` | официальный экономический календарь, live-источники, фильтры, критические предупреждения и нижняя лента |
 | `/ui/topstep.html` | read-only TopStep integration status |
 | `/ui/assets/*` | Aurora assets |
 | `/ui/legacy/`, `/ui/legacy/<file>` | classic UI from `app/static/` |

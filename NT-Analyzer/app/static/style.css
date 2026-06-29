@@ -18,7 +18,9 @@ header {
   border-bottom: 1px solid #2a2d34; background: #161922;
   height: 48px;
 }
-header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+header h1 { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-name { font-weight: 700; letter-spacing: .01em; }
+.legacy-brand-mark { width: 28px; height: 28px; flex: none; filter: drop-shadow(0 4px 12px rgba(31, 201, 255, 0.18)); }
 .muted { color: #888; font-weight: 400; }
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .hdr-btn {

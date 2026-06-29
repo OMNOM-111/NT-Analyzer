@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Full AI Strategy Lab launcher.
+    Full StratForge AI Lab launcher.
 
 .DESCRIPTION
     Best-effort startup for the local research stack:
-    NinjaTrader -> LM Studio server -> NT-Analyzer UI.
+    NinjaTrader -> LM Studio server -> StratForge AI UI.
 
     Configure custom paths via environment variables or ai_lab/bootstrap.json:
       NINJATRADER_EXE, LM_STUDIO_EXE, LMS_CLI
@@ -32,7 +32,7 @@ function Read-BootstrapConfig {
         $json.PSObject.Properties | ForEach-Object { $map[$_.Name] = [string]$_.Value }
         return $map
     } catch {
-        Write-Host "[AI Lab] warning: cannot read ${path}: $_" -ForegroundColor Yellow
+        Write-Host "[StratForge AI Lab] warning: cannot read ${path}: $_" -ForegroundColor Yellow
         return @{}
     }
 }
@@ -57,14 +57,14 @@ function Test-ProcessName([string]$Needle) {
 
 function Start-IfMissing([string]$Label, [string]$Needle, [string]$Exe) {
     if (Test-ProcessName $Needle) {
-        Write-Host "[AI Lab] $Label already running." -ForegroundColor Cyan
+        Write-Host "[StratForge AI Lab] $Label already running." -ForegroundColor Cyan
         return
     }
     if ([string]::IsNullOrWhiteSpace($Exe)) {
-        Write-Host "[AI Lab] $Label path is not configured; skipping auto-start." -ForegroundColor Yellow
+        Write-Host "[StratForge AI Lab] $Label path is not configured; skipping auto-start." -ForegroundColor Yellow
         return
     }
-    Write-Host "[AI Lab] starting ${Label}: $Exe" -ForegroundColor Cyan
+    Write-Host "[StratForge AI Lab] starting ${Label}: $Exe" -ForegroundColor Cyan
     Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) | Out-Null
 }
 
@@ -78,7 +78,7 @@ function Resolve-LmsCli($Cfg) {
 
 function Invoke-Lms([string]$Cli, [string[]]$LmsArgs) {
     if ([string]::IsNullOrWhiteSpace($Cli)) { return $false }
-    Write-Host "[AI Lab] lms $($LmsArgs -join ' ')" -ForegroundColor DarkCyan
+    Write-Host "[StratForge AI Lab] lms $($LmsArgs -join ' ')" -ForegroundColor DarkCyan
     & $Cli @LmsArgs
     return ($LASTEXITCODE -eq 0)
 }
@@ -89,13 +89,13 @@ function Wait-LmStudioModels([int]$TimeoutSec = 90) {
         try {
             $resp = Invoke-RestMethod -Uri 'http://127.0.0.1:1234/v1/models' -TimeoutSec 5
             $count = @($resp.data).Count
-            Write-Host "[AI Lab] LM Studio server responding; models listed: $count" -ForegroundColor Green
+            Write-Host "[StratForge AI Lab] LM Studio server responding; models listed: $count" -ForegroundColor Green
             return $true
         } catch {
             Start-Sleep -Seconds 3
         }
     }
-    Write-Host "[AI Lab] LM Studio server did not answer on 127.0.0.1:1234 within timeout." -ForegroundColor Yellow
+    Write-Host "[StratForge AI Lab] LM Studio server did not answer on 127.0.0.1:1234 within timeout." -ForegroundColor Yellow
     return $false
 }
 
@@ -124,7 +124,7 @@ if (-not $SkipDependencyStart) {
     if ($lms) {
         Invoke-Lms $lms @('server', 'start') | Out-Null
     } else {
-        Write-Host '[AI Lab] lms CLI not found; backend bootstrap/readiness will report what is missing.' -ForegroundColor Yellow
+        Write-Host '[StratForge AI Lab] lms CLI not found; backend bootstrap/readiness will report what is missing.' -ForegroundColor Yellow
     }
 
     Wait-LmStudioModels 90 | Out-Null

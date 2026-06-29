@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    NT-Analyzer launcher.
+    StratForge AI launcher.
 
 .DESCRIPTION
     Starts the local Python backend (which also serves the static UI) on
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# start.ps1 lives directly in the NT-Analyzer project root.
+# start.ps1 lives directly in the StratForge AI project root.
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
@@ -32,7 +32,7 @@ if (-not $UiPath.StartsWith('/')) { $UiPath = '/' + $UiPath }
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {
     Write-Host "ERROR: backend entrypoint not found at: $serverScript" -ForegroundColor Red
-    Write-Host "       expected this script (start.ps1) to live in the NT-Analyzer project root." -ForegroundColor Red
+    Write-Host "       expected this script (start.ps1) to live in the StratForge AI project root." -ForegroundColor Red
     Write-Host "       resolved project_root = $projectRoot" -ForegroundColor Red
     exit 2
 }
@@ -49,8 +49,8 @@ if (-not $pyCmd) {
     exit 1
 }
 
-Write-Host '[NT-Analyzer] starting backend...' -ForegroundColor Cyan
-Write-Host "[NT-Analyzer] project_root: $projectRoot"
+Write-Host '[StratForge AI] starting backend...' -ForegroundColor Cyan
+Write-Host "[StratForge AI] project_root: $projectRoot"
 
 $env:PYTHONUNBUFFERED = '1'
 $env:NT_ANALYZER_ROOT = $projectRoot
@@ -89,10 +89,10 @@ function Test-PortInUse([int]$p) {
 }
 
 if (Test-PortInUse $Port) {
-    Write-Host "[NT-Analyzer] backend already running on port $Port." -ForegroundColor Cyan
+    Write-Host "[StratForge AI] backend already running on port $Port." -ForegroundColor Cyan
     if (-not $NoBrowser) {
         $url = "http://127.0.0.1:$Port$UiPath"
-        Write-Host "[NT-Analyzer] opening browser: $url"
+        Write-Host "[StratForge AI] opening browser: $url"
         Start-Process $url | Out-Null
     }
     exit 0
@@ -134,7 +134,7 @@ try {
                         }
                     }
                     if ($urlOpened) {
-                        Write-Host '[NT-Analyzer] browser opened.' -ForegroundColor Cyan
+                        Write-Host '[StratForge AI] browser opened.' -ForegroundColor Cyan
                     }
                 }
             }
@@ -152,8 +152,8 @@ try {
 
 $code = $proc.ExitCode
 if ($code -ne 0) {
-    Write-Host "[NT-Analyzer] backend exited with code $code." -ForegroundColor Yellow
+    Write-Host "[StratForge AI] backend exited with code $code." -ForegroundColor Yellow
 } else {
-    Write-Host '[NT-Analyzer] backend stopped.' -ForegroundColor Cyan
+    Write-Host '[StratForge AI] backend stopped.' -ForegroundColor Cyan
 }
 exit $code
