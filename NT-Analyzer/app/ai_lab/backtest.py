@@ -17,16 +17,29 @@ from typing import Any, Dict, List, Optional
 from .. import governance
 
 
+# Public compatibility floors. Governance may raise them, but never lower them.
+AI_COMMISSION_FLOOR = 1.90
+AI_SLIPPAGE_FLOOR = 1
+
+
 def _runtime_defaults() -> Dict[str, Any]:
     return governance.runtime_defaults()
 
 
 def _ai_commission_floor() -> float:
-    return float(_runtime_defaults().get("round_turn_commission", 1.90) or 1.90)
+    configured = float(
+        _runtime_defaults().get("round_turn_commission", AI_COMMISSION_FLOOR)
+        or AI_COMMISSION_FLOOR
+    )
+    return max(AI_COMMISSION_FLOOR, configured)
 
 
 def _ai_slippage_floor() -> int:
-    return int(_runtime_defaults().get("slippage_ticks", 1) or 1)
+    configured = int(
+        _runtime_defaults().get("slippage_ticks", AI_SLIPPAGE_FLOOR)
+        or AI_SLIPPAGE_FLOOR
+    )
+    return max(AI_SLIPPAGE_FLOOR, configured)
 
 
 def _now() -> str:

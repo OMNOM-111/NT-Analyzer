@@ -1615,7 +1615,7 @@ def t_lm_status_pending_without_probe() -> None:
       assert out["probe_pending"] is False
       assert out["run_allowed"] is True
       assert out["status"] == "standby_lazy"
-      assert "standby" in out["message_ru"]
+      assert "lazy-режиме" in out["message_ru"]
       ai_lm_studio._READINESS_CACHE = {  # type: ignore[attr-defined]
           "ready": True,
           "run_allowed": True,
