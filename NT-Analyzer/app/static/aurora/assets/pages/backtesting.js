@@ -2,7 +2,7 @@
    Instruments /api/ops/runtime/instruments · strategies /api/strategies · reports /api/reports ·
    submit POST /api/jobs · favorites /api/report-favorites · job detail /api/jobs/{id}[/trades]. */
 UI.ready(async function () {
-  let roots = [], strategies = [], profiles = [], coverage = null, catalog = null, basket = [], repOffset = 0, repFilter = 'all', favMode = false;
+  let roots = [], strategies = [], profiles = [], coverage = null, catalog = null, basket = [], repOffset = 0, repFilter = 'all', repSort = 'mtime', repDir = 'desc', repHierarchy = 'report';
   const reportSummaries = new Map();
   const reportSparkLoaded = new Set();
   const REP_PAGE = 50;
@@ -11,18 +11,30 @@ UI.ready(async function () {
   const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso || ''; } };
   const tfLabel = (tf) => tf ? `${tf.value || tf.bars_period_value || ''} ${(tf.bars_period_type === 'Minute' ? 'мин' : (tf.bars_period_type || ''))}` : '';
   const pf = (v) => v == null ? '—' : Number(v).toFixed(2);
+  const periodLabel = period => period && (period.from_utc || period.to_utc) ? `${String(period.from_utc || '').slice(0, 10)} … ${String(period.to_utc || '').slice(0, 10)}` : '—';
+  function rootGroup(row) {
+    if (row.group || row.category || row.asset_class) return row.group || row.category || row.asset_class;
+    const root = String(row.root || '').toUpperCase();
+    if (['ES','MES','NQ','MNQ','YM','MYM','RTY','M2K'].includes(root)) return 'Индексы';
+    if (['GC','MGC','SI','SIL','HG'].includes(root)) return 'Металлы';
+    if (['CL','MCL','NG','RB','HO'].includes(root)) return 'Энергия';
+    if (/^6[A-Z]$/.test(root) || ['M6A','M6B','M6E','M6J'].includes(root)) return 'Валюты';
+    if (['ZB','ZN','ZF','ZT','UB'].includes(root)) return 'Ставки';
+    return 'Сырьё и прочее';
+  }
 
   // ---------- instruments ----------
   function renderInst(q) {
     q = (q || '').toLowerCase();
-    const list = roots.filter(r => !q || (r.root + ' ' + ((r.front_month && r.front_month.instrument) || '')).toLowerCase().includes(q));
+    const group = UI.qs('#inst-group').value;
+    const list = roots.filter(r => (group === 'all' || rootGroup(r) === group) && (!q || (r.root + ' ' + rootGroup(r) + ' ' + ((r.front_month && r.front_month.instrument) || '')).toLowerCase().includes(q)));
     UI.qs('#inst-count').textContent = list.length + ' инстр.';
     UI.qs('#inst-list').innerHTML = list.map(r => {
       const fm = r.front_month || {};
       return `<div class="inst-row ${basket.includes(r.root) ? 'on' : ''}" data-sym="${UI.esc(r.root)}" data-inst="${UI.esc(fm.instrument || r.root)}">
         <span class="inst-sym">${UI.esc(r.root)}</span>
         <div class="row-main"><div class="row-title" style="font-size:12px">${UI.esc(fm.instrument || r.root)}</div>
-          <div class="row-sub">${UI.esc(fm.exchange || '')} · шаг ${fm.tick_size != null ? fm.tick_size : '—'} = <b style="color:var(--tx-2)">$${fm.tick_value != null ? fm.tick_value : '—'}</b>/тик · ${(r.contracts || []).length} контр.</div></div>
+          <div class="row-sub">${UI.esc(rootGroup(r))} · ${UI.esc(fm.exchange || '')} · шаг ${fm.tick_size != null ? fm.tick_size : '—'} = <b style="color:var(--tx-2)">$${fm.tick_value != null ? fm.tick_value : '—'}</b>/тик · ${(r.contracts || []).length} контр.</div></div>
         ${basket.includes(r.root) ? `<span class="pos">${UI.icon('check')}</span>` : `<span class="faint">${UI.icon('plus')}</span>`}
       </div>`;
     }).join('') || '<div class="empty-state">Ничего не найдено.</div>';
@@ -51,17 +63,28 @@ UI.ready(async function () {
     UI.qsa('#profile-list .row[data-profile]').forEach(row => row.onclick = () => {
       const p = profiles.find(item => item.profile_id === row.dataset.profile); if (!p) return;
       const cls = p.strategy_class || p.deploy_strategy_class || p.class_name || '';
+      UI.drawer(`<h3>${UI.esc(p.name || cls || 'Профиль')}</h3>`, `<div class="flex wrap gap-sm"><span class="badge ${p.status === 'ready' ? 'live' : 'trial'}">${UI.esc(p.status || '—')}</span><span class="tag">${UI.esc(p.cell_id || 'без ячейки')}</span><span class="tag">${UI.esc(p.instrument || 'инструмент не указан')}</span></div><div class="grid cols-3"><div class="kpi"><div class="kpi-label">Стратегия</div><div class="kpi-val sm">${UI.esc(cls || '—')}</div></div><div class="kpi"><div class="kpi-label">Таймфрейм</div><div class="kpi-val sm">${UI.esc(String(p.timeframe || '—'))}</div></div><div class="kpi"><div class="kpi-label">Решение</div><div class="kpi-val sm">${UI.esc(p.decision || p.status || '—')}</div></div></div>${p.notes || p.description ? `<div class="finance-note">${UI.esc(p.notes || p.description)}</div>` : ''}<details><summary>Параметры профиля</summary><pre class="logbox">${UI.esc(JSON.stringify(p.parameters || p.strategy_parameters || {}, null, 2))}</pre></details><button class="btn primary" id="apply-profile">Применить к новому бэктесту</button>`);
+      UI.qs('#apply-profile').onclick = () => {
+      const cls = p.strategy_class || p.deploy_strategy_class || p.class_name || '';
       const option = Array.from(UI.qs('#f-strategy').options).find(o => o.value === cls); if (option) UI.qs('#f-strategy').value = cls;
       if (p.instrument) UI.qs('#f-instrument').value = p.instrument;
       renderStrategyParams(p.parameters || p.strategy_parameters || {});
       UI.toast(`Профиль ${p.name || cls} применён`);
+      UI.closeDrawer();
+      };
     });
   }
 
   function renderCoverage() {
     const rows = (coverage && coverage.instruments) || [];
     UI.qs('#coverage-list').innerHTML = rows.length ? rows.map(row => `<div class="row" data-root="${UI.esc(row.root || '')}"><div class="row-main"><div class="row-title">${UI.esc(row.root || '')}</div><div class="row-sub">${row.strategy_count || 0} профилей · ${UI.esc(row.best_status || 'нет готовой')}</div></div><div class="row-val">${row.ready_count || (row.best_status === 'ready' ? 1 : 0)}</div></div>`).join('') : '<div class="empty-state">Coverage недоступно.</div>';
-    UI.qsa('#coverage-list .row[data-root]').forEach(row => row.onclick = () => { const item = roots.find(root => root.root === row.dataset.root); if (item) { UI.qs('#f-instrument').value = (item.front_month && item.front_month.instrument) || item.root; UI.toast(`${item.root} выбран`); } });
+    UI.qsa('#coverage-list .row[data-root]').forEach(row => row.onclick = () => {
+      const data = rows.find(item => item.root === row.dataset.root) || {};
+      const item = roots.find(root => root.root === row.dataset.root);
+      const matching = profiles.filter(profile => String(profile.instrument || profile.root || '').startsWith(row.dataset.root));
+      UI.drawer(`<h3>Покрытие ${UI.esc(row.dataset.root)}</h3>`, `<div class="grid cols-3"><div class="kpi"><div class="kpi-label">Профили</div><div class="kpi-val">${data.strategy_count || matching.length || 0}</div></div><div class="kpi pos"><div class="kpi-label">Готово</div><div class="kpi-val">${data.ready_count || 0}</div></div><div class="kpi"><div class="kpi-label">Лучший статус</div><div class="kpi-val sm">${UI.esc(data.best_status || 'нет')}</div></div></div><div class="list">${matching.length ? matching.map(profile => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(profile.name || profile.strategy_class || '')}</div><div class="row-sub">${UI.esc(profile.cell_id || '')}</div></div><span class="badge ${profile.status === 'ready' ? 'live' : 'trial'}">${UI.esc(profile.status || '')}</span></div>`).join('') : '<div class="empty-state">Профили для этого root не найдены.</div>'}</div>${item ? '<button class="btn primary" id="apply-coverage">Выбрать инструмент</button>' : ''}`);
+      const apply = UI.qs('#apply-coverage'); if (apply) apply.onclick = () => { UI.qs('#f-instrument').value = (item.front_month && item.front_month.instrument) || item.root; UI.toast(`${item.root} выбран`); UI.closeDrawer(); };
+    });
   }
 
   function renderStrategyParams(values) {
@@ -89,28 +112,29 @@ UI.ready(async function () {
     return values;
   }
 
-  // ---------- favorites pane ----------
-  async function renderFav(q) {
-    const box = UI.qs('#fav-list');
-    UI.renderLoading(box, 'Загрузка избранного…');
-    let doc;
-    try { doc = await API.http.reportFavorites(); } catch (e) { box.innerHTML = '<div class="empty-state">Избранное недоступно.</div>'; return; }
-    const favs = (doc.favorites || []).filter(f => !q || ((f.label || '') + ' ' + (f.strategy || '')).toLowerCase().includes(q.toLowerCase()));
-    box.innerHTML = favs.length ? favs.map(f => `<div class="row" data-id="${UI.esc(f.id)}"><span style="color:var(--warn)">${UI.icon('star')}</span><div class="row-main"><div class="row-title" style="font-size:12.5px">${UI.esc(f.strategy || f.label || f.id)}</div><div class="row-sub">№${f.report_no || ''} · ${UI.esc(f.instrument || f.label || '')}</div></div></div>`).join('') : '<div class="empty-state">В избранном пусто. Отметьте отчёт ★.</div>';
-    UI.qsa('#fav-list .row').forEach(el => el.onclick = () => openReport(el.dataset.id));
-  }
-
   // ---------- reports ----------
+  function reportQueryParams() {
+    return {
+      filter: repFilter, limit: REP_PAGE, offset: repOffset, sort: repSort, dir: repDir,
+      q: UI.qs('#rep-search').value.trim(), report_no: UI.qs('#rep-no').value.trim(),
+      instrument: UI.qs('#rep-instrument').value.trim(), frequency: UI.qs('#rep-frequency').value,
+      min_trades: UI.qs('#rep-min-trades').value, min_win: UI.qs('#rep-min-win').value,
+      min_pf: UI.qs('#rep-min-pf').value, min_confidence: UI.qs('#rep-min-confidence').value,
+      pnl_sign: UI.qs('#rep-pnl-sign').value, from: UI.qs('#rep-from').value, to: UI.qs('#rep-to').value,
+      analysis_limit: UI.qs('#rep-analysis-limit').value,
+    };
+  }
   async function loadReports(reset) {
-    if (reset) { repOffset = 0; reportSparkLoaded.clear(); UI.qs('#rep-body').innerHTML = '<tr><td colspan="9"><div class="state-loading"><span class="spinner"></span>Загрузка отчётов…</div></td></tr>'; }
+    if (reset) { repOffset = 0; reportSparkLoaded.clear(); reportSummaries.clear(); UI.qs('#rep-body').innerHTML = '<tr><td colspan="12"><div class="state-loading"><span class="spinner"></span>Загрузка отчётов…</div></td></tr>'; }
     let doc;
-    try { doc = await API.http.reports({ filter: repFilter, limit: REP_PAGE, offset: repOffset, sort: 'mtime', dir: 'desc' }, { signal: UI.signal() }); }
-    catch (e) { if (e.name !== 'AbortError') UI.qs('#rep-body').innerHTML = `<tr><td colspan="9" class="muted">Ошибка: ${UI.esc(e.message)}</td></tr>`; return; }
+    try { doc = await API.http.reports(reportQueryParams(), { signal: UI.signal() }); }
+    catch (e) { if (e.name !== 'AbortError') UI.qs('#rep-body').innerHTML = `<tr><td colspan="12" class="muted">Ошибка: ${UI.esc(e.message)}</td></tr>`; return; }
     const c = doc.counts || {};
-    UI.qs('#rep-counts').textContent = `${c.done || 0} готово · ${c.running || 0} в работе · ${c.failed || 0} ошибок · ${c.cancelled || 0} отменено`;
+    UI.qs('#rep-counts').textContent = `${doc.total || 0} найдено${doc.scope_limited ? ` в последних ${doc.analysis_limit} из ${doc.archive_total}` : ''} · ${c.done || 0} готово · ${c.running || 0} в работе · ${c.failed || 0} ошибок`;
     if (reset) UI.qs('#rep-body').innerHTML = '';
-    appendReports(doc.jobs || [], doc.total || 0);
-    repOffset += (doc.jobs || []).length;
+    const pageCount = (doc.jobs || []).length + (doc.batches || []).length;
+    appendReports(doc.jobs || [], doc.total || 0, repOffset + pageCount);
+    repOffset += pageCount;
   }
   async function loadReportSparks(jobs) {
     jobs.filter(row => row.status === 'done' && row.job_id).forEach(row => {
@@ -140,27 +164,43 @@ UI.ready(async function () {
       }
     }));
   }
-  function appendReports(jobs, total) {
+  function appendReports(jobs, total, nextOffset) {
     const body = UI.qs('#rep-body');
     const moreRow = body.querySelector('.load-more-row'); if (moreRow) moreRow.remove();
-    if (!jobs.length && !body.children.length) { body.innerHTML = '<tr><td colspan="9"><div class="empty-state">Отчётов нет.</div></td></tr>'; return; }
+    if (!jobs.length && !body.children.length) { body.innerHTML = '<tr><td colspan="12"><div class="empty-state">Отчётов по выбранным условиям нет.</div></td></tr>'; return; }
     jobs.forEach(r => reportSummaries.set(r.job_id, r));
-    body.insertAdjacentHTML('beforeend', jobs.map(r => {
+    const displayJobs = jobs.slice();
+    if (repHierarchy === 'strategy') displayJobs.sort((a, b) => String(a.class_name || '').localeCompare(String(b.class_name || ''), 'ru'));
+    if (repHierarchy === 'day') displayJobs.sort((a, b) => String(b.created_at_utc || '').slice(0, 10).localeCompare(String(a.created_at_utc || '').slice(0, 10)));
+    let lastGroup = null;
+    body.insertAdjacentHTML('beforeend', displayJobs.map(r => {
       const m = r.metrics || r;
       const net = m.net_profit_after_commission != null ? m.net_profit_after_commission : (m.net_profit != null ? m.net_profit : null);
+      const profitFactor = m.profit_factor_after_commission != null ? m.profit_factor_after_commission : m.profit_factor;
       const done = r.status === 'done';
-      return `<tr class="clickable" data-id="${UI.esc(r.job_id)}">
+      const assessment = r.assessment || AuroraDomain.assessReport(m.trade_count, r.period, m);
+      const frequency = r.frequency || assessment.frequency;
+      const confidence = r.confidence || assessment.confidence;
+      const group = repHierarchy === 'strategy' ? (r.class_name || 'Без стратегии') : repHierarchy === 'day' ? String(r.created_at_utc || '').slice(0, 10) || 'Без даты' : null;
+      const groupRow = group && group !== lastGroup ? `<tr class="report-group-row"><td colspan="12"><span class="section-title">${UI.esc(group)}</span></td></tr>` : '';
+      lastGroup = group;
+      const frequencyTitle = `${frequency.explanation || ''} Риск: ${frequency.risk_expectation || '—'}; ожидаемая прибыль: ${frequency.profit_expectation || '—'}.`;
+      const confidenceTitle = (confidence.reasons || []).join(' · ');
+      return `${groupRow}<tr class="clickable" data-id="${UI.esc(r.job_id)}">
         <td><button class="btn icon ghost fav-star" data-fav="${UI.esc(r.job_id)}" data-on="${r.favorite ? '1' : '0'}" style="color:${r.favorite ? 'var(--warn)' : 'var(--tx-4)'}">${UI.icon('star')}</button></td>
         <td class="mono muted">${r.report_no || ''}</td>
         <td class="muted">${fmtDate(r.created_at_utc)}</td>
         <td><div class="report-strategy-cell"><div><div class="cell-strat"><strong>${UI.esc(r.class_name || '')}</strong>${r.origin && r.origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div><div class="row-sub">${UI.esc(r.instrument || '')} · ${tfLabel(r.timeframe)}</div></div>${done ? `<canvas class="row-spark" data-report-spark="${UI.esc(r.job_id)}" aria-label="Мини-график результата бэктеста"></canvas>` : ''}</div></td>
         <td>${statusBadge(r.status)}</td>
-        <td class="num">${done ? (m.trade_count != null ? m.trade_count : '—') : '—'}</td>
-        <td class="num">${done && m.winning_pct != null ? UI.pct(m.winning_pct) : '—'}</td>
-        <td class="num">${done ? pf(m.profit_factor) : '—'}</td>
+        <td class="muted mono">${periodLabel(r.period)}</td>
+        <td title="${UI.esc(frequencyTitle)}"><span class="badge ${frequency.key === 'normal' ? 'live' : frequency.key === 'unknown' ? 'archived' : 'trial'}">${UI.esc(frequency.label || '—')}</span><div class="row-sub">${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1)}/нед</div></td>
+        <td class="num ${done ? AuroraDomain.metricTone('trades', m.trade_count, r.period) : 'muted'}">${done ? (m.trade_count != null ? m.trade_count : '—') : '—'}</td>
+        <td class="num ${done ? AuroraDomain.metricTone('win', m.winning_pct) : 'muted'}">${done && m.winning_pct != null ? UI.pct(m.winning_pct) : '—'}</td>
+        <td class="num ${done ? AuroraDomain.metricTone('pf', profitFactor) : 'muted'}">${done ? pf(profitFactor) : '—'}</td>
+        <td class="num ${AuroraDomain.metricTone('confidence', confidence.score)}" title="${UI.esc(confidenceTitle)}"><strong>${confidence.score != null ? confidence.score + '%' : '—'}</strong><div class="row-sub">${UI.esc(confidence.label || '')}</div></td>
         <td class="num"><strong class="${done && net != null ? UI.pnlClass(net) : 'muted'}">${done && net != null ? UI.money(net, { sign: true }) : '—'}</strong></td></tr>`;
     }).join(''));
-    if (repOffset + jobs.length < total) body.insertAdjacentHTML('beforeend', `<tr class="load-more-row"><td colspan="9" style="text-align:center"><button class="btn sm" id="rep-more">Загрузить ещё (${total - repOffset - jobs.length})</button></td></tr>`);
+    if (nextOffset < total) body.insertAdjacentHTML('beforeend', `<tr class="load-more-row"><td colspan="12" style="text-align:center"><button class="btn sm" id="rep-more">Загрузить ещё (${total - nextOffset})</button></td></tr>`);
     UI.qsa('#rep-body tr.clickable').forEach(tr => tr.onclick = (e) => { if (e.target.closest('.fav-star')) return; openReport(tr.dataset.id); });
     UI.qsa('#rep-body .fav-star').forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
@@ -173,18 +213,22 @@ UI.ready(async function () {
   }
 
   // ---------- detail drawer ----------
-  function metricCards(m) {
+  function metricCards(m, period) {
+    const assessment = AuroraDomain.assessReport(m.trade_count, period, m);
+    const profitFactor = m.profit_factor_after_commission != null ? m.profit_factor_after_commission : m.profit_factor;
     const cards = [
       ['Чистый P&L', m.net_profit_after_commission != null ? UI.money(m.net_profit_after_commission, { sign: true }) : (m.net_profit != null ? UI.money(m.net_profit, { sign: true }) : '—'), UI.pnlClass(m.net_profit_after_commission != null ? m.net_profit_after_commission : (m.net_profit || 0))],
-      ['Profit Factor', pf(m.profit_factor), ''],
-      ['Win Rate', m.winning_pct != null ? UI.pct(m.winning_pct) : '—', 'info'],
-      ['Сделок', m.trade_count != null ? m.trade_count : '—', ''],
+      ['Profit Factor', pf(profitFactor), AuroraDomain.metricTone('pf', profitFactor)],
+      ['Win Rate', m.winning_pct != null ? UI.pct(m.winning_pct) : '—', AuroraDomain.metricTone('win', m.winning_pct)],
+      ['Сделок', m.trade_count != null ? m.trade_count : '—', AuroraDomain.metricTone('trades', m.trade_count, period)],
+      ['Частота', assessment.frequency.label, assessment.frequency.key === 'normal' ? 'pos' : 'warn'],
+      ['Личное доверие', assessment.confidence.score + '%', AuroraDomain.metricTone('confidence', assessment.confidence.score)],
       ['Макс. просадка', m.max_drawdown != null ? UI.money(m.max_drawdown) : '—', 'neg'],
       ['Комиссия', m.commission_total_adjusted != null ? UI.money(m.commission_total_adjusted) : (m.commission != null ? UI.money(m.commission) : '—'), 'muted'],
       ['Валовая прибыль', m.gross_profit != null ? UI.money(m.gross_profit, { sign: true }) : '—', ''],
       ['Валовой убыток', m.gross_loss != null ? UI.money(m.gross_loss, { sign: true }) : '—', 'neg'],
     ];
-    return cards.map(c => `<div class="kpi ${c[2] === 'neg' ? 'neg' : c[2] === 'pos' ? 'pos' : ''}"><div class="kpi-label">${c[0]}</div><div class="kpi-val sm ${c[2]}">${c[1]}</div></div>`).join('');
+    return cards.map(c => `<div class="kpi ${c[2]}"><div class="kpi-label">${c[0]}</div><div class="kpi-val sm ${c[2]}">${c[1]}</div></div>`).join('');
   }
   const tradePnl = AuroraDomain.tradePnl;
   const tradeTime = AuroraDomain.tradeTime;
@@ -196,10 +240,22 @@ UI.ready(async function () {
     try { detail = await API.http.job(jobId); } catch (e) { UI.renderError(body, e, () => openReport(jobId)); return; }
     let trades = [];
     try { const t = await API.http.jobTrades(jobId, { limit: 500 }); trades = t.trades || t.rows || t.items || []; } catch (e) { /* none */ }
-    const summary = reportSummaries.get(jobId) || {};
+    let summary = reportSummaries.get(jobId) || {};
+    if (!Object.keys(summary).length) {
+      try {
+        const favDoc = await API.http.reportFavorites();
+        const isFavorite = (favDoc.favorites || []).some(item => item.kind === 'job' && item.id === jobId);
+        summary = { favorite: isFavorite };
+      } catch (error) { /* favorite state remains unknown */ }
+    }
     const model = AuroraDomain.normalizeJobDetail(detail, summary);
     const { execution, risk, metrics: m, instrument, timeframe, period, origin,
       className, status, favorite, parameters: params, warnings } = model;
+    const linkedProfile = profiles.find(profile => [profile.strategy_class, profile.deploy_strategy_class, profile.class_name, profile.name].includes(className)) || {};
+    const strategyMeta = ((catalog && catalog.strategies) || []).find(item => item.class_name === className) || {};
+    const description = linkedProfile.description || linkedProfile.notes || linkedProfile.hypothesis || strategyMeta.description || strategyMeta.summary || '';
+    const rules = Array.isArray(linkedProfile.rules) ? linkedProfile.rules : Array.isArray(strategyMeta.rules) ? strategyMeta.rules : [];
+    const assessment = AuroraDomain.assessReport(m.trade_count, period, m);
     let cum = 0; const eq = trades.map(t => { cum += tradePnl(t); return Math.round(cum * 100) / 100; });
     const monthlyMap = {};
     trades.forEach(trade => {
@@ -210,15 +266,16 @@ UI.ready(async function () {
     const monthly = Object.keys(monthlyMap).sort().map(key => ({ label: key.slice(5) || key, tooltipLabel: `Месяц ${key}`, value: Math.round(monthlyMap[key] * 100) / 100 }));
     body.innerHTML = `
       <div class="tb-title" style="margin-bottom:10px"><span class="tb-kicker">№${detail.report_no || summary.report_no || ''} · ${UI.esc(instrument)} · ${UI.esc(status)}</span><span class="tb-h1">${UI.esc(className)}</span></div>
-      <div class="flex wrap gap-sm">${statusBadge(status)}<span class="tag">${tfLabel(timeframe)}</span>${period.from_utc || period.to_utc ? `<span class="tag">${(period.from_utc || '').slice(0, 10)} … ${(period.to_utc || '').slice(0, 10)}</span>` : ''}${origin.type === 'ai_lab' ? '<span class="tag">AI Lab</span>' : ''}${detail.validated_against_strategy_analyzer ? '<span class="tag">Strategy Analyzer: проверено</span>' : ''}</div>
+      <div class="flex wrap gap-sm">${statusBadge(status)}<span class="tag">${tfLabel(timeframe)}</span>${period.from_utc || period.to_utc ? `<span class="tag">${(period.from_utc || '').slice(0, 10)} … ${(period.to_utc || '').slice(0, 10)}</span>` : ''}${origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}${detail.validated_against_strategy_analyzer ? '<span class="tag">Strategy Analyzer: проверено</span>' : ''}</div>
+      <section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Как работает стратегия</h2><span class="sub">${UI.esc(linkedProfile.family || strategyMeta.family || linkedProfile.pattern || 'правила из каталога/профиля')}</span></div><div class="panel-b col gap-sm">${description ? `<p style="margin:0;color:var(--tx-2);line-height:1.55">${UI.esc(description)}</p>` : '<div class="muted">Описание стратегии пока не заполнено в профиле или каталоге; интерфейс не выдумывает правила.</div>'}${rules.length ? `<ul>${rules.map(rule => `<li>${UI.esc(typeof rule === 'string' ? rule : rule.label || rule.summary || JSON.stringify(rule))}</li>`).join('')}</ul>` : ''}<div class="flex wrap gap-sm"><span class="tag" title="${UI.esc(assessment.frequency.explanation)}">${UI.esc(assessment.frequency.label)} · ${assessment.frequency.trades_per_week == null ? '—' : Number(assessment.frequency.trades_per_week).toFixed(1)}/нед</span><span class="tag" title="${UI.esc(assessment.confidence.reasons.join(' · '))}">доверие ${assessment.confidence.score}% · ${UI.esc(assessment.confidence.label)}</span>${linkedProfile.profile_id ? `<a class="tag" href="strategies.html?strategy=${encodeURIComponent(className)}">профиль ${UI.esc(linkedProfile.profile_id)}</a>` : ''}</div></div></section>
       ${eq.length ? '<section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Кривая накопленного P&L (по сделкам)</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-eq" style="height:240px"></canvas></div></div></section>' : ''}
       ${trades.length ? '<div class="grid cols-2" style="margin-top:12px"><section class="panel"><div class="panel-h"><h2>P&L каждой сделки</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-trade-pnl" style="height:220px"></canvas></div></div></section><section class="panel"><div class="panel-h"><h2>Итог по месяцам</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-monthly" style="height:220px"></canvas></div></div></section></div>' : ''}
-      <div class="grid cols-4" style="margin-top:12px">${metricCards(m)}</div>
+      <div class="grid cols-4" style="margin-top:12px">${metricCards(m, period)}</div>
       <section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Параметры прогона</h2></div><div class="panel-b"><div class="grid cols-4">
         <div><div class="muted">Исполнение</div><strong>${UI.esc(execution.calculate || '—')}</strong></div>
         <div><div class="muted">Fill resolution</div><strong>${UI.esc(execution.order_fill_resolution || '—')}</strong></div>
         <div><div class="muted">Проскальзывание</div><strong>${execution.slippage_ticks != null ? execution.slippage_ticks + ' тик.' : '—'}</strong></div>
-        <div><div class="muted">Начальный капитал</div><strong>${risk.starting_capital != null ? UI.money(risk.starting_capital) : '—'}</strong></div>
+        <div><div class="muted">Начальный капитал</div><strong>${risk.starting_capital != null || risk.StartingCapital != null ? UI.money(Number(risk.starting_capital != null ? risk.starting_capital : risk.StartingCapital)) : '—'}</strong></div>
       </div>${Object.keys(params).length ? `<details style="margin-top:10px"><summary>Параметры стратегии (${Object.keys(params).length})</summary><pre class="logbox">${UI.esc(JSON.stringify(params, null, 2))}</pre></details>` : ''}</div></section>
       ${warnings.length ? `<details class="panel" style="margin-top:12px"><summary class="panel-h"><h2>Проверка и журнал (${warnings.length})</h2></summary><div class="panel-b"><pre class="logbox">${UI.esc(warnings.join('\n'))}</pre></div></details>` : ''}
       <div class="flex wrap gap-sm" style="margin-top:12px">
@@ -233,7 +290,7 @@ UI.ready(async function () {
         <div class="panel-b tight"><div class="tbl-wrap" style="max-height:320px"><table class="tbl"><thead><tr><th>#</th><th>Сторона</th><th>Вход</th><th>Выход</th><th class="num">Кол.</th><th class="num">Цена входа</th><th class="num">Цена выхода</th><th class="num">Тики</th><th class="num">Комис.</th><th class="num">P&L</th></tr></thead>
         <tbody>${trades.length ? trades.slice(0, 200).map((t, i) => { const pnl = tradePnl(t); return `<tr><td class="muted">${t.trade_no || i + 1}</td><td>${UI.esc(t.side || t.market_position || t.direction || '')}</td><td class="mono muted">${UI.esc(tradeTime(t, 'entry').toString().slice(0, 16).replace('T', ' '))}</td><td class="mono muted">${UI.esc(tradeTime(t, 'exit').toString().slice(0, 16).replace('T', ' '))}</td><td class="num">${t.quantity != null ? t.quantity : '—'}</td><td class="num">${t.entry_price != null ? t.entry_price : (t.price != null ? t.price : '—')}</td><td class="num">${t.exit_price != null ? t.exit_price : '—'}</td><td class="num">${t.pnl_ticks != null ? t.pnl_ticks : '—'}</td><td class="num muted">${t.commission != null ? UI.money(t.commission) : '—'}</td><td class="num ${UI.pnlClass(pnl)}">${UI.money(pnl, { sign: true })}</td></tr>`; }).join('') : '<tr><td colspan="10"><div class="empty-state">Сделок нет.</div></td></tr>'}</tbody></table></div></div></section>`;
     if (eq.length) requestAnimationFrame(() => {
-      Chart.line(UI.qs('#dw-eq'), [{ name: 'P&L', color: '#6e8bff', values: eq }], { area: true, money: true, height: 240, baseZero: true });
+      Chart.pnl(UI.qs('#dw-eq'), eq, { money: true, height: 240, labels: trades.map(trade => String(tradeTime(trade, 'exit') || tradeTime(trade, 'entry') || '').slice(0, 16).replace('T', ' ')) });
       Chart.bars(UI.qs('#dw-trade-pnl'), trades.slice(-80).map((trade, index) => { const number = Math.max(1, trades.length - 79 + index); return { label: index % 10 === 0 ? String(number) : '', tooltipLabel: `Сделка #${number}`, tooltipDetail: String(tradeTime(trade, 'exit') || tradeTime(trade, 'entry') || '').slice(0, 16).replace('T', ' '), value: tradePnl(trade) }; }), { money: true, height: 220 });
       Chart.bars(UI.qs('#dw-monthly'), monthly, { money: true, height: 220 });
     });
@@ -258,9 +315,9 @@ UI.ready(async function () {
       try {
         const [barsDoc, drawDoc] = await Promise.all([API.http.jobBars(jobId, { limit: 3000 }), API.http.jobDrawObjects(jobId).catch(() => ({ draw_objects: [] }))]);
         const bars = barsDoc.bars || []; const draws = drawDoc.draw_objects || drawDoc.items || [];
-        UI.qs('#dw-price-sub').textContent = `${bars.length}/${barsDoc.total || bars.length} bars · ${draws.length} draw objects`;
+        UI.qs('#dw-price-sub').textContent = `${bars.length}/${barsDoc.total || bars.length} bars · ${trades.length} сделок · ${draws.length} объектов`;
         if (!bars.length) UI.renderEmpty(UI.qs('#dw-price-box'), 'Bars artifact отсутствует.');
-        else { UI.qs('#dw-price-box').innerHTML = '<canvas id="dw-price-chart" style="height:300px"></canvas>'; Chart.line(UI.qs('#dw-price-chart'), [{ name: 'Close', color: '#4fd1e0', values: bars.map(bar => Number(bar.c)) }], { height: 300, baseZero: false, labels: bars.map((bar, i) => i % Math.max(1, Math.floor(bars.length / 8)) === 0 ? String(bar.t || '').slice(5, 16).replace('T', ' ') : '') }); }
+        else { UI.qs('#dw-price-box').innerHTML = '<canvas id="dw-price-chart" style="height:300px"></canvas>'; const chart = Chart.price(UI.qs('#dw-price-chart'), bars, { height: 300, trades, draws }); UI.qs('#dw-price-sub').textContent += ` · ${chart.markerCount} маркеров`; }
       } catch (e) { UI.renderError(UI.qs('#dw-price-box'), e, loadPriceChart); }
       finally { UI.qs('#dw-price').disabled = false; }
     }
@@ -326,23 +383,26 @@ UI.ready(async function () {
 
   // ---------- init ----------
   UI.qs('#inst-search').oninput = e => renderInst(e.target.value);
+  UI.qs('#inst-group').onchange = () => renderInst(UI.qs('#inst-search').value);
   UI.qs('#econ-btn').onclick = openEcon;
   UI.qs('#add-all').onclick = () => { roots.forEach(r => { if (!basket.includes(r.root)) basket.push(r.root); }); renderInst(UI.qs('#inst-search').value); renderBasket(); UI.toast('Все видимые добавлены в корзину'); };
-  UI.qs('#fav-search').oninput = e => renderFav(e.target.value);
-  UI.qsa('#side-tabs button').forEach(b => b.onclick = () => { UI.qsa('#side-tabs button').forEach(x => x.classList.remove('active')); b.classList.add('active'); const t = b.dataset.tab; ['inst', 'prof', 'cov', 'fav'].forEach(name => { UI.qs('#pane-' + name).hidden = t !== name; }); if (t === 'fav') renderFav(''); });
+  UI.qsa('#side-tabs button').forEach(b => b.onclick = () => { UI.qsa('#side-tabs button').forEach(x => x.classList.remove('active')); b.classList.add('active'); const t = b.dataset.tab; ['inst', 'prof', 'cov'].forEach(name => { UI.qs('#pane-' + name).hidden = t !== name; }); });
   UI.qs('#f-period').onchange = (e) => { const cu = e.target.value === 'custom'; UI.qs('#f-custom-from').hidden = !cu; UI.qs('#f-custom-to').hidden = !cu; };
   UI.qs('#f-strategy').onchange = () => renderStrategyParams({});
   UI.qs('#run-btn').innerHTML = UI.icon('play') + 'Запустить прогон';
   UI.qs('#run-btn').onclick = runBacktest;
-  UI.qsa('#rep-filter button').forEach(b => b.onclick = () => { UI.qsa('#rep-filter button').forEach(x => x.classList.remove('active')); b.classList.add('active'); repFilter = b.dataset.f === 'fav' ? 'all' : b.dataset.f; if (b.dataset.f === 'fav') { UI.qs('#rep-body').innerHTML = ''; loadFavInline(); } else loadReports(true); });
-
-  async function loadFavInline() {
-    let doc; try { doc = await API.http.reportFavorites(); } catch (e) { return; }
-    const favs = doc.favorites || [];
-    UI.qs('#rep-counts').textContent = favs.length + ' в избранном';
-    UI.qs('#rep-body').innerHTML = favs.length ? favs.map(f => `<tr class="clickable" data-id="${UI.esc(f.id)}"><td><span style="color:var(--warn)">${UI.icon('star')}</span></td><td class="mono muted">${f.report_no || ''}</td><td class="muted">—</td><td><strong>${UI.esc(f.strategy || f.label || '')}</strong><div class="row-sub">${UI.esc(f.instrument || '')}</div></td><td>${statusBadge('done')}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>`).join('') : '<tr><td colspan="9"><div class="empty-state">В избранном пусто.</div></td></tr>';
-    UI.qsa('#rep-body tr.clickable').forEach(tr => tr.onclick = () => openReport(tr.dataset.id));
-  }
+  UI.qsa('#rep-filter button').forEach(b => b.onclick = () => { UI.qsa('#rep-filter button').forEach(x => x.classList.remove('active')); b.classList.add('active'); repFilter = b.dataset.f === 'fav' ? 'favorite' : b.dataset.f; loadReports(true); });
+  UI.qsa('#rep-table th.sortable').forEach(header => header.onclick = () => {
+    const next = header.dataset.sort;
+    if (repSort === next) repDir = repDir === 'asc' ? 'desc' : 'asc'; else { repSort = next; repDir = ['label','status','period'].includes(next) ? 'asc' : 'desc'; }
+    UI.qsa('#rep-table th.sortable').forEach(item => { item.classList.toggle('active', item === header); item.dataset.dir = item === header ? repDir : ''; });
+    loadReports(true);
+  });
+  let filterTimer = null;
+  const filterIds = ['rep-search','rep-no','rep-instrument','rep-frequency','rep-min-trades','rep-min-win','rep-min-pf','rep-min-confidence','rep-pnl-sign','rep-from','rep-to','rep-analysis-limit'];
+  filterIds.forEach(id => UI.qs('#' + id).addEventListener(['SELECT','INPUT'].includes(UI.qs('#' + id).tagName) ? 'input' : 'change', () => { clearTimeout(filterTimer); filterTimer = setTimeout(() => loadReports(true), 350); }));
+  UI.qs('#rep-hierarchy').onchange = e => { repHierarchy = e.target.value; loadReports(true); };
+  UI.qs('#rep-clear').onclick = () => { filterIds.forEach(id => { UI.qs('#' + id).value = id === 'rep-analysis-limit' ? '500' : ''; }); repHierarchy = 'report'; UI.qs('#rep-hierarchy').value = 'report'; loadReports(true); };
 
   // load data
   const initialReports = loadReports(true);
@@ -351,6 +411,8 @@ UI.ready(async function () {
   roots = (instr && instr.roots) || [];
   strategies = (strat && strat.strategies) || [];
   profiles = (prof && prof.profiles) || []; coverage = cov; catalog = cat;
+  const groups = Array.from(new Set(roots.map(rootGroup))).sort((a, b) => a.localeCompare(b, 'ru'));
+  UI.qs('#inst-group').innerHTML = '<option value="all">Все группы</option>' + groups.map(group => `<option>${UI.esc(group)}</option>`).join('');
   UI.qs('#f-strategy').innerHTML = strategies.map(s => `<option value="${UI.esc(s)}">${UI.esc(s)}</option>`).join('') || '<option value="">нет стратегий</option>';
   renderInst(); renderBasket(); renderProfiles(); renderCoverage(); renderStrategyParams({});
   await initialReports;

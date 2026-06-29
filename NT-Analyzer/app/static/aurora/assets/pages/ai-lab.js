@@ -204,6 +204,25 @@ UI.ready(async function () {
       Chart.bars(chartBox.querySelector('canvas'), models.map(row => ({ label: String(row.model).split('/').pop().slice(0, 10), tooltipLabel: String(row.model), tooltipDetail: `Ошибок: ${Number(row.errors || 0)}`, value: Number(row.requests || 0), color: Number(row.errors || 0) ? '#fcc55a' : '#34d399' })), { height: 230 });
     } else UI.renderEmpty(chartBox, 'Нет модельной телеметрии.');
   }
+  async function loadExternalAgents() {
+    const kpis = UI.qs('#external-agent-kpis');
+    const body = UI.qs('#external-agent-body');
+    UI.renderLoading(kpis, 'Проверка внешнего контура…');
+    try {
+      const doc = await API.http.externalAgentsStatus({ signal: UI.signal() });
+      const agents = doc.agents || [];
+      UI.qs('#external-agent-sub').textContent = doc.configured ? `${agents.length} записей · исполнение ${doc.execution_enabled ? 'включено' : 'заблокировано'}` : 'контур не настроен';
+      kpis.innerHTML = [
+        ['Бюджет', UI.money(Number(doc.budget_usd || 0)), 'info'],
+        ['Израсходовано', UI.money(Number(doc.spent_usd || 0)), Number(doc.spent_usd || 0) > Number(doc.budget_usd || 0) ? 'neg' : 'warn'],
+        ['Остаток', UI.money(Number(doc.remaining_usd || 0)), 'pos'],
+        ['Исполнение', doc.execution_enabled ? 'включено' : 'заблокировано', doc.execution_enabled ? 'warn' : 'pos'],
+      ].map(row => `<div class="kpi ${row[2]}"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
+      body.innerHTML = agents.length ? agents.slice().reverse().map(row => `<tr><td><strong>${UI.esc(row.agent || row.name || 'агент')}</strong><div class="row-sub">${UI.esc(row.role || 'роль не указана')}</div></td><td>${UI.esc(row.task || row.action || '—')}</td><td><span class="badge ${['done','completed'].includes(String(row.status).toLowerCase()) ? 'live' : String(row.status).toLowerCase() === 'failed' ? 'failed' : 'archived'}">${UI.esc(row.status || '—')}</span></td><td class="muted">${UI.esc(row.interaction || row.last_interaction || row.timestamp_utc || '—')}</td><td class="num">${Number(row.tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${UI.money(Number(row.cost_usd || 0), { dec: 4 })}</td></tr>`).join('') : '<tr><td colspan="6"><div class="empty-state">Внешние агенты не запускались. Демонстрационные записи не создаются.</div></td></tr>';
+    } catch (error) {
+      if (error.name !== 'AbortError') body.innerHTML = `<tr><td colspan="6"><div class="empty-state">Статус недоступен: ${UI.esc(error.message)}</div></td></tr>`;
+    }
+  }
   function renderRoleTimeline(rows, target) {
     const box = target || UI.qs('#ai-role-timeline');
     if (!box) return;
@@ -295,7 +314,7 @@ UI.ready(async function () {
   UI.qs('#ai-sweep').onclick = () => { if (!confirm('Пометить эксперименты без heartbeat более 6 часов как cancelled?')) return; UI.action('Проверка зависших экспериментов', () => API.http.aiSweepStale({ stale_after_hours: 6 }), 'Проверка завершена').then(() => { loadSummary(); loadExperiments(); }).catch(() => {}); };
 
   if (!(await loadSummary())) return;
-  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance()]);
+  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadExternalAgents()]);
   if (!activityRows.length) renderRoleTimeline([]);
   UI.poll(refreshRun, 5000);
   UI.poll(async () => { await loadSummary(); }, 20000);

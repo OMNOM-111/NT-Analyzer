@@ -7,12 +7,14 @@
 
 | Страница | Источники данных | Изменяющие действия |
 |---|---|---|
-| Обзор | `/api/health`, `/api/performance`, `/api/coverage`, `/api/ai-lab/summary`, `/api/reports`, accounts/account-history | системные действия вынесены в общее меню |
-| Бэктест | catalog, instruments, profiles, coverage, reports, jobs, trades, bars, draw objects, favorites, batches | создать job/batch, отменить/удалить job, favorite/unfavorite |
+| Обзор | `/api/health`, `/api/performance`, `/api/coverage`, `/api/ai-lab/summary`, `/api/reports`, `/api/news`, accounts/account-history | системные действия вынесены в общее меню |
+| Бэктест | catalog, instruments, profiles, coverage, reports, jobs, trades, bars, draw objects, favorites, batches | создать job/batch, отменить/удалить job, favorite/unfavorite; серверные фильтры/сортировка не изменяют данные |
 | Торговля | accounts, account-history, strategies, positions, orders, executions, errors, commands/results/status, runtime history, strategy history/display, start dates, performance, diagnostics, strategy journal | paper-only enable/disable, ручное движение, CSV-импорт, классификация движения, восстановление скрытого класса |
 | Доход | performance, performance/trades, accounts, account-history, CSV | фильтры, пагинация, drilldown и выгрузка; финансовые данные не изменяются |
 | Стратегии | profiles/archive, AI lifecycle/cell history, coverage, instruments, persistent portfolio registry | статус/удаление профиля, add root/cell, archive cell, hide runtime class, NinjaTrader cleanup |
-| AI Lab | summary, experiments/activity, run/current status, performance board, model-performance, calendar, compile source, errors, LM Studio | run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan |
+| AI Lab | summary, experiments/activity, run/current status, performance board, model-performance, external-agent status, calendar, compile source, errors, LM Studio | run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; внешние агенты read-only и execution-disabled |
+| Новости | `/api/news` | read-only; пустое состояние без вымышленных событий, пока источники не настроены |
+| TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
@@ -34,11 +36,20 @@
   direction только по атрибутированным стратегиям.
 - `GET /api/ai-lab/model-performance` агрегирует model/role request success,
   latency P95, usage tokens и результат связанных экспериментов.
+- `GET /api/reports` поддерживает сортировку по PF, частоте и статистическому
+  доверию, а также фильтры по всем операторским колонкам. Частота едина для UI и
+  backend: `<2`, `2–7`, `>7` сделок в неделю. Тяжёлые metric-фильтры имеют
+  явный охват `500/2000/all`; точный номер отчёта всегда ищется во всём архиве.
+- `GET /api/integrations/status`, `/api/topstep/status`, `/api/news` и
+  `/api/ai-lab/external-agents/status` не возвращают токены/API-ключи и не
+  создают демонстрационные события.
 
 ## Safety
 
 - Runtime-команды остаются paper/demo/playback-only. Backend отклоняет live и
   неизвестные счета.
+- TopStep и внешние платные агенты остаются execution-disabled независимо от
+  наличия ключей, пока не появятся отдельные risk/security gates.
 - Все изменяющие действия требуют подтверждения в UI и показывают ошибку backend.
 - P&L строится по закрытым сделкам после комиссии. NetLiq и движения средств
   отображаются отдельно.

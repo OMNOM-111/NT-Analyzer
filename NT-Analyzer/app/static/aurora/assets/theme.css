@@ -320,6 +320,8 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
+.warn { color: var(--warn); }
+.info { color: var(--info); }
 .muted { color: var(--tx-3); }
 .faint { color: var(--tx-4); }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -432,11 +434,15 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 }
 .kan-card.ai-origin { border-color: rgba(180,140,255,.38); padding-top: 31px; }
 .ai-origin-ribbon {
-  position: absolute; inset: 0 0 auto 0; padding: 5px 10px; display: flex; align-items: center; gap: 6px;
-  color: #e8dcff; background: linear-gradient(90deg, rgba(110,139,255,.28), rgba(180,140,255,.16));
-  border-bottom: 1px solid rgba(180,140,255,.24); font-size: 9px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase;
+  position: absolute; left: 10px; top: 7px; padding: 3px 8px; display: inline-flex; align-items: center; gap: 5px;
+  color: #fff; background: linear-gradient(135deg, #3975ff 0%, #6656f6 58%, #8658e8 100%);
+  border: 1px solid rgba(255,255,255,.2); border-radius: 999px; box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 4px 10px rgba(56,73,220,.25);
+  font-size: 9px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase;
 }
-.ai-origin-badge { color: #d9c7ff; border-color: rgba(180,140,255,.38); background: rgba(180,140,255,.12); }
+.ai-origin-badge {
+  color: #fff; border-color: rgba(255,255,255,.2); background: linear-gradient(135deg, #3975ff 0%, #6656f6 58%, #8658e8 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 3px 9px rgba(56,73,220,.24); text-shadow: 0 1px 1px rgba(0,0,0,.2);
+}
 .kan-card:hover { border-color: var(--brand-line); background: var(--bg-3); }
 .kan-card .kc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .kan-card .kc-name { font-weight: 700; font-size: 12.5px; }
@@ -708,8 +714,9 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
     z-index: 60; overflow-x: auto;
   }
   .rail-logo, .rail-foot { display: none; }
-  .rail-nav { flex-direction: row; gap: 2px; width: auto; flex: 1; justify-content: space-around; }
-  .rail-item { width: auto; flex: 1; padding: 6px 4px; }
+  .rail-nav { flex-direction: row; gap: 2px; width: 100%; flex: 1; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .rail-nav::-webkit-scrollbar { display: none; }
+  .rail-item { width: auto; flex: 0 0 66px; padding: 6px 4px; }
   .rail-item .lb { display: block; font-size: 8.5px; }
   .content { padding: 12px; padding-bottom: 74px; }   /* clear the bottom nav */
   .topbar .chip { display: none; }                    /* declutter header on phones */

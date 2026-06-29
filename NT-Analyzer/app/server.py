@@ -41,6 +41,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from app import jobqueue  # type: ignore[no-redef]
     from app import governance  # type: ignore[no-redef]
+    from app import integrations  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
     from app import performance  # type: ignore[no-redef]
@@ -64,6 +65,7 @@ if __package__ is None or __package__ == "":
 else:
     from . import jobqueue
     from . import governance
+    from . import integrations
     from . import marginrefresh
     from . import ops
     from . import performance
@@ -664,6 +666,7 @@ class Handler(BaseHTTPRequestHandler):
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
                 "/performance.html", "/strategies.html", "/ai-lab.html", "/documents.html",
+                "/news.html", "/topstep.html",
             }
             if rel in _new_pages or rel.startswith("/assets/"):
                 self._serve_static("aurora/index.html" if rel == "/" else "aurora" + rel)
@@ -775,14 +778,38 @@ class Handler(BaseHTTPRequestHandler):
             sort_col = str((qs.get("sort") or ["mtime"])[0] or "mtime")
             sort_dir = str((qs.get("dir") or ["desc"])[0] or "desc")
             status_filter = str((qs.get("filter") or ["all"])[0] or "all")
+            def optional_float(name: str) -> Optional[float]:
+                raw = str((qs.get(name) or [""])[0] or "").strip()
+                if not raw:
+                    return None
+                try:
+                    return float(raw)
+                except ValueError:
+                    return None
             limit = max(1, min(10000, limit))
             offset = max(0, offset)
+            try:
+                analysis_limit = int((qs.get("analysis_limit") or ["500"])[0])
+            except ValueError:
+                analysis_limit = 500
             self._json(HTTPStatus.OK, jobqueue.list_reports(
                 limit=limit,
                 offset=offset,
                 sort_col=sort_col,
                 sort_dir=sort_dir,
                 status_filter=status_filter,
+                query=str((qs.get("q") or [""])[0] or ""),
+                report_no=str((qs.get("report_no") or [""])[0] or ""),
+                instrument=str((qs.get("instrument") or [""])[0] or ""),
+                frequency=str((qs.get("frequency") or [""])[0] or ""),
+                from_date=str((qs.get("from") or [""])[0] or ""),
+                to_date=str((qs.get("to") or [""])[0] or ""),
+                min_trades=optional_float("min_trades"),
+                min_win=optional_float("min_win"),
+                min_pf=optional_float("min_pf"),
+                pnl_sign=str((qs.get("pnl_sign") or [""])[0] or ""),
+                min_confidence=optional_float("min_confidence"),
+                analysis_limit=analysis_limit,
             ))
             return
 
@@ -920,6 +947,26 @@ class Handler(BaseHTTPRequestHandler):
             if handled:
                 return
 
+        if path == "/api/integrations/status":
+            self._json(HTTPStatus.OK, integrations.status())
+            return
+
+        if path == "/api/topstep/status":
+            self._json(HTTPStatus.OK, integrations.topstep_status())
+            return
+
+        if path == "/api/news":
+            try:
+                limit = int((qs.get("limit") or ["50"])[0])
+            except ValueError:
+                limit = 50
+            self._json(HTTPStatus.OK, integrations.news(limit))
+            return
+
+        if path == "/api/ai-lab/external-agents/status":
+            self._json(HTTPStatus.OK, integrations.external_agents_status())
+            return
+
         # /api/ai-lab/* read model
         if path.startswith("/api/ai-lab"):
             if self._ai_lab_get(path, qs):
@@ -938,6 +985,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/governance/summary":
             self._json(HTTPStatus.OK, {
+                "owner": governance.PROJECT_OWNER,
                 "documents": governance.list_documents(),
                 "runtime_defaults": governance.runtime_defaults(),
                 "consistency": governance.consistency_report(),
@@ -946,7 +994,10 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path == "/api/governance/documents":
-            self._json(HTTPStatus.OK, {"documents": governance.list_documents()})
+            self._json(HTTPStatus.OK, {
+                "owner": governance.PROJECT_OWNER,
+                "documents": governance.list_documents(),
+            })
             return True
 
         if path == "/api/governance/history":

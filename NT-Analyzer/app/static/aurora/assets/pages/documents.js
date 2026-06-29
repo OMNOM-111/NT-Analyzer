@@ -1,6 +1,6 @@
 /* Документы и законы — реальная интеграция (/api/governance/*). CSP-safe. */
 UI.ready(async function () {
-  let docs = [], active = null, current = null, dirty = false;
+  let docs = [], active = null, current = null, dirty = false, owner = 'Черевко Дмитро';
 
   // minimal markdown renderer (headings, bold, code, lists, blockquote, hr)
   function md(src) {
@@ -31,10 +31,12 @@ UI.ready(async function () {
       API.http.governanceDocuments({ signal: UI.signal() }),
       API.http.governanceRuntimeDefaults({ signal: UI.signal() }),
     ]);
-    summary = { documents: list.documents || [], runtime_defaults: defaults || {} };
+    summary = { owner: list.owner, documents: list.documents || [], runtime_defaults: defaults || {} };
   }
   catch (e) { if (e.name === 'AbortError') return; UI.renderError(listBox, e, () => location.reload()); return; }
   docs = summary.documents || [];
+  owner = summary.owner || (docs[0] && docs[0].owner) || owner;
+  UI.qs('#project-owner').textContent = owner;
   renderRuntimeDefaults(summary.runtime_defaults || {});
 
   function renderRuntimeDefaults(rd) {
@@ -74,7 +76,7 @@ UI.ready(async function () {
     catch (e) { if (e.name === 'AbortError') return; UI.renderError(viewBox, e, () => selectDoc(id)); return; }
     current = doc;
     UI.qs('#doc-cat').textContent = doc.title || doc.label || doc.id;
-    UI.qs('#doc-meta').textContent = (doc.rel_path || doc.path || '') + (doc.editable_kind === 'markdown' ? '' : ' · только чтение');
+    UI.qs('#doc-meta').textContent = `Владелец: ${doc.owner || owner} · ` + (doc.rel_path || doc.path || '') + (doc.editable_kind === 'markdown' ? '' : ' · только чтение');
     viewBox.innerHTML = md(doc.content);
     UI.qs('#edit-area').value = doc.content || '';
     const editable = doc.editable_kind === 'markdown';

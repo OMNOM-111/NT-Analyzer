@@ -163,6 +163,178 @@
     return { redraw: draw, toggle: (name) => { const s = series.find(x => x.name === name); if (s) { s._hidden = !s._hidden; draw(); } return s ? !s._hidden : false; } };
   }
 
+  /* ---------- Semantic P&L chart: green above zero, red below zero ---------- */
+  function pnl(canvas, values, opts) {
+    opts = opts || {};
+    const height = opts.height || 240;
+    const pad = { l: 54, r: 16, t: 14, b: 28 };
+    const points = (values || []).map(Number).filter(Number.isFinite);
+    const labels = opts.labels || [];
+
+    function draw() {
+      const { ctx, w, h } = setup(canvas, height);
+      ctx.clearRect(0, 0, w, h);
+      if (!points.length) return;
+      let min = Math.min(0, ...points), max = Math.max(0, ...points);
+      if (min === max) { min -= 1; max += 1; }
+      const extra = (max - min) * 0.08;
+      min -= extra; max += extra;
+      const X = i => pad.l + (i / Math.max(1, points.length - 1)) * (w - pad.l - pad.r);
+      const Y = v => pad.t + (1 - (v - min) / (max - min)) * (h - pad.t - pad.b);
+      const y0 = Y(0);
+
+      ctx.font = '10px Inter, sans-serif'; ctx.textBaseline = 'middle';
+      for (let g = 0; g <= 4; g += 1) {
+        const value = min + (g / 4) * (max - min); const y = Y(value);
+        ctx.strokeStyle = 'rgba(255,255,255,0.045)'; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+        ctx.fillStyle = css('--tx-4'); ctx.textAlign = 'right'; ctx.fillText(opts.money === false ? Math.round(value) : fmtMoney(value), pad.l - 8, y);
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.34)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad.l, y0); ctx.lineTo(w - pad.r, y0); ctx.stroke();
+
+      if (labels.length) {
+        ctx.fillStyle = css('--tx-4'); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        const step = Math.max(1, Math.ceil(labels.length / 7));
+        labels.forEach((label, index) => { if (index % step === 0 || index === labels.length - 1) ctx.fillText(label, X(index), h - pad.b + 7); });
+      }
+
+      const area = new Path2D();
+      area.moveTo(X(0), y0);
+      points.forEach((value, index) => area.lineTo(X(index), Y(value)));
+      area.lineTo(X(points.length - 1), y0); area.closePath();
+      const positive = css('--pos'), negative = css('--neg');
+      ctx.save(); ctx.beginPath(); ctx.rect(pad.l, pad.t, w - pad.l - pad.r, Math.max(0, y0 - pad.t)); ctx.clip();
+      const posGradient = ctx.createLinearGradient(0, pad.t, 0, y0);
+      posGradient.addColorStop(0, hexA(positive, 0.38)); posGradient.addColorStop(1, hexA(positive, 0.08));
+      ctx.fillStyle = posGradient; ctx.fill(area); ctx.restore();
+      ctx.save(); ctx.beginPath(); ctx.rect(pad.l, y0, w - pad.l - pad.r, Math.max(0, h - pad.b - y0)); ctx.clip();
+      const negGradient = ctx.createLinearGradient(0, y0, 0, h - pad.b);
+      negGradient.addColorStop(0, hexA(negative, 0.08)); negGradient.addColorStop(1, hexA(negative, 0.38));
+      ctx.fillStyle = negGradient; ctx.fill(area); ctx.restore();
+
+      for (let index = 1; index < points.length; index += 1) {
+        const a = points[index - 1], b = points[index];
+        const x1 = X(index - 1), x2 = X(index), y1 = Y(a), y2 = Y(b);
+        const drawSegment = (sx, sy, ex, ey, color) => {
+          ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+        };
+        if ((a < 0 && b > 0) || (a > 0 && b < 0)) {
+          const ratio = Math.abs(a) / (Math.abs(a) + Math.abs(b));
+          const crossX = x1 + (x2 - x1) * ratio;
+          drawSegment(x1, y1, crossX, y0, a >= 0 ? positive : negative);
+          drawSegment(crossX, y0, x2, y2, b >= 0 ? positive : negative);
+        } else drawSegment(x1, y1, x2, y2, (a + b) / 2 >= 0 ? positive : negative);
+      }
+      if (points.length === 1) {
+        ctx.fillStyle = points[0] >= 0 ? positive : negative; ctx.beginPath(); ctx.arc(X(0), Y(points[0]), 3, 0, Math.PI * 2); ctx.fill();
+      }
+      canvas._pnlGeo = { X, Y, points, labels, pad, w, h };
+    }
+
+    const tip = ensureTip(canvas);
+    canvas.onmousemove = event => {
+      const geo = canvas._pnlGeo; if (!geo) return;
+      const rect = canvas.getBoundingClientRect();
+      const index = Math.round(((event.clientX - rect.left - geo.pad.l) / (geo.w - geo.pad.l - geo.pad.r)) * Math.max(1, geo.points.length - 1));
+      if (index < 0 || index >= geo.points.length) { tip.style.opacity = 0; return; }
+      const label = geo.labels[index] || `Точка ${index + 1}`;
+      tip.innerHTML = `<div class="t-lab">${esc(label)}</div><div class="t-val ${geo.points[index] >= 0 ? 'pos' : 'neg'}">${fmtMoney(geo.points[index])}</div>`;
+      tip.style.left = geo.X(index) + 'px'; tip.style.top = Math.max(28, geo.Y(geo.points[index])) + 'px'; tip.style.opacity = 1;
+    };
+    canvas.onmouseleave = () => { tip.style.opacity = 0; };
+    draw(); bindResize(canvas, draw);
+    return { redraw: draw };
+  }
+
+  /* ---------- Price chart with lazy trade and NinjaTrader draw markers ---------- */
+  function price(canvas, bars, opts) {
+    opts = opts || {};
+    bars = (bars || []).slice(-3000);
+    const trades = (opts.trades || []).slice(0, 500);
+    const draws = (opts.draws || []).slice(0, 500);
+    const height = opts.height || 300;
+    const pad = { l: 58, r: 18, t: 18, b: 30 };
+    const stamp = value => { const parsed = Date.parse(value || ''); return Number.isFinite(parsed) ? parsed : null; };
+    const barStamp = bar => stamp(bar.t || bar.time_utc || bar.time || bar.timestamp);
+    const times = bars.map(barStamp);
+    const nearestIndex = value => {
+      const target = stamp(value); if (target == null || !times.length) return null;
+      let best = null, distance = Infinity;
+      times.forEach((time, index) => { if (time != null && Math.abs(time - target) < distance) { distance = Math.abs(time - target); best = index; } });
+      return best;
+    };
+    const markers = [];
+    trades.forEach((trade, tradeIndex) => {
+      const pnlValue = Number(trade.pnl_currency != null ? trade.pnl_currency : trade.pnl || 0);
+      const direction = String(trade.market_position || trade.direction || '').toLowerCase();
+      [['entry', trade.entry_time_utc || trade.entry_time, trade.entry_price || trade.entry], ['exit', trade.exit_time_utc || trade.exit_time, trade.exit_price || trade.exit]].forEach(([kind, time, priceValue]) => {
+        const index = nearestIndex(time); const numericPrice = Number(priceValue);
+        if (index == null || !Number.isFinite(numericPrice)) return;
+        markers.push({ kind, index, price: numericPrice, pnl: pnlValue, direction, tradeIndex: tradeIndex + 1, time });
+      });
+    });
+    draws.forEach((item, drawIndex) => {
+      const time = item.time_utc || item.time || item.start_time_utc || item.anchor_time_utc;
+      const priceValue = Number(item.price != null ? item.price : (item.y != null ? item.y : item.start_price));
+      const index = nearestIndex(time);
+      if (index != null && Number.isFinite(priceValue)) markers.push({ kind: 'draw', index, price: priceValue, text: item.text || item.tag || item.type || `Объект ${drawIndex + 1}`, time });
+    });
+
+    function draw() {
+      const { ctx, w, h } = setup(canvas, height); ctx.clearRect(0, 0, w, h);
+      if (!bars.length) return;
+      const closes = bars.map(bar => Number(bar.c != null ? bar.c : bar.close)).filter(Number.isFinite);
+      if (!closes.length) return;
+      let min = Math.min(...closes, ...markers.map(marker => marker.price));
+      let max = Math.max(...closes, ...markers.map(marker => marker.price));
+      const extra = (max - min || 1) * 0.08; min -= extra; max += extra;
+      const X = index => pad.l + (index / Math.max(1, bars.length - 1)) * (w - pad.l - pad.r);
+      const Y = value => pad.t + (1 - (value - min) / (max - min)) * (h - pad.t - pad.b);
+      ctx.font = '10px Inter'; ctx.textBaseline = 'middle';
+      for (let g = 0; g <= 4; g += 1) {
+        const value = min + (g / 4) * (max - min); const y = Y(value);
+        ctx.strokeStyle = 'rgba(255,255,255,.045)'; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+        ctx.fillStyle = css('--tx-4'); ctx.textAlign = 'right'; ctx.fillText(value.toFixed(2), pad.l - 8, y);
+      }
+      ctx.strokeStyle = '#4fd1e0'; ctx.lineWidth = 1.6; ctx.beginPath();
+      bars.forEach((bar, index) => { const value = Number(bar.c != null ? bar.c : bar.close); if (!Number.isFinite(value)) return; index ? ctx.lineTo(X(index), Y(value)) : ctx.moveTo(X(index), Y(value)); }); ctx.stroke();
+      markers.forEach(marker => {
+        const x = X(marker.index), y = Y(marker.price);
+        if (marker.kind === 'draw') {
+          ctx.fillStyle = '#b48cff'; ctx.fillRect(x - 3, y - 3, 6, 6); return;
+        }
+        const positive = marker.pnl >= 0; const color = positive ? css('--pos') : css('--neg');
+        ctx.fillStyle = color; ctx.strokeStyle = '#0b1018'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (marker.kind === 'entry') { ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 5); ctx.lineTo(x + 6, y + 5); }
+        else { ctx.arc(x, y, 5, 0, Math.PI * 2); }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      });
+      const labelStep = Math.max(1, Math.ceil(bars.length / 7));
+      ctx.fillStyle = css('--tx-4'); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      bars.forEach((bar, index) => { if (index % labelStep === 0 || index === bars.length - 1) ctx.fillText(String(bar.t || bar.time_utc || '').slice(5, 16).replace('T', ' '), X(index), h - pad.b + 7); });
+      canvas._priceGeo = { X, Y, markers, bars, pad, w, h };
+    }
+    const tip = ensureTip(canvas);
+    canvas.onmousemove = event => {
+      const geo = canvas._priceGeo; if (!geo) return;
+      const rect = canvas.getBoundingClientRect(); const mx = event.clientX - rect.left, my = event.clientY - rect.top;
+      let hit = null, distance = 12;
+      geo.markers.forEach(marker => { const d = Math.hypot(geo.X(marker.index) - mx, geo.Y(marker.price) - my); if (d < distance) { distance = d; hit = marker; } });
+      if (hit) {
+        const title = hit.kind === 'entry' ? `Вход · сделка ${hit.tradeIndex}` : hit.kind === 'exit' ? `Выход · сделка ${hit.tradeIndex}` : hit.text;
+        const pnlText = hit.kind === 'draw' ? '' : `<div class="t-detail">P&L: ${fmtMoney(hit.pnl)}</div>`;
+        tip.innerHTML = `<div class="t-lab">${esc(title)}</div><div class="t-val">${hit.price.toLocaleString('ru-RU')}</div><div class="t-detail">${esc(hit.time || '')}</div>${pnlText}`;
+        tip.style.left = geo.X(hit.index) + 'px'; tip.style.top = geo.Y(hit.price) + 'px'; tip.style.opacity = 1; return;
+      }
+      tip.style.opacity = 0;
+    };
+    canvas.onmouseleave = () => { tip.style.opacity = 0; };
+    draw(); bindResize(canvas, draw);
+    return { redraw: draw, markerCount: markers.length };
+  }
+
   /* ---------- Bar chart (vertical, +/- colored) ---------- */
   // data: [{ label, tooltipLabel?, tooltipDetail?, value, color? }]
   function bars(canvas, data, opts) {
@@ -293,5 +465,5 @@
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
   }
 
-  window.Chart = { line, bars, spark, donut, COLORS, fmtMoney };
+  window.Chart = { line, pnl, price, bars, spark, donut, COLORS, fmtMoney };
 })();

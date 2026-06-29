@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
+PROJECT_OWNER = "Черевко Дмитро"
 
 
 def _now_iso() -> str:
@@ -1217,6 +1218,7 @@ def list_documents() -> List[Dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         item = copy.deepcopy(row)
+        item["owner"] = str(registry.get("owner") or PROJECT_OWNER)
         path = _resolve_doc_path(str(row.get("path") or ""))
         item["abs_path"] = str(path)
         item["rel_path"] = _rel(path)

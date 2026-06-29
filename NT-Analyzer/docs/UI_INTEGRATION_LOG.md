@@ -203,3 +203,20 @@ All seven Aurora pages are now served-only and wired to the real backend; the pr
 - Created final Git-visible release snapshot
   `C:\Users\dimon\Documents\NT-Analyzer-UI-backups\release_final_20260628_183903`
   (590 files, 7,706,535 bytes, SHA-256 manifest, binary diff and Git bundle).
+
+## 2026-06-28 — Operator audit follow-up
+
+- Added one shared report-assessment contract: rare `<2/week`, normal
+  `2–7/week`, frequent `>7/week`; statistical confidence is based on sample,
+  period and metric completeness, never profitability.
+- Rebuilt the reports grid with period/frequency/confidence columns, consistent
+  metric colors, server-wide filters and sorting, strategy/day hierarchy and a
+  single canonical favorite flow.
+- Added semantic green/red P&L charts with a visible zero line, full hover dates,
+  lazy price markers for entries/exits and persisted NinjaTrader draw objects.
+- Added strategy description/rules context, grouped instruments, profile and
+  coverage drilldowns, and frequency filtering in the portfolio.
+- Registered project owner `Черевко Дмитро` in governance data/API/UI.
+- Added safe read-only integration seams and pages for News and TopStep, a
+  Telegram status panel, and external paid-agent budget/activity in AI Lab.
+  No secrets, fake news or implied live connectivity are exposed.

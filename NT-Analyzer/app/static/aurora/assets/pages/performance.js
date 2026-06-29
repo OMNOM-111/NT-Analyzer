@@ -85,7 +85,7 @@ UI.ready(async function () {
     if (eq.length) {
       eqBox.innerHTML = '<canvas id="eq-curve" style="height:240px"></canvas>';
       ddBox.innerHTML = '<canvas id="dd-curve" style="height:130px"></canvas>';
-      Chart.line(UI.qs('#eq-curve'), [{ name: 'Накопл. P&L', color: '#6e8bff', values: eq }], { area: true, money: true, height: 240, baseZero: true, labels: dates.map((d, i) => i % 6 === 0 ? d.slice(5) : '') });
+      Chart.pnl(UI.qs('#eq-curve'), eq, { money: true, height: 240, labels: dates });
       Chart.line(UI.qs('#dd-curve'), [{ name: 'Просадка', color: '#ff6b81', values: dd }], { area: true, money: true, height: 130, baseZero: true });
     } else { UI.renderEmpty(eqBox, perf.empty_message || 'Нет сделок за период.'); ddBox.innerHTML = ''; }
 

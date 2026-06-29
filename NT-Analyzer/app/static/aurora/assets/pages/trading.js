@@ -65,7 +65,7 @@ UI.ready(async function () {
     renderLedger(account, ledger);
     if (series.length) {
       chartBox.innerHTML = '<canvas id="account-pnl-curve" style="height:240px"></canvas>';
-      Chart.line(UI.qs('#account-pnl-curve'), [{ name: 'Trading P&L', color: '#45c7b8', values: series.map(row => row.cumulativeTradingPnl) }], { area: true, money: true, height: 240, baseZero: true, labels: series.map((row, i) => i % 5 === 0 ? row.date.slice(5) : '') });
+      Chart.pnl(UI.qs('#account-pnl-curve'), series.map(row => row.cumulativeTradingPnl), { money: true, height: 240, labels: series.map(row => row.date) });
     } else UI.renderEmpty(chartBox, 'За выбранный месяц закрытых сделок нет. Баланс не используется как замена P&L.');
   }
 
@@ -264,7 +264,7 @@ UI.ready(async function () {
       <details><summary>Операторский журнал (${(journal.rows || []).length})</summary><pre class="logbox">${UI.esc(JSON.stringify((journal.rows || []).slice(-50), null, 2))}</pre></details>`;
     if (perfRow && (perfRow.daily || []).length) {
       let cumulative = 0;
-      Chart.line(UI.qs('#runtime-strategy-chart'), [{ name: 'Trading P&L', color: '#45c7b8', values: perfRow.daily.map(day => (cumulative += Number(day.pnl || 0))) }], { area: true, money: true, height: 260, baseZero: true, labels: perfRow.daily.map((day, index) => index % 25 === 0 ? day.date.slice(5) : '') });
+      Chart.pnl(UI.qs('#runtime-strategy-chart'), perfRow.daily.map(day => (cumulative += Number(day.pnl || 0))), { money: true, height: 260, labels: perfRow.daily.map(day => day.date) });
     }
   }
   async function disableStrategy(sid, cls, acct, iid) {

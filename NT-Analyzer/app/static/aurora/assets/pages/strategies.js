@@ -10,18 +10,20 @@ UI.ready(async function () {
     { key: 'approved_demo', title: 'Демо', accent: 'var(--info)' },
     { key: 'approved_live', title: 'Реальная торговля', accent: 'var(--pos)' },
   ];
-  let profiles = [], aiCards = [], coverage = null, archive = [], registry = null, runtimeRoots = [], curOrigin = 'all';
+  let profiles = [], aiCards = [], coverage = null, archive = [], registry = null, runtimeRoots = [], curOrigin = 'all', curFrequency = 'all';
 
   function fmtDate(iso) { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: '2-digit' }); } catch (e) { return iso || ''; } }
   function normProfile(p) {
     const m = p.metrics || {};
+    const period = p.test_period || (m.full_2024_2025 && { from_utc: m.full_2024_2025.from_utc, to_utc: m.full_2024_2025.to_utc }) || {};
+    const frequency = AuroraDomain.frequencyAssessment(m.trade_count, period);
     return {
       id: p.profile_id, name: p.name, cell: p.cell_id || p.archived_cell_id || '',
       root: p.root_family || (p.instrument || '').split(' ')[0] || '—', instrument: p.instrument, tf: p.timeframe,
       status: p.status, statusLabel: p.status_label, lifecycle: p.lifecycle, lifecycleLabel: p.lifecycle_label,
       origin: p.origin || 'production', originLabel: p.origin_label, isAi: !!p.is_ai_lab, family: p.strategy_family,
       net: m.net_profit_after_commission, pf: m.profit_factor_after_commission, win: m.winning_pct, trades: m.trade_count,
-      lastJob: p.last_job_id, updated: p.updated_at_utc, decision: p.decision, metrics: m, raw: p,
+      lastJob: p.last_job_id, updated: p.updated_at_utc, decision: p.decision, metrics: m, period, frequency, raw: p,
     };
   }
   function normAi(c) {
@@ -31,6 +33,7 @@ UI.ready(async function () {
       origin: 'ai_lab', originLabel: c.origin_label, isAi: true, family: c.strategy_family, attempts: c.attempts,
       archiveReason: c.archive_reason, experimentId: c.experiment_id, updated: c.updated_at_utc,
       net: null, pf: null, win: null, raw: c,
+      frequency: { key: 'unknown', label: 'частота неизвестна', trades_per_week: null, explanation: 'Эксперимент ещё не имеет итогового профиля.' },
     };
   }
   const byId = (id) => [...profiles, ...aiCards].find(x => x.id === id);
@@ -75,12 +78,14 @@ UI.ready(async function () {
   function kanCard(c) {
     const meta = c.isAi
       ? `<span>${UI.esc(c.statusLabel || '')}</span><span>попыток <b>${c.attempts || 1}</b></span>`
-      : `<span>P&L <b class="${UI.pnlClass(c.net || 0)}">${c.net != null ? UI.money(c.net, { sign: true }) : '—'}</b></span>${c.win != null ? `<span>WR <b>${UI.pct(c.win)}</b></span>` : ''}${c.pf != null ? `<span>PF <b>${Number(c.pf).toFixed(2)}</b></span>` : ''}`;
-    return `<div class="kan-card ${c.isAi ? 'ai-origin' : ''}" data-id="${UI.esc(c.id)}">${c.isAi ? `<div class="ai-origin-ribbon">${UI.icon('ai')}AI стратегия · автономная лаборатория</div>` : ''}<div class="kc-top"><span class="kc-name">${UI.esc(c.name)}</span><span class="tag">${UI.esc(c.cell || c.root || '')}</span></div><div class="kc-meta">${meta}</div></div>`;
+      : `<span>P&L <b class="${UI.pnlClass(c.net || 0)}">${c.net != null ? UI.money(c.net, { sign: true }) : '—'}</b></span>${c.win != null ? `<span>WR <b class="${AuroraDomain.metricTone('win', c.win)}">${UI.pct(c.win)}</b></span>` : ''}${c.pf != null ? `<span>PF <b class="${AuroraDomain.metricTone('pf', c.pf)}">${Number(c.pf).toFixed(2)}</b></span>` : ''}`;
+    const frequency = c.frequency || { key: 'unknown', label: 'частота неизвестна' };
+    return `<div class="kan-card ${c.isAi ? 'ai-origin' : ''}" data-id="${UI.esc(c.id)}">${c.isAi ? `<div class="ai-origin-ribbon">${UI.icon('ai')}AI стратегия · автономная лаборатория</div>` : ''}<div class="kc-top"><span class="kc-name">${UI.esc(c.name)}</span><span class="tag">${UI.esc(c.cell || c.root || '')}</span></div><div class="kc-meta">${meta}</div><div class="flex between" style="margin-top:9px"><span class="badge ${frequency.key === 'normal' ? 'live' : frequency.key === 'unknown' ? 'archived' : 'trial'}" title="${UI.esc(frequency.explanation || '')}">${UI.esc(frequency.label)}</span><span class="muted mono" style="font-size:10px">${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1) + '/нед'}</span></div></div>`;
   }
   function renderKanban() {
     let cards = [...profiles, ...aiCards];
     if (curOrigin !== 'all') cards = cards.filter(c => c.origin === curOrigin);
+    if (curFrequency !== 'all') cards = cards.filter(c => c.frequency && c.frequency.key === curFrequency);
     UI.qs('#kanban').innerHTML = LC_COLS.map(col => {
       const list = cards.filter(c => c.lifecycle === col.key);
       return `<div class="kan-col"><div class="kan-h"><span class="accent" style="background:${col.accent}"></span><span class="t">${col.title}</span><span class="n">${list.length}</span></div><div class="kan-b">${list.map(kanCard).join('') || '<div class="empty-state" style="padding:18px">пусто</div>'}</div></div>`;
@@ -158,18 +163,20 @@ UI.ready(async function () {
     const url = c.lastJob ? ('backtesting.html?job=' + encodeURIComponent(c.lastJob)) : ('backtesting.html?strategy=' + encodeURIComponent(c.name));
     const metrics = [
       ['Чистый P&L (2024-25)', m.net_profit_after_commission != null ? UI.money(m.net_profit_after_commission, { sign: true }) : '—', UI.pnlClass(m.net_profit_after_commission || 0)],
-      ['Profit Factor', m.profit_factor_after_commission != null ? Number(m.profit_factor_after_commission).toFixed(2) : '—', ''],
-      ['Win Rate', m.winning_pct != null ? UI.pct(m.winning_pct) : '—', 'info'],
-      ['Сделок', m.trade_count != null ? m.trade_count : '—', ''],
+      ['Profit Factor', m.profit_factor_after_commission != null ? Number(m.profit_factor_after_commission).toFixed(2) : '—', AuroraDomain.metricTone('pf', m.profit_factor_after_commission)],
+      ['Win Rate', m.winning_pct != null ? UI.pct(m.winning_pct) : '—', AuroraDomain.metricTone('win', m.winning_pct)],
+      ['Сделок', m.trade_count != null ? m.trade_count : '—', AuroraDomain.metricTone('trades', m.trade_count, c.period)],
       ['Просадка', m.max_drawdown != null ? UI.money(m.max_drawdown) : '—', 'neg'],
       ['Полож. кварталы', m.positive_quarters || '—', ''],
       ['IS 2024 aPF', m.is_2024_adj_pf != null ? Number(m.is_2024_adj_pf).toFixed(2) : '—', ''],
       ['OOS 2025 aPF', m.oos_2025_adj_pf != null ? Number(m.oos_2025_adj_pf).toFixed(2) : '—', ''],
     ];
     const dec = c.decision || {};
+    const frequency = c.frequency || AuroraDomain.frequencyAssessment(m.trade_count, c.period || {});
     UI.drawer(
       `<div class="tb-title"><span class="tb-kicker">${UI.esc([c.cell, c.root, c.tf, c.originLabel].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(c.name)}</span></div>`,
-      `<div class="flex wrap gap-sm">${statusBadge(c)}${c.family ? `<span class="tag">семейство ${UI.esc(c.family)}</span>` : ''}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}${c.updated ? `<span class="tag">обновл. ${fmtDate(c.updated)}</span>` : ''}</div>
+      `<div class="flex wrap gap-sm">${statusBadge(c)}${c.family ? `<span class="tag">семейство ${UI.esc(c.family)}</span>` : ''}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="badge ${frequency.key === 'normal' ? 'live' : 'trial'}" title="${UI.esc(frequency.explanation || '')}">${UI.esc(frequency.label)} · ${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1)}/нед</span>${c.updated ? `<span class="tag">обновл. ${fmtDate(c.updated)}</span>` : ''}</div>
+       <div class="finance-note" style="margin-top:12px"><strong>Политика частоты:</strong> ожидаемая прибыль — ${UI.esc(frequency.profit_expectation || 'не определена')}; риск — ${UI.esc(frequency.risk_expectation || 'не определён')}. ${UI.esc(frequency.explanation || '')}</div>
        <div class="grid cols-4" style="margin-top:14px">${metrics.map(mm => `<div class="kpi"><div class="kpi-label">${mm[0]}</div><div class="kpi-val sm ${mm[2]}">${mm[1]}</div></div>`).join('')}</div>
        ${dec.verdict ? `<section class="panel" style="margin-top:14px"><div class="panel-h"><h2>Решение: ${UI.esc(dec.verdict)}</h2></div><div class="panel-b col gap-sm"><p class="muted" style="font-size:12.5px">${UI.esc(dec.reason || '')}</p>${dec.weaknesses && dec.weaknesses.length ? `<div><strong style="font-size:12px">Слабые места</strong><ul style="margin:6px 0 0 16px;font-size:12px;color:var(--tx-2)">${dec.weaknesses.map(w => `<li>${UI.esc(w)}</li>`).join('')}</ul></div>` : ''}${dec.next_test ? `<div class="muted" style="font-size:12px"><strong>След. тест:</strong> ${UI.esc(dec.next_test)}</div>` : ''}</div></section>` : ''}
        <section class="panel" style="margin-top:14px"><div class="panel-h"><h2>Фактическая торговля и готовность</h2><span class="sub">runtime NinjaTrader · отдельно от бэктеста</span></div><div class="panel-b" id="sd-live"><div class="state-loading"><span class="spinner"></span>Сопоставление runtime и сделок...</div></div></section>
@@ -251,7 +258,7 @@ UI.ready(async function () {
     if (perfRow && (perfRow.daily || []).length) {
       let cumulative = 0;
       const daily = perfRow.daily;
-      Chart.line(UI.qs('#sd-live-chart'), [{ name: 'Фактический P&L', color: '#45c7b8', values: daily.map(day => (cumulative += Number(day.pnl || 0))) }], { area: true, money: true, height: 240, baseZero: true, labels: daily.map((day, index) => index % 25 === 0 ? day.date.slice(5) : '') });
+      Chart.pnl(UI.qs('#sd-live-chart'), daily.map(day => (cumulative += Number(day.pnl || 0))), { money: true, height: 240, labels: daily.map(day => day.date) });
     }
   }
 
@@ -324,6 +331,7 @@ UI.ready(async function () {
 
   function wireControls() {
     UI.qsa('#origin button').forEach(b => b.onclick = () => { UI.qsa('#origin button').forEach(x => x.classList.remove('active')); b.classList.add('active'); curOrigin = b.dataset.o; renderKanban(); });
+    UI.qsa('#frequency-filter button').forEach(b => b.onclick = () => { UI.qsa('#frequency-filter button').forEach(x => x.classList.remove('active')); b.classList.add('active'); curFrequency = b.dataset.frequency; renderKanban(); });
     UI.qs('#hide-rejected').onchange = renderMatrix;
     UI.qs('#rejected-btn').onclick = openArchiveDrawer;
     UI.qs('#add-root-btn').onclick = openAddRoot;

@@ -17,7 +17,7 @@ AURORA = STATIC / "aurora"
 
 NEW_PAGES = [
     "index.html", "backtesting.html", "trading.html", "performance.html",
-    "strategies.html", "ai-lab.html", "documents.html",
+    "strategies.html", "ai-lab.html", "news.html", "topstep.html", "documents.html",
 ]
 LEGACY_PAGES = [
     "index.html", "trading.html", "strategies.html", "performance.html",
@@ -54,6 +54,8 @@ def test_aurora_page_controllers_call_real_endpoints():
         "trading.js": "API.http.runtimeAccounts",
         "ai-lab.js": "API.http.aiSummary",
         "backtesting.js": "API.http.reports",
+        "news.js": "API.http.news",
+        "topstep.js": "API.http.topstepStatus",
     }
     for fname, needle in expected.items():
         js = (AURORA / "assets" / "pages" / fname).read_text(encoding="utf-8")

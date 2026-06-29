@@ -5,7 +5,9 @@
 | URL | Result |
 |---|---|
 | `/`, `/ui/`, `/ui/index.html` | Aurora Overview (primary) |
-| `/ui/backtesting.html` ... `/ui/documents.html` | Aurora pages |
+| `/ui/backtesting.html` ... `/ui/documents.html` | Aurora operational pages |
+| `/ui/news.html` | real-news aggregator scaffold (no mock feed) |
+| `/ui/topstep.html` | read-only TopStep integration status |
 | `/ui/assets/*` | Aurora assets |
 | `/ui/legacy/`, `/ui/legacy/<file>` | classic UI from `app/static/` |
 | `/ui/ai-strategy.html` | redirect to Aurora AI Lab |

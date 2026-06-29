@@ -89,6 +89,25 @@ def test_trading_series_contains_only_trade_pnl_and_drawdown():
     assert all("deposit" not in row and "balance" not in row for row in out)
 
 
+def test_aurora_report_assessment_matches_frequency_policy_and_confidence_rules():
+    out = _domain_eval("""
+      (() => {
+        const period = {from_utc:'2026-01-01T00:00:00Z', to_utc:'2026-01-08T00:00:00Z'};
+        const longPeriod = {from_utc:'2026-01-01T00:00:00Z', to_utc:'2026-04-01T00:00:00Z'};
+        const metrics = {winning_pct:50, profit_factor:1, max_drawdown:100};
+        return {
+          frequencies:[1,2,7,8].map(n => AuroraDomain.frequencyAssessment(n, period).key),
+          profitable:AuroraDomain.confidenceAssessment(100, longPeriod, {...metrics, net_profit:50000}),
+          losing:AuroraDomain.confidenceAssessment(100, longPeriod, {...metrics, net_profit:-50000}),
+          tones:[AuroraDomain.metricTone('win', 60), AuroraDomain.metricTone('win', 40), AuroraDomain.metricTone('pnl', -1)]
+        };
+      })()
+    """)
+    assert out["frequencies"] == ["rare", "normal", "normal", "frequent"]
+    assert out["profitable"] == out["losing"]
+    assert out["tones"] == ["pos", "neg", "neg"]
+
+
 def test_market_phase_handles_weekend_and_daily_maintenance_in_pt():
     dates = [
         "2026-06-29T20:59:00Z",  # Monday 13:59 PT
@@ -240,6 +259,8 @@ def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     ai_lab = (AURORA / "assets" / "pages" / "ai-lab.js").read_text(encoding="utf-8")
 
     assert "canvas._barGeo" in charts and "tooltipLabel" in charts
+    assert "function pnl(" in charts and "function price(" in charts
+    assert "entry_time_utc" in charts and "exit_time_utc" in charts
     assert "canvas.onmousemove" in charts and "t-detail" in charts
     assert "tooltipLabel: String(row.label" in overview
     assert "data-report-spark" in backtesting and "API.http.jobTrades" in backtesting

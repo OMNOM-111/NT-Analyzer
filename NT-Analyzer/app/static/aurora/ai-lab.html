@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>AI Lab — NT-Analyzer</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260629-final3">
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final4">
 <style>
   .ai-matrix { display:grid; grid-template-columns: repeat(auto-fill, 26px); gap:5px; }
   .ai-cell { width:26px; height:26px; border-radius:7px; cursor:pointer; border:1px solid var(--line-2); transition:.1s; }
@@ -92,6 +92,15 @@
     </div>
   </section>
 
+  <section class="panel">
+    <div class="panel-h"><h2>Внешние платные агенты</h2><span class="sub" id="external-agent-sub">выполнение отключено до настройки бюджета</span></div>
+    <div class="panel-b col gap-lg">
+      <div class="grid cols-4" id="external-agent-kpis"></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Агент / роль</th><th>Задача</th><th>Статус</th><th>Последнее взаимодействие</th><th class="num">Токены</th><th class="num">Стоимость</th></tr></thead><tbody id="external-agent-body"></tbody></table></div>
+      <div class="finance-note">Этот контур отделён от локальных моделей. Backend не запускает внешних агентов автоматически: сначала задаётся общий бюджет, затем проводится отдельный security-аудит и включается исполнение.</div>
+    </div>
+  </section>
+
   <!-- experiment matrix + portfolio -->
   <div class="grid" style="grid-template-columns: 1fr 1fr;">
     <section class="panel">
@@ -136,10 +145,10 @@
     </section>
   </div>
 
-<script src="assets/charts.js?v=20260629-final3"></script>
-<script src="assets/api.js?v=20260629-final3"></script>
-<script src="assets/domain.js?v=20260629-final3"></script>
-<script src="assets/ui.js?v=20260629-final3"></script>
-<script src="assets/pages/ai-lab.js?v=20260629-final3"></script>
+<script src="assets/charts.js?v=20260629-final4"></script>
+<script src="assets/api.js?v=20260629-final4"></script>
+<script src="assets/domain.js?v=20260629-final4"></script>
+<script src="assets/ui.js?v=20260629-final4"></script>
+<script src="assets/pages/ai-lab.js?v=20260629-final4"></script>
 </body>
 </html>

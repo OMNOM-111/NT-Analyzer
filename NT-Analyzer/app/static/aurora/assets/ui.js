@@ -12,6 +12,9 @@
     strategies: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     ai: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="3"/><path d="M10 10h4v4h-4z"/>',
     docs: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+    news: '<path d="M4 5h12v14H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1Z"/><path d="M16 8h4v9a2 2 0 0 1-2 2h-2M7 9h6M7 13h6M7 16h4"/>',
+    trophy: '<path d="M8 4h8v4a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4v2a4 4 0 0 0 4 4M16 6h4v2a4 4 0 0 1-4 4M12 12v5M8 21h8M9 17h6"/>',
+    telegram: '<path d="m21 3-4 18-6-5-4 3 1-6 9-7-11 6-4-2 19-7Z"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 4v4h-4"/>',
     play: '<path d="M6 4l14 8-14 8V4Z"/>',
@@ -52,6 +55,8 @@
     { id: 'performance', label: 'Доход', href: 'performance.html', icon: 'performance' },
     { id: 'strategies', label: 'Стратегии', href: 'strategies.html', icon: 'strategies' },
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
+    { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
+    { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
   let runtimeAccounts = [];
@@ -283,6 +288,24 @@
     } catch (e) { renderError(body, e, showDiagnostics); }
   }
 
+  async function showIntegrations() {
+    if (!window.API || API.config.offline) { toast('Интеграции недоступны в офлайн-превью'); return; }
+    const d = drawer('<h3>Интеграции и уведомления</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка конфигурации…</div>');
+    const body = qs('.drawer-b', d);
+    try {
+      const status = await API.http.integrationsStatus();
+      const rows = [
+        ['Telegram', status.telegram, 'Уведомления; команды заблокированы до security-аудита'],
+        ['TopStep', status.topstep, 'Только одобренные стратегии через NinjaTrader; live-действия пока заблокированы'],
+        ['Новости', status.news, 'Отображаются только реальные сохранённые источники'],
+        ['Платные AI-агенты', status.external_agents, 'Бюджет и выполнение требуют отдельного разрешения'],
+      ];
+      body.innerHTML = `<div class="list">${rows.map(([name, item, note]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(name)}</div><div class="row-sub">${esc(note)}</div></div><span class="badge ${item && item.configured ? 'live' : 'archived'}"><span class="dot"></span>${item && item.configured ? 'настроено' : 'не настроено'}</span></div>`).join('')}</div>
+        <div class="finance-note"><strong>Безопасность:</strong> токены и API-ключи никогда не возвращаются в браузер. Подключение выполняется через переменные окружения backend.</div>
+        <div class="flex wrap gap-sm"><a class="btn" href="topstep.html">TopStep</a><a class="btn" href="news.html">Новости</a><a class="btn" href="ai-lab.html">AI-агенты</a></div>`;
+    } catch (error) { renderError(body, error, showIntegrations); }
+  }
+
   function wireTopbar() {
     const offline = !window.API || API.config.offline;
     const legacyUrl = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/';
@@ -293,6 +316,7 @@
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
+        { icon: 'telegram', label: 'Интеграции и Telegram', onClick: () => showIntegrations() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
           if (!confirm('Перезапустить python-backend? Активные HTTP-запросы прервутся.')) return;

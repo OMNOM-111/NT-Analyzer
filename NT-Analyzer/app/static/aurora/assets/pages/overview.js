@@ -67,6 +67,7 @@ async function renderLive() {
     API.http.coverage({}, { signal: UI.signal() }),
     API.http.aiSummary({}, { signal: UI.signal() }),
     API.http.health({}, { signal: UI.signal() }),
+    API.http.news({ limit: 5 }, { signal: UI.signal() }),
   ]);
   const value = index => settled[index].status === 'fulfilled' ? settled[index].value : null;
   const month = value(0);
@@ -77,6 +78,7 @@ async function renderLive() {
   const coverage = value(5);
   const ai = value(6);
   const health = value(7);
+  const news = value(8);
   if (!month && !year && !accountDoc && !coverage && !ai && !health) {
     UI.renderError(kpiBox, settled[0].reason || new Error('backend недоступен'), renderLive);
     return;
@@ -89,6 +91,7 @@ async function renderLive() {
   wireRhythm(year);
   renderTopStrategies(month);
   renderReports(reports);
+  renderNews(news);
   renderSystems(selectedAccount, month, coverage, ai, health);
 }
 
@@ -118,10 +121,7 @@ function wireEquity(month, year, accountName) {
     if (sub) sub.textContent = data ? `${series.length} сессий · реализованный P&L стратегий, без пополнений и выводов` : 'данные недоступны';
     if (!data || !values.length) { UI.renderEmpty(box, (data && data.empty_message) || 'Нет сделок за период.'); return; }
     box.innerHTML = '<canvas id="eq-chart" style="height:300px"></canvas>';
-    Chart.line(UI.qs('#eq-chart'), [{ name: 'Стратегии', color: '#6e8bff', values }], {
-      area: true, money: true, height: 300, baseZero: true,
-      labels: series.map(row => row.date),
-    });
+    Chart.pnl(UI.qs('#eq-chart'), values, { money: true, height: 300, labels: series.map(row => row.date) });
   }
   async function select(range, button) {
     UI.qsa('#eq-range button').forEach(item => item.classList.toggle('active', item === button));
@@ -230,6 +230,19 @@ function renderReports(reports) {
     const ai = job.origin && job.origin.type === 'ai_lab';
     return `<a class="row" href="backtesting.html?job=${encodeURIComponent(job.job_id || '')}"><div class="row-main"><div class="row-title">${UI.esc(job.label || job.name || job.job_id || 'отчёт')} ${ai ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div><div class="row-sub">${UI.esc(job.strategy || job.class_name || '')} · ${UI.esc(job.status || '')}</div></div><div class="row-val ${pnl != null ? UI.pnlClass(pnl) : 'muted'}">${pnl != null ? UI.money(pnl, { sign: true }) : '—'}</div></a>`;
   }).join('') : '<div class="empty-state">Отчётов пока нет.</div>';
+}
+
+function renderNews(news) {
+  const box = UI.qs('#news-overview');
+  const sub = UI.qs('#news-overview-sub');
+  const rows = (news && news.items) || [];
+  if (!news || !news.configured) {
+    if (sub) sub.textContent = 'источники не настроены';
+    UI.renderEmpty(box, 'Новостной агрегатор подготовлен. Реальные источники пока не подключены.');
+    return;
+  }
+  if (sub) sub.textContent = `${news.total || rows.length} событий`;
+  box.innerHTML = rows.length ? rows.map(item => `<a class="row" href="news.html"><span class="badge ${item.impact === 'high' ? 'failed' : item.impact === 'medium' ? 'trial' : 'demo'}">${UI.esc(item.impact || '—')}</span><div class="row-main"><div class="row-title">${UI.esc(item.title)}</div><div class="row-sub">${UI.esc(item.source || '')} · ${item.published_at_utc ? new Date(item.published_at_utc).toLocaleString('ru-RU') : 'время не указано'}</div></div><div class="row-val mono">${UI.esc((item.instruments || []).join(', '))}</div></a>`).join('') : '<div class="empty-state">Источники подключены, но сохранённых событий пока нет.</div>';
 }
 
 function renderSystems(account, month, coverage, ai, health) {

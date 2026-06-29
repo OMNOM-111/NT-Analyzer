@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Новости рынка — NT-Analyzer</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260629-final4">
+<style>
+  .news-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}.news-item{padding:16px 18px;border-bottom:1px solid var(--line)}.news-item:last-child{border-bottom:0}.news-item h3{margin:6px 0;font-size:15px}.impact-high{border-left:3px solid var(--neg)}.impact-medium{border-left:3px solid var(--warn)}.impact-low{border-left:3px solid var(--info)}
+  @media(max-width:900px){.news-layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body data-page="news" data-title="Новости рынка" data-kicker="NT-Analyzer · Market intelligence">
+  <div class="news-layout">
+    <section class="panel">
+      <div class="panel-h"><h2>Лента событий</h2><span class="sub" id="news-summary">проверка источников…</span><div class="spacer"></div><select id="news-impact"><option value="all">Любое влияние</option><option value="high">Высокое</option><option value="medium">Среднее</option><option value="low">Низкое</option></select></div>
+      <div id="news-list"></div>
+    </section>
+    <aside class="panel">
+      <div class="panel-h"><h2>Принцип работы</h2></div>
+      <div class="panel-b col gap-lg"><div class="finance-note">Страница не создаёт новости и не подменяет источники демонстрационными данными. Здесь появляются только реально сохранённые события.</div><div class="list"><div class="row"><div class="row-main"><div class="row-title">Высокое влияние</div><div class="row-sub">FOMC, CPI, NFP, экстренные события</div></div><span class="badge failed">high</span></div><div class="row"><div class="row-main"><div class="row-title">Связь с инструментами</div><div class="row-sub">Каждое событие может иметь список затронутых фьючерсов</div></div></div></div></div>
+    </aside>
+  </div>
+<script src="assets/api.js?v=20260629-final4"></script>
+<script src="assets/domain.js?v=20260629-final4"></script>
+<script src="assets/ui.js?v=20260629-final4"></script>
+<script src="assets/pages/news.js?v=20260629-final4"></script>
+</body>
+</html>

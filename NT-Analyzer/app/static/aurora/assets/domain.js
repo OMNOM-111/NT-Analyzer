@@ -37,7 +37,7 @@
       className: first(strategy.class_name, context.strategy && context.strategy.class_name, summary.class_name, detail.job_id),
       status: first(detail.status, summary.status),
       reportNo: first(detail.report_no, summary.report_no),
-      favorite: !!summary.favorite,
+      favorite: !!(detail.favorite || summary.favorite),
       parameters: strategy.parameters || strategy.final_parameters || (context.strategy && context.strategy.final_parameters) || {},
       warnings: result.verification_warnings || [],
       artifacts: result.artifacts || {},
@@ -54,6 +54,82 @@
   function tradeTime(trade, kind) {
     trade = trade || {};
     return first(trade[kind + '_time_utc'], trade[kind + '_time'], trade.timestamp_utc, trade.time);
+  }
+
+  function periodDays(period) {
+    period = period || {};
+    const start = Date.parse(period.from_utc || '');
+    const end = Date.parse(period.to_utc || '');
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    return Math.max(1, (end - start) / 86400000);
+  }
+
+  function frequencyAssessment(tradeCount, period) {
+    const trades = Math.max(0, Number(tradeCount) || 0);
+    const days = periodDays(period);
+    const weeks = days == null ? null : Math.max(1 / 7, days / 7);
+    const perWeek = weeks == null ? null : trades / weeks;
+    if (perWeek == null) return {
+      key: 'unknown', label: 'частота неизвестна', trades_per_week: null,
+      risk_expectation: 'не определён', profit_expectation: 'не определена',
+      explanation: 'Нужен корректный период отчёта.',
+    };
+    if (perWeek < 2) return {
+      key: 'rare', label: 'редко', trades_per_week: perWeek, risk_expectation: 'низкий',
+      profit_expectation: 'высокая', explanation: 'Менее 2 сделок в неделю. Требуется высокая прибыль на сделку и устойчивый результат.',
+    };
+    if (perWeek <= 7) return {
+      key: 'normal', label: 'нормально', trades_per_week: perWeek, risk_expectation: 'средний',
+      profit_expectation: 'хорошая', explanation: '2–7 сделок в неделю. Ожидаются хорошая прибыль и средний контролируемый риск.',
+    };
+    return {
+      key: 'frequent', label: 'часто', trades_per_week: perWeek, risk_expectation: 'умеренно повышенный',
+      profit_expectation: 'минимально допустимая', explanation: 'Более 7 сделок в неделю. Допустима меньшая прибыль на сделку, но требуется контроль переторговки.',
+    };
+  }
+
+  function confidenceAssessment(tradeCount, period, metrics) {
+    const trades = Math.max(0, Math.trunc(Number(tradeCount) || 0));
+    if (!trades) return { score: 0, level: 'insufficient', label: 'нет данных', reasons: ['нет завершённых сделок'] };
+    let score = trades >= 200 ? 90 : trades >= 100 ? 82 : trades >= 50 ? 72 : trades >= 20 ? 58 : trades >= 10 ? 42 : trades >= 5 ? 28 : 14;
+    const reasons = [`размер выборки: ${trades} сделок`];
+    const days = periodDays(period);
+    if (days == null) { score -= 8; reasons.push('период отчёта не определён'); }
+    else {
+      const weeks = days / 7;
+      if (weeks >= 26) score += 8; else if (weeks >= 12) score += 5; else if (weeks >= 4) score += 2; else if (weeks < 2) score -= 10;
+      reasons.push(`покрытие периода: ${Math.round(days)} дней`);
+    }
+    metrics = metrics || {};
+    const complete = ['winning_pct', 'profit_factor', 'max_drawdown'].filter(key => metrics[key] != null).length;
+    if (complete === 3) { score += 3; reasons.push('основные метрики заполнены'); }
+    else if (!complete) { score -= 5; reasons.push('основные метрики отсутствуют'); }
+    if (trades < 5) score = Math.min(score, 18); else if (trades < 10) score = Math.min(score, 28); else if (trades < 20) score = Math.min(score, 42); else if (trades < 50) score = Math.min(score, 65);
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const level = score >= 75 ? 'high' : score >= 45 ? 'medium' : score >= 25 ? 'low' : 'very_low';
+    const labels = { high: 'высокое', medium: 'среднее', low: 'низкое', very_low: 'очень низкое' };
+    return { score, level, label: labels[level], reasons };
+  }
+
+  function assessReport(tradeCount, period, metrics) {
+    return {
+      frequency: frequencyAssessment(tradeCount, period),
+      confidence: confidenceAssessment(tradeCount, period, metrics),
+    };
+  }
+
+  function metricTone(kind, value, context) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return 'muted';
+    if (kind === 'pnl') return number > 0 ? 'pos' : number < 0 ? 'neg' : 'muted';
+    if (kind === 'win') return number >= 55 ? 'pos' : number >= 45 ? 'warn' : 'neg';
+    if (kind === 'pf') return number >= 1.3 ? 'pos' : number >= 1 ? 'warn' : 'neg';
+    if (kind === 'confidence') return number >= 75 ? 'pos' : number >= 45 ? 'info' : number >= 25 ? 'warn' : 'neg';
+    if (kind === 'trades') {
+      const frequency = frequencyAssessment(number, context || {});
+      return frequency.key === 'normal' ? 'pos' : frequency.key === 'unknown' ? 'muted' : 'warn';
+    }
+    return 'muted';
   }
 
   function tradingSeries(strategies) {
@@ -263,6 +339,11 @@
     normalizeJobDetail,
     tradePnl,
     tradeTime,
+    periodDays,
+    frequencyAssessment,
+    confidenceAssessment,
+    assessReport,
+    metricTone,
     tradingSeries,
     ptParts,
     marketPhaseAt,

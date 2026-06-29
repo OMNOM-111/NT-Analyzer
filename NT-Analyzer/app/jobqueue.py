@@ -30,6 +30,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from . import governance
 from . import marginrefresh  # informational margin catalog auto-refresh
 from . import portfolio_cells
+from . import report_assessment
 from . import strategy_families
 from . import strategy_lifecycle
 from . import ninjatrader_ops
@@ -74,11 +75,15 @@ VALIDATED_AGAINST_STRATEGY_ANALYZER = True
 #
 # Cache invalidation is automatic: a folder's mtime changes when a status
 # move (running -> done) happens or when the bridge writes new artefacts.
-# Cache survives only in process memory; restart = clean rebuild.
+# The hot subset lives in memory. A compact derived snapshot is also persisted
+# beside the jobs directory so global report sorting does not re-read thousands
+# of immutable result files after every backend restart.
 # ---------------------------------------------------------------------------
 
 # job_id -> (signature, summary_dict).  signature == (status, mtime).
 _JOB_SUMMARY_CACHE: Dict[str, Tuple[Tuple[str, float], Dict[str, Any]]] = {}
+_JOB_SUMMARY_CACHE_LOADED = False
+_JOB_SUMMARY_CACHE_DIRTY = False
 _JOB_LOCATION_FP: Optional[Tuple[int, float]] = None
 _JOB_LOCATION_INDEX: Dict[str, Tuple[str, Path, float]] = {}
 
@@ -134,12 +139,15 @@ def _safe_child_path(parent: Path, child_name: str, kind: str) -> Path:
 def reset_caches() -> None:
     """Drop in-memory list_jobs/list_batches caches (used by tests)."""
     global _JOB_LOCATION_FP, _JOB_LOCATION_INDEX
+    global _JOB_SUMMARY_CACHE_LOADED, _JOB_SUMMARY_CACHE_DIRTY
     global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE, _REPORT_NUMBERS_FILE_SIG
     global _REPORT_FAVORITES_RAW_SIG, _REPORT_FAVORITES_RAW_VALUE
     global _REPORT_FAVORITE_KEYS_SIG, _REPORT_FAVORITE_KEYS_VALUE
     global _JSON_ARRAY_ARTIFACT_CACHE_BYTES
     global _PORTFOLIO_LAYOUT_FP, _PORTFOLIO_LAYOUT_VALUE
     _JOB_SUMMARY_CACHE.clear()
+    _JOB_SUMMARY_CACHE_LOADED = False
+    _JOB_SUMMARY_CACHE_DIRTY = False
     _BATCH_METRICS_CACHE.clear()
     _JSON_ARRAY_ARTIFACT_CACHE.clear()
     _JSON_ARRAY_ARTIFACT_CACHE_ORDER.clear()
@@ -156,6 +164,62 @@ def reset_caches() -> None:
     _PORTFOLIO_LAYOUT_FP = None
     _PORTFOLIO_LAYOUT_VALUE = {"profiles": {}, "lookup": {}}
     strategy_families.reset_caches()
+
+
+def _report_summary_cache_path() -> Path:
+    return jobs_dir().parent / "cache" / "report_summaries_v2.json"
+
+
+def _load_persisted_report_summaries() -> None:
+    global _JOB_SUMMARY_CACHE_LOADED, _JOB_SUMMARY_CACHE_DIRTY
+    if _JOB_SUMMARY_CACHE_LOADED:
+        return
+    _JOB_SUMMARY_CACHE_LOADED = True
+    path = _report_summary_cache_path()
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return
+    for job_id, payload in jobs.items():
+        if not isinstance(payload, dict) or not isinstance(payload.get("summary"), dict):
+            continue
+        signature = payload.get("signature")
+        if not isinstance(signature, list) or len(signature) != 2:
+            continue
+        try:
+            _JOB_SUMMARY_CACHE[str(job_id)] = (
+                (str(signature[0]), float(signature[1])),
+                payload["summary"],
+            )
+        except (TypeError, ValueError):
+            continue
+    _JOB_SUMMARY_CACHE_DIRTY = False
+
+
+def _persist_report_summaries() -> None:
+    global _JOB_SUMMARY_CACHE_DIRTY
+    if not _JOB_SUMMARY_CACHE_DIRTY:
+        return
+    path = _report_summary_cache_path()
+    payload = {
+        "schema_version": 1,
+        "updated_at_utc": utcnow_iso(),
+        "jobs": {
+            job_id: {"signature": [signature[0], signature[1]], "summary": summary}
+            for job_id, (signature, summary) in _JOB_SUMMARY_CACHE.items()
+        },
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, path)
+        _JOB_SUMMARY_CACHE_DIRTY = False
+    except OSError:
+        return
 
 
 def cache_stats() -> Dict[str, int]:
@@ -3693,6 +3757,7 @@ def _indexed_job_rows() -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
 def _build_job_list_row(index_row: Dict[str, Any],
                         report_numbers: Dict[str, int],
                         favorite_keys: set[str]) -> Dict[str, Any]:
+    global _JOB_SUMMARY_CACHE_DIRTY
     r = dict(index_row)
     sig = (r["status"], r["mtime"])
     cached = _JOB_SUMMARY_CACHE.get(r["job_id"])
@@ -3702,6 +3767,7 @@ def _build_job_list_row(index_row: Dict[str, Any],
         meta = read_job_summary(r["job_id"], include_adjusted=False)
         if meta:
             _JOB_SUMMARY_CACHE[r["job_id"]] = (sig, meta)
+            _JOB_SUMMARY_CACHE_DIRTY = True
     if meta:
         r.update(meta)
     if not (r.get("batch") or {}).get("batch_id"):
@@ -4036,8 +4102,15 @@ def read_job_summary(job_id: str, include_adjusted: bool = True) -> Optional[Dic
                 summary["net_profit_after_commission"] = adj.get("net_profit_after_commission")
                 summary["profit_factor_after_commission"] = adj.get("profit_factor_after_commission")
                 summary["commission_total_adjusted"] = adj.get("commission_total_adjusted")
+                if adj.get("profit_factor_after_commission") is not None:
+                    summary["profit_factor"] = adj.get("profit_factor_after_commission")
         except Exception:
             pass
+
+        assessment = report_assessment.assess_report(summary.get("trade_count"), summary.get("period"), m)
+        summary["assessment"] = assessment
+        summary["frequency"] = assessment["frequency"]
+        summary["confidence"] = assessment["confidence"]
 
         summary["validated_against_strategy_analyzer"] = VALIDATED_AGAINST_STRATEGY_ANALYZER
     elif status == "failed":
@@ -4051,6 +4124,12 @@ def read_job_summary(job_id: str, include_adjusted: bool = True) -> Optional[Dic
         summary["duration_ms"] = res.get("duration_ms")
         summary["metrics"] = res.get("metrics") or {}
         summary["trade_count"] = summary["metrics"].get("trade_count")
+        assessment = report_assessment.assess_report(
+            summary.get("trade_count"), summary.get("period"), summary["metrics"]
+        )
+        summary["assessment"] = assessment
+        summary["frequency"] = assessment["frequency"]
+        summary["confidence"] = assessment["confidence"]
         summary["cancel_reason"] = res.get("reason")
         summary["verification_warnings"] = res.get("verification_warnings") or []
     elif status == "running":
@@ -4558,6 +4637,13 @@ def _build_batch_list_row(bdir_mtime: float,
             "profit_factor":   agg_metrics.get("profit_factor"),
             "max_drawdown":    agg_metrics.get("max_drawdown"),
         }
+        if include_metrics:
+            assessment = report_assessment.assess_report(
+                agg_payload.get("trade_count"), period, agg_metrics
+            )
+            agg_payload["assessment"] = assessment
+            agg_payload["frequency"] = assessment["frequency"]
+            agg_payload["confidence"] = assessment["confidence"]
         _BATCH_METRICS_CACHE[bid] = (sig, agg_payload)
     favorite_children_count = 0
     for c in children:
@@ -4652,7 +4738,7 @@ def _report_status_matches(status: str, status_filter: str) -> bool:
 def _coerce_report_sort_col(value: str) -> str:
     allowed = {
         "report_no", "mtime", "label", "strategy", "kind", "status", "period",
-        "trades", "winning_pct", "net_profit", "confidence",
+        "trades", "winning_pct", "profit_factor", "net_profit", "frequency", "confidence",
     }
     col = str(value or "mtime").strip()
     return col if col in allowed else "mtime"
@@ -4666,7 +4752,19 @@ def list_reports(limit: int = 100,
                  offset: int = 0,
                  sort_col: str = "mtime",
                  sort_dir: str = "desc",
-                 status_filter: str = "all") -> Dict[str, Any]:
+                 status_filter: str = "all",
+                 query: str = "",
+                 report_no: str = "",
+                 instrument: str = "",
+                 frequency: str = "",
+                 from_date: str = "",
+                 to_date: str = "",
+                 min_trades: Optional[float] = None,
+                 min_win: Optional[float] = None,
+                 min_pf: Optional[float] = None,
+                 pnl_sign: str = "",
+                 min_confidence: Optional[float] = None,
+                 analysis_limit: int = 500) -> Dict[str, Any]:
     """Mixed reports feed with one shared server-side pagination stream.
 
     The UI scrolls by pages, so sorting must happen before slicing.  The
@@ -4674,6 +4772,7 @@ def list_reports(limit: int = 100,
     mtime: opening a batch can update its folder mtime and otherwise makes old
     reports float above newer 4000+ reports.
     """
+    _load_persisted_report_summaries()
     job_rows, report_numbers = _indexed_job_rows()
     batch_rows = _indexed_batch_rows()
     favorite_keys = _report_favorite_key_set()
@@ -4717,7 +4816,10 @@ def list_reports(limit: int = 100,
             "row": (bdir_mtime, p),
         })
 
-    full_sort_cols = {"label", "strategy", "period", "trades", "winning_pct", "net_profit", "confidence"}
+    full_sort_cols = {
+        "label", "strategy", "period", "trades", "winning_pct", "profit_factor",
+        "net_profit", "frequency", "confidence",
+    }
     need_batch_status = status_filter not in {"all", "favorite"} or sort_col == "status"
     need_full_row = sort_col in full_sort_cols
     _fp, loc_index = _get_job_location_index()
@@ -4784,7 +4886,9 @@ def list_reports(limit: int = 100,
         elif sort_col == "status":
             primary = ensure_batch_status(item)
         else:
-            include_metrics = sort_col in {"trades", "winning_pct", "net_profit", "confidence"}
+            include_metrics = sort_col in {
+                "trades", "winning_pct", "profit_factor", "net_profit", "frequency", "confidence",
+            }
             row = materialized(item, include_metrics=include_metrics)
             if item["kind"] == "job":
                 label = row.get("instrument") or row.get("job_id") or ""
@@ -4807,12 +4911,25 @@ def list_reports(limit: int = 100,
                 primary = metric_value(trades)
             elif sort_col == "winning_pct":
                 primary = metric_value(row.get("winning_pct"))
+            elif sort_col == "profit_factor":
+                primary = metric_value(
+                    row.get("profit_factor_after_commission")
+                    if row.get("profit_factor_after_commission") is not None
+                    else row.get("profit_factor")
+                )
             elif sort_col == "net_profit":
-                primary = metric_value(row.get("net_profit"), -10**18)
+                primary = metric_value(
+                    row.get("net_profit_after_commission")
+                    if row.get("net_profit_after_commission") is not None
+                    else row.get("net_profit"),
+                    -10**18,
+                )
+            elif sort_col == "frequency":
+                frequency = row.get("frequency") if isinstance(row.get("frequency"), dict) else {}
+                primary = metric_value(frequency.get("trades_per_week"))
             else:
-                # Server keeps confidence sorting deterministic without
-                # duplicating the heavier client-side confidence formula.
-                primary = metric_value(row.get("net_profit"), -10**18)
+                confidence = row.get("confidence") if isinstance(row.get("confidence"), dict) else {}
+                primary = metric_value(confidence.get("score"))
         return (primary, rn_val, item["kind"], str(item["id"]))
 
     if need_batch_status:
@@ -4836,12 +4953,82 @@ def list_reports(limit: int = 100,
                 continue
         filtered.append(item)
 
+    query_key = str(query or "").strip().casefold()
+    report_no_key = str(report_no or "").strip().casefold()
+    instrument_key = str(instrument or "").strip().casefold()
+    frequency_key = str(frequency or "").strip().lower()
+    pnl_sign_key = str(pnl_sign or "").strip().lower()
+    has_column_filters = any([
+        query_key, report_no_key, instrument_key, frequency_key, from_date, to_date,
+        min_trades is not None, min_win is not None, min_pf is not None,
+        pnl_sign_key, min_confidence is not None,
+    ])
+    archive_total = len(filtered)
+    scope_limited = False
+    analysis_limit = max(0, min(int(analysis_limit or 0), 10000))
+    if report_no_key:
+        filtered = [item for item in filtered if report_no_key in str(item.get("report_no") or "").casefold()]
+    if (need_full_row or has_column_filters) and analysis_limit and len(filtered) > analysis_limit:
+        filtered.sort(key=lambda item: int(item.get("report_no") or -1), reverse=True)
+        filtered = filtered[:analysis_limit]
+        scope_limited = True
+    if has_column_filters:
+        refined: List[Dict[str, Any]] = []
+        for item in filtered:
+            row = materialized(item, include_metrics=True)
+            instruments = row.get("instruments") if isinstance(row.get("instruments"), list) else []
+            instrument_text = " ".join(str(value) for value in instruments) if instruments else str(row.get("instrument") or "")
+            label = str(row.get("name") or row.get("label") or row.get("class_name") or row.get("job_id") or row.get("batch_id") or "")
+            strategy = str(row.get("class_name") or "")
+            searchable = " ".join([label, strategy, instrument_text, str(item.get("id") or "")]).casefold()
+            if query_key and query_key not in searchable:
+                continue
+            if report_no_key and report_no_key not in str(row.get("report_no") or "").casefold():
+                continue
+            if instrument_key and instrument_key not in instrument_text.casefold():
+                continue
+            created = str(row.get("created_at_utc") or "")[:10]
+            if from_date and created and created < str(from_date)[:10]:
+                continue
+            if to_date and created and created > str(to_date)[:10]:
+                continue
+            if min_trades is not None and metric_value(row.get("trade_count"), -1) < min_trades:
+                continue
+            if min_win is not None and metric_value(row.get("winning_pct"), -1) < min_win:
+                continue
+            pf_value = row.get("profit_factor_after_commission") if row.get("profit_factor_after_commission") is not None else row.get("profit_factor")
+            if min_pf is not None and metric_value(pf_value, -1) < min_pf:
+                continue
+            net = metric_value(
+                row.get("net_profit_after_commission")
+                if row.get("net_profit_after_commission") is not None
+                else row.get("net_profit"),
+                0,
+            )
+            if pnl_sign_key == "positive" and net <= 0:
+                continue
+            if pnl_sign_key == "negative" and net >= 0:
+                continue
+            frequency_doc = row.get("frequency") if isinstance(row.get("frequency"), dict) else {}
+            if frequency_key and frequency_doc.get("key") != frequency_key:
+                continue
+            confidence_doc = row.get("confidence") if isinstance(row.get("confidence"), dict) else {}
+            if min_confidence is not None and metric_value(confidence_doc.get("score"), -1) < min_confidence:
+                continue
+            refined.append(item)
+        filtered = refined
+
     if need_full_row:
-        include_metrics = sort_col in {"trades", "winning_pct", "net_profit", "confidence"}
+        include_metrics = sort_col in {
+            "trades", "winning_pct", "profit_factor", "net_profit", "frequency", "confidence",
+        }
         for item in filtered:
             materialized(item, include_metrics=include_metrics)
 
     filtered.sort(key=sort_key, reverse=(sort_dir == "desc"))
+
+    if need_full_row or has_column_filters:
+        _persist_report_summaries()
 
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 100))
@@ -4858,9 +5045,18 @@ def list_reports(limit: int = 100,
         "offset": offset,
         "limit": limit,
         "total": len(filtered),
+        "archive_total": archive_total,
+        "analysis_limit": analysis_limit,
+        "scope_limited": scope_limited,
         "sort": sort_col,
         "dir": sort_dir,
         "filter": status_filter,
+        "column_filters": {
+            "query": query, "report_no": report_no, "instrument": instrument,
+            "frequency": frequency, "from": from_date, "to": to_date,
+            "min_trades": min_trades, "min_win": min_win, "min_pf": min_pf,
+            "pnl_sign": pnl_sign, "min_confidence": min_confidence,
+        },
         "jobs": jobs,
         "batches": batches,
     }
