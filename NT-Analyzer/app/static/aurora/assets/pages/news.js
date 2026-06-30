@@ -24,6 +24,7 @@ UI.ready(async function () {
     cal: null,
     selDay: null,
   };
+  const RECENT_NEWS_MAX_AGE_MIN = 720;
 
   // ---- time helpers (PT-first) -------------------------------------------
   const fmtKey  = new Intl.DateTimeFormat('en-CA', { timeZone: PTZ, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -47,6 +48,24 @@ UI.ready(async function () {
     return `${Math.floor(h / 24)} дн назад`;
   }
   const sev = i => (i.severity || i.impact || 'low');
+
+  function recentLiveItems() {
+    return ((state.live.items || []).filter(item => {
+      if (!item || !item.title) return false;
+      if (sev(item) !== 'high' && sev(item) !== 'medium') return false;
+      return item.age_min == null || (item.age_min >= -5 && item.age_min <= RECENT_NEWS_MAX_AGE_MIN);
+    })).sort((a, b) => new Date(b.published_at_utc || b.event_time_utc || 0) - new Date(a.published_at_utc || a.event_time_utc || 0));
+  }
+
+  function providerErrorText(error) {
+    const text = String(error || '').trim();
+    const lower = text.toLowerCase();
+    if (!text) return 'нет данных';
+    if (lower.includes('25 requests per day') || lower.includes('premium') || lower.includes('rate limit') || lower.includes('дневной лимит')) {
+      return 'лимит free-tier исчерпан; Alpha Vantage временно пропущен';
+    }
+    return text;
+  }
 
   // ---- filtering ---------------------------------------------------------
   function filtered() {
@@ -151,20 +170,26 @@ UI.ready(async function () {
         evCls,
       ].filter(Boolean).join(' ');
 
-      // Show up to 2 event badges inside the cell
-      const shown = evs.slice(0, 2);
+      // Show events directly inside the cell, under the date number.
+      const shown = evs.slice(0, 3);
       const badges = shown.map(e =>
-        `<div class="cal-ev s-${UI.esc(sev(e))}"><span class="dot"></span>${UI.esc(pt(e.event_time_utc).time)} ${UI.esc((e.title || '').slice(0, 12))}</div>`
+        `<div class="cal-ev s-${UI.esc(sev(e))}"><span class="dot"></span><span class="cal-ev-time">${UI.esc(pt(e.event_time_utc).time)}</span><span class="cal-ev-title">${UI.esc(e.title || '')}</span></div>`
       ).join('');
-      const more = evs.length > 2 ? `<div class="cal-more">+${evs.length - 2}</div>` : '';
+      const more = evs.length > 3 ? `<div class="cal-more">+${evs.length - 3}</div>` : '';
       const badge = evs.length ? `<span class="cal-ev-count">${evs.length}</span>` : '';
 
-      html += `<div class="cal-cell ${cls}" data-day="${key}" role="button" tabindex="0" aria-label="${UI.esc(dayLabel(key))}, событий: ${evs.length}"><div class="cal-day">${cell.getUTCDate()}</div>${badge}${badges}${more}</div>`;
+      html += `<div class="cal-cell ${cls}" data-day="${key}" role="button" tabindex="0" aria-label="${UI.esc(dayLabel(key))}, событий: ${evs.length}"><div class="cal-top"><div class="cal-day">${cell.getUTCDate()}</div>${badge}</div><div class="cal-events">${badges}${more}</div></div>`;
     }
     grid.innerHTML = html;
     grid.querySelectorAll('.cal-cell').forEach(c => {
       const choose = () => { state.selDay = c.dataset.day; renderCalendar(); renderDayPanel(); };
       c.addEventListener('click', choose);
+      c.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          choose();
+        }
+      });
     });
   }
 
@@ -257,12 +282,9 @@ UI.ready(async function () {
       node.innerHTML = head + '<div class="side-row m">Лента не настроена. python -m app.market_news</div>';
       return;
     }
-    // Use fresh items; fall back to all stored items if none recent
-    const src = ((live.items || []).length > 0 ? live.items : (live.all_items || []))
-      .filter(item => sev(item) === 'high' || sev(item) === 'medium');
-    const items = src.slice(0, 5);
-    node.innerHTML = head + (items.length
-      ? items.map(i => {
+    const items = recentLiveItems().slice(0, 5);
+    if (items.length) {
+      node.innerHTML = head + items.map(i => {
           const title = i.url
             ? `<a href="${UI.esc(i.url)}" target="_blank" rel="noopener noreferrer">${UI.esc(i.title)}</a>`
             : UI.esc(i.title);
@@ -270,8 +292,11 @@ UI.ready(async function () {
             <div class="t"><span class="dot s-${UI.esc(sev(i))}" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px"></span>${title}</div>
             <div class="m">${UI.esc(i.source || '')} · ${UI.esc(ago(i.age_min))}</div>
           </div>`;
-        }).join('')
-      : `<div class="side-row m">Нет заголовков за последние ${live.max_age_min} мин.</div>`);
+        }).join('');
+      return;
+    }
+    const fallback = UI.marketNoticeRows(state.events, Date.now()).slice(0, 3).map(row => `<div class="side-row"><div class="t">${UI.esc(row.text)}</div></div>`).join('');
+    node.innerHTML = head + `<div class="side-row m">Нет свежих заголовков за последние ${RECENT_NEWS_MAX_AGE_MIN / 60} ч.</div>${fallback}`;
   }
 
   // ---- fetch status sidebar ----------------------------------------------
@@ -282,6 +307,7 @@ UI.ready(async function () {
     const rows = provs.length
       ? provs.map(p => {
           const isKeyErr = !p.ok && (p.error || '').toLowerCase().includes('ключ не задан');
+          const errorText = providerErrorText(p.error || '');
           const errHint = isKeyErr
             ? `<div class="api-key-hint">Бесплатный ключ (25 запр./день):<br>
                <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer">alphavantage.co → Free API Key</a><br>
@@ -289,7 +315,7 @@ UI.ready(async function () {
             : '';
           return `<div class="side-row">
             <div class="t"><span class="live-dot ${p.ok ? '' : 'err'}" style="display:inline-block;margin-right:6px"></span>${UI.esc(p.name)}</div>
-            <div class="m">${p.ok ? `${p.count} записей · ${UI.esc(p.source_type || 'rss')}` : 'ошибка: ' + UI.esc(p.error || 'нет данных')}</div>
+            <div class="m">${p.ok ? `${p.count} записей · ${UI.esc(p.source_type || 'rss')}` : 'ошибка: ' + UI.esc(errorText)}</div>
             ${errHint}
           </div>`;
         }).join('')
@@ -341,58 +367,50 @@ UI.ready(async function () {
       const ms = new Date(e.event_time_utc) - now;
       return ms > 30 * 60000 && ms <= 24 * 3600000 && sev(e) === 'high';
     });
-    const recentNews = state.live.items || [];
+    const recentNews = recentLiveItems();
 
     const hasCrit = alerts.length > 0 || upcomingCrit.length > 0;
-    const hasWarn = !hasCrit && upcomingWarn.length > 0;
+    const hasWarn = !hasCrit && (upcomingWarn.length > 0 || recentNews.some(i => sev(i) === 'high'));
     wrap.classList.toggle('alert', hasCrit);
     wrap.classList.toggle('warn', hasWarn);
     lbl.textContent = hasCrit ? '🔴 СТОП' : hasWarn ? '⚠ ВАЖНО' : 'LIVE';
 
-    // Build ticker items
-    const alertTk = alerts.map(e =>
-      `<span class="tk alert"><span class="dot"></span>⛔ ОТКЛЮЧИТЕ СТРАТЕГИИ: <b>${UI.esc(e.title)}</b> — защитное окно активно</span>`);
-    const critTk = upcomingCrit.map(e => {
+    const rows = [];
+    alerts.forEach(e => rows.push({
+      severity: 'high',
+      tone: 'alert',
+      text: `⛔ ОТКЛЮЧИТЕ СТРАТЕГИИ: ${e.title} — защитное окно активно`,
+      dedupeKey: `event:${e.id || e.title}`,
+    }));
+    upcomingCrit.forEach(e => {
       const e2 = eta(new Date(e.event_time_utc) - now);
-      return `<span class="tk t-crit"><span class="dot" style="background:var(--neg)"></span>🔴 ОЧЕНЬ СРОЧНО — ${UI.esc(e2.txt)}: <b>${UI.esc(e.title)}</b>. Отключите затронутые стратегии</span>`;
-    });
-    const warnTk = upcomingWarn.map(e => {
-      const e2 = eta(new Date(e.event_time_utc) - now);
-      const status = e.is_confirmed ? '' : ' · время требует проверки';
-      return `<span class="tk t-warn"><span class="dot" style="background:var(--warn)"></span>⚠ ${UI.esc(e2.txt)}: <b>${UI.esc(e.title)}</b>${status}</span>`;
-    });
-    const newsTk = recentNews.map(i => {
-      const prefix = sev(i) === 'high' ? '🔴 ВАЖНАЯ НОВОСТЬ · ' : '';
-      return `<span class="tk s-${UI.esc(sev(i))}"><span class="dot"></span>${prefix}<b>${UI.esc(i.source || '')}:</b> ${UI.esc(i.title)} · ${UI.esc(ago(i.age_min))}</span>`;
-    });
-
-    let all = [...alertTk, ...critTk, ...warnTk, ...newsTk];
-
-    // Fallback 1: older stored live news (beyond max_age_min)
-    if (all.length < 3) {
-      const recentIds = new Set((state.live.items || []).map(i => i.id));
-      const olderNews = (state.live.all_items || [])
-        .filter(i => !recentIds.has(i.id))
-        .filter(i => sev(i) === 'high' || sev(i) === 'medium')
-        .slice(0, 8)
-        .map(i => `<span class="tk s-${UI.esc(sev(i))}"><span class="dot"></span><b>${UI.esc(i.source || '')}:</b> ${UI.esc(i.title)} · ${UI.esc(ago(i.age_min))}</span>`);
-      all = [...all, ...olderNews];
-    }
-
-    // Fallback 2: upcoming calendar events (next 7 days, any severity)
-    if (all.length < 3) {
-      const upcoming7 = state.events
-        .filter(e => { const ms = new Date(e.event_time_utc) - now; return ms > 0 && ms <= 7 * 24 * 3600000; })
-        .sort((a, b) => a.event_time_utc < b.event_time_utc ? -1 : 1)
-        .slice(0, 8);
-      const upcoming7Tk = upcoming7.map(e => {
-        const e2 = eta(new Date(e.event_time_utc) - now);
-        return `<span class="tk s-${UI.esc(sev(e))}"><span class="dot"></span>📅 ${UI.esc(e2.txt)}: <b>${UI.esc(e.title)}</b></span>`;
+      rows.push({
+        severity: 'high',
+        tone: 'crit',
+        text: `🔴 ОЧЕНЬ СРОЧНО — ${e2.txt}: ${e.title}. Отключите затронутые стратегии`,
+        dedupeKey: `event:${e.id || e.title}`,
       });
-      all = [...all, ...upcoming7Tk];
-    }
+    });
+    upcomingWarn.forEach(e => {
+      const e2 = eta(new Date(e.event_time_utc) - now);
+      rows.push({
+        severity: 'medium',
+        tone: 'warn',
+        text: `⚠ ${e2.txt}: ${e.title}${e.is_confirmed ? '' : ' · время требует проверки'}`,
+        dedupeKey: `event:${e.id || e.title}`,
+      });
+    });
+    recentNews.forEach(i => rows.push({
+      severity: sev(i),
+      tone: sev(i),
+      text: `${sev(i) === 'high' ? '🔴 ВАЖНАЯ НОВОСТЬ · ' : ''}${i.source || 'источник'}: ${i.title}${i.age_min == null ? '' : ' · ' + ago(i.age_min)}`,
+      dedupeKey: `live:${i.source || ''}:${i.title || ''}`,
+    }));
 
-    if (!all.length) {
+    let unique = UI.uniqueTickerRows(rows.concat(UI.scheduleStrategyRows(state.events, now, 12)), 24);
+    if (unique.length < 10) unique = UI.uniqueTickerRows(unique.concat(UI.marketNoticeRows(state.events, now)), 24);
+
+    if (!unique.length) {
       wrap.classList.add('paused');
       track.innerHTML = `<span class="static">${state.live.configured
         ? 'Нет свежих данных. Запустите: python -m app.market_news'
@@ -400,8 +418,13 @@ UI.ready(async function () {
       return;
     }
     wrap.classList.remove('paused');
-    const body = all.join('');
-    track.innerHTML = body + body; // duplicate for seamless marquee
+    const expanded = UI.expandTickerRows(unique, unique.length < 10 ? 20 : 14);
+    const rollover = expanded.length > 1 ? expanded.slice(2).concat(expanded.slice(0, 2)) : expanded;
+    const renderRow = row => {
+      const tone = row.tone === 'alert' ? 'alert' : row.tone === 'crit' ? 't-crit' : row.tone === 'warn' ? 't-warn' : `s-${UI.esc(row.severity || 'low')}`;
+      return `<span class="tk ${tone}"><span class="dot"></span>${UI.esc(row.text)}</span>`;
+    };
+    track.innerHTML = expanded.map(renderRow).join('') + rollover.map(renderRow).join('');
   }
 
   // ---- orchestration -----------------------------------------------------
@@ -424,7 +447,7 @@ UI.ready(async function () {
   try {
     const [cal, live] = await Promise.all([
       API.http.news({ limit: 200 }, { signal: UI.signal() }),
-      API.http.newsLive({ max_age_min: 60, limit: 40 }, { signal: UI.signal() }).catch(() => null),
+      API.http.newsLive({ max_age_min: RECENT_NEWS_MAX_AGE_MIN, limit: 40 }, { signal: UI.signal() }).catch(() => null),
     ]);
     state.events = cal.items || [];
     if (live) state.live = live;
@@ -460,7 +483,7 @@ UI.ready(async function () {
     ticks++;
     if (ticks % 3 === 0) {
       try {
-        const live = await API.http.newsLive({ max_age_min: 60, limit: 40 }, { signal: UI.signal() });
+        const live = await API.http.newsLive({ max_age_min: RECENT_NEWS_MAX_AGE_MIN, limit: 40 }, { signal: UI.signal() });
         if (live) state.live = live;
       } catch (e) { /* keep last */ }
     }

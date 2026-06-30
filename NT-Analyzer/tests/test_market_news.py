@@ -45,6 +45,52 @@ def test_feeds_env_override(monkeypatch) -> None:
     assert any(url == "https://example.gov/b.xml" for _, url in feeds)
 
 
+def test_alpha_vantage_rate_limit_is_sanitized(monkeypatch) -> None:
+    api_key = "5E84M75TLHE42OTD"
+    monkeypatch.setenv("NTA_ALPHAVANTAGE_API_KEY", api_key)
+    payload = {
+        "Note": f"We have detected your API key as {api_key} and our standard API rate limit is 25 requests per day.",
+    }
+    monkeypatch.setattr(market_news, "_http_get", lambda url, accept="application/json": json.dumps(payload).encode("utf-8"))
+
+    items, status = market_news._alpha_vantage("2026-06-30T03:00:00Z", {})
+    assert items == []
+    assert status["ok"] is False
+    assert "дневной лимит" in status["error"]
+    assert api_key not in status["error"]
+    assert status["fetched_at_utc"] == "2026-06-30T03:00:00Z"
+
+
+def test_alpha_vantage_reuses_cached_result_inside_min_interval(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_ALPHAVANTAGE_API_KEY", "DEMOALPHATESTKEY")
+    cached_doc = {
+        "providers": [{
+            "name": "Alpha Vantage · News",
+            "ok": True,
+            "count": 1,
+            "error": "",
+            "source_type": "api",
+            "fetched_at_utc": "2026-06-30T02:00:00Z",
+        }],
+        "items": [{
+            "title": "Macro headline",
+            "source": "Alpha Vantage",
+            "severity": "high",
+            "published_at_utc": "2026-06-30T01:45:00Z",
+        }],
+    }
+
+    def _boom(url, accept="application/json"):
+        raise AssertionError("network should not be used when cached Alpha result is still fresh")
+
+    monkeypatch.setattr(market_news, "_http_get", _boom)
+    items, status = market_news._alpha_vantage("2026-06-30T03:00:00Z", cached_doc)
+    assert len(items) == 1
+    assert items[0]["source"] == "Alpha Vantage"
+    assert status["cached"] is True
+    assert status["name"] == "Alpha Vantage · News"
+
+
 def test_fetch_live_news_degrades_without_network(monkeypatch) -> None:
     monkeypatch.setattr(market_news, "_feeds", lambda: [("Fed", "https://example.gov/x.xml")])
     monkeypatch.delenv("NTA_ALPHAVANTAGE_API_KEY", raising=False)

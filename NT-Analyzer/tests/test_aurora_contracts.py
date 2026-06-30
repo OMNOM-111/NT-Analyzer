@@ -138,6 +138,7 @@ def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
     assert "data-global-news-strip" in ui and "page === 'news' ? null" in ui
     assert "global-news-window" in ui and "overflow: hidden" in theme
     assert "ticker-window" in news and "repeat(7,minmax(0,1fr))" in news
+    assert "scheduleStrategyRows" in ui and "cal-ev-title" in page_js
     assert "item.is_confirmed" in page_js
     assert "ОТКЛЮЧИТЕ СТРАТЕГИИ" in ui and "ОТКЛЮЧИТЕ СТРАТЕГИИ" in page_js
 

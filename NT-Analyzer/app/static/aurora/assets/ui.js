@@ -99,15 +99,208 @@
     return `${Math.floor(minutes / 60)} ч назад`;
   }
 
+  function normalizeNewsKey(text) {
+    return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function itemSeverity(item) {
+    const raw = String((item && (item.severity || item.impact)) || 'low').toLowerCase();
+    return ['high', 'medium', 'low'].includes(raw) ? raw : 'low';
+  }
+
+  function itemTimeMs(item) {
+    const stamp = new Date((item && (item.event_time_utc || item.published_at_utc)) || 0).getTime();
+    return Number.isFinite(stamp) ? stamp : 0;
+  }
+
+  function itemInstruments(item, maxCount) {
+    const rows = (item && (item.affected_instruments || item.instruments)) || [];
+    const unique = Array.from(new Set((Array.isArray(rows) ? rows : []).filter(Boolean).map(value => String(value))));
+    if (!unique.length) return '';
+    const limit = Math.max(1, maxCount || 3);
+    const shown = unique.slice(0, limit).join('/');
+    return unique.length > limit ? `${shown}+${unique.length - limit}` : shown;
+  }
+
+  function uniqueTickerRows(rows, limit) {
+    const seen = new Set();
+    const out = [];
+    (rows || []).forEach(row => {
+      if (!row || !row.text) return;
+      const key = normalizeNewsKey(row.dedupeKey || row.title || row.text);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(row);
+    });
+    return out.slice(0, limit || 18);
+  }
+
+  function expandTickerRows(rows, targetCount) {
+    const base = (rows || []).filter(Boolean);
+    if (!base.length) return [];
+    const total = Math.max(base.length, targetCount || 12);
+    const out = [];
+    let cycle = 0;
+    while (out.length < total) {
+      const offset = base.length > 1 ? ((cycle * 2) + 1) % base.length : 0;
+      const rotated = cycle === 0 ? base : base.slice(offset).concat(base.slice(0, offset));
+      rotated.forEach(row => {
+        if (out.length >= total) return;
+        if (!out.length || normalizeNewsKey(out[out.length - 1].text) !== normalizeNewsKey(row.text)) out.push(row);
+      });
+      if (base.length === 1) break;
+      cycle += 1;
+      if (cycle > total) break;
+    }
+    return out;
+  }
+
+  function ptMinuteOfDay(date) {
+    if (!window.AuroraDomain || !AuroraDomain.ptParts) return 0;
+    const p = AuroraDomain.ptParts(date || new Date());
+    return p.hour * 60 + p.minute;
+  }
+
+  function inPtWindow(minute, start, end) {
+    return start <= end ? minute >= start && minute < end : minute >= start || minute < end;
+  }
+
+  function ptMinutesUntil(minute, target) {
+    return target >= minute ? target - minute : 1440 - minute + target;
+  }
+
+  function samePtDay(a, b) {
+    if (!window.AuroraDomain || !AuroraDomain.ptParts) return false;
+    const pa = AuroraDomain.ptParts(a);
+    const pb = AuroraDomain.ptParts(b);
+    return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
+  }
+
+  function marketNoticeRows(events, now) {
+    const rows = [];
+    const current = new Date(now || Date.now());
+    if (window.AuroraDomain && AuroraDomain.marketStatus) {
+      const market = AuroraDomain.marketStatus(current);
+      const sev = market.state === 'warn' ? 'medium' : market.state === 'off' ? 'medium' : 'low';
+      rows.push({ severity: sev, text: `📈 CME futures: ${market.label}`, dedupeKey: `market:cme:${market.phase}` });
+      if (market.phase === 'maintenance') {
+        rows.push({ severity: 'medium', text: '⛔ Идёт техпауза CME: новые входы лучше отложить до открытия', dedupeKey: 'market:maintenance' });
+      } else if (market.phase === 'weekend') {
+        rows.push({ severity: 'low', text: '🌙 Американская cash-сессия закрыта: фокус смещается на открытие Европы и Азии', dedupeKey: 'market:weekend' });
+      }
+    }
+    if (window.AuroraDomain && AuroraDomain.ptParts) {
+      const minute = ptMinuteOfDay(current);
+      const sessions = [
+        { id: 'asia', label: 'азиатская сессия', start: 17 * 60, end: 1 * 60, severity: 'low' },
+        { id: 'europe', label: 'европейская сессия', start: 0, end: 8 * 60, severity: 'low' },
+        { id: 'us', label: 'американская cash-сессия', start: 6 * 60 + 30, end: 13 * 60, severity: 'medium' },
+      ];
+      const active = sessions.filter(session => inPtWindow(minute, session.start, session.end));
+      if (active.length) {
+        rows.push({
+          severity: active.some(session => session.id === 'us') ? 'medium' : 'low',
+          text: `🕒 Сейчас активна ${active.map(session => session.label).join(' и ')}`,
+          dedupeKey: `market:active:${active.map(session => session.id).join(',')}`,
+        });
+      } else {
+        rows.push({ severity: 'low', text: '🕒 Сейчас вне основных cash-сессий США, Европы и Азии', dedupeKey: 'market:active:none' });
+      }
+      const next = sessions
+        .filter(session => !active.some(item => item.id === session.id))
+        .map(session => ({ session, minutes: ptMinutesUntil(minute, session.start) }))
+        .sort((a, b) => a.minutes - b.minutes)[0];
+      if (next) {
+        rows.push({
+          severity: next.session.severity,
+          text: `⏭ Следующая сессия: ${next.session.label} откроется ${newsEta(next.minutes * 60000)}`,
+          dedupeKey: `market:next:${next.session.id}`,
+        });
+      }
+    }
+    const list = Array.isArray(events) ? events : [];
+    const upcoming24 = list
+      .filter(item => {
+        const at = itemTimeMs(item);
+        const remaining = at - current.getTime();
+        return remaining > 0 && remaining <= 24 * 3600000;
+      })
+      .sort((a, b) => itemTimeMs(a) - itemTimeMs(b));
+    const todayCount = list.filter(item => samePtDay(current, new Date(item.event_time_utc || 0))).length;
+    if (todayCount) {
+      rows.push({
+        severity: upcoming24.some(item => itemSeverity(item) === 'high') ? 'medium' : 'low',
+        text: `📅 Сегодня в календаре ${todayCount} событий${upcoming24[0] ? ` · ближайшее ${newsEta(itemTimeMs(upcoming24[0]) - current.getTime())}` : ''}`,
+        dedupeKey: `market:today:${todayCount}`,
+      });
+    } else if (upcoming24[0]) {
+      rows.push({
+        severity: 'low',
+        text: `📅 Ближайшее событие календаря ${newsEta(itemTimeMs(upcoming24[0]) - current.getTime())}`,
+        dedupeKey: `market:upcoming:${upcoming24[0].id || upcoming24[0].title || ''}`,
+      });
+    }
+    return uniqueTickerRows(rows, 8);
+  }
+
+  function scheduleStrategyRows(events, now, limit) {
+    const current = Number(now || Date.now());
+    const list = Array.isArray(events) ? events : [];
+    const rows = [];
+    const immediate = list
+      .filter(item => {
+        const severity = itemSeverity(item);
+        const remaining = itemTimeMs(item) - current;
+        if (!item || !item.title || !['high', 'medium'].includes(severity)) return false;
+        if (severity === 'high') return remaining >= -(Number(item.block_after_min || 0) * 60000 + 90 * 60000) && remaining <= 72 * 3600000;
+        return remaining > 0 && remaining <= 36 * 3600000;
+      })
+      .sort((a, b) => itemTimeMs(a) - itemTimeMs(b));
+
+    immediate.forEach(item => {
+      const remaining = itemTimeMs(item) - current;
+      const severity = itemSeverity(item);
+      const target = itemInstruments(item, 3);
+      const timing = remaining <= 0 ? 'только что вышло' : newsEta(remaining);
+      const prefix = remaining <= 0 ? '🟢' : severity === 'high' ? '🎯' : '⚙';
+      rows.push({
+        severity: severity === 'high' ? 'high' : 'medium',
+        text: `${prefix} ${timing}: ${item.title}${target ? ` · ${target}` : ''}${item.is_confirmed ? '' : ' · время требует проверки'}`,
+        url: item.url || item.source_url || '',
+        dedupeKey: `event:${item.id || item.title}`,
+      });
+    });
+
+    if (rows.length < 4) {
+      const laterHigh = list
+        .filter(item => {
+          const remaining = itemTimeMs(item) - current;
+          return item && item.title && itemSeverity(item) === 'high' && remaining > 72 * 3600000 && remaining <= 7 * 24 * 3600000;
+        })
+        .sort((a, b) => itemTimeMs(a) - itemTimeMs(b))
+        .slice(0, 4 - rows.length);
+      laterHigh.forEach(item => rows.push({
+        severity: 'medium',
+        text: `📅 ${newsEta(itemTimeMs(item) - current)}: ${item.title}${itemInstruments(item, 3) ? ` · ${itemInstruments(item, 3)}` : ''}`,
+        url: item.url || item.source_url || '',
+        dedupeKey: `event:${item.id || item.title}`,
+      }));
+    }
+
+    return uniqueTickerRows(rows, limit || 10);
+  }
+
   function renderGlobalNewsStrip(strip, calendar, live) {
     const label = qs('.global-news-label', strip);
     const track = qs('.global-news-track', strip);
     const now = Date.now();
     const events = (calendar && calendar.items) || [];
-    const liveItems = (live && live.items) || [];
-    const severity = item => ['high', 'medium', 'low'].includes(String(item.severity || item.impact || '').toLowerCase())
-      ? String(item.severity || item.impact).toLowerCase() : 'low';
-    const eventMs = item => new Date(item.event_time_utc || 0).getTime();
+    const liveItems = ((live && live.items) || [])
+      .filter(item => item && item.title && itemSeverity(item) !== 'low')
+      .filter(item => item.age_min == null || (item.age_min >= -5 && item.age_min <= 720))
+      .sort((a, b) => itemTimeMs(b) - itemTimeMs(a));
+    const severity = item => itemSeverity(item);
+    const eventMs = item => itemTimeMs(item);
     const activeCritical = events.filter(item => {
       const at = eventMs(item);
       return item.is_confirmed && severity(item) === 'high' &&
@@ -124,7 +317,7 @@
     }).sort((a, b) => eventMs(a) - eventMs(b));
 
     const critical = activeCritical.length > 0 || imminentCritical.length > 0;
-    const warning = !critical && upcoming.some(item => eventMs(item) - now <= 24 * 3600000);
+    const warning = !critical && (upcoming.some(item => eventMs(item) - now <= 24 * 3600000) || liveItems.some(item => severity(item) === 'high'));
     strip.classList.toggle('critical', critical);
     strip.classList.toggle('warning', warning);
     label.textContent = critical ? '🔴 СТОП' : warning ? '⚠ ВАЖНО' : 'РЫНОК';
@@ -139,43 +332,44 @@
       severity: 'high',
       text: `🔴 ОЧЕНЬ СРОЧНО — ${newsEta(eventMs(item) - now)}: ${item.title}. Отключите затронутые стратегии`,
       url: item.url || item.source_url || '',
+      dedupeKey: `event:${item.id || item.title}`,
     }));
-    liveItems.filter(item => severity(item) === 'high').slice(0, 8).forEach(item => rows.push({
+    liveItems.filter(item => severity(item) === 'high').slice(0, 4).forEach(item => rows.push({
       severity: 'high',
       text: `🔴 ВАЖНАЯ НОВОСТЬ · ${item.source || 'источник'}: ${item.title}${item.age_min == null ? '' : ' · ' + newsAge(item.age_min)}`,
       url: item.url || item.source_url || '',
+      dedupeKey: `live:${item.source || ''}:${item.title || ''}`,
     }));
-    upcoming.slice(0, 8).forEach(item => rows.push({
+    upcoming.slice(0, 4).forEach(item => rows.push({
       severity: item.is_confirmed ? 'high' : 'medium',
       text: `${item.is_confirmed ? '📅' : '⚠ оценка'} ${newsEta(eventMs(item) - now)}: ${item.title}`,
       url: item.url || item.source_url || '',
+      dedupeKey: `event:${item.id || item.title}`,
     }));
-    liveItems.filter(item => severity(item) === 'medium').slice(0, 8).forEach(item => rows.push({
+    liveItems.filter(item => severity(item) === 'medium').slice(0, 4).forEach(item => rows.push({
       severity: 'medium',
       text: `${item.source || 'источник'}: ${item.title}${item.age_min == null ? '' : ' · ' + newsAge(item.age_min)}`,
       url: item.url || item.source_url || '',
+      dedupeKey: `live:${item.source || ''}:${item.title || ''}`,
     }));
 
-    const seen = new Set();
-    const unique = rows.filter(row => {
-      const key = row.text.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
-    }).slice(0, 18);
+    let unique = uniqueTickerRows(rows.concat(scheduleStrategyRows(events, now, 12)), 24);
+    if (unique.length < 10) unique = uniqueTickerRows(unique.concat(marketNoticeRows(events, now)), 24);
     if (!unique.length) {
       track.classList.add('paused');
       track.innerHTML = '<span class="global-news-static">Нет свежих важных сообщений; календарь доступен на вкладке «Новости».</span>';
       return;
     }
     track.classList.remove('paused');
-    const html = unique.map(row => {
+    const expanded = expandTickerRows(unique, unique.length < 10 ? 20 : 14);
+    const rollover = expanded.length > 1 ? expanded.slice(1).concat(expanded.slice(0, 1)) : expanded;
+    const renderRow = row => {
       const content = `<span class="dot"></span><b>${esc(row.text)}</b>`;
       return row.url
         ? `<a class="global-news-item ${row.severity}" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${content}</a>`
         : `<span class="global-news-item ${row.severity}">${content}</span>`;
-    }).join('');
-    const copies = unique.length < 3 ? 8 : unique.length < 6 ? 4 : 2;
-    track.innerHTML = html.repeat(copies);
+    };
+    track.innerHTML = expanded.map(renderRow).join('') + rollover.map(renderRow).join('');
   }
 
   function wireGlobalNewsStrip(strip) {
@@ -184,7 +378,7 @@
       try {
         const [calendar, live] = await Promise.all([
           API.http.news({ limit: 120 }, { signal: signal() }),
-          API.http.newsLive({ max_age_min: 180, limit: 40 }, { signal: signal() }).catch(() => null),
+          API.http.newsLive({ max_age_min: 720, limit: 40 }, { signal: signal() }).catch(() => null),
         ]);
         renderGlobalNewsStrip(strip, calendar, live);
       } catch (error) {
@@ -235,6 +429,7 @@
     const main = el('<div class="main"></div>');
     main.appendChild(topbar);
     const newsStrip = page === 'news' ? null : el('<div class="global-news-strip" data-global-news-strip><span class="global-news-label">РЫНОК</span><div class="global-news-window"><div class="global-news-track"><span class="global-news-static">Загрузка новостей…</span></div></div></div>');
+    if (newsStrip) main.classList.add('has-global-news-strip');
     if (newsStrip) main.appendChild(newsStrip);
     // move existing body content into <main class=content>
     const content = el('<div class="content"></div>');
@@ -709,6 +904,6 @@
     });
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, NAV };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

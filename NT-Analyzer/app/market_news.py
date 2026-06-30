@@ -34,6 +34,7 @@ local_secrets.apply()
 _UA = "NT-Analyzer/1.0 (+local; market-news-fetch)"
 _MAX_BYTES = 3_000_000
 _TIMEOUT = 8
+_ALPHA_MIN_INTERVAL_MIN = 75
 
 # Default free, official RSS feeds. Operators can override / extend with the
 # NTA_NEWS_LIVE_FEEDS env var: "Label|https://url, Label2|https://url2".
@@ -90,6 +91,71 @@ def _classify(title: str, summary: str) -> Tuple[str, List[str]]:
         if pattern.search(text):
             return severity, instruments
     return "low", []
+
+
+def _read_cached_live_doc() -> Dict[str, Any]:
+    path = _root() / "data" / "integrations" / "live_news.json"
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _parse_iso(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _minutes_between(older: str, newer: str) -> float | None:
+    old_dt = _parse_iso(older)
+    new_dt = _parse_iso(newer)
+    if old_dt is None or new_dt is None:
+        return None
+    return (new_dt - old_dt).total_seconds() / 60.0
+
+
+def _cached_provider(doc: Dict[str, Any], name: str) -> Dict[str, Any] | None:
+    providers = doc.get("providers")
+    if not isinstance(providers, list):
+        return None
+    for row in providers:
+        if isinstance(row, dict) and str(row.get("name") or "") == name:
+            return dict(row)
+    return None
+
+
+def _cached_alpha_items(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = doc.get("items")
+    if not isinstance(rows, list):
+        return []
+    cached = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "")
+        if source.lower().startswith("alpha vantage"):
+            cached.append(dict(row))
+    return cached
+
+
+def _sanitize_alpha_error(message: str) -> str:
+    text = _strip_html(str(message or "").strip()) or "ошибка API"
+    masked = re.sub(r"\b[A-Z0-9]{12,}\b", "********", text)
+    lower = masked.lower()
+    if "25 requests per day" in lower or "premium plans" in lower or "rate limit" in lower:
+        return "дневной лимит Alpha Vantage исчерпан (free-tier 25 запросов/день)"
+    if "api key" in lower:
+        return "Alpha Vantage отклонил API-ключ"
+    return masked[:200]
 
 
 def _feeds() -> List[Tuple[str, str]]:
@@ -194,22 +260,33 @@ def _parse_feed(source: str, xml_bytes: bytes, fetched_at: str) -> List[Dict[str
     return items
 
 
-def _alpha_vantage(fetched_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def _alpha_vantage(fetched_at: str, cached_doc: Dict[str, Any] | None = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     key = os.environ.get("NTA_ALPHAVANTAGE_API_KEY", "").strip()
     name = "Alpha Vantage · News"
     if not key:
-        return [], {"name": name, "ok": False, "count": 0, "error": "ключ не задан (NTA_ALPHAVANTAGE_API_KEY)", "source_type": "api", "fetched_at_utc": None}
+        return [], {"name": name, "ok": False, "count": 0, "error": "ключ не задан (NTA_ALPHAVANTAGE_API_KEY)", "source_type": "api", "fetched_at_utc": fetched_at}
+    cached_doc = cached_doc or {}
+    min_interval = max(30, int(os.environ.get("NTA_ALPHAVANTAGE_MIN_INTERVAL_MIN", str(_ALPHA_MIN_INTERVAL_MIN)) or _ALPHA_MIN_INTERVAL_MIN))
+    cached_status = _cached_provider(cached_doc, name)
+    cached_items = _cached_alpha_items(cached_doc)
+    if cached_status:
+        minutes_since = _minutes_between(str(cached_status.get("fetched_at_utc") or ""), fetched_at)
+        if minutes_since is not None and minutes_since < min_interval:
+            status = dict(cached_status)
+            status["cached"] = True
+            status["source_type"] = "api"
+            return cached_items, status
     url = ("https://www.alphavantage.co/query?function=NEWS_SENTIMENT"
            "&topics=economy_macro&sort=LATEST&limit=50&apikey=" + urllib.parse.quote(key))
     try:
         doc = json.loads(_http_get(url, accept="application/json").decode("utf-8", "replace"))
     except (urllib.error.URLError, ValueError, OSError, TimeoutError) as exc:
-        return [], {"name": name, "ok": False, "count": 0, "error": str(exc)[:200], "source_type": "api", "fetched_at_utc": None}
+        return [], {"name": name, "ok": False, "count": 0, "error": _sanitize_alpha_error(str(exc)), "source_type": "api", "fetched_at_utc": fetched_at}
     if not isinstance(doc, dict):
-        return [], {"name": name, "ok": False, "count": 0, "error": "некорректный ответ API", "source_type": "api", "fetched_at_utc": None}
+        return [], {"name": name, "ok": False, "count": 0, "error": "некорректный ответ API", "source_type": "api", "fetched_at_utc": fetched_at}
     if doc.get("Error Message") or doc.get("Information") or doc.get("Note"):
-        err = str(doc.get("Error Message") or doc.get("Information") or doc.get("Note") or "ошибка API")[:200]
-        return [], {"name": name, "ok": False, "count": 0, "error": err, "source_type": "api", "fetched_at_utc": None}
+        err = _sanitize_alpha_error(str(doc.get("Error Message") or doc.get("Information") or doc.get("Note") or "ошибка API"))
+        return [], {"name": name, "ok": False, "count": 0, "error": err, "source_type": "api", "fetched_at_utc": fetched_at}
     items: List[Dict[str, Any]] = []
     for row in doc.get("feed", []) if isinstance(doc, dict) else []:
         title = _strip_html(str(row.get("title") or ""))
@@ -248,6 +325,7 @@ def fetch_live_news() -> Dict[str, Any]:
     fetched_at = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
     items: List[Dict[str, Any]] = []
     providers: List[Dict[str, Any]] = []
+    cached_doc = _read_cached_live_doc()
     def fetch_feed(feed: Tuple[str, str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         label, url = feed
         try:
@@ -266,7 +344,7 @@ def fetch_live_news() -> Dict[str, Any]:
         for parsed, status in pool.map(fetch_feed, feeds):
             items.extend(parsed)
             providers.append(status)
-    av_items, av_status = _alpha_vantage(fetched_at)
+    av_items, av_status = _alpha_vantage(fetched_at, cached_doc)
     items.extend(av_items)
     providers.append(av_status)
 
