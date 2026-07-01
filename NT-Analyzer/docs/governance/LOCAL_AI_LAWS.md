@@ -1,10 +1,10 @@
 # LOCAL_AI_LAWS
 
-Дата актуализации: 2026-06-29
+Дата актуализации: 2026-07-01
 
-Короткий свод законов только для локального ИИ / AI Lab sandbox.
+Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox.
 
-## Локальный ИИ и AI Lab sandbox
+## Локальный ИИ и cloud fallback в AI Lab sandbox
 
 ### GOV-AI-001 — Локальный ИИ пишет только в sandbox
 
@@ -47,3 +47,32 @@
 - Суть: Новая стратегия не генерируется из пустого контекста; сначала reference + lessons + rejected patterns.
 - Источники: `NT-Analyzer/ai_lab/prompts/system_coder.txt`, `NT-Analyzer/app/ai_lab/knowledge.py`
 - Автосинхронизация: app/ai_lab/knowledge.py, app/ai_lab/prompts/system_coder.txt
+
+### GOV-AI-007 — Облачный API работает только как local-first fallback
+
+- Значение: `Да`
+- Суть: Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.
+- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Автосинхронизация: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py, app/ai_lab/generator.py
+
+### GOV-AI-008 — Бюджет облачного API имеет жёсткие потолки
+
+- Значение: `20.00 USD/month; 0.50 USD/run`
+- Суть: Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.
+- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Автосинхронизация: app/ai_lab/cloud_agents.py, ui AI Lab cloud-agent settings
+- Ручная проверка: provider invoice versus local cost audit
+
+### GOV-AI-009 — API output не является verdict
+
+- Значение: `Да`
+- Суть: Cloud-ответ не может обойти validator, compile, backtest, arbitration, governance или ручное promotion-решение.
+- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`
+- Автосинхронизация: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py
+
+### GOV-AI-010 — Облачные ключи и prompts не раскрываются
+
+- Значение: `Да`
+- Суть: Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.
+- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Автосинхронизация: app/local_secrets.py, app/ai_lab/cloud_agents.py

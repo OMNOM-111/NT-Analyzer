@@ -30,9 +30,28 @@ CODING_REPORT_PATH = REPORTS_DIR / "CODING_BENCHMARK_REPORT.md"
 FINAL_REPORT_PATH = REPORTS_DIR / "FINAL_MODEL_SELECTION_REPORT.md"
 SUMMARY_PATH = SCORED_DIR / "summary.json"
 MODEL_ROLES_PATH = AI_LAB_DIR / "model_roles.json"
+WRITE_MODEL_ROLES = True
 
 DEFAULT_BASE_URL = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
 DEFAULT_TIMEOUT = int(os.environ.get("MODEL_BENCHMARK_TIMEOUT", "180"))
+
+
+def configure_output_root(path: Optional[str], *, write_model_roles: bool = True) -> None:
+    """Redirect benchmark artifacts without affecting the default local reports."""
+    global RESULTS_DIR, RAW_DIR, SCORED_DIR, REPORTS_DIR
+    global MODEL_REPORT_PATH, CODING_REPORT_PATH, FINAL_REPORT_PATH, SUMMARY_PATH
+    global WRITE_MODEL_ROLES
+    WRITE_MODEL_ROLES = bool(write_model_roles)
+    if not path:
+        return
+    RESULTS_DIR = Path(path).resolve()
+    RAW_DIR = RESULTS_DIR / "raw"
+    SCORED_DIR = RESULTS_DIR / "scored"
+    REPORTS_DIR = RESULTS_DIR / "reports"
+    MODEL_REPORT_PATH = REPORTS_DIR / "MODEL_BENCHMARK_REPORT.md"
+    CODING_REPORT_PATH = REPORTS_DIR / "CODING_BENCHMARK_REPORT.md"
+    FINAL_REPORT_PATH = REPORTS_DIR / "FINAL_MODEL_SELECTION_REPORT.md"
+    SUMMARY_PATH = SCORED_DIR / "summary.json"
 
 
 @dataclass(frozen=True)
@@ -868,8 +887,13 @@ def apply_speed_scores(aggregates: Sequence[Dict[str, Any]]) -> None:
             item["speed_score"] = round(max(0.0, 5.0 * (1.0 - ratio)), 2)
 
 
-def finalize_aggregates(model_results: Sequence[Dict[str, Any]], skipped_models: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    aggregates = [aggregate_model_result(result, len(STAGE1_PROMPTS)) for result in model_results]
+def finalize_aggregates(
+    model_results: Sequence[Dict[str, Any]],
+    skipped_models: Sequence[Dict[str, Any]],
+    total_stage1_prompts: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    total = len(STAGE1_PROMPTS) if total_stage1_prompts is None else total_stage1_prompts
+    aggregates = [aggregate_model_result(result, total) for result in model_results]
     apply_speed_scores(aggregates)
     for aggregate in aggregates:
         aggregate["role_scores"] = role_scores(aggregate) if aggregate.get("status") == "tested" else {}
@@ -1304,21 +1328,37 @@ def write_scores(
     }
     SUMMARY_PATH.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if all(assignments.values()):
+    if WRITE_MODEL_ROLES and all(assignments.values()):
         MODEL_ROLES_PATH.write_text(json.dumps(assignments, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def run(base_url: str, timeout: int, skip_stage2: bool = False, max_consecutive_failures: int = 2) -> int:
+def run(
+    base_url: str,
+    timeout: int,
+    skip_stage2: bool = False,
+    max_consecutive_failures: int = 2,
+    include_models: Optional[Sequence[str]] = None,
+    include_prompts: Optional[Sequence[str]] = None,
+) -> int:
     ensure_dirs()
     started_at = now_utc()
     print(f"[benchmark] base_url={base_url}", flush=True)
     detected_models, models_error = list_models(base_url, timeout)
+    if include_models:
+        wanted = {normalize_name(item) for item in include_models if str(item).strip()}
+        detected_models = [model for model in detected_models if normalize_name(model) in wanted]
     if models_error:
         print(f"[benchmark] models endpoint error: {models_error}", flush=True)
     else:
         print(f"[benchmark] detected models: {len(detected_models)}", flush=True)
 
     model_entries, skipped_models = build_model_entries(detected_models, models_error)
+    stage1_prompts = tuple(
+        prompt_id for prompt_id in STAGE1_PROMPTS
+        if not include_prompts or prompt_id in set(include_prompts)
+    )
+    if not stage1_prompts:
+        raise ValueError("No valid --include-prompt values were selected")
     model_results: List[Dict[str, Any]] = []
 
     for entry in model_entries:
@@ -1332,7 +1372,7 @@ def run(base_url: str, timeout: int, skip_stage2: bool = False, max_consecutive_
         print(f"[stage1] testing {requested} -> {actual}", flush=True)
         model_result = {**entry, "status": "tested", "prompt_results": []}
         consecutive_failures = 0
-        for prompt_id in STAGE1_PROMPTS:
+        for prompt_id in stage1_prompts:
             prompt = PROMPTS[prompt_id]
             result = run_single_prompt(base_url, entry, prompt, "stage1", timeout)
             model_result["prompt_results"].append(result)
@@ -1350,7 +1390,7 @@ def run(base_url: str, timeout: int, skip_stage2: bool = False, max_consecutive_
                     break
         model_results.append(model_result)
 
-    stage1_aggregates = [aggregate_model_result(result, len(STAGE1_PROMPTS)) for result in model_results]
+    stage1_aggregates = [aggregate_model_result(result, len(stage1_prompts)) for result in model_results]
     apply_speed_scores(stage1_aggregates)
     for aggregate in stage1_aggregates:
         aggregate["role_scores"] = role_scores(aggregate) if aggregate.get("status") == "tested" else {}
@@ -1383,7 +1423,7 @@ def run(base_url: str, timeout: int, skip_stage2: bool = False, max_consecutive_
                         break
 
     finished_at = now_utc()
-    aggregates = finalize_aggregates(model_results, skipped_models)
+    aggregates = finalize_aggregates(model_results, skipped_models, len(stage1_prompts))
     assignments = make_role_assignments(aggregates)
     dispositions = build_dispositions(aggregates, assignments)
     write_scores(
@@ -1424,6 +1464,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OpenAI-compatible LM Studio base URL")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Minimum per-request timeout in seconds")
     parser.add_argument("--skip-stage2", action="store_true", help="Run only the general benchmark stage")
+    parser.add_argument("--output-root", help="Write results/reports under a separate root")
+    parser.add_argument("--no-write-model-roles", action="store_true", help="Do not modify ai_lab/model_roles.json")
+    parser.add_argument("--include-model", action="append", default=[], help="Test only this exact visible model id; repeatable")
+    parser.add_argument("--include-prompt", action="append", default=[], choices=list(STAGE1_PROMPTS), help="Run only this stage-1 prompt; repeatable")
     parser.add_argument(
         "--max-consecutive-failures",
         type=int,
@@ -1435,7 +1479,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    return run(args.base_url.rstrip("/"), args.timeout, args.skip_stage2, args.max_consecutive_failures)
+    configure_output_root(args.output_root, write_model_roles=not args.no_write_model_roles)
+    return run(
+        args.base_url.rstrip("/"), args.timeout, args.skip_stage2,
+        args.max_consecutive_failures, args.include_model, args.include_prompt,
+    )
 
 
 if __name__ == "__main__":

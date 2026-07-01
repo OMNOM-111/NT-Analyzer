@@ -1,6 +1,6 @@
 # SYNC_MAP
 
-Дата актуализации: 2026-06-29
+Дата актуализации: 2026-07-01
 
 Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.
 
@@ -98,4 +98,28 @@
 
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/knowledge.py, app/ai_lab/prompts/system_coder.txt
+- Нужно проверить вручную: —
+
+## GOV-AI-007 — Облачный API работает только как local-first fallback
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py, app/ai_lab/generator.py
+- Нужно проверить вручную: —
+
+## GOV-AI-008 — Бюджет облачного API имеет жёсткие потолки
+
+- Текущее значение: `20.00 USD/month; 0.50 USD/run`
+- Автоматически обновляется: app/ai_lab/cloud_agents.py, ui AI Lab cloud-agent settings
+- Нужно проверить вручную: provider invoice versus local cost audit
+
+## GOV-AI-009 — API output не является verdict
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py
+- Нужно проверить вручную: —
+
+## GOV-AI-010 — Облачные ключи и prompts не раскрываются
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/local_secrets.py, app/ai_lab/cloud_agents.py
 - Нужно проверить вручную: —

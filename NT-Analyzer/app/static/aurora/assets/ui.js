@@ -58,6 +58,7 @@
     { id: 'performance', label: 'Доход', href: 'performance.html', icon: 'performance' },
     { id: 'strategies', label: 'Стратегии', href: 'strategies.html', icon: 'strategies' },
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
+    { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
@@ -603,22 +604,116 @@
     } catch (e) { renderError(body, e, showDiagnostics); }
   }
 
-  async function showIntegrations() {
-    if (!window.API || API.config.offline) { toast('Интеграции недоступны в офлайн-превью'); return; }
-    const d = drawer('<h3>Интеграции и уведомления</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка конфигурации…</div>');
+  async function showTelegram() {
+    if (!window.API || API.config.offline) { toast('Telegram недоступен в офлайн-превью'); return; }
+    const d = drawer('<h3>Telegram</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка подключения…</div>');
     const body = qs('.drawer-b', d);
-    try {
-      const status = await API.http.integrationsStatus();
-      const rows = [
-        ['Telegram', status.telegram, 'Уведомления; команды заблокированы до security-аудита'],
-        ['TopStep', status.topstep, 'Только одобренные стратегии через NinjaTrader; live-действия пока заблокированы'],
-        ['Новости', status.news, 'Отображаются только реальные сохранённые источники'],
-        ['Платные AI-агенты', status.external_agents, 'Бюджет и выполнение требуют отдельного разрешения'],
-      ];
-      body.innerHTML = `<div class="list">${rows.map(([name, item, note]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(name)}</div><div class="row-sub">${esc(note)}</div></div><span class="badge ${item && item.configured ? 'live' : 'archived'}"><span class="dot"></span>${item && item.configured ? 'настроено' : 'не настроено'}</span></div>`).join('')}</div>
-        <div class="finance-note"><strong>Безопасность:</strong> токены и API-ключи никогда не возвращаются в браузер. Подключение выполняется через переменные окружения backend.</div>
-        <div class="flex wrap gap-sm"><a class="btn" href="topstep.html">TopStep</a><a class="btn" href="news.html">Новости</a><a class="btn" href="ai-lab.html">AI-агенты</a></div>`;
-    } catch (error) { renderError(body, error, showIntegrations); }
+
+    async function refresh() {
+      try {
+        const status = await API.http.telegramStatus();
+        const connectionLabel = status.configured ? 'подключён' : status.token_configured ? 'нужно подключить чат' : 'не настроен';
+        const botLabel = status.bot_username ? `@${status.bot_username}` : (status.bot_name || 'бот не проверен');
+        const settingRows = (status.setting_definitions || []).map(item => {
+          const checked = status.settings && status.settings[item.key];
+          const unavailable = item.key !== 'enabled' && !status.configured;
+          return `<label class="telegram-setting ${unavailable ? 'disabled' : ''}">
+            <span class="telegram-setting-copy"><strong>${esc(item.label)}</strong><small>${esc(item.description)}</small></span>
+            <input type="checkbox" data-telegram-setting="${esc(item.key)}" ${checked ? 'checked' : ''} ${unavailable ? 'disabled' : ''}>
+            <span class="telegram-switch" aria-hidden="true"></span>
+          </label>`;
+        }).join('');
+
+        body.innerHTML = `
+          <section class="telegram-card">
+            <div class="flex between"><div><div class="section-title">Подключение</div><div class="telegram-bot-name">${esc(botLabel)}</div></div><span class="badge ${status.configured ? 'live' : status.token_configured ? 'pending' : 'archived'}"><span class="dot"></span>${esc(connectionLabel)}</span></div>
+            ${status.chat_label ? `<div class="row-sub">Чат: ${esc(status.chat_label)}</div>` : ''}
+            ${status.last_delivery_at_utc ? `<div class="row-sub">Последняя отправка: ${esc(status.last_delivery_at_utc)}</div>` : ''}
+            ${status.last_error ? `<div class="finance-note telegram-error"><strong>Последняя ошибка:</strong> ${esc(status.last_error)}</div>` : ''}
+          </section>
+
+          <section class="telegram-card">
+            <div class="section-title">Токен бота</div>
+            <div class="field"><label for="telegram-token">${status.token_configured ? 'Новый токен (текущий скрыт)' : 'Токен от BotFather'}</label><input id="telegram-token" type="password" autocomplete="new-password" placeholder="123456789:AA…"></div>
+            <div class="flex wrap gap-sm"><button class="btn ${status.token_configured ? '' : 'primary'}" id="telegram-save-token">${status.token_configured ? 'Заменить токен' : 'Сохранить и проверить'}</button>${status.bot_username ? `<a class="btn ghost" href="https://t.me/${esc(status.bot_username)}" target="_blank" rel="noopener">Открыть бота</a>` : ''}</div>
+            <div class="row-sub">Токен сохраняется только в локальном gitignored-хранилище backend и никогда не возвращается в браузер.</div>
+          </section>
+
+          ${status.token_configured && !status.chat_configured ? `<section class="telegram-card">
+            <div class="section-title">Подключение личного чата</div>
+            <p class="muted mt-0">Создайте одноразовую ссылку, откройте её и нажмите Start в Telegram.</p>
+            <div id="telegram-pair-result"></div>
+            <div class="flex wrap gap-sm"><button class="btn primary" id="telegram-pair-start">Создать ссылку</button><button class="btn" id="telegram-pair-complete" ${status.pairing_active ? '' : 'disabled'}>Проверить подключение</button></div>
+          </section>` : ''}
+
+          <section class="telegram-card">
+            <div class="section-title">Уведомления</div>
+            <div class="telegram-settings">${settingRows}</div>
+          </section>
+
+          <div class="finance-note"><strong>Команды из Telegram:</strong> выключены. Запуск бэктестов и торговые действия будут добавляться отдельно после авторизации чата, защиты от повторов и security-аудита.</div>
+          <div class="flex wrap gap-sm">${status.configured ? '<button class="btn primary" id="telegram-test">Отправить тест</button>' : ''}${status.token_configured ? '<button class="btn danger" id="telegram-disconnect">Отключить Telegram</button>' : ''}</div>`;
+
+        const saveToken = qs('#telegram-save-token', body);
+        if (saveToken) saveToken.onclick = async () => {
+          const input = qs('#telegram-token', body);
+          const token = input && input.value.trim();
+          if (!token) { toast('Введите новый токен Telegram'); return; }
+          saveToken.disabled = true;
+          try {
+            await API.http.telegramSaveToken(token);
+            input.value = '';
+            toast('Токен проверен и сохранён');
+            await refresh();
+          } catch (error) { reportError(error); saveToken.disabled = false; }
+        };
+
+        const pairStart = qs('#telegram-pair-start', body);
+        if (pairStart) pairStart.onclick = async () => {
+          pairStart.disabled = true;
+          try {
+            const pair = await API.http.telegramPairStart();
+            const result = qs('#telegram-pair-result', body);
+            result.innerHTML = `<div class="telegram-pair"><div>Код: <strong>${esc(pair.code)}</strong></div><a class="btn primary" href="${esc(pair.bot_url)}" target="_blank" rel="noopener">Открыть Telegram и нажать Start</a><div class="row-sub">Ссылка действует 10 минут.</div></div>`;
+            const complete = qs('#telegram-pair-complete', body);
+            if (complete) complete.disabled = false;
+          } catch (error) { reportError(error); pairStart.disabled = false; }
+        };
+
+        const pairComplete = qs('#telegram-pair-complete', body);
+        if (pairComplete) pairComplete.onclick = async () => {
+          pairComplete.disabled = true;
+          try { await API.http.telegramPairComplete(); toast('Чат Telegram подключён'); await refresh(); }
+          catch (error) { reportError(error); pairComplete.disabled = false; }
+        };
+
+        qsa('[data-telegram-setting]', body).forEach(input => {
+          input.onchange = async () => {
+            input.disabled = true;
+            try { await API.http.telegramSettings({ [input.dataset.telegramSetting]: input.checked }); toast('Настройка сохранена'); }
+            catch (error) { input.checked = !input.checked; reportError(error); }
+            finally { input.disabled = false; }
+          };
+        });
+
+        const test = qs('#telegram-test', body);
+        if (test) test.onclick = async () => {
+          test.disabled = true;
+          try { await API.http.telegramTest(); toast('Тестовое сообщение отправлено'); await refresh(); }
+          catch (error) { reportError(error); test.disabled = false; }
+        };
+
+        const disconnect = qs('#telegram-disconnect', body);
+        if (disconnect) disconnect.onclick = async () => {
+          if (!confirm('Удалить локальный токен, привязку чата и выключить Telegram?')) return;
+          disconnect.disabled = true;
+          try { await API.http.telegramDisconnect(); toast('Telegram отключён'); await refresh(); }
+          catch (error) { reportError(error); disconnect.disabled = false; }
+        };
+      } catch (error) { renderError(body, error, refresh); }
+    }
+
+    await refresh();
   }
 
   function wireTopbar() {
@@ -631,7 +726,7 @@
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
-        { icon: 'telegram', label: 'Интеграции и Telegram', onClick: () => showIntegrations() },
+        { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
           if (!confirm('Перезапустить python-backend? Активные HTTP-запросы прервутся.')) return;

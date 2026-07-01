@@ -42,6 +42,8 @@ if __package__ is None or __package__ == "":
     from app import jobqueue  # type: ignore[no-redef]
     from app import governance  # type: ignore[no-redef]
     from app import integrations  # type: ignore[no-redef]
+    from app import telegram_service  # type: ignore[no-redef]
+    from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
     from app import performance  # type: ignore[no-redef]
@@ -62,12 +64,18 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import errors as ai_errors  # type: ignore[no-redef]
     from app.ai_lab import lessons as ai_lessons  # type: ignore[no-redef]
     from app.ai_lab import stale_sweep as ai_stale_sweep  # type: ignore[no-redef]
+    from app.ai_lab import cloud_agents as ai_cloud_agents  # type: ignore[no-redef]
+    from app.ai_lab import agent_registry as ai_agent_registry  # type: ignore[no-redef]
+    from app.ai_lab import agent_router as ai_agent_router  # type: ignore[no-redef]
+    from app.ai_lab import universal_llm as ai_universal_llm  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import governance
     from . import integrations
+    from . import telegram_service
+    from . import secure_store as _secure_store
     from . import marginrefresh
     from . import ops
     from . import performance
@@ -88,6 +96,10 @@ else:
     from .ai_lab import errors as ai_errors
     from .ai_lab import lessons as ai_lessons
     from .ai_lab import stale_sweep as ai_stale_sweep
+    from .ai_lab import cloud_agents as ai_cloud_agents
+    from .ai_lab import agent_registry as ai_agent_registry
+    from .ai_lab import agent_router as ai_agent_router
+    from .ai_lab import universal_llm as ai_universal_llm
     from . import local_secrets as _local_secrets
     from . import news_refresh
 
@@ -671,7 +683,7 @@ class Handler(BaseHTTPRequestHandler):
             # New Aurora UI is primary: its pages + assets are served from app/static/aurora/.
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
-                "/performance.html", "/strategies.html", "/ai-lab.html", "/documents.html",
+                "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
                 "/news.html", "/topstep.html",
             }
             if rel in _new_pages or rel.startswith("/assets/"):
@@ -957,6 +969,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, integrations.status())
             return
 
+        if path == "/api/telegram/status":
+            self._json(HTTPStatus.OK, telegram_service.status())
+            return
+
         if path == "/api/topstep/status":
             self._json(HTTPStatus.OK, integrations.topstep_status())
             return
@@ -983,6 +999,32 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/external-agents/status":
             self._json(HTTPStatus.OK, integrations.external_agents_status())
+            return
+
+        if path == "/api/ai-lab/cloud-agents/status":
+            self._json(HTTPStatus.OK, ai_cloud_agents.status())
+            return
+
+        if path in {"/api/ai-agents", "/api/ai-agents/summary"}:
+            payload = ai_agent_registry.summary()
+            payload["routing"] = ai_agent_router.status()
+            self._json(HTTPStatus.OK, payload)
+            return
+
+        if path == "/api/ai-agents/usage":
+            try:
+                limit = max(1, min(1000, int((qs.get("limit") or ["200"])[0])))
+            except ValueError:
+                limit = 200
+            self._json(HTTPStatus.OK, {"usage": ai_agent_registry.usage_rows(limit=limit)})
+            return
+
+        if path.startswith("/api/ai-agents/"):
+            agent_id = urllib.parse.unquote(path.rsplit("/", 1)[-1])
+            try:
+                self._json(HTTPStatus.OK, {"agent": ai_agent_registry.get_agent(agent_id)})
+            except ai_agent_registry.AgentRegistryError as exc:
+                self._err(HTTPStatus.NOT_FOUND, str(exc))
             return
 
         # /api/ai-lab/* read model
@@ -1552,6 +1594,27 @@ class Handler(BaseHTTPRequestHandler):
     # ------------- /api/ai-lab/* POST dispatcher ----------------------------
 
     def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
+        if path.startswith("/api/ai-lab/cloud-agents/"):
+            try:
+                if path == "/api/ai-lab/cloud-agents/settings":
+                    out = ai_cloud_agents.update_settings(body.get("settings") or body)
+                elif path == "/api/ai-lab/cloud-agents/provider-key":
+                    out = ai_cloud_agents.configure_provider(
+                        str(body.get("provider") or ""), str(body.get("api_key") or "")
+                    )
+                elif path == "/api/ai-lab/cloud-agents/provider-test":
+                    out = ai_cloud_agents.recheck_provider(str(body.get("provider") or ""))
+                elif path == "/api/ai-lab/cloud-agents/provider-disconnect":
+                    out = ai_cloud_agents.disconnect_provider(str(body.get("provider") or ""))
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no cloud-agents route: {path}")
+                    return
+            except ai_cloud_agents.CloudAgentsError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._json(HTTPStatus.OK, out)
+            return
+
         if path == "/api/ai-lab/bootstrap/start":
             try:
                 out = ai_bootstrap.start(
@@ -2116,18 +2179,75 @@ class Handler(BaseHTTPRequestHandler):
         is_ai_lab = path.startswith("/api/ai-lab/")
         is_governance = path.startswith("/api/governance/")
         is_portfolio = path.startswith("/api/portfolio/")
+        is_telegram = path.startswith("/api/telegram/")
+        is_ai_agents = path == "/api/ai-agents" or path.startswith("/api/ai-agents/")
 
         if not (path in ("/api/jobs", "/api/batches")
                 or is_cancel_job or is_cancel_batch
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
                 or is_ops or is_profiles or is_report_favorites
-                or is_ai_lab or is_governance or is_portfolio):
+                or is_ai_lab or is_governance or is_portfolio or is_telegram or is_ai_agents):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
         if not self._check_local_post():
             return  # _check_local_post already wrote an error
+
+        if is_telegram:
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                if path == "/api/telegram/token":
+                    out = telegram_service.configure_token(str(body.get("token") or ""))
+                elif path == "/api/telegram/pair/start":
+                    out = telegram_service.start_pairing()
+                elif path == "/api/telegram/pair/complete":
+                    out = telegram_service.complete_pairing()
+                elif path == "/api/telegram/settings":
+                    out = telegram_service.update_settings(body.get("settings") or body)
+                elif path == "/api/telegram/test":
+                    out = telegram_service.send_test()
+                elif path == "/api/telegram/disconnect":
+                    out = telegram_service.disconnect()
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no Telegram route: {path}")
+                    return
+            except telegram_service.TelegramServiceError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._json(HTTPStatus.OK, out)
+            return
+
+        if is_ai_agents:
+            body = self._read_body()
+            if body is None:
+                return
+            parts = [urllib.parse.unquote(part) for part in path.split("/") if part]
+            try:
+                if path == "/api/ai-agents":
+                    out = {"agent": ai_agent_registry.create_agent(body.get("agent") or body)}
+                elif len(parts) == 3 and parts[:2] == ["api", "ai-agents"]:
+                    out = {"agent": ai_agent_registry.update_agent(parts[2], body.get("agent") or body)}
+                elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "toggle":
+                    out = {"agent": ai_agent_registry.set_enabled(parts[2], body.get("enabled"), reason="disabled_by_operator")}
+                elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "test":
+                    out = ai_universal_llm.test_connection(parts[2], str(body.get("prompt") or ""))
+                elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "sync-balance":
+                    out = {"agent": ai_universal_llm.sync_credit_balance(parts[2])}
+                elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "delete":
+                    out = ai_agent_registry.delete_agent(parts[2])
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no AI agents route: {path}")
+                    return
+            except (ai_agent_registry.AgentRegistryError,
+                    ai_universal_llm.UniversalLLMError,
+                    _secure_store.SecureStoreError) as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._json(HTTPStatus.OK, out)
+            return
 
         if is_ai_lab:
             body = self._read_body()
@@ -2398,12 +2518,18 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] news refresher started (live every 15 min)")
     except Exception as e:
         print(f"[nta-backend] news refresher NOT started: {e}")
+    try:
+        telegram_service.start_background_notifier(interval_sec=30)
+        print("[nta-backend] Telegram notifier started (every 30 sec)")
+    except Exception as e:
+        print(f"[nta-backend] Telegram notifier NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("[nta-backend] shutting down")
     finally:
+        telegram_service.stop_background_notifier()
         server.server_close()
 
 

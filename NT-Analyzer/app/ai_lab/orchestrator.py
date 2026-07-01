@@ -35,7 +35,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from . import activity, arbitration, backtest, compile_pipeline, errors, generator, lessons
+from . import activity, agent_committee, agent_router, arbitration, backtest, cloud_agents, compile_pipeline, errors, generator, lessons
 from . import compile_errors, goal_parser, knowledge, lm_studio, operator_notes, registry, runner, user_research
 from . import signal_sanity
 from .analysis_pack import build as build_pack, project_to_experiment_analysis
@@ -229,72 +229,58 @@ def choose_hypothesis(
     }
     if not use_llm:
         return fallback
-    try:
-        sys_prompt = (
-            "/no_think\nYou are a strict trading research spec writer. Output ONLY JSON with "
-            "keys: reference_id, hypothesis, family, market_regime, entry_trigger, "
-            "exit_economics, why_not_generic, expected_trades_per_day, parameters. "
-            "Write all human-readable JSON string values in Russian. Keep JSON keys, "
-            "reference IDs, parameter names, and metric names in English. "
-            "Do not expose hidden chain-of-thought; provide concise final reasoning only. "
-            "Choose exactly one reference_id from the approved shortlist. WEX and "
-            "rejected AI-CELL rows are negative evidence, not code templates. "
-            "Reject generic breakout/crossover ideas that lack a named regime and "
-            "confirmation. Keep hypothesis under 80 words and parameters to at most "
-            "8 actionable scalar values."
-        )
-        model_gate = (intake.get("model_health") or {}).get("idea_generator") or {}
-        if model_gate and not model_gate.get("ok"):
-            activity.log(
-                experiment_id, "generate", "hypothesis_model_health_failed",
-                level="warn", role="judge", response_summary=str(model_gate)[:300],
-            )
-            return fallback
-        selected_role = model_gate.get("selected_role") or "judge"
-        selected_model = model_gate.get("selected_model")
-        user_prompt = (
-            f"{intake.get('knowledge_prompt_context', '')}\n\n"
-            f"Approved references: {shortlist}\n"
-            f"Avoid recent failure patterns: {intake.get('rejected_patterns', [])[:5]}\n"
-            f"User research files just read: {intake.get('user_research_files_read', [])}\n\n"
-            f"{lm_studio.prompt_cache_marker()}\n\n"
-            f"Target root: {target_root}\n"
-            f"User goal constraints: {constraints}\n"
-            "Propose one structurally distinct intraday hypothesis. State why it is "
-            "not another generic breakout and target 0.2-3.0 trades/day. "
-            "All explanations must be in Russian."
-        )
-        if operator_notes_block:
-            user_prompt = (
-                user_prompt
-                + "\n\nOperator notes for this dynamic request:\n"
-                + operator_notes_block
-            )
-        activity.log(experiment_id, "generate", "hypothesis_prompt", level="info",
-                     role=selected_role, model=selected_model,
-                     prompt_preview="Propose one structurally distinct intraday hypothesis in Russian.",
-                     prompt_preview_ru="Сформировать одну структурно отличающуюся внутридневную гипотезу на русском языке.")
-        resp = lm_studio.chat(
-            role=selected_role,
-            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
-            temperature=0.3, max_tokens=500, experiment_id=experiment_id,
-            purpose="hypothesis", timeout=lm_studio.DEFAULT_JUDGE_TIMEOUT,
-            cancel_event=cancel_event,
-            model_override=selected_model,
-        )
+    sys_prompt = (
+        "/no_think\nYou are a strict trading research spec writer. Output ONLY JSON with "
+        "keys: reference_id, hypothesis, family, market_regime, entry_trigger, "
+        "exit_economics, why_not_generic, expected_trades_per_day, parameters. "
+        "Write all human-readable JSON string values in Russian. Keep JSON keys, "
+        "reference IDs, parameter names, and metric names in English. "
+        "Do not expose hidden chain-of-thought; provide concise final reasoning only. "
+        "Choose exactly one reference_id from the approved shortlist. WEX and "
+        "rejected AI-CELL rows are negative evidence, not code templates. "
+        "Reject generic breakout/crossover ideas that lack a named regime and "
+        "confirmation. Keep hypothesis under 80 words and parameters to at most "
+        "8 actionable scalar values."
+    )
+    user_prompt = (
+        f"{intake.get('knowledge_prompt_context', '')}\n\n"
+        f"Approved references: {shortlist}\n"
+        f"Avoid recent failure patterns: {intake.get('rejected_patterns', [])[:5]}\n"
+        f"User research files just read: {intake.get('user_research_files_read', [])}\n\n"
+        f"{lm_studio.prompt_cache_marker()}\n\n"
+        f"Target root: {target_root}\n"
+        f"User goal constraints: {constraints}\n"
+        "Propose one structurally distinct intraday hypothesis. State why it is "
+        "not another generic breakout and target 0.2-3.0 trades/day. "
+        "All explanations must be in Russian."
+    )
+    if operator_notes_block:
+        user_prompt += "\n\nOperator notes for this dynamic request:\n" + operator_notes_block
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    def _validated_response(resp: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
         parsed = lm_studio.extract_json_block(resp.get("content", ""))
         if not isinstance(parsed, dict):
             activity.log(
-                experiment_id,
-                "generate",
-                "hypothesis_contract_rejected",
-                level="warn",
+                experiment_id, "generate", "hypothesis_contract_rejected", level="warn",
+                provider=source,
                 response_summary=str(parsed)[:300],
             )
-            return fallback
+            return None
         allowed_refs = {
             str(row.get("reference_id")) for row in shortlist if row.get("reference_id")
         }
+        supplied_ref = str(parsed.get("reference_id") or "")
+        if allowed_refs and supplied_ref not in allowed_refs and preferred_ref.get("reference_id"):
+            parsed["reference_id"] = str(preferred_ref["reference_id"])
+            activity.log(
+                experiment_id, "generate", "hypothesis_reference_normalized",
+                level="info", supplied_reference=supplied_ref[:120],
+                selected_reference=parsed["reference_id"],
+            )
         family_text = str(parsed.get("family") or "")
         generic_without_regime = (
             any(word in family_text.lower() for word in ("generic", "pricebreakout"))
@@ -335,13 +321,15 @@ def choose_hypothesis(
                 except (TypeError, ValueError):
                     merged[key] = default
             activity.log(experiment_id, "generate", "hypothesis_response", level="success",
-                         model=resp.get("model"), response_summary=str(parsed.get("hypothesis"))[:200])
+                         model=resp.get("model"), provider=resp.get("provider") or source,
+                         cost_usd=resp.get("cost_usd"),
+                         response_summary=str(parsed.get("hypothesis"))[:200])
             return {
                 "hypothesis": str(parsed["hypothesis"])[:500],
                 "family": parsed.get("family") or fallback["family"],
                 "lane": "research",
                 "parameters": merged,
-                "_source": "llm",
+                "_source": source,
                 "reference_id": parsed.get("reference_id"),
                 "market_regime": parsed.get("market_regime"),
                 "entry_trigger": parsed.get("entry_trigger"),
@@ -350,16 +338,88 @@ def choose_hypothesis(
                 "expected_trades_per_day": parsed.get("expected_trades_per_day"),
             }
         activity.log(
-            experiment_id,
-            "generate",
-            "hypothesis_contract_rejected",
-            level="warn",
+            experiment_id, "generate", "hypothesis_contract_rejected", level="warn",
+            provider=source,
             response_summary=str(parsed)[:300],
         )
-    except lm_studio.LMStudioCancelled:
-        raise
-    except lm_studio.LMStudioError as e:
-        activity.log(experiment_id, "generate", "hypothesis_lm_failed", level="warn", error=str(e))
+        return None
+
+    model_gate = (intake.get("model_health") or {}).get("idea_generator") or {}
+    selected_role = model_gate.get("selected_role") or "judge"
+    selected_model = model_gate.get("selected_model")
+    local_failure = ""
+    # The external benchmark winner proposes the first specification. The
+    # strict JSON contract below remains the authority; local inference is the
+    # fallback when the external pool is unavailable or violates the contract.
+    try:
+        external_resp = agent_router.invoke_messages(
+            "hypothesis", messages, max_output_tokens=700, timeout=180,
+            purpose="hypothesis",
+        )
+        candidate = _validated_response(external_resp, "external_primary")
+        if candidate:
+            return candidate
+        local_failure = "external_hypothesis_contract_rejected"
+    except agent_router.AgentRouterError as exc:
+        local_failure = "external_hypothesis_request_failed"
+        activity.log(
+            experiment_id, "generate", "hypothesis_external_failed",
+            level="warn", error=str(exc)[:300],
+        )
+    if model_gate and not model_gate.get("ok"):
+        local_failure = "local_model_health_failed"
+        activity.log(
+            experiment_id, "generate", "hypothesis_model_health_failed",
+            level="warn", role="judge", response_summary=str(model_gate)[:300],
+        )
+    else:
+        activity.log(experiment_id, "generate", "hypothesis_prompt", level="info",
+                     role=selected_role, model=selected_model,
+                     prompt_preview="Propose one structurally distinct intraday hypothesis in Russian.",
+                     prompt_preview_ru="Сформировать одну структурно отличающуюся внутридневную гипотезу на русском языке.")
+        try:
+            local_resp = lm_studio.chat(
+                role=selected_role, messages=messages,
+                temperature=0.3, max_tokens=500, experiment_id=experiment_id,
+                purpose="hypothesis", timeout=lm_studio.DEFAULT_JUDGE_TIMEOUT,
+                cancel_event=cancel_event, model_override=selected_model,
+            )
+            candidate = _validated_response(local_resp, "local_llm")
+            if candidate:
+                return candidate
+            local_failure = "local_hypothesis_contract_rejected"
+        except lm_studio.LMStudioCancelled:
+            raise
+        except lm_studio.LMStudioError as exc:
+            local_failure = "local_hypothesis_request_failed"
+            activity.log(experiment_id, "generate", "hypothesis_lm_failed", level="warn", error=str(exc))
+
+    try:
+        cloud_resp = cloud_agents.invoke(
+            "hypothesis_fallback", messages,
+            fallback_reason=local_failure or "local_hypothesis_failed",
+            experiment_id=experiment_id, purpose="hypothesis_fallback",
+            temperature=0.2, max_tokens=500, timeout=180,
+        )
+        activity.log(
+            experiment_id, "generate", "hypothesis_cloud_fallback", level="warn",
+            role="hypothesis_fallback", provider=cloud_resp.get("provider"),
+            model=cloud_resp.get("model"), cost_usd=cloud_resp.get("cost_usd"),
+            reason=local_failure,
+        )
+        candidate = _validated_response(cloud_resp, "cloud_fallback")
+        if candidate:
+            return candidate
+    except cloud_agents.CloudAgentBlocked as exc:
+        activity.log(
+            experiment_id, "generate", "hypothesis_cloud_blocked", level="info",
+            role="hypothesis_fallback", reason=str(exc)[:300],
+        )
+    except cloud_agents.CloudAgentsError as exc:
+        activity.log(
+            experiment_id, "generate", "hypothesis_cloud_failed", level="warn",
+            role="hypothesis_fallback", error=str(exc)[:300],
+        )
     activity.log(experiment_id, "generate", "hypothesis_fallback", level="info",
                  response_summary=fallback["hypothesis"][:200])
     return fallback
@@ -890,6 +950,7 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
                     operator_notes=notes_block,
                     cancel_event=cancel_event,
                     allow_template_fallback=allow_template_fallback,
+                    allow_cloud_fallback=attempt >= 2,
                 )
             except lm_studio.LMStudioCancelled:
                 registry.transition_status(experiment_id, "cancelled", reason="cancelled in autofix")
@@ -1203,6 +1264,23 @@ def finalize_backtest(experiment_id: str, job_id: str) -> Dict[str, Any]:
         capital=float(exp.get("primary_capital") or 5000.0),
     )
     exp["arbitration"]["quality_decision"] = quality
+    # Advisory explanations and the next structural mutation are generated
+    # after deterministic metrics. They are recorded for audit but cannot
+    # change ``quality`` or the verdict below.
+    try:
+        exp["agent_committee"] = agent_committee.review_backtest(exp)
+        activity.log(
+            experiment_id, "analyze", "agent_committee_completed", level="success",
+            advisory_only=True,
+        )
+    except Exception as exc:
+        exp["agent_committee"] = {
+            "advisory_only": True, "reports": {}, "error": str(exc)[:500],
+        }
+        activity.log(
+            experiment_id, "analyze", "agent_committee_failed", level="warn",
+            error=str(exc)[:300],
+        )
     decision = quality.get("decision")
     if decision == "reject":
         exp["status"] = "rejected"

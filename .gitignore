@@ -44,6 +44,11 @@
 /NT-Analyzer/data/last_job.txt
 /NT-Analyzer/data/integrations/news.json
 /NT-Analyzer/data/integrations/live_news.json
+/NT-Analyzer/data/integrations/telegram.settings.json
+/NT-Analyzer/data/integrations/telegram.state.json
+/NT-Analyzer/data/integrations/ai_agents.settings.json
+/NT-Analyzer/data/integrations/ai_agents.registry.json
+/NT-Analyzer/data/integrations/ai_agent_keys.dpapi
 /NT-Analyzer/logs/
 /NT-Analyzer/_backup_before_restore_*/
 /NT-Analyzer/research_archive/
@@ -98,6 +103,9 @@
 /NT-Analyzer/ai_lab/*_REPORT.md
 /NT-Analyzer/ai_lab/model_benchmark/results/
 /NT-Analyzer/ai_lab/model_benchmark/reports/
+/NT-Analyzer/ai_lab/model_benchmark/comparison_*/
+/NT-Analyzer/ai_lab/model_benchmark/external_results/
+/NT-Analyzer/ai_lab/model_benchmark/local_*_20*/
 /NT-Analyzer/ai_lab/model_benchmark/AI_SANDBOX_COMPILE_TEST/
 /NT-Analyzer/ai_lab/model_benchmark/**/__pycache__/
 /NT-Analyzer/ai_lab/user_research/*

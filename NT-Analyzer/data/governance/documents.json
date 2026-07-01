@@ -126,6 +126,14 @@
       "editable_kind": "none"
     },
     {
+      "id": "ai-lab-cloud-agents",
+      "title": "AI_LAB_CLOUD_AGENTS",
+      "label": "AI Lab cloud agents, roles and budget",
+      "category": "technical",
+      "path": "docs/AI_LAB_CLOUD_AGENTS.md",
+      "editable_kind": "none"
+    },
+    {
       "id": "ai-lab-system-coder",
       "title": "system_coder",
       "label": "Локальный AI prompt contract",

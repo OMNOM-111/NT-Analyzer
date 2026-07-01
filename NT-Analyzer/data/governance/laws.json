@@ -338,6 +338,82 @@
         "app/ai_lab/prompts/system_coder.txt"
       ],
       "review_targets": []
+    },
+    {
+      "id": "GOV-AI-007",
+      "key": "ai_lab_cloud_local_first_only",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Облачный API работает только как local-first fallback",
+      "summary": "Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/cloud_agents.py",
+        "app/ai_lab/orchestrator.py",
+        "app/ai_lab/generator.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-008",
+      "key": "ai_lab_cloud_budget_caps",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Бюджет облачного API имеет жёсткие потолки",
+      "summary": "Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.",
+      "kind": "string",
+      "value": "20.00 USD/month; 0.50 USD/run",
+      "source_refs": [
+        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/cloud_agents.py",
+        "ui AI Lab cloud-agent settings"
+      ],
+      "review_targets": [
+        "provider invoice versus local cost audit"
+      ]
+    },
+    {
+      "id": "GOV-AI-009",
+      "key": "ai_lab_cloud_output_not_verdict",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "API output не является verdict",
+      "summary": "Cloud-ответ не может обойти validator, compile, backtest, arbitration, governance или ручное promotion-решение.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md",
+        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+      ],
+      "dynamic_targets": [
+        "app/ai_lab/cloud_agents.py",
+        "app/ai_lab/orchestrator.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-010",
+      "key": "ai_lab_cloud_secrets_private",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Облачные ключи и prompts не раскрываются",
+      "summary": "Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [
+        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+      ],
+      "dynamic_targets": [
+        "app/local_secrets.py",
+        "app/ai_lab/cloud_agents.py"
+      ],
+      "review_targets": []
     }
   ]
 }

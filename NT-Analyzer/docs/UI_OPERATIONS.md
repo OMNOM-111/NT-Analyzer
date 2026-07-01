@@ -83,6 +83,26 @@ arbitration score). Exact token totals appear only when LM Studio returns `usage
 At run end the configured cleanup may unload models and stop the model server.
 That is expected; the next environment/run start restores it.
 
+## AI Agents / API Keys
+
+Open **AI Agents** from navigation. The basic form asks only for provider,
+account/quota label, deployment/model, API key and (for Azure/Custom) endpoint.
+Transport, auth and endpoint type are inferred. Roles, rotation pool and priority
+are optional advanced settings; prices come from the central model catalog.
+The key is stored through Windows DPAPI and only a mask is shown afterward.
+
+For student credits, record the grant total and the current remaining amount from
+the provider billing portal. Azure model keys cannot read Cost Management, so its
+balance is a manual snapshot minus later StratForge calls. Deployment retirement
+shown in Foundry is not the grant expiry. The tariff table is an estimator; the
+provider invoice is authoritative.
+
+Budget `0` is monitoring-only and does not block requests. A configured positive
+daily/monthly/credit or `$0.50` single-call gate can block and disable the model.
+Models sharing one provider/account share the same grant balance. Enabling a model
+does not give it trading, Telegram or strategy
+promotion rights; workflow integration is a separate reviewed change.
+
 ## Documents
 
 Documents use the governance API. Editing requires actor and reason, has a dirty

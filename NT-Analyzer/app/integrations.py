@@ -33,14 +33,10 @@ def _read_rows(name: str) -> List[Dict[str, Any]]:
 
 
 def telegram_status() -> Dict[str, Any]:
-    configured = bool(os.environ.get("NTA_TELEGRAM_BOT_TOKEN") and os.environ.get("NTA_TELEGRAM_CHAT_ID"))
-    return {
-        "configured": configured,
-        "status": "configured" if configured else "not_configured",
-        "notifications_enabled": configured and os.environ.get("NTA_TELEGRAM_NOTIFICATIONS", "1") != "0",
-        "commands_enabled": False,
-        "note": "Команды из Telegram отключены до отдельного security-аудита.",
-    }
+    # Local import prevents a module cycle: the notifier reads news through
+    # this module while status is also used by the Telegram settings drawer.
+    from . import telegram_service
+    return telegram_service.status()
 
 
 def topstep_status() -> Dict[str, Any]:
@@ -193,28 +189,10 @@ def live_news(max_age_min: int = 60, limit: int = 40) -> Dict[str, Any]:
 
 
 def external_agents_status() -> Dict[str, Any]:
-    rows = _read_rows("external_agents.json") or _read_rows("external_agents.jsonl")
-    configured = bool(os.environ.get("NTA_EXTERNAL_AGENTS_ENABLED") == "1")
-    budget_raw = os.environ.get("NTA_EXTERNAL_AGENTS_BUDGET_USD", "0")
-    try:
-        budget = max(0.0, float(budget_raw))
-    except ValueError:
-        budget = 0.0
-    spent = 0.0
-    for row in rows:
-        try:
-            spent += max(0.0, float(row.get("cost_usd") or 0))
-        except (TypeError, ValueError):
-            continue
-    return {
-        "configured": configured,
-        "execution_enabled": False,
-        "budget_usd": round(budget, 4),
-        "spent_usd": round(spent, 4),
-        "remaining_usd": round(max(0.0, budget - spent), 4),
-        "agents": rows[-100:],
-        "note": "Внешние агенты работают только после настройки бюджета и отдельного разрешения выполнения.",
-    }
+    # Lazy import keeps the general integration status lightweight and avoids
+    # making the paid-model router a dependency of unrelated market feeds.
+    from .ai_lab import cloud_agents
+    return cloud_agents.status()
 
 
 def status() -> Dict[str, Any]:

@@ -15,7 +15,7 @@ from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import governance
-from . import activity, lm_studio, paths
+from . import activity, agent_router, cloud_agents, lm_studio, paths
 from .guards import assert_sandbox_only
 from .validator import ValidationReport, validate_source
 
@@ -745,6 +745,7 @@ def generate(
     operator_notes: Optional[str] = None,
     cancel_event: Optional[threading.Event] = None,
     allow_template_fallback: bool = False,
+    allow_cloud_fallback: bool = False,
 ) -> Tuple[str, ValidationReport, Dict[str, Any]]:
     """Returns (source, validation_report, meta).
 
@@ -768,52 +769,115 @@ def generate(
             meta["path"] = "autofix_skipped_no_llm"
             report = validate_source(prior_source or "", expected_class_name=class_name)
             return prior_source or "", report, meta
+        sys_prompt = _read_system_prompt()
+        user_prompt = _build_autofix_prompt(
+            class_name=class_name,
+            prior_compile_errors=prior_compile_errors or [],
+            prior_source=prior_source or "",
+            operator_notes=operator_notes,
+        )
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        # Critical compile repair is routed to the benchmark winner first.
+        # Local GPT-OSS remains the no-cost fallback below.
         try:
-            sys_prompt = _read_system_prompt()
-            user_prompt = _build_autofix_prompt(
-                class_name=class_name,
-                prior_compile_errors=prior_compile_errors or [],
-                prior_source=prior_source or "",
-                operator_notes=operator_notes,
-            )
-            _log_activity(
-                experiment_id,
-                "coder_prompt",
-                role=meta["role"],
+            external_resp = agent_router.invoke_messages(
+                "compile_error_fixer", messages,
+                max_output_tokens=2200, timeout=240,
                 purpose="autofix_compile",
-                prompt_preview="Fix compile errors and return one complete C# file with Russian human-readable comments.",
-                prompt_preview_ru="Исправить ошибки компиляции и вернуть полный C# файл с русскими поясняющими комментариями.",
             )
-            resp = lm_studio.chat(
-                role="compile_error_fixer",
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=2200,
-                experiment_id=experiment_id,
-                purpose="autofix_compile",
-                timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
-                cancel_event=cancel_event,
-            )
-            meta["model"] = resp.get("model")
-            meta["elapsed_sec"] = resp.get("elapsed_sec")
-            src = _extract_csharp(resp.get("content", "")) or None
-            meta["attempts"] = 1
-            _log_activity(
-                experiment_id,
-                "coder_response",
-                role=meta["role"],
-                model=resp.get("model"),
-                response_summary="Model returned a corrected strategy; extracting C# and validating it.",
-                response_summary_ru="Модель вернула исправленный вариант стратегии; выполняется извлечение C# и проверка.",
-            )
-        except lm_studio.LMStudioCancelled:
-            raise
-        except lm_studio.LMStudioError as e:
-            meta["llm_error"] = str(e)
-            _raise_if_cancelled()
+            src = _extract_csharp(external_resp.get("content", "")) or None
+            if src:
+                meta.update({
+                    "path": "external_primary",
+                    "provider": external_resp.get("provider"),
+                    "model": external_resp.get("actual_model") or external_resp.get("model"),
+                    "elapsed_sec": external_resp.get("elapsed_sec"),
+                    "cost_usd": external_resp.get("cost_usd"),
+                    "attempts": 1,
+                })
+                _log_activity(
+                    experiment_id, "coder_external_primary",
+                    role="compile_error_fixer", provider=external_resp.get("provider"),
+                    model=meta.get("model"), cost_usd=external_resp.get("cost_usd"),
+                )
+        except agent_router.AgentRouterError as exc:
+            meta["external_primary_error"] = str(exc)[:300]
+        if allow_cloud_fallback:
+            try:
+                cloud_resp = cloud_agents.invoke(
+                    "compile_error_fixer_fallback", messages,
+                    fallback_reason="local_compile_fix_failed_repeatedly",
+                    experiment_id=experiment_id, purpose="autofix_compile_fallback",
+                    temperature=0.1, max_tokens=2200, timeout=240,
+                )
+                src = _extract_csharp(cloud_resp.get("content", "")) or None
+                if src:
+                    meta.update({
+                        "path": "cloud_fallback",
+                        "provider": cloud_resp.get("provider"),
+                        "model": cloud_resp.get("model"),
+                        "elapsed_sec": cloud_resp.get("elapsed_sec"),
+                        "cost_usd": cloud_resp.get("cost_usd"),
+                        "attempts": 1,
+                    })
+                    _log_activity(
+                        experiment_id, "coder_cloud_fallback", role="compile_error_fixer_fallback",
+                        provider=cloud_resp.get("provider"), model=cloud_resp.get("model"),
+                        cost_usd=cloud_resp.get("cost_usd"),
+                        response_summary_ru="Облачный fallback вернул C# после повторных локальных ошибок компиляции.",
+                    )
+            except cloud_agents.CloudAgentBlocked as exc:
+                meta["cloud_fallback_blocked"] = str(exc)
+                _log_activity(
+                    experiment_id, "coder_cloud_blocked", role="compile_error_fixer_fallback",
+                    reason=str(exc)[:300],
+                )
+            except cloud_agents.CloudAgentsError as exc:
+                meta["cloud_fallback_error"] = str(exc)
+                _log_activity(
+                    experiment_id, "coder_cloud_failed", role="compile_error_fixer_fallback",
+                    error=str(exc)[:300],
+                )
+        if not src:
+            try:
+                _log_activity(
+                    experiment_id,
+                    "coder_prompt",
+                    role=meta["role"],
+                    purpose="autofix_compile",
+                    prompt_preview="Fix compile errors and return one complete C# file with Russian human-readable comments.",
+                    prompt_preview_ru="Исправить ошибки компиляции и вернуть полный C# файл с русскими поясняющими комментариями.",
+                )
+                resp = lm_studio.chat(
+                    role="compile_error_fixer",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=2200,
+                    experiment_id=experiment_id,
+                    purpose="autofix_compile",
+                    timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
+                    cancel_event=cancel_event,
+                )
+                meta["model"] = resp.get("model")
+                meta["elapsed_sec"] = resp.get("elapsed_sec")
+                src = _extract_csharp(resp.get("content", "")) or None
+                meta["attempts"] = 1
+                _log_activity(
+                    experiment_id,
+                    "coder_response",
+                    role=meta["role"],
+                    model=resp.get("model"),
+                    response_summary="Model returned a corrected strategy; extracting C# and validating it.",
+                    response_summary_ru="Модель вернула исправленный вариант стратегии; выполняется извлечение C# и проверка.",
+                )
+            except lm_studio.LMStudioCancelled:
+                raise
+            except lm_studio.LMStudioError as e:
+                meta["llm_error"] = str(e)
+                _raise_if_cancelled()
         _raise_if_cancelled()
         if not src:
             # Autofix failed. Return the previous source for audit only, but
@@ -862,19 +926,27 @@ def generate(
                 prompt_preview="Generate a NinjaTrader 8 strategy from the hypothesis; keep C# APIs untranslated.",
                 prompt_preview_ru="Сгенерировать стратегию NinjaTrader 8 по гипотезе; C# API не переводить.",
             )
-            resp = lm_studio.chat(
-                role="coder",
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=1500,
-                experiment_id=experiment_id,
-                purpose="generate_strategy",
-                timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
-                cancel_event=cancel_event,
-            )
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            try:
+                resp = agent_router.invoke_messages(
+                    "coder", messages, max_output_tokens=2200, timeout=240,
+                    purpose="generate_strategy",
+                )
+                meta["path"] = "external_primary"
+                meta["provider"] = resp.get("provider")
+                meta["cost_usd"] = resp.get("cost_usd")
+            except agent_router.AgentRouterError as external_error:
+                meta["external_primary_error"] = str(external_error)[:300]
+                resp = lm_studio.chat(
+                    role="coder", messages=messages, temperature=0.2,
+                    max_tokens=1500, experiment_id=experiment_id,
+                    purpose="generate_strategy", timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
+                    cancel_event=cancel_event,
+                )
+                meta["path"] = "local_fallback"
             meta["model"] = resp.get("model")
             meta["elapsed_sec"] = resp.get("elapsed_sec")
             src = _extract_csharp(resp.get("content", "")) or None
@@ -936,19 +1008,22 @@ def generate(
                 prompt_preview="Fix static-validation violations without renaming the class or namespace.",
                 prompt_preview_ru="Исправить нарушения статической проверки без переименования класса и namespace.",
             )
-            resp = lm_studio.chat(
-                role="code_reviewer",
-                messages=[
-                    {"role": "system", "content": _read_system_prompt()},
-                    {"role": "user", "content": fix_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=2200,
-                experiment_id=experiment_id,
-                purpose="autofix_strategy",
-                timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
-                cancel_event=cancel_event,
-            )
+            messages = [
+                {"role": "system", "content": _read_system_prompt()},
+                {"role": "user", "content": fix_prompt},
+            ]
+            try:
+                resp = agent_router.invoke_messages(
+                    "code_reviewer", messages, max_output_tokens=2200,
+                    timeout=240, purpose="autofix_strategy",
+                )
+            except agent_router.AgentRouterError:
+                resp = lm_studio.chat(
+                    role="code_reviewer", messages=messages, temperature=0.1,
+                    max_tokens=2200, experiment_id=experiment_id,
+                    purpose="autofix_strategy", timeout=lm_studio.DEFAULT_CODER_TIMEOUT,
+                    cancel_event=cancel_event,
+                )
             meta["attempts"] += 1
             fixed = _extract_csharp(resp.get("content", "")) or None
             _log_activity(

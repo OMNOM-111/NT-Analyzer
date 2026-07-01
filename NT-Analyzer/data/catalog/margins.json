@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-06-28T21:11:43Z",
+  "fetched_at_utc": "2026-06-30T22:15:18Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",
@@ -23,7 +23,7 @@
       "display_name": "1-Ounce Gold",
       "exchange": "COMEX",
       "intraday_margin": 50.0,
-      "initial_margin": 237.0,
+      "initial_margin": 226.0,
       "maintenance_margin": null
     },
     "2YY": {
@@ -226,42 +226,42 @@
       "display_name": "DAX Index",
       "exchange": "EUREX",
       "intraday_margin": 2000.0,
-      "initial_margin": 45416.0,
+      "initial_margin": 45360.0,
       "maintenance_margin": null
     },
     "FDXM": {
       "display_name": "Mini-DAX",
       "exchange": "EUREX",
       "intraday_margin": 500.0,
-      "initial_margin": 9082.0,
+      "initial_margin": 9071.0,
       "maintenance_margin": null
     },
     "FDXS": {
       "display_name": "Micro DAX Index",
       "exchange": "EUREX",
       "intraday_margin": 100.0,
-      "initial_margin": 1816.0,
+      "initial_margin": 1814.0,
       "maintenance_margin": null
     },
     "FESX": {
       "display_name": "Euro Stoxx 50",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 4370.0,
+      "initial_margin": 4341.0,
       "maintenance_margin": null
     },
     "FGBL": {
       "display_name": "Euro-Bund",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 1926.0,
+      "initial_margin": 1946.0,
       "maintenance_margin": null
     },
     "FGBM": {
       "display_name": "Euro-Bobl",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 1043.0,
+      "initial_margin": 1046.0,
       "maintenance_margin": null
     },
     "FGBS": {
@@ -275,28 +275,28 @@
       "display_name": "Euro-Buxl",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 3751.0,
+      "initial_margin": 3848.0,
       "maintenance_margin": null
     },
     "FSXE": {
       "display_name": "Micro EURO STOXX 50",
       "exchange": "EUREX",
-      "intraday_margin": 218.5,
-      "initial_margin": 437.0,
+      "intraday_margin": 217.0,
+      "initial_margin": 434.0,
       "maintenance_margin": null
     },
     "FVS": {
       "display_name": "VSTOXX",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 276.0,
+      "initial_margin": 252.0,
       "maintenance_margin": null
     },
     "FXXP": {
       "display_name": "STOXX Europe 600",
       "exchange": "EUREX",
       "intraday_margin": 1000.0,
-      "initial_margin": 2166.0,
+      "initial_margin": 2182.0,
       "maintenance_margin": null
     },
     "GC": {
@@ -750,8 +750,8 @@
     "PSOLUS": {
       "display_name": "Solana US Dollar Perpetual",
       "exchange": "Bitnomial",
-      "intraday_margin": 36.0,
-      "initial_margin": 72.0,
+      "intraday_margin": 20.0,
+      "initial_margin": 40.0,
       "maintenance_margin": null
     },
     "PXLMUK": {

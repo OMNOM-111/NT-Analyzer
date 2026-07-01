@@ -17,7 +17,7 @@ AURORA = STATIC / "aurora"
 
 NEW_PAGES = [
     "index.html", "backtesting.html", "trading.html", "performance.html",
-    "strategies.html", "ai-lab.html", "news.html", "topstep.html", "documents.html",
+    "strategies.html", "ai-lab.html", "ai-agents.html", "news.html", "topstep.html", "documents.html",
 ]
 LEGACY_PAGES = [
     "index.html", "trading.html", "strategies.html", "performance.html",
@@ -53,6 +53,7 @@ def test_aurora_page_controllers_call_real_endpoints():
         "strategies.js": "API.http.profiles",
         "trading.js": "API.http.runtimeAccounts",
         "ai-lab.js": "API.http.aiSummary",
+        "ai-agents.js": "API.http.aiAgents",
         "backtesting.js": "API.http.reports",
         "news.js": "API.http.news",
         "topstep.js": "API.http.topstepStatus",

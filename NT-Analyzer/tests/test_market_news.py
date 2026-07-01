@@ -46,7 +46,7 @@ def test_feeds_env_override(monkeypatch) -> None:
 
 
 def test_alpha_vantage_rate_limit_is_sanitized(monkeypatch) -> None:
-    api_key = "5E84M75TLHE42OTD"
+    api_key = "TEST_API_KEY_NOT_REAL"
     monkeypatch.setenv("NTA_ALPHAVANTAGE_API_KEY", api_key)
     payload = {
         "Note": f"We have detected your API key as {api_key} and our standard API rate limit is 25 requests per day.",

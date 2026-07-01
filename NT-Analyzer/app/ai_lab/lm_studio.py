@@ -5,7 +5,7 @@ specific roles -> model ids. Logs every prompt/response to
 ``ai_lab/registry/prompts_log/<date>.jsonl`` for full audit.
 
 Roles:
-    - "judge"     -> qwen/qwen3.6-35b-a3b      (analyst, reasoning, scoring)
+    - "judge"     -> openai/gpt-oss-20b        (local emergency fallback)
     - "coder"     -> gpt-oss-20b               (code drafter / reviewer)
     - "embedder"  -> text-embedding-nomic-embed-text-v1.5
 """
@@ -47,7 +47,7 @@ _READINESS_CACHE: Optional[Dict[str, Any]] = None
 _READINESS_CACHE_AT: float = 0.0
 
 MODEL_ROUTES = {
-    "judge": "qwen/qwen3.6-35b-a3b",
+    "judge": "openai/gpt-oss-20b",
     "coder": "openai/gpt-oss-20b",
     "code_reviewer": "openai/gpt-oss-20b",
     "compile_error_fixer": "openai/gpt-oss-20b",

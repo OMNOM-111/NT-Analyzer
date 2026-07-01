@@ -33,6 +33,14 @@
 - Работает строго по `LOCAL_AI_LAWS.md`, `system_coder.txt`, `knowledge.py` и lessons/reference library.
 - Не имеет права запускать paper/live/demo, трогать production-strategies или выходить за sandbox.
 
+## Cloud API / платные AI-роли
+
+- Только fallback для явно разрешённых ролей после локальной неудачи.
+- Реально подключены `hypothesis_fallback` и `compile_error_fixer_fallback`; остальные роли на экране имеют статус `reserved` до отдельной реализации.
+- Не принимает trading verdict, не отправляет runtime/account команды и не имеет доступа к paper/live.
+- Каждый вызов ограничен месячным/per-run бюджетом и фиксируется в cost audit.
+- Назначения «роль → модель», ключи и главный выключатель настраиваются владельцем на странице AI Lab.
+
 ## Правило фиксации изменений
 
 Для изменений governance, стратегии или runtime-процесса должна быть понятна цепочка:

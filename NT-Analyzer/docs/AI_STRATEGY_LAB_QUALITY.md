@@ -1,6 +1,6 @@
 # AI Strategy Lab — quality pipeline
 
-Дата проверки: 2026-06-22.
+Дата проверки: 2026-06-29.
 
 ## Рабочая архитектура
 
@@ -41,11 +41,20 @@
 - context: `8192`
 - parallel: `1`
 - retries: `0`
-- idea/spec: `qwen3-coder-30b-a3b-instruct`
+- local fallback for idea/spec/code/review: `openai/gpt-oss-20b`
 - compile fixer/reviewer: `openai/gpt-oss-20b`
 
 Перед запуском readiness обязан проверить `judge`, `coder` и
 `compile_error_fixer` через реальный `chat/completions`.
+
+## Controlled cloud fallback
+
+AI Lab остаётся local-first. После некорректного локального hypothesis-контракта
+может быть вызван `hypothesis_fallback`; после трёх повторных compile-fail
+циклов — `compile_error_fixer_fallback`. Оба пути по умолчанию выключены,
+требуют отдельного API-ключа и разрешения, ограничены `$20/месяц` и
+`$0.50/run`. Cloud output снова проходит все deterministic gates и не имеет
+права на verdict. Полный контракт: `docs/AI_LAB_CLOUD_AGENTS.md`.
 
 ## Реальные E2E результаты
 

@@ -448,6 +448,65 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         ],
         "review_targets": [],
     },
+    {
+        "id": "GOV-AI-007",
+        "key": "ai_lab_cloud_local_first_only",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Облачный API работает только как local-first fallback",
+        "summary": "Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": [
+            "app/ai_lab/cloud_agents.py",
+            "app/ai_lab/orchestrator.py",
+            "app/ai_lab/generator.py",
+        ],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-008",
+        "key": "ai_lab_cloud_budget_caps",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Бюджет облачного API имеет жёсткие потолки",
+        "summary": "Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.",
+        "kind": "string",
+        "value": "20.00 USD/month; 0.50 USD/run",
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": ["app/ai_lab/cloud_agents.py", "ui AI Lab cloud-agent settings"],
+        "review_targets": ["provider invoice versus local cost audit"],
+    },
+    {
+        "id": "GOV-AI-009",
+        "key": "ai_lab_cloud_output_not_verdict",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "API output не является verdict",
+        "summary": "Cloud-ответ не может обойти validator, compile, backtest, arbitration, governance или ручное promotion-решение.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": [
+            "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md",
+            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        ],
+        "dynamic_targets": ["app/ai_lab/cloud_agents.py", "app/ai_lab/orchestrator.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-010",
+        "key": "ai_lab_cloud_secrets_private",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Облачные ключи и prompts не раскрываются",
+        "summary": "Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": ["app/local_secrets.py", "app/ai_lab/cloud_agents.py"],
+        "review_targets": [],
+    },
 ]
 
 
@@ -575,6 +634,14 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "label": "AI Lab quality pipeline",
             "category": "technical",
             "path": "docs/AI_STRATEGY_LAB_QUALITY.md",
+            "editable_kind": "none",
+        },
+        {
+            "id": "ai-lab-cloud-agents",
+            "title": "AI_LAB_CLOUD_AGENTS",
+            "label": "AI Lab cloud agents, roles and budget",
+            "category": "technical",
+            "path": "docs/AI_LAB_CLOUD_AGENTS.md",
             "editable_kind": "none",
         },
         {
@@ -730,7 +797,7 @@ def _group_title(group: str) -> str:
         "execution_costs": "Комиссии, slippage и fill",
         "process": "Процесс разработки",
         "promotion": "Promotion и runtime-контроль",
-        "local_ai": "Локальный ИИ и AI Lab sandbox",
+        "local_ai": "Локальный ИИ и cloud fallback в AI Lab sandbox",
     }.get(group, group)
 
 
@@ -936,7 +1003,7 @@ def _render_laws_markdown(audience: str) -> str:
     subtitle = (
         "Короткий свод проектных законов для людей, Codex, Cursor, Claude и Gemini."
         if audience == "project"
-        else "Короткий свод законов только для локального ИИ / AI Lab sandbox."
+        else "Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox."
     )
     parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_now_iso()[:10]}", "", subtitle]
     current_group = None
@@ -1006,7 +1073,7 @@ def _render_readme_markdown() -> str:
 - `CHARTER.md` — цель, границы и основные принципы.
 - `ROLES.md` — роли владельца и всех ИИ-каналов.
 - `LAWS.md` — общие законы проекта.
-- `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ / AI Lab.
+- `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ и cloud fallback / AI Lab.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
 
@@ -1042,6 +1109,7 @@ def _render_overview_markdown() -> str:
     runtime_lock = "Да" if bool(law_value("runtime_locked_params_must_match", True)) else "Нет"
     ai_window = str(law_value("ai_lab_session_window_pt", "06:30-12:30 PT"))
     ai_sandbox = "Да" if bool(law_value("ai_lab_sandbox_only", True)) else "Нет"
+    cloud_budget = str(law_value("ai_lab_cloud_budget_caps", "20.00 USD/month; 0.50 USD/run"))
 
     parts = [
         "# OVERVIEW",
@@ -1065,6 +1133,7 @@ def _render_overview_markdown() -> str:
         f"- Paper before live: `{paper_gate}`",
         f"- Runtime должен совпадать с locked params: `{runtime_lock}`",
         f"- AI Lab sandbox only: `{ai_sandbox}`",
+        f"- AI Lab cloud API: `local-first fallback; {cloud_budget}`",
         f"- Базовое PT-окно AI Lab: `{ai_window}`",
         "",
         "## На что смотреть в первую очередь",

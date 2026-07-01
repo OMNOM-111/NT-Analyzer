@@ -1,11 +1,11 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>StratForge AI Lab — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260630-news6">
+<link rel="stylesheet" href="assets/theme.css?v=20260630-drawer1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
   .ai-matrix { display:grid; grid-template-columns: repeat(auto-fill, 26px); gap:5px; }
@@ -94,11 +94,14 @@
   </section>
 
   <section class="panel">
-    <div class="panel-h"><h2>Внешние платные агенты</h2><span class="sub" id="external-agent-sub">выполнение отключено до настройки бюджета</span></div>
+    <div class="panel-h"><h2>Внешние агенты: работа и стоимость</h2><div class="spacer"></div><a class="btn sm" href="ai-agents.html">Управление ключами</a></div>
     <div class="panel-b col gap-lg">
-      <div class="grid cols-4" id="external-agent-kpis"></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Агент / роль</th><th>Задача</th><th>Статус</th><th>Последнее взаимодействие</th><th class="num">Токены</th><th class="num">Стоимость</th></tr></thead><tbody id="external-agent-body"></tbody></table></div>
-      <div class="finance-note">Этот контур отделён от локальных моделей. Backend не запускает внешних агентов автоматически: сначала задаётся общий бюджет, затем проводится отдельный security-аудит и включается исполнение.</div>
+      <div class="grid cols-4" id="ai-agent-kpis"></div>
+      <div class="grid" style="grid-template-columns:1fr 1.4fr">
+        <div><h4 style="margin:0 0 8px">Сейчас выполняется</h4><div class="list" id="ai-agent-active"></div></div>
+        <div><h4 style="margin:0 0 8px">Последние вызовы</h4><div class="tbl-wrap" style="max-height:260px"><table class="tbl"><thead><tr><th>Роль</th><th>Модель / аккаунт</th><th class="num">Tokens</th><th class="num">Cost</th><th>Статус</th></tr></thead><tbody id="ai-agent-usage"></tbody></table></div></div>
+      </div>
+      <details><summary>Текущая цепочка маршрутизации и failover</summary><div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Роль</th><th>Порядок</th></tr></thead><tbody id="ai-agent-routes"></tbody></table></div></details>
     </div>
   </section>
 
@@ -147,9 +150,9 @@
   </div>
 
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260629-final4"></script>
+<script src="assets/api.js?v=20260629-cloud1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ui.js?v=20260630-news6"></script>
-<script src="assets/pages/ai-lab.js?v=20260629-final4"></script>
+<script src="assets/pages/ai-lab.js?v=20260701-routing2"></script>
 </body>
 </html>

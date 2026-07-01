@@ -58,6 +58,28 @@ UI.ready(async function () {
   function runActive() {
     return AuroraDomain.aiRunIsActive(runStatus);
   }
+
+  async function loadAgentRuntime() {
+    let data;
+    try { data = await API.http.aiAgents({ signal: UI.signal() }); } catch (e) { return; }
+    const totals = data.totals || {};
+    const agents = data.agents || [];
+    const azureCredits = agents.filter(a => a.billing_mode === 'credit' && a.credit_remaining_estimated_usd != null).map(a => Number(a.credit_remaining_estimated_usd));
+    const azureUsedPct = agents.filter(a => a.billing_mode === 'credit' && a.credit_used_pct != null).map(a => Number(a.credit_used_pct));
+    const remaining = azureCredits.length ? Math.max(...azureCredits) : null;
+    UI.qs('#ai-agent-kpis').innerHTML = [
+      ['Enabled', `${Number(totals.enabled || 0)} / ${Number(totals.agents || 0)}`],
+      ['Активные запросы', String((data.routing?.active_requests || []).length)],
+      ['Расход / месяц', `≈ $${Number(totals.spend_month_usd || 0).toFixed(6)}`],
+      ['Azure grant', remaining == null ? 'не синхронизирован' : `≈ $${remaining.toFixed(4)} · ${Math.max(...azureUsedPct, 0).toFixed(4)}% used`],
+    ].map(row => `<div class="kpi"><div class="kpi-label">${UI.esc(row[0])}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
+    const active = data.routing?.active_requests || [];
+    UI.qs('#ai-agent-active').innerHTML = active.length ? active.map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.request_role || 'general')} · ${UI.esc(row.model || '')}</div><div class="row-sub">${UI.esc(row.account_name || '')} · ${UI.esc(row.purpose || '')} · с ${fmtDate(row.started_at_utc)}</div></div><span class="badge running"><span class="dot"></span>working</span></div>`).join('') : '<div class="empty-state">Сейчас внешних запросов нет.</div>';
+    const recent = (data.usage || []).slice(-12).reverse();
+    UI.qs('#ai-agent-usage').innerHTML = recent.length ? recent.map(row => `<tr><td>${UI.esc(row.request_role || row.role || '—')}<div class="row-sub">${UI.esc(row.purpose || '')}</div></td><td>${UI.esc(row.actual_model || row.model || '—')}<div class="row-sub">${UI.esc(row.account_name || '')}</div></td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${row.cost_estimated ? '≈ ' : ''}$${Number(row.cost_usd || 0).toFixed(8)}</td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span></td></tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">Вызовов пока нет.</div></td></tr>';
+    const routes = data.routing?.roles || {};
+    UI.qs('#ai-agent-routes').innerHTML = Object.entries(routes).map(([role, rows]) => `<tr><td><strong>${UI.esc(role)}</strong></td><td>${rows.length ? rows.map((row, i) => `${i + 1}. ${UI.esc(row.model || '')} <span class="row-sub">(${UI.esc(row.account_name || '')})</span>`).join('<br>') : '<span class="row-sub">нет enabled-модели</span>'}</td></tr>`).join('');
+  }
   function updateLaunchEnabled() {
     const launch = UI.qs('#ai-launch');
     if (runActive()) { launch.disabled = false; launch.title = ''; return; }
@@ -204,24 +226,87 @@ UI.ready(async function () {
       Chart.bars(chartBox.querySelector('canvas'), models.map(row => ({ label: String(row.model).split('/').pop().slice(0, 10), tooltipLabel: String(row.model), tooltipDetail: `Ошибок: ${Number(row.errors || 0)}`, value: Number(row.requests || 0), color: Number(row.errors || 0) ? '#fcc55a' : '#34d399' })), { height: 230 });
     } else UI.renderEmpty(chartBox, 'Нет модельной телеметрии.');
   }
+  let cloudAgentDoc = null;
+  const tinyUsd = (value, digits = 5) => '$' + Number(value || 0).toFixed(digits);
+  function renderCloudAgentStatus(doc) {
+    cloudAgentDoc = doc;
+    const usage = doc.usage || doc.agents || [];
+    const providers = doc.providers || [];
+    const roles = doc.roles || [];
+    const catalog = doc.catalog || [];
+    const configuredCount = providers.filter(row => row.configured && row.runtime_supported).length;
+    UI.qs('#external-agent-sub').textContent = `local-first · API fallback ${doc.fallback_enabled ? 'разрешён' : 'выключен'} · период ${doc.billing_period_utc || '—'}`;
+    UI.qs('#external-agent-kpis').innerHTML = [
+      ['Лимит / месяц', UI.money(Number(doc.monthly_budget_usd || 0)), 'info'],
+      ['Израсходовано', tinyUsd(doc.spent_usd, 4), Number(doc.spent_usd || 0) > Number(doc.monthly_budget_usd || 0) ? 'neg' : 'warn'],
+      ['Лимит / цикл', UI.money(Number(doc.per_run_budget_usd || 0), { dec: 2 }), 'info'],
+      ['Готовность', doc.execution_enabled ? 'fallback готов' : 'вызовы заблокированы', doc.execution_enabled ? 'pos' : 'warn'],
+    ].map(row => `<div class="kpi ${row[2]}"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
+    UI.qs('#external-provider-list').innerHTML = providers.map(row => `<div class="cloud-provider-card"><div class="flex between gap-sm"><strong>${UI.esc(row.label)}</strong><span class="badge ${row.configured ? (row.last_check_ok === false ? 'failed' : 'live') : 'archived'}"><span class="dot"></span>${row.runtime_supported ? (row.configured ? 'ключ сохранён' : 'нет ключа') : 'сравнение'}</span></div><div class="row-sub">${row.runtime_supported ? (row.last_checked_at_utc ? `проверено ${fmtDate(row.last_checked_at_utc)}` : 'ключи хранятся только локально') : UI.esc(row.note || '')}</div><a class="mini-link" href="${UI.esc(row.runtime_supported ? row.key_url : row.docs_url)}" target="_blank" rel="noopener">${row.runtime_supported ? 'Где получить API-ключ' : 'Документация'}</a></div>`).join('');
+    UI.qs('#external-role-body').innerHTML = roles.map(row => `<tr><td><strong>${UI.esc(row.label)}</strong><div class="row-sub mono">${UI.esc(row.id)}</div></td><td>${UI.esc(row.purpose)}<div class="row-sub">Trigger: ${UI.esc(row.trigger)}</div></td><td><strong>${UI.esc(row.provider_label)}</strong><div class="row-sub mono">${UI.esc(row.model)}</div></td><td><span class="badge ${row.provider_configured ? 'live' : 'archived'}">${row.provider_configured ? 'ключ есть' : 'нет ключа'}</span></td><td><span class="badge ${row.ready ? 'live' : row.execution_path === 'wired' && row.enabled ? 'pending' : 'archived'}">${row.ready ? 'готов' : row.execution_path === 'wired' ? (row.enabled ? 'ожидает разрешения' : 'роль выключена') : 'зарезервировано'}</span></td></tr>`).join('');
+    UI.qs('#external-price-body').innerHTML = catalog.map(row => `<tr><td><strong>${UI.esc(row.label)}</strong><div class="row-sub">${UI.esc(row.provider)}</div></td><td>${UI.esc(row.quality || (row.recommended_for || []).join(', '))}</td><td class="num">${tinyUsd(row.input_usd_per_m, 4)}</td><td class="num">${row.cached_input_usd_per_m == null ? '—' : tinyUsd(row.cached_input_usd_per_m, 5)}</td><td class="num">${tinyUsd(row.output_usd_per_m, 4)}</td><td class="num"><strong>${tinyUsd(row.example_cost_usd, 5)}</strong></td><td><a class="mini-link" href="${UI.esc(row.source_url)}" target="_blank" rel="noopener">официальная цена</a></td></tr>`).join('');
+    UI.qs('#external-agent-body').innerHTML = usage.length ? usage.slice().reverse().map(row => `<tr><td><strong>${UI.esc(row.role || 'агент')}</strong><div class="row-sub">${UI.esc([row.provider, row.model].filter(Boolean).join(' · '))}</div></td><td>${UI.esc(row.fallback_reason || row.purpose || '—')}</td><td><span class="badge ${row.status === 'completed' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span><div class="row-sub">${fmtDate(row.timestamp_utc)} · ${Number(row.elapsed_sec || 0).toFixed(1)} сек</div></td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${tinyUsd(row.cost_usd, 6)}</td></tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">Платных вызовов в текущем месяце нет.</div></td></tr>';
+    const blocked = (doc.blocked_reasons || []).join(' ');
+    UI.qs('#external-agent-note').textContent = `${doc.pricing_note || ''} ${blocked} API не имеет доступа к paper/live и не меняет deterministic verdict.`.trim();
+    const button = UI.qs('#external-agent-configure');
+    button.textContent = configuredCount ? 'API, роли и бюджет' : 'Настроить API и роли';
+  }
   async function loadExternalAgents() {
     const kpis = UI.qs('#external-agent-kpis');
-    const body = UI.qs('#external-agent-body');
-    UI.renderLoading(kpis, 'Проверка внешнего контура…');
-    try {
-      const doc = await API.http.externalAgentsStatus({ signal: UI.signal() });
-      const agents = doc.agents || [];
-      UI.qs('#external-agent-sub').textContent = doc.configured ? `${agents.length} записей · исполнение ${doc.execution_enabled ? 'включено' : 'заблокировано'}` : 'контур не настроен';
-      kpis.innerHTML = [
-        ['Бюджет', UI.money(Number(doc.budget_usd || 0)), 'info'],
-        ['Израсходовано', UI.money(Number(doc.spent_usd || 0)), Number(doc.spent_usd || 0) > Number(doc.budget_usd || 0) ? 'neg' : 'warn'],
-        ['Остаток', UI.money(Number(doc.remaining_usd || 0)), 'pos'],
-        ['Исполнение', doc.execution_enabled ? 'включено' : 'заблокировано', doc.execution_enabled ? 'warn' : 'pos'],
-      ].map(row => `<div class="kpi ${row[2]}"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
-      body.innerHTML = agents.length ? agents.slice().reverse().map(row => `<tr><td><strong>${UI.esc(row.agent || row.name || 'агент')}</strong><div class="row-sub">${UI.esc(row.role || 'роль не указана')}</div></td><td>${UI.esc(row.task || row.action || '—')}</td><td><span class="badge ${['done','completed'].includes(String(row.status).toLowerCase()) ? 'live' : String(row.status).toLowerCase() === 'failed' ? 'failed' : 'archived'}">${UI.esc(row.status || '—')}</span></td><td class="muted">${UI.esc(row.interaction || row.last_interaction || row.timestamp_utc || '—')}</td><td class="num">${Number(row.tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${UI.money(Number(row.cost_usd || 0), { dec: 4 })}</td></tr>`).join('') : '<tr><td colspan="6"><div class="empty-state">Внешние агенты не запускались. Демонстрационные записи не создаются.</div></td></tr>';
-    } catch (error) {
-      if (error.name !== 'AbortError') body.innerHTML = `<tr><td colspan="6"><div class="empty-state">Статус недоступен: ${UI.esc(error.message)}</div></td></tr>`;
+    UI.renderLoading(kpis, 'Проверка платного fallback…');
+    try { renderCloudAgentStatus(await API.http.cloudAgentsStatus({ signal: UI.signal() })); }
+    catch (error) {
+      if (error.name !== 'AbortError') UI.qs('#external-agent-body').innerHTML = `<tr><td colspan="5"><div class="empty-state">Статус недоступен: ${UI.esc(error.message)}</div></td></tr>`;
     }
+  }
+  async function openCloudAgentSettings() {
+    const drawer = UI.drawer('<h3>Облачные AI-агенты</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка безопасной конфигурации…</div>');
+    const body = UI.qs('.drawer-b', drawer);
+    const refresh = async () => {
+      const doc = await API.http.cloudAgentsStatus();
+      cloudAgentDoc = doc;
+      const runtimeModels = (doc.catalog || []).filter(row => row.runtime_supported);
+      const roleRows = (doc.roles || []).map(row => `<div class="cloud-role-setting"><div class="cloud-role-copy"><strong>${UI.esc(row.label)}</strong><small>${UI.esc(row.purpose)}</small><span class="mono">${UI.esc(row.id)} · ${UI.esc(row.execution_path === 'wired' ? 'подключено к pipeline' : 'зарезервировано')}</span></div><select data-cloud-role-model="${UI.esc(row.id)}">${runtimeModels.map(model => `<option value="${UI.esc(model.model)}" ${model.model === row.model ? 'selected' : ''}>${UI.esc(model.label)} · ${tinyUsd(model.example_cost_usd, 4)}/пример</option>`).join('')}</select><label class="telegram-setting cloud-role-toggle ${row.execution_path !== 'wired' ? 'disabled' : ''}"><span class="telegram-setting-copy"><strong>Разрешена</strong></span><input type="checkbox" data-cloud-role-enabled="${UI.esc(row.id)}" ${row.enabled ? 'checked' : ''} ${row.execution_path !== 'wired' ? 'disabled' : ''}><span class="telegram-switch" aria-hidden="true"></span></label></div>`).join('');
+      const providerRows = (doc.providers || []).filter(row => row.runtime_supported).map(row => `<section class="telegram-card"><div class="flex between gap-sm"><div><div class="section-title">${UI.esc(row.label)}</div><div class="row-sub">${row.configured ? 'Ключ сохранён локально и не показывается интерфейсу.' : 'Ключ ещё не сохранён.'}</div></div><span class="badge ${row.configured ? (row.last_check_ok === false ? 'failed' : 'live') : 'archived'}">${row.configured ? 'подключён' : 'не подключён'}</span></div><div class="field"><label for="cloud-key-${UI.esc(row.id)}">${row.configured ? 'Новый ключ (текущий скрыт)' : 'API-ключ'}</label><input id="cloud-key-${UI.esc(row.id)}" data-cloud-key="${UI.esc(row.id)}" type="password" autocomplete="new-password" placeholder="Вставьте ключ ${UI.esc(row.label)}"></div><div class="flex wrap gap-sm"><button class="btn ${row.configured ? '' : 'primary'}" data-cloud-key-save="${UI.esc(row.id)}">${row.configured ? 'Заменить и проверить' : 'Сохранить и проверить'}</button>${row.configured ? `<button class="btn" data-cloud-provider-test="${UI.esc(row.id)}">Проверить снова</button><button class="btn danger" data-cloud-provider-disconnect="${UI.esc(row.id)}">Удалить ключ</button>` : ''}<a class="btn ghost" href="${UI.esc(row.key_url)}" target="_blank" rel="noopener">Получить ключ</a></div>${row.last_check_message ? `<div class="finance-note">${UI.esc(row.last_check_message)} ${row.last_checked_at_utc ? `· ${fmtDate(row.last_checked_at_utc)}` : ''}</div>` : ''}</section>`).join('');
+      body.innerHTML = `<div class="finance-note"><strong>Local-first:</strong> платный вызов возможен только после неудачи локальной модели, при разрешённой роли и свободном бюджете. Максимумы зафиксированы governance: $20/месяц и $0.50/цикл.</div><section class="telegram-card"><div class="section-title">Бюджет и главный выключатель</div><div class="grid cols-2"><div class="field"><label for="cloud-monthly-budget">Лимит в месяц, USD</label><input id="cloud-monthly-budget" type="number" min="0" max="20" step="0.50" value="${Number(doc.monthly_budget_usd || 0).toFixed(2)}"></div><div class="field"><label for="cloud-run-budget">Лимит на цикл, USD</label><input id="cloud-run-budget" type="number" min="0" max="0.50" step="0.05" value="${Number(doc.per_run_budget_usd || 0).toFixed(2)}"></div></div><label class="telegram-setting"><span class="telegram-setting-copy"><strong>Разрешить платный fallback</strong><small>Сам по себе ключ не запускает расходы. Этот переключатель — отдельное явное разрешение.</small></span><input id="cloud-fallback-enabled" type="checkbox" ${doc.fallback_enabled ? 'checked' : ''}><span class="telegram-switch" aria-hidden="true"></span></label></section><div class="section-title">API-ключи по провайдерам</div>${providerRows}<div class="section-title">Роли и модели</div><div class="cloud-role-settings">${roleRows}</div><div class="finance-note">Роли «зарезервировано» показаны как roadmap и не могут делать вызовы. hypothesis_fallback и compile_error_fixer_fallback подключены к pipeline, но работают только после локальной неудачи.</div><div class="flex wrap gap-sm"><button class="btn primary" id="cloud-settings-save">Сохранить бюджет и роли</button><button class="btn ghost" data-close-drawer>Закрыть</button></div>`;
+      UI.qsa('[data-cloud-key-save]', body).forEach(button => button.onclick = async () => {
+        const provider = button.dataset.cloudKeySave;
+        const input = UI.qs(`[data-cloud-key="${provider}"]`, body);
+        const key = input.value.trim();
+        if (!key) { UI.toast('Вставьте API-ключ'); return; }
+        button.disabled = true;
+        try { await API.http.cloudProviderKey(provider, key); input.value = ''; UI.toast('Ключ проверен и сохранён локально'); await refresh(); await loadExternalAgents(); }
+        catch (error) { button.disabled = false; UI.reportError(error); }
+      });
+      UI.qsa('[data-cloud-provider-test]', body).forEach(button => button.onclick = async () => {
+        button.disabled = true;
+        try { await API.http.cloudProviderTest(button.dataset.cloudProviderTest); UI.toast('Подключение подтверждено'); await refresh(); await loadExternalAgents(); }
+        catch (error) { button.disabled = false; UI.reportError(error); }
+      });
+      UI.qsa('[data-cloud-provider-disconnect]', body).forEach(button => button.onclick = async () => {
+        if (!confirm('Удалить локально сохранённый API-ключ?')) return;
+        button.disabled = true;
+        try { await API.http.cloudProviderDisconnect(button.dataset.cloudProviderDisconnect); UI.toast('API-ключ удалён'); await refresh(); await loadExternalAgents(); }
+        catch (error) { button.disabled = false; UI.reportError(error); }
+      });
+      UI.qs('#cloud-settings-save', body).onclick = async () => {
+        const fallbackEnabled = UI.qs('#cloud-fallback-enabled', body).checked;
+        if (fallbackEnabled && !doc.fallback_enabled && !confirm('Разрешить реальные платные API-вызовы после локальных ошибок в пределах указанных лимитов?')) return;
+        const roleAssignments = {};
+        UI.qsa('[data-cloud-role-model]', body).forEach(select => {
+          const role = select.dataset.cloudRoleModel;
+          const toggle = UI.qs(`[data-cloud-role-enabled="${role}"]`, body);
+          roleAssignments[role] = { model: select.value, enabled: toggle ? toggle.checked : false };
+        });
+        const save = UI.qs('#cloud-settings-save', body);
+        save.disabled = true;
+        try {
+          await API.http.cloudAgentsSettings({ fallback_enabled: fallbackEnabled, monthly_budget_usd: Number(UI.qs('#cloud-monthly-budget', body).value), per_run_budget_usd: Number(UI.qs('#cloud-run-budget', body).value), role_assignments: roleAssignments });
+          UI.toast('Настройки платного fallback сохранены'); await refresh(); await loadExternalAgents();
+        } catch (error) { save.disabled = false; UI.reportError(error); }
+      };
+    };
+    try { await refresh(); } catch (error) { UI.renderError(body, error, openCloudAgentSettings); }
   }
   function renderRoleTimeline(rows, target) {
     const box = target || UI.qs('#ai-role-timeline');
@@ -314,8 +399,9 @@ UI.ready(async function () {
   UI.qs('#ai-sweep').onclick = () => { if (!confirm('Пометить эксперименты без heartbeat более 6 часов как cancelled?')) return; UI.action('Проверка зависших экспериментов', () => API.http.aiSweepStale({ stale_after_hours: 6 }), 'Проверка завершена').then(() => { loadSummary(); loadExperiments(); }).catch(() => {}); };
 
   if (!(await loadSummary())) return;
-  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadExternalAgents()]);
+  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadAgentRuntime()]);
   if (!activityRows.length) renderRoleTimeline([]);
   UI.poll(refreshRun, 5000);
   UI.poll(async () => { await loadSummary(); }, 20000);
+  UI.poll(loadAgentRuntime, 10000);
 });

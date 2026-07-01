@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-06-29T21:05:14Z
+Дата актуализации: 2026-07-01T21:49:14Z
 
 ## Короткое предисловие
 
@@ -19,6 +19,7 @@
 - Paper before live: `Да`
 - Runtime должен совпадать с locked params: `Да`
 - AI Lab sandbox only: `Да`
+- AI Lab cloud API: `local-first fallback; 20.00 USD/month; 0.50 USD/run`
 - Базовое PT-окно AI Lab: `06:30-12:30 PT`
 
 ## На что смотреть в первую очередь
