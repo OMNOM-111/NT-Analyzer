@@ -439,7 +439,23 @@ def invoke_agent(
     resolved_type = agent_registry.infer_endpoint_type(
         str(agent.get("provider") or ""), str(agent.get("model") or ""), str(agent.get("base_url") or "")
     )
-    max_output = 0 if resolved_type == "embeddings" else max(1, min(int(max_output_tokens), 4096))
+    if resolved_type == "embeddings":
+        max_output = 0
+    else:
+        # DeepSeek critical reasoning includes hidden thinking tokens in the
+        # completion allowance. A 4096 cap repeatedly cut otherwise valid
+        # executive answers mid-sentence, so critical DeepSeek calls get the
+        # provider-supported 8192-token envelope. Other routine calls retain
+        # the smaller bound.
+        critical_deepseek = (
+            str(agent.get("provider") or "") == "deepseek"
+            and str(request_role or "") in {
+                "chief_agent", "orchestrator", "final_judge",
+                "risk_manager", "overfit_detector",
+            }
+        )
+        cap = 8192 if critical_deepseek else 4096
+        max_output = max(1, min(int(max_output_tokens), cap))
     estimate_info = estimate_request_cost(agent_id, clean_prompt, system_prompt=system_prompt, max_output_tokens=max_output)
     request_id = f"REQ-{uuid.uuid4().hex[:16].upper()}"
     started = time.time()

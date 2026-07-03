@@ -112,6 +112,15 @@ EXECUTIVE MANAGER DOCTRINE
   based rejection. Never count generated files or cycles as results.
 - Never promise profitability. "Profitable" means positive after costs and all
   required validation gates, not one attractive smoke run.
+- Maintain a real dialogue. A discussion answer must answer the question now,
+  not announce that you will answer it later. Read the supplied research packet,
+  explain the decision and its tradeoffs, then wait. If the owner subsequently
+  says "начинай" or "запускай", treat that as approval of the concrete plan in
+  this same conversation; do not restart the discussion or lose its context.
+- Never manufacture relevance. Prior experiments are evidence only when their
+  instrument, family, regime or failure mechanism actually bears on the current
+  question. Name that link; otherwise do not claim the proposal "agrees" with
+  them.
 
 PROJECT NORTH STAR
 - The project goal is in application_snapshot.north_star: $100,000 realized
@@ -589,6 +598,43 @@ def _chief_model() -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+def _looks_like_deep_manager_dialogue(task: str) -> bool:
+    """Discussion, diagnosis and planning need the strongest reasoning lane.
+
+    This check intentionally runs before cheap operational keyword matching:
+    Russian words such as ``разработаешь`` contain ``разработ`` but are often a
+    question, not a button-press command.
+    """
+    text = str(task or "").strip().lower()
+    if not text:
+        return False
+    quick = any(token in text for token in (
+        "прост", "быстр", "тест", "шаблон", "минимал",
+        "simple", "quick", "fast", "test", "template",
+    ))
+    strategy = any(token in text for token in ("стратег", "strategy"))
+    strategy_reasoning = strategy and not quick and (
+        "?" in text
+        or any(token in text for token in (
+            "какую", "какая", "предлож", "исходя", "на основании",
+            "по документ", "по исследован", "давай разработ", "обсуд",
+            "выбрать", "выбери", "сплан", "подход", "гипотез",
+        ))
+    )
+    general_reasoning = any(token in text for token in (
+        "давай обсуд", "хочу обсуд", "что думаешь", "как лучше",
+        "какой подход", "проанализируй", "сравни", "обоснуй",
+        "почему это", "почему не", "спланируй", "на основании документов",
+        "исходя из наших", "проверь полностью", "пересмотри полностью",
+    ))
+    simple_status_question = any(token in text for token in (
+        "статус", "всё работает", "все работает", "что сейчас происходит",
+        "сколько стратег", "когда будет готов",
+    ))
+    open_question = "?" in text and len(text) >= 20 and not simple_status_question
+    return bool(strategy_reasoning or general_reasoning or open_question)
+
+
 def classify_complexity(task: str, role: str = "general") -> str:
     """Deterministic routing tier; the LLM does not choose its own cost tier.
 
@@ -602,6 +648,8 @@ def classify_complexity(task: str, role: str = "general") -> str:
     text = f"{role} {task}".lower()
     message = str(task or "").lower()
     if role in {"final_judge", "risk_manager", "overfit_detector"}:
+        return "critical"
+    if role in {"orchestrator", "chief_agent"} and _looks_like_deep_manager_dialogue(message):
         return "critical"
     # Genuine deep reasoning: methodology, disputes, risk/overfit design, audits.
     critical = (
@@ -617,6 +665,7 @@ def classify_complexity(task: str, role: str = "general") -> str:
     simple_command = (
         "быстр", "прост", "шаблон", "тест", "template", "quick", "fast", "simple",
         "нажми", "кнопк", "запусти", "останов", "включи", "выключи", "перезапус",
+        "начинай", "приступай",
         "разработ", "создай", "сделай", "сгенер", "построй", "develop", "build",
         "generate", "run", "получи отчёт", "получи отчет", "покажи", "отчёт",
         "отчет", "report", "статус", "status",
@@ -1164,7 +1213,8 @@ _RESEARCH_START_VERBS = (
 _RESEARCH_DISCUSSION_MARKERS = (
     "какую стратег", "что предлож", "можешь предлож", "какая стратег",
     "что думаешь", "давай обсуд", "хочу обсуд", "стоит ли", "расскажи",
-    "what strategy", "what do you suggest", "discuss",
+    "давай разработаем", "давайте разработаем", "what strategy",
+    "what do you suggest", "discuss",
 )
 
 
@@ -1181,6 +1231,11 @@ def _is_research_start_command(message: str) -> bool:
     text = str(message or "").strip().lower()
     if not text or _is_strategy_discussion_request(text):
         return False
+    if text in {
+        "начинай", "начинайте", "запускай", "запускайте", "приступай",
+        "приступайте", "start", "go ahead", "да, начинай", "да, запускай",
+    }:
+        return True
     has_subject = any(token in text for token in (
         "стратег", "strategy", "исследован", "research", "бэктест", "backtest",
     ))
@@ -1194,6 +1249,215 @@ def _owner_explicitly_disables_local_models(message: str) -> bool:
         "не используй локальную", "не использовать локальную",
         "without local model", "do not use lm studio",
     ))
+
+
+def _needs_strategy_knowledge(message: str) -> bool:
+    text = str(message or "").lower()
+    return any(token in text for token in ("стратег", "strategy", "гипотез", "бэктест", "backtest"))
+
+
+def _manager_strategy_context(message: str) -> Dict[str, Any]:
+    """Build auditable, multi-instrument context for a strategy conversation."""
+    from . import knowledge
+
+    explicit = _extract_root(message)
+    roots = [explicit] if explicit else ["MNQ", "MES", "MGC"]
+    root_packets: List[Dict[str, Any]] = []
+    common: Dict[str, Any] = {}
+    for index, root in enumerate(roots):
+        context = knowledge.build_context(
+            root,
+            user_goal=message,
+            goal_constraints={},
+            max_prompt_chars=12_000,
+        )
+        root_packets.append({
+            "root": root,
+            "reference_shortlist": [{
+                key: row.get(key) for key in (
+                    "reference_id", "name", "family", "timeframe", "notes", "risk_flags",
+                )
+            } for row in (context.get("reference_shortlist") or [])[:3]],
+            "recent_experiments": [{
+                key: row.get(key) for key in (
+                    "experiment_id", "status", "family", "hypothesis", "outcome",
+                    "rejection_code", "trades_total", "pf_after_commission",
+                )
+            } for row in (context.get("recent_experiments") or [])[:3]],
+        })
+        if index == 0:
+            common = {
+                "reference_results": (context.get("reference_examples") or [])[:6],
+                "hard_constraints": (context.get("hard_constraints") or [])[:14],
+                "acceptance_gates": (context.get("acceptance_gates") or [])[:10],
+                "rejection_gates": (context.get("rejection_gates") or [])[:10],
+                "stored_lessons": [{
+                    "summary": row.get("summary"), "rule": row.get("rule"),
+                } for row in (context.get("lessons") or [])[:6]],
+                "owner_rules": [{
+                    "priority": row.get("priority"), "text": row.get("text"),
+                } for row in (context.get("global_operator_notes") or [])[:16]],
+                "user_research_files_read": (context.get("user_research_refs") or [])[:8],
+                "source_excerpts": (context.get("source_excerpt_summaries") or [])[:2],
+                "source_files_read": [
+                    row.get("rel_path") for row in (context.get("source_refs") or [])[:18]
+                    if row.get("rel_path")
+                ],
+            }
+    return {"roots_compared": roots, "by_root": root_packets, **common}
+
+
+STRATEGIC_DIALOGUE_SYSTEM_PROMPT = """
+You are the strongest configured StratForge executive research manager speaking
+to the owner, Dmitry Sergeevich. This turn is a DISCUSSION, not permission to
+start work. Answer in natural, substantive Russian and do not emit JSON.
+
+Before answering, use the supplied research packet: project documents,
+reference library, user research, stored lessons and actual experiment results.
+Do not pretend that an idea "agrees with current experiments" unless you name
+the exact evidence and explain the relationship. Separate proven facts from a
+new hypothesis.
+Every proposed number must respect the supplied hard constraints. In particular,
+never propose commission or slippage below the project floor and never replace
+IS/OOS, walk-forward and stress validation with parameter optimization.
+
+For a strategy-selection question, give a complete decision memo in the same
+turn: the primary recommendation; why it was selected; which project evidence
+supports and contradicts it; concrete market regime, entry confirmation, exit
+and risk design; why the main alternatives rank lower; and what will be tested
+if the owner later says "начинай". Do not merely promise that you will propose
+or analyze something. Do not start a mission. Do not end mid-thought. Mention
+the actual source filenames/reference IDs/experiment IDs you used when they are
+available. Avoid internal routing vocabulary and generic corporate filler.
+Keep the final answer between 1,600 and 2,600 Russian characters. Be selective:
+do not retell the whole research packet and do not spend the response on long
+quotes. Reserve enough output space to finish the recommendation and next-step
+plan with a complete sentence.
+""".strip()
+
+GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT = """
+You are the strongest configured StratForge executive manager speaking with the
+owner, Dmitry Sergeevich. This turn is for discussion, diagnosis or planning;
+it is not permission to mutate application state. Answer in natural Russian,
+not JSON. Give the actual answer now, not a promise that you will think about
+it later. Use the supplied facts and recent dialogue, explain your reasoning,
+distinguish facts from assumptions, present material alternatives/tradeoffs,
+and finish with a concrete proposed next step that waits for the owner's
+explicit execution command. Do not expose routing or action-schema vocabulary.
+""".strip()
+
+
+def _strategic_reply_complete(text: str) -> bool:
+    clean = str(text or "").strip()
+    if len(clean) < 650 or clean.startswith("{"):
+        return False
+    if clean[-1] not in ".!?…)]»\"'":
+        return False
+    low = clean.lower()
+    dimensions = (
+        ("почему", "основан", "выбрал", "рекоменд"),
+        ("вход", "сигнал", "подтвержден"),
+        ("выход", "стоп", "цель", "тейк"),
+        ("риск", "комис", "просад"),
+        ("провер", "тест", "oos", "walk-forward"),
+        ("альтернатив", "не выбрал", "ниже"),
+    )
+    return sum(any(token in low for token in group) for group in dimensions) >= 4
+
+
+def _general_manager_reply_complete(text: str) -> bool:
+    clean = str(text or "").strip()
+    if len(clean) < 350 or clean.startswith("{"):
+        return False
+    if clean[-1] not in ".!?…)]»\"'":
+        return False
+    low = clean.lower()
+    promise_only = any(value in low for value in (
+        "я подготовлю ответ", "я проанализирую и сообщу", "предложу решение позже",
+    ))
+    return not promise_only
+
+
+def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
+                               snapshot: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+    research = _manager_strategy_context(message)
+    packet = {
+        "owner_message": message,
+        "recent_dialogue": history,
+        "research_packet": research,
+        "current_application_state": {
+            "north_star": snapshot.get("north_star"),
+            "research_mission": snapshot.get("research_mission"),
+            "lm_studio": snapshot.get("lm_studio"),
+        },
+    }
+    prompt = json.dumps(packet, ensure_ascii=False, default=str)[:19_000]
+    first = agent_router.invoke_role(
+        "chief_agent", prompt,
+        system_prompt=STRATEGIC_DIALOGUE_SYSTEM_PROMPT,
+        max_output_tokens=8192, timeout=300,
+        purpose="orchestrator_strategic_dialogue",
+        complexity="critical", cache_mode="off", allow_paid=True,
+    )
+    reply = str(first.get("content") or "").strip()
+    if _strategic_reply_complete(reply):
+        return first, reply
+    repair_prompt = (
+        prompt
+        + "\n\nINCOMPLETE_PREVIOUS_ANSWER:\n" + reply[:1200]
+        + "\n\nCORRECTION: Replace it entirely with the complete decision memo "
+          "required by the system prompt. Start with the actual recommendation, "
+          "not a promise to provide one."
+    )[:19_500]
+    second = agent_router.invoke_role(
+        "final_judge", repair_prompt,
+        system_prompt=STRATEGIC_DIALOGUE_SYSTEM_PROMPT,
+        max_output_tokens=8192, timeout=300,
+        purpose="orchestrator_strategic_dialogue_repair",
+        complexity="critical", cache_mode="off", allow_paid=True,
+    )
+    repaired = str(second.get("content") or "").strip()
+    return (second, repaired) if repaired else (first, reply)
+
+
+def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]],
+                                     snapshot: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+    packet = {
+        "owner_message": message,
+        "recent_dialogue": history[-12:],
+        "application_facts": {
+            "north_star": snapshot.get("north_star"),
+            "research_mission": snapshot.get("research_mission"),
+            "active_run": snapshot.get("active_run"),
+            "lm_studio": snapshot.get("lm_studio"),
+            "recent_experiments": (snapshot.get("recent_experiments") or [])[-8:],
+            "accounts": snapshot.get("accounts"),
+            "open_tasks": snapshot.get("open_tasks"),
+            "owner_rules": snapshot.get("owner_rules"),
+        },
+    }
+    prompt = json.dumps(packet, ensure_ascii=False, default=str)[:19_000]
+    first = agent_router.invoke_role(
+        "chief_agent", prompt, system_prompt=GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT,
+        max_output_tokens=8192, timeout=300,
+        purpose="orchestrator_manager_dialogue", complexity="critical",
+        cache_mode="off", allow_paid=True,
+    )
+    reply = str(first.get("content") or "").strip()
+    if _general_manager_reply_complete(reply):
+        return first, reply
+    repair = (
+        prompt + "\n\nINCOMPLETE_PREVIOUS_ANSWER:\n" + reply[:1200]
+        + "\n\nReplace it with a complete answer to the owner's actual question now."
+    )[:19_500]
+    second = agent_router.invoke_role(
+        "final_judge", repair, system_prompt=GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT,
+        max_output_tokens=8192, timeout=300,
+        purpose="orchestrator_manager_dialogue_repair", complexity="critical",
+        cache_mode="off", allow_paid=True,
+    )
+    repaired = str(second.get("content") or "").strip()
+    return (second, repaired) if repaired else (first, reply)
 
 
 def _action_grounded_in_message(name: str, message: str) -> bool:
@@ -1525,10 +1789,8 @@ def _extract_deadline_minutes(text: str) -> Optional[int]:
 
 def _extract_root(text: str) -> Optional[str]:
     up = str(text or "").upper()
-    for root in _KNOWN_ROOTS:
-        if root in up:
-            return root
-    return None
+    hits = [(up.find(root), root) for root in _KNOWN_ROOTS if up.find(root) >= 0]
+    return min(hits)[1] if hits else None
 
 
 def _is_quick_strategy_request(low: str) -> bool:
@@ -1561,9 +1823,51 @@ def _stop_requested(low: str) -> bool:
     ))
 
 
+def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+    low = str(message or "").strip().lower().strip(".! ")
+    if low not in {
+        "начинай", "начинайте", "запускай", "запускайте", "приступай",
+        "приступайте", "да начинай", "да запускай", "start", "go ahead",
+    }:
+        return None
+    last_assistant = next((
+        str(row.get("content") or "") for row in reversed(history)
+        if row.get("role") == "assistant" and str(row.get("content") or "").strip()
+    ), "")
+    if not last_assistant or not any(token in last_assistant.lower() for token in (
+        "стратег", "strategy", "гипотез",
+    )):
+        return None
+    root = _extract_root(last_assistant) or "MNQ"
+    return {
+        "reply": (
+            f"Дмитрий Сергеевич, начинаю реализацию согласованного плана по {root}. "
+            "Сначала доведу эту стратегию до подтверждённого результата или "
+            "обоснованного отказа; новые основы до этого создавать не буду."
+        ),
+        "confidence": 1.0,
+        "doubts": [],
+        "actions": [{
+            "name": "start_research",
+            "arguments": {
+                "goal": last_assistant[:4000],
+                "target_roots": [root],
+                "strategy_count_per_cycle": 1,
+                "iterations_per_strategy": DEFAULT_STRATEGY_ITERATIONS,
+                "strategy_time_budget_minutes": DEFAULT_STRATEGY_TIME_BUDGET_MINUTES,
+                "max_cycles": 1,
+                "paid_budget_usd": 0,
+                "notification_policy": "result_only",
+            },
+            "reason": "owner approved the concrete strategy plan from this conversation",
+        }],
+    }
+
+
 def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
     text = str(message or "").strip()
     low = text.lower()
+    normalized_low = low.rstrip("?! .")
     current_mission = dict(_load().get("mission") or {})
     continuous_request = _is_continuous_strategy_request(low)
     # "work until I say stop" describes mission lifetime; it is not an
@@ -1615,8 +1919,9 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
                 "reason": "owner ordered deep refinement before new strategies",
             }],
         }
-    status_request = low in {
-        "статус", "покажи статус", "что сейчас происходит", "status", "/status", "/chief status",
+    status_request = normalized_low in {
+        "статус", "покажи статус", "что сейчас происходит", "всё работает",
+        "все работает", "status", "/status", "/chief status",
     } or any(value in low for value in (
         "сколько стратег", "какие итог", "сколько осталось", "когда будет готов",
     ))
@@ -1764,9 +2069,63 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             **domain, "message": assistant, "conversation_id": cid,
             "domain_agent": persona["id"], "actions": [], "doubts": [],
         }
-    direct = _direct_plan(clean)
+    history = [
+        {"role": row.get("role"), "content": row.get("content")}
+        for row in _read_conversation(16, path=conv_path)[:-1]
+    ]
+    strategic_dialogue = _is_strategy_discussion_request(clean)
+    explicit_execution = any(token in clean.lower() for token in (
+        "запусти", "запускай", "начинай", "приступай", "выполни", "создай",
+        "сделай", "включи", "отключи", "останови", "run ", "start ", "execute",
+    ))
+    manager_dialogue = (
+        not strategic_dialogue
+        and _looks_like_deep_manager_dialogue(clean)
+        and not explicit_execution
+    )
+    discussion_only = strategic_dialogue or manager_dialogue
+    direct = None if discussion_only else (
+        _followup_start_plan(clean, history) or _direct_plan(clean)
+    )
     result: Dict[str, Any] = {}
-    if direct is not None:
+    if strategic_dialogue:
+        complexity = "critical"
+        snapshot = _application_snapshot()
+        try:
+            result, strategic_reply = _invoke_strategic_dialogue(clean, history, snapshot)
+            model = str(result.get("actual_model") or result.get("model") or "unknown")
+            provider = str(result.get("provider") or "")
+            plan = {
+                "reply": strategic_reply,
+                "confidence": 1.0 if _strategic_reply_complete(strategic_reply) else 0.6,
+                "doubts": [],
+                "actions": [],
+            }
+        except agent_router.AgentRouterError as exc:
+            model, provider = "deterministic fallback", "local"
+            plan = {
+                "reply": f"Не удалось привлечь сильную модель для полноценного обсуждения: {exc}",
+                "confidence": 0.0, "doubts": ["Действия не выполнялись."], "actions": [],
+            }
+    elif manager_dialogue:
+        complexity = "critical"
+        snapshot = _application_snapshot()
+        try:
+            result, manager_reply = _invoke_general_manager_dialogue(clean, history, snapshot)
+            model = str(result.get("actual_model") or result.get("model") or "unknown")
+            provider = str(result.get("provider") or "")
+            plan = {
+                "reply": manager_reply,
+                "confidence": 1.0 if _general_manager_reply_complete(manager_reply) else 0.6,
+                "doubts": [], "actions": [],
+            }
+        except agent_router.AgentRouterError as exc:
+            model, provider = "deterministic fallback", "local"
+            plan = {
+                "reply": f"Не удалось привлечь сильную модель для полноценного обсуждения: {exc}",
+                "confidence": 0.0, "doubts": ["Действия не выполнялись."], "actions": [],
+            }
+    elif direct is not None:
         plan = direct
         model = "deterministic dispatcher"
         provider = "local"
@@ -1774,19 +2133,17 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     else:
         complexity = classify_complexity(clean, "orchestrator")
         snapshot = _application_snapshot()
-        history = [
-            {"role": row.get("role"), "content": row.get("content")}
-            for row in _read_conversation(12, path=conv_path)[:-1]
-        ]
         dynamic = {
             "owner_message": clean,
             "recent_dialogue": history,
             "application_snapshot": snapshot,
         }
+        if _needs_strategy_knowledge(clean):
+            dynamic["strategy_research_packet"] = _manager_strategy_context(clean)
         try:
             result = agent_router.invoke_role(
                 "orchestrator",
-                json.dumps(dynamic, ensure_ascii=False, default=str)[:19500],
+                json.dumps(dynamic, ensure_ascii=False, default=str)[:19_000],
                 system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
                 # DeepSeek thinking tokens share the output allowance. Complex
                 # plans have exceeded 3k before the final JSON, so reserve
@@ -1811,7 +2168,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             model, provider = "deterministic fallback", "local"
             plan = {"reply": f"Не удалось привлечь AI-модель: {exc}", "confidence": 0.0, "doubts": ["Действия не выполнялись."], "actions": []}
     raw_actions = plan.get("actions") if isinstance(plan.get("actions"), list) else []
-    if _is_strategy_discussion_request(clean):
+    if discussion_only:
         # Defence in depth: even if a cloud model ignores the doctrine, an
         # exploratory question can never mutate research state.
         raw_actions = []

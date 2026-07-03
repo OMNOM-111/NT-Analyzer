@@ -147,3 +147,15 @@
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/chief_agent.py, app/ai_lab/runner.py
 - Нужно проверить вручную: —
+
+## GOV-AI-015 — Содержательное обсуждение использует strongest reasoning lane
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/chief_agent.py, app/ai_lab/agent_router.py
+- Нужно проверить вручную: —
+
+## GOV-AI-016 — Ответ менеджера обязан быть контекстным и завершённым
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/chief_agent.py, app/ai_lab/knowledge.py, app/ai_lab/universal_llm.py
+- Нужно проверить вручную: —

@@ -350,7 +350,17 @@ def build_context(
 
     scan = user_research.scan()
     user_research_refs: List[str] = []
-    for rel_path in (scan.get("new", []) + scan.get("changed", []))[:8]:
+    research_paths = list(scan.get("new", []) + scan.get("changed", []))
+    if not research_paths:
+        # A file stops being "new" after the first scan, but it does not stop
+        # being relevant. Strategic dialogue and later runs must still read the
+        # owner's current research corpus.
+        research_paths = [
+            str(row.get("rel_path") or "")
+            for row in user_research.all_files()
+            if str(row.get("rel_path") or "")
+        ]
+    for rel_path in research_paths[:8]:
         text, _meta = user_research.read_file(rel_path, max_bytes=5000)
         if text:
             user_research_refs.append(rel_path)
@@ -464,6 +474,7 @@ def build_context(
         "lessons": lesson_rows[:30],
         "global_operator_notes": global_notes,
         "user_research_refs": user_research_refs,
+        "source_excerpt_summaries": source_summaries[:12],
         "source_refs": sources,
         "prompt_context": prompt_context,
     }

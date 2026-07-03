@@ -533,6 +533,30 @@ def t_knowledge_reference_shortlist_excludes_forbidden_refs() -> None:
         assert "REF-BAD" not in ctx["prompt_context"]
 
 
+def t_knowledge_context_keeps_reading_existing_user_research() -> None:
+    from app.ai_lab import user_research
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        _redirect_paths(tmp)
+        paths.USER_RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+        research_file = paths.USER_RESEARCH_DIR / "curated" / "owner_findings.md"
+        research_file.parent.mkdir(parents=True, exist_ok=True)
+        research_file.write_text(
+            "Owner finding: MNQ opening range needs VWAP confirmation and at most two trades.",
+            encoding="utf-8",
+        )
+        first_scan = user_research.scan()
+        assert "curated/owner_findings.md" in first_scan["new"]
+        second_scan = user_research.scan()
+        assert second_scan["new"] == [] and second_scan["changed"] == []
+
+        ctx = knowledge.build_context("MNQ", max_prompt_chars=20_000)
+
+        assert "curated/owner_findings.md" in ctx["user_research_refs"]
+        assert any("Owner finding" in row for row in ctx["source_excerpt_summaries"])
+
+
 def t_generator_prompt_includes_knowledge_context() -> None:
     prompt = generator.build_user_prompt(
         class_name="NTAAiSandboxFoo",
@@ -2216,6 +2240,8 @@ def main() -> int:
         ("t12 knowledge context reads reference library and sources", t_knowledge_context_reads_reference_library_and_sources),
         ("t12b knowledge shortlist excludes forbidden references",
          t_knowledge_reference_shortlist_excludes_forbidden_refs),
+        ("t12c knowledge keeps reading existing user research",
+         t_knowledge_context_keeps_reading_existing_user_research),
         ("t13 generator prompt includes knowledge context", t_generator_prompt_includes_knowledge_context),
         ("t14 runner research loop continues after rejected", t_runner_research_loop_continues_after_rejected),
         ("t15 signal sanity counts breakout signals", t_signal_sanity_counts_breakout_signals),

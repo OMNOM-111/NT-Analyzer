@@ -16,6 +16,23 @@ def _isolate(tmp_path, monkeypatch):
     })
 
 
+def _complete_strategy_reply() -> str:
+    return (
+        "Дмитрий Сергеевич, основной вариант — ORB с подтверждением стороны VWAP на MNQ 15m. "
+        "Я выбрал его по REF-021 и PATTERN_EFFECTIVENESS.md: это гипотеза, а не уже доказанная доходность. "
+        "Предыдущие WEX-проверки показывают главный риск — комиссия уничтожает частые входы, поэтому здесь "
+        "нужны максимум две сделки в день и только выраженный режим открытия.\n\n"
+        "Вход: после формирования 30-минутного opening range цена выходит из диапазона, остаётся по правильную "
+        "сторону VWAP и подтверждает импульс объёмом. Ложный пробой без закрытия за границей сигнала не даёт. "
+        "Выход: защитный стоп возвращается внутрь диапазона, первая цель покрывает минимум двукратный риск, "
+        "после чего позиция закрывается до конца сессии. Риск ограничивается одной позицией и дневным лимитом.\n\n"
+        "Альтернатива — liquidity sweep reversal REF-017, но она сложнее для однозначной формализации; EMA pullback "
+        "ниже в рейтинге из-за смены режима и слабых прошлых результатов. Если вы скажете «начинай», сначала проверю "
+        "signal sanity, затем smoke, IS/OOS и walk-forward после комиссии; при провале изменю подтверждение или режим, "
+        "а не буду бесконечно перебирать параметры."
+    )
+
+
 def test_mission_is_historical_only_and_capped(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     mission = chief_agent.start_mission({
@@ -166,9 +183,10 @@ def test_orchestrator_does_not_reuse_previous_research_action_for_lm_command(tmp
 def test_strategy_question_is_discussion_only_even_if_model_requests_start(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {"recent_experiments": []})
+    monkeypatch.setattr(chief_agent, "_manager_strategy_context", lambda _msg: {"source_files_read": ["lessons.md"]})
     monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
-        "content": '{"reply":"Предлагаю проверить возврат к VWAP.","confidence":0.99,"doubts":[],"actions":[{"name":"start_research","arguments":{"target_roots":["MNQ"]},"reason":"wrong"}]}',
-        "provider": "gemini", "actual_model": "gemini-2.5-flash",
+        "content": _complete_strategy_reply(),
+        "provider": "deepseek", "actual_model": "deepseek-v4-pro",
     })
     monkeypatch.setattr(chief_agent, "start_mission", lambda _args: (_ for _ in ()).throw(
         AssertionError("discussion must not start research")
@@ -181,6 +199,141 @@ def test_strategy_question_is_discussion_only_even_if_model_requests_start(tmp_p
 
     assert result["actions"] == []
     assert "VWAP" in result["reply"]
+    assert result["complexity"] == "critical"
+    assert result["model"] == "deepseek-v4-pro"
+
+
+def test_strategy_discussion_uses_strong_lane_and_research_packet(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {
+        "north_star": {"target_usd": 100000}, "research_mission": None,
+        "lm_studio": {"run_allowed": True},
+    })
+    monkeypatch.setattr(chief_agent, "_manager_strategy_context", lambda _msg: {
+        "source_files_read": ["ai_lessons/LESSONS_SUMMARY.md"],
+        "reference_results": [{"id": "WEX-007", "pf_after_commission": "0.914"}],
+    })
+    captured = {}
+
+    def invoke(role, prompt, **kwargs):
+        captured.update({"role": role, "prompt": prompt, **kwargs})
+        return {
+            "content": _complete_strategy_reply(), "provider": "deepseek",
+            "actual_model": "deepseek-v4-pro",
+        }
+
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", invoke)
+
+    result = chief_agent.handle_message(
+        "Какую стратегию предложишь исходя из наших документов и исследований?",
+        mirror_to_telegram=False,
+    )
+
+    assert captured["role"] == "chief_agent"
+    assert captured["complexity"] == "critical"
+    assert captured["allow_paid"] is True
+    assert "LESSONS_SUMMARY.md" in captured["prompt"]
+    assert "WEX-007" in captured["prompt"]
+    assert len(result["reply"]) >= 650
+    assert result["actions"] == []
+
+
+def test_incomplete_strategy_discussion_is_replaced_by_second_strong_answer(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent, "_manager_strategy_context", lambda _msg: {})
+    calls = []
+
+    def invoke(role, prompt, **kwargs):
+        calls.append((role, kwargs.get("purpose")))
+        content = "Предложу следующую гипотезу." if len(calls) == 1 else _complete_strategy_reply()
+        return {"content": content, "provider": "deepseek", "actual_model": "deepseek-v4-pro"}
+
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", invoke)
+
+    result = chief_agent.handle_message(
+        "Какую стратегию нам лучше разработать?", mirror_to_telegram=False,
+    )
+
+    assert calls == [
+        ("chief_agent", "orchestrator_strategic_dialogue"),
+        ("final_judge", "orchestrator_strategic_dialogue_repair"),
+    ]
+    assert result["reply"] == _complete_strategy_reply()
+
+
+def test_general_discussion_uses_strong_plain_dialogue_without_actions(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {
+        "research_mission": None, "recent_experiments": [], "accounts": [],
+    })
+    reply = (
+        "Дмитрий Сергеевич, причина в том, что прежняя схема принимала короткий технический ответ за завершённое "
+        "управленческое решение. Факт: проверка полноты отсутствовала. Предлагаю разделить обсуждение и исполнение: "
+        "сначала дать вывод, основания и варианты, затем дождаться вашей команды. Альтернатива — оставить единый "
+        "маршрут, но он снова будет смешивать разговор с запуском. Следующий шаг после вашего подтверждения — "
+        "применить раздельную маршрутизацию и проверить её на реальном диалоге."
+    )
+    captured = {}
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda role, prompt, **kwargs: (
+        captured.update({"role": role, **kwargs}) or {
+            "content": reply, "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+        }
+    ))
+
+    result = chief_agent.handle_message(
+        "Почему этот подход не работает и как лучше его перестроить?",
+        mirror_to_telegram=False,
+    )
+
+    assert captured["role"] == "chief_agent"
+    assert captured["complexity"] == "critical"
+    assert result["reply"] == reply
+    assert result["actions"] == []
+
+
+def test_simple_status_question_stays_deterministic(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("simple status question must not spend model tokens")
+    ))
+
+    result = chief_agent.handle_message("Всё работает?", mirror_to_telegram=False)
+
+    assert result["model"] == "deterministic dispatcher"
+    assert result["actions"] == []
+
+
+def test_short_start_approval_can_continue_previous_strategy_dialogue() -> None:
+    assert chief_agent._action_grounded_in_message("start_research", "Начинай") is True
+    assert chief_agent._extract_root("Основная рекомендация MGC; MNQ ниже") == "MGC"
+
+
+def test_short_start_approval_executes_plan_from_same_conversation(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chief_agent._append_conversation(
+        "assistant",
+        "Основная рекомендация — стратегия отката для MGC. MNQ и MES являются альтернативами.",
+        source="app",
+    )
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("approved concrete plan should not require another planning call")
+    ))
+    monkeypatch.setattr(chief_agent, "_kick_mission_start", lambda: None)
+    monkeypatch.setattr(chief_agent, "_lm_status_snapshot", lambda: {"run_allowed": True})
+    started = []
+    monkeypatch.setattr(chief_agent, "start_mission", lambda args: started.append(args) or {
+        "mission_id": "M1", "ends_at_utc": None, "target_roots": args["target_roots"],
+        "allow_local_models": args["allow_local_models"],
+    })
+
+    result = chief_agent.handle_message("Начинай", mirror_to_telegram=False)
+
+    assert result["model"] == "deterministic dispatcher"
+    assert result["actions"][0]["status"] == "completed"
+    assert started[0]["target_roots"] == ["MGC"]
+    assert started[0]["strategy_count_per_cycle"] == 1
+    assert started[0]["iterations_per_strategy"] == chief_agent.DEFAULT_STRATEGY_ITERATIONS
 
 
 def test_start_research_forces_local_model_unless_current_message_opts_out(tmp_path, monkeypatch) -> None:
@@ -407,6 +560,12 @@ def test_simple_operational_commands_use_cheapest_tier() -> None:
     assert chief_agent.classify_complexity("покажи отчёт", "orchestrator") == "light"
     # Genuine deep reasoning still uses the powerful tier.
     assert chief_agent.classify_complexity("обоснуй методологию walk-forward для портфеля", "orchestrator") == "critical"
+    assert chief_agent.classify_complexity(
+        "Какую стратегию предложишь исходя из наших исследований?", "orchestrator",
+    ) == "critical"
+    assert chief_agent.classify_complexity(
+        "Давай разработаем стратегию на основании документов", "orchestrator",
+    ) == "critical"
 
 
 def test_quick_simple_strategy_request_is_executed_not_refused(tmp_path, monkeypatch) -> None:
@@ -483,6 +642,7 @@ def test_ensure_local_models_is_not_blocked_by_grounding(tmp_path, monkeypatch) 
 
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent, "_manager_strategy_context", lambda _msg: {})
     monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
         "content": '{"reply":"Готовлю окружение.","confidence":0.9,"doubts":[],"actions":[{"name":"ensure_local_models","arguments":{},"reason":"self-heal"}]}',
         "provider": "gemini", "actual_model": "gemini-2.5-flash",
@@ -492,9 +652,11 @@ def test_ensure_local_models_is_not_blocked_by_grounding(tmp_path, monkeypatch) 
         "available": True, "ready": False, "run_allowed": False, "message_ru": "up",
     })
 
-    # The owner message does NOT mention LM Studio; self-heal must still run.
+    # An explicit execution command does not need to mention LM Studio; its
+    # dependency self-heal must still run. Collaborative "давай разработаем"
+    # wording is intentionally discussion-only and is covered separately.
     result = chief_agent.handle_message(
-        "Давай разработаем стратегию согласно исследованиям", mirror_to_telegram=False,
+        "Разработай стратегию согласно исследованиям", mirror_to_telegram=False,
     )
     ensure = [row for row in result["actions"] if row["name"] == "ensure_local_models"]
     assert ensure and ensure[0]["status"] == "completed"

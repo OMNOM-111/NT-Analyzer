@@ -539,6 +539,22 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean", "value": True, "source_refs": [],
         "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/runner.py"], "review_targets": [],
     },
+    {
+        "id": "GOV-AI-015", "key": "orchestrator_discussion_uses_strongest_model",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Содержательное обсуждение использует strongest reasoning lane",
+        "summary": "Обсуждение, диагностика, выбор стратегии и планирование идут через critical-маршрут к самой сильной доступной модели; простые операционные команды остаются в быстром маршруте.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/agent_router.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-016", "key": "orchestrator_dialogue_context_and_completeness",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Ответ менеджера обязан быть контекстным и завершённым",
+        "summary": "Перед стратегическим ответом читаются project docs, reference library, lessons, user research и фактические эксперименты; короткий, обещающий или оборванный ответ автоматически заменяется полным, а команда «начинай» продолжает согласованный план этого чата.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/knowledge.py", "app/ai_lab/universal_llm.py"], "review_targets": [],
+    },
 ]
 
 

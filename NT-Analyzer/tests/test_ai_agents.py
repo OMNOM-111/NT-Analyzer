@@ -377,7 +377,7 @@ def test_deepseek_v4_pro_uses_managed_pricing_and_thinking(isolated_agents, monk
     monkeypatch.setattr(universal_llm, "_request_json", fake_request)
     result = universal_llm.invoke_agent(
         agent["id"], "metrics", system_prompt="stable prefix",
-        request_role="chief_agent", purpose="daily_audit", max_output_tokens=100,
+        request_role="chief_agent", purpose="daily_audit", max_output_tokens=9000,
     )
 
     assert agent["input_price_usd_per_m"] == 0.435
@@ -387,6 +387,7 @@ def test_deepseek_v4_pro_uses_managed_pricing_and_thinking(isolated_agents, monk
     assert captured["payload"]["thinking"] == {"type": "enabled"}
     assert captured["payload"]["reasoning_effort"] == "max"
     assert captured["payload"]["user_id"] == "nt-analyzer"
+    assert captured["payload"]["max_tokens"] == 8192
     assert "temperature" not in captured["payload"]
     assert result["cached_input_tokens"] == 80
     assert result["cache_miss_tokens"] == 20
