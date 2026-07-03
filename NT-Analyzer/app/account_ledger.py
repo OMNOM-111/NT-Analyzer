@@ -8,6 +8,7 @@ reported as strategy profit or silently labelled as deposits.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -218,6 +219,109 @@ def account_history(account_name: str = "", limit: int = 500) -> Dict[str, Any]:
         "cash_flow_capability": "derived_unclassified_only",
         "cash_flow_note": "Broker transaction history is unavailable; unexplained balance deltas require manual classification.",
     }
+
+
+def audit_integrity(account_name: str = "", *, repair_safe: bool = False) -> Dict[str, Any]:
+    """Find ledger corruption and remove only byte-equivalent safe duplicates.
+
+    A safe repair never guesses a financial classification or amount. It may
+    only remove a repeated snapshot with the same timestamp/source/values, a
+    repeated source_id with identical financial fields, or a repeated
+    system-derived unclassified adjustment. Every other anomaly is reported
+    for a person to review.
+    """
+    with _LOCK:
+        doc = _read()
+        issues: List[Dict[str, Any]] = []
+        repaired: List[Dict[str, Any]] = []
+        names = [account_name] if account_name else sorted(doc["accounts"])
+        changed = False
+        for name in names:
+            account = doc["accounts"].get(name)
+            if not account:
+                continue
+            snapshots = list(account.get("snapshots") or [])
+            kept_snapshots: List[Dict[str, Any]] = []
+            seen_snapshots: Dict[tuple, int] = {}
+            for index, row in enumerate(snapshots):
+                signature = (
+                    str(row.get("at_utc") or ""), str(row.get("source") or ""),
+                    _number(row.get("net_liquidation")), _number(row.get("cash_value")),
+                    _number(row.get("realized_pnl")), _number(row.get("unrealized_pnl")),
+                )
+                if signature in seen_snapshots:
+                    issue = {"code": "duplicate_snapshot", "account_name": name, "index": index, "safe_to_repair": True}
+                    issues.append(issue)
+                    if repair_safe:
+                        repaired.append(issue)
+                        changed = True
+                        continue
+                else:
+                    seen_snapshots[signature] = index
+                kept_snapshots.append(row)
+
+            events = list(account.get("events") or [])
+            kept_events: List[Dict[str, Any]] = []
+            seen_source: Dict[str, Dict[str, Any]] = {}
+            seen_derived: Dict[tuple, Dict[str, Any]] = {}
+            for row in events:
+                event_id = str(row.get("event_id") or "")
+                try:
+                    raw_amount = float(row.get("amount"))
+                    finite = math.isfinite(raw_amount)
+                except (TypeError, ValueError):
+                    finite = False
+                if not finite:
+                    issues.append({"code": "invalid_amount", "account_name": name, "event_id": event_id, "safe_to_repair": False})
+                source_id = str(row.get("source_id") or "").strip()
+                core = (
+                    str(row.get("at_utc") or ""), str(row.get("kind") or ""),
+                    _number(row.get("amount")), str(row.get("provenance") or ""),
+                )
+                duplicate = False
+                if source_id and source_id in seen_source:
+                    previous = seen_source[source_id]
+                    previous_core = (
+                        str(previous.get("at_utc") or ""), str(previous.get("kind") or ""),
+                        _number(previous.get("amount")), str(previous.get("provenance") or ""),
+                    )
+                    safe = core == previous_core
+                    issue = {"code": "duplicate_source_id", "account_name": name, "event_id": event_id, "source_id": source_id, "safe_to_repair": safe}
+                    issues.append(issue)
+                    duplicate = bool(safe and repair_safe)
+                elif source_id:
+                    seen_source[source_id] = row
+                derived = (
+                    row.get("provenance") == "derived_from_net_liquidation_minus_runtime_pnl_delta"
+                    and row.get("classification_status") == "needs_review"
+                )
+                if derived:
+                    derived_key = (str(row.get("at_utc") or ""), _number(row.get("amount")), str(row.get("kind") or ""))
+                    if derived_key in seen_derived:
+                        issue = {"code": "duplicate_derived_adjustment", "account_name": name, "event_id": event_id, "safe_to_repair": True}
+                        issues.append(issue)
+                        duplicate = bool(repair_safe)
+                    else:
+                        seen_derived[derived_key] = row
+                if duplicate:
+                    repaired.append(issues[-1])
+                    changed = True
+                    continue
+                kept_events.append(row)
+            if repair_safe:
+                account["snapshots"] = kept_snapshots
+                account["events"] = kept_events
+        if changed:
+            _write(doc)
+        return {
+            "ok": True,
+            "generated_at_utc": _now(),
+            "account": account_name or "__all__",
+            "issues": issues,
+            "repaired": repaired,
+            "repair_policy": "exact_duplicates_only",
+            "requires_review": sum(1 for row in issues if not row.get("safe_to_repair")),
+        }
 
 
 def classify_event(account_name: str, event_id: str, kind: str, actor: str, note: str = "") -> Dict[str, Any]:

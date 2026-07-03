@@ -2,7 +2,23 @@
 UI.ready(async function () {
   let lmHealth = null, runStatus = null, summary = null, scoreMap = {}, activityExp = null, activitySince = 0, activityRows = [];
   const STATUS_BADGE = { rejected: 'failed', candidate: 'trial', champion: 'live', portfolio_contributor: 'live', running: 'running', in_progress: 'running' };
-  const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso || ''; } };
+  const PTZ = (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: PTZ, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return iso || ''; }
+  };
+  const fmtTimePt = (iso) => {
+    if (!iso) return '—';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: PTZ, hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).format(new Date(iso)) + ' PT';
+    } catch (e) { return String(iso).slice(11, 19); }
+  };
   const statusBadge = (st) => STATUS_BADGE[st] || (String(st).includes('compile') ? 'failed' : 'archived');
   const statusToCell = (st) => {
     if (st === 'running' || st === 'in_progress') return 'running';
@@ -71,6 +87,7 @@ UI.ready(async function () {
       ['Enabled', `${Number(totals.enabled || 0)} / ${Number(totals.agents || 0)}`],
       ['Активные запросы', String((data.routing?.active_requests || []).length)],
       ['Расход / месяц', `≈ $${Number(totals.spend_month_usd || 0).toFixed(6)}`],
+      ['Effective cache', `${Number(totals.cache_hit_pct || 0).toFixed(1)}%`],
       ['Azure grant', remaining == null ? 'не синхронизирован' : `≈ $${remaining.toFixed(4)} · ${Math.max(...azureUsedPct, 0).toFixed(4)}% used`],
     ].map(row => `<div class="kpi"><div class="kpi-label">${UI.esc(row[0])}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
     const active = data.routing?.active_requests || [];
@@ -79,6 +96,28 @@ UI.ready(async function () {
     UI.qs('#ai-agent-usage').innerHTML = recent.length ? recent.map(row => `<tr><td>${UI.esc(row.request_role || row.role || '—')}<div class="row-sub">${UI.esc(row.purpose || '')}</div></td><td>${UI.esc(row.actual_model || row.model || '—')}<div class="row-sub">${UI.esc(row.account_name || '')}</div></td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${row.cost_estimated ? '≈ ' : ''}$${Number(row.cost_usd || 0).toFixed(8)}</td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span></td></tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">Вызовов пока нет.</div></td></tr>';
     const routes = data.routing?.roles || {};
     UI.qs('#ai-agent-routes').innerHTML = Object.entries(routes).map(([role, rows]) => `<tr><td><strong>${UI.esc(role)}</strong></td><td>${rows.length ? rows.map((row, i) => `${i + 1}. ${UI.esc(row.model || '')} <span class="row-sub">(${UI.esc(row.account_name || '')})</span>`).join('<br>') : '<span class="row-sub">нет enabled-модели</span>'}</td></tr>`).join('');
+  }
+
+  async function loadChief() {
+    let doc;
+    try { doc = await API.http.aiOrchestratorStatus({ signal: UI.signal() }); } catch (error) { return; }
+    const model = doc.orchestrator || {}, mission = doc.mission || {}, usage = doc.usage || {};
+    const badge = UI.qs('#chief-badge');
+    badge.className = `badge ${doc.enabled ? (mission.status === 'active' ? 'running' : 'live') : 'failed'}`;
+    badge.innerHTML = `<span class="dot"></span>${doc.enabled ? `Auto · ${mission.status === 'active' ? 'автономная работа' : 'готов'}` : 'модели недоступны'}`;
+    UI.qs('#chief-kpis').innerHTML = [
+      ['Последняя модель', model.last_model || 'ещё не выбиралась'],
+      ['Режим', 'Auto · по сложности'],
+      ['Расход месяца', `$${Number(model.spend_month_usd || 0).toFixed(6)} / $${Number(model.monthly_budget_usd || 0).toFixed(2)}`],
+      ['Effective cache', `${Number(usage.effective_cache_hit_pct || usage.cache_hit_pct || 0).toFixed(1)}%`],
+      ['Ожидают решения', String((doc.pending_proposals || []).length)],
+    ].map(row => `<div class="kpi"><div class="kpi-label">${UI.esc(row[0])}</div><div class="kpi-val sm">${UI.esc(row[1])}</div></div>`).join('');
+    const tasks = (doc.tasks || []).filter(row => row.status === 'open').slice(0, 5);
+    const missionText = mission.status ? `${mission.status} · до ${fmtDate(mission.ends_at_utc)} · циклов ${Number(mission.cycles_started || 0)}` : 'автономная работа не запущена';
+    const missionBreaker = mission.safety_circuit_breaker || {};
+    UI.qs('#chief-status').innerHTML = `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(doc.name || 'StratForge Orchestrator')}</div><div class="row-sub">${UI.esc(missionText)}</div><div class="row-sub">provider cache ${Number(usage.provider_cache_hit_pct || 0).toFixed(1)}% · app cache ${Number(usage.application_cache_hits || 0)} hits</div>${missionBreaker.open ? `<div class="row-sub neg"><strong>Защитная остановка:</strong> ${UI.esc(missionBreaker.signature || 'systemic failure')} · ${Number(missionBreaker.count || 0)}×</div>` : ''}${mission.last_error ? `<div class="row-sub">${UI.esc(mission.last_error)}</div>` : ''}</div></div>${tasks.map(task => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(task.title)}</div><div class="row-sub">${UI.esc(task.task_id)}${task.due_at_utc ? ` · ${fmtDate(task.due_at_utc)}` : ''}</div></div></div>`).join('') || '<div class="empty-state">Открытых задач нет.</div>'}`;
+    const allowed = (doc.capabilities || []).filter(row => row.allowed);
+    UI.qs('#orchestrator-capabilities').innerHTML = allowed.map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.id)}</div><div class="row-sub">${row.requires_owner_approval ? 'требует подтверждения' : 'разрешено в приложении'}</div></div></div>`).join('') + `<div class="finance-note"><strong>Запрещено:</strong> ${UI.esc((doc.prohibited || []).join(', '))}</div>`;
   }
   function updateLaunchEnabled() {
     const launch = UI.qs('#ai-launch');
@@ -110,7 +149,11 @@ UI.ready(async function () {
       const pct = runStatus.progress_pct != null ? runStatus.progress_pct : (runStatus.progress != null ? runStatus.progress : derivedPct);
       UI.qs('#ai-prog').style.width = Math.min(100, pct) + '%';
       const cur = runStatus.current_experiment_id || runStatus.experiment_id || (runStatus.current && runStatus.current.experiment_id);
-      UI.qs('#ai-prog-label').textContent = [runStatus.phase || phase || 'выполняется', cur, `стратегия ${strategyIndex}/${strategyTotal}`, `итерация ${iterationIndex}/${iterationTotal}`].filter(Boolean).join(' · ');
+      const staged = runStatus.staged_pipeline || {};
+      const stagedText = staged.developing_experiment_id
+        ? `следующая ${staged.developing_experiment_id}: ${staged.state || staged.status || 'designing'}`
+        : (staged.state && staged.state !== 'promoted_to_execution' ? `ступенчатый pipeline: ${staged.state}` : '');
+      UI.qs('#ai-prog-label').textContent = [runStatus.phase || phase || 'выполняется', cur, `стратегия ${strategyIndex}/${strategyTotal}`, `итерация ${iterationIndex}/${iterationTotal}`, stagedText].filter(Boolean).join(' · ');
       renderRunMeta(cur, strategyIndex, strategyTotal, iterationIndex, iterationTotal);
       if (cur) await loadActivity(cur);
     } else {
@@ -135,6 +178,18 @@ UI.ready(async function () {
       ['Прогресс', `${strategyIndex}/${strategyTotal} · ${iterationIndex}/${iterationTotal}`, ''],
       ['Время / heartbeat', `${elapsed == null ? '—' : elapsed + ' мин'}${staleSec == null ? '' : ' · ' + staleSec + ' сек назад'}`, staleSec != null && staleSec > 90 ? 'warn' : ''],
     ];
+    const staged = runStatus && runStatus.staged_pipeline || {};
+    if (staged.state) rows.push([
+      'Следующая стратегия',
+      [staged.developing_experiment_id, staged.family, staged.state].filter(Boolean).join(' · '),
+      staged.state === 'failed' ? 'neg' : staged.state === 'ready' ? 'pos' : 'info',
+    ]);
+    const breaker = runStatus && runStatus.circuit_breaker || {};
+    if (breaker.open) rows.push([
+      'Защитная остановка',
+      `${breaker.signature || 'systemic failure'} · ${Number(breaker.count || 0)}×`,
+      'neg',
+    ]);
     UI.qs('#ai-run-meta').innerHTML = rows.map(row => `<div class="kpi"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm ${row[2]}">${UI.esc(row[1])}</div></div>`).join('');
   }
   async function startRun() {
@@ -164,7 +219,7 @@ UI.ready(async function () {
 
   function fmtLogLine(l) {
     if (typeof l === 'string') return l;
-    const ts = String(l.ts || l.timestamp || l.timestamp_utc || '').slice(11, 19);
+    const ts = fmtTimePt(l.ts || l.timestamp || l.timestamp_utc || '');
     const stage = l.stage_ru || l.stage || l.phase || l.source || '';
     const action = l.action_ru || l.action || l.event || l.message || l.text || '';
     const reason = l.reason_ru || l.reason || '';
@@ -316,7 +371,7 @@ UI.ready(async function () {
       const stage = row.stage_ru || row.stage || row.phase || 'процесс';
       const action = row.action_ru || row.action || row.message || 'событие';
       const detail = [row.selected_model || row.model, row.reason_ru || row.reason, row.class_name].filter(Boolean).join(' · ');
-      const ts = String(row.ts || row.timestamp_utc || '').slice(11, 19);
+      const ts = fmtTimePt(row.ts || row.timestamp_utc || '');
       return `<div class="role-step"><span class="stage">${UI.esc(stage)}</span><span class="task" title="${UI.esc(detail || action)}">${UI.esc(action)}${detail ? ` · ${UI.esc(detail)}` : ''}</span><span class="time">${UI.esc(ts)}</span></div>`;
     }).join('') : '<div class="empty-state" style="padding:12px">Нет активных этапов. Выберите эксперимент в истории для подробного журнала.</div>';
   }
@@ -342,15 +397,16 @@ UI.ready(async function () {
     let doc;
     try { doc = await API.http.aiExperiments({ limit: 300 }, { signal: UI.signal() }); } catch (e) { return; }
     const exps = doc.experiments || [];
-    UI.qs('#ai-matrix').innerHTML = exps.map(e => `<div class="ai-cell ${statusToCell(e.status)}" data-id="${UI.esc(e.experiment_id)}" title="${UI.esc(e.class_name || e.experiment_id)} · ${UI.esc(e.status)}"></div>`).join('');
+    const visibleExps = exps.filter(e => !(e.class_name === 'PENDING' && e.status === 'archived'));
+    UI.qs('#ai-matrix').innerHTML = visibleExps.map(e => `<div class="ai-cell ${statusToCell(e.status)}" data-id="${UI.esc(e.experiment_id)}" title="${UI.esc(e.class_name || e.experiment_id)} · ${UI.esc(e.status)}"></div>`).join('');
     UI.qsa('#ai-matrix .ai-cell').forEach(el => el.onclick = () => openExp(el.dataset.id));
 
-    const cands = exps.filter(e => ['candidate', 'champion', 'portfolio_contributor'].includes(e.status));
+    const cands = visibleExps.filter(e => ['candidate', 'champion', 'portfolio_contributor'].includes(e.status));
     UI.qs('#port-body').innerHTML = cands.length ? cands.map(e => `<tr class="clickable" data-id="${UI.esc(e.experiment_id)}"><td><strong>${UI.esc(e.class_name || e.experiment_id)}</strong></td><td class="mono muted">${UI.esc(e.target_root || '')}</td><td class="num">${scoreMap[e.experiment_id] != null ? Number(scoreMap[e.experiment_id]).toFixed(1) : '—'}</td><td><span class="badge ${statusBadge(e.status)}">${UI.esc(e.status)}</span></td></tr>`).join('') : '<tr><td colspan="4"><div class="empty-state">Кандидатов нет.</div></td></tr>';
     UI.qsa('#port-body tr[data-id]').forEach(tr => tr.onclick = () => openExp(tr.dataset.id));
 
-    UI.qs('#exp-count').textContent = exps.length + ' экспериментов';
-    UI.qs('#exp-body').innerHTML = exps.map(e => `<tr class="clickable" data-id="${UI.esc(e.experiment_id)}"><td class="mono muted" style="font-size:10px">${UI.esc(e.experiment_id)}</td><td class="muted">${fmtDate(e.created_at_utc)}</td><td><strong>${UI.esc(e.class_name || '')}</strong></td><td class="mono muted">${UI.esc(e.target_root || '')}</td><td class="muted">${UI.esc(e.family || '')}</td><td class="num">${scoreMap[e.experiment_id] != null ? Number(scoreMap[e.experiment_id]).toFixed(1) : '—'}</td><td><span class="badge ${statusBadge(e.status)}">${UI.esc(e.status)}</span></td></tr>`).join('');
+    UI.qs('#exp-count').textContent = `${visibleExps.length} стратегий${exps.length !== visibleExps.length ? ` · ${exps.length - visibleExps.length} тех. записей скрыто` : ''}`;
+    UI.qs('#exp-body').innerHTML = visibleExps.map(e => `<tr class="clickable" data-id="${UI.esc(e.experiment_id)}"><td class="mono muted" style="font-size:10px">${UI.esc(e.experiment_id)}</td><td class="muted">${fmtDate(e.created_at_utc)}</td><td><strong>${UI.esc(e.class_name || '')}</strong></td><td class="mono muted">${UI.esc(e.target_root || '')}</td><td class="muted">${UI.esc(e.family || '')}</td><td class="num">${scoreMap[e.experiment_id] != null ? Number(scoreMap[e.experiment_id]).toFixed(1) : '—'}</td><td><span class="badge ${statusBadge(e.status)}">${UI.esc(e.status)}</span></td></tr>`).join('');
     UI.qsa('#exp-body tr[data-id]').forEach(tr => tr.onclick = () => openExp(tr.dataset.id));
   }
 
@@ -363,9 +419,10 @@ UI.ready(async function () {
       <div class="tb-title" style="margin-bottom:10px"><span class="tb-kicker">${UI.esc([e.ai_cell_id, e.target_root, e.family].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(e.class_name || id)}</span></div>
       <div class="flex wrap gap-sm"><span class="badge ${statusBadge(e.status)}">${UI.esc(e.status)}</span><span class="tag">создан ${fmtDate(e.created_at_utc)}</span>${e.primary_capital ? `<span class="tag">капитал $${e.primary_capital}</span>` : ''}${scoreMap[id] != null ? `<span class="tag">score ${Number(scoreMap[id]).toFixed(1)}</span>` : ''}</div>
       ${e.hypothesis ? `<section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Гипотеза</h2></div><div class="panel-b"><p style="font-size:12.5px;color:var(--tx-2);line-height:1.55">${UI.esc(e.hypothesis)}</p></div></section>` : ''}
+      ${(e.model_chain || []).length ? `<section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Фактическая цепочка моделей</h2></div><div class="panel-b">${e.model_chain.map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.role || 'agent')} · ${UI.esc(row.selected_model || 'unknown')}</div><div class="row-sub">${UI.esc(row.provider || row.path || '')}${row.iteration ? ` · итерация ${Number(row.iteration)}` : ''}</div></div></div>`).join('')}</div></section>` : ''}
       <h4 style="margin:14px 0 6px">Этапы и роли</h4><div class="role-timeline" id="ed-roles"></div>
       <h4 style="margin:14px 0 6px">Журнал работы</h4><pre class="logbox" id="ed-log">загрузка…</pre>
-      <details style="margin-top:12px"><summary>Технические данные эксперимента</summary><pre class="logbox">${UI.esc(JSON.stringify({ memory_intake: e.memory_intake, analysis: e.analysis, decision: e.decision, portfolio: e.portfolio, lineage: e.lineage }, null, 2))}</pre></details>
+      <details style="margin-top:12px"><summary>Технические данные эксперимента</summary><pre class="logbox">${UI.esc(JSON.stringify({ memory_intake: e.memory_intake, backtests: e.backtests, backtest_result_integrity: e.backtest_result_integrity, backtest_infrastructure_attempts: e.backtest_infrastructure_attempts, analysis: e.analysis, decision: e.decision, portfolio: e.portfolio, lineage: e.lineage }, null, 2))}</pre></details>
       <div class="flex gap-sm" style="margin-top:12px">${e.class_name ? `<a class="btn" href="strategies.html?strategy=${encodeURIComponent(e.class_name)}">${UI.icon('strategies')}В портфеле стратегий</a>` : ''}${e.status === 'running' ? '<button class="btn danger" id="ed-cancel">Отменить</button>' : ''}</div>`;
     try { const a = await API.http.aiExperimentActivity(id, { since: 0, limit: 500 }); const lines = a.entries || a.lines || a.events || a.activity || []; UI.qs('#ed-log').textContent = lines.length ? lines.map(fmtLogLine).join('\n') : 'нет записей в журнале'; renderRoleTimeline(lines, UI.qs('#ed-roles')); }
     catch (err) { UI.qs('#ed-log').textContent = 'журнал недоступен'; }
@@ -393,15 +450,21 @@ UI.ready(async function () {
     try { await API.http.aiOperatorNoteGlobal({ text, priority: 'high' }); UI.toast('Заметка сохранена в глобальную память AI'); UI.qs('#ai-note').value = ''; }
     catch (e) { UI.reportError(e); }
   };
+  // The full conversational surface is the global floating orchestrator widget
+  // (bottom-right). This page only launches it; sends go through
+  // API.http.aiOrchestratorMessage inside UI.openOrchestrator.
+  const orchestratorOpen = UI.qs('#orchestrator-open');
+  if (orchestratorOpen) orchestratorOpen.onclick = () => { if (UI.openOrchestrator) UI.openOrchestrator(); };
   UI.pageActions(`<button class="btn sm" id="ai-research-scan">${UI.icon('search')}Сканировать исследования</button><button class="btn sm" id="ai-unload">${UI.icon('eraser')}Освободить память</button><button class="btn sm" id="ai-sweep">${UI.icon('refresh')}Очистить зависшие</button>`);
   UI.qs('#ai-research-scan').onclick = () => { if (!confirm('Просканировать пользовательские исследования и обновить входной контекст AI Lab?')) return; UI.action('Сканирование исследований', () => API.http.aiUserResearchScan({}), 'Исследования просканированы').then(loadResearchAnalytics).catch(() => {}); };
   UI.qs('#ai-unload').onclick = () => { if (!confirm('Выгрузить модели LM Studio и остановить локальный model server?')) return; UI.action('Выгрузка моделей', () => API.http.aiBootstrapUnload({ stop_server: true }), 'Модели выгружены').then(refreshLm).catch(() => {}); };
   UI.qs('#ai-sweep').onclick = () => { if (!confirm('Пометить эксперименты без heartbeat более 6 часов как cancelled?')) return; UI.action('Проверка зависших экспериментов', () => API.http.aiSweepStale({ stale_after_hours: 6 }), 'Проверка завершена').then(() => { loadSummary(); loadExperiments(); }).catch(() => {}); };
 
   if (!(await loadSummary())) return;
-  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadAgentRuntime()]);
+  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadAgentRuntime(), loadChief()]);
   if (!activityRows.length) renderRoleTimeline([]);
   UI.poll(refreshRun, 5000);
   UI.poll(async () => { await loadSummary(); }, 20000);
   UI.poll(loadAgentRuntime, 10000);
+  UI.poll(loadChief, 10000);
 });

@@ -31,6 +31,22 @@ BILLING_MODES = {
     "unknown": "Not classified",
 }
 MODEL_PRICING: Dict[tuple[str, str], Dict[str, Any]] = {
+    ("deepseek", "deepseek-v4-flash"): {
+        "input_price_usd_per_m": 0.14,
+        "cached_input_price_usd_per_m": 0.0028,
+        "output_price_usd_per_m": 0.28,
+        "pricing_status": "configured",
+        "pricing_basis": "Official DeepSeek API pricing (cache miss / cache hit / output)",
+        "pricing_source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    ("deepseek", "deepseek-v4-pro"): {
+        "input_price_usd_per_m": 0.435,
+        "cached_input_price_usd_per_m": 0.003625,
+        "output_price_usd_per_m": 0.87,
+        "pricing_status": "configured",
+        "pricing_basis": "Official DeepSeek API pricing (cache miss / cache hit / output)",
+        "pricing_source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
     ("azure_foundry", "gpt-5-mini"): {
         "input_price_usd_per_m": 0.25,
         "cached_input_price_usd_per_m": 0.025,
@@ -46,6 +62,14 @@ MODEL_PRICING: Dict[tuple[str, str], Dict[str, Any]] = {
         "pricing_status": "estimated",
         "pricing_basis": "OpenAI public reference; Azure invoice is authoritative",
         "pricing_source_url": "https://platform.openai.com/docs/models/text-embedding-3-small",
+    },
+    ("zai", "glm-5.2"): {
+        "input_price_usd_per_m": 1.4,
+        "cached_input_price_usd_per_m": 0.26,
+        "output_price_usd_per_m": 4.4,
+        "pricing_status": "configured",
+        "pricing_basis": "Official Z.AI general API pricing; trial quota is account-side",
+        "pricing_source_url": "https://docs.z.ai/guides/overview/pricing",
     },
 }
 
@@ -98,6 +122,19 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "help_url": "https://aistudio.google.com/app/apikey",
         "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
     },
+    "zai": {
+        "label": "Z.AI / GLM",
+        "base_url": "https://api.z.ai/api/paas/v4",
+        "auth_type": "bearer",
+        "supports_balance_sync": False,
+        "help_url": "https://z.ai/manage-apikey/apikey-list",
+        "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+        "note": (
+            "Обычный API использует /api/paas/v4. /api/coding/paas/v4 работает "
+            "только с активным GLM Coding Plan. GLM-5.2 тарифицируется; "
+            "glm-4.7-flash и glm-4.5-flash бесплатны."
+        ),
+    },
     "mistral": {
         "label": "Mistral",
         "base_url": "https://api.mistral.ai/v1",
@@ -126,8 +163,11 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
 }
 
 ROLES: Dict[str, str] = {
+    "orchestrator": "StratForge Orchestrator",
+    "chief_agent": "Chief agent / research supervisor",
     "coder": "Coder",
     "strategy_analyst": "Strategy analyst",
+    "accountant": "Financial controller / accountant",
     "backtest_analyst": "Backtest analyst",
     "risk_manager": "Risk manager",
     "telegram_assistant": "Telegram assistant",
@@ -145,6 +185,7 @@ OPENROUTER_FREE_MODELS = frozenset({
     "openrouter/free",
     "cohere/north-mini-code:free",
 })
+ZAI_FREE_MODELS = frozenset({"glm-4.7-flash", "glm-4.5-flash"})
 OPENROUTER_DEPRECATED_FREE_MODELS = {
     "deepseek/deepseek-v4-flash:free": "openrouter/free",
     "deepseek/deepseek-chat:free": "openrouter/free",
@@ -223,6 +264,8 @@ def infer_billing_mode(provider: str, model: str, credit_total: float = 0.0) -> 
         return "free_tier"
     if provider == "openrouter" and is_openrouter_free_model(model):
         return "free_tier"
+    if provider == "zai" and str(model or "").strip().lower() in ZAI_FREE_MODELS:
+        return "free_tier"
     return "unknown"
 
 
@@ -235,6 +278,8 @@ def _default_account_name(provider: str, base_url: str, credit_total: float = 0.
     if provider == "gemini":
         suffix = str(agent_name or "").replace("Gemini", "").strip(" _-")
         return f"Google AI Studio · {suffix}" if suffix else "Google AI Studio"
+    if provider == "zai":
+        return "Z.AI API"
     return PROVIDERS.get(provider, {}).get("label") or provider or "AI provider"
 
 
@@ -420,6 +465,8 @@ def _validated(payload: Dict[str, Any], existing: Optional[Dict[str, Any]] = Non
     billing_mode = str(source.get("billing_mode") or infer_billing_mode(
         provider, model, credit_total
     )).strip().lower()
+    if provider == "zai" and model.lower() in ZAI_FREE_MODELS:
+        billing_mode = "free_tier"
     if billing_mode not in BILLING_MODES:
         raise AgentRegistryError("Неподдерживаемый billing mode.")
     rotation_group = str(source.get("rotation_group") or f"{provider}-pool").strip()[:80]
@@ -535,6 +582,7 @@ def _public_agent(
     month_start = day_start.replace(day=1)
     daily_spend = _sum_cost(rows, since=day_start)
     monthly_spend = _sum_cost(rows, since=month_start)
+    account_monthly_spend = _sum_cost(account_rows, since=month_start)
     all_spend = _sum_cost(rows)
     reported_peer = max(
         (item for item in peers if item.get("credit_remaining_reported_usd") is not None),
@@ -578,9 +626,11 @@ def _public_agent(
         "key_storage_error": key_error,
         "spend_today_usd": round(daily_spend, 8),
         "spend_month_usd": round(monthly_spend, 8),
+        "account_spend_month_usd": round(account_monthly_spend, 8),
         "spend_all_time_usd": round(all_spend, 8),
         "remaining_daily_budget_usd": None if float(raw.get("daily_budget_usd") or 0) <= 0 else round(max(0.0, float(raw.get("daily_budget_usd") or 0) - daily_spend), 8),
-        "remaining_monthly_budget_usd": None if float(raw.get("monthly_budget_usd") or 0) <= 0 else round(max(0.0, float(raw.get("monthly_budget_usd") or 0) - monthly_spend), 8),
+        "remaining_monthly_budget_usd": None if float(raw.get("monthly_budget_usd") or 0) <= 0 else round(max(0.0, float(raw.get("monthly_budget_usd") or 0) - account_monthly_spend), 8),
+        "monthly_budget_scope": "provider_account",
         "budget_mode": "monitor_only" if float(raw.get("daily_budget_usd") or 0) <= 0 and float(raw.get("monthly_budget_usd") or 0) <= 0 else "limited",
         "account_models": len(peers),
         "credit_tracked_spend_usd": round(credit_spend, 8),
@@ -764,7 +814,8 @@ def record_usage(row: Dict[str, Any]) -> None:
         for key in (
             "timestamp_utc", "request_id", "agent_id", "agent_name", "provider",
             "account_name", "billing_mode", "rotation_group", "model", "role",
-            "actual_model", "endpoint_type", "input_tokens", "cached_input_tokens", "output_tokens",
+            "actual_model", "endpoint_type", "input_tokens", "cached_input_tokens", "cache_miss_tokens", "output_tokens",
+            "application_cache_hit", "application_cache_saved_input_tokens", "application_cache_saved_output_tokens",
             "total_tokens", "cost_usd", "cost_known", "cost_estimated", "pricing_basis",
             "request_role", "purpose", "status", "elapsed_sec", "error",
         )
@@ -812,14 +863,25 @@ def summary() -> Dict[str, Any]:
     for row in usage_rows(limit=100_000):
         cost = float(row.get("cost_usd") or 0)
         tokens = int(row.get("total_tokens") or 0)
+        input_tokens = int(row.get("input_tokens") or 0)
+        cached_tokens = int(row.get("cached_input_tokens") or 0)
+        app_saved = int(row.get("application_cache_saved_input_tokens") or 0)
         for bucket, key in (
             (provider_totals, str(row.get("provider") or "unknown")),
             (model_totals, str(row.get("model") or "unknown")),
             (account_totals, str(row.get("account_name") or agents_by_id.get(str(row.get("agent_id") or ""), {}).get("account_name") or "unknown")),
         ):
-            item = bucket.setdefault(key, {"id": key, "requests": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_requests": 0})
+            item = bucket.setdefault(key, {"id": key, "requests": 0, "tokens": 0, "input_tokens": 0, "cached_input_tokens": 0, "application_cache_saved_input_tokens": 0, "cost_usd": 0.0, "unpriced_requests": 0})
             item["requests"] += 1
             item["tokens"] += tokens
+            item["input_tokens"] += input_tokens
+            item["cached_input_tokens"] += cached_tokens
+            item["application_cache_saved_input_tokens"] += app_saved
+            effective_input = item["input_tokens"] + item["application_cache_saved_input_tokens"]
+            effective_cached = item["cached_input_tokens"] + item["application_cache_saved_input_tokens"]
+            item["provider_cache_hit_pct"] = round(item["cached_input_tokens"] / item["input_tokens"] * 100.0, 2) if item["input_tokens"] else 0.0
+            item["effective_cache_hit_pct"] = round(effective_cached / effective_input * 100.0, 2) if effective_input else 0.0
+            item["cache_hit_pct"] = item["effective_cache_hit_pct"]
             item["cost_usd"] = round(item["cost_usd"] + cost, 8)
             if row.get("cost_known") is False:
                 item["unpriced_requests"] += 1
@@ -844,6 +906,18 @@ def summary() -> Dict[str, Any]:
             "enabled": sum(1 for agent in agents if agent.get("enabled")),
             "spend_today_usd": round(sum(float(agent.get("spend_today_usd") or 0) for agent in agents), 8),
             "spend_month_usd": round(sum(float(agent.get("spend_month_usd") or 0) for agent in agents), 8),
+            "input_tokens": sum(int(row.get("input_tokens") or 0) for row in recent),
+            "cached_input_tokens": sum(int(row.get("cached_input_tokens") or 0) for row in recent),
+            "application_cache_saved_input_tokens": sum(int(row.get("application_cache_saved_input_tokens") or 0) for row in recent),
+            "application_cache_hits": sum(1 for row in recent if row.get("application_cache_hit")),
+            "provider_cache_hit_pct": round(
+                sum(int(row.get("cached_input_tokens") or 0) for row in recent)
+                / max(1, sum(int(row.get("input_tokens") or 0) for row in recent)) * 100.0, 2),
+            "cache_hit_pct": round(
+                (sum(int(row.get("cached_input_tokens") or 0) for row in recent)
+                 + sum(int(row.get("application_cache_saved_input_tokens") or 0) for row in recent))
+                / max(1, sum(int(row.get("input_tokens") or 0) for row in recent)
+                      + sum(int(row.get("application_cache_saved_input_tokens") or 0) for row in recent)) * 100.0, 2),
         },
         "usage": recent,
         "by_provider": sorted(provider_totals.values(), key=lambda row: row["cost_usd"], reverse=True),

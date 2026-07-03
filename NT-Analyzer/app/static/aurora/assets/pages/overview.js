@@ -85,6 +85,7 @@ async function renderLive() {
   }
 
   renderKpis(kpiBox, selectedAccount, month, year, coverage, ai);
+  renderNorthStar();
   wireEquity(month, year, accountName);
   renderToday(today);
   renderAccountOverview(accounts, selectedAccount, history);
@@ -93,6 +94,40 @@ async function renderLive() {
   renderReports(reports);
   renderNews(news);
   renderSystems(selectedAccount, month, coverage, ai, health);
+}
+
+async function renderNorthStar() {
+  const panel = UI.qs('#north-star-panel'), body = UI.qs('#north-star-body');
+  if (!panel || !body) return;
+  let ns = null;
+  try { ns = await API.http.northStar({ signal: UI.signal() }); } catch (e) { panel.hidden = true; return; }
+  if (!ns || !ns.configured) { panel.hidden = true; return; }
+  const target = Number(ns.target_usd || 0);
+  const progress = ns.progress_usd == null ? null : Number(ns.progress_usd);
+  const remaining = ns.remaining_usd == null ? null : Number(ns.remaining_usd);
+  const pctRaw = ns.progress_pct == null ? (progress != null && target ? progress / target * 100 : null) : Number(ns.progress_pct);
+  const pctClamped = pctRaw == null ? 0 : Math.max(0, Math.min(100, pctRaw));
+  const barCls = pctRaw == null ? '' : (progress < 0 ? 'neg' : 'pos');
+  const foot = [
+    ns.days_left != null ? `${ns.days_left} дн. до дедлайна` : '',
+    ns.pace_required_usd_per_day != null ? `нужно ≈ ${UI.money(ns.pace_required_usd_per_day)}/день` : '',
+    ns.deadline ? `дедлайн ${ns.deadline}` : '',
+  ].filter(Boolean).join(' · ');
+  body.innerHTML = `
+    <div class="ns-head">
+      <div><div class="ns-kick">North Star 2026</div><div class="ns-title">${UI.esc(ns.title || 'Цель года')}</div></div>
+      <a class="btn sm ghost" href="documents.html?doc=north-star-2026">Документ цели</a>
+    </div>
+    <div class="ns-bar"><div class="ns-fill ${barCls}" style="width:${pctClamped}%"></div></div>
+    <div class="ns-stats">
+      <span class="ns-prog ${progress != null ? UI.pnlClass(progress) : ''}">${progress == null ? '—' : UI.money(progress, { sign: true })}</span>
+      <span class="ns-sep">/</span>
+      <span class="ns-target">${UI.money(target)}</span>
+      <span class="ns-pct">${pctRaw == null ? '' : (pctRaw.toFixed(1) + '%')}</span>
+      <span class="ns-remain">${remaining == null ? '' : 'осталось ' + UI.money(remaining)}</span>
+    </div>
+    <div class="ns-foot muted">${UI.esc(foot)} · реализованная прибыль после комиссии с ${UI.esc(ns.baseline_date || '')}</div>`;
+  panel.hidden = false;
 }
 
 function renderKpis(box, account, month, year, coverage, ai) {

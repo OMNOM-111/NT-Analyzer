@@ -36,6 +36,37 @@ def test_parse_feed_extracts_items_and_severity() -> None:
     assert cpi["severity"] == "high"
     assert cpi["source_url"].startswith("https://")
     assert cpi["published_at_utc"] == "2026-06-29T12:30:00Z"
+    assert cpi["image_url"] == ""
+
+
+def test_parse_feed_extracts_image_from_rss_description_html() -> None:
+    rss = """<?xml version='1.0' encoding='UTF-8'?>
+<rss version='2.0'><channel>
+  <item><title>Oil inventories update</title>
+    <link>https://www.eia.gov/todayinenergy/detail.php?id=123</link>
+    <description>&lt;p&gt;&lt;img src="https://www.eia.gov/images/chart.png" alt="chart"/&gt;&lt;/p&gt;Weekly update.</description>
+    <pubDate>Mon, 29 Jun 2026 12:30:00 GMT</pubDate></item>
+</channel></rss>"""
+    items = market_news._parse_feed("EIA", rss.encode("utf-8"), "2026-06-29T13:00:00Z")
+    assert items[0]["image_url"] == "https://www.eia.gov/images/chart.png"
+
+
+def test_alpha_vantage_reads_banner_image(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_ALPHAVANTAGE_API_KEY", "DEMOALPHATESTKEY")
+    payload = {
+        "feed": [{
+            "title": "Macro headline",
+            "url": "https://example.com/story",
+            "time_published": "20260630123000",
+            "summary": "Important macro release.",
+            "banner_image": "https://cdn.example.com/banner.jpg",
+            "source": "Example News",
+        }],
+    }
+    monkeypatch.setattr(market_news, "_http_get", lambda url, accept="application/json": json.dumps(payload).encode("utf-8"))
+    items, status = market_news._alpha_vantage("2026-06-30T03:00:00Z", {})
+    assert status["ok"] is True
+    assert items[0]["image_url"] == "https://cdn.example.com/banner.jpg"
 
 
 def test_feeds_env_override(monkeypatch) -> None:

@@ -1,12 +1,12 @@
 # AI Agents / API Keys: подключения, роли, ключи и бюджет
 
-Актуально на 2026-07-01. Универсальный реестр теперь подключён непосредственно к
+Актуально на 2026-07-02. Универсальный реестр теперь подключён непосредственно к
 historical-only AI Lab через role-aware router. Итоговый benchmark и фактические
 замеры: `docs/AI_AGENT_STACK_RESEARCH_2026-07-01.md`.
 
 1. универсальный реестр **AI Agents / API Keys** для ручного подключения и
    проверки OpenAI, Microsoft Foundry / Azure OpenAI, DeepSeek, OpenRouter,
-   Gemini, Mistral, Groq и Custom OpenAI-compatible API;
+   Gemini, Z.AI/GLM, Mistral, Groq и Custom OpenAI-compatible API;
 2. совместимый старый controlled fallback, сохранённый только для обратной
    совместимости конфигурации.
 
@@ -106,11 +106,50 @@ Azure balance синхронизируется ручным снимком из 
 автоматически выключается, а причина показывается в UI. Повторное включение —
 явное решение пользователя после изменения лимита или проверки billing portal.
 
+Исключение — `paid_budget_usd` автономной миссии Orchestrator: значение `0`
+означает `local/free only`, поэтому credit/payg-модели не допускаются к committee
+этой миссии. Это ограничение не меняет budget карточки самого API-агента.
+
 Несколько моделей одного `provider + account name` используют общий credit:
 два Azure deployments не создают два отдельных гранта по `$100`. Несколько
 Google AI Studio keys помещаются в общий `rotation_group` и получают priority.
 Router уже выполняет failover: `429`, quota, timeout и `5xx` включают cooldown
 для проблемного ключа и переводят запрос на следующий. VPN не используется.
+
+## DeepSeek V4 Flash, V4 Pro и StratForge Orchestrator
+
+На 2026-07-01 официальный DeepSeek API предоставляет `deepseek-v4-flash` и
+`deepseek-v4-pro` через `https://api.deepseek.com`. В приложении
+`deepseek-v4-pro` назначен платным critical tier Orchestrator, а
+`deepseek-v4-flash` — экономичным strategy/review fallback. Обе карточки
+используют один DeepSeek account и общий local hard budget `$5/month`; UI
+показывает расход каждой модели и общий расход аккаунта. Простые задачи сначала
+идут в бесплатный пул. Цены берутся из
+централизованного catalog:
+
+| Модель | Input cache hit / 1M | Input cache miss / 1M | Output / 1M |
+|---|---:|---:|---:|
+| DeepSeek V4 Flash | $0.0028 | $0.14 | $0.28 |
+| DeepSeek V4 Pro | $0.003625 | $0.435 | $0.87 |
+
+Источник: [официальная таблица DeepSeek Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing).
+
+Thinking включается с `reasoning_effort=max` только для критических ролей:
+`orchestrator`, `chief_agent` (legacy alias), `final_judge`, `risk_manager`,
+`overfit_detector`. Лёгкие задачи
+идут сначала в free/low-cost pool. Для thinking-запросов используется увеличенный
+output allowance; если reasoning занял весь лимит, запрос отмечается ошибкой, но
+фактически выставленные provider usage/cost всё равно записываются.
+
+Provider context cache включён автоматически. Приложение держит стабильные
+system/data prefixes и считает provider-reported cached tokens. Дополнительно
+exact-response cache в памяти процесса (TTL 1 час) обслуживает только
+повторяемые analysis/audit/review запросы; генерация, мутация, события и разговор
+не кэшируются. UI показывает provider cache и effective cache отдельно.
+Фиксировать 90% нельзя: hit rate зависит от повторяемости, минимальной длины
+префикса и правил провайдера.
+Фактический общий UI-показатель на 2026-07-02 — около `2.1%`; это baseline для
+последующих циклов, а не повод подменять provider usage расчётной цифрой.
 
 ## Исправленные ошибки подключения 2026-06-30
 
@@ -145,7 +184,18 @@ Router уже выполняет failover: `429`, quota, timeout и `5xx` вкл
 openrouter.ai). При сохранении агента устаревшие free-slug автоматически
 переназначаются на `openrouter/free`.
 
-Роли подготовлены для: `coder`, `strategy_analyst`, `backtest_analyst`,
+## Z.AI / GLM
+
+- general API: `https://api.z.ai/api/paas/v4`;
+- Coding Plan endpoint не используется приложением без активного совместимого
+  плана и не предназначен для general-purpose API integration;
+- `glm-5.2` тарифицируется по официальному catalog и не маркируется permanent free;
+- `glm-4.7-flash` и `glm-4.5-flash` автоматически маркируются free tier;
+- trial-квота GLM-5.2 не считается фиксированным credit, пока Z.AI не возвращает
+  доступный resource package или оператор не внесёт подтверждённый portal balance.
+
+Роли подготовлены для: `orchestrator`, `chief_agent` (legacy), `coder`,
+`strategy_analyst`, `backtest_analyst`,
 `risk_manager`, `telegram_assistant`, `news_analyst`, `optimizer`,
 `hypothesis_fallback`, `compile_error_fixer_fallback`, `embedding`, `general`.
 Роль — назначение и будущая точка маршрутизации, не полномочие на действие.
@@ -155,7 +205,7 @@ openrouter.ai). При сохранении агента устаревшие fr
 Файлы: `ai_lab/registry/agent_usage/YYYY-MM.jsonl` (gitignored). Записываются:
 
 `timestamp_utc`, `request_id`, `agent_id/name`, `provider`, `model`, `role`,
-`endpoint_type`, `input_tokens`, `cached_input_tokens`, `output_tokens`,
+`endpoint_type`, `input_tokens`, `cached_input_tokens`, `cache_miss_tokens`, `output_tokens`,
 `total_tokens`, `cost_usd`, `status`, `elapsed_sec`, безопасная ошибка.
 
 Prompt, response и API key не сохраняются. Если provider не вернул usage,
@@ -170,7 +220,9 @@ Prompt, response и API key не сохраняются. Если provider не 
 | `hypothesis` | Azure primary, затем Gemini/OpenRouter/local | нет |
 | `coder`, `code_reviewer`, `compile_error_fixer` | Azure primary, затем OpenRouter/Gemini/local | нет |
 | `backtest_analyst`, `optimizer` | Gemini pool, затем Azure/OpenRouter | нет |
-| `risk_manager`, `overfit_detector`, `final_judge` | Azure, затем OpenRouter/Gemini/local | нет |
+| `risk_manager` | DeepSeek V4 Pro на critical tier, затем Azure/Gemini/free fallback | нет |
+| `overfit_detector`, `final_judge` | DeepSeek V4 Pro на critical tier, затем safe fallback | нет |
+| `orchestrator` | Auto: Gemini/Z.AI для light, free → DeepSeek Flash для standard, DeepSeek Pro → Flash для critical | только allowlist приложения |
 
 Детерминированный renderer/validator/compile/backtest/arbitration остаётся
 обязательным. На странице AI Lab видны активные requests, последние tokens/cost,
@@ -189,6 +241,15 @@ grant и порядок failover.
 | POST | `/api/ai-agents/{id}/test` | явный тестовый API-вызов |
 | POST | `/api/ai-agents/{id}/sync-balance` | поддерживаемая provider-синхронизация |
 | POST | `/api/ai-agents/{id}/delete` | удалить метаданные и encrypted key |
+| GET | `/api/ai-lab/orchestrator` | диалог, фактическая модель, миссия, budget/cache, allowlist, approvals |
+| POST | `/api/ai-lab/orchestrator/message` | natural-language сообщение из локального UI |
+| GET | `/api/ai-lab/chief-agent` | legacy alias статуса Orchestrator |
+| POST | `/api/ai-lab/chief-agent/mission` | historical-only миссия до 168 часов |
+| POST | `/api/ai-lab/chief-agent/mission/state` | pause/resume/stop миссии |
+| POST | `/api/ai-lab/chief-agent/tasks` | локальная задача/календарная запись |
+| POST | `/api/ai-lab/chief-agent/audit` | аудит сегодняшних backtest |
+| POST | `/api/ai-lab/chief-agent/proposals` | создать paper/demo proposal |
+| POST | `/api/ai-lab/chief-agent/proposals/decision` | approve/reject proposal |
 
 Все POST доступны только локальному UI/CLI и проходят существующую проверку JSON
 Content-Type и same-origin. Реальные ключи нельзя помещать в тесты: используется

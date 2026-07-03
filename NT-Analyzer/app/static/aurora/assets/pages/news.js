@@ -21,6 +21,7 @@ UI.ready(async function () {
       providers_ok: 0, providers_total: 0,
       max_age_min: 60, total_recent: 0,
     },
+    agent: { items: [], summary: {} },
     cal: null,
     selDay: null,
   };
@@ -48,6 +49,13 @@ UI.ready(async function () {
     return `${Math.floor(h / 24)} дн назад`;
   }
   const sev = i => (i.severity || i.impact || 'low');
+  const eventMs = e => new Date(e.event_time_utc).getTime();
+  const isPast = (e, now) => eventMs(e) < now;
+  const isoMs = iso => {
+    if (!iso) return null;
+    const value = new Date(iso).getTime();
+    return Number.isFinite(value) ? value : null;
+  };
 
   function recentLiveItems() {
     return ((state.live.items || []).filter(item => {
@@ -144,7 +152,7 @@ UI.ready(async function () {
     Object.values(map).forEach(list => list.sort((a, b) => a.event_time_utc < b.event_time_utc ? -1 : 1));
     return map;
   }
-  function renderCalendar() {
+  function renderCalendar(now = Date.now()) {
     if (!state.cal) {
       const t = todayKey().split('-');
       state.cal = { y: +t[0], m: +t[1] - 1 };
@@ -162,12 +170,14 @@ UI.ready(async function () {
       const evs = map[key] || [];
       const hasHigh = evs.some(e => sev(e) === 'high');
       const hasMed  = evs.some(e => sev(e) === 'medium');
+      const allPast = evs.length > 0 && evs.every(e => isPast(e, now));
       const evCls   = hasHigh ? 'ev-high' : hasMed ? 'ev-medium' : evs.length ? 'ev-low' : '';
       const cls = [
         cell.getUTCMonth() !== m ? 'out' : '',
         key === tKey ? 'today' : '',
         key === state.selDay ? 'sel' : '',
         evCls,
+        allPast ? 'ev-past' : '',
       ].filter(Boolean).join(' ');
 
       // Show events directly inside the cell, under the date number.
@@ -263,14 +273,18 @@ UI.ready(async function () {
   }
 
   // ---- today's events sidebar --------------------------------------------
-  function renderToday() {
+  function renderToday(now = Date.now()) {
     const node = UI.qs('#side-today'), tKey = todayKey();
     const evs = filtered().filter(e => pt(e.event_time_utc).key === tKey);
     node.innerHTML = '<div class="side-h">Сегодня</div>' +
       (evs.length
-        ? evs.map(e => `<div class="side-row">
-            <div class="t"><span class="dot s-${UI.esc(sev(e))}" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px"></span>${UI.esc(pt(e.event_time_utc).time)} PT · ${UI.esc(e.title)}</div>
-          </div>`).join('')
+        ? evs.map(e => {
+            const past = isPast(e, now);
+            const pastTag = past ? ' · <span class="past-tag">прошло</span>' : '';
+            return `<div class="side-row${past ? ' past' : ''}">
+            <div class="t"><span class="dot s-${UI.esc(sev(e))}" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px"></span>${UI.esc(pt(e.event_time_utc).time)} PT · ${UI.esc(e.title)}${pastTag}</div>
+          </div>`;
+          }).join('')
         : '<div class="side-row m">На сегодня событий нет.</div>');
   }
 
@@ -321,6 +335,119 @@ UI.ready(async function () {
         }).join('')
       : '<div class="side-row m">Не запускалось. Команда: python -m app.market_news</div>';
     node.innerHTML = head + rows + `<div class="side-row m">Обновлено: ${UI.esc(last)}</div>`;
+  }
+
+  // ---- named news agent: saved analysis + deterministic recommendations ---
+  function hasCyrillic(text) {
+    return /[А-Яа-яЁё]/.test(String(text || ''));
+  }
+
+  function agentInstrumentTags(item) {
+    const instruments = (item.instruments || item.affected_instruments || []).filter(Boolean);
+    return instruments.length
+      ? instruments.map(v => `<span class="tag mono">${UI.esc(v)}</span>`).join('')
+      : '<span class="tag muted">рынок в целом</span>';
+  }
+
+  function agentWhen(item, now) {
+    const raw = item.kind === 'upcoming'
+      ? (item.event_time_utc || item.published_at_utc)
+      : (item.published_at_utc || item.event_time_utc);
+    const t = isoMs(raw);
+    if (t == null) return 'время уточняется';
+    if (item.kind === 'upcoming') {
+      const p = pt(raw);
+      return `${p.day} ${p.time} PT · ${eta(t - now).txt}`;
+    }
+    const diffMin = (now - t) / 60000;
+    return diffMin >= 0 ? `вышло ${ago(diffMin)}` : `ожидается ${eta(t - now).txt}`;
+  }
+
+  function agentRelevance(item, now) {
+    if (item.kind === 'upcoming') return 'влияние после релиза';
+    const until = isoMs(item.relevance_until_utc);
+    if (until == null) return sev(item) === 'high' ? 'следить 2-4 ч после выхода' : 'краткосрочное влияние';
+    if (until > now) return `актуально ещё ${eta(until - now).txt.replace(/^через /, '')}`;
+    return 'влияние снижается';
+  }
+
+  function agentSourceNote(item) {
+    const summaryRu = String(item.summary_ru || '').trim();
+    if (summaryRu) return summaryRu;
+    const summary = String(item.summary || '').trim();
+    return hasCyrillic(summary) ? summary : '';
+  }
+
+  function agentShortRecommendation(item) {
+    return String(item.short_recommendation || item.recommendation || '').trim();
+  }
+
+  function agentSourceBadge(source) {
+    const text = String(source || '').toLowerCase();
+    if (text.includes('federal reserve')) return { label: 'FED', cls: 'src-fed' };
+    if (text.includes('bea')) return { label: 'BEA', cls: 'src-bea' };
+    if (text.includes('eia')) return { label: 'EIA', cls: 'src-eia' };
+    if (text.includes('bls')) return { label: 'BLS', cls: 'src-bls' };
+    if (text.includes('labor') || text.includes('dol')) return { label: 'DOL', cls: 'src-dol' };
+    if (text.includes('alpha vantage')) return { label: 'AV', cls: 'src-av' };
+    return { label: 'NEWS', cls: 'src-generic' };
+  }
+
+  function agentThumbHtml(item) {
+    const badge = agentSourceBadge(item.source);
+    const fallback = `<div class="news-agent-thumb-fallback ${badge.cls}">${UI.esc(badge.label)}</div>`;
+    const imageUrl = String(item.image_url || '').trim();
+    if (!imageUrl) return `<div class="news-agent-thumb-wrap">${fallback}</div>`;
+    return `<div class="news-agent-thumb-wrap">
+      ${fallback}
+      <img class="news-agent-thumb" src="${UI.esc(imageUrl)}" alt="" loading="lazy" decoding="async">
+    </div>`;
+  }
+
+  function renderAgentAnalysis() {
+    const node = UI.qs('#news-agent-items');
+    const summaryNode = UI.qs('#news-agent-summary');
+    if (!node || !summaryNode) return;
+    const agent = state.agent || { items: [], summary: {} };
+    const rows = agent.items || [];
+    const s = agent.summary || {};
+    const now = Date.now();
+    summaryNode.textContent = `${s.total || rows.length} значимых · high ${s.high || 0}`;
+    if (!rows.length) {
+      node.innerHTML = '<div class="empty-state">Значимых опубликованных или предстоящих событий пока нет.</div>';
+      return;
+    }
+    node.innerHTML = rows.slice(0, 8).map(item => {
+      const title = item.source_url
+        ? `<a href="${UI.esc(item.source_url)}" target="_blank" rel="noopener noreferrer">${UI.esc(item.title || '')}</a>`
+        : UI.esc(item.title || '');
+      const sourceNote = agentSourceNote(item);
+      const evidence = sourceNote ? `<div class="news-agent-line"><strong>Уточнение:</strong> ${UI.esc(sourceNote)}</div>` : '';
+      const affected = ((item.strategy_context && item.strategy_context.affected) || []);
+      const affectedLine = affected.length ? `<div class="news-agent-line"><strong>Затронутые активные стратегии:</strong> ${affected.slice(0, 6).map(row => UI.esc(row.class_name || row.strategy_id || row.instrument || '')).join(', ')}</div>` : '<div class="news-agent-line"><strong>Активные стратегии:</strong> прямое совпадение по инструменту не найдено.</div>';
+      const model = item.model_analysis ? `<div class="news-agent-line"><strong>AI-анализ:</strong> ${UI.esc(item.model_analysis)}</div>` : '';
+      const status = item.kind === 'upcoming' ? 'ожидается' : 'вышло';
+      const recommendation = agentShortRecommendation(item);
+      return `<article class="news-agent-card ${UI.esc(item.severity || 'low')}">
+        ${agentThumbHtml(item)}
+        <div class="news-agent-instruments">${agentInstrumentTags(item)}</div>
+        <div class="news-agent-title">${item.kind === 'upcoming' ? '⏱ ' : '📰 '}${title}</div>
+        <div class="news-agent-meta"><span class="impact-badge ${UI.esc(item.severity || 'low')}">${UI.esc(String(item.severity || '').toUpperCase())}</span><span>${UI.esc(item.source || 'источник')}</span><span>${UI.esc(status)}</span></div>
+        <div class="news-agent-time">${UI.esc(agentWhen(item, now))} · ${UI.esc(agentRelevance(item, now))}</div>
+        <div class="news-agent-reco"><strong>Рекомендация:</strong> ${UI.esc(recommendation)}</div>
+        <details class="news-agent-details">
+          <summary>Подробнее</summary>
+          ${evidence}
+          ${affectedLine}
+          <div class="news-agent-line"><strong>Влияние:</strong> ${UI.esc(item.impact || '')}</div>
+          ${model}
+          <div class="news-agent-line"><strong>Неопределённость:</strong> ${UI.esc(item.uncertainty || '')}</div>
+        </details>
+      </article>`;
+    }).join('');
+    node.querySelectorAll('.news-agent-thumb').forEach(img => {
+      img.addEventListener('error', () => img.remove(), { once: true });
+    });
   }
 
   // ---- alert banner at top -----------------------------------------------
@@ -406,6 +533,12 @@ UI.ready(async function () {
       text: `${sev(i) === 'high' ? '🔴 ВАЖНАЯ НОВОСТЬ · ' : ''}${i.source || 'источник'}: ${i.title}${i.age_min == null ? '' : ' · ' + ago(i.age_min)}`,
       dedupeKey: `live:${i.source || ''}:${i.title || ''}`,
     }));
+    ((state.agent && state.agent.items) || []).slice(0, 6).forEach(item => rows.push({
+      severity: item.severity || 'medium',
+      tone: item.severity === 'high' ? 'warn' : 'medium',
+      text: `🧠 Никита: ${item.title} — ${item.recommendation}`,
+      dedupeKey: `agent:${item.news_id || item.title}`,
+    }));
 
     let unique = UI.uniqueTickerRows(rows.concat(UI.scheduleStrategyRows(state.events, now, 12)), 24);
     if (unique.length < 10) unique = UI.uniqueTickerRows(unique.concat(UI.marketNoticeRows(state.events, now)), 24);
@@ -431,26 +564,29 @@ UI.ready(async function () {
   function renderAll() {
     const now = Date.now();
     renderList();
-    renderCalendar();
+    renderCalendar(now);
     renderDayPanel();
     renderAlertBanner(now);
     renderStopCard(now);
     renderNext(now);
-    renderToday();
+    renderToday(now);
     renderLiveSide();
     renderFetchStatus();
+    renderAgentAnalysis();
     renderTicker(now);
   }
 
   // ---- load --------------------------------------------------------------
   UI.renderLoading(listView, 'Загрузка событий…');
   try {
-    const [cal, live] = await Promise.all([
+    const [cal, live, agent] = await Promise.all([
       API.http.news({ limit: 200 }, { signal: UI.signal() }),
       API.http.newsLive({ max_age_min: RECENT_NEWS_MAX_AGE_MIN, limit: 40 }, { signal: UI.signal() }).catch(() => null),
+      API.http.newsAnalysis({ limit: 40 }, { signal: UI.signal() }).catch(() => null),
     ]);
     state.events = cal.items || [];
     if (live) state.live = live;
+    if (agent) state.agent = agent;
     UI.qs('#news-summary').textContent = cal.configured
       ? `${cal.total || state.events.length} событий · ${state.live.total_recent || 0} свежих новостей`
       : 'источники не настроены';
@@ -483,8 +619,12 @@ UI.ready(async function () {
     ticks++;
     if (ticks % 3 === 0) {
       try {
-        const live = await API.http.newsLive({ max_age_min: RECENT_NEWS_MAX_AGE_MIN, limit: 40 }, { signal: UI.signal() });
+        const [live, agent] = await Promise.all([
+          API.http.newsLive({ max_age_min: RECENT_NEWS_MAX_AGE_MIN, limit: 40 }, { signal: UI.signal() }),
+          API.http.newsAnalysis({ limit: 40 }, { signal: UI.signal() }).catch(() => null),
+        ]);
         if (live) state.live = live;
+        if (agent) state.agent = agent;
       } catch (e) { /* keep last */ }
     }
     const now = Date.now();
@@ -492,8 +632,11 @@ UI.ready(async function () {
     renderAlertBanner(now);
     renderLiveSide();
     renderList();
+    renderCalendar(now);
     renderDayPanel();
     renderStopCard(now);
     renderNext(now);
+    renderToday(now);
+    renderAgentAnalysis();
   }, 60000);
 });

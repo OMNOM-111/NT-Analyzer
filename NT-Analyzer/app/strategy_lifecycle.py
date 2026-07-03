@@ -100,7 +100,7 @@ def status_for_lifecycle(lifecycle: str) -> str:
 
 # Still being researched / evaluated (Испытание).
 AI_TRIAL_STATUSES = frozenset({
-    "draft", "generating", "generated", "awaiting_compile", "catalog_visible",
+    "draft", "designing", "draft_ready", "generating", "generated", "awaiting_compile", "catalog_visible",
     "backtesting", "backtest_done", "analysis_ready", "mutation_planned",
     "mutation_candidate", "sandbox_candidate", "champion_candidate",
     "human_review_candidate",
@@ -124,6 +124,8 @@ def lifecycle_for_ai_status(status: Any) -> str:
 # Russian stage labels for the AI trial sub-status shown on hover/cards.
 AI_STATUS_LABELS_RU: Dict[str, str] = {
     "draft": "черновик",
+    "designing": "параллельная разработка",
+    "draft_ready": "проект готов к компиляционному конвейеру",
     "generating": "генерация кода",
     "generated": "код сгенерирован",
     "awaiting_compile": "ожидает компиляции",

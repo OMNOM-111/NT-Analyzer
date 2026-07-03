@@ -12,6 +12,7 @@ Prompt text and API keys are never written to usage logs.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import threading
 import time
@@ -22,7 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import agent_registry
+from . import agent_registry, response_cache
 
 
 _BUDGET_LOCK = threading.RLock()
@@ -35,6 +36,14 @@ class UniversalLLMError(RuntimeError):
 
 class BudgetExceeded(UniversalLLMError):
     """The request was blocked before transmission by a hard budget gate."""
+
+
+class ProviderResponseError(UniversalLLMError):
+    """A provider replied and billed usage, but did not return usable content."""
+
+    def __init__(self, message: str, usage: Dict[str, Any]):
+        super().__init__(message)
+        self.usage = dict(usage or {})
 
 
 def _now() -> str:
@@ -143,6 +152,20 @@ def _estimated_input_tokens(prompt: str, system_prompt: str = "") -> int:
     return max(1, len(prompt.encode("utf-8")) + len(system_prompt.encode("utf-8")) + 64)
 
 
+def _response_cache_allowed(purpose: str, mode: str) -> bool:
+    normalized = str(mode or "auto").strip().lower()
+    if normalized == "off":
+        return False
+    if normalized in {"on", "read_write"}:
+        return True
+    value = str(purpose or "").lower()
+    return any(marker in value for marker in (
+        "analysis", "audit", "review", "qa", "benchmark", "backtest_committee",
+    )) and not any(marker in value for marker in (
+        "connection", "generation", "mutation", "news", "orchestrator_chat",
+    ))
+
+
 def _cost(agent: Dict[str, Any], input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> float:
     cached = max(0, min(int(input_tokens), int(cached_tokens)))
     uncached = max(0, int(input_tokens) - cached)
@@ -180,12 +203,21 @@ def _reserve(agent: Dict[str, Any], estimate: float, *, allow_disabled: bool) ->
         raise BudgetExceeded(f"Оценка запроса превышает hard cap ${agent_registry.MAX_SINGLE_CALL_USD:.2f} на вызов.")
     with _BUDGET_LOCK:
         reserved_day = sum(float(item["cost"]) for item in _RESERVATIONS.values() if item["agent_id"] == agent_id)
+        peer_ids = {
+            str(row.get("id") or "") for row in agent_registry.list_agents()
+            if str(row.get("provider") or "") == str(agent.get("provider") or "")
+            and str(row.get("account_name") or "") == str(agent.get("account_name") or "")
+        }
+        reserved_account = sum(
+            float(item["cost"]) for item in _RESERVATIONS.values()
+            if str(item.get("agent_id") or "") in peer_ids
+        )
         daily_limit = float(agent.get("daily_budget_usd") or 0)
         monthly_limit = float(agent.get("monthly_budget_usd") or 0)
         if daily_limit > 0 and float(agent.get("spend_today_usd") or 0) + reserved_day + estimate > daily_limit + 1e-12:
             agent_registry.auto_disable(agent_id, "daily_budget_exceeded")
             raise BudgetExceeded("Дневной бюджет агента исчерпан; агент автоматически отключён.")
-        if monthly_limit > 0 and float(agent.get("spend_month_usd") or 0) + reserved_day + estimate > monthly_limit + 1e-12:
+        if monthly_limit > 0 and float(agent.get("account_spend_month_usd") or 0) + reserved_account + estimate > monthly_limit + 1e-12:
             agent_registry.auto_disable(agent_id, "monthly_budget_exceeded")
             raise BudgetExceeded("Месячный бюджет агента исчерпан; агент автоматически отключён.")
         credit = agent.get("credit_remaining_estimated_usd")
@@ -214,7 +246,7 @@ def active_requests() -> List[Dict[str, Any]]:
 
 def _openai_compatible(
     agent: Dict[str, Any], api_key: str, prompt: str, system_prompt: str,
-    max_output_tokens: int, timeout: int,
+    max_output_tokens: int, timeout: int, *, request_role: str = "", purpose: str = "",
 ) -> Tuple[str, Dict[str, Any]]:
     kind = agent_registry.infer_endpoint_type(
         str(agent.get("provider") or ""), str(agent.get("model") or ""), str(agent.get("base_url") or "")
@@ -239,6 +271,22 @@ def _openai_compatible(
         payload = {"model": agent["model"], "messages": messages, "temperature": 0.0, "stream": False}
         token_field = "max_completion_tokens" if agent.get("provider") in {"openai", "azure_foundry"} else "max_tokens"
         payload[token_field] = max_output_tokens
+        if agent.get("provider") == "zai":
+            # GLM enables dynamic thinking by default. Short service contracts
+            # can otherwise consume the output allowance in reasoning_content
+            # and return an empty visible answer.
+            payload["thinking"] = {"type": "disabled"}
+        if agent.get("provider") == "deepseek":
+            critical_roles = {"chief_agent", "orchestrator", "final_judge", "risk_manager", "overfit_detector"}
+            thinking = request_role in critical_roles and purpose != "connection_test"
+            payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+            payload["user_id"] = "nt-analyzer"
+            if thinking:
+                payload.pop("temperature", None)
+                payload["reasoning_effort"] = "max"
+    if agent.get("provider") == "openai" and system_prompt:
+        digest = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:24]
+        payload["prompt_cache_key"] = f"nt-analyzer-{digest}"
     doc = _request_json(
         endpoint, payload=payload, headers=_headers(agent, api_key),
         timeout=timeout, secret=api_key,
@@ -248,6 +296,7 @@ def _openai_compatible(
     usage = {
         "input_tokens": int(raw_usage.get("prompt_tokens") or raw_usage.get("input_tokens") or 0),
         "cached_input_tokens": int(details.get("cached_tokens") or raw_usage.get("prompt_cache_hit_tokens") or 0),
+        "cache_miss_tokens": int(raw_usage.get("prompt_cache_miss_tokens") or 0),
         "output_tokens": int(raw_usage.get("completion_tokens") or raw_usage.get("output_tokens") or 0),
         "actual_model": str(doc.get("model") or agent.get("model") or ""),
     }
@@ -279,7 +328,46 @@ def _openai_compatible(
         reason = doc.get("incomplete_details")
         raise UniversalLLMError(f"Provider не завершил response: {reason}") from None
     if not text:
-        raise UniversalLLMError("Provider вернул пустой chat response.")
+        reasoning = ""
+        try:
+            reasoning = str(doc["choices"][0]["message"].get("reasoning_content") or "")
+        except (KeyError, IndexError, TypeError):
+            pass
+        if reasoning and agent.get("provider") == "deepseek":
+            # Some DeepSeek gateways consume the complete allowance in hidden
+            # reasoning and return no final answer. Retry once in concise mode;
+            # both attempts remain included in usage/cost accounting.
+            retry_payload = dict(payload)
+            retry_payload["thinking"] = {"type": "disabled"}
+            retry_payload.pop("reasoning_effort", None)
+            retry_doc = _request_json(
+                endpoint, payload=retry_payload, headers=_headers(agent, api_key),
+                timeout=timeout, secret=api_key,
+            )
+            retry_raw = retry_doc.get("usage") if isinstance(retry_doc.get("usage"), dict) else {}
+            retry_details = retry_raw.get("prompt_tokens_details") if isinstance(retry_raw.get("prompt_tokens_details"), dict) else {}
+            usage["input_tokens"] += int(retry_raw.get("prompt_tokens") or retry_raw.get("input_tokens") or 0)
+            usage["cached_input_tokens"] += int(retry_details.get("cached_tokens") or retry_raw.get("prompt_cache_hit_tokens") or 0)
+            usage["cache_miss_tokens"] += int(retry_raw.get("prompt_cache_miss_tokens") or 0)
+            usage["output_tokens"] += int(retry_raw.get("completion_tokens") or retry_raw.get("output_tokens") or 0)
+            usage["actual_model"] = str(retry_doc.get("model") or usage.get("actual_model") or agent.get("model") or "")
+            try:
+                retry_content = retry_doc["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                retry_content = ""
+            if isinstance(retry_content, list):
+                retry_content = "".join(
+                    str(item.get("text") or "") for item in retry_content if isinstance(item, dict)
+                )
+            text = str(retry_content or "").strip()
+            if text:
+                return text, usage
+        note = (
+            "Provider израсходовал output allowance на reasoning и не вернул финальный ответ; "
+            "увеличьте max_output_tokens."
+            if reasoning else "Provider вернул пустой chat response."
+        )
+        raise ProviderResponseError(note, usage)
     return text, usage
 
 
@@ -342,6 +430,7 @@ def invoke_agent(
     allow_disabled: bool = False,
     request_role: str = "",
     purpose: str = "",
+    cache_mode: str = "auto",
 ) -> Dict[str, Any]:
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt or len(clean_prompt) > 20_000:
@@ -352,10 +441,52 @@ def invoke_agent(
     )
     max_output = 0 if resolved_type == "embeddings" else max(1, min(int(max_output_tokens), 4096))
     estimate_info = estimate_request_cost(agent_id, clean_prompt, system_prompt=system_prompt, max_output_tokens=max_output)
-    estimate = float(estimate_info["estimated_max_cost_usd"])
-    reservation_id = _reserve(agent, estimate, allow_disabled=allow_disabled)
     request_id = f"REQ-{uuid.uuid4().hex[:16].upper()}"
     started = time.time()
+    cache_key = ""
+    if resolved_type == "chat" and _response_cache_allowed(purpose, cache_mode):
+        cache_key = response_cache.make_key(
+            agent_id=agent_id, model=str(agent.get("model") or ""),
+            system_prompt=system_prompt, prompt=clean_prompt,
+            max_output_tokens=max_output,
+        )
+        cached_result = response_cache.get(cache_key)
+        if cached_result:
+            saved_input = int(cached_result.get("source_input_tokens") or estimate_info["estimated_input_tokens"])
+            saved_output = int(cached_result.get("source_output_tokens") or 0)
+            actual_model = str(cached_result.get("actual_model") or agent.get("model") or "")
+            row = {
+                "timestamp_utc": _now(), "request_id": request_id,
+                "agent_id": agent_id, "agent_name": agent["name"],
+                "provider": agent["provider"], "account_name": agent.get("account_name"),
+                "billing_mode": agent.get("billing_mode"), "rotation_group": agent.get("rotation_group"),
+                "model": agent["model"], "actual_model": actual_model,
+                "role": agent["role"], "request_role": str(request_role or agent["role"])[:80],
+                "purpose": str(purpose or "agent_request")[:120], "endpoint_type": resolved_type,
+                "input_tokens": 0, "cached_input_tokens": 0, "cache_miss_tokens": 0,
+                "application_cache_hit": True,
+                "application_cache_saved_input_tokens": saved_input,
+                "application_cache_saved_output_tokens": saved_output,
+                "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0,
+                "cost_known": True, "cost_estimated": False,
+                "pricing_basis": "Process-local exact response cache",
+                "status": "success", "elapsed_sec": round(time.time() - started, 3), "error": None,
+            }
+            agent_registry.record_usage(row)
+            return {
+                "ok": True, "status": "success", "request_id": request_id,
+                "agent_id": agent_id, "agent_name": agent["name"],
+                "provider": agent["provider"], "model": agent["model"], "actual_model": actual_model,
+                "response": str(cached_result.get("response") or "")[:30000],
+                "input_tokens": 0, "cached_input_tokens": 0, "cache_miss_tokens": 0,
+                "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0,
+                "application_cache_hit": True,
+                "application_cache_saved_input_tokens": saved_input,
+                "application_cache_saved_output_tokens": saved_output,
+                "elapsed_sec": row["elapsed_sec"],
+            }
+    estimate = float(estimate_info["estimated_max_cost_usd"])
+    reservation_id = _reserve(agent, estimate, allow_disabled=allow_disabled)
     with _BUDGET_LOCK:
         _RESERVATIONS[reservation_id].update({
             "request_id": request_id,
@@ -369,12 +500,17 @@ def invoke_agent(
             "started_at_utc": _now(),
         })
     api_key = ""
+    usage: Dict[str, Any] = {}
     try:
         api_key = agent_registry.get_api_key(agent_id)
         if agent.get("provider") == "gemini":
             response_text, usage = _gemini(agent, api_key, clean_prompt, system_prompt, max_output, timeout)
         else:
-            response_text, usage = _openai_compatible(agent, api_key, clean_prompt, system_prompt, max_output, timeout)
+            response_text, usage = _openai_compatible(
+                agent, api_key, clean_prompt, system_prompt, max_output, timeout,
+                request_role=str(request_role or agent.get("role") or "general"),
+                purpose=str(purpose or "agent_request"),
+            )
         estimated_input = int(estimate_info["estimated_input_tokens"])
         reported_input = int(usage.get("input_tokens") or 0)
         reported_output = int(usage.get("output_tokens") or 0)
@@ -393,6 +529,7 @@ def invoke_agent(
             "role": agent["role"], "request_role": str(request_role or agent["role"])[:80],
             "purpose": str(purpose or "agent_request")[:120], "endpoint_type": resolved_type,
             "input_tokens": input_tokens, "cached_input_tokens": cached_tokens,
+            "cache_miss_tokens": int(usage.get("cache_miss_tokens") or max(0, input_tokens - cached_tokens)),
             "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens,
             "cost_usd": round(cost, 8), "cost_known": pricing_status != "unpriced",
             "cost_estimated": pricing_status == "estimated", "pricing_basis": agent.get("pricing_basis"),
@@ -400,11 +537,16 @@ def invoke_agent(
             "elapsed_sec": round(time.time() - started, 3), "error": None,
         }
         agent_registry.record_usage(row)
+        if cache_key:
+            response_cache.set(cache_key, {
+                "response": response_text, "actual_model": actual_model,
+                "input_tokens": input_tokens, "output_tokens": output_tokens,
+            })
         agent_registry.clear_cooldown(agent_id)
         fresh = agent_registry.get_agent(agent_id)
         if (
             (float(fresh.get("daily_budget_usd") or 0) > 0 and float(fresh.get("spend_today_usd") or 0) >= float(fresh.get("daily_budget_usd") or 0))
-            or (float(fresh.get("monthly_budget_usd") or 0) > 0 and float(fresh.get("spend_month_usd") or 0) >= float(fresh.get("monthly_budget_usd") or 0))
+            or (float(fresh.get("monthly_budget_usd") or 0) > 0 and float(fresh.get("account_spend_month_usd") or 0) >= float(fresh.get("monthly_budget_usd") or 0))
             or (fresh.get("credit_remaining_estimated_usd") == 0 and agent.get("pricing_status") in {"free", "configured", "estimated"})
         ):
             agent_registry.auto_disable(agent_id, "budget_reached_after_request")
@@ -415,12 +557,19 @@ def invoke_agent(
             "response": response_text[:30000],
             "dimensions": usage.get("dimensions"),
             "input_tokens": input_tokens, "cached_input_tokens": cached_tokens,
+            "cache_miss_tokens": row["cache_miss_tokens"],
             "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens,
             "cost_usd": row["cost_usd"], "cost_estimated": row["cost_estimated"],
             "pricing_basis": row["pricing_basis"], "elapsed_sec": row["elapsed_sec"],
+            "application_cache_hit": False,
         }
     except (UniversalLLMError, agent_registry.AgentRegistryError) as exc:
         error = _safe_error(exc, api_key)
+        failure_usage = getattr(exc, "usage", {}) if isinstance(exc, ProviderResponseError) else {}
+        input_tokens = int(failure_usage.get("input_tokens") or 0)
+        cached_tokens = int(failure_usage.get("cached_input_tokens") or 0)
+        output_tokens = int(failure_usage.get("output_tokens") or 0)
+        failure_cost = _cost(agent, input_tokens, output_tokens, cached_tokens)
         row = {
             "timestamp_utc": _now(), "request_id": request_id,
             "agent_id": agent_id, "agent_name": agent["name"],
@@ -429,8 +578,10 @@ def invoke_agent(
             "model": agent["model"], "role": agent["role"],
             "request_role": str(request_role or agent["role"])[:80],
             "purpose": str(purpose or "agent_request")[:120], "endpoint_type": resolved_type,
-            "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0,
-            "total_tokens": 0, "cost_usd": 0.0,
+            "input_tokens": input_tokens, "cached_input_tokens": cached_tokens,
+            "cache_miss_tokens": int(failure_usage.get("cache_miss_tokens") or max(0, input_tokens - cached_tokens)),
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens, "cost_usd": round(failure_cost, 8),
             "cost_known": str(agent.get("pricing_status") or "unpriced") != "unpriced",
             "cost_estimated": agent.get("pricing_status") == "estimated",
             "pricing_basis": agent.get("pricing_basis"), "status": "error",
@@ -448,7 +599,8 @@ def test_connection(agent_id: str, prompt: str = "") -> Dict[str, Any]:
         result = invoke_agent(
             agent_id, test_prompt,
             system_prompt="This is a connection test. Return a short response only.",
-            max_output_tokens=512, timeout=45, allow_disabled=True,
+            max_output_tokens=128, timeout=45, allow_disabled=True,
+            request_role="connection_test", purpose="connection_test",
         )
         result["status"] = "connected"
         agent_registry.record_test(agent_id, result)

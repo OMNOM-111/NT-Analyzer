@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "owner": "Черевко Дмитро",
-  "updated_at_utc": "2026-06-27T23:34:40Z",
+  "updated_at_utc": "2026-07-02T18:33:11Z",
   "documents": [
     {
       "id": "project-overview",
@@ -140,6 +140,14 @@
       "category": "technical",
       "path": "ai_lab/prompts/system_coder.txt",
       "editable_kind": "none"
+    },
+    {
+      "id": "north-star-2026",
+      "title": "NORTH_STAR_2026",
+      "label": "Цель 2026: $100k с онлайн-стратегий",
+      "category": "governance",
+      "path": "docs/governance/NORTH_STAR_2026.md",
+      "editable_kind": "markdown"
     }
   ]
 }

@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
-<title>Центр доходности — StratForge AI</title>
+<title>Финансы — StratForge AI</title>
 <link rel="stylesheet" href="assets/theme.css?v=20260630-drawer1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="performance" data-title="Центр доходности" data-kicker="StratForge AI · Аналитика P&L">
+<body data-page="performance" data-title="Финансы" data-kicker="StratForge AI · Доходность, счета и бухгалтерия">
 
   <!-- toolbar -->
   <section class="panel"><div class="panel-b col">
@@ -44,6 +44,19 @@
       <div class="grid cols-4" id="account-context-kpis"></div>
       <div class="finance-note" id="performance-cashflow-note"></div>
       <div class="grid cols-4" id="cashflow-kpis" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="marina-financial-control">
+    <div class="panel-h"><h2>Марина · финансовый контроль</h2><span class="sub" id="marina-period-label">автоматическая сводка · без расхода токенов</span></div>
+    <div class="panel-b col gap-sm">
+      <div class="finance-note" id="marina-summary">Формирование финансовой сводки…</div>
+      <div class="grid cols-4" id="marina-kpis"></div>
+      <div id="marina-integrity"></div>
+      <div class="tbl-wrap" style="max-height:320px"><table class="tbl">
+        <thead><tr><th>Время UTC</th><th>Счёт</th><th>Тип</th><th class="num">Сумма</th><th>Статус</th><th>Источник / примечание</th></tr></thead>
+        <tbody id="marina-events"></tbody>
+      </table></div>
     </div>
   </section>
 
@@ -114,9 +127,9 @@
   </section>
 
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260629-final4"></script>
+<script src="assets/api.js?v=20260702-finance1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
-<script src="assets/ui.js?v=20260630-news6"></script>
-<script src="assets/pages/performance.js?v=20260629-final4"></script>
+<script src="assets/ui.js?v=20260702-finance1"></script>
+<script src="assets/pages/performance.js?v=20260702-finance2"></script>
 </body>
 </html>

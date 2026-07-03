@@ -1785,8 +1785,14 @@ def t_reject_creates_lesson_for_next_iteration() -> None:
         job_dir.mkdir(parents=True)
         (job_dir / "result.json").write_text(json.dumps({
             "metrics": {"net_profit": -500.0, "trade_count": 5,
-                        "profit_factor": 0.5, "max_drawdown": -800.0},
+                         "profit_factor": 0.5, "max_drawdown": -800.0},
+            "context": {"historical_data_fingerprint": {
+                "method": "sha256_of_primary_bar_series", "value": "sha256:test",
+                "bar_count": 100,
+            }},
+            "artifacts": {"bars_file": "bars.json"},
         }), encoding="utf-8")
+        (job_dir / "bars.json").write_text("[]", encoding="utf-8")
         (job_dir / "trades.json").write_text(json.dumps({"trades": [
             {"exit_time_utc": "2026-01-01T10:00:00Z", "pnl_currency": -100.0}
             for _ in range(5)

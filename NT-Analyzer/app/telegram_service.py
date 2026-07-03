@@ -27,6 +27,7 @@ from . import runtime
 
 TOKEN_ENV = "NTA_TELEGRAM_BOT_TOKEN"
 CHAT_ENV = "NTA_TELEGRAM_CHAT_ID"
+GROUP_ENV = "NTA_TELEGRAM_GROUP_ID"
 API_BASE_ENV = "NTA_TELEGRAM_API_BASE"
 
 SETTING_DEFINITIONS = (
@@ -39,6 +40,8 @@ SETTING_DEFINITIONS = (
     ("daily_summary", "Сводка за день", "После 16:00 PT: сделки, P&L, win rate и комиссия."),
     ("weekly_summary", "Сводка за неделю", "По пятницам после 16:05 PT."),
     ("monthly_summary", "Сводка за месяц", "В последний день месяца после 16:10 PT."),
+    ("quarterly_summary", "Сводка за квартал", "В последний день квартала после 16:15 PT."),
+    ("chief_agent_reports", "StratForge Orchestrator", "Диалог, аудит, сомнения, рекомендации и задачи."),
 )
 DEFAULT_SETTINGS = {key: True for key, _label, _note in SETTING_DEFINITIONS}
 DEFAULT_SETTINGS["enabled"] = False
@@ -67,6 +70,10 @@ def _state_path() -> Path:
     return _root() / "data" / "integrations" / "telegram.state.json"
 
 
+def _topics_path() -> Path:
+    return _root() / "data" / "integrations" / "telegram.topics.json"
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}
@@ -93,7 +100,7 @@ def load_settings() -> Dict[str, Any]:
     for key in DEFAULT_SETTINGS:
         if key in raw:
             out[key] = bool(raw[key])
-    for key in ("bot_username", "bot_name", "chat_label", "updated_at_utc"):
+    for key in ("bot_username", "bot_name", "chat_label", "group_title", "updated_at_utc"):
         if raw.get(key):
             out[key] = str(raw[key])
     return out
@@ -203,10 +210,10 @@ def configure_token(token: str) -> Dict[str, Any]:
 
 
 def disconnect() -> Dict[str, Any]:
-    if not local_secrets.update({TOKEN_ENV: None, CHAT_ENV: None}):
+    if not local_secrets.update({TOKEN_ENV: None, CHAT_ENV: None, GROUP_ENV: None}):
         raise TelegramServiceError("Не удалось очистить локальные данные Telegram.")
     settings = load_settings()
-    for key in ("bot_username", "bot_name", "chat_label"):
+    for key in ("bot_username", "bot_name", "chat_label", "group_title"):
         settings.pop(key, None)
     settings["enabled"] = False
     settings["updated_at_utc"] = _now_iso()
@@ -215,7 +222,103 @@ def disconnect() -> Dict[str, Any]:
         _PAIRING.clear()
     with _IO_LOCK:
         _write_json(_state_path(), {})
+        _write_json(_topics_path(), {})
     return status()
+
+
+def configure_group(raw_group_id: str) -> Dict[str, Any]:
+    """Bind a Telegram supergroup with forum topics as the app's chat mirror."""
+    gid = str(raw_group_id or "").strip()
+    if not re.fullmatch(r"-?\d{5,}", gid):
+        raise TelegramServiceError("Неверный ID группы Telegram (пример: -1001234567890).")
+    identity = _bot_identity()
+    chat = _api_call("getChat", {"chat_id": gid})
+    if not isinstance(chat, dict):
+        raise TelegramServiceError("Не удалось получить данные группы.")
+    if str(chat.get("type") or "") not in {"supergroup", "group"}:
+        raise TelegramServiceError("Указанный чат не является группой.")
+    if not chat.get("is_forum"):
+        raise TelegramServiceError("В группе не включены темы (Topics). Включите их в настройках группы и повторите.")
+    if not local_secrets.update({GROUP_ENV: gid}):
+        raise TelegramServiceError("Не удалось сохранить группу в локальном хранилище.")
+    settings = load_settings()
+    settings["group_title"] = str(chat.get("title") or "")
+    settings["updated_at_utc"] = _now_iso()
+    _save_settings(settings)
+    with _IO_LOCK:
+        doc = _load_topics()
+        doc["group"] = {
+            "chat_id": gid,
+            "title": str(chat.get("title") or ""),
+            "bot_id": int(identity.get("id") or 0),
+            "bound_at_utc": _now_iso(),
+        }
+        _save_topics(doc)
+    return group_status()
+
+
+def disconnect_group() -> Dict[str, Any]:
+    if not local_secrets.update({GROUP_ENV: None}):
+        raise TelegramServiceError("Не удалось отвязать группу Telegram.")
+    settings = load_settings()
+    settings.pop("group_title", None)
+    settings["updated_at_utc"] = _now_iso()
+    _save_settings(settings)
+    with _IO_LOCK:
+        _write_json(_topics_path(), {})
+    return group_status()
+
+
+def group_rights() -> Dict[str, Any]:
+    """Check that the bot can read, post and manage topics in the bound group."""
+    gid = group_id()
+    if not gid:
+        return {"configured": False}
+    doc = _load_topics()
+    bot_id = int((doc.get("group") or {}).get("bot_id") or 0)
+    if not bot_id:
+        try:
+            bot_id = int(_bot_identity().get("id") or 0)
+        except TelegramServiceError:
+            bot_id = 0
+    out: Dict[str, Any] = {
+        "configured": True, "group_id": gid,
+        "group_title": str((doc.get("group") or {}).get("title") or load_settings().get("group_title") or ""),
+    }
+    try:
+        chat = _api_call("getChat", {"chat_id": gid})
+        out["is_forum"] = bool(isinstance(chat, dict) and chat.get("is_forum"))
+    except TelegramServiceError as exc:
+        out["error"] = str(exc)
+        out["ready"] = False
+        return out
+    if bot_id:
+        try:
+            member = _api_call("getChatMember", {"chat_id": gid, "user_id": bot_id})
+            member_status = str(member.get("status") or "") if isinstance(member, dict) else ""
+            out["bot_status"] = member_status
+            out["is_admin"] = member_status in {"administrator", "creator"}
+            out["can_manage_topics"] = bool(member.get("can_manage_topics")) or member_status == "creator"
+            # Non-restricted members can post; a restricted member exposes can_send_messages.
+            out["can_post_messages"] = member_status != "restricted" or bool(member.get("can_send_messages"))
+            out["can_read"] = member_status not in {"left", "kicked"}
+        except TelegramServiceError as exc:
+            out["error"] = str(exc)
+    out["ready"] = bool(out.get("is_forum") and out.get("is_admin") and out.get("can_manage_topics") and out.get("can_post_messages"))
+    return out
+
+
+def group_status() -> Dict[str, Any]:
+    doc = _load_topics()
+    rights = group_rights()
+    return {
+        "configured": group_configured(),
+        "group_id": group_id(),
+        "group_title": str((doc.get("group") or {}).get("title") or load_settings().get("group_title") or ""),
+        "topics_count": len((doc.get("conversations") or {})),
+        "topics": list_topics(),
+        "rights": rights,
+    }
 
 
 def start_pairing() -> Dict[str, Any]:
@@ -284,7 +387,7 @@ def complete_pairing() -> Dict[str, Any]:
     with _PAIR_LOCK:
         _PAIRING.clear()
     try:
-        _send_raw("✅ <b>StratForge AI подключён</b>\nЭтот чат будет получать выбранные уведомления.")
+        _send_raw("✅ <b>StratForge AI подключён</b>\nЭтот чат будет получать выбранные уведомления.", chat_id=chat_id)
     except TelegramServiceError as exc:
         # Pairing remains valid even if the confirmation message is delayed or
         # Telegram temporarily rejects the send. The UI exposes this error and
@@ -309,20 +412,138 @@ def _record_delivery(*, success: bool, error: str = "") -> None:
         _write_json(_state_path(), state)
 
 
-def _send_raw(text: str, *, silent: bool = False) -> Dict[str, Any]:
-    chat_id = str(os.environ.get(CHAT_ENV) or "").strip()
-    if not chat_id:
+# ---------------------------------------------------------------------------
+# Group forum-topics mode: each internal app chat (orchestrator conversation)
+# maps to a Telegram forum topic (message_thread_id) inside one supergroup.
+# ---------------------------------------------------------------------------
+
+DEFAULT_CONVERSATION_ID = "default"
+
+
+def group_id() -> str:
+    return str(os.environ.get(GROUP_ENV) or "").strip()
+
+
+def group_configured() -> bool:
+    return bool(group_id())
+
+
+def _primary_chat_id() -> str:
+    """Where non-conversation notifications go: the group (General) if set,
+    otherwise the paired private chat."""
+    return group_id() or str(os.environ.get(CHAT_ENV) or "").strip()
+
+
+def _load_topics() -> Dict[str, Any]:
+    doc = _read_json(_topics_path())
+    if not isinstance(doc.get("conversations"), dict):
+        doc["conversations"] = {}
+    if not isinstance(doc.get("group"), dict):
+        doc["group"] = {}
+    return doc
+
+
+def _save_topics(doc: Dict[str, Any]) -> None:
+    with _IO_LOCK:
+        _write_json(_topics_path(), doc)
+
+
+def _conversation_display_name(conversation_id: str, title: str = "") -> str:
+    name = str(title or "").strip()
+    if name:
+        return name[:120]
+    cid = str(conversation_id or "").strip()
+    if not cid or cid == DEFAULT_CONVERSATION_ID:
+        return "Основной чат"
+    return f"Чат {cid[:20]}"
+
+
+def ensure_topic(conversation_id: str, title: str = "") -> Dict[str, Any]:
+    """Return the Telegram topic for an app conversation, creating it once.
+
+    Deduplicated: an existing mapping is returned without creating a second
+    topic. Requires group mode; raises otherwise.
+    """
+    gid = group_id()
+    if not gid:
+        raise TelegramServiceError("Групповой режим Telegram не настроен.")
+    cid = str(conversation_id or "").strip() or DEFAULT_CONVERSATION_ID
+    with _IO_LOCK:
+        doc = _load_topics()
+        existing = doc["conversations"].get(cid)
+        if isinstance(existing, dict) and existing.get("message_thread_id") and str(existing.get("chat_id")) == gid:
+            return existing
+    name = _conversation_display_name(cid, title)
+    result = _api_call("createForumTopic", {"chat_id": gid, "name": name})
+    thread_id = int(result.get("message_thread_id") or 0) if isinstance(result, dict) else 0
+    if not thread_id:
+        raise TelegramServiceError("Не удалось создать тему Telegram.")
+    record = {
+        "conversation_id": cid,
+        "chat_id": gid,
+        "message_thread_id": thread_id,
+        "name": name,
+        "created_at_utc": _now_iso(),
+    }
+    with _IO_LOCK:
+        doc = _load_topics()
+        doc["conversations"][cid] = record
+        _save_topics(doc)
+    return record
+
+
+def _thread_for_conversation(conversation_id: str, title: str = "") -> Optional[int]:
+    """Resolve (and lazily create) the topic thread id for a conversation.
+
+    Returns None on any failure so sending falls back to the General topic
+    instead of dropping the message."""
+    if not group_configured():
+        return None
+    try:
+        return int(ensure_topic(conversation_id, title).get("message_thread_id") or 0) or None
+    except TelegramServiceError as exc:
+        _record_delivery(success=False, error=str(exc))
+        return None
+
+
+def _conversation_for_thread(chat_id: str, thread_id: Optional[int]) -> str:
+    """Reverse map a (chat_id, message_thread_id) back to the app conversation.
+
+    General-topic / unbound messages (no thread) route to the default chat.
+    """
+    if not thread_id:
+        return DEFAULT_CONVERSATION_ID
+    doc = _load_topics()
+    for cid, row in (doc.get("conversations") or {}).items():
+        if str(row.get("chat_id")) == str(chat_id) and int(row.get("message_thread_id") or 0) == int(thread_id):
+            return str(cid)
+    return DEFAULT_CONVERSATION_ID
+
+
+def list_topics() -> List[Dict[str, Any]]:
+    doc = _load_topics()
+    rows = list((doc.get("conversations") or {}).values())
+    rows.sort(key=lambda r: str(r.get("created_at_utc") or ""))
+    return rows
+
+
+def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = None,
+              chat_id: Optional[str] = None) -> Dict[str, Any]:
+    target = str(chat_id or _primary_chat_id()).strip()
+    if not target:
         raise TelegramServiceError("Чат Telegram не подключён.")
     message = str(text or "").strip()
     if not message:
         raise TelegramServiceError("Пустое сообщение Telegram.")
-    payload = {
-        "chat_id": chat_id,
+    payload: Dict[str, Any] = {
+        "chat_id": target,
         "text": message[:4096],
         "parse_mode": "HTML",
         "link_preview_options": {"is_disabled": True},
         "disable_notification": bool(silent),
     }
+    if thread_id:
+        payload["message_thread_id"] = int(thread_id)
     result = _api_call("sendMessage", payload)
     _record_delivery(success=True)
     return dict(result) if isinstance(result, dict) else {"ok": True}
@@ -343,18 +564,24 @@ def status() -> Dict[str, Any]:
     token_configured = bool(str(os.environ.get(TOKEN_ENV) or "").strip())
     chat_configured = bool(str(os.environ.get(CHAT_ENV) or "").strip())
     configured = token_configured and chat_configured
+    group_ready = group_configured()
     with _PAIR_LOCK:
         pairing_active = bool(_PAIRING and time.time() <= float(_PAIRING.get("expires_at") or 0))
+    topics_doc = _load_topics()
     return {
-        "configured": configured,
-        "status": "connected" if configured else ("token_ready" if token_configured else "not_configured"),
+        "configured": configured or (token_configured and group_ready),
+        "status": "connected" if (configured or (token_configured and group_ready)) else ("token_ready" if token_configured else "not_configured"),
         "token_configured": token_configured,
         "chat_configured": chat_configured,
-        "notifications_enabled": configured and bool(settings.get("enabled")),
-        "commands_enabled": False,
+        "notifications_enabled": (configured or group_ready) and bool(settings.get("enabled")),
+        "commands_enabled": configured or group_ready,
         "bot_username": str(settings.get("bot_username") or ""),
         "bot_name": str(settings.get("bot_name") or ""),
         "chat_label": str(settings.get("chat_label") or ""),
+        "group_mode": group_ready,
+        "group_id": group_id(),
+        "group_title": str(settings.get("group_title") or (topics_doc.get("group") or {}).get("title") or ""),
+        "topics_count": len(topics_doc.get("conversations") or {}),
         "pairing_active": pairing_active,
         "settings": {key: bool(settings.get(key)) for key in DEFAULT_SETTINGS},
         "setting_definitions": [
@@ -364,22 +591,189 @@ def status() -> Dict[str, Any]:
         "last_delivery_at_utc": str(state.get("last_delivery_at_utc") or ""),
         "last_error_at_utc": str(state.get("last_error_at_utc") or ""),
         "last_error": str(state.get("last_error") or ""),
-        "note": "Команды управления торговлей и бэктестами отключены до отдельного security-аудита.",
+        "note": (
+            "StratForge Orchestrator понимает обычный текст только из привязанного личного чата. "
+            "Исполняются лишь allowlisted функции; paper/demo требует approve, live заблокирован backend."
+        ),
     }
 
 
-def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False) -> bool:
+def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
+            thread_id: Optional[int] = None) -> bool:
     settings = load_settings()
     if not settings.get("enabled") or not settings.get(setting):
         return False
     body = [f"<b>{html.escape(title)}</b>"]
     body.extend(html.escape(str(line)) for line in lines if str(line).strip())
     try:
-        _send_raw("\n".join(body), silent=not urgent)
+        _send_raw("\n".join(body), silent=not urgent, thread_id=thread_id)
         return True
     except TelegramServiceError as exc:
         _record_delivery(success=False, error=str(exc))
         return False
+
+
+def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
+                      model_name: str = "Chief agent / deterministic",
+                      conversation_id: Optional[str] = None,
+                      conversation_title: str = "") -> bool:
+    """Send a model-attributed chief-agent report through the normal settings gate.
+
+    In group mode the report is delivered into the Telegram forum topic bound to
+    the originating app conversation (created once, then reused).
+    """
+    thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
+    # Model/provider attribution belongs in diagnostics, not in every message
+    # to the owner. The parameter remains for API compatibility with older
+    # callers, but executive reports intentionally contain only useful facts.
+    return _notify(
+        "chief_agent_reports", title, lines,
+        urgent=urgent, thread_id=thread_id,
+    )
+
+
+def send_news_alert(title: str, lines: List[str], *,
+                    model_name: str = "deterministic news rules") -> bool:
+    """Send one deduplicated news-agent alert through the news setting gate."""
+    return _notify(
+        "important_news", f"📰 {title}",
+        [f"Модель: {model_name}", *lines], urgent=True,
+    )
+
+
+def _chief_command_reply(text: str, *, thread_id: Optional[int] = None) -> None:
+    try:
+        _send_raw(str(text or "")[:4000], thread_id=thread_id)
+    except TelegramServiceError:
+        pass
+
+
+def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
+                          thread_id: Optional[int] = None) -> None:
+    """Handle natural owner text through the allowlisted Orchestrator executor.
+
+    ``conversation_id`` binds the incoming Telegram topic to an app chat so the
+    context and the reply stay inside the right thread.
+    """
+    from .ai_lab import chief_agent
+
+    clean = str(text or "").strip()
+    try:
+        if clean.lower() in {"/chief", "/chief help", "/help"}:
+            _chief_command_reply(
+                "<b>StratForge Orchestrator</b>\n"
+                "Пишите обычным текстом: попросите запустить исследование, проверить бэктест, "
+                "сохранить правило, создать задачу или объяснить состояние.\n\n"
+                "Paper/demo-действия потребуют подтверждения. Live, shell и изменение кода недоступны.",
+                thread_id=thread_id,
+            )
+        elif clean.lower().startswith("/start"):
+            return
+        else:
+            result = chief_agent.handle_message(
+                clean, source="telegram", mirror_to_telegram=False,
+                conversation_id=conversation_id or chief_agent.DEFAULT_CONVERSATION_ID,
+            )
+            _chief_command_reply(
+                html.escape(str(result.get("reply") or "")),
+                thread_id=thread_id,
+            )
+    except Exception as exc:
+        _chief_command_reply(f"⚠️ {html.escape(str(exc)[:500])}", thread_id=thread_id)
+
+
+def _auto_discover_group(updates: List[Dict[str, Any]]) -> None:
+    """If the bot was added to a supergroup with forum-topics in this batch,
+    auto-configure the GROUP_ENV so the user doesn't need a manual step."""
+    if group_configured():
+        return
+    for upd in updates:
+        mc = upd.get("my_chat_member") if isinstance(upd, dict) else None
+        if not isinstance(mc, dict):
+            continue
+        chat = mc.get("chat") or {}
+        new = mc.get("new_chat_member") or {}
+        if str(chat.get("type") or "") not in {"supergroup", "group"}:
+            continue
+        if new.get("status") not in {"member", "administrator", "restricted"}:
+            continue
+        gid = str(chat.get("id") or "").strip()
+        if not gid:
+            continue
+        # Confirm the group has forum topics enabled and save the config.
+        try:
+            info = _api_call("getChat", {"chat_id": gid})
+            if not isinstance(info, dict) or not info.get("is_forum"):
+                # If Topics not enabled yet, store the ID so configure_group can
+                # be called when Topics are turned on; for now just note it.
+                _record_delivery(success=False,
+                                 error=f"Группа {info.get('title') or gid} найдена, но Topics не включены — включите Topics в настройках группы.")
+                continue
+            configure_group(gid)
+            _send_raw(
+                f"✅ <b>Группа с темами подключена автоматически</b>\n"
+                f"Группа: <b>{html.escape(str(info.get('title') or gid))}</b>\n"
+                "Каждый чат приложения будет получать отдельную тему. "
+                "Напишите что-нибудь в любую тему группы — бот ответит."
+            )
+        except TelegramServiceError as exc:
+            _record_delivery(success=False, error=str(exc))
+
+
+def _poll_chief_commands(state: Dict[str, Any]) -> None:
+    """Read the paired private chat and/or the bound group and route free text
+    to the Orchestrator. One shared offset so private and group updates never
+    consume each other. Also auto-discovers a new forum group if the bot was
+    just added."""
+    private_id = str(os.environ.get(CHAT_ENV) or "").strip()
+    gid = group_id()
+    if not private_id and not gid:
+        return
+    offset = int(state.get("chief_update_id") or 0) + 1
+    # Include my_chat_member so we can auto-discover when the bot is added to a group.
+    updates = _api_call(
+        "getUpdates",
+        {"offset": offset, "limit": 30, "timeout": 0,
+         "allowed_updates": ["message", "my_chat_member"]},
+        timeout=12,
+    )
+    if not isinstance(updates, list) or not updates:
+        state["chief_commands_initialized"] = True
+        return
+    newest = max(int(row.get("update_id") or 0) for row in updates if isinstance(row, dict))
+    # Auto-discover a new group even before initialization completes.
+    try:
+        _auto_discover_group(updates)
+    except Exception:
+        pass
+    if not state.get("chief_commands_initialized"):
+        # Do not replay messages sent before command handling was enabled.
+        state["chief_update_id"] = newest
+        state["chief_commands_initialized"] = True
+        return
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        message = update.get("message")
+        if not isinstance(message, dict):
+            continue
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        if sender.get("is_bot"):
+            continue
+        text = str(message.get("text") or "").strip()
+        if not text or text.lower().startswith("/start"):
+            continue
+        chat_id_str = str(chat.get("id") or "")
+        chat_type = str(chat.get("type") or "")
+        if gid and chat_id_str == gid:
+            raw_thread = message.get("message_thread_id")
+            thread_id = int(raw_thread) if raw_thread else None
+            conversation_id = _conversation_for_thread(gid, thread_id)
+            _handle_chief_command(text, conversation_id=conversation_id, thread_id=thread_id)
+        elif private_id and chat_id_str == private_id and chat_type == "private":
+            _handle_chief_command(text)
+    state["chief_update_id"] = newest
 
 
 def _strategy_snapshot() -> Dict[str, Dict[str, Any]]:
@@ -428,6 +822,7 @@ def _summary_lines(period_name: str, period_key: str) -> List[str]:
 def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> None:
     from . import integrations  # local import avoids an integrations/status cycle
 
+    enabled_strategies = sum(1 for row in runtime.read_strategies_raw() if row.get("enabled"))
     live = integrations.live_news(max_age_min=90, limit=50)
     high_live = [item for item in live.get("items") or [] if str(item.get("severity") or "").lower() == "high"]
     seen_live = set(str(value) for value in state.get("seen_live_news") or [])
@@ -436,10 +831,11 @@ def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> N
         for item, key in zip(high_live, current_live):
             if key in seen_live:
                 continue
-            _notify("important_news", "🔴 Важная новость", [
-                str(item.get("title") or ""),
-                f"Источник: {item.get('source') or 'не указан'}",
-            ], urgent=True)
+            try:
+                from .ai_lab import news_agent
+                news_agent.observe_items([item], send_telegram=True, use_llm=True)
+            except Exception:
+                pass
     state["seen_live_news"] = list(dict.fromkeys(list(seen_live) + current_live))[-200:]
 
     events = integrations.news(200).get("items") or []
@@ -460,6 +856,16 @@ def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> N
                 f"Инструменты: {', '.join(item.get('instruments') or []) or 'не указаны'}",
             ], urgent=True):
                 notified.add(key)
+                try:
+                    if enabled_strategies <= 0:
+                        continue
+                    from .ai_lab import chief_agent
+                    chief_agent.enqueue_event("important_calendar_event", {
+                        "title": item.get("title"), "minutes_until": minutes,
+                        "instruments": item.get("instruments"), "event_time_utc": item.get("event_time_utc"),
+                    })
+                except Exception:
+                    pass
     state["notified_calendar_events"] = list(notified)[-300:]
 
 
@@ -483,6 +889,8 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     if announce_start:
         _notify("app_status", "🟢 StratForge AI запущен", ["Мониторинг Telegram активен."])
 
+    current_strategies = _strategy_snapshot()
+    enabled_count = sum(1 for row in current_strategies.values() if row.get("enabled"))
     heartbeat = runtime.read_heartbeat()
     connected = bool(heartbeat.get("fresh"))
     previous_connection = state.get("nt_connected")
@@ -494,12 +902,11 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
         else:
             age = heartbeat.get("age_sec")
             _notify("nt_connection", "🔴 Потеряна связь с NinjaTrader", [
-                f"Возраст heartbeat: {'нет данных' if age is None else f'{age} сек.'}",
-                "Проверьте NinjaTrader и NTAnalyzerBridge.",
+                f"Heartbeat: {'нет данных' if age is None else f'{age} сек.'} · активных стратегий: {enabled_count}",
+                "Проверьте NinjaTrader / Bridge.",
             ], urgent=True)
     state["nt_connected"] = connected
 
-    current_strategies = _strategy_snapshot()
     previous_strategies = state.get("strategies") if isinstance(state.get("strategies"), dict) else {}
     if initialized and previous_connection is True and connected:
         for key, row in current_strategies.items():
@@ -535,6 +942,11 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     except Exception as exc:
         state["news_poll_error"] = _safe_error(exc)
 
+    try:
+        _poll_chief_commands(state)
+    except Exception as exc:
+        state["chief_command_error"] = _safe_error(exc)
+
     pt = _pt_now(now)
     day_key = pt.date().isoformat()
     if pt.hour >= 16 and state.get("daily_summary_key") != day_key:
@@ -551,6 +963,11 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
         if state.get("monthly_summary_key") != month_key:
             if _notify("monthly_summary", "🗓 Сводка StratForge AI за месяц", _summary_lines("текущий месяц", "month")):
                 state["monthly_summary_key"] = month_key
+    if pt.month in {3, 6, 9, 12} and pt.day == last_day and (pt.hour, pt.minute) >= (16, 15):
+        quarter_key = f"{pt.year}-Q{((pt.month - 1) // 3) + 1}"
+        if state.get("quarterly_summary_key") != quarter_key:
+            if _notify("quarterly_summary", "📚 Сводка StratForge AI за квартал", _summary_lines("квартал", "quarter")):
+                state["quarterly_summary_key"] = quarter_key
 
     state["initialized"] = True
     state["monitoring"] = True

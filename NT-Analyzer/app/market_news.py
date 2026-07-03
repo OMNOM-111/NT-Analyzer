@@ -15,6 +15,7 @@ Nothing here is wired to trade execution; this is informational only.
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -188,7 +189,60 @@ def _text(node) -> str:
 
 
 def _strip_html(value: str) -> str:
-    return re.sub(r"<[^>]+>", "", value or "").strip()
+    return html.unescape(re.sub(r"<[^>]+>", "", value or "")).strip()
+
+
+_IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.I)
+
+
+def _normalize_image_url(value: str) -> str:
+    url = html.unescape(str(value or "").strip())
+    if url.startswith("//"):
+        url = "https:" + url
+    return url if url.startswith(("https://", "http://")) else ""
+
+
+def _extract_image_url_from_html(value: str) -> str:
+    raw = html.unescape(value or "")
+    match = _IMG_SRC_RE.search(raw)
+    return _normalize_image_url(match.group(1)) if match else ""
+
+
+def _element_htmlish(node) -> str:
+    if node is None:
+        return ""
+    parts = [node.text or ""]
+    for child in node:
+        parts.append(ET.tostring(child, encoding="unicode", method="html"))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
+
+
+def _node_image_url(node, *, is_atom: bool) -> str:
+    for child in node.iter():
+        local = child.tag.split("}")[-1].lower()
+        if local == "enclosure":
+            url = _normalize_image_url(child.get("url") or "")
+            media_type = str(child.get("type") or "").lower()
+            if url and (not media_type or media_type.startswith("image/")):
+                return url
+        if local == "thumbnail":
+            url = _normalize_image_url(child.get("url") or "")
+            if url:
+                return url
+        if local == "content":
+            url = _normalize_image_url(child.get("url") or "")
+            medium = str(child.get("medium") or "").lower()
+            media_type = str(child.get("type") or "").lower()
+            if url and (medium == "image" or media_type.startswith("image/")):
+                return url
+    if is_atom:
+        raw = _element_htmlish(node.find("{*}summary")) or _element_htmlish(node.find("summary"))
+        raw = raw or _element_htmlish(node.find("{*}content")) or _element_htmlish(node.find("content"))
+    else:
+        raw = _element_htmlish(node.find("description"))
+    return _extract_image_url_from_html(raw)
 
 
 def _parse_published(value: str) -> str:
@@ -238,11 +292,13 @@ def _parse_feed(source: str, xml_bytes: bytes, fetched_at: str) -> List[Dict[str
             continue
         severity, instruments = _classify(title, summary)
         link = link if link.startswith(("https://", "http://")) else ""
+        image_url = _node_image_url(node, is_atom=is_atom)
         items.append({
             "id": f"live:{source}:{published or title[:48]}",
             "item_type": "live_news",
             "title": title,
             "summary": summary[:280],
+            "image_url": image_url,
             "source": source,
             "source_type": "rss",
             "source_url": link,
@@ -301,9 +357,11 @@ def _alpha_vantage(fetched_at: str, cached_doc: Dict[str, Any] | None = None) ->
         severity, instruments = _classify(title, "")
         link = str(row.get("url") or "")
         link = link if link.startswith(("https://", "http://")) else ""
+        image_url = _normalize_image_url(str(row.get("banner_image") or ""))
         items.append({
             "id": f"live:av:{row.get('url') or title[:48]}",
             "item_type": "live_news", "title": title, "summary": summary[:280],
+            "image_url": image_url,
             "source": str(row.get("source") or "Alpha Vantage"), "source_type": "api",
             "source_url": link, "url": link, "severity": severity, "impact": severity,
             "category": "live", "affected_instruments": instruments, "instruments": instruments,

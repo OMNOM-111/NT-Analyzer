@@ -11,7 +11,8 @@ import pytest
 
 from app import secure_store
 from app import server as server_mod
-from app.ai_lab import agent_registry, agent_router, universal_llm
+from app.ai_lab import agent_registry, agent_router, universal_llm, response_cache
+from app.ai_lab import orchestrator as lab_orchestrator
 
 
 @pytest.fixture()
@@ -320,6 +321,248 @@ def test_openrouter_free_model_normalization_helpers() -> None:
     assert agent_registry.infer_billing_mode("openrouter", "openrouter/free", 0) == "free_tier"
 
 
+def test_zai_catalog_distinguishes_flagship_trial_from_permanent_free(isolated_agents) -> None:
+    flagship = agent_registry.create_agent({
+        "name": "ZAI GLM 5.2 trial",
+        "provider": "zai",
+        "model": "glm-5.2",
+        "api_key": "zai-test-key-not-real-1234",
+        "billing_mode": "unknown",
+        "enabled": False,
+    })
+    flash = agent_registry.create_agent({
+        "name": "ZAI GLM 4.7 Flash",
+        "provider": "zai",
+        "model": "glm-4.7-flash",
+        "api_key": "zai-test-key-not-real-5678",
+        "billing_mode": "unknown",
+        "enabled": False,
+    })
+
+    assert flagship["base_url"] == "https://api.z.ai/api/paas/v4"
+    assert flagship["pricing_status"] == "configured"
+    assert flagship["input_price_usd_per_m"] == 1.4
+    assert flagship["output_price_usd_per_m"] == 4.4
+    assert flagship["billing_mode"] == "unknown"
+    assert flash["billing_mode"] == "free_tier"
+    assert flash["pricing_status"] == "free"
+
+
+def test_deepseek_v4_pro_uses_managed_pricing_and_thinking(isolated_agents, monkeypatch) -> None:
+    agent = agent_registry.create_agent({
+        "name": "DeepSeek chief",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "api_key": "sk-deepseek-test-key-1234",
+        "role": "chief_agent",
+        "billing_mode": "payg",
+        "monthly_budget_usd": 5,
+        "enabled": True,
+    })
+    captured = {}
+
+    def fake_request(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return {
+            "model": "deepseek-v4-pro",
+            "choices": [{"message": {"content": "review complete"}}],
+            "usage": {
+                "prompt_tokens": 100,
+                "prompt_cache_hit_tokens": 80,
+                "prompt_cache_miss_tokens": 20,
+                "completion_tokens": 10,
+            },
+        }
+
+    monkeypatch.setattr(universal_llm, "_request_json", fake_request)
+    result = universal_llm.invoke_agent(
+        agent["id"], "metrics", system_prompt="stable prefix",
+        request_role="chief_agent", purpose="daily_audit", max_output_tokens=100,
+    )
+
+    assert agent["input_price_usd_per_m"] == 0.435
+    assert agent["cached_input_price_usd_per_m"] == 0.003625
+    assert agent["output_price_usd_per_m"] == 0.87
+    assert captured["url"].endswith("/chat/completions")
+    assert captured["payload"]["thinking"] == {"type": "enabled"}
+    assert captured["payload"]["reasoning_effort"] == "max"
+    assert captured["payload"]["user_id"] == "nt-analyzer"
+    assert "temperature" not in captured["payload"]
+    assert result["cached_input_tokens"] == 80
+    assert result["cache_miss_tokens"] == 20
+    assert result["cost_usd"] > 0
+
+
+def test_deepseek_reasoning_only_response_retries_without_thinking_and_accounts_both(isolated_agents, monkeypatch) -> None:
+    agent = agent_registry.create_agent({
+        "name": "DeepSeek chief failure accounting", "provider": "deepseek",
+        "model": "deepseek-v4-pro", "api_key": "sk-deepseek-test-key-5678",
+        "role": "chief_agent", "billing_mode": "payg", "monthly_budget_usd": 5,
+        "enabled": True,
+    })
+    calls = []
+    def fake_request(_url, **kwargs):
+        calls.append(kwargs["payload"])
+        if len(calls) == 1:
+            return {
+                "model": "deepseek-v4-pro",
+                "choices": [{"message": {"content": "", "reasoning_content": "internal reasoning"}}],
+                "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 64,
+                          "prompt_cache_miss_tokens": 36, "completion_tokens": 512},
+            }
+        return {
+            "model": "deepseek-v4-pro",
+            "choices": [{"message": {"content": "final answer"}}],
+            "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 64,
+                      "prompt_cache_miss_tokens": 36, "completion_tokens": 20},
+        }
+    monkeypatch.setattr(universal_llm, "_request_json", fake_request)
+
+    result = universal_llm.invoke_agent(
+        agent["id"], "metrics", request_role="chief_agent",
+        purpose="reasoning_limit_test", max_output_tokens=512,
+    )
+    assert result["response"] == "final answer"
+    assert calls[0]["thinking"] == {"type": "enabled"}
+    assert calls[1]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in calls[1]
+
+    row = agent_registry.usage_rows(agent_id=agent["id"])[-1]
+    assert row["status"] == "success"
+    assert row["input_tokens"] == 200
+    assert row["cached_input_tokens"] == 128
+    assert row["output_tokens"] == 532
+    assert row["cost_usd"] > 0
+
+
+def test_complexity_routing_prefers_paid_deepseek_only_for_critical(monkeypatch) -> None:
+    # This test intentionally exercises the real candidates() implementation;
+    # the suite-wide safety fixture otherwise replaces it to prevent real calls.
+    monkeypatch.undo()
+    rows = [
+        {"id": "gem", "provider": "gemini", "model": "gemini-2.5-flash", "role": "general", "priority": 1,
+         "key_configured": True, "endpoint_type": "chat", "enabled": True, "cooldown_active": False, "requests_today": 0},
+        {"id": "ds", "provider": "deepseek", "model": "deepseek-v4-pro", "role": "chief_agent", "priority": 1,
+         "key_configured": True, "endpoint_type": "chat", "enabled": True, "cooldown_active": False, "requests_today": 0},
+    ]
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: rows)
+
+    assert agent_router.candidates("general", complexity="light")[0]["id"] == "gem"
+    assert agent_router.candidates("chief_agent", complexity="critical")[0]["id"] == "ds"
+
+
+def test_zero_paid_mission_route_excludes_credit_and_payg_agents(monkeypatch) -> None:
+    monkeypatch.undo()
+    rows = [
+        {"id": "gem", "provider": "gemini", "model": "gemini-2.5-flash", "role": "general",
+         "billing_mode": "free_tier", "priority": 1, "key_configured": True,
+         "endpoint_type": "chat", "enabled": True, "cooldown_active": False, "requests_today": 0},
+        {"id": "az", "provider": "azure_foundry", "model": "gpt-5-mini", "role": "risk_manager",
+         "billing_mode": "credit", "priority": 1, "key_configured": True,
+         "endpoint_type": "chat", "enabled": True, "cooldown_active": False, "requests_today": 0},
+        {"id": "ds", "provider": "deepseek", "model": "deepseek-v4-pro", "role": "orchestrator",
+         "billing_mode": "payg", "priority": 1, "key_configured": True,
+         "endpoint_type": "chat", "enabled": True, "cooldown_active": False, "requests_today": 0},
+    ]
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: rows)
+
+    route = agent_router.candidates("risk_manager", complexity="critical", allow_paid=False)
+
+    assert [row["id"] for row in route] == ["gem"]
+
+
+def test_deepseek_flash_precedes_pro_outside_critical_tier(monkeypatch) -> None:
+    monkeypatch.undo()
+    rows = [
+        {"id": "pro", "provider": "deepseek", "model": "deepseek-v4-pro", "role": "orchestrator",
+         "billing_mode": "payg", "priority": 1, "key_configured": True, "endpoint_type": "chat",
+         "enabled": True, "cooldown_active": False, "requests_today": 0},
+        {"id": "flash", "provider": "deepseek", "model": "deepseek-v4-flash", "role": "strategy_analyst",
+         "billing_mode": "payg", "priority": 2, "key_configured": True, "endpoint_type": "chat",
+         "enabled": True, "cooldown_active": False, "requests_today": 0},
+    ]
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: rows)
+
+    assert agent_router.candidates("strategy_analyst", complexity="standard")[0]["id"] == "flash"
+    assert agent_router.candidates("risk_manager", complexity="critical")[0]["id"] == "pro"
+
+
+def test_monthly_budget_is_shared_by_provider_account(isolated_agents) -> None:
+    common = {
+        "provider": "deepseek", "base_url": "https://api.deepseek.com",
+        "api_key": "sk-shared-deepseek-placeholder-1234", "account_name": "DeepSeek account",
+        "billing_mode": "payg", "monthly_budget_usd": 1.0, "enabled": True,
+    }
+    pro = agent_registry.create_agent({**common, "name": "Pro", "model": "deepseek-v4-pro", "role": "orchestrator"})
+    flash = agent_registry.create_agent({**common, "name": "Flash", "model": "deepseek-v4-flash", "role": "strategy_analyst"})
+    agent_registry.record_usage({
+        "timestamp_utc": "2026-07-02T08:00:00Z", "agent_id": pro["id"], "agent_name": "Pro",
+        "provider": "deepseek", "account_name": "DeepSeek account", "model": "deepseek-v4-pro",
+        "role": "orchestrator", "status": "success", "cost_usd": 0.9,
+    })
+    fresh_flash = agent_registry.get_agent(flash["id"])
+
+    with pytest.raises(universal_llm.BudgetExceeded, match="Месячный бюджет"):
+        universal_llm._reserve(fresh_flash, 0.2, allow_disabled=False)
+
+    assert fresh_flash["remaining_monthly_budget_usd"] == pytest.approx(0.1)
+
+
+def test_hypothesis_stage_propagates_zero_paid_policy(monkeypatch) -> None:
+    captured = {}
+    payload = {
+        "reference_id": "REF-008", "hypothesis": "Проверяемая VWAP гипотеза",
+        "family": "vwap_pullback", "market_regime": "RTH trend",
+        "entry_trigger": "second VWAP pullback", "why_not_generic": "named regime",
+        "parameters": {},
+    }
+    monkeypatch.setattr(lab_orchestrator.activity, "log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        lab_orchestrator.agent_router, "invoke_messages",
+        lambda *args, **kwargs: captured.update(kwargs) or {
+            "content": json.dumps(payload), "provider": "gemini",
+            "actual_model": "gemini-2.5-flash", "model": "gemini-2.5-flash",
+        },
+    )
+
+    result = lab_orchestrator.choose_hypothesis(
+        "MNQ",
+        {"goal_constraints": {}, "reference_shortlist": [{"reference_id": "REF-008", "family": "vwap_pullback"}]},
+        "EXP-TEST", allow_paid_agents=False,
+    )
+
+    assert captured["allow_paid"] is False
+    assert result["_provider"] == "gemini"
+    assert result["_model"] == "gemini-2.5-flash"
+
+
+def test_exact_response_cache_avoids_second_provider_call(isolated_agents, monkeypatch) -> None:
+    response_cache.clear()
+    agent = agent_registry.create_agent(azure_payload(enabled=True))
+    calls = []
+    monkeypatch.setattr(universal_llm, "_request_json", lambda *_a, **_k: calls.append(True) or {
+        "choices": [{"message": {"content": "same analysis"}}],
+        "usage": {"prompt_tokens": 1200, "completion_tokens": 50},
+    })
+
+    first = universal_llm.invoke_agent(
+        agent["id"], "immutable metrics", system_prompt="stable audit prefix",
+        purpose="backtest_analysis", cache_mode="auto",
+    )
+    second = universal_llm.invoke_agent(
+        agent["id"], "immutable metrics", system_prompt="stable audit prefix",
+        purpose="backtest_analysis", cache_mode="auto",
+    )
+
+    assert len(calls) == 1
+    assert first["application_cache_hit"] is False
+    assert second["application_cache_hit"] is True
+    assert second["cost_usd"] == 0
+    assert second["application_cache_saved_input_tokens"] == 1200
+    logged = agent_registry.usage_rows(agent_id=agent["id"])[-1]
+    assert logged["application_cache_hit"] is True
+
+
 def test_openrouter_repair_doc_fixes_legacy_registry(isolated_agents) -> None:
     path = agent_registry.registry_path()
     path.write_text(json.dumps({
@@ -410,6 +653,29 @@ def test_agent_router_fails_over_and_cools_down_retryable_provider(monkeypatch) 
     assert cooldowns and cooldowns[0][0] == "AGT-1"
     assert result["content"] == "complete"
     assert [row["status"] for row in result["route_attempts"]] == ["error", "success"]
+
+
+def test_agent_router_can_leave_four_key_pool_for_next_provider(monkeypatch) -> None:
+    route = [
+        {"id": f"GEM-{index}", "account_name": f"gemini-{index}", "provider": "gemini", "model": "gemini-2.5-flash"}
+        for index in range(4)
+    ] + [{"id": "ZAI-1", "account_name": "zai", "provider": "zai", "model": "glm-4.7-flash"}]
+    monkeypatch.setattr(agent_router, "candidates", lambda *args, **kwargs: route)
+    calls = []
+
+    def fake_invoke(agent_id, *args, **kwargs):
+        calls.append(agent_id)
+        if agent_id.startswith("GEM-"):
+            raise universal_llm.UniversalLLMError("Provider отклонил запрос (HTTP 429): quota")
+        return {"ok": True, "response": "zai fallback", "provider": "zai", "model": "glm-4.7-flash"}
+
+    monkeypatch.setattr(universal_llm, "invoke_agent", fake_invoke)
+    monkeypatch.setattr(agent_registry, "set_cooldown", lambda *args, **kwargs: {})
+
+    result = agent_router.invoke_role("strategy_analyst", "test")
+
+    assert calls == ["GEM-0", "GEM-1", "GEM-2", "GEM-3", "ZAI-1"]
+    assert result["content"] == "zai fallback"
 
 
 def test_ai_agents_page_and_navigation_contract() -> None:

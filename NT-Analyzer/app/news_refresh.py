@@ -25,6 +25,10 @@ def _worker(live_interval_sec: int, calendar_interval_sec: int) -> None:
     while True:
         try:
             market_news.write_live_news()
+            # Deterministic reports are generated for every relevant headline;
+            # an LLM/Telegram alert is used only for a newly observed high item.
+            from app.ai_lab import news_agent
+            news_agent.observe_live_news(send_telegram=True, use_llm=True)
         except Exception as exc:  # pragma: no cover - network/filesystem dependent
             print(f"[nta-news] live refresh failed: {exc}")
         now = time.monotonic()

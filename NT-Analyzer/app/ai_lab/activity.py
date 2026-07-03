@@ -22,7 +22,7 @@ from . import paths
 STAGES = {
     "intake", "generate", "validate", "write", "compile", "catalog",
     "signal_sanity", "backtest", "analyze", "arbitrate", "verdict",
-    "runner", "status",
+    "runner", "status", "staged", "safety",
 }
 
 LEVELS = {"info", "warn", "error", "success"}
@@ -43,6 +43,8 @@ STAGE_RU = {
     "verdict": "Вердикт",
     "runner": "Запуск",
     "status": "Статус",
+    "staged": "Параллельная разработка",
+    "safety": "Защита запуска",
 }
 
 LEVEL_RU = {
@@ -54,6 +56,8 @@ LEVEL_RU = {
 
 STATUS_RU = {
     "draft": "черновик",
+    "designing": "параллельная разработка",
+    "draft_ready": "проект готов",
     "generating": "генерация",
     "generated": "код сгенерирован",
     "validation_failed": "проверка не пройдена",
@@ -113,6 +117,13 @@ ACTION_RU = {
     "checked": "проверка завершена",
     "smoke_submitted": "smoke-бэктест отправлен",
     "smoke_checked": "результат smoke-бэктеста проверен",
+    "smoke_data_invalid": "smoke остановлен: исторические данные не подтверждены",
+    "circuit_breaker_open": "защитный выключатель остановил запуск",
+    "contract_selected": "выбран контракт с подтверждёнными минутными данными",
+    "parallel_design_started": "начата параллельная разработка следующей стратегии",
+    "parallel_design_ready": "параллельный проект стратегии готов",
+    "parallel_design_failed": "ошибка параллельной разработки",
+    "parallel_design_reused": "параллельный проект передан в исполнение",
     "mutation_planned": "мутация стратегии запланирована",
     "timeout_no_dll_change": "тайм-аут: DLL не изменилась",
     "compile_failed": "компиляция не удалась",

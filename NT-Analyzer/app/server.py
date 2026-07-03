@@ -68,6 +68,9 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import agent_registry as ai_agent_registry  # type: ignore[no-redef]
     from app.ai_lab import agent_router as ai_agent_router  # type: ignore[no-redef]
     from app.ai_lab import universal_llm as ai_universal_llm  # type: ignore[no-redef]
+    from app.ai_lab import chief_agent as ai_chief_agent  # type: ignore[no-redef]
+    from app.ai_lab import domain_agents as ai_domain_agents  # type: ignore[no-redef]
+    from app.ai_lab import news_agent as ai_news_agent  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
 else:
@@ -100,6 +103,9 @@ else:
     from .ai_lab import agent_registry as ai_agent_registry
     from .ai_lab import agent_router as ai_agent_router
     from .ai_lab import universal_llm as ai_universal_llm
+    from .ai_lab import chief_agent as ai_chief_agent
+    from .ai_lab import domain_agents as ai_domain_agents
+    from .ai_lab import news_agent as ai_news_agent
     from . import local_secrets as _local_secrets
     from . import news_refresh
 
@@ -663,6 +669,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/ai-strategy.html": "/ui/ai-lab.html", "/ai-strategy": "/ui/ai-lab.html",
                 "/ops.html": "/ui/trading.html", "/ops": "/ui/trading.html",
                 "/docs.html": "/ui/documents.html", "/docs": "/ui/documents.html",
+                "/accounting.html": "/ui/performance.html", "/accounting": "/ui/performance.html",
             }
             if rel in _aliases:
                 self.send_response(HTTPStatus.FOUND)
@@ -973,6 +980,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, telegram_service.status())
             return
 
+        if path == "/api/telegram/group":
+            try:
+                self._json(HTTPStatus.OK, telegram_service.group_status())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"telegram group status failed: {e}")
+            return
+
         if path == "/api/topstep/status":
             self._json(HTTPStatus.OK, integrations.topstep_status())
             return
@@ -1041,6 +1055,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/governance/runtime-defaults":
             self._json(HTTPStatus.OK, governance.runtime_defaults())
+            return True
+
+        if path == "/api/governance/north-star":
+            try:
+                self._json(HTTPStatus.OK, governance.north_star_progress())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"north-star failed: {e}")
             return True
 
         if path == "/api/governance/summary":
@@ -1375,6 +1396,41 @@ class Handler(BaseHTTPRequestHandler):
             return True
         sub = parts[2]
 
+        if path == "/api/ai-lab/domain-agents":
+            self._json(HTTPStatus.OK, ai_domain_agents.list_personas())
+            return True
+
+        if path == "/api/ai-lab/accounting":
+            period = (qs.get("period") or ["month"])[0]
+            account = (qs.get("account") or [""])[0]
+            from_date = (qs.get("from") or [None])[0]
+            to_date = (qs.get("to") or [None])[0]
+            try:
+                self._json(HTTPStatus.OK, ai_domain_agents.accounting_snapshot(
+                    period, account, from_date=from_date, to_date=to_date,
+                ))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"accounting report failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/strategy-analysis":
+            period = (qs.get("period") or ["month"])[0]
+            try:
+                self._json(HTTPStatus.OK, ai_domain_agents.strategy_snapshot(period))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"strategy analysis failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/news-analysis":
+            try:
+                limit = int((qs.get("limit") or ["40"])[0])
+                self._json(HTTPStatus.OK, ai_news_agent.snapshot(limit=limit))
+            except ValueError:
+                self._err(HTTPStatus.BAD_REQUEST, "limit must be an integer")
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"news analysis failed: {e}")
+            return True
+
         if path == "/api/ai-lab/summary":
             try:
                 self._json(HTTPStatus.OK, ai_read_model.summary())
@@ -1491,6 +1547,37 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, {"ok": True, "run": status})
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run status failed: {e}")
+            return True
+
+        if path in {"/api/ai-lab/chief-agent", "/api/ai-lab/orchestrator"}:
+            try:
+                self._json(HTTPStatus.OK, ai_chief_agent.status())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"orchestrator status failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/orchestrator/conversations":
+            try:
+                self._json(HTTPStatus.OK, {"ok": True, "conversations": ai_chief_agent.list_conversations()})
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversations list failed: {e}")
+            return True
+
+        # /api/ai-lab/orchestrator/conversations/{id}
+        if sub == "orchestrator" and len(parts) == 5 and parts[3] == "conversations":
+            conversation_id = parts[4]
+            try:
+                limit = int((qs.get("limit") or ["200"])[0])
+            except ValueError:
+                limit = 200
+            try:
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "conversation_id": conversation_id,
+                    "messages": ai_chief_agent.conversation_messages(conversation_id, limit=limit),
+                })
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversation load failed: {e}")
             return True
 
         if path == "/api/ai-lab/errors/summary":
@@ -1638,6 +1725,127 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, out)
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"bootstrap unload failed: {e}")
+            return
+
+        if path == "/api/ai-lab/orchestrator/message":
+            try:
+                out = ai_chief_agent.handle_message(
+                    str(body.get("message") or body.get("text") or ""),
+                    source="app", mirror_to_telegram=True,
+                    conversation_id=str(body.get("conversation_id") or "default"),
+                )
+                self._json(HTTPStatus.OK, out)
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/domain-agents/message":
+            try:
+                out = ai_domain_agents.answer(
+                    str(body.get("agent_id") or ""), str(body.get("message") or body.get("text") or ""),
+                    period=str(body.get("period") or "month"), account=str(body.get("account") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except (ValueError, ai_agent_router.AgentRouterError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/orchestrator/conversations":
+            try:
+                conv = ai_chief_agent.create_conversation(str(body.get("title") or ""))
+                self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/orchestrator/conversations/rename":
+            try:
+                conv = ai_chief_agent.rename_conversation(
+                    str(body.get("conversation_id") or ""), str(body.get("title") or ""),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/orchestrator/conversations/pin":
+            try:
+                conv = ai_chief_agent.pin_conversation(
+                    str(body.get("conversation_id") or ""), bool(body.get("pinned", True)),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/orchestrator/conversations/delete":
+            try:
+                out = ai_chief_agent.delete_conversation(str(body.get("conversation_id") or ""))
+                self._json(HTTPStatus.OK, out)
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/mission":
+            try:
+                self._json(HTTPStatus.OK, {"ok": True, "mission": ai_chief_agent.start_mission(body)})
+            except (ValueError, TypeError, ai_chief_agent.ChiefAgentError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/mission/state":
+            try:
+                self._json(HTTPStatus.OK, {"ok": True, "mission": ai_chief_agent.set_mission_state(str(body.get("action") or ""))})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/tasks":
+            try:
+                self._json(HTTPStatus.OK, {"ok": True, "task": ai_chief_agent.add_task(body)})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/notes":
+            try:
+                note = ai_chief_agent.add_note(str(body.get("text") or ""), str(body.get("priority") or "normal"))
+                self._json(HTTPStatus.OK, {"ok": True, "note": note})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/audit":
+            try:
+                report = ai_chief_agent.audit_recent_backtests(
+                    use_llm=bool(body.get("use_llm", True)),
+                    send_telegram=bool(body.get("send_telegram", False)),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "report": report})
+            except (ai_chief_agent.ChiefAgentError, ai_agent_router.AgentRouterError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/proposals":
+            try:
+                proposal = ai_chief_agent.propose_action(
+                    str(body.get("action") or ""),
+                    body.get("payload") if isinstance(body.get("payload"), dict) else {},
+                    str(body.get("reason") or ""),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "proposal": proposal})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path == "/api/ai-lab/chief-agent/proposals/decision":
+            try:
+                proposal = ai_chief_agent.decide_proposal(
+                    str(body.get("proposal_id") or ""), str(body.get("decision") or "")
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "proposal": proposal})
+            except (ai_chief_agent.ChiefAgentError, ops.OpsError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
         if path == "/api/ai-lab/run":
@@ -2209,6 +2417,10 @@ class Handler(BaseHTTPRequestHandler):
                     out = telegram_service.update_settings(body.get("settings") or body)
                 elif path == "/api/telegram/test":
                     out = telegram_service.send_test()
+                elif path == "/api/telegram/group":
+                    out = telegram_service.configure_group(str(body.get("group_id") or ""))
+                elif path == "/api/telegram/group/disconnect":
+                    out = telegram_service.disconnect_group()
                 elif path == "/api/telegram/disconnect":
                     out = telegram_service.disconnect()
                 else:
@@ -2523,12 +2735,18 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] Telegram notifier started (every 30 sec)")
     except Exception as e:
         print(f"[nta-backend] Telegram notifier NOT started: {e}")
+    try:
+        ai_chief_agent.start_background_worker(interval_sec=30)
+        print("[nta-backend] StratForge Orchestrator started (every 30 sec)")
+    except Exception as e:
+        print(f"[nta-backend] StratForge Orchestrator NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("[nta-backend] shutting down")
     finally:
+        ai_chief_agent.stop_background_worker()
         telegram_service.stop_background_notifier()
         server.server_close()
 

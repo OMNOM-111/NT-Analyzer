@@ -12,6 +12,17 @@ UI.ready(async function () {
   ];
   let profiles = [], aiCards = [], coverage = null, archive = [], registry = null, runtimeRoots = [], curOrigin = 'all', curFrequency = 'all';
 
+  async function loadTolik() {
+    const box = UI.qs('#tolik-summary');
+    if (!box) return;
+    try {
+      const doc = await API.http.strategyAnalysis({ period: 'month' });
+      const s = doc.summary || {}; const counts = s.status_counts || {};
+      const topFlags = (doc.findings || []).slice(0, 4).map(row => `${row.class_name || row.experiment_id}: ${(row.flags || []).join(', ')}`);
+      box.innerHTML = `<strong>Контроль качества без токенов</strong><div style="margin-top:7px">Экспериментов: <b>${s.experiments || 0}</b> · активных runtime: <b>${s.enabled_runtime || 0}</b> · замечаний: <b class="${s.findings ? 'neg' : 'pos'}">${s.findings || 0}</b></div><div class="muted" style="margin-top:6px">Готово: ${counts.complete || 0}; no-edge: ${counts.no_edge || 0}; технические сбои: ${(counts.pipeline_failed || 0) + (counts.compile_failed || 0)}</div>${topFlags.length ? `<ul style="margin:8px 0 0 17px">${topFlags.map(text => `<li>${UI.esc(text)}</li>`).join('')}</ul>` : ''}`;
+    } catch (e) { box.textContent = 'Аналитическая сводка временно недоступна: ' + (e.message || e); }
+  }
+
   function fmtDate(iso) { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: '2-digit' }); } catch (e) { return iso || ''; } }
   function normProfile(p) {
     const m = p.metrics || {};
@@ -56,7 +67,7 @@ UI.ready(async function () {
   async function reload() { await fetchAll(); renderKpis(); renderKanban(); renderMatrix(); renderGoals(); }
 
   if (!(await fetchAll())) { UI.renderError(kpiBox, new Error('backend недоступен'), () => location.reload()); return; }
-  renderKpis(); renderKanban(); renderMatrix(); renderGoals(); wireControls();
+  renderKpis(); renderKanban(); renderMatrix(); renderGoals(); wireControls(); loadTolik();
   const wanted = new URLSearchParams(location.search).get('strategy');
   if (wanted) { const c = [...profiles, ...aiCards].find(x => x.name === wanted); if (c) openCard(c); }
 

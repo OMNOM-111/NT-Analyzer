@@ -59,10 +59,104 @@
   --sh-2: 0 18px 48px rgba(0,0,0,0.45);
   --glow: 0 0 0 1px var(--brand-line), 0 10px 28px rgba(31, 201, 255, 0.18);
 
+  /* Shell backgrounds (theme-aware) */
+  --app-bg:
+    radial-gradient(1080px 620px at 84% -12%, rgba(31, 201, 255, 0.10), transparent 58%),
+    radial-gradient(920px 660px at -4% 112%, rgba(138, 86, 255, 0.09), transparent 56%),
+    linear-gradient(180deg, #08101a 0%, #070d16 100%);
+  --rail-bg: linear-gradient(180deg, #09111c, #050913);
+  --topbar-bg: linear-gradient(180deg, rgba(10,16,26,0.94), rgba(10,16,26,0.80));
+  --scrollbar-thumb: #283044;
+
   --rail-w: 76px;
   --topbar-h: 60px;
   --font: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+/* ---------- Light theme ---------- */
+/* Applied when the user picks "Светлая", or when the theme is "Авто" and the OS
+   prefers a light color scheme. Dark stays the default (:root above). */
+[data-theme="light"] {
+  --bg-0: #e9eef6;
+  --bg-1: #f4f7fb;
+  --bg-2: #ffffff;
+  --bg-3: #eef3f9;
+  --bg-4: #e2eaf4;
+  --glass: rgba(255, 255, 255, 0.86);
+
+  --line: #e3e9f1;
+  --line-2: #d4deeb;
+  --line-3: #bfccdd;
+
+  --tx: #0f1b2d;
+  --tx-2: #3b4a62;
+  --tx-3: #6a7b95;
+  --tx-4: #98a6bd;
+
+  --brand: #0d8fd6;
+  --brand-ink: #06344a;
+  --brand-soft: rgba(13, 143, 214, 0.10);
+  --brand-line: rgba(13, 143, 214, 0.30);
+
+  --pos: #0f9d63;
+  --pos-soft: rgba(15, 157, 99, 0.12);
+  --neg: #d92d4e;
+  --neg-soft: rgba(217, 45, 78, 0.12);
+  --warn: #b9820a;
+  --warn-soft: rgba(185, 130, 10, 0.14);
+  --info: #0e8ea0;
+  --info-soft: rgba(14, 142, 160, 0.14);
+
+  --sh-1: 0 1px 0 rgba(15, 27, 45, 0.02), 0 8px 24px rgba(20, 40, 80, 0.10);
+  --sh-2: 0 18px 48px rgba(20, 40, 80, 0.16);
+  --glow: 0 0 0 1px var(--brand-line), 0 10px 28px rgba(13, 143, 214, 0.14);
+  --app-bg:
+    radial-gradient(1080px 620px at 84% -12%, rgba(13, 143, 214, 0.07), transparent 58%),
+    radial-gradient(920px 660px at -4% 112%, rgba(138, 86, 255, 0.05), transparent 56%),
+    linear-gradient(180deg, #f4f7fb 0%, #e7eef7 100%);
+  --rail-bg: linear-gradient(180deg, #ffffff, #eef3f9);
+  --topbar-bg: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(244,247,251,0.82));
+  --scrollbar-thumb: #c4cede;
+}
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] {
+    --bg-0: #e9eef6;
+    --bg-1: #f4f7fb;
+    --bg-2: #ffffff;
+    --bg-3: #eef3f9;
+    --bg-4: #e2eaf4;
+    --glass: rgba(255, 255, 255, 0.86);
+    --line: #e3e9f1;
+    --line-2: #d4deeb;
+    --line-3: #bfccdd;
+    --tx: #0f1b2d;
+    --tx-2: #3b4a62;
+    --tx-3: #6a7b95;
+    --tx-4: #98a6bd;
+    --brand: #0d8fd6;
+    --brand-ink: #06344a;
+    --brand-soft: rgba(13, 143, 214, 0.10);
+    --brand-line: rgba(13, 143, 214, 0.30);
+    --pos: #0f9d63;
+    --pos-soft: rgba(15, 157, 99, 0.12);
+    --neg: #d92d4e;
+    --neg-soft: rgba(217, 45, 78, 0.12);
+    --warn: #b9820a;
+    --warn-soft: rgba(185, 130, 10, 0.14);
+    --info: #0e8ea0;
+    --info-soft: rgba(14, 142, 160, 0.14);
+    --sh-1: 0 1px 0 rgba(15, 27, 45, 0.02), 0 8px 24px rgba(20, 40, 80, 0.10);
+    --sh-2: 0 18px 48px rgba(20, 40, 80, 0.16);
+    --glow: 0 0 0 1px var(--brand-line), 0 10px 28px rgba(13, 143, 214, 0.14);
+    --app-bg:
+      radial-gradient(1080px 620px at 84% -12%, rgba(13, 143, 214, 0.07), transparent 58%),
+      radial-gradient(920px 660px at -4% 112%, rgba(138, 86, 255, 0.05), transparent 56%),
+      linear-gradient(180deg, #f4f7fb 0%, #e7eef7 100%);
+    --rail-bg: linear-gradient(180deg, #ffffff, #eef3f9);
+    --topbar-bg: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(244,247,251,0.82));
+    --scrollbar-thumb: #c4cede;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -74,10 +168,8 @@ body {
   font-size: 13.5px;
   line-height: 1.45;
   color: var(--tx);
-  background:
-    radial-gradient(1080px 620px at 84% -12%, rgba(31, 201, 255, 0.10), transparent 58%),
-    radial-gradient(920px 660px at -4% 112%, rgba(138, 86, 255, 0.09), transparent 56%),
-    linear-gradient(180deg, #08101a 0%, #070d16 100%);
+  background: var(--app-bg);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -98,7 +190,7 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 /* Scrollbars */
 * { scrollbar-width: thin; scrollbar-color: #2b3346 transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: #283044; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:hover { background: #36405a; background-clip: padding-box; }
 
 /* =====================================================================
@@ -110,15 +202,15 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
   position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 14px 0 12px;
-  background: linear-gradient(180deg, #09111c, #050913);
+  background: var(--rail-bg);
   border-right: 1px solid var(--line);
   z-index: 40;
 }
 .rail-logo {
   width: 46px; height: 46px; border-radius: 14px; margin-bottom: 12px; padding: 8px;
   display: grid; place-items: center;
-  background: linear-gradient(180deg, rgba(13, 21, 33, 0.98), rgba(9, 14, 22, 0.94));
-  border: 1px solid rgba(84, 115, 163, 0.24);
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+  border: 1px solid var(--line-2);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255,255,255,0.05);
   position: relative;
 }
@@ -145,7 +237,7 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .topbar {
   position: sticky; top: 0; z-index: 30; height: var(--topbar-h);
   display: flex; align-items: center; gap: 14px; padding: 0 22px;
-  background: linear-gradient(180deg, rgba(10,16,26,0.94), rgba(10,16,26,0.80));
+  background: var(--topbar-bg);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
@@ -802,3 +894,124 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 .toast-wrap { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .toast { background: var(--glass); border: 1px solid var(--line-3); border-radius: var(--r-pill); padding: 10px 18px; font-size: 12.5px; font-weight: 600; box-shadow: var(--sh-2); backdrop-filter: blur(12px); animation: toastIn .2s; }
 @keyframes toastIn { from { transform: translateY(10px); opacity: 0; } }
+
+/* =========================================================================
+   Orchestrator chat widget — floating launcher + full conversation panel
+   ========================================================================= */
+.orch-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 70;
+  width: 56px; height: 56px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(150deg, var(--brand), #0f8fd6);
+  color: #041019; border: 1px solid var(--brand-line);
+  box-shadow: 0 12px 30px rgba(31, 201, 255, 0.34); cursor: pointer;
+  transition: transform .15s, box-shadow .15s;
+}
+.orch-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 16px 40px rgba(31, 201, 255, 0.5); }
+.orch-fab.active { transform: scale(.94); }
+.orch-fab svg { width: 26px; height: 26px; }
+.orch-fab-dot { position: absolute; top: 12px; right: 13px; width: 9px; height: 9px; border-radius: 50%; background: var(--pos); border: 2px solid #041019; }
+
+.orch-panel {
+  position: fixed; right: 22px; bottom: 22px; z-index: 95;
+  width: min(410px, calc(100vw - 32px)); height: min(600px, calc(100vh - 40px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--line-3); border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  opacity: 0; transform: translateY(16px) scale(.98); transform-origin: bottom right;
+  transition: opacity .2s, transform .2s;
+}
+.orch-panel.open { opacity: 1; transform: translateY(0) scale(1); }
+.orch-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px; border-bottom: 1px solid var(--line-2); background: var(--bg-3); }
+.orch-head-title { flex: 1; min-width: 0; }
+.orch-head-name { display: block; font-weight: 800; font-size: 13.5px; color: var(--tx); }
+.orch-head-sub { display: block; font-size: 10.5px; color: var(--tx-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.orch-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; background: transparent; border: 1px solid transparent; color: var(--tx-2); cursor: pointer; }
+.orch-icon-btn:hover { background: var(--bg-2); color: var(--tx); border-color: var(--line-2); }
+.orch-icon-btn svg { width: 17px; height: 17px; }
+.orch-icon-btn.sm { width: 26px; height: 26px; } .orch-icon-btn.sm svg { width: 14px; height: 14px; }
+
+.orch-body { position: relative; flex: 1; display: flex; min-height: 0; }
+.orch-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.orch-convos {
+  position: absolute; inset: 0; z-index: 3; padding: 8px;
+  background: var(--bg-1); border-right: 1px solid var(--line-2);
+  overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+  transform: translateX(-102%); transition: transform .18s; visibility: hidden;
+}
+.orch-panel.show-convos .orch-convos { transform: translateX(0); visibility: visible; }
+.orch-convo { display: flex; align-items: center; gap: 6px; padding: 9px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+.orch-convo:hover { background: var(--bg-3); }
+.orch-convo.active { background: var(--brand-soft); border-color: var(--brand-line); }
+.orch-convo-main { flex: 1; min-width: 0; }
+.orch-convo-title { font-size: 12.5px; font-weight: 700; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.orch-convo-sub { font-size: 10.5px; color: var(--tx-3); margin-top: 2px; }
+.orch-convo-acts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.orch-convo:hover .orch-convo-acts { opacity: 1; }
+.orch-convo.pinned { background: rgba(31, 201, 255, 0.06); }
+.orch-convo.pinned .orch-convo-acts { opacity: 1; }
+.orch-convo-title svg { width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; color: var(--brand); }
+.orch-icon-btn.sm.on { color: var(--brand); }
+
+.orch-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.orch-msg { max-width: 86%; padding: 9px 12px; border-radius: 13px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.orch-msg.user { align-self: flex-end; background: var(--brand-soft); border: 1px solid var(--brand-line); color: var(--tx); border-bottom-right-radius: 4px; }
+.orch-msg.assistant { align-self: flex-start; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--tx-2); border-bottom-left-radius: 4px; }
+.orch-msg-body { white-space: pre-wrap; }
+.orch-msg-body.orch-err { color: var(--neg); }
+.orch-msg-meta { margin-top: 6px; font-size: 10px; color: var(--tx-3); }
+.orch-dots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.orch-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--tx-3); animation: orchDot 1s infinite; }
+.orch-dots i:nth-child(2) { animation-delay: .16s; } .orch-dots i:nth-child(3) { animation-delay: .32s; }
+@keyframes orchDot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+
+.orch-experts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 7px 10px 0; border-top: 1px solid var(--line-2); background: var(--bg-3); }
+.orch-experts > span { margin-right: auto; color: var(--tx-3); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
+.orch-experts button { border: 1px solid var(--line-2); background: var(--bg-1); color: var(--tx-2); border-radius: 999px; padding: 5px 9px; font: inherit; font-size: 10.5px; cursor: pointer; }
+.orch-experts button:hover { color: var(--tx); border-color: var(--brand-line); background: var(--brand-soft); }
+
+.orch-input { display: flex; align-items: flex-end; gap: 8px; padding: 10px; border-top: 1px solid var(--line-2); background: var(--bg-3); }
+.orch-input textarea {
+  flex: 1; resize: none; min-height: 40px; max-height: 120px; padding: 10px 12px;
+  background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 11px;
+  color: var(--tx); font: inherit; font-size: 13px; line-height: 1.4;
+}
+.orch-input textarea:focus { outline: none; border-color: var(--brand-line); }
+.orch-send { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: var(--brand); color: #041019; border: 0; cursor: pointer; }
+.orch-send:hover { filter: brightness(1.08); }
+.orch-send:disabled { opacity: .5; cursor: default; }
+.orch-send svg { width: 18px; height: 18px; }
+.orch-mic { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: var(--bg-1); color: var(--tx-2); border: 1px solid var(--line-2); cursor: pointer; }
+.orch-mic:hover { background: var(--bg-2); color: var(--tx); }
+.orch-mic svg { width: 18px; height: 18px; }
+.orch-mic.listening { background: rgba(255, 107, 129, 0.16); color: var(--neg); border-color: rgba(255, 107, 129, 0.5); animation: orchMicPulse 1.1s infinite; }
+@keyframes orchMicPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 129, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(255, 107, 129, 0); } }
+
+@media (max-width: 760px) {
+  .orch-fab { right: 14px; bottom: 70px; width: 50px; height: 50px; }
+  .orch-panel { right: 0; left: 0; bottom: 0; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; }
+}
+
+/* North Star 2026 goal progress (Overview) */
+.ns-panel .panel-b { padding: 16px 18px; }
+.ns-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.ns-kick { font-size: 10.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--brand); font-weight: 800; }
+.ns-title { font-size: 15px; font-weight: 800; color: var(--tx); margin-top: 2px; }
+.ns-bar { height: 12px; border-radius: 999px; background: var(--bg-1); border: 1px solid var(--line-2); overflow: hidden; }
+.ns-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--brand), #0f8fd6); transition: width .5s; min-width: 2px; }
+.ns-fill.pos { background: linear-gradient(90deg, var(--pos), #16a34a); }
+.ns-fill.neg { background: linear-gradient(90deg, var(--neg), #b91c1c); }
+.ns-stats { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.ns-prog { font-size: 20px; font-weight: 800; }
+.ns-sep { color: var(--tx-3); }
+.ns-target { font-size: 15px; font-weight: 700; color: var(--tx-2); }
+.ns-pct { font-size: 12.5px; font-weight: 700; color: var(--brand); background: var(--brand-soft); border: 1px solid var(--brand-line); padding: 1px 8px; border-radius: 999px; }
+.ns-remain { font-size: 12.5px; color: var(--tx-3); margin-left: auto; }
+.ns-foot { font-size: 11.5px; margin-top: 8px; }
+
+/* Theme picker (top menu → Тема приложения) */
+.theme-picker { gap: 6px; }
+.theme-opt { width: 100%; text-align: left; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-sm); cursor: pointer; color: inherit; font: inherit; padding: 12px 14px; }
+.theme-opt:hover { background: var(--bg-3); }
+.theme-opt.active { border-color: var(--brand-line); background: var(--brand-soft); }
+.theme-opt .row-val svg { width: 18px; height: 18px; color: var(--brand); }

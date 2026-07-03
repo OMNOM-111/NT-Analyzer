@@ -16,7 +16,7 @@ UI.ready(async function () {
   }
 
   function renderBuckets(target, rows, empty) {
-    UI.qs(target).innerHTML = rows.length ? rows.map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.id)}</div><div class="row-sub">${Number(row.requests || 0)} запросов · ${Number(row.tokens || 0).toLocaleString('ru-RU')} tokens${row.unpriced_requests ? ` · ${Number(row.unpriced_requests)} без цены` : ''}</div></div><strong>${usd(row.cost_usd, 6)}</strong></div>`).join('') : `<div class="empty-state">${UI.esc(empty)}</div>`;
+    UI.qs(target).innerHTML = rows.length ? rows.map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.id)}</div><div class="row-sub">${Number(row.requests || 0)} запросов · ${Number(row.tokens || 0).toLocaleString('ru-RU')} tokens · provider cache ${Number(row.provider_cache_hit_pct || 0).toFixed(1)}% · effective ${Number(row.effective_cache_hit_pct || row.cache_hit_pct || 0).toFixed(1)}%${row.unpriced_requests ? ` · ${Number(row.unpriced_requests)} без цены` : ''}</div></div><strong>${usd(row.cost_usd, 6)}</strong></div>`).join('') : `<div class="empty-state">${UI.esc(empty)}</div>`;
   }
 
   function render() {
@@ -27,7 +27,8 @@ UI.ready(async function () {
       ['Модели', totals.agents || 0, ''],
       ['Аккаунты / ключи', accounts.size, 'info'],
       ['Включены', totals.enabled || 0, totals.enabled ? 'pos' : ''],
-      ['Tokens за месяц', (state.usage || []).reduce((sum, row) => sum + Number(row.total_tokens || 0), 0).toLocaleString('ru-RU'), ''],
+      ['Provider cache', `${Number(totals.provider_cache_hit_pct || 0).toFixed(1)}%`, Number(totals.provider_cache_hit_pct || 0) >= 50 ? 'pos' : ''],
+      ['Effective cache', `${Number(totals.cache_hit_pct || 0).toFixed(1)}%`, Number(totals.cache_hit_pct || 0) >= 50 ? 'pos' : ''],
       ['Известный расход / месяц', usd(totals.spend_month_usd, 6), 'warn'],
     ].map(row => `<div class="kpi"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm ${row[2]}">${UI.esc(row[1])}</div></div>`).join('');
     UI.qs('#storage-badge').className = `badge ${state.storage?.available ? 'live' : 'failed'}`;
@@ -43,9 +44,16 @@ UI.ready(async function () {
         ? (agent.credit_remaining_estimated_usd == null ? `${usd(agent.credit_total_usd, 2)} credit` : `${usd(agent.credit_remaining_estimated_usd, 4)} из ${usd(agent.credit_total_usd, 2)} · использовано ${Number(agent.credit_used_pct || 0).toFixed(4)}%`)
         : billing.label;
       const pricing = agent.pricing_status === 'free' ? 'free tier · $0' : agent.pricing_status === 'estimated' ? 'стоимость ≈ по reference-тарифу' : agent.pricing_status === 'configured' ? 'стоимость считается' : 'tokens считаются · цена ожидает catalog';
+      const dayBudget = Number(agent.daily_budget_usd || 0) > 0
+        ? `<div>День: ${usd(agent.spend_today_usd, 6)} / ${usd(agent.daily_budget_usd, 2)}</div>${meter(agent.spend_today_usd, agent.daily_budget_usd)}`
+        : `<div>День: ${usd(agent.spend_today_usd, 6)}</div><div class="row-sub">без дневного лимита</div>`;
+      const monthSpent = agent.monthly_budget_scope === 'provider_account' ? Number(agent.account_spend_month_usd || 0) : Number(agent.spend_month_usd || 0);
+      const monthBudget = Number(agent.monthly_budget_usd || 0) > 0
+        ? `<div class="row-sub" style="margin-top:6px">Месяц${agent.monthly_budget_scope === 'provider_account' ? ' · общий аккаунт' : ''}: ${usd(monthSpent, 6)} / ${usd(agent.monthly_budget_usd, 2)}</div>${meter(monthSpent, agent.monthly_budget_usd)}`
+        : `<div class="row-sub" style="margin-top:6px">Месяц: ${usd(agent.spend_month_usd, 6)} · без лимита</div>`;
       const budget = agent.budget_mode === 'monitor_only'
-        ? `<strong>${usd(agent.spend_month_usd, 6)}</strong><div class="row-sub">без блокирующего лимита</div>`
-        : `<div>${usd(agent.spend_today_usd, 6)} / ${usd(agent.daily_budget_usd, 2)}</div>${meter(agent.spend_today_usd, agent.daily_budget_usd)}<div class="row-sub" style="margin-top:6px">${usd(agent.spend_month_usd, 6)} / ${usd(agent.monthly_budget_usd, 2)}</div>${meter(agent.spend_month_usd, agent.monthly_budget_usd)}`;
+        ? `<strong>${usd(agent.spend_month_usd, 6)}</strong><div class="row-sub">monitoring · без блокирующего лимита</div>`
+        : `${dayBudget}${monthBudget}`;
       return `<tr><td><strong>${UI.esc(agent.model)}</strong><div class="row-sub">${UI.esc(provider.label)} · ${UI.esc(agent.endpoint_type)}</div><div class="row-sub">роль: ${UI.esc(roleById(agent.role).label)}</div></td><td><strong>${UI.esc(agent.account_name)}</strong><div class="row-sub">${UI.esc(billing.label)} · pool ${UI.esc(agent.rotation_group || '—')} · priority ${Number(agent.priority || 100)}</div></td><td><span class="mono">${UI.esc(agent.key_mask || 'не настроен')}</span><div class="row-sub">${agent.key_configured ? 'Windows DPAPI' : UI.esc(agent.key_storage_error || '')}</div></td><td>${budget}<div class="row-sub">${UI.esc(pricing)}</div></td><td><strong>${credit}</strong><div class="row-sub">общий для ${Number(agent.account_models || 1)} моделей этого аккаунта</div></td><td><span class="badge ${agent.enabled ? 'live' : 'archived'}"><span class="dot"></span>${agent.enabled ? 'enabled' : 'disabled'}</span>${agent.disabled_reason && agent.disabled_reason !== 'disabled_by_operator' ? `<div class="row-sub">${UI.esc(agent.disabled_reason)}</div>` : ''}${agent.last_test ? `<div class="row-sub">test: ${agent.last_test.ok ? 'OK' : 'error'} · ${fmtDate(agent.last_test.tested_at_utc)}</div>` : ''}</td><td><div class="agent-actions"><button class="btn sm" data-agent-test="${UI.esc(agent.id)}">Test Connection</button><button class="btn sm" data-agent-edit="${UI.esc(agent.id)}">Edit Agent</button><button class="btn sm ${agent.enabled ? 'danger' : 'primary'}" data-agent-toggle="${UI.esc(agent.id)}" data-enabled="${agent.enabled ? '1' : '0'}">${agent.enabled ? 'Disable Agent' : 'Enable Agent'}</button>${provider.supports_balance_sync ? `<button class="btn sm" data-agent-balance="${UI.esc(agent.id)}">Sync credit</button>` : ''}<button class="btn sm danger" data-agent-delete="${UI.esc(agent.id)}">Delete Agent</button></div></td></tr>`;
     }).join('') : '<tr><td colspan="7"><div class="empty-state">Моделей пока нет. Нажмите Add Model; технические параметры будут определены автоматически.</div></td></tr>';
 
@@ -71,7 +79,7 @@ UI.ready(async function () {
     select.innerHTML = agents.length ? agents.map(agent => `<option value="${UI.esc(agent.id)}">${UI.esc(agent.account_name)} · ${UI.esc(agent.model)}</option>`).join('') : '<option value="">нет моделей</option>';
     if (agents.some(agent => agent.id === previous)) select.value = previous;
     UI.qs('#test-send').disabled = !agents.length;
-    UI.qs('#usage-body').innerHTML = (state.usage || []).length ? state.usage.slice().reverse().map(row => `<tr><td>${fmtDate(row.timestamp_utc)}</td><td><strong>${UI.esc(row.agent_name || row.agent_id || '—')}</strong><div class="row-sub">${UI.esc(row.account_name || '')}${row.request_role ? ` · ${UI.esc(row.request_role)}` : ''}</div></td><td>${UI.esc(row.provider || '—')}<div class="row-sub mono">${UI.esc(row.actual_model || row.model || '')}</div></td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span>${row.purpose ? `<div class="row-sub">${UI.esc(row.purpose)}</div>` : ''}${row.error ? `<div class="row-sub">${UI.esc(row.error)}</div>` : ''}</td><td class="num">${Number(row.input_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.output_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${costText(row)}</td></tr>`).join('') : '<tr><td colspan="8"><div class="empty-state">Usage log пуст.</div></td></tr>';
+    UI.qs('#usage-body').innerHTML = (state.usage || []).length ? state.usage.slice().reverse().map(row => `<tr><td>${fmtDate(row.timestamp_utc)}</td><td><strong>${UI.esc(row.agent_name || row.agent_id || '—')}</strong><div class="row-sub">${UI.esc(row.account_name || '')}${row.request_role ? ` · ${UI.esc(row.request_role)}` : ''}</div></td><td>${UI.esc(row.provider || '—')}<div class="row-sub mono">${UI.esc(row.actual_model || row.model || '')}</div></td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span>${row.purpose ? `<div class="row-sub">${UI.esc(row.purpose)}</div>` : ''}${row.error ? `<div class="row-sub">${UI.esc(row.error)}</div>` : ''}</td><td class="num">${Number(row.input_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.cached_input_tokens || 0).toLocaleString('ru-RU')}<div class="row-sub">${Number(row.input_tokens || 0) ? (Number(row.cached_input_tokens || 0) / Number(row.input_tokens || 1) * 100).toFixed(1) : '0.0'}%${row.application_cache_hit ? ` · app saved ${Number(row.application_cache_saved_input_tokens || 0).toLocaleString('ru-RU')}` : ''}</div></td><td class="num">${Number(row.output_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${costText(row)}</td></tr>`).join('') : '<tr><td colspan="9"><div class="empty-state">Usage log пуст.</div></td></tr>';
     renderBuckets('#account-usage', state.by_account || [], 'Запросов по аккаунтам пока нет.');
     renderBuckets('#model-usage', state.by_model || [], 'Запросов по моделям пока нет.');
     wireRows();
@@ -87,7 +95,9 @@ UI.ready(async function () {
     if (providerId === 'azure_foundry') return { account: 'Azure Student Grant ($100)', billing: 'credit', credit: 100, pool: 'azure-student', model: '' };
     if (providerId === 'gemini') return { account: `Google AI Studio key ${count}`, billing: 'free_tier', credit: 0, pool: 'gemini-pool', model: 'gemini-2.5-flash' };
     if (providerId === 'openrouter') return { account: `OpenRouter key ${count}`, billing: 'free_tier', credit: 0, pool: 'openrouter-pool', model: 'openrouter/free' };
-    return { account: `${providerById(providerId).label} key ${count}`, billing: 'unknown', credit: 0, pool: `${providerId}-pool`, model: '' };
+    if (providerId === 'zai') return { account: `Z.AI key ${count}`, billing: 'unknown', credit: 0, pool: 'zai-pool', model: 'glm-5.2' };
+    if (providerId === 'deepseek') return { account: `DeepSeek paid account ${count}`, billing: 'payg', credit: 0, pool: 'deepseek-paid-critical', model: 'deepseek-v4-pro', monthly: 5 };
+    return { account: `${providerById(providerId).label} key ${count}`, billing: 'unknown', credit: 0, pool: `${providerId}-pool`, model: '', monthly: 0 };
   }
 
   function openAgentForm(agent) {
@@ -138,7 +148,7 @@ UI.ready(async function () {
         rotation_group: UI.qs('#af-pool', body).value.trim(), priority: Number(UI.qs('#af-priority', body).value || 100),
         role: UI.qs('#af-role', body).value || undefined, purpose: UI.qs('#af-purpose', body).value.trim(),
         credit_total_usd: billing.value === 'credit' ? Number(UI.qs('#af-credit', body).value || 0) : 0,
-        daily_budget_usd: agent?.daily_budget_usd || 0, monthly_budget_usd: agent?.monthly_budget_usd || 0,
+        daily_budget_usd: agent?.daily_budget_usd || 0, monthly_budget_usd: agent?.monthly_budget_usd ?? providerDefaults(provider.value).monthly ?? 0,
         input_price_usd_per_m: agent?.input_price_usd_per_m || 0, cached_input_price_usd_per_m: agent?.cached_input_price_usd_per_m ?? null,
         output_price_usd_per_m: agent?.output_price_usd_per_m || 0, enabled: UI.qs('#af-enabled', body).checked,
       };

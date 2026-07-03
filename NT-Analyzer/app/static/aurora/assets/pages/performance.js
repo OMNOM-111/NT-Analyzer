@@ -1,4 +1,4 @@
-/* Центр доходности — реальная интеграция с backend (/api/performance). CSP-safe. */
+/* Финансы: доходность + счета + детерминированная бухгалтерия. CSP-safe. */
 UI.ready(async function () {
   const state = { range: 'month', from: '', to: '', account: '', offset: 0, limit: 100, breakdown: 'daily' };
   let firstLoad = true, rows = [], currentPerf = null, currentTrades = null;
@@ -13,6 +13,15 @@ UI.ready(async function () {
     if (state.account) q.account = state.account;
     return q;
   }
+  function toAccountingQuery() {
+    const financeRange = toQuery();
+    return {
+      period: financeRange.period,
+      account: state.account,
+      ...(financeRange.from ? { from: financeRange.from } : {}),
+      ...(financeRange.to ? { to: financeRange.to } : {}),
+    };
+  }
   function pfText(kind, pf) {
     if (kind === 'infinite') return '∞';
     if (pf == null) return '—';
@@ -24,20 +33,21 @@ UI.ready(async function () {
     UI.renderLoading(sumBox, 'Загрузка доходности из backend…');
     const sharedNow = UI.getSelectedAccount();
     if (firstLoad && !state.account && sharedNow) state.account = sharedNow.account_name;
-    let perf, accountDoc, accountHistory, tradesDoc;
+    let perf, accountDoc, accountHistory, tradesDoc, accountingDoc;
     try {
-      [perf, accountDoc, accountHistory, tradesDoc] = await Promise.all([
+      [perf, accountDoc, accountHistory, tradesDoc, accountingDoc] = await Promise.all([
         API.http.performance(toQuery(), { signal: UI.signal() }),
         API.http.runtimeAccounts().catch(() => ({ online_accounts: [] })),
         API.http.runtimeAccountHistory({ account: state.account, limit: 250 }).catch(() => ({ accounts: [] })),
         API.http.performanceTrades(Object.assign({}, toQuery(), { offset: state.offset, limit: state.limit }), { signal: UI.signal() }).catch(() => null),
+        API.http.accounting(toAccountingQuery(), { signal: UI.signal() }).catch(() => null),
       ]);
     }
     catch (e) { if (e.name === 'AbortError') return; UI.renderError(sumBox, e, load); return; }
-    render(perf, accountDoc, accountHistory, tradesDoc);
+    render(perf, accountDoc, accountHistory, tradesDoc, accountingDoc);
   }
 
-  function render(perf, accountDoc, accountHistory, tradesDoc) {
+  function render(perf, accountDoc, accountHistory, tradesDoc, accountingDoc) {
     currentPerf = perf;
     currentTrades = tradesDoc;
     // account selector — populated once from real accounts
@@ -75,6 +85,7 @@ UI.ready(async function () {
     ].map(k => `<div class="kpi ${k.cls}"><div class="kpi-top"><span class="kpi-label">${k.label}</span><span class="kpi-ic">${UI.icon(k.icon)}</span></div><div class="kpi-val sm">${k.val}</div></div>`).join('');
 
     renderAccountContext(perf, accountDoc, accountHistory, sum, maxDd);
+    renderMarina(accountingDoc);
     renderCategories(perf.categories || {});
     renderTimeBreakdowns(perf.strategy_breakdowns || perf.breakdowns || {});
     renderTrades(tradesDoc);
@@ -195,6 +206,41 @@ UI.ready(async function () {
       ['Прочие движения', UI.money(amount('transfer') + amount('fee'), { sign: true }), ''],
       ['Требуют проверки', String(pending.length), pending.length ? 'warn' : ''],
     ].map(row => `<div class="kpi"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm ${row[2]}">${row[1]}</div></div>`).join('');
+  }
+
+  function renderMarina(report) {
+    const summaryBox = UI.qs('#marina-summary');
+    if (!report) {
+      summaryBox.textContent = 'Сводка Марины временно недоступна; торговые графики выше продолжают использовать фактические исполнения.';
+      UI.qs('#marina-kpis').innerHTML = '';
+      UI.qs('#marina-integrity').innerHTML = '';
+      UI.qs('#marina-events').innerHTML = '<tr><td colspan="6" class="muted">Финансовый журнал недоступен.</td></tr>';
+      return;
+    }
+    const s = report.summary || {};
+    const pnl = Number(s.trading_pnl || 0); const trades = Number(s.trades || 0);
+    const needs = Number(s.needs_review || 0); const integrityCount = Number(s.integrity_issues || 0);
+    const conclusion = !trades ? 'За выбранный период закрытых сделок нет.' : pnl > 0 ? 'После комиссий период прибыльный.' : pnl < 0 ? 'После комиссий период убыточный.' : 'Результат после комиссий нулевой.';
+    const reviewText = needs || integrityCount ? ` Требуют проверки: движения средств — ${needs}, нарушения структуры — ${integrityCount}. Спорные суммы автоматически не классифицируются.` : ' Необъяснённых движений и структурных нарушений не найдено.';
+    summaryBox.innerHTML = `<strong>Автоматический вывод Марины:</strong> ${conclusion}${reviewText}`;
+    const period = report.period || {};
+    UI.qs('#marina-period-label').textContent = `${period.from || '—'} … ${period.to || '—'} · точный расчёт без LLM`;
+    UI.qs('#marina-kpis').innerHTML = [
+      ['P&L после комиссий', UI.money(pnl, { sign: true, dec: 2 }), UI.pnlClass(pnl)],
+      ['Валовый P&L', UI.money(Number(s.gross_pnl || 0), { sign: true, dec: 2 }), UI.pnlClass(Number(s.gross_pnl || 0))],
+      ['Комиссии', UI.money(Number(s.commission || 0), { dec: 2 }), 'warn'],
+      ['Проверить', String(needs + integrityCount), needs + integrityCount ? 'neg' : 'pos'],
+    ].map(row => `<div class="kpi"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm ${row[2]}">${row[1]}</div></div>`).join('');
+
+    const issues = (report.integrity && report.integrity.issues) || [];
+    UI.qs('#marina-integrity').innerHTML = issues.length
+      ? `<div class="list">${issues.slice(0, 20).map(issue => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(issue.code || 'financial_issue')}</div><div class="row-sub">${UI.esc(issue.account_name || '')} · ${UI.esc(issue.event_id || '')}</div></div><div class="row-val"><span class="badge ${issue.safe_to_repair ? 'trial' : 'failed'}">${issue.safe_to_repair ? 'точный дубль' : 'ручная проверка'}</span></div></div>`).join('')}</div>`
+      : '<div class="finance-note"><strong>Целостность журнала:</strong> точных дублей и повреждённых сумм не обнаружено.</div>';
+
+    const events = [];
+    (report.accounts || []).forEach(account => (account.events || []).forEach(event => events.push({ ...event, account_name: account.account_name })));
+    events.sort((a, b) => String(b.at_utc || '').localeCompare(String(a.at_utc || '')));
+    UI.qs('#marina-events').innerHTML = events.length ? events.slice(0, 100).map(event => `<tr><td class="mono muted">${UI.esc(event.at_utc || '—')}</td><td>${UI.esc(event.account_name || '')}</td><td>${UI.esc(event.kind || '')}</td><td class="num ${UI.pnlClass(Number(event.amount || 0))}">${UI.money(Number(event.amount || 0), { sign: true, dec: 2 })}</td><td><span class="badge ${event.classification_status === 'needs_review' ? 'trial' : 'live'}">${UI.esc(event.classification_status || '')}</span></td><td class="muted">${UI.esc(event.note || event.provenance || '')}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">Движений за выбранный период нет.</td></tr>';
   }
 
   function renderCategories(categories) {

@@ -30,6 +30,29 @@ def test_governance_documents_exist() -> None:
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
 
 
+def test_north_star_goal_is_registered_and_readable() -> None:
+    goals = governance.read_goals()
+    north = goals.get("north_star")
+    assert isinstance(north, dict) and north, "north_star goal must be configured"
+    assert north["target_usd"] == 100000
+    assert north["deadline"] == "2026-12-31"
+    assert len(north.get("milestones") or []) == 4
+    # registered as a governance document and the markdown file exists
+    docs = {row["id"]: row for row in governance.list_documents()}
+    assert "north-star-2026" in docs
+    assert Path(docs["north-star-2026"]["abs_path"]).is_file()
+
+
+def test_north_star_progress_shape() -> None:
+    progress = governance.north_star_progress()
+    assert progress["configured"] is True
+    assert progress["target_usd"] == 100000
+    assert progress["deadline"] == "2026-12-31"
+    # progress/remaining come from runtime realized PnL; keys must always exist
+    for key in ("progress_usd", "remaining_usd", "progress_pct", "days_left", "pace_required_usd_per_day"):
+        assert key in progress
+
+
 def test_change_log_reader_shape() -> None:
     entries = governance.read_change_log(10)
     assert isinstance(entries, list)

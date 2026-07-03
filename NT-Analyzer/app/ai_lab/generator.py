@@ -480,6 +480,8 @@ def fallback_template(
                 private double _dailyOpenPnl;
                 private DateTime _currentSessionDate = DateTime.MinValue;
                 private int _tradesToday;
+                private bool _sessionCloseLogged;
+                private bool _riskStopLogged;
 {extra_fields}
 
                 protected override void OnStateChange()
@@ -515,11 +517,16 @@ def fallback_template(
                         SlippageTicks       = {slippage_ticks};
                         SessionStartTimePT  = {session_start_time};
                         SessionEndTimePT    = {session_end_time};
+                        EnableBacktestLog   = true;
                     }}
                     else if (State == State.Configure)
                     {{
                         SetStopLoss(CalculationMode.Ticks, StopLossTicks);
                         SetProfitTarget(CalculationMode.Ticks, ProfitTargetTicks);
+                    }}
+                    else if (State == State.DataLoaded && EnableBacktestLog)
+                    {{
+                        Print("[NTA-LAB] READY " + Name + " cell={ai_cell_id} instrument={instrument}");
                     }}
                 }}
 
@@ -533,6 +540,10 @@ def fallback_template(
                         _currentSessionDate = Time[0].Date;
                         _dailyOpenPnl = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
                         _tradesToday = 0;
+                        _sessionCloseLogged = false;
+                        _riskStopLogged = false;
+                        if (EnableBacktestLog)
+                            Print(string.Format("[NTA-LAB] SESSION {{0}} date={{1:yyyy-MM-dd}}", Name, Time[0]));
 {reset_family_state}
                     }}
 
@@ -540,6 +551,11 @@ def fallback_template(
                     var sessionPnl = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit - _dailyOpenPnl;
                     if (sessionPnl <= -MaxDailyLoss)
                     {{
+                        if (EnableBacktestLog && !_riskStopLogged)
+                        {{
+                            Print(string.Format("[NTA-LAB] RISK_STOP {{0}} pnl={{1:F2}} trades={{2}}", Name, sessionPnl, _tradesToday));
+                            _riskStopLogged = true;
+                        }}
                         ForceFlat();
                         return;
                     }}
@@ -552,6 +568,11 @@ def fallback_template(
 
                     if (nowPt >= SessionEndTimePT)
                     {{
+                        if (EnableBacktestLog && !_sessionCloseLogged)
+                        {{
+                            Print(string.Format("[NTA-LAB] SESSION_END {{0}} pnl={{1:F2}} trades={{2}}", Name, sessionPnl, _tradesToday));
+                            _sessionCloseLogged = true;
+                        }}
                         ForceFlat();
                         return;
                     }}
@@ -572,6 +593,8 @@ def fallback_template(
 
                 private string TelemetrySignal(string side)
                 {{
+                    if (EnableBacktestLog)
+                        Print(string.Format("[NTA-LAB] ENTRY {{0}} side={{1}} time={{2:yyyy-MM-dd HH:mm}}", Name, side, Time[0]));
                     return GetType().Name + "." + side;
                 }}
 
@@ -605,6 +628,9 @@ def fallback_template(
 
                 [NinjaTrader.NinjaScript.NinjaScriptProperty]
                 public int SessionEndTimePT {{ get; set; }}
+
+                [NinjaTrader.NinjaScript.NinjaScriptProperty]
+                public bool EnableBacktestLog {{ get; set; }}
                 #endregion
             }}
         }}
@@ -673,6 +699,9 @@ def build_user_prompt(
         "SetProfitTarget(CalculationMode.Ticks, ProfitTargetTicks) before any entry.",
         "- Every entry signal must be TelemetrySignal(\"Long\"/\"Short\"), where "
         "TelemetrySignal returns GetType().Name + \".\" + side.",
+        "- Add compact NinjaTrader Output logging only for READY, session start/end, "
+        "entry submission and first risk stop. Never Print on every bar. Expose "
+        "EnableBacktestLog=true so the operator can disable it.",
         "- If position sizing is dynamic, return qty=0 when one contract exceeds "
         "the per-trade risk budget. Never force byRisk or qty up to 1.",
         "- At Bars.IsFirstBarOfSession snapshot CumProfit and reset tradesToday.",

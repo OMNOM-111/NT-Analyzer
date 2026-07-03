@@ -15,6 +15,10 @@
     news: '<path d="M4 5h12v14H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1Z"/><path d="M16 8h4v9a2 2 0 0 1-2 2h-2M7 9h6M7 13h6M7 16h4"/>',
     trophy: '<path d="M8 4h8v4a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4v2a4 4 0 0 0 4 4M16 6h4v2a4 4 0 0 1-4 4M12 12v5M8 21h8M9 17h6"/>',
     telegram: '<path d="m21 3-4 18-6-5-4 3 1-6 9-7-11 6-4-2 19-7Z"/>',
+    chat: '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10Z"/><path d="M8 9h8M8 13h5"/>',
+    send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/>',
+    pin: '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6ZM12 14v7"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 4v4h-4"/>',
     play: '<path d="M6 4l14 8-14 8V4Z"/>',
@@ -45,17 +49,32 @@
     plug: '<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v6"/>',
     chart: '<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2V5Z"/><path d="M8 7h7M8 11h7"/>',
+    palette: '<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-.5-.3-.9-.6-1.2-.3-.3-.5-.6-.5-1 0-.8.7-1.3 1.5-1.3H15a5 5 0 0 0 5-5c0-4-3.6-7-8-7Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>',
   };
   function icon(name, cls) { return `<svg class="${cls || 'ic'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[name] || ''}</svg>`; }
   const APP_NAME = 'StratForge AI';
   const APP_KICKER = 'StratForge AI · NTA Edition';
+
+  // ---- app theme (auto / dark / light) ---------------------------------------
+  const THEME_KEY = 'app.theme';
+  function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+  function applyTheme(mode) {
+    const m = (mode === 'dark' || mode === 'light') ? mode : 'auto';
+    if (document.documentElement) document.documentElement.setAttribute('data-theme', m);
+  }
+  function setTheme(mode) {
+    const m = (mode === 'dark' || mode === 'light') ? mode : 'auto';
+    try { localStorage.setItem(THEME_KEY, m); } catch (e) { /* ignore */ }
+    applyTheme(m);
+  }
+  applyTheme(loadTheme());  // apply immediately to avoid a flash before shell builds
   const BRAND_MARK = 'brand/stratforge-mark.png';
 
   const NAV = [
     { id: 'overview', label: 'Обзор', href: 'index.html', icon: 'overview' },
     { id: 'backtest', label: 'Бэктест', href: 'backtesting.html', icon: 'backtest' },
     { id: 'trading', label: 'Торговля', href: 'trading.html', icon: 'trading' },
-    { id: 'performance', label: 'Доход', href: 'performance.html', icon: 'performance' },
+    { id: 'performance', label: 'Финансы', href: 'performance.html', icon: 'performance' },
     { id: 'strategies', label: 'Стратегии', href: 'strategies.html', icon: 'strategies' },
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
@@ -291,7 +310,7 @@
     return uniqueTickerRows(rows, limit || 10);
   }
 
-  function renderGlobalNewsStrip(strip, calendar, live) {
+  function renderGlobalNewsStrip(strip, calendar, live, agentNews) {
     const label = qs('.global-news-label', strip);
     const track = qs('.global-news-track', strip);
     const now = Date.now();
@@ -353,6 +372,12 @@
       url: item.url || item.source_url || '',
       dedupeKey: `live:${item.source || ''}:${item.title || ''}`,
     }));
+    ((agentNews && agentNews.items) || []).slice(0, 6).forEach(item => rows.push({
+      severity: item.severity || 'medium',
+      text: `🧠 Никита: ${item.title} — ${String(item.recommendation || '').slice(0, 180)}`,
+      url: item.source_url || '',
+      dedupeKey: `agent:${item.news_id || item.title}`,
+    }));
 
     let unique = uniqueTickerRows(rows.concat(scheduleStrategyRows(events, now, 12)), 24);
     if (unique.length < 10) unique = uniqueTickerRows(unique.concat(marketNoticeRows(events, now)), 24);
@@ -377,11 +402,12 @@
     if (!strip || !window.API || !API.http) return;
     const refresh = async () => {
       try {
-        const [calendar, live] = await Promise.all([
+        const [calendar, live, agentNews] = await Promise.all([
           API.http.news({ limit: 120 }, { signal: signal() }),
           API.http.newsLive({ max_age_min: 720, limit: 40 }, { signal: signal() }).catch(() => null),
+          API.http.newsAnalysis({ limit: 20 }, { signal: signal() }).catch(() => null),
         ]);
-        renderGlobalNewsStrip(strip, calendar, live);
+        renderGlobalNewsStrip(strip, calendar, live, agentNews);
       } catch (error) {
         if (error && error.name === 'AbortError') return;
         const track = qs('.global-news-track', strip);
@@ -447,6 +473,7 @@
     wireDelegatedActions();
     wireA11y();
     wireGlobalNewsStrip(newsStrip);
+    buildOrchestratorWidget();
     // run page initializers (await async ones; route rejections to the global handler)
     requestAnimationFrame(() => { runReady(); });
   }
@@ -604,6 +631,31 @@
     } catch (e) { renderError(body, e, showDiagnostics); }
   }
 
+  function telegramRightRow(label, ok) {
+    return `<div class="row"><div class="row-main"><div class="row-title">${esc(label)}</div></div><div class="row-val ${ok ? 'pos' : 'neg'}">${ok ? 'да' : 'нет'}</div></div>`;
+  }
+
+  function showThemePicker() {
+    const opts = [
+      ['auto', 'Автоматически', 'Как в системе (сейчас по умолчанию)'],
+      ['dark', 'Тёмная', 'Тёмный интерфейс Aurora'],
+      ['light', 'Светлая', 'Светлый интерфейс'],
+    ];
+    const render = () => {
+      const current = loadTheme();
+      const html = `<div class="list theme-picker">${opts.map(o => `
+        <button class="row theme-opt ${o[0] === current ? 'active' : ''}" data-theme-opt="${o[0]}">
+          <div class="row-main"><div class="row-title">${esc(o[1])}</div><div class="row-sub">${esc(o[2])}</div></div>
+          <div class="row-val">${o[0] === current ? icon('check') : ''}</div>
+        </button>`).join('')}</div>
+        <div class="finance-note">Тема сохраняется в этом браузере и действует на всех страницах приложения.</div>`;
+      const d = drawer('<h3>Тема приложения</h3>', html);
+      const body = qs('.drawer-b', d);
+      qsa('[data-theme-opt]', body).forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.themeOpt); toast('Тема применена'); render(); }));
+    };
+    render();
+  }
+
   async function showTelegram() {
     if (!window.API || API.config.offline) { toast('Telegram недоступен в офлайн-превью'); return; }
     const d = drawer('<h3>Telegram</h3>', '<div class="state-loading"><span class="spinner"></span>Проверка подключения…</div>');
@@ -612,6 +664,8 @@
     async function refresh() {
       try {
         const status = await API.http.telegramStatus();
+        let group = null;
+        if (status.token_configured) { try { group = await API.http.telegramGroupStatus(); } catch (e) { group = null; } }
         const connectionLabel = status.configured ? 'подключён' : status.token_configured ? 'нужно подключить чат' : 'не настроен';
         const botLabel = status.bot_username ? `@${status.bot_username}` : (status.bot_name || 'бот не проверен');
         const settingRows = (status.setting_definitions || []).map(item => {
@@ -644,6 +698,31 @@
             <p class="muted mt-0">Создайте одноразовую ссылку, откройте её и нажмите Start в Telegram.</p>
             <div id="telegram-pair-result"></div>
             <div class="flex wrap gap-sm"><button class="btn primary" id="telegram-pair-start">Создать ссылку</button><button class="btn" id="telegram-pair-complete" ${status.pairing_active ? '' : 'disabled'}>Проверить подключение</button></div>
+          </section>` : ''}
+
+          ${status.token_configured ? `<section class="telegram-card">
+            <div class="flex between"><div class="section-title">Группа с темами (StratForge AI Control)</div><span class="badge ${group && group.configured ? (group.rights && group.rights.ready ? 'live' : 'pending') : 'archived'}"><span class="dot"></span>${group && group.configured ? (group.rights && group.rights.ready ? 'готова' : 'нужны права') : 'не привязана'}</span></div>
+            <p class="muted mt-0">Каждый чат приложения показывается отдельной темой группы. Добавьте бота <strong>@${esc(status.bot_username || 'StratForgeAI_bot')}</strong> в супергруппу с включёнными Topics и сделайте его админом с правом «Управление темами».</p>
+            ${group && !group.configured ? `<div class="finance-note"><strong>Как настроить:</strong><br>
+              1. Откройте группу → Добавить участников → найдите @${esc(status.bot_username || 'StratForgeAI_bot')} → добавьте.<br>
+              2. Откройте профиль бота в группе → Назначить администратором → включите «Управление темами».<br>
+              3. Убедитесь, что в группе включены Topics (Групп. темы) в настройках группы.<br>
+              4. <strong>Бот обнаружит группу автоматически</strong> при следующем сообщении (≤30 сек) — или введите ID вручную ниже.</div>` : ''}
+            ${group && group.configured ? `
+              <div class="row-sub">Группа: ${esc(group.group_title || group.group_id || '')}${group.topics_count != null ? ` · тем: ${group.topics_count}` : ''}</div>
+              <div class="list" style="margin:8px 0">
+                ${telegramRightRow('Темы включены (is_forum)', group.rights && group.rights.is_forum)}
+                ${telegramRightRow('Бот — администратор', group.rights && group.rights.is_admin)}
+                ${telegramRightRow('Может управлять темами', group.rights && group.rights.can_manage_topics)}
+                ${telegramRightRow('Может отправлять сообщения', group.rights && group.rights.can_post_messages)}
+              </div>
+              ${group.rights && group.rights.error ? `<div class="finance-note telegram-error">${esc(group.rights.error)}</div>` : ''}
+              <div class="flex wrap gap-sm"><button class="btn" id="telegram-group-recheck">Проверить права</button><button class="btn danger" id="telegram-group-disconnect">Отвязать группу</button></div>
+            ` : `
+              <div class="field"><label for="telegram-group-id">ID супергруппы (необязательно — бот обнаружит автоматически)</label><input id="telegram-group-id" inputmode="numeric" placeholder="-1001234567890"></div>
+              <div class="flex wrap gap-sm"><button class="btn primary" id="telegram-group-connect">Привязать группу вручную</button></div>
+              <div class="row-sub">ID: откройте группу в Telegram Web → скопируйте число из URL (начинается с -100...). Или дождитесь автоопределения после добавления бота.</div>
+            `}
           </section>` : ''}
 
           <section class="telegram-card">
@@ -687,6 +766,25 @@
           catch (error) { reportError(error); pairComplete.disabled = false; }
         };
 
+        const groupConnect = qs('#telegram-group-connect', body);
+        if (groupConnect) groupConnect.onclick = async () => {
+          const input = qs('#telegram-group-id', body);
+          const gid = input && input.value.trim();
+          if (!gid) { toast('Введите ID группы'); return; }
+          groupConnect.disabled = true;
+          try { await API.http.telegramConfigureGroup(gid); toast('Группа привязана'); await refresh(); }
+          catch (error) { reportError(error); groupConnect.disabled = false; }
+        };
+        const groupRecheck = qs('#telegram-group-recheck', body);
+        if (groupRecheck) groupRecheck.onclick = async () => { groupRecheck.disabled = true; try { await refresh(); } catch (e) { groupRecheck.disabled = false; } };
+        const groupDisconnect = qs('#telegram-group-disconnect', body);
+        if (groupDisconnect) groupDisconnect.onclick = async () => {
+          if (!confirm('Отвязать группу и удалить карту тем? Личный чат останется.')) return;
+          groupDisconnect.disabled = true;
+          try { await API.http.telegramDisconnectGroup(); toast('Группа отвязана'); await refresh(); }
+          catch (error) { reportError(error); groupDisconnect.disabled = false; }
+        };
+
         qsa('[data-telegram-setting]', body).forEach(input => {
           input.onchange = async () => {
             input.disabled = true;
@@ -726,6 +824,7 @@
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
+        { icon: 'palette', label: 'Тема приложения', onClick: () => showThemePicker() },
         { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
@@ -999,6 +1098,287 @@
     });
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV };
+  // ---- global orchestrator chat widget ---------------------------------------
+  // Floating launcher (bottom-right) that opens a full StratForge Orchestrator
+  // chat with a conversation list, per-dialogue context, timestamps and titles.
+  // Non-blocking: sending shows the message + a typing indicator immediately and
+  // only awaits the reply; it never freezes the page.
+  const ORCH = {
+    built: false, open: false, sending: false,
+    conversations: [], currentId: 'default', loadingList: false, pollStop: null,
+  };
+  const ORCH_KEY = 'orch.currentConversationId';
+  function orchLoadLastId() {
+    try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
+  }
+  function orchSaveCurrentId(cid) {
+    ORCH.currentId = cid || 'default';
+    try { localStorage.setItem(ORCH_KEY, ORCH.currentId); } catch (e) { /* ignore */ }
+  }
+  function orchFmtTime(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles',
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return String(iso).slice(0, 16); }
+  }
+  function buildOrchestratorWidget() {
+    if (ORCH.built || qs('.orch-fab')) return;
+    ORCH.built = true;
+    const offline = !window.API || API.config.offline;
+    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="StratForge Orchestrator — чат с ассистентом" aria-label="Открыть чат оркестратора">${icon('chat')}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
+    const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="Чат StratForge Orchestrator">
+      <header class="orch-head">
+        <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
+        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">выбирает модель · работает вместо вас</span></div>
+        <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
+        <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
+      </header>
+      <div class="orch-body">
+        <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
+        <div class="orch-main">
+          <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
+          <div class="orch-experts" aria-label="Вызвать специалиста">
+            <span>Специалисты</span>
+            <button type="button" data-orch-agent="Марина" title="Финансы и бухгалтерия">Марина · финансы</button>
+            <button type="button" data-orch-agent="Толик" title="Стратегии и качество тестов">Толик · стратегии</button>
+            <button type="button" data-orch-agent="Никита" title="Новости рынка и события приложения">Никита · новости</button>
+          </div>
+          <form class="orch-input" id="orch-form" autocomplete="off">
+            <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
+            <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
+            <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
+          </form>
+        </div>
+      </div>
+    </section>`);
+    document.body.appendChild(fab);
+    document.body.appendChild(panel);
+
+    fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
+    qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
+    qs('#orch-list-toggle', panel).addEventListener('click', () => panel.classList.toggle('show-convos'));
+    qs('#orch-new', panel).addEventListener('click', orchNewConversation);
+    qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
+    qsa('[data-orch-agent]', panel).forEach(button => button.addEventListener('click', () => orchAddressAgent(button.dataset.orchAgent)));
+    const ta = qs('#orch-text', panel);
+    ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ORCH.open) closeOrchestrator(); });
+    wireOrchestratorVoice(panel);
+  }
+  function orchAddressAgent(name) {
+    const ta = qs('#orch-text');
+    if (!ta || ta.disabled) return;
+    const clean = ta.value.trim();
+    const withoutOldAddress = clean.replace(/^(Марина|Толик|Никита)\s*[,,:;-]?\s*/i, '');
+    ta.value = `${name}, ${withoutOldAddress}`;
+    ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+    ta.focus();
+  }
+  // Voice input: dictate into the message box using the browser Web Speech API
+  // (microphone). No external resources — CSP-safe. Hidden if unsupported.
+  function wireOrchestratorVoice(panel) {
+    const mic = qs('#orch-mic', panel); const ta = qs('#orch-text', panel);
+    if (!mic || !ta) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || (!window.API || API.config.offline)) { mic.hidden = true; return; }
+    mic.hidden = false;
+    let rec = null, listening = false, baseText = '';
+    function stop() { listening = false; mic.classList.remove('listening'); mic.title = 'Голосовой ввод'; try { if (rec) rec.stop(); } catch (e) { /* ignore */ } }
+    mic.addEventListener('click', () => {
+      if (listening) { stop(); return; }
+      try {
+        rec = new SR();
+        rec.lang = 'ru-RU';
+        rec.interimResults = true;
+        rec.continuous = true;
+        baseText = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
+        rec.onresult = (event) => {
+          let finalText = '', interim = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const t = event.results[i][0].transcript;
+            if (event.results[i].isFinal) finalText += t; else interim += t;
+          }
+          if (finalText) baseText = (baseText + finalText).replace(/\s+/g, ' ') + ' ';
+          ta.value = (baseText + interim).slice(0, 6000);
+          ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+        };
+        rec.onerror = (event) => { if (event && event.error === 'not-allowed') toast('Нет доступа к микрофону — разрешите его в браузере'); stop(); };
+        rec.onend = () => { if (listening) { try { rec.start(); } catch (e) { stop(); } } };
+        rec.start();
+        listening = true;
+        mic.classList.add('listening');
+        mic.title = 'Остановить запись';
+        ta.focus();
+      } catch (e) { toast('Голосовой ввод недоступен в этом браузере'); stop(); }
+    });
+    onLeave(stop);
+  }
+  async function openOrchestrator() {
+    buildOrchestratorWidget();
+    const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
+    if (!panel) return;
+    ORCH.open = true;
+    panel.hidden = false;
+    requestAnimationFrame(() => panel.classList.add('open'));
+    if (fab) fab.classList.add('active');
+    if (!window.API || API.config.offline) {
+      qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Чат оркестратора доступен только в работающем приложении (не в офлайн-превью).</div>';
+      return;
+    }
+    // Restore the last opened conversation so a reload lands where you left off.
+    ORCH.currentId = orchLoadLastId();
+    await orchLoadConversations();
+    await orchLoadMessages(ORCH.currentId);
+    const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
+    // gentle refresh only while open (keeps context in sync with Telegram/автономная работа)
+    if (ORCH.pollStop) ORCH.pollStop();
+    let stopped = false;
+    const id = setInterval(() => { if (!stopped && ORCH.open && !ORCH.sending) orchLoadMessages(ORCH.currentId, true).catch(() => {}); }, 8000);
+    ORCH.pollStop = () => { stopped = true; clearInterval(id); };
+  }
+  function closeOrchestrator() {
+    const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
+    ORCH.open = false;
+    if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 220); }
+    if (fab) fab.classList.remove('active');
+    if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
+  }
+  async function orchLoadConversations() {
+    const wrap = qs('#orch-convos'); if (!wrap) return;
+    try {
+      const data = await API.http.aiOrchestratorConversations();
+      ORCH.conversations = data.conversations || [];
+    } catch (e) { ORCH.conversations = []; }
+    if (!ORCH.conversations.some(c => c.conversation_id === ORCH.currentId)) {
+      orchSaveCurrentId((ORCH.conversations[0] && ORCH.conversations[0].conversation_id) || 'default');
+    }
+    orchRenderConversations();
+  }
+  function orchRenderConversations() {
+    const wrap = qs('#orch-convos'); if (!wrap) return;
+    wrap.innerHTML = ORCH.conversations.map(c => {
+      const active = c.conversation_id === ORCH.currentId;
+      const canEdit = !c.is_default;
+      const pinned = !!c.pinned;
+      return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
+        <div class="orch-convo-main">
+          <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}</div>
+          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.</div>
+        </div>
+        <div class="orch-convo-acts">
+          <button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>
+          ${canEdit ? `<button class="orch-icon-btn sm" data-rename="${esc(c.conversation_id)}" title="Переименовать" aria-label="Переименовать">${icon('edit')}</button><button class="orch-icon-btn sm" data-del="${esc(c.conversation_id)}" title="Удалить" aria-label="Удалить">${icon('trash')}</button>` : ''}
+        </div>
+      </div>`;
+    }).join('') || '<div class="empty-state">Диалогов нет.</div>';
+    qsa('.orch-convo', wrap).forEach(node => {
+      node.addEventListener('click', (e) => {
+        if (e.target.closest('[data-rename]') || e.target.closest('[data-del]') || e.target.closest('[data-pin]')) return;
+        orchSelectConversation(node.dataset.cid);
+      });
+    });
+    qsa('[data-pin]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchPin(b.dataset.pin, b.dataset.pinned !== '1'); }));
+    qsa('[data-rename]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchRename(b.dataset.rename); }));
+    qsa('[data-del]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchDelete(b.dataset.del); }));
+  }
+  async function orchPin(cid, pinned) {
+    try { await API.http.aiOrchestratorPinConversation(cid, pinned); await orchLoadConversations(); }
+    catch (e) { reportError(e); }
+  }
+  async function orchSelectConversation(cid) {
+    if (!cid || cid === ORCH.currentId) { qs('#orch-panel').classList.remove('show-convos'); return; }
+    orchSaveCurrentId(cid);
+    orchRenderConversations();
+    qs('#orch-panel').classList.remove('show-convos');
+    await orchLoadMessages(cid);
+    const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+  }
+  async function orchNewConversation() {
+    if (!window.API || API.config.offline) return;
+    try {
+      const res = await API.http.aiOrchestratorCreateConversation('');
+      orchSaveCurrentId((res.conversation && res.conversation.conversation_id) || 'default');
+      await orchLoadConversations();
+      await orchLoadMessages(ORCH.currentId);
+      qs('#orch-panel').classList.remove('show-convos');
+      const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+    } catch (e) { reportError(e); }
+  }
+  async function orchRename(cid) {
+    const current = ORCH.conversations.find(c => c.conversation_id === cid);
+    const title = prompt('Название диалога:', (current && current.title) || '');
+    if (title == null) return;
+    const clean = String(title).trim();
+    if (!clean) return;
+    try { await API.http.aiOrchestratorRenameConversation(cid, clean); await orchLoadConversations(); }
+    catch (e) { reportError(e); }
+  }
+  async function orchDelete(cid) {
+    if (!confirm('Удалить этот диалог вместе с его историей?')) return;
+    try {
+      await API.http.aiOrchestratorDeleteConversation(cid);
+      if (ORCH.currentId === cid) orchSaveCurrentId('default');
+      await orchLoadConversations();
+      await orchLoadMessages(ORCH.currentId);
+    } catch (e) { reportError(e); }
+  }
+  function orchMessageHtml(row) {
+    const isUser = row.role === 'user';
+    // Provider/model/action diagnostics remain available on AI Agents and in
+    // backend logs. The owner-facing chat reads like a normal manager dialogue.
+    const meta = [row.agent_name && !isUser ? esc(row.agent_name) : '', orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ');
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"><div class="orch-msg-body">${esc(row.content || '')}</div><div class="orch-msg-meta">${meta}</div></div>`;
+  }
+  async function orchLoadMessages(cid, silent) {
+    const box = qs('#orch-msgs'); if (!box) return;
+    if (!silent) box.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка диалога…</div>';
+    let messages = [];
+    try {
+      const data = await API.http.aiOrchestratorConversation(cid, { limit: 200 });
+      messages = data.messages || [];
+    } catch (e) { if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return; } return; }
+    if (ORCH.currentId !== cid) return;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>';
+    if (!silent || atBottom) box.scrollTop = box.scrollHeight;
+  }
+  async function orchSend() {
+    if (ORCH.sending) return;
+    const ta = qs('#orch-text'); const box = qs('#orch-msgs'); const sendBtn = qs('#orch-send');
+    if (!ta || !box) return;
+    const text = ta.value.trim();
+    if (!text) return;
+    if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
+    ORCH.sending = true;
+    if (sendBtn) sendBtn.disabled = true;
+    ta.value = ''; ta.style.height = 'auto';
+    // optimistic render: show the owner message + a typing bubble immediately
+    if (box.querySelector('.empty-state')) box.innerHTML = '';
+    box.insertAdjacentHTML('beforeend', orchMessageHtml({ role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' }));
+    box.insertAdjacentHTML('beforeend', '<div class="orch-msg assistant orch-typing" id="orch-typing"><div class="orch-msg-body"><span class="orch-dots"><i></i><i></i><i></i></span> оркестратор работает…</div></div>');
+    box.scrollTop = box.scrollHeight;
+    const cid = ORCH.currentId;
+    try {
+      const res = await API.http.aiOrchestratorMessage(text, cid);
+      if (res && res.conversation_id) orchSaveCurrentId(res.conversation_id);
+    } catch (e) {
+      const typing = qs('#orch-typing'); if (typing) typing.remove();
+      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><div class="orch-msg-body orch-err">Не удалось получить ответ: ${esc((e && e.message) || String(e))}</div></div>`);
+      box.scrollTop = box.scrollHeight;
+    } finally {
+      ORCH.sending = false;
+      if (sendBtn) sendBtn.disabled = false;
+      const typing = qs('#orch-typing'); if (typing) typing.remove();
+      await orchLoadMessages(ORCH.currentId);
+      await orchLoadConversations();
+      if (ta && !ta.disabled) ta.focus();
+    }
+  }
+
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

@@ -250,6 +250,18 @@ namespace NTAnalyzerBridge.Execution
             diag.AddRange(barsCollector.Warnings);
             bool barsFileWritten = barsCollector.Bars.Count > 0;
 
+            // A void/successful RunBacktest invocation does not prove that NT
+            // actually attached a historical series.  Treat an empty/null
+            // BarsArray as an infrastructure failure, never as a legitimate
+            // zero-trade strategy result.
+            if (!barsFileWritten)
+            {
+                diag.Add("FATAL: no historical bars were attached to the backtested strategy; " +
+                         "zero-trade metrics are not valid strategy evidence.");
+                return WriteFailure(jobId, runningDir, "variant1_no_historical_bars",
+                    "historical_bars_missing", diag, rb, job, strategyType);
+            }
+
             // Stage 2: compute a REAL historical_data_fingerprint from the exact
             // OHLCV series the backtest consumed. This replaces the placeholder
             // and (via ResultBuilder) participates in run_hash, so two runs over

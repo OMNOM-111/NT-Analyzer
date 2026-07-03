@@ -46,6 +46,7 @@
 /NT-Analyzer/data/integrations/live_news.json
 /NT-Analyzer/data/integrations/telegram.settings.json
 /NT-Analyzer/data/integrations/telegram.state.json
+/NT-Analyzer/data/integrations/telegram.topics.json
 /NT-Analyzer/data/integrations/ai_agents.settings.json
 /NT-Analyzer/data/integrations/ai_agents.registry.json
 /NT-Analyzer/data/integrations/ai_agent_keys.dpapi
@@ -91,6 +92,7 @@
 # Explicit audit/runtime artifacts called out before first public push.
 /NT-Analyzer/data/ops/audit_log.jsonl
 /NT-Analyzer/docs/audit/
+/NT-Analyzer/docs/CEO/
 
 # AI Strategy Lab generated/runtime artifacts. Keep source prompts, schemas,
 # reference docs, and app code in Git; keep experiment history and model IO local.
@@ -106,6 +108,7 @@
 /NT-Analyzer/ai_lab/model_benchmark/comparison_*/
 /NT-Analyzer/ai_lab/model_benchmark/external_results/
 /NT-Analyzer/ai_lab/model_benchmark/local_*_20*/
+/NT-Analyzer/ai_lab/model_benchmark/zai_*_20*/
 /NT-Analyzer/ai_lab/model_benchmark/AI_SANDBOX_COMPILE_TEST/
 /NT-Analyzer/ai_lab/model_benchmark/**/__pycache__/
 /NT-Analyzer/ai_lab/user_research/*

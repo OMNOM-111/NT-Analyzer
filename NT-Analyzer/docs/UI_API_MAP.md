@@ -1,7 +1,15 @@
 # Aurora UI API map
 
-Актуально на 2026-06-30 после добавления безопасного реестра AI Agents. Единственный HTTP-адаптер интерфейса находится в
+Актуально на 2026-07-01 после добавления безопасного реестра AI Agents и
+StratForge Orchestrator. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
+
+Именованные domain agents добавляют `/api/ai-lab/accounting`,
+`/api/ai-lab/strategy-analysis`, `/api/ai-lab/domain-agents` и POST
+`/api/ai-lab/domain-agents/message`. Общий endpoint Orchestrator также
+распознаёт обращения `Марина, ...` и `Толик, ...`.
+Новостной агент использует `/api/ai-lab/news-analysis`; общий чат также
+распознаёт `Никита, ...`.
 
 ## Страницы
 
@@ -10,13 +18,14 @@
 | Обзор | `/api/health`, `/api/performance`, `/api/coverage`, `/api/ai-lab/summary`, `/api/reports`, `/api/news`, accounts/account-history | системные действия вынесены в общее меню |
 | Бэктест | catalog, instruments, profiles, coverage, reports, jobs, trades, bars, draw objects, favorites, batches | создать job/batch, отменить/удалить job, favorite/unfavorite; серверные фильтры/сортировка не изменяют данные |
 | Торговля | accounts, account-history, strategies, positions, orders, executions, errors, commands/results/status, runtime history, strategy history/display, start dates, performance, diagnostics, strategy journal | paper-only enable/disable, ручное движение, CSV-импорт, классификация движения, восстановление скрытого класса |
-| Доход | performance, performance/trades, accounts, account-history, CSV | фильтры, пагинация, drilldown и выгрузка; финансовые данные не изменяются |
+| Финансы | performance, performance/trades, AI accounting, accounts, account-history, CSV | единые фильтры доходности и бухгалтерии, пагинация, drilldown и выгрузка; спорные записи не исправляются моделью |
 | Стратегии | profiles/archive, AI lifecycle/cell history, coverage, instruments, persistent portfolio registry | статус/удаление профиля, add root/cell, archive cell, hide runtime class, NinjaTrader cleanup |
-| AI Lab | summary, experiments/activity, run/current status, performance board, model-performance, cloud-agent roles/pricing/usage, calendar, compile source, errors, LM Studio | run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; локальная настройка cloud keys, role routes и hard budgets |
+| AI Lab | summary, experiments/activity, staged run/current status, параллельно проектируемая следующая стратегия, Orchestrator conversation/model/actions, performance board, model-performance, cloud-agent roles/pricing/usage, calendar, compile source, errors, LM Studio | natural-language Orchestrator chat; ручной run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; локальная настройка cloud keys, role routes и hard budgets |
 | AI Agents / API Keys | `/api/ai-agents`, usage, account/provider/role catalogs, DPAPI status, shared grant/budget totals | Add/Edit/Delete model, Test Connection, Enable/Disable, supported balance sync; transport/auth определяются автоматически, ключ возвращается только маской |
-| Новости | `/api/news`, `/api/news/live` | read-only; официальный календарь, явно помеченные оценки, здоровье живых источников и приоритетные ленты |
+| Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram | `/api/telegram/status` | token validation, one-time private-chat pairing, notification settings, test send, disconnect; токен и chat id не возвращаются |
+| StratForge Orchestrator | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | natural-language chat, auto complexity routing, historical mission, notes/tasks/calendar, backtest audit, budget/cache telemetry, bounded app allowlist and paper/demo approval queue |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
@@ -61,8 +70,9 @@
   создают демонстрационные события.
 - `GET /api/telegram/status` и `POST /api/telegram/{token,pair/*,settings,test,disconnect}`
   используют `app/telegram_service.py`. Фоновый notifier отслеживает heartbeat,
-  runtime-стратегии, ошибки, high-impact новости и расписание сводок. Управляющие
-  команды Telegram отсутствуют; pairing принимает только личный чат и одноразовый код.
+  runtime-стратегии, свежие ошибки, high-impact новости и расписание сводок.
+  Свободный текст из единственного paired private chat передаётся Orchestrator;
+  исполняются только действия allowlist, а paper/demo требует отдельного approve.
 
 ## Safety
 

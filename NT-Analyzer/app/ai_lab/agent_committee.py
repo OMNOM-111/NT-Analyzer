@@ -28,6 +28,7 @@ ROLE_PROMPTS = {
 
 
 def review_backtest(experiment: Dict[str, Any]) -> Dict[str, Any]:
+    allow_paid = bool(experiment.get("allow_paid_agents", True))
     metrics = {
         "experiment_id": experiment.get("experiment_id"),
         "target_root": experiment.get("target_root"),
@@ -48,9 +49,11 @@ def review_backtest(experiment: Dict[str, Any]) -> Dict[str, Any]:
                     "Return concise JSON with keys decision, evidence, risks, next_action. "
                     "Your output is advisory and cannot override deterministic gates."
                 ),
-                max_output_tokens=700,
+                max_output_tokens=2500 if role == "risk_manager" else 700,
                 timeout=120,
                 purpose=f"backtest_committee_{role}",
+                complexity="critical" if role == "risk_manager" else "standard",
+                allow_paid=allow_paid,
             )
             reports[role] = {
                 "ok": True,
@@ -59,6 +62,7 @@ def review_backtest(experiment: Dict[str, Any]) -> Dict[str, Any]:
                 "agent_id": result.get("agent_id"),
                 "content": str(result.get("content") or "")[:6000],
                 "input_tokens": result.get("input_tokens"),
+                "cached_input_tokens": result.get("cached_input_tokens"),
                 "output_tokens": result.get("output_tokens"),
                 "cost_usd": result.get("cost_usd"),
                 "cost_estimated": result.get("cost_estimated"),
@@ -68,5 +72,6 @@ def review_backtest(experiment: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "advisory_only": True,
         "cannot_override_deterministic_verdict": True,
+        "allow_paid_agents": allow_paid,
         "reports": reports,
     }

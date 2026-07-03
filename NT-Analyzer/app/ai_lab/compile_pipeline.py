@@ -56,6 +56,11 @@ def _dll_mtime() -> float:
         return 0.0
 
 
+def capture_dll_baseline() -> float:
+    """Capture compile evidence before a source write can trigger NT auto-build."""
+    return _dll_mtime()
+
+
 def auto_compile_enabled() -> bool:
     return os.environ.get("AI_LAB_AUTO_COMPILE", "1").strip().lower() not in {
         "0", "false", "no", "off",
@@ -564,6 +569,7 @@ def run_compile_chain(
     verify_poll_sec: int = 0,
     dll_wait_sec: int = 300,
     catalog_wait_sec: int = 30,
+    baseline_mtime: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Trigger/observe NT compile -> refresh catalog -> verify class visible."""
     steps = []
@@ -573,11 +579,15 @@ def run_compile_chain(
     )
     if quarantined:
         steps.append({"step": "quarantine_unrelated", "files": quarantined})
-    baseline = _dll_mtime()
+    baseline = _dll_mtime() if baseline_mtime is None else float(baseline_mtime)
     activity.log(experiment_id, "compile", "baseline_recorded", level="info",
-                 baseline_mtime=baseline, dll=str(nt_custom_dll()))
+                 baseline_mtime=baseline, dll=str(nt_custom_dll()),
+                 captured_before_source_write=baseline_mtime is not None)
 
-    auto_res = trigger_ninjascript_editor_compile(experiment_id, class_name=class_name)
+    if _dll_mtime() > baseline and _dll_mtime() > 0:
+        auto_res = {"ok": True, "status": "compile_already_observed_after_source_write"}
+    else:
+        auto_res = trigger_ninjascript_editor_compile(experiment_id, class_name=class_name)
     steps.append({"step": "auto_compile_f5", **auto_res})
 
     dll_res = await_compile_outcome(

@@ -1436,6 +1436,89 @@ def runtime_defaults() -> Dict[str, Any]:
     }
 
 
+def goals_path() -> Path:
+    return data_dir() / "goals.json"
+
+
+def read_goals() -> Dict[str, Any]:
+    """Machine-readable project goals (North Star). Empty dict if not configured."""
+    path = goals_path()
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def north_star_progress() -> Dict[str, Any]:
+    """North Star goal + live progress from runtime realized PnL after commission.
+
+    ``progress`` is realized (closed) after-commission PnL accumulated since the
+    goal ``baseline_date``. It intentionally excludes backtest and unrealized
+    PnL — those never count toward the goal.
+    """
+    goals = read_goals()
+    north = goals.get("north_star") if isinstance(goals, dict) else None
+    if not isinstance(north, dict) or not north:
+        return {"configured": False}
+
+    target = float(north.get("target_usd") or 0.0)
+    baseline_date = str(north.get("baseline_date") or "").strip()
+    baseline_realized = float(north.get("baseline_realized_usd") or 0.0)
+    deadline = str(north.get("deadline") or "").strip()
+
+    realized: Optional[float] = None
+    realized_error = ""
+    if baseline_date:
+        try:
+            from . import performance as _perf  # lazy import to avoid cycles
+            today = datetime.now(timezone.utc).date().isoformat()
+            resp = _perf.build_performance_response(
+                period="custom", from_date=baseline_date, to_date=today,
+            )
+            realized = float((resp.get("summary") or {}).get("pnl") or 0.0)
+        except Exception as exc:  # pragma: no cover - defensive
+            realized_error = str(exc)[:200]
+
+    progress = None if realized is None else round(realized - baseline_realized, 2)
+    remaining = None if progress is None else round(target - progress, 2)
+    pct = None if (progress is None or target <= 0) else round(progress / target * 100.0, 2)
+
+    days_left: Optional[int] = None
+    if deadline:
+        try:
+            end = datetime.fromisoformat(deadline).date()
+            days_left = max(0, (end - datetime.now(timezone.utc).date()).days)
+        except ValueError:
+            days_left = None
+    pace_required = None
+    if remaining is not None and days_left and days_left > 0:
+        pace_required = round(max(0.0, remaining) / days_left, 2)
+
+    return {
+        "configured": True,
+        "id": north.get("id"),
+        "title": north.get("title"),
+        "statement": north.get("statement"),
+        "target_usd": target,
+        "deadline": deadline,
+        "baseline_date": baseline_date,
+        "baseline_realized_usd": baseline_realized,
+        "progress_usd": progress,
+        "remaining_usd": remaining,
+        "progress_pct": pct,
+        "days_left": days_left,
+        "pace_required_usd_per_day": pace_required,
+        "measurement": north.get("measurement"),
+        "milestones": north.get("milestones") or [],
+        "constraints": north.get("constraints") or [],
+        "doc": north.get("doc"),
+        "realized_source_error": realized_error,
+    }
+
+
 def _scan_candidate_refs(patterns: Iterable[str]) -> List[Dict[str, Any]]:
     compiled = [re.compile(p, re.IGNORECASE) for p in patterns if p]
     if not compiled:

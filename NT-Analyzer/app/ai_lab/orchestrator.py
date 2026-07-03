@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -47,15 +48,45 @@ def _now() -> str:
 
 
 DEFAULT_INSTRUMENT_BY_ROOT = {
-    "MNQ": "MNQ 12-26",
+    "MNQ": "MNQ 09-26",
     "MGC": "MGC 08-26",
-    "MES": "MES 12-26",
-    "MCL": "MCL 09-26",
+    "MES": "MES 09-26",
+    "MCL": "MCL 08-26",
 }
 
 INSTRUMENT_UNIVERSE = ["MNQ", "MGC", "MES"]
 
 MAX_COMPILE_ATTEMPTS = 5
+
+_MODEL_HEALTH_CACHE: Dict[str, Dict[str, Any]] = {}
+_MODEL_HEALTH_LOCK = threading.RLock()
+_MODEL_HEALTH_TTL_SEC = 900
+
+
+def _cached_model_health(
+    role: str,
+    *,
+    fallback_roles: List[str],
+    experiment_id: str,
+) -> Dict[str, Any]:
+    """Probe a local role once per run-sized window instead of per iteration."""
+    now = time.time()
+    with _MODEL_HEALTH_LOCK:
+        cached = _MODEL_HEALTH_CACHE.get(role)
+        if cached and now - float(cached.get("cached_at_epoch") or 0) < _MODEL_HEALTH_TTL_SEC:
+            return dict(cached.get("value") or {})
+    value = lm_studio.select_available_model(
+        role, fallback_roles=fallback_roles,
+        experiment_id=experiment_id, purpose="idea_generator_health_gate",
+    )
+    with _MODEL_HEALTH_LOCK:
+        _MODEL_HEALTH_CACHE[role] = {"cached_at_epoch": now, "value": dict(value)}
+    return value
+
+
+def reset_runtime_caches_for_tests() -> None:
+    with _MODEL_HEALTH_LOCK:
+        _MODEL_HEALTH_CACHE.clear()
 
 
 def _bail_if_cancelled(experiment_id: str) -> bool:
@@ -105,6 +136,7 @@ def preflight_memory(
     user_goal: str = "",
     goal_constraints: Optional[Dict[str, Any]] = None,
     use_llm: bool = True,
+    allow_local_models: bool = True,
 ) -> Dict[str, Any]:
     scan = user_research.scan()
     excerpts: List[Dict[str, str]] = []
@@ -134,13 +166,11 @@ def preflight_memory(
         raise RuntimeError("knowledge_context generation failed")
 
     model_health: Dict[str, Any] = {}
-    if use_llm:
+    if use_llm and allow_local_models:
         try:
-            model_health["idea_generator"] = lm_studio.select_available_model(
-                "judge",
-                fallback_roles=["strategy_researcher", "fast_assistant"],
+            model_health["idea_generator"] = _cached_model_health(
+                "judge", fallback_roles=["strategy_researcher", "fast_assistant"],
                 experiment_id=experiment_id,
-                purpose="idea_generator_health_gate",
             )
         except Exception as e:  # noqa: BLE001
             model_health["idea_generator"] = {
@@ -179,10 +209,22 @@ def choose_hypothesis(
     use_llm: bool = True,
     cancel_event: Optional[threading.Event] = None,
     operator_notes_block: str = "",
+    allow_paid_agents: bool = True,
+    allow_local_models: bool = True,
 ) -> Dict[str, Any]:
     constraints = intake.get("goal_constraints") or {}
+    avoided_families = {
+        str(value).strip().lower()
+        for value in (intake.get("avoid_families") or constraints.get("avoid_families") or [])
+        if str(value).strip()
+    }
     requested_pattern = constraints.get("pattern")
     shortlist = list(intake.get("reference_shortlist") or [])
+    if avoided_families:
+        shortlist = [
+            row for row in shortlist
+            if str(row.get("family") or "").strip().lower() not in avoided_families
+        ]
     preferred_ref = shortlist[0] if shortlist else {}
     if requested_pattern:
         fallback_family = str(requested_pattern)
@@ -242,14 +284,20 @@ def choose_hypothesis(
         "confirmation. Keep hypothesis under 80 words and parameters to at most "
         "8 actionable scalar values."
     )
+    # Keep a genuinely stable prefix before the marker.  Experiment memory,
+    # ids, notes and target-specific fields belong after it; putting them in
+    # the prefix made every cache key unique during the previous night run.
     user_prompt = (
+        "Prepare one contract-valid intraday strategy hypothesis from approved research. "
+        "Use an explicit market regime, confirmation and after-cost exit economics.\n"
+        f"{lm_studio.prompt_cache_marker()}\n\n"
         f"{intake.get('knowledge_prompt_context', '')}\n\n"
         f"Approved references: {shortlist}\n"
         f"Avoid recent failure patterns: {intake.get('rejected_patterns', [])[:5]}\n"
         f"User research files just read: {intake.get('user_research_files_read', [])}\n\n"
-        f"{lm_studio.prompt_cache_marker()}\n\n"
         f"Target root: {target_root}\n"
         f"User goal constraints: {constraints}\n"
+        f"Forbidden families for this staged draft: {sorted(avoided_families)}\n"
         "Propose one structurally distinct intraday hypothesis. State why it is "
         "not another generic breakout and target 0.2-3.0 trades/day. "
         "All explanations must be in Russian."
@@ -282,6 +330,13 @@ def choose_hypothesis(
                 selected_reference=parsed["reference_id"],
             )
         family_text = str(parsed.get("family") or "")
+        if family_text.strip().lower() in avoided_families:
+            activity.log(
+                experiment_id, "generate", "hypothesis_family_rejected", level="warn",
+                provider=source, family=family_text,
+                avoided_families=sorted(avoided_families),
+            )
+            return None
         generic_without_regime = (
             any(word in family_text.lower() for word in ("generic", "pricebreakout"))
             or (
@@ -299,6 +354,13 @@ def choose_hypothesis(
             and parsed.get("why_not_generic")
         ):
             params = parsed.get("parameters") or {}
+            if not isinstance(params, dict):
+                activity.log(
+                    experiment_id, "generate", "hypothesis_contract_rejected", level="warn",
+                    provider=source, contract_error="parameters_must_be_object",
+                    received_type=type(params).__name__,
+                )
+                return None
             merged = {**fallback["parameters"], **{k: params[k] for k in params if isinstance(params[k], (int, float, str))}}
             # The model controls signal/risk tuning, never the execution
             # contract. Session, quantity, commission and slippage are fixed.
@@ -330,6 +392,8 @@ def choose_hypothesis(
                 "lane": "research",
                 "parameters": merged,
                 "_source": source,
+                "_model": resp.get("actual_model") or resp.get("model"),
+                "_provider": resp.get("provider") or source,
                 "reference_id": parsed.get("reference_id"),
                 "market_regime": parsed.get("market_regime"),
                 "entry_trigger": parsed.get("entry_trigger"),
@@ -348,25 +412,26 @@ def choose_hypothesis(
     selected_role = model_gate.get("selected_role") or "judge"
     selected_model = model_gate.get("selected_model")
     local_failure = ""
-    # The external benchmark winner proposes the first specification. The
-    # strict JSON contract below remains the authority; local inference is the
-    # fallback when the external pool is unavailable or violates the contract.
+    # Cost-aware order: free external rotation -> local model -> paid fallback.
+    # A paid Azure/DeepSeek request must not be the default for every idea.
     try:
         external_resp = agent_router.invoke_messages(
             "hypothesis", messages, max_output_tokens=700, timeout=180,
-            purpose="hypothesis",
+            purpose="hypothesis_free_primary", allow_paid=False,
         )
-        candidate = _validated_response(external_resp, "external_primary")
+        candidate = _validated_response(external_resp, "external_free_primary")
         if candidate:
             return candidate
         local_failure = "external_hypothesis_contract_rejected"
     except agent_router.AgentRouterError as exc:
-        local_failure = "external_hypothesis_request_failed"
+        local_failure = "free_external_hypothesis_request_failed"
         activity.log(
             experiment_id, "generate", "hypothesis_external_failed",
             level="warn", error=str(exc)[:300],
         )
-    if model_gate and not model_gate.get("ok"):
+    if not allow_local_models:
+        local_failure = "local_models_disabled_by_owner"
+    elif model_gate and not model_gate.get("ok"):
         local_failure = "local_model_health_failed"
         activity.log(
             experiment_id, "generate", "hypothesis_model_health_failed",
@@ -394,7 +459,25 @@ def choose_hypothesis(
             local_failure = "local_hypothesis_request_failed"
             activity.log(experiment_id, "generate", "hypothesis_lm_failed", level="warn", error=str(exc))
 
+    if allow_paid_agents:
+        try:
+            paid_resp = agent_router.invoke_messages(
+                "hypothesis", messages, max_output_tokens=700, timeout=180,
+                purpose="hypothesis_paid_fallback", allow_paid=True,
+            )
+            candidate = _validated_response(paid_resp, "external_paid_fallback")
+            if candidate:
+                return candidate
+            local_failure = "paid_hypothesis_contract_rejected"
+        except agent_router.AgentRouterError as exc:
+            activity.log(
+                experiment_id, "generate", "hypothesis_external_failed",
+                level="warn", fallback="paid", error=str(exc)[:300],
+            )
+
     try:
+        if not allow_paid_agents:
+            raise cloud_agents.CloudAgentBlocked("paid cloud fallback disabled for this mission")
         cloud_resp = cloud_agents.invoke(
             "hypothesis_fallback", messages,
             fallback_reason=local_failure or "local_hypothesis_failed",
@@ -431,46 +514,85 @@ def _default_period() -> Dict[str, str]:
     return {"from_utc": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "to_utc": end.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
+def _catalog_contracts(target_root: str) -> List[Dict[str, Any]]:
+    """Return dated contracts with minute data, newest data first."""
+    try:
+        from .. import jobqueue
+        catalog = jobqueue.read_instruments_catalog() or {}
+    except Exception:
+        return []
+    rows = [
+        dict(row) for row in (catalog.get("instruments") or [])
+        if isinstance(row, dict)
+        and str(row.get("root") or "").upper() == target_root.upper()
+        and bool(row.get("has_minute_data"))
+        and row.get("data_first") and row.get("data_last")
+    ]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("data_last") or ""),
+            str(row.get("data_first") or ""),
+            str(row.get("instrument") or ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def _backtest_instrument(target_root: str, args: Dict[str, Any]) -> str:
     explicit = args.get("backtest_instrument") or args.get("instrument")
     if explicit:
         return str(explicit)
-    try:
-        from .. import jobqueue
-        catalog = jobqueue.read_instruments_catalog() or {}
-        candidates = [
-            row for row in (catalog.get("instruments") or [])
-            if isinstance(row, dict)
-            and str(row.get("root") or "").upper() == target_root.upper()
-            and bool(row.get("has_minute_data"))
-            and row.get("data_last")
-        ]
-        mature = []
-        for row in candidates:
-            try:
-                first = datetime.fromisoformat(str(row.get("data_first")))
-                last = datetime.fromisoformat(str(row.get("data_last")))
-                if (last - first).days >= 60:
-                    mature.append(row)
-            except (TypeError, ValueError):
-                continue
-        # Avoid a just-rolled contract with only a few days of history. The
-        # AI Lab needs enough observations for smoke and after-cost scoring.
-        if mature:
-            candidates = mature
-        candidates.sort(
-            key=lambda row: (
-                str(row.get("data_last") or ""),
-                str(row.get("data_first") or ""),
-                str(row.get("instrument") or ""),
-            ),
-            reverse=True,
-        )
-        if candidates:
-            return str(candidates[0]["instrument"])
-    except Exception:
-        pass
+    candidates = _catalog_contracts(target_root)
+    if candidates:
+        # Futures liquidity rolls before the previous contract accumulates a
+        # long history.  Selecting only "mature" rows chose expired 06-26
+        # contracts in July.  The row with the newest actual minute bar is the
+        # honest current-contract choice.
+        return str(candidates[0]["instrument"])
     return str(DEFAULT_INSTRUMENT_BY_ROOT.get(target_root, target_root))
+
+
+def _bounded_period_for_instrument(
+    instrument: str,
+    requested_start: datetime,
+    requested_end: datetime,
+) -> Dict[str, Any]:
+    """Clamp a requested period to catalog-proven minute-data coverage."""
+    root = str(instrument).split()[0].upper()
+    row = next(
+        (item for item in _catalog_contracts(root)
+         if str(item.get("instrument") or "") == str(instrument)),
+        None,
+    )
+    if not row:
+        return {
+            "ok": False, "instrument": instrument,
+            "reason": "instrument_missing_from_minute_data_catalog",
+        }
+    try:
+        first = datetime.fromisoformat(str(row["data_first"])).replace(tzinfo=timezone.utc)
+        # Catalog dates are inclusive; job periods use an exclusive upper
+        # boundary, therefore include the last catalog day with +1 day.
+        last_exclusive = (
+            datetime.fromisoformat(str(row["data_last"])).replace(tzinfo=timezone.utc)
+            + timedelta(days=1)
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        return {"ok": False, "instrument": instrument, "reason": f"invalid_catalog_dates: {exc}"}
+    start = max(requested_start, first)
+    end = min(requested_end, last_exclusive)
+    days = max(0.0, (end - start).total_seconds() / 86400.0)
+    return {
+        "ok": end > start,
+        "instrument": instrument,
+        "from_utc": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "to_utc": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "catalog_data_first": str(row.get("data_first") or ""),
+        "catalog_data_last": str(row.get("data_last") or ""),
+        "available_days": round(days, 2),
+        "reason": "" if end > start else "requested_period_has_no_catalog_overlap",
+    }
 
 
 # ---------------------- public API ----------------------
@@ -499,6 +621,8 @@ def start_skeleton(args: Dict[str, Any]) -> Dict[str, Any]:
     skeleton["status"] = "draft"
     skeleton["rationale"] = f"user_goal={user_goal or 'auto'}"
     skeleton["user_goal"] = user_goal
+    skeleton["allow_paid_agents"] = bool(args.get("allow_paid_agents", True))
+    skeleton["allow_local_models"] = args.get("allow_local_models") is not False
     skeleton["goal_constraints"] = goal_constraints
     skeleton["research_loop"] = {
         "mode": args.get("research_mode") or "single_cell",
@@ -515,6 +639,101 @@ def start_skeleton(args: Dict[str, Any]) -> Dict[str, Any]:
                  research_mode=skeleton["research_loop"]["mode"],
                  attempt_index=skeleton["research_loop"]["attempt_index"])
     return skeleton
+
+
+def prepare_strategy_draft(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Prepare the next hypothesis while NinjaTrader backtests another cell.
+
+    This stage never writes NinjaScript, compiles, or submits a backtest.  It
+    only allocates an AI sandbox experiment, loads research memory and prepares
+    a contract-valid hypothesis for the sequential execution lane.
+    """
+    skeleton = start_skeleton(args)
+    experiment_id = str(skeleton["experiment_id"])
+    try:
+        skeleton["status"] = "designing"
+        skeleton["staged_pipeline"] = {
+            "stage": "designing", "prepared_during_backtest": True,
+            "source_experiment_id": args.get("staged_source_experiment_id"),
+        }
+        registry.write_experiment(skeleton)
+        activity.log(
+            experiment_id, "staged", "parallel_design_started", level="info",
+            source_experiment_id=args.get("staged_source_experiment_id"),
+        )
+        user_goal = str(args.get("user_goal") or args.get("goal") or "")
+        constraints = goal_parser.parse_user_goal(user_goal, args)
+        constraints["avoid_families"] = [
+            str(value).strip() for value in (args.get("avoid_families") or [])
+            if str(value).strip()
+        ]
+        intake = preflight_memory(
+            str(skeleton.get("target_root") or "MNQ"), experiment_id,
+            user_goal=user_goal, goal_constraints=constraints,
+            use_llm=bool(args.get("use_llm", True)),
+        )
+        intake["avoid_families"] = constraints["avoid_families"]
+        hypothesis = choose_hypothesis(
+            str(skeleton.get("target_root") or "MNQ"), intake, experiment_id,
+            use_llm=bool(args.get("use_llm", True)),
+            allow_paid_agents=bool(args.get("allow_paid_agents", True)),
+        )
+        skeleton = registry.read_experiment(experiment_id) or skeleton
+        skeleton["memory_intake"].update({
+            "user_research_files_read": intake.get("user_research_files_read", []),
+            "similar_rejected": intake.get("similar_rejected", []),
+            "similar_demo_mismatch": intake.get("similar_demo_mismatch", []),
+            "similar_compile_fails": intake.get("similar_compile_fails", []),
+            "knowledge_context_path": intake.get("knowledge_context_path"),
+            "knowledge_sources_read": intake.get("knowledge_sources_read", []),
+            "knowledge_prompt_context": intake.get("knowledge_prompt_context", ""),
+            "reference_shortlist": intake.get("reference_shortlist", []),
+            "goal_constraints": constraints,
+            "model_health": intake.get("model_health", {}),
+        })
+        skeleton["prepared_hypothesis"] = hypothesis
+        skeleton["hypothesis"] = hypothesis.get("hypothesis")
+        skeleton["family"] = hypothesis.get("family")
+        skeleton["lane"] = hypothesis.get("lane") or "research"
+        skeleton["parameters"] = hypothesis.get("parameters") or {}
+        skeleton["hypothesis_spec"] = {
+            key: hypothesis.get(key) for key in (
+                "reference_id", "market_regime", "entry_trigger", "exit_economics",
+                "why_not_generic", "expected_trades_per_day",
+            ) if hypothesis.get(key) is not None
+        }
+        skeleton["status"] = "draft_ready"
+        skeleton["staged_pipeline"].update({
+            "stage": "draft_ready", "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+            "model": hypothesis.get("_model"), "provider": hypothesis.get("_provider"),
+        })
+        registry.write_experiment(skeleton)
+        activity.log(
+            experiment_id, "staged", "parallel_design_ready", level="success",
+            family=hypothesis.get("family"), model=hypothesis.get("_model"),
+            provider=hypothesis.get("_provider"),
+        )
+        return skeleton
+    except Exception as exc:
+        failed = registry.read_experiment(experiment_id) or skeleton
+        # A staged skeleton has no runnable class/source.  Keep the failure
+        # evidence but archive it immediately so PENDING rows never look like
+        # unfinished strategies in the laboratory.
+        failed["status_before_archive"] = "pipeline_failed"
+        failed["status"] = "archived"
+        failed["archive_reason"] = f"staged design failed: {exc}"
+        failed["verdict"] = {
+            "outcome": "reject", "reasons": [f"staged design failed: {exc}"],
+            "rejection_code": "STAGED_DESIGN_FAILED", "structural": False,
+        }
+        failed["staged_pipeline"] = {
+            **dict(failed.get("staged_pipeline") or {}),
+            "stage": "failed", "error": str(exc)[:500],
+            "error_type": type(exc).__name__,
+        }
+        registry.write_experiment(failed)
+        activity.log(experiment_id, "staged", "parallel_design_failed", level="error", error=str(exc)[:300])
+        return failed
 
 
 def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -536,6 +755,7 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     if skeleton is None:
         raise ValueError(f"experiment not found: {experiment_id}")
 
+    prepared_hypothesis = skeleton.get("prepared_hypothesis") if isinstance(skeleton.get("prepared_hypothesis"), dict) else None
     target_root = skeleton["target_root"]
     user_goal = str(skeleton.get("user_goal") or args.get("user_goal") or args.get("goal") or "")
     goal_constraints = skeleton.get("goal_constraints") or goal_parser.parse_user_goal(user_goal, args)
@@ -545,6 +765,8 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     verify_poll_sec = int(args.get("verify_poll_sec", 0))
     use_llm = bool(args.get("use_llm", True))
     allow_template_fallback = bool(args.get("allow_template_fallback", False))
+    allow_paid_agents = bool(skeleton.get("allow_paid_agents", args.get("allow_paid_agents", True)))
+    allow_local_models = skeleton.get("allow_local_models", args.get("allow_local_models", True)) is not False
     cancel_event = runner.cancel_event_for(experiment_id)
     max_compile_attempts = max(
         1,
@@ -565,6 +787,7 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         user_goal=user_goal,
         goal_constraints=goal_constraints,
         use_llm=use_llm,
+        allow_local_models=allow_local_models,
     )
     if mutation_context:
         intake["knowledge_prompt_context"] = (
@@ -608,11 +831,20 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return registry.read_experiment(experiment_id)
     with heartbeat(experiment_id, "generate", "awaiting judge model", every_sec=10):
         try:
-            hypo = choose_hypothesis(
-                target_root, intake, experiment_id, use_llm=use_llm,
-                cancel_event=cancel_event,
-                operator_notes_block=operator_notes.render_entries(judge_notes),
-            )
+            if prepared_hypothesis and prepared_hypothesis.get("hypothesis"):
+                hypo = dict(prepared_hypothesis)
+                activity.log(
+                    experiment_id, "staged", "parallel_design_reused", level="success",
+                    family=hypo.get("family"), model=hypo.get("_model"),
+                )
+            else:
+                hypo = choose_hypothesis(
+                    target_root, intake, experiment_id, use_llm=use_llm,
+                    cancel_event=cancel_event,
+                    operator_notes_block=operator_notes.render_entries(judge_notes),
+                    allow_paid_agents=allow_paid_agents,
+                    allow_local_models=allow_local_models,
+                )
         except lm_studio.LMStudioCancelled:
             registry.transition_status(experiment_id, "cancelled", reason="cancelled in judge stage")
             return registry.read_experiment(experiment_id)
@@ -629,15 +861,29 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         if hypo.get(key) is not None
     }
     idea_gate = (intake.get("model_health") or {}).get("idea_generator") or {}
-    if idea_gate:
-        skeleton["model_chain"] = [{
+    prior_model_chain = list(skeleton.get("model_chain") or [])
+    model_iteration = int(skeleton.get("current_iteration") or args.get("iteration_idx") or 1)
+    if hypo.get("_model") or hypo.get("_provider"):
+        prior_model_chain.append({
+            "role": "idea_generator",
+            "selected_model": hypo.get("_model") or "unknown",
+            "provider": hypo.get("_provider") or hypo.get("_source"),
+            "path": hypo.get("_source"),
+            "iteration": model_iteration,
+            "recorded_at_utc": _now(),
+        })
+    elif idea_gate:
+        prior_model_chain.append({
             "role": "idea_generator",
             "configured_primary": idea_gate.get("primary_model"),
             "selected_model": idea_gate.get("selected_model"),
             "fallback_used": bool(idea_gate.get("fallback_used")),
             "primary_model_failed": bool(idea_gate.get("primary_model_failed")),
             "checked_via": idea_gate.get("checked_via"),
-        }]
+            "iteration": model_iteration,
+            "recorded_at_utc": _now(),
+        })
+    skeleton["model_chain"] = prior_model_chain
 
     class_name = (
         str(skeleton.get("class_name"))
@@ -744,6 +990,8 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
             "role": gen_meta.get("role") or "coder",
             "selected_model": gen_meta.get("model"),
             "path": gen_meta.get("path"),
+            "iteration": model_iteration,
+            "recorded_at_utc": _now(),
         })
     elif gen_meta.get("path"):
         model_chain.append({
@@ -754,6 +1002,8 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
                 else "fallback_template"
             ),
             "path": gen_meta.get("path"),
+            "iteration": model_iteration,
+            "recorded_at_utc": _now(),
         })
     skeleton["model_chain"] = model_chain
     skeleton["strategy_source"]["sha256"] = gen_meta.get("sha256", "")
@@ -791,6 +1041,11 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     activity.log(experiment_id, "validate", "ok", level="success")
 
     # --- write to sandbox ---
+    # NinjaTrader may auto-compile immediately when the .cs file changes.
+    # Capture the DLL state before writing or that fast successful compile is
+    # mistaken for a five-minute timeout.
+    compile_baseline = compile_pipeline.capture_dll_baseline()
+    compile_baseline_ts = datetime.now(timezone.utc)
     sandbox_path, mirror_path = generator.write_to_sandbox(class_name, source)
     skeleton = registry.read_experiment(experiment_id)
     skeleton["strategy_source"]["sandbox_path"] = str(sandbox_path)
@@ -831,11 +1086,12 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         activity.log(experiment_id, "compile", "awaiting_nt_compile", level="info",
                      sandbox_path=str(sandbox_path), class_name=class_name,
                      attempt=attempt + 1)
-        baseline_ts = datetime.now(timezone.utc)
+        baseline_ts = compile_baseline_ts
         with heartbeat(experiment_id, "compile", "waiting for NT compile / dll change", every_sec=15):
             compile_res = compile_pipeline.run_compile_chain(
                 experiment_id=experiment_id, class_name=class_name,
                 request_restart_flag=False, verify_poll_sec=verify_poll_sec,
+                baseline_mtime=compile_baseline,
             )
         last_compile_res = compile_res
         skeleton = registry.read_experiment(experiment_id)
@@ -977,6 +1233,8 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
             return registry.read_experiment(experiment_id)
         if _bail_if_cancelled(experiment_id):
             return registry.read_experiment(experiment_id)
+        compile_baseline = compile_pipeline.capture_dll_baseline()
+        compile_baseline_ts = datetime.now(timezone.utc)
         generator.write_to_sandbox(class_name, new_src)
         activity.log(experiment_id, "write", "autofix_rewrite", level="info",
                      attempt=attempt + 1, sandbox_path=str(sandbox_path),
@@ -997,9 +1255,12 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         activity.log(experiment_id, "backtest", "skipped", level="info")
         return registry.read_experiment(experiment_id)
 
+    instrument = _backtest_instrument(target_root, args)
     sanity_min = int(args.get("min_signal_sanity", signal_sanity.DEFAULT_MIN_SIGNALS))
     exp_for_sanity = registry.read_experiment(experiment_id) or skeleton
-    sanity = signal_sanity.check_experiment(exp_for_sanity, min_signals=sanity_min)
+    sanity = signal_sanity.check_experiment(
+        exp_for_sanity, min_signals=sanity_min, instrument=instrument,
+    )
     exp_for_sanity["signal_sanity"] = sanity
     registry.write_experiment(exp_for_sanity)
     activity.log(
@@ -1008,6 +1269,9 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
         reason=str(sanity.get("reason")),
         theoretical_signals=sanity.get("theoretical_signals"),
         data_source=str(sanity.get("data_source"))[:180],
+        requested_instrument=instrument,
+        data_instrument=sanity.get("data_instrument"),
+        advisory_only=bool(sanity.get("advisory_only")),
     )
     if sanity.get("environment_blocker"):
         registry.transition_status(
@@ -1061,38 +1325,98 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- execution smoke (short real NT run before the 180-day run) ---
     skeleton = registry.read_experiment(experiment_id) or skeleton
-    instrument = _backtest_instrument(target_root, args)
     smoke_end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     smoke_days = max(14, min(45, int(args.get("smoke_days") or 30)))
     smoke_start = smoke_end - timedelta(days=smoke_days)
-    smoke = backtest.submit(
-        experiment_id=experiment_id,
-        ai_cell_id=skeleton["ai_cell_id"],
-        class_name=class_name,
-        instrument=instrument,
-        from_utc=smoke_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        to_utc=smoke_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        parameters=hypo["parameters"],
-        risk_profile=skeleton["risk_profile"],
-        session_template=skeleton["session_template"],
-        model_chain=skeleton["model_chain"],
-        stage="smoke",
-    )
-    if not smoke.get("ok"):
+    preferred_instrument = instrument
+    instrument_candidates = [preferred_instrument]
+    if not (args.get("backtest_instrument") or args.get("instrument")):
+        instrument_candidates.extend(
+            str(row.get("instrument")) for row in _catalog_contracts(target_root)[:3]
+            if row.get("instrument") and str(row.get("instrument")) != preferred_instrument
+        )
+    instrument_candidates = list(dict.fromkeys(instrument_candidates))[:2]
+    smoke: Dict[str, Any] = {}
+    smoke_state: Dict[str, Any] = {"status": "not_started"}
+    smoke_result: Dict[str, Any] = {}
+    instrument = preferred_instrument
+    infra_attempts: List[Dict[str, Any]] = []
+    for candidate_instrument in instrument_candidates:
+        period_plan = _bounded_period_for_instrument(
+            candidate_instrument, smoke_start, smoke_end,
+        )
+        if not period_plan.get("ok") or float(period_plan.get("available_days") or 0) < 10:
+            infra_attempts.append({
+                "instrument": candidate_instrument, "stage": "catalog_preflight",
+                "reason": period_plan.get("reason") or "less_than_10_days_of_minute_data",
+                "period": period_plan,
+            })
+            continue
+        instrument = candidate_instrument
+        activity.log(
+            experiment_id, "safety", "contract_selected", level="info",
+            instrument=instrument, data_first=period_plan.get("catalog_data_first"),
+            data_last=period_plan.get("catalog_data_last"),
+            available_days=period_plan.get("available_days"),
+        )
+        smoke = backtest.submit(
+            experiment_id=experiment_id,
+            ai_cell_id=skeleton["ai_cell_id"],
+            class_name=class_name,
+            instrument=instrument,
+            from_utc=str(period_plan["from_utc"]),
+            to_utc=str(period_plan["to_utc"]),
+            parameters=hypo["parameters"],
+            risk_profile=skeleton["risk_profile"],
+            session_template=skeleton["session_template"],
+            model_chain=skeleton["model_chain"],
+            stage="smoke",
+        )
+        if not smoke.get("ok"):
+            infra_attempts.append({
+                "instrument": instrument, "stage": "submit",
+                "reason": str(smoke.get("error") or "submit_failed")[:500],
+            })
+            continue
+        activity.log(
+            experiment_id, "backtest", "smoke_submitted", level="info",
+            job_id=smoke["job_id"], days=period_plan.get("available_days"),
+            instrument=instrument,
+        )
+        smoke_state = backtest.wait_for_terminal(
+            smoke["job_id"], timeout_sec=int(args.get("smoke_timeout_sec") or 180),
+        )
+        smoke_result = backtest.result_metrics(smoke["job_id"])
+        integrity = smoke_result.get("integrity") or {}
+        if smoke_state.get("status") == "done" and integrity.get("ok"):
+            break
+        infra_attempts.append({
+            "instrument": instrument, "stage": "result_integrity",
+            "job_id": smoke.get("job_id"), "job_status": smoke_state.get("status"),
+            "integrity": integrity,
+        })
+        activity.log(
+            experiment_id, "safety", "smoke_data_invalid", level="error",
+            instrument=instrument, job_id=smoke.get("job_id"),
+            reasons=integrity.get("reasons") or [smoke_state.get("status")],
+        )
+        smoke_result = {}
+
+    if not smoke_result:
+        reason = "smoke infrastructure preflight failed: no backtest with proven historical bars"
+        errors.log_infra_fail(experiment_id, "backtest", reason)
         registry.transition_status(
-            experiment_id, "backtest_failed",
-            reason=f"smoke submit error: {smoke.get('error')}",
+            experiment_id, "blocked_by_real_environment_issue", reason=reason,
+            extra={
+                "backtest_infrastructure_attempts": infra_attempts,
+                "verdict": {
+                    "outcome": "blocked", "reasons": [reason],
+                    "rejection_code": "SMOKE_DATA_UNVERIFIED", "structural": True,
+                },
+            },
         )
         return registry.read_experiment(experiment_id)
-    activity.log(
-        experiment_id, "backtest", "smoke_submitted", level="info",
-        job_id=smoke["job_id"], days=smoke_days,
-    )
-    smoke_state = backtest.wait_for_terminal(
-        smoke["job_id"],
-        timeout_sec=int(args.get("smoke_timeout_sec") or 180),
-    )
-    smoke_result = backtest.result_metrics(smoke["job_id"])
+
     smoke_metrics = smoke_result.get("metrics") or {}
     smoke_trades = int(smoke_result.get("trade_count") or 0)
     smoke_pf = float(smoke_metrics.get("profit_factor_after_commission") or 0.0)
@@ -1171,9 +1495,31 @@ def run_pipeline(experiment_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- backtest submit ---
     skeleton = registry.read_experiment(experiment_id) or skeleton
-    period = _default_period()
+    requested_period = _default_period()
+    period = _bounded_period_for_instrument(
+        instrument,
+        datetime.fromisoformat(requested_period["from_utc"].replace("Z", "+00:00")),
+        datetime.fromisoformat(requested_period["to_utc"].replace("Z", "+00:00")),
+    )
+    if not period.get("ok") or float(period.get("available_days") or 0) < 20:
+        reason = (
+            "full backtest blocked: selected contract has insufficient proven minute data "
+            f"({period.get('available_days', 0)} days)"
+        )
+        errors.log_infra_fail(experiment_id, "backtest", reason)
+        registry.transition_status(
+            experiment_id, "blocked_by_real_environment_issue", reason=reason,
+            extra={
+                "backtest_period_preflight": period,
+                "verdict": {
+                    "outcome": "blocked", "reasons": [reason],
+                    "rejection_code": "FULL_DATA_INSUFFICIENT", "structural": True,
+                },
+            },
+        )
+        return registry.read_experiment(experiment_id)
     activity.log(experiment_id, "backtest", "submitting", level="info",
-                 instrument=instrument,
+                  instrument=instrument,
                  from_utc=period["from_utc"], to_utc=period["to_utc"])
     bt = backtest.submit(
         experiment_id=experiment_id, ai_cell_id=skeleton["ai_cell_id"],
@@ -1236,6 +1582,26 @@ def finalize_backtest(experiment_id: str, job_id: str) -> Dict[str, Any]:
             "job_id": job_id,
             "status": exp["status"],
             "error": f"job is {job_state}, not done",
+        }
+
+    integrity = backtest.validate_job_dir_integrity(job_dir)
+    if not integrity.get("ok"):
+        reason = "full backtest result has no proven historical bars"
+        exp["status"] = "blocked_by_real_environment_issue"
+        exp["backtest_result_integrity"] = integrity
+        exp["verdict"] = {
+            "outcome": "blocked", "reasons": [reason, *(integrity.get("reasons") or [])],
+            "rejection_code": "FULL_DATA_UNVERIFIED", "structural": True,
+        }
+        registry.write_experiment(exp)
+        errors.log_infra_fail(experiment_id, "backtest", reason)
+        activity.log(
+            experiment_id, "safety", "smoke_data_invalid", level="error",
+            job_id=job_id, reasons=integrity.get("reasons") or [], backtest_stage="full",
+        )
+        return {
+            "ok": False, "experiment_id": experiment_id, "job_id": job_id,
+            "status": exp["status"], "error": reason, "integrity": integrity,
         }
 
     activity.log(experiment_id, "analyze", "building_pack", level="info", job_id=job_id)

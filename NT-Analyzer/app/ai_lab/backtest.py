@@ -10,6 +10,7 @@ Source of truth for backtest results remains NT-Analyzer / NinjaTrader.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
@@ -218,10 +219,60 @@ def result_metrics(job_id: str) -> Dict[str, Any]:
     full = jobqueue.read_job_full(job_id) or {}
     result = full.get("result") or {}
     metrics = result.get("metrics") or {}
+    integrity = validate_result_integrity(full)
     return {
         "ok": full.get("status") == "done",
         "status": full.get("status"),
         "metrics": metrics,
         "trade_count": int(metrics.get("trade_count_adjusted", metrics.get("trade_count", 0)) or 0),
         "job": full,
+        "integrity": integrity,
     }
+
+
+def validate_result_integrity(full: Dict[str, Any]) -> Dict[str, Any]:
+    """Prove a completed result actually consumed historical bars.
+
+    A successful RunBacktest call with ``BarsArray[0] == null`` previously
+    produced a valid-looking zero-trade result.  Such a result is an
+    infrastructure failure and must never become negative strategy evidence.
+    """
+    status = str(full.get("status") or "")
+    result = full.get("result") if isinstance(full.get("result"), dict) else {}
+    context = result.get("context") if isinstance(result.get("context"), dict) else {}
+    fingerprint = (
+        context.get("historical_data_fingerprint")
+        if isinstance(context.get("historical_data_fingerprint"), dict) else {}
+    )
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    warnings = [str(value) for value in (result.get("verification_warnings") or [])]
+    warning_blob = "\n".join(warnings).lower()
+    method = str(fingerprint.get("method") or "")
+    bar_count = int(fingerprint.get("bar_count") or 0)
+    bars_file = artifacts.get("bars_file")
+    reasons: List[str] = []
+    if status != "done":
+        reasons.append(f"job_status_{status or 'unknown'}")
+    if not method or method == "placeholder":
+        reasons.append("historical_fingerprint_placeholder")
+    if bar_count <= 0 and not bars_file:
+        reasons.append("no_historical_bars_artifact")
+    if "barsarray[0] not found / null" in warning_blob:
+        reasons.append("strategy_bars_array_null")
+    return {
+        "ok": not reasons,
+        "reasons": list(dict.fromkeys(reasons)),
+        "historical_data_fingerprint_method": method or None,
+        "bar_count": bar_count,
+        "bars_file": bars_file,
+    }
+
+
+def validate_job_dir_integrity(job_dir: Path) -> Dict[str, Any]:
+    """Validate the immutable result artifact directly from a terminal job dir."""
+    try:
+        result = json.loads((Path(job_dir) / "result.json").read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "reasons": [f"result_json_unreadable:{type(exc).__name__}"]}
+    status = "done" if Path(job_dir).parent.name == "done" else Path(job_dir).parent.name
+    return validate_result_integrity({"status": status, "result": result})

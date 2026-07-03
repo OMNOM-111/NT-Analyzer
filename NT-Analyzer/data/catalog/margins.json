@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-06-30T22:15:18Z",
+  "fetched_at_utc": "2026-07-03T03:08:33Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",
@@ -687,8 +687,8 @@
     "PBTCUC": {
       "display_name": "Bitcoin US Dollar Perpetual",
       "exchange": "Bitnomial",
-      "intraday_margin": 32.0,
-      "initial_margin": 64.0,
+      "intraday_margin": 49.0,
+      "initial_margin": 98.0,
       "maintenance_margin": null
     },
     "PDOGUK": {

@@ -265,6 +265,59 @@ def test_aurora_keeps_legacy_operational_capabilities_wired():
         assert f"API.http.{method}" in ai_lab
 
 
+def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
+    html = (AURORA / "ai-lab.html").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    # AI Lab keeps only a compact status card + a launcher for the global chat.
+    assert "StratForge Orchestrator" in html
+    assert 'id="orchestrator-open"' in html
+    assert 'id="chief-hours"' not in html
+    assert 'id="chief-task"' not in html
+    # The full conversational surface is the global floating widget in the shell:
+    # launcher FAB, per-conversation switching and the message API are all wired.
+    assert "openOrchestrator" in ui
+    assert "orch-fab" in ui
+    assert "API.http.aiOrchestratorMessage" in ui
+    assert "aiOrchestratorConversations" in ui
+    assert "/api/ai-lab/orchestrator/message" in api
+    assert "/api/ai-lab/orchestrator/conversations" in api
+
+
+def test_named_domain_agents_and_unified_finance_page_contract():
+    finance = (AURORA / "performance.html").read_text(encoding="utf-8")
+    finance_js = (AURORA / "assets" / "pages" / "performance.js").read_text(encoding="utf-8")
+    strategies = (AURORA / "strategies.html").read_text(encoding="utf-8")
+    strategies_js = (AURORA / "assets" / "pages" / "strategies.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+
+    assert "Финансы" in finance and "Марина · финансовый контроль" in finance
+    assert "renderMarina" in finance_js and "API.http.accounting" in finance_js
+    assert not (AURORA / "accounting.html").exists()
+    assert "Толик · контроль качества стратегий" in strategies
+    assert "tolik-message" not in strategies and "domainAgentMessage('tolik'" not in strategies_js
+    assert "/api/ai-lab/accounting" in api and "/api/ai-lab/strategy-analysis" in api
+    assert 'data-orch-agent="Марина"' in ui and 'data-orch-agent="Толик"' in ui
+    assert 'data-orch-agent="Никита"' in ui
+    assert "accounting.html" not in ui and "label: 'Финансы'" in ui
+
+
+def test_news_agent_page_ticker_and_api_contract():
+    html = (AURORA / "news.html").read_text(encoding="utf-8")
+    news = (AURORA / "assets" / "pages" / "news.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+
+    assert "Никита · новостной аналитик" in html
+    assert "renderAgentAnalysis" in news and "API.http.newsAnalysis" in news
+    assert "news-agent-instruments" in html and "agentWhen" in news and "agentRelevance" in news
+    assert "news-agent-details" in html and "детерминированный анализ · без токенов" not in news
+    assert "news-agent-thumb-wrap" in html and "agentThumbHtml" in news
+    assert "🧠 Никита:" in news and "🧠 Никита:" in ui
+    assert "/api/ai-lab/news-analysis" in api
+
+
 def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     charts = (AURORA / "assets" / "charts.js").read_text(encoding="utf-8")
     overview = (AURORA / "assets" / "pages" / "overview.js").read_text(encoding="utf-8")

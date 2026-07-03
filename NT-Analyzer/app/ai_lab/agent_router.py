@@ -14,19 +14,29 @@ from . import agent_registry, universal_llm
 ROLE_PROVIDER_ORDER: Dict[str, List[str]] = {
     # Benchmark 2026-06-30: GPT-5 mini was the only external model that was
     # both strong across the full suite and deterministic enough for gates.
-    "hypothesis": ["azure_foundry", "gemini", "openrouter"],
-    "strategy_analyst": ["gemini", "azure_foundry", "openrouter"],
-    "coder": ["azure_foundry", "openrouter", "gemini"],
-    "code_reviewer": ["azure_foundry", "openrouter", "gemini"],
-    "compile_error_fixer": ["azure_foundry", "openrouter", "gemini"],
-    "backtest_analyst": ["gemini", "azure_foundry", "openrouter"],
-    "risk_manager": ["azure_foundry", "openrouter", "gemini"],
-    "optimizer": ["gemini", "azure_foundry", "openrouter"],
-    "overfit_detector": ["azure_foundry", "openrouter", "gemini"],
-    "final_judge": ["azure_foundry", "openrouter", "gemini"],
-    "telegram_assistant": ["gemini", "openrouter", "azure_foundry"],
+    "orchestrator": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+    "chief_agent": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter"],
+    "hypothesis": ["azure_foundry", "gemini", "zai", "openrouter", "deepseek"],
+    "strategy_analyst": ["gemini", "zai", "openrouter", "azure_foundry"],
+    "accountant": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+    "news_analyst": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+    "coder": ["azure_foundry", "openrouter", "gemini", "zai"],
+    "code_reviewer": ["azure_foundry", "openrouter", "gemini", "zai"],
+    "compile_error_fixer": ["azure_foundry", "openrouter", "gemini", "zai"],
+    "backtest_analyst": ["gemini", "zai", "openrouter", "azure_foundry"],
+    "risk_manager": ["azure_foundry", "openrouter", "gemini", "zai"],
+    "optimizer": ["gemini", "zai", "openrouter", "azure_foundry"],
+    "overfit_detector": ["azure_foundry", "openrouter", "gemini", "zai"],
+    "final_judge": ["deepseek", "azure_foundry", "openrouter", "gemini", "zai"],
+    "telegram_assistant": ["gemini", "zai", "openrouter", "azure_foundry"],
     "embedding": ["azure_foundry", "openai", "gemini"],
-    "general": ["gemini", "openrouter", "azure_foundry"],
+    "general": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+}
+
+COMPLEXITY_PROVIDER_ORDER: Dict[str, List[str]] = {
+    "light": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+    "standard": ["gemini", "zai", "deepseek", "azure_foundry", "openrouter"],
+    "critical": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter"],
 }
 
 
@@ -47,6 +57,8 @@ def candidates(
     *,
     enabled_only: bool = True,
     endpoint_type: Optional[str] = None,
+    complexity: str = "auto",
+    allow_paid: bool = True,
 ) -> List[Dict[str, Any]]:
     kind = endpoint_type or ("embeddings" if role == "embedding" else "chat")
     rows = [
@@ -55,9 +67,26 @@ def candidates(
         and agent.get("endpoint_type") == kind
         and (not enabled_only or agent.get("enabled"))
         and not agent.get("cooldown_active")
+        and (allow_paid or agent.get("billing_mode") == "free_tier")
     ]
+    level = str(complexity or "auto").strip().lower()
+    provider_order = COMPLEXITY_PROVIDER_ORDER.get(level)
+    def provider_rank(agent: Dict[str, Any]) -> int:
+        provider = str(agent.get("provider") or "")
+        if provider_order is None:
+            return _provider_rank(role, provider)
+        try:
+            return provider_order.index(provider)
+        except ValueError:
+            return len(provider_order) + 10
+    def model_rank(agent: Dict[str, Any]) -> int:
+        model = str(agent.get("model") or "").lower()
+        if level == "critical":
+            return 0 if model == "deepseek-v4-pro" else 1 if model == "deepseek-v4-flash" else 2
+        return 0 if model == "deepseek-v4-flash" else 1 if model == "deepseek-v4-pro" else 0
     rows.sort(key=lambda agent: (
-        _provider_rank(role, str(agent.get("provider") or "")),
+        provider_rank(agent),
+        model_rank(agent),
         0 if str(agent.get("role") or "") in {role, "general"} else 1,
         int(agent.get("priority") or 100),
         int(agent.get("requests_today") or 0),
@@ -84,9 +113,15 @@ def invoke_role(
     timeout: int = 180,
     purpose: str = "role_request",
     enabled_only: bool = True,
-    max_attempts: int = 4,
+    max_attempts: int = 12,
+    complexity: str = "auto",
+    cache_mode: str = "auto",
+    allow_paid: bool = True,
 ) -> Dict[str, Any]:
-    route = candidates(role, enabled_only=enabled_only)
+    route = candidates(
+        role, enabled_only=enabled_only, complexity=complexity,
+        allow_paid=allow_paid,
+    )
     if not route:
         raise AgentRouterError(f"Нет доступной enabled-модели для роли {role}.")
     attempts: List[Dict[str, Any]] = []
@@ -97,12 +132,14 @@ def invoke_role(
                 str(agent["id"]), prompt, system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens, timeout=timeout,
                 allow_disabled=not enabled_only, request_role=role, purpose=purpose,
+                cache_mode=cache_mode,
             )
             # Universal client uses ``response`` for the public test API;
             # AI Lab chat consumers use the conventional ``content`` key.
             # Normalize once at the routing boundary.
             result["content"] = str(result.get("response") or result.get("content") or "")
             result["request_role"] = role
+            result["complexity"] = complexity
             result["route_attempts"] = attempts + [{
                 "agent_id": agent["id"], "account_name": agent.get("account_name"),
                 "provider": agent.get("provider"), "model": agent.get("model"), "status": "success",
@@ -149,6 +186,8 @@ def invoke_messages(
 def status() -> Dict[str, Any]:
     return {
         "active_requests": universal_llm.active_requests(),
+        "routing_mode": "automatic_complexity",
+        "complexity_provider_order": COMPLEXITY_PROVIDER_ORDER,
         "roles": {
             role: [
                 {

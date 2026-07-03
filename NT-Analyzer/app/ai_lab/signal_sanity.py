@@ -65,7 +65,23 @@ def _to_pacific(dt_utc: datetime) -> datetime:
     return (dt_utc - timedelta(hours=8)).replace(tzinfo=timezone(timedelta(hours=-8)))
 
 
-def find_bars_file(target_root: str) -> Optional[Path]:
+def _job_instrument_for_bars(bars_path: Path) -> str:
+    for name in ("job.json", "result.json"):
+        path = bars_path.parent / name
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if name == "job.json":
+            value = doc.get("instrument")
+        else:
+            value = ((doc.get("context") or {}).get("instrument"))
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def find_bars_file(target_root: str, instrument: str = "") -> Optional[Path]:
     """Find the newest local completed bars.json for a target root."""
     override = os.environ.get("AI_LAB_SIGNAL_BARS_FILE")
     if override:
@@ -104,6 +120,12 @@ def find_bars_file(target_root: str) -> Optional[Path]:
     candidates.sort(key=lambda item: item[0], reverse=True)
     if not root:
         return candidates[0][1]
+
+    exact = str(instrument or "").strip().upper()
+    if exact:
+        for _, bars_path in candidates:
+            if _job_instrument_for_bars(bars_path).upper() == exact:
+                return bars_path
 
     root_in_name = [p for _, p in candidates if root in p.parent.name.upper()]
     if root_in_name:
@@ -551,9 +573,10 @@ def check_experiment(
     *,
     min_signals: int = DEFAULT_MIN_SIGNALS,
     bars_file: Optional[Path] = None,
+    instrument: str = "",
 ) -> Dict[str, Any]:
     target_root = str(experiment.get("target_root") or "").upper()
-    path = Path(bars_file) if bars_file else find_bars_file(target_root)
+    path = Path(bars_file) if bars_file else find_bars_file(target_root, instrument)
     if path is None:
         return {
             "ok": False,
@@ -589,6 +612,16 @@ def check_experiment(
         data_source=str(path),
     )
     out["target_root"] = target_root
+    out["requested_instrument"] = str(instrument or "")
+    out["data_instrument"] = _job_instrument_for_bars(path)
+    if instrument and out["data_instrument"].upper() != str(instrument).upper():
+        # Cross-contract bars are useful as a rough diagnostic but cannot
+        # reject the current contract before its authoritative smoke run.
+        out["original_ok"] = out.get("ok")
+        out["original_reason"] = out.get("reason")
+        out["ok"] = True
+        out["advisory_only"] = True
+        out["reason"] = "contract_mismatch_advisory_only"
     return out
 
 

@@ -33,6 +33,21 @@
   <!-- KPI -->
   <div class="grid cols-5" id="ai-kpis"></div>
 
+  <section class="panel">
+    <div class="panel-h"><h2>StratForge Orchestrator</h2><div class="spacer"></div><span class="badge" id="chief-badge"><span class="dot"></span>Auto · проверка</span></div>
+    <div class="panel-b col gap-lg">
+      <div class="grid cols-5" id="chief-kpis"></div>
+      <div class="grid" style="grid-template-columns:1.55fr 1fr">
+        <div class="col gap-sm">
+          <div class="finance-note">Оркестратор работает вместо вас: понимает свободный текст, сам выбирает самую дешёвую подходящую модель, ставит задачи агентам, контролирует выполнение по таймеру и доводит работу до отчёта. Полноценный диалог с историей и отдельными темами — в плавающем чате (кнопка с иконкой сообщения справа внизу экрана).</div>
+          <div class="flex wrap gap-sm"><button class="btn primary" id="orchestrator-open">Открыть чат оркестратора</button><span class="row-sub">Каждая тема — свой контекст. Ответы и отчёты также приходят в Telegram.</span></div>
+        </div>
+        <div><h4 style="margin:0 0 8px">Состояние</h4><div class="list" id="chief-status"></div><h4 style="margin:16px 0 8px">Разрешённые функции</h4><div class="list" id="orchestrator-capabilities"></div></div>
+      </div>
+      <div class="finance-note">Исполняются только функции приложения из allowlist. Простые задачи идут на дешёвую модель, сложный анализ — на мощную. Изменение кода, shell, live и автоматический promotion запрещены; paper/demo требует подтверждения.</div>
+    </div>
+  </section>
+
   <!-- launcher + process -->
   <div class="grid" style="grid-template-columns: 360px 1fr;">
     <section class="panel">
@@ -96,7 +111,7 @@
   <section class="panel">
     <div class="panel-h"><h2>Внешние агенты: работа и стоимость</h2><div class="spacer"></div><a class="btn sm" href="ai-agents.html">Управление ключами</a></div>
     <div class="panel-b col gap-lg">
-      <div class="grid cols-4" id="ai-agent-kpis"></div>
+      <div class="grid cols-5" id="ai-agent-kpis"></div>
       <div class="grid" style="grid-template-columns:1fr 1.4fr">
         <div><h4 style="margin:0 0 8px">Сейчас выполняется</h4><div class="list" id="ai-agent-active"></div></div>
         <div><h4 style="margin:0 0 8px">Последние вызовы</h4><div class="tbl-wrap" style="max-height:260px"><table class="tbl"><thead><tr><th>Роль</th><th>Модель / аккаунт</th><th class="num">Tokens</th><th class="num">Cost</th><th>Статус</th></tr></thead><tbody id="ai-agent-usage"></tbody></table></div></div>
@@ -150,9 +165,9 @@
   </div>
 
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260629-cloud1"></script>
+<script src="assets/api.js?v=20260701-orchestrator1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ui.js?v=20260630-news6"></script>
-<script src="assets/pages/ai-lab.js?v=20260701-routing2"></script>
+<script src="assets/pages/ai-lab.js?v=20260702-staged1"></script>
 </body>
 </html>

@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "owner": "Черевко Дмитро",
+  "updated_at_utc": "2026-07-02T18:30:00Z",
+  "north_star": {
+    "id": "ns-2026-runtime-pnl",
+    "title": "Первые $100,000 с онлайн-стратегий",
+    "statement": "К 31 декабря 2026 совокупная реализованная прибыль после комиссии со всех включённых стратегий approved_demo и approved_live в NinjaTrader runtime должна составить не менее $100,000 сверх baseline.",
+    "target_usd": 100000,
+    "currency": "USD",
+    "deadline": "2026-12-31",
+    "baseline_date": "2026-07-02",
+    "baseline_realized_usd": 0,
+    "measurement": {
+      "source": "runtime_realized_after_commission",
+      "include_lifecycle": ["approved_demo", "approved_live"],
+      "exclude": ["backtest", "unrealized", "ai_lab_sandbox", "paper_without_executions"]
+    },
+    "milestones": [
+      {"date": "2026-09-30", "target_usd": 25000},
+      {"date": "2026-10-31", "target_usd": 50000},
+      {"date": "2026-11-30", "target_usd": 75000},
+      {"date": "2026-12-31", "target_usd": 100000}
+    ],
+    "constraints": [
+      "MaxDD 15% от зафиксированного capital остаётся обязательным",
+      "paper before live",
+      "цель не отменяет risk/compile/backtest/promotion gates и законы"
+    ],
+    "doc": "docs/governance/NORTH_STAR_2026.md",
+    "approved_by": "owner",
+    "approved_at_utc": "2026-07-02T18:30:00Z"
+  }
+}

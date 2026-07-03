@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-07-02
+
+- Added StratForge Orchestrator as the owner-facing manager with isolated app/
+  Telegram conversations, named finance/strategy/news specialists, secure model
+  routing, cost accounting and a governed North Star.
+- Reworked autonomous strategy development to finish one strategy before the
+  next: evidence-driven mutations, stagnation/time limits, result-only reports
+  and commission-aware metrics.
+- Made stop commands deterministic and race-safe across the mission and runner;
+  queued restarts are cleared and stale workers cannot reactivate stopped work.
+- Removed model/action/cycle boilerplate from owner messages and added stable
+  incident deduplication for Telegram/system notifications.
+- Fixed LM Studio lazy operation by retaining the API server between runs while
+  unloading models from VRAM; explicit no-local missions now bypass local probes.
+- Expanded Aurora operations, news, performance and strategy views; added
+  historical-data integrity checks in the NinjaTrader bridge and full regression
+  coverage for the staged AI pipeline.
+- Removed private CEO photos and ignored machine-specific Telegram topic maps,
+  runtime artifacts and benchmark outputs.
+
 ## 2026-06-30
 
 - Added a dedicated AI Agents / API Keys page with provider/model/role CRUD,

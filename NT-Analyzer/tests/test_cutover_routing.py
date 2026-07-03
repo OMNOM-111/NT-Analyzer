@@ -78,6 +78,7 @@ def test_server_routes_aurora_primary_and_legacy():
     assert '"/ai-strategy.html": "/ui/ai-lab.html"' in server
     assert '"/ops.html": "/ui/trading.html"' in server
     assert '"/docs.html": "/ui/documents.html"' in server
+    assert '"/accounting.html": "/ui/performance.html"' in server
     # Uniform CSP response header that blocks inline scripts.
     assert "STATIC_CSP" in server and "script-src 'self'" in server
     assert 'self.send_header("Content-Security-Policy", STATIC_CSP)' in server
