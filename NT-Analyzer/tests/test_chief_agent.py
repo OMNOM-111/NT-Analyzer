@@ -588,6 +588,7 @@ def test_auto_reconnect_helper_uses_cooldown(tmp_path, monkeypatch) -> None:
     command_rows = []
     monkeypatch.setattr(runtime_mod, "read_commands", lambda limit=200: list(command_rows))
     monkeypatch.setattr(runtime_mod, "read_command_results", lambda limit=500: [])
+    monkeypatch.setattr(runtime_mod, "read_heartbeat", lambda: {"present": True, "fresh": True})
     monkeypatch.setattr(
         chief_agent,
         "_queue_runtime_reconnect",
@@ -643,6 +644,33 @@ def test_auto_reconnect_requires_actual_realtime_strategy(tmp_path, monkeypatch)
     }) is True
 
 
+def test_auto_reconnect_does_not_queue_when_bridge_heartbeat_is_stale(tmp_path, monkeypatch) -> None:
+    from app import runtime as runtime_mod
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+        "_connected": False,
+        "_has_enabled_strategy": True,
+    }])
+    monkeypatch.setattr(runtime_mod, "read_heartbeat", lambda: {
+        "present": True, "fresh": False, "age_sec": 600,
+    })
+    monkeypatch.setattr(
+        chief_agent, "_queue_runtime_reconnect",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("offline bridge must not receive queued reconnects")
+        ),
+    )
+
+    result = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 1})
+
+    assert result["attempted"] is False
+    assert result["reason"] == "bridge_offline_or_stale"
+
+
 def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_path, monkeypatch) -> None:
     from app import runtime as runtime_mod
 
@@ -660,6 +688,7 @@ def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_
     monkeypatch.setattr(runtime_mod, "read_command_results", lambda limit=500: [{
         "command_id": "cmd-1", "status": "rejected", "timestamp_utc": now,
     }])
+    monkeypatch.setattr(runtime_mod, "read_heartbeat", lambda: {"present": True, "fresh": True})
     monkeypatch.setattr(chief_agent, "AUTO_RECONNECT_COOLDOWN_SEC", 0)
     monkeypatch.setattr(chief_agent, "_queue_runtime_reconnect", lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("terminal failure must not be immediately retried")

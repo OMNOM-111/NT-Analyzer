@@ -1105,6 +1105,13 @@ def _maybe_auto_reconnect_connection(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
     target = offline_with_strategies[0]
     account_name = str(target.get("account_name") or "")
+    heartbeat = runtime.read_heartbeat()
+    if not heartbeat.get("present") or not heartbeat.get("fresh"):
+        return {
+            "attempted": False,
+            "reason": "bridge_offline_or_stale",
+            "account_name": account_name,
+        }
     recent = [
         row for row in runtime.read_commands(limit=200)
         if row.get("command") == "reconnect_account"
@@ -3183,6 +3190,9 @@ def _scheduled_reports_tick() -> None:
 def _runtime_monitor_tick() -> None:
     from .. import runtime
 
+    heartbeat = runtime.read_heartbeat()
+    if not heartbeat.get("present") or not heartbeat.get("fresh"):
+        return
     strategies = runtime.read_strategies_raw()
     enabled = [row for row in strategies if _active_runtime_strategy(row)]
     enabled_accounts = {
