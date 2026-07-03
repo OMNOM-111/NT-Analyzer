@@ -23,10 +23,12 @@ import errno
 import json
 import math
 import os
+import queue
 import socket
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 from datetime import timezone
@@ -691,7 +693,7 @@ class Handler(BaseHTTPRequestHandler):
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
                 "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
-                "/news.html", "/topstep.html",
+                "/news.html", "/topstep.html", "/desktop.html",
             }
             if rel in _new_pages or rel.startswith("/assets/"):
                 self._serve_static("aurora/index.html" if rel == "/" else "aurora" + rel)
@@ -1340,7 +1342,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"roots": result})
             return True
 
-        # /api/ops/strategies/{id}[/sub]
+        if path == "/api/ops/runtime/bars":
+            # Market bars for the Рабочий стол (desktop) charts — sourced from
+            # NinjaTrader. Honest-empty when no NT data exists for the symbol.
+            instrument = (qs.get("instrument") or [""])[0]
+            timeframe = (qs.get("timeframe") or [""])[0]
+            try:
+                limit = int((qs.get("limit") or ["1500"])[0])
+            except ValueError:
+                limit = 1500
+            if not instrument:
+                self._err(HTTPStatus.BAD_REQUEST, "instrument is required")
+                return True
+            self._json(HTTPStatus.OK,
+                       jobqueue.read_instrument_bars(instrument, timeframe, limit))
+            return True
+
         if sub == "strategies" and len(parts) >= 4:
             sid = parts[3]
             tail = parts[4] if len(parts) >= 5 else None
@@ -1680,6 +1697,129 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- /api/ai-lab/* POST dispatcher ----------------------------
 
+    def _sse_write(self, event: str, data: Dict[str, Any]) -> bool:
+        """Write one Server-Sent Event; return False if the client disconnected."""
+        try:
+            payload = json.dumps(self._json_safe(data), ensure_ascii=False, allow_nan=False)
+            chunk = f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+            self.wfile.write(chunk)
+            self.wfile.flush()
+            return True
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return False
+            raise
+
+    def _sse_keepalive(self) -> bool:
+        try:
+            self.wfile.write(b": keepalive\n\n")
+            self.wfile.flush()
+            return True
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return False
+            raise
+
+    def _ai_lab_orchestrator_stream(self, body: Dict[str, Any]) -> None:
+        """Stream the orchestrator reply as Server-Sent Events.
+
+        A live "thinking" channel (the provider's native reasoning) is streamed
+        first, then the final answer. The heavy work — including allowlisted
+        actions — runs in a worker thread through the SAME handle_message path as
+        the synchronous endpoint, so behaviour and safety are identical; only the
+        transport differs. Telegram still receives only the final reply (the
+        thinking channel is never mirrored). No extra model call is made: the
+        reasoning shown is the one the provider already generated for this turn.
+        """
+        message = str(body.get("message") or body.get("text") or "")
+        conversation_id = str(body.get("conversation_id") or "default")
+        agent = str(body.get("agent") or "")
+
+        events: "queue.Queue[tuple]" = queue.Queue()
+
+        def on_thinking(delta: str) -> None:
+            events.put(("thinking", str(delta or "")))
+
+        def worker() -> None:
+            try:
+                out = ai_chief_agent.handle_message(
+                    message, source="app", mirror_to_telegram=True,
+                    conversation_id=conversation_id, agent=agent,
+                    on_thinking=on_thinking,
+                )
+                events.put(("result", out))
+            except ai_chief_agent.ChiefAgentError as exc:
+                events.put(("error", str(exc)))
+            except Exception as exc:  # defensive: a failure must not hang the stream
+                events.put(("error", f"orchestrator error: {exc}"))
+
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+        except OSError as e:
+            if self._is_client_disconnect_error(e):
+                return
+            raise
+
+        threading.Thread(target=worker, name="orchestrator-stream", daemon=True).start()
+
+        if not self._sse_write("thinking_start", {"conversation_id": conversation_id}):
+            return
+
+        # Fallback wait statuses for models that expose no native reasoning.
+        wait_statuses = ["Выбираю модель…", "Формирую план…", "Выполняю действие…", "Собираю ответ…"]
+        saw_thinking = False
+        status_idx = 0
+        started_at = time.time()
+        last_status = 0.0
+        max_seconds = 600.0
+        while True:
+            if time.time() - started_at > max_seconds:
+                self._sse_write("error", {"error": "orchestrator stream timeout"})
+                self._sse_write("done", {"ok": False})
+                return
+            try:
+                kind, payload = events.get(timeout=1.0)
+            except queue.Empty:
+                now = time.time()
+                if not saw_thinking and now - last_status >= 1.5:
+                    last_status = now
+                    if not self._sse_write("status", {"text": wait_statuses[status_idx % len(wait_statuses)]}):
+                        return
+                    status_idx += 1
+                elif not self._sse_keepalive():
+                    return
+                continue
+            if kind == "thinking":
+                saw_thinking = True
+                if not self._sse_write("thinking_delta", {"text": payload}):
+                    return
+            elif kind == "result":
+                out = payload if isinstance(payload, dict) else {}
+                msg = out.get("message") if isinstance(out.get("message"), dict) else {}
+                self._sse_write("thinking_done", {"text": str(out.get("thinking") or "")})
+                self._sse_write("final", {
+                    "reply": str(out.get("reply") or ""),
+                    "conversation_id": str(out.get("conversation_id") or conversation_id),
+                    "model": out.get("model"),
+                    "provider": out.get("provider"),
+                    "agent": out.get("agent"),
+                    "doubts": out.get("doubts") or [],
+                    "message_id": str(msg.get("message_id") or ""),
+                    "timestamp_utc": str(msg.get("timestamp_utc") or ""),
+                })
+                self._sse_write("done", {"ok": True})
+                return
+            elif kind == "error":
+                self._sse_write("error", {"error": str(payload)})
+                self._sse_write("done", {"ok": False})
+                return
+
     def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
         if path.startswith("/api/ai-lab/cloud-agents/"):
             try:
@@ -1727,12 +1867,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"bootstrap unload failed: {e}")
             return
 
+        if path == "/api/ai-lab/orchestrator/message/stream":
+            self._ai_lab_orchestrator_stream(body)
+            return
+
         if path == "/api/ai-lab/orchestrator/message":
             try:
                 out = ai_chief_agent.handle_message(
                     str(body.get("message") or body.get("text") or ""),
                     source="app", mirror_to_telegram=True,
                     conversation_id=str(body.get("conversation_id") or "default"),
+                    agent=str(body.get("agent") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        if path.startswith("/api/ai-lab/orchestrator/message/") and path.endswith("/rating"):
+            try:
+                parts = path.strip("/").split("/")
+                message_id = urllib.parse.unquote(parts[-2]) if len(parts) >= 6 else ""
+                out = ai_chief_agent.rate_message(
+                    str(body.get("conversation_id") or "default"),
+                    message_id,
+                    body.get("rating"),
+                    str(body.get("feedback_comment") or body.get("comment") or ""),
+                    source=str(body.get("feedback_source") or "owner"),
                 )
                 self._json(HTTPStatus.OK, out)
             except ai_chief_agent.ChiefAgentError as e:

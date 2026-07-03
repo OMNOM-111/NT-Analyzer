@@ -4269,6 +4269,98 @@ def read_bars(job_id: str, offset: int = 0, limit: int = 5000) -> Dict[str, Any]
     }
 
 
+def _timeframe_label(doc: Dict[str, Any]) -> str:
+    """Compact timeframe token ('5m', '1h', '1D') from a job.json timeframe."""
+    tf = doc.get("timeframe") if isinstance(doc.get("timeframe"), dict) else {}
+    ptype = str(tf.get("bars_period_type") or "").strip()
+    raw = tf.get("value")
+    if raw is None:
+        raw = tf.get("bars_period_value")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        val = None
+    if not val:
+        return ""
+    if ptype == "Day":
+        return f"{val}D"
+    abbr = {"Minute": "m", "Hour": "h", "Second": "s", "Tick": "t", "Week": "W", "Month": "M"}.get(ptype)
+    return f"{val}{abbr}" if abbr else ""
+
+
+def read_instrument_bars(instrument: str, timeframe: str = "",
+                         limit: int = 1500) -> Dict[str, Any]:
+    """Return the most recent OHLCV bars for an instrument, sourced from
+    NinjaTrader.
+
+    There is no live market-data feed yet; the honest real source of NT bars
+    are the ``bars.json`` artifacts produced by Strategy Analyzer runs. We pick
+    the newest job whose instrument *root* matches the request, preferring an
+    exact timeframe match and falling back to any timeframe available for that
+    root. When nothing is available we return an honest-empty payload (never
+    fabricated candles) so the chart can show a "waiting for NinjaTrader" state.
+    """
+    root = portfolio_cells.normalize_root(instrument)
+    if not root:
+        return {"instrument": instrument, "bars": [], "total": 0,
+                "source": None, "live": False,
+                "note": "инструмент не указан"}
+
+    rows, _ = _indexed_job_rows()
+    want_tf = str(timeframe or "").strip().lower()
+    best: Optional[Dict[str, Any]] = None
+    fallback: Optional[Dict[str, Any]] = None
+    for r in rows[:120]:
+        jdir = Path(r["path"])
+        job = _read_json_safe(jdir / "job.json") or {}
+        if portfolio_cells.normalize_root(job.get("instrument")) != root:
+            continue
+        if not (jdir / "bars.json").is_file():
+            continue
+        label = _timeframe_label(job)
+        candidate = {
+            "job_id": r["job_id"], "dir": jdir,
+            "instrument": job.get("instrument"), "timeframe": label,
+        }
+        if want_tf and label.lower() == want_tf:
+            best = candidate
+            break
+        if fallback is None:
+            fallback = candidate
+
+    chosen = best or fallback
+    if not chosen:
+        return {"instrument": instrument, "root": root, "bars": [], "total": 0,
+                "source": None, "live": False,
+                "note": f"нет данных NinjaTrader по {root}"}
+
+    arr = _read_json_array_cached(chosen["dir"] / "bars.json")
+    if not isinstance(arr, list):
+        arr = []
+    total = len(arr)
+    if limit <= 0:
+        limit = 1500
+    if limit > 20000:
+        limit = 20000
+    bars = arr[-limit:]
+    note = ""
+    if want_tf and not best and chosen.get("timeframe"):
+        note = f"показан доступный ТФ {chosen['timeframe']}"
+    return {
+        "instrument": instrument, "root": root,
+        "bars": bars, "total": total,
+        "requested_timeframe": timeframe,
+        "matched_timeframe": chosen.get("timeframe"),
+        "source": {
+            "job_id": chosen["job_id"],
+            "instrument": chosen.get("instrument"),
+            "timeframe": chosen.get("timeframe"),
+        },
+        "live": False,
+        "note": note,
+    }
+
+
 def read_draw_objects(job_id: str) -> Dict[str, Any]:
     """Returns the strategy-draw-objects artifact for a job.
 

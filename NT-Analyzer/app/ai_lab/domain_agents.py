@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import account_ledger, performance, runtime
-from . import agent_router, news_agent, registry
+from . import agent_router, llm_timeouts, news_agent, registry
 
 
 MONEY = Decimal("0.01")
@@ -59,6 +59,44 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# Management tiers of the orchestrator itself. Unlike the named specialists,
+# these have no personal name — each one is a fixed *seniority* of the same
+# manager and deliberately forces a model-complexity tier so the owner can
+# consciously choose "quick & cheap" versus "strongest reasoning" instead of
+# relying on automatic classification.
+MANAGEMENT: Dict[str, Dict[str, Any]] = {
+    "secretary": {
+        "id": "secretary",
+        "name": "",
+        "title": "Секретарь управляющего",
+        "role": "management",
+        "level": 1,
+        "forced_complexity": "light",
+        "aliases": ("секретарь", "secretary"),
+        "hint": "Быстрые команды и простые справки — запустил и отпустил",
+    },
+    "deputy": {
+        "id": "deputy",
+        "name": "",
+        "title": "Заместитель управляющего",
+        "role": "management",
+        "level": 2,
+        "forced_complexity": "standard",
+        "aliases": ("заместитель", "зам", "deputy"),
+        "hint": "Средние по сложности задачи и обсуждение",
+    },
+    "manager": {
+        "id": "manager",
+        "name": "",
+        "title": "Управляющий",
+        "role": "management",
+        "level": 4,
+        "forced_complexity": "critical",
+        "aliases": ("управляющий", "главный", "директор", "manager"),
+        "hint": "Важные решения, полное обсуждение перед запуском",
+    },
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -100,7 +138,19 @@ def list_personas() -> Dict[str, Any]:
         "ok": True,
         "routing": "auto_by_task_complexity",
         "agents": [dict(row) for row in PERSONAS.values()],
+        "management": [dict(row) for row in MANAGEMENT.values()],
     }
+
+
+def resolve_management(agent: str) -> Optional[Dict[str, Any]]:
+    """Return the management tier for an explicit selector id, else ``None``."""
+    key = str(agent or "").strip().lower()
+    if key in MANAGEMENT:
+        return MANAGEMENT[key]
+    for profile in MANAGEMENT.values():
+        if key and key in profile["aliases"]:
+            return profile
+    return None
 
 
 def resolve_persona(message: str, requested_agent: str = "") -> Optional[Dict[str, Any]]:
@@ -369,7 +419,7 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
         result = agent_router.invoke_role(
             str(profile["role"]), json.dumps(packet, ensure_ascii=False, default=str)[:19000],
             system_prompt=system_prompt, max_output_tokens=900 if complexity == "critical" else 500,
-            timeout=180, purpose=f"domain_agent_{profile['id']}", complexity=complexity,
+            timeout=llm_timeouts.ANALYSIS, purpose=f"domain_agent_{profile['id']}", complexity=complexity,
             cache_mode="auto",
         )
         narrative = _non_numeric_narrative(str(result.get("content") or ""))

@@ -263,7 +263,7 @@ function renderReports(reports) {
     const metrics = job.metrics || {};
     const pnl = metrics.net_profit_after_commission != null ? metrics.net_profit_after_commission : (metrics.net_profit != null ? metrics.net_profit : (job.net_pnl != null ? job.net_pnl : job.pnl));
     const ai = job.origin && job.origin.type === 'ai_lab';
-    return `<a class="row" href="backtesting.html?job=${encodeURIComponent(job.job_id || '')}"><div class="row-main"><div class="row-title">${UI.esc(job.label || job.name || job.job_id || 'отчёт')} ${ai ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div><div class="row-sub">${UI.esc(job.strategy || job.class_name || '')} · ${UI.esc(job.status || '')}</div></div><div class="row-val ${pnl != null ? UI.pnlClass(pnl) : 'muted'}">${pnl != null ? UI.money(pnl, { sign: true }) : '—'}</div></a>`;
+    return `<a class="row" href="backtesting.html?job=${encodeURIComponent(job.job_id || '')}"><div class="row-main"><div class="row-title">${UI.esc(job.label || job.name || job.job_id || 'отчёт')} ${ai ? '<span class="badge ai-origin-badge">AI</span>' : ''}</div><div class="row-sub">${UI.esc(job.strategy || job.class_name || '')} · ${UI.esc(job.status || '')}</div></div><div class="row-val ${pnl != null ? UI.pnlClass(pnl) : 'muted'}">${pnl != null ? UI.money(pnl, { sign: true }) : '—'}</div></a>`;
   }).join('') : '<div class="empty-state">Отчётов пока нет.</div>';
 }
 

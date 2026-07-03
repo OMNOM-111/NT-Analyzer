@@ -37,7 +37,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from . import activity, agent_committee, agent_router, arbitration, backtest, cloud_agents, compile_pipeline, errors, generator, lessons
-from . import compile_errors, goal_parser, knowledge, lm_studio, operator_notes, registry, runner, user_research
+from . import compile_errors, goal_parser, knowledge, llm_timeouts, lm_studio, operator_notes, registry, runner, user_research
 from . import signal_sanity
 from .analysis_pack import build as build_pack, project_to_experiment_analysis
 from .heartbeat import heartbeat
@@ -416,7 +416,7 @@ def choose_hypothesis(
     # A paid Azure/DeepSeek request must not be the default for every idea.
     try:
         external_resp = agent_router.invoke_messages(
-            "hypothesis", messages, max_output_tokens=700, timeout=180,
+            "hypothesis", messages, max_output_tokens=700, timeout=llm_timeouts.ANALYSIS,
             purpose="hypothesis_free_primary", allow_paid=False,
         )
         candidate = _validated_response(external_resp, "external_free_primary")
@@ -462,7 +462,7 @@ def choose_hypothesis(
     if allow_paid_agents:
         try:
             paid_resp = agent_router.invoke_messages(
-                "hypothesis", messages, max_output_tokens=700, timeout=180,
+                "hypothesis", messages, max_output_tokens=700, timeout=llm_timeouts.ANALYSIS,
                 purpose="hypothesis_paid_fallback", allow_paid=True,
             )
             candidate = _validated_response(paid_resp, "external_paid_fallback")
@@ -482,7 +482,7 @@ def choose_hypothesis(
             "hypothesis_fallback", messages,
             fallback_reason=local_failure or "local_hypothesis_failed",
             experiment_id=experiment_id, purpose="hypothesis_fallback",
-            temperature=0.2, max_tokens=500, timeout=180,
+            temperature=0.2, max_tokens=500, timeout=llm_timeouts.ANALYSIS,
         )
         activity.log(
             experiment_id, "generate", "hypothesis_cloud_fallback", level="warn",

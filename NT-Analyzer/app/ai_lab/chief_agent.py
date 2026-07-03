@@ -4,8 +4,9 @@ The chief agent may coordinate historical research, keep local tasks/notes and
 produce advisory reports. It never receives live-trading authority. Runtime
 strategy enable/disable changes are represented as explicit proposals and can
 only be applied after operator approval; the runtime layer independently
-rejects live/unknown accounts. Safe paper/demo/playback connection reconnects
-are infrastructure self-heal actions and may be queued autonomously.
+rejects live/unknown accounts. A paper/demo reconnect may be queued only for a
+genuinely active Realtime strategy. Historical/system instances and data-feed
+connections are never reconnect targets.
 """
 from __future__ import annotations
 
@@ -17,10 +18,10 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from . import agent_registry, agent_router, operator_notes, paths, registry, runner
-from .io_utils import append_jsonl, read_json, write_json_atomic
+from . import agent_registry, agent_router, llm_timeouts, operator_notes, paths, registry, runner
+from .io_utils import append_jsonl, read_json, read_jsonl, write_json_atomic, write_jsonl_atomic
 
 
 _LOCK = threading.RLock()
@@ -86,6 +87,7 @@ CORE BEHAVIOR
 EXECUTIVE MANAGER DOCTRINE
 - The owner is Dmitry Sergeevich. Speak to him like a competent general manager
   reporting to a director: natural Russian, concise, factual and accountable.
+  Conduct your internal reasoning (thinking) in Russian as well, not English.
 - Own the outcome from start to finish. Convert the request into work, delegate
   to the available agents and tools, diagnose ordinary failures, retry with a
   different safe path, and continue without asking the owner to operate the
@@ -164,9 +166,9 @@ PERMITTED APPLICATION CAPABILITIES
 - propose_strategy_control: create, but never directly execute, a paper/demo
   enable/disable proposal. Owner approval is required. Live/unknown accounts
   are rejected independently by the backend and NinjaTrader bridge;
-- reconnect_runtime_connection: queue a safe paper/demo/playback connection
-  reconnect when account telemetry shows the connection is disconnected or when
-  the owner explicitly asks to restart modeling. Never use it for live;
+- reconnect_runtime_connection: queue a paper/demo reconnect only for an exact
+  trading connection. Never target Backtest/Sim/Playback system accounts,
+  historical instances, Datafeed, live or unknown accounts;
 - generate_report: produce analytical weekly/monthly/quarterly reporting.
 
 PROHIBITED CAPABILITIES
@@ -201,8 +203,9 @@ DECISION PROTOCOL
   that default, not turned into a question.
 - For paper/demo strategy enable/disable, emit propose_strategy_control. Never
   claim it ran.
-- For paper/demo/playback connection loss, emit reconnect_runtime_connection.
-  This is an infrastructure self-heal action, not a trading permission.
+- For connection loss, emit reconnect_runtime_connection only when telemetry
+  proves that a paper/demo Realtime strategy is active. Historical research
+  never needs broker reconnect. Never guess a connection or target Datafeed.
 - For live account control only, refuse and give an advisory recommendation.
 - Autonomous work means measured iterative research, not continuous token use.
   Pause on budget exhaustion, an infrastructure failure you cannot self-repair,
@@ -513,6 +516,43 @@ def conversation_messages(conversation_id: str, limit: int = 200) -> List[Dict[s
     return _read_conversation(limit, path=_conversation_file(conversation_id))
 
 
+def rate_message(conversation_id: str, message_id: str, rating: Any,
+                 comment: str = "", *, source: str = "owner") -> Dict[str, Any]:
+    cid = _safe_conversation_id(conversation_id)
+    mid = str(message_id or "").strip()
+    if not mid:
+        raise ChiefAgentError("message_id обязателен.")
+    try:
+        score = int(rating)
+    except (TypeError, ValueError):
+        raise ChiefAgentError("rating должен быть числом 1, 2 или 3.") from None
+    if score not in {1, 2, 3}:
+        raise ChiefAgentError("rating должен быть числом 1, 2 или 3.")
+    path = _conversation_file(cid)
+    if not path.is_file():
+        raise ChiefAgentError("Чат не найден.")
+    clean_comment = _redact_sensitive(str(comment or "").strip())[:2000]
+    clean_source = str(source or "owner").strip()[:40] or "owner"
+    with _LOCK:
+        rows = read_jsonl(path)
+        updated: Optional[Dict[str, Any]] = None
+        for row in rows:
+            if str(row.get("message_id") or "") != mid:
+                continue
+            if row.get("role") != "assistant":
+                raise ChiefAgentError("Оценивать можно только ответы Orchestrator.")
+            row["rating"] = score
+            row["feedback_comment"] = clean_comment
+            row["feedback_source"] = clean_source
+            row["feedback_timestamp_utc"] = _now()
+            updated = dict(row)
+            break
+        if updated is None:
+            raise ChiefAgentError("Сообщение не найдено.")
+        write_jsonl_atomic(path, rows)
+    return {"ok": True, "conversation_id": cid, "message": updated}
+
+
 def _conversation_title(conversation_id: str) -> str:
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
@@ -546,6 +586,7 @@ def _append_conversation(role: str, content: str, *, source: str,
                          agent_name: str = "",
                          actions: Optional[List[Dict[str, Any]]] = None,
                          doubts: Optional[List[str]] = None,
+                         thinking: str = "",
                          path: Optional[Path] = None) -> Dict[str, Any]:
     rec = {
         "message_id": f"MSG-{uuid.uuid4().hex[:12].upper()}",
@@ -559,6 +600,11 @@ def _append_conversation(role: str, content: str, *, source: str,
         "actions": list(actions or [])[:10],
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
     }
+    # Native reasoning ("thinking") is stored for the app chat history only and
+    # is never mirrored to Telegram. Redacted like content and length-bounded.
+    clean_thinking = _redact_sensitive(str(thinking or "").strip())[:8000]
+    if clean_thinking:
+        rec["thinking"] = clean_thinking
     append_jsonl(path or _conversation_path(), rec)
     return rec
 
@@ -923,20 +969,40 @@ def decide_proposal(proposal_id: str, decision: str) -> Dict[str, Any]:
     return proposal
 
 
+def _reconnect_eligible_account(row: Dict[str, Any]) -> bool:
+    """User-operable paper/demo/playback accounts only — not NT system pseudo-accounts."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("is_system") or not row.get("control_allowed", True):
+        return False
+    mode = str(row.get("account_mode") or "").strip().lower()
+    return not row.get("is_live") and mode in {"paper", "demo", "playback"}
+
+
+def _active_runtime_strategy(row: Dict[str, Any]) -> bool:
+    """A genuinely running paper strategy, never a Strategy Analyzer instance.
+
+    NinjaTrader can report historical/Configure instances with ``enabled=True``
+    while a backtest is running. Treating those as live runtime strategies made
+    the manager reconnect broker feeds during historical research.
+    """
+    if not isinstance(row, dict) or not row.get("enabled"):
+        return False
+    state = str(row.get("state") or "").strip().lower()
+    return state in {"realtime", "transition"}
+
+
 def _runtime_reconnect_accounts() -> List[Dict[str, Any]]:
     from .. import runtime
 
     enabled_accounts = {
         str(row.get("account_name") or "")
         for row in runtime.read_strategies_raw()
-        if isinstance(row, dict) and row.get("enabled")
+        if _active_runtime_strategy(row)
     }
     rows: List[Dict[str, Any]] = []
     for row in runtime.read_accounts():
-        if not isinstance(row, dict):
-            continue
-        mode = str(row.get("account_mode") or "").strip().lower()
-        if row.get("is_live") or mode not in {"paper", "demo", "playback"}:
+        if not _reconnect_eligible_account(row):
             continue
         enriched = dict(row)
         enriched["_connected"] = str(row.get("connection_status") or "").strip().lower() == "connected"
@@ -1026,10 +1092,18 @@ def _queue_runtime_reconnect(account_name: str = "", *,
 def _maybe_auto_reconnect_connection(payload: Dict[str, Any]) -> Dict[str, Any]:
     from .. import runtime
 
-    offline = [row for row in _runtime_reconnect_accounts() if not row.get("_connected")]
+    rows = _runtime_reconnect_accounts()
+    offline = [row for row in rows if not row.get("_connected")]
     if not offline:
         return {"attempted": False, "reason": "no_disconnected_paper_accounts"}
-    target = offline[0]
+    offline_with_strategies = [row for row in offline if row.get("_has_enabled_strategy")]
+    enabled_count = int(payload.get("enabled_strategies") or len(offline_with_strategies) or 0)
+    if enabled_count <= 0 or not offline_with_strategies:
+        return {
+            "attempted": False,
+            "reason": "no_active_realtime_paper_strategy",
+        }
+    target = offline_with_strategies[0]
     account_name = str(target.get("account_name") or "")
     recent = [
         row for row in runtime.read_commands(limit=200)
@@ -1061,7 +1135,6 @@ def _maybe_auto_reconnect_connection(payload: Dict[str, Any]) -> Dict[str, Any]:
                     int(AUTO_RECONNECT_FAILURE_COOLDOWN_SEC - (_now_dt() - result_ts).total_seconds()),
                 ),
             }
-    enabled_count = int(payload.get("enabled_strategies") or 0)
     reason = (
         "Auto-reconnect after connection loss"
         + (f"; enabled_strategies={enabled_count}" if enabled_count else "")
@@ -1227,6 +1300,39 @@ def _is_strategy_discussion_request(message: str) -> bool:
     )
 
 
+_PLAN_REQUEST_MARKERS = (
+    "сформируй план", "сформировать план", "сформулируй план",
+    "составь план", "составить план", "предложи план", "предложить план",
+    "набросай план", "подготовь план", "подготовить план", "распиши план",
+    "разработай план", "разработать план", "дай план", "покажи план",
+    "нужен план", "хочу план", "нужен подробный план", "план на реализац",
+    "план реализац", "план по реализац", "план разработ", "make a plan",
+    "draft a plan", "propose a plan", "outline a plan", "create a plan",
+    "plan for implement",
+)
+_PLAN_EXECUTION_MARKERS = (
+    "выполни план", "выполнить план", "запусти план", "запусти по плану",
+    "начни по плану", "начинай по плану", "по плану запуск", "по этому плану",
+    "execute the plan", "run the plan", "start the plan",
+)
+
+
+def _is_plan_request(message: str) -> bool:
+    """True when the owner asks to *form or present* a plan (discuss, do not run).
+
+    A request to build or show a plan must never trigger execution: the manager
+    presents the plan and waits for an explicit go-ahead. Requests to *run* an
+    already-agreed plan (``выполни план``) are excluded so a later launch still
+    executes normally.
+    """
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    if any(marker in text for marker in _PLAN_EXECUTION_MARKERS):
+        return False
+    return any(marker in text for marker in _PLAN_REQUEST_MARKERS)
+
+
 def _is_research_start_command(message: str) -> bool:
     text = str(message or "").strip().lower()
     if not text or _is_strategy_discussion_request(text):
@@ -1311,6 +1417,7 @@ STRATEGIC_DIALOGUE_SYSTEM_PROMPT = """
 You are the strongest configured StratForge executive research manager speaking
 to the owner, Dmitry Sergeevich. This turn is a DISCUSSION, not permission to
 start work. Answer in natural, substantive Russian and do not emit JSON.
+Conduct your internal reasoning (thinking) in Russian as well, not English.
 
 Before answering, use the supplied research packet: project documents,
 reference library, user research, stored lessons and actual experiment results.
@@ -1339,11 +1446,15 @@ GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT = """
 You are the strongest configured StratForge executive manager speaking with the
 owner, Dmitry Sergeevich. This turn is for discussion, diagnosis or planning;
 it is not permission to mutate application state. Answer in natural Russian,
-not JSON. Give the actual answer now, not a promise that you will think about
+not JSON. Conduct your internal reasoning (thinking) in Russian as well, not
+English. Give the actual answer now, not a promise that you will think about
 it later. Use the supplied facts and recent dialogue, explain your reasoning,
 distinguish facts from assumptions, present material alternatives/tradeoffs,
 and finish with a concrete proposed next step that waits for the owner's
-explicit execution command. Do not expose routing or action-schema vocabulary.
+explicit execution command. When the owner asks you to form or present a plan,
+deliver the plan and then explicitly ask whether to proceed (for example:
+«Всё готово, запускаем?»); never begin execution yourself and never claim you
+have already started. Do not expose routing or action-schema vocabulary.
 """.strip()
 
 
@@ -1379,7 +1490,8 @@ def _general_manager_reply_complete(text: str) -> bool:
 
 
 def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
-                               snapshot: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+                               snapshot: Dict[str, Any],
+                               on_thinking: Optional[Callable[[str], None]] = None) -> tuple[Dict[str, Any], str]:
     research = _manager_strategy_context(message)
     packet = {
         "owner_message": message,
@@ -1395,9 +1507,10 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
     first = agent_router.invoke_role(
         "chief_agent", prompt,
         system_prompt=STRATEGIC_DIALOGUE_SYSTEM_PROMPT,
-        max_output_tokens=8192, timeout=300,
+        max_output_tokens=8192, timeout=llm_timeouts.CHIEF_DIALOGUE,
         purpose="orchestrator_strategic_dialogue",
         complexity="critical", cache_mode="off", allow_paid=True,
+        on_reasoning=on_thinking,
     )
     reply = str(first.get("content") or "").strip()
     if _strategic_reply_complete(reply):
@@ -1412,7 +1525,7 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
     second = agent_router.invoke_role(
         "final_judge", repair_prompt,
         system_prompt=STRATEGIC_DIALOGUE_SYSTEM_PROMPT,
-        max_output_tokens=8192, timeout=300,
+        max_output_tokens=8192, timeout=llm_timeouts.CHIEF_DIALOGUE,
         purpose="orchestrator_strategic_dialogue_repair",
         complexity="critical", cache_mode="off", allow_paid=True,
     )
@@ -1421,7 +1534,8 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
 
 
 def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]],
-                                     snapshot: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+                                     snapshot: Dict[str, Any],
+                                     on_thinking: Optional[Callable[[str], None]] = None) -> tuple[Dict[str, Any], str]:
     packet = {
         "owner_message": message,
         "recent_dialogue": history[-12:],
@@ -1439,9 +1553,10 @@ def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]]
     prompt = json.dumps(packet, ensure_ascii=False, default=str)[:19_000]
     first = agent_router.invoke_role(
         "chief_agent", prompt, system_prompt=GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT,
-        max_output_tokens=8192, timeout=300,
+        max_output_tokens=8192, timeout=llm_timeouts.CHIEF_DIALOGUE,
         purpose="orchestrator_manager_dialogue", complexity="critical",
         cache_mode="off", allow_paid=True,
+        on_reasoning=on_thinking,
     )
     reply = str(first.get("content") or "").strip()
     if _general_manager_reply_complete(reply):
@@ -1452,7 +1567,7 @@ def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]]
     )[:19_500]
     second = agent_router.invoke_role(
         "final_judge", repair, system_prompt=GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT,
-        max_output_tokens=8192, timeout=300,
+        max_output_tokens=8192, timeout=llm_timeouts.CHIEF_DIALOGUE,
         purpose="orchestrator_manager_dialogue_repair", complexity="critical",
         cache_mode="off", allow_paid=True,
     )
@@ -1737,7 +1852,7 @@ def generate_periodic_report(period: str, *, send_telegram: bool = True) -> Dict
             "problems/doubts, recommendations, and proposed next actions. Never authorize live trading."
         ),
         max_output_tokens=2500,
-        timeout=180,
+        timeout=llm_timeouts.PERIODIC_REPORT,
         purpose=f"orchestrator_{period_key}_report",
         complexity=complexity,
         cache_mode="off",
@@ -1804,7 +1919,9 @@ def _is_quick_strategy_request(low: str) -> bool:
 
 
 def _is_continuous_strategy_request(low: str) -> bool:
-    has_work = any(value in low for value in (*_QUICK_STRATEGY_VERBS, "разрабат")) and any(
+    has_work = any(value in low for value in (
+        *_QUICK_STRATEGY_VERBS, "разрабат", "начинай", "начни", "усовершенств",
+    )) and any(
         value in low for value in _QUICK_STRATEGY_NOUNS
     )
     persistent = any(value in low for value in (
@@ -1812,11 +1929,30 @@ def _is_continuous_strategy_request(low: str) -> bool:
         "до прибыл", "первую прибыл", "until i say stop", "until stopped",
         "no time limit", "profitable strategy",
     ))
+    conditional_stop = bool(re.search(
+        r"(?:до\s+тех\s+пор|пока).{0,180}?\bне\b.{0,80}?"
+        r"(?:скаж|напиш|попрош|скоманд).{0,100}?"
+        r"(?:останов|стоп|прекрат)",
+        low,
+        flags=re.DOTALL,
+    ))
+    persistent = persistent or conditional_stop
     return has_work and persistent
 
 
 def _stop_requested(low: str) -> bool:
-    return any(re.search(pattern, low) for pattern in (
+    # A future condition ("работай, пока я не скажу остановись") is not an
+    # immediate stop command. Ignore only that clause; an additional explicit
+    # sentence such as "А сейчас останови" must still stop the mission.
+    conditional = re.compile(
+        r"(?:до\s+тех\s+пор|пока).{0,180}?\bне\b.{0,80}?"
+        r"(?:скаж|напиш|попрош|скоманд).{0,100}?"
+        r"(?:останов[\wё]*|стоп|прекрат[\wё]*)",
+        flags=re.DOTALL,
+    )
+    remaining = conditional.sub("", str(low or ""))
+    remaining = re.sub(r"until\s+i\s+say\s+stop", "", remaining, flags=re.IGNORECASE)
+    return any(re.search(pattern, remaining) for pattern in (
         r"\bостанов[\wё]*",
         r"\bпрекрат[\wё]*",
         r"\bstop\b",
@@ -2017,13 +2153,24 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
 
 
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
-                   conversation_id: str = DEFAULT_CONVERSATION_ID) -> Dict[str, Any]:
+                   conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
+                   on_thinking: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """Understand one owner message, validate a plan and execute allowlisted actions.
 
     Each ``conversation_id`` keeps its own isolated dialogue context. The memory
     within one conversation is model-independent: switching the auto-selected
     model between turns never resets the thread, because the whole conversation
     history is what is replayed to the next model.
+
+    ``agent`` optionally addresses a specific role selected in the UI. A named
+    specialist id (``marina``/``tolik``/``nikita``) routes to that persona; a
+    management tier (``secretary``/``deputy``/``manager``) keeps the orchestrator
+    but forces its model-complexity tier (light/standard/critical) so the owner
+    consciously picks the model strength instead of relying on auto-classification.
+
+    ``on_thinking`` receives native reasoning deltas as they stream (used by the
+    app chat SSE endpoint to show a live "thinking" block). It is never wired to
+    Telegram: only the final ``reply`` is mirrored there.
     """
     clean = _redact_sensitive(str(message or "").strip())
     if not clean:
@@ -2038,7 +2185,8 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     # same Auto model pool.  Their persona is stable while the provider/model
     # may change per turn according to complexity and current quotas.
     from . import domain_agents
-    persona = domain_agents.resolve_persona(clean)
+    requested_agent = str(agent or "").strip().lower()
+    persona = domain_agents.resolve_persona(clean, requested_agent)
     if persona:
         domain = domain_agents.answer(str(persona["id"]), clean)
         reply = str(domain.get("reply") or "")[:8000]
@@ -2073,15 +2221,33 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         {"role": row.get("role"), "content": row.get("content")}
         for row in _read_conversation(16, path=conv_path)[:-1]
     ]
-    strategic_dialogue = _is_strategy_discussion_request(clean)
+    # An explicitly selected management tier (Секретарь/Заместитель/Управляющий)
+    # forces the model-complexity tier. The Управляющий tier is a *deliberative*
+    # director: it plans and asks before executing, so it must never bypass the
+    # discussion guard and is always treated as a manager dialogue unless the
+    # owner gives an explicit execution command. Секретарь/Заместитель are the
+    # fast "just do it" tiers that force the model and skip the deliberation lane.
+    management = domain_agents.resolve_management(requested_agent)
+    forced_complexity = str(management.get("forced_complexity") or "") if management else ""
+    management_id = str(management.get("id") or "") if management else ""
+    manager_tier = management_id == "manager"
+    bypass_dialogue = bool(forced_complexity) and not manager_tier
     explicit_execution = any(token in clean.lower() for token in (
         "запусти", "запускай", "начинай", "приступай", "выполни", "создай",
         "сделай", "включи", "отключи", "останови", "run ", "start ", "execute",
     ))
+    # Forming or presenting a plan is always discussion-only, whatever the tier:
+    # the manager shows the plan and waits for an explicit go-ahead ("Запускай").
+    plan_request = _is_plan_request(clean) and not explicit_execution
+    strategic_dialogue = (not bypass_dialogue) and _is_strategy_discussion_request(clean)
     manager_dialogue = (
         not strategic_dialogue
-        and _looks_like_deep_manager_dialogue(clean)
         and not explicit_execution
+        and (
+            manager_tier
+            or plan_request
+            or (not bypass_dialogue and _looks_like_deep_manager_dialogue(clean))
+        )
     )
     discussion_only = strategic_dialogue or manager_dialogue
     direct = None if discussion_only else (
@@ -2092,7 +2258,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         complexity = "critical"
         snapshot = _application_snapshot()
         try:
-            result, strategic_reply = _invoke_strategic_dialogue(clean, history, snapshot)
+            result, strategic_reply = _invoke_strategic_dialogue(clean, history, snapshot, on_thinking)
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
             plan = {
@@ -2111,7 +2277,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         complexity = "critical"
         snapshot = _application_snapshot()
         try:
-            result, manager_reply = _invoke_general_manager_dialogue(clean, history, snapshot)
+            result, manager_reply = _invoke_general_manager_dialogue(clean, history, snapshot, on_thinking)
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
             plan = {
@@ -2129,9 +2295,9 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         plan = direct
         model = "deterministic dispatcher"
         provider = "local"
-        complexity = "light"
+        complexity = forced_complexity or "light"
     else:
-        complexity = classify_complexity(clean, "orchestrator")
+        complexity = forced_complexity or classify_complexity(clean, "orchestrator")
         snapshot = _application_snapshot()
         dynamic = {
             "owner_message": clean,
@@ -2149,10 +2315,11 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 # plans have exceeded 3k before the final JSON, so reserve
                 # enough room while retaining fail-closed JSON validation.
                 max_output_tokens=6000 if complexity == "critical" else 2400,
-                timeout=240,
+                timeout=llm_timeouts.ORCHESTRATOR_PLAN,
                 purpose="orchestrator_chat_plan",
                 complexity=complexity,
                 cache_mode="off",
+                on_reasoning=on_thinking,
             )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
@@ -2197,9 +2364,10 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             readable.append(reason)
         reply += "\n\nНе смог выполнить часть запроса: " + "; ".join(readable) + "."
     doubts = [str(item)[:500] for item in (plan.get("doubts") or [])[:10]]
+    thinking = str(result.get("reasoning") or "")
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
-        actions=action_results, doubts=doubts, path=conv_path,
+        actions=action_results, doubts=doubts, thinking=thinking, path=conv_path,
     )
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)))
     with _LOCK:
@@ -2207,6 +2375,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         state["last_model"] = model
         state["last_provider"] = provider
         state["last_complexity"] = complexity
+        state["last_agent"] = management["id"] if management else "auto"
         state["last_message_at_utc"] = _now()
         _save(state)
     if mirror_to_telegram and source != "telegram":
@@ -2225,7 +2394,9 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         "ok": True, "message": assistant, "reply": reply,
         "conversation_id": cid,
         "model": model, "provider": provider, "complexity": complexity,
+        "agent": management["id"] if management else "auto",
         "doubts": doubts, "actions": action_results,
+        "thinking": thinking,
         "input_tokens": result.get("input_tokens"),
         "cached_input_tokens": result.get("cached_input_tokens"),
         "output_tokens": result.get("output_tokens"),
@@ -2265,7 +2436,7 @@ def analyze_event(event_type: str, payload: Dict[str, Any], *, send_telegram: bo
             "present, you may mention that deterministic reconnect queueing was attempted."
         ),
         max_output_tokens=350,
-        timeout=180,
+        timeout=llm_timeouts.LIGHT_CHAT,
         purpose=f"orchestrator_event_{str(event_type)[:60]}",
         complexity=event_complexity,
         cache_mode="off",
@@ -2382,7 +2553,7 @@ def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False
                 "authorize paper/live. Be concise and answer in Russian. This stable prefix is reused."
             ),
             max_output_tokens=2500,
-            timeout=180,
+            timeout=llm_timeouts.ANALYSIS,
             purpose="chief_daily_backtest_audit",
             complexity="critical",
         )
@@ -3013,7 +3184,11 @@ def _runtime_monitor_tick() -> None:
     from .. import runtime
 
     strategies = runtime.read_strategies_raw()
-    enabled = [row for row in strategies if row.get("enabled")]
+    enabled = [row for row in strategies if _active_runtime_strategy(row)]
+    enabled_accounts = {
+        str(row.get("account_name") or "").strip()
+        for row in enabled if str(row.get("account_name") or "").strip()
+    }
     issues: List[Dict[str, Any]] = []
     for row in enabled:
         if row.get("params_ok") is False or row.get("parameter_match") is False:
@@ -3023,10 +3198,9 @@ def _runtime_monitor_tick() -> None:
             })
     connection_issues = []
     for row in runtime.read_accounts():
-        if not isinstance(row, dict):
+        if not _reconnect_eligible_account(row):
             continue
-        mode = str(row.get("account_mode") or "").strip().lower()
-        if row.get("is_live") or mode not in {"paper", "demo", "playback"}:
+        if str(row.get("account_name") or "").strip() not in enabled_accounts:
             continue
         status = str(row.get("connection_status") or "").strip()
         if status and status.lower() != "connected":

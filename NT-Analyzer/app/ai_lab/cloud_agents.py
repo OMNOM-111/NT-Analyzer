@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import local_secrets
-from . import paths
+from . import llm_timeouts, paths
 from .io_utils import append_jsonl
 
 
@@ -796,7 +796,7 @@ def invoke(
     purpose: Optional[str] = None,
     temperature: float = 0.1,
     max_tokens: int = 2048,
-    timeout: int = 180,
+    timeout: int = llm_timeouts.ANALYSIS,
 ) -> Dict[str, Any]:
     """Run one budget-gated paid fallback request and append an audit row."""
     if not isinstance(messages, list) or not messages:

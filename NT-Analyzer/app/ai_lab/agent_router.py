@@ -6,9 +6,9 @@ backtest, arbitration and manual promotion.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from . import agent_registry, universal_llm
+from . import agent_registry, llm_timeouts, universal_llm
 
 
 ROLE_PROVIDER_ORDER: Dict[str, List[str]] = {
@@ -110,13 +110,15 @@ def invoke_role(
     *,
     system_prompt: str = "",
     max_output_tokens: int = 1024,
-    timeout: int = 180,
+    timeout: int = llm_timeouts.ANALYSIS,
     purpose: str = "role_request",
     enabled_only: bool = True,
     max_attempts: int = 12,
     complexity: str = "auto",
     cache_mode: str = "auto",
     allow_paid: bool = True,
+    on_reasoning: Optional[Callable[[str], None]] = None,
+    on_content: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     route = candidates(
         role, enabled_only=enabled_only, complexity=complexity,
@@ -133,6 +135,7 @@ def invoke_role(
                 max_output_tokens=max_output_tokens, timeout=timeout,
                 allow_disabled=not enabled_only, request_role=role, purpose=purpose,
                 cache_mode=cache_mode,
+                on_reasoning=on_reasoning, on_content=on_content,
             )
             # Universal client uses ``response`` for the public test API;
             # AI Lab chat consumers use the conventional ``content`` key.

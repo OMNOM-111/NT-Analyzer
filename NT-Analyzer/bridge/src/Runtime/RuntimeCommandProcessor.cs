@@ -190,6 +190,11 @@ namespace NTAnalyzerBridge.Runtime
 
                 if (command == "reconnect_account")
                 {
+                    if (IsSystemAccountName(accountName))
+                    {
+                        return WriteResult(cid, "rejected",
+                            "system account '" + accountName + "' cannot be reconnected", "");
+                    }
                     string reconnectMessage;
                     string reconnectStatus;
                     ReconnectAccountConnection(
@@ -307,6 +312,14 @@ namespace NTAnalyzerBridge.Runtime
             return "live";
         }
 
+        private static bool IsSystemAccountName(string accountName)
+        {
+            string value = (accountName ?? "").Trim();
+            return string.Equals(value, "Backtest", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "Sim101", StringComparison.OrdinalIgnoreCase) ||
+                   value.StartsWith("Playback", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static object FindStrategy(Account acc, string className, string instrument,
                                            string accountName, string runtimeInstanceId)
         {
@@ -380,6 +393,24 @@ namespace NTAnalyzerBridge.Runtime
                 return false;
             }
 
+            if (IsDataFeedConnection(connectOption))
+            {
+                status = "rejected";
+                message = "refusing to reconnect data-feed connection '" + resolvedName +
+                          "' for account '" + accountName +
+                          "'; account reconnect requires an exact trading connection";
+                return false;
+            }
+
+            object existingTrading = FindLiveConnection(resolvedName);
+            if (existingTrading != null && IsConnectionActive(existingTrading))
+            {
+                status = "completed";
+                message = "connection '" + resolvedName + "' already active on account '" +
+                          accountName + "'; reconnect skipped";
+                return true;
+            }
+
             string disconnectWarning = "";
             object existing = FindLiveConnection(resolvedName);
             if (existing != null)
@@ -394,6 +425,21 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     try { Thread.Sleep(250); } catch { }
                 }
+            }
+
+            // Never mutate another connection to make this reconnect succeed.
+            // In particular, silently disconnecting a data feed can interrupt a
+            // user session or Strategy Analyzer. Fail closed and let the owner
+            // decide which connection should remain open.
+            object blockingDataFeed = FindActiveDataFeedConnection();
+            if (blockingDataFeed != null)
+            {
+                status = "rejected";
+                message = "trading connection '" + resolvedName +
+                          "' was not opened because data-feed connection '" +
+                          SafeConnectionOptionName(SafeGetPropValue(blockingDataFeed, "Options")) +
+                          "' is active";
+                return false;
             }
 
             string connectErr;
@@ -447,7 +493,7 @@ namespace NTAnalyzerBridge.Runtime
             foreach (string candidate in namedCandidates)
             {
                 object exact = FindConfiguredConnectionOption(options, candidate, false);
-                if (exact != null)
+                if (exact != null && !IsDataFeedConnection(exact))
                 {
                     resolvedName = SafeConnectionOptionName(exact);
                     return exact;
@@ -456,7 +502,7 @@ namespace NTAnalyzerBridge.Runtime
             foreach (string candidate in namedCandidates)
             {
                 object fuzzy = FindConfiguredConnectionOption(options, candidate, true);
-                if (fuzzy != null)
+                if (fuzzy != null && !IsDataFeedConnection(fuzzy))
                 {
                     resolvedName = SafeConnectionOptionName(fuzzy);
                     return fuzzy;
@@ -473,6 +519,12 @@ namespace NTAnalyzerBridge.Runtime
             }
             if (modeMatches.Count > 1)
             {
+                object preferred = PreferTradingConnectOption(modeMatches, accountMode);
+                if (preferred != null)
+                {
+                    resolvedName = SafeConnectionOptionName(preferred);
+                    return preferred;
+                }
                 error = "multiple configured connections match account '" + accountName +
                         "': [" + string.Join(", ", modeMatches.Select(SafeConnectionOptionName)) +
                         "]. Set runtime_reconnect_connection_name in NTAnalyzerBridge.config.json.";
@@ -527,6 +579,8 @@ namespace NTAnalyzerBridge.Runtime
 
         private static bool OptionMatchesAccountMode(object option, string accountMode)
         {
+            if (IsDataFeedConnection(option))
+                return false;
             string mode = (SafeStringProp(option, "Mode") ?? "").ToLowerInvariant();
             string name = SafeConnectionOptionName(option).ToLowerInvariant();
             if (accountMode == "playback")
@@ -535,7 +589,66 @@ namespace NTAnalyzerBridge.Runtime
             return mode.Contains("simulation") || mode.Contains("sim") ||
                    name.Contains("simulation") || name.StartsWith("sim") ||
                    mode.Contains("симуляц") || name.Contains("симуляц") ||
+                   name.Contains("моделир") ||
                    name.StartsWith("demo") || name.Contains(" demo") || name.EndsWith("demo");
+        }
+
+        private static bool IsDataFeedConnection(object option)
+        {
+            if (option == null) return false;
+            string name = SafeConnectionOptionName(option).ToLowerInvariant();
+            string mode = (SafeStringProp(option, "Mode") ?? "").ToLowerInvariant();
+            return name.Contains("data feed") || name.Contains("датафид") ||
+                   mode.Contains("data feed") || mode.Contains("датафид");
+        }
+
+        private static object PreferTradingConnectOption(List<object> candidates, string accountMode)
+        {
+            if (candidates == null || candidates.Count == 0) return null;
+            var tradingOnly = candidates.Where(option => !IsDataFeedConnection(option)).ToList();
+            if (tradingOnly.Count == 1) return tradingOnly[0];
+
+            Func<object, bool> isPreferred = option =>
+            {
+                string name = SafeConnectionOptionName(option).ToLowerInvariant();
+                if (accountMode == "playback")
+                    return name.Contains("playback") || name.Contains("воспроизвед");
+                return name.Contains("моделир") ||
+                       (name.Contains("simulation") && !name.Contains("data feed"));
+            };
+            var preferred = tradingOnly.Where(isPreferred).ToList();
+            if (preferred.Count == 1) return preferred[0];
+            return null;
+        }
+
+        private static bool IsConnectionActive(object connection)
+        {
+            if (connection == null) return false;
+            string status = (SafeStringProp(connection, "Status") ?? "").ToLowerInvariant();
+            return status.Contains("connected") || status.Contains("работает");
+        }
+
+        private static object FindActiveDataFeedConnection()
+        {
+            try
+            {
+                var prop = typeof(Connection).GetProperty("Connections",
+                    BindingFlags.Public | BindingFlags.Static);
+                var col = prop == null ? null : prop.GetValue(null, null) as System.Collections.IEnumerable;
+                if (col == null) return null;
+                lock (col)
+                {
+                    foreach (var item in col)
+                    {
+                        if (item == null || !IsConnectionActive(item)) continue;
+                        object options = SafeGetPropValue(item, "Options");
+                        if (IsDataFeedConnection(options))
+                            return item;
+                    }
+                }
+                return null;
+            }
+            catch { return null; }
         }
 
         private static string SafeConnectionOptionName(object option)

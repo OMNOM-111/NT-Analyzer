@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
 from .. import integrations, runtime
-from . import agent_router, paths
+from . import agent_router, llm_timeouts, paths
 from .io_utils import read_json, write_json_atomic
 
 
@@ -192,7 +192,7 @@ def _llm_analysis(item: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
             "существенная неопределённость. Не предсказывай направление цены, не утверждай, что торговое действие "
             "выполнено, и не разрешай live-торговлю. Опирайся только на переданные заголовок, summary и состояние приложения."
         ),
-        max_output_tokens=420, timeout=180, purpose="news_agent_high_impact",
+        max_output_tokens=420, timeout=llm_timeouts.LIGHT_CHAT, purpose="news_agent_high_impact",
         complexity="critical", cache_mode="auto",
     )
     base["model_analysis"] = str(result.get("content") or "").strip()[:3000]

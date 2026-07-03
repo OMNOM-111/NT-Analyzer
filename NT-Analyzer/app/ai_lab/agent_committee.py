@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from . import agent_router
+from . import agent_router, llm_timeouts
 
 
 ROLE_PROMPTS = {
@@ -50,7 +50,7 @@ def review_backtest(experiment: Dict[str, Any]) -> Dict[str, Any]:
                     "Your output is advisory and cannot override deterministic gates."
                 ),
                 max_output_tokens=2500 if role == "risk_manager" else 700,
-                timeout=120,
+                timeout=llm_timeouts.REVIEW,
                 purpose=f"backtest_committee_{role}",
                 complexity="critical" if role == "risk_manager" else "standard",
                 allow_paid=allow_paid,

@@ -112,3 +112,17 @@
 - Значение: `Да`
 - Суть: Перед стратегическим ответом читаются project docs, reference library, lessons, user research и фактические эксперименты; короткий, обещающий или оборванный ответ автоматически заменяется полным, а команда «начинай» продолжает согласованный план этого чата.
 - Автосинхронизация: app/ai_lab/chief_agent.py, app/ai_lab/knowledge.py, app/ai_lab/universal_llm.py
+
+### GOV-AI-017 — ИИ-роли улучшаются через конкурентную обратную связь
+
+- Значение: `Да`
+- Суть: Роли Analyst/Coder/Judge/Reviewer сравниваются по проверяемому результату; слабый ответ не наказывается, а получает детальный feedback и временно меньший приоритет следующего вызова, пока не восстановит качество.
+- Источники: `NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md`
+- Автосинхронизация: governance docs, docs/AI_LAB_COMPETITIVE_FEEDBACK.md
+- Ручная проверка: app/ai_lab/agent_router.py role ranking, agent usage/feedback ledger, AI Lab UI feedback report
+
+### GOV-AI-018 — Переподключение NinjaTrader не подменяет торговое соединение Datafeed
+
+- Значение: `Да`
+- Суть: Автоматический reconnect разрешён только для фактически активной Realtime-стратегии на paper/demo-счёте; системные Backtest/Sim/Playback-счета, исторические экземпляры, live-счета и Datafeed исключены. Bridge не выбирает неоднозначное соединение и не отключает другие соединения автоматически.
+- Автосинхронизация: app/ai_lab/chief_agent.py, app/runtime.py, bridge/src/Runtime/RuntimeCommandProcessor.cs

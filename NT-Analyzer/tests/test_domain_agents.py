@@ -14,6 +14,19 @@ def test_named_personas_require_explicit_address() -> None:
     assert domain_agents.resolve_persona("Никита, что произошло на рынке?")["id"] == "nikita"
 
 
+def test_management_tiers_force_model_complexity() -> None:
+    assert domain_agents.resolve_management("secretary")["forced_complexity"] == "light"
+    assert domain_agents.resolve_management("deputy")["forced_complexity"] == "standard"
+    assert domain_agents.resolve_management("manager")["forced_complexity"] == "critical"
+    assert domain_agents.resolve_management("управляющий")["id"] == "manager"
+    # Named specialists and unknown ids are not management tiers.
+    assert domain_agents.resolve_management("nikita") is None
+    assert domain_agents.resolve_management("") is None
+    listing = domain_agents.list_personas()
+    assert {row["id"] for row in listing["management"]} == {"secretary", "deputy", "manager"}
+    assert all(row["name"] == "" for row in listing["management"])
+
+
 def test_accounting_snapshot_uses_decimal_authoritative_totals(monkeypatch) -> None:
     monkeypatch.setattr(domain_agents.performance, "build_performance_response", lambda **kwargs: {
         "period": {"from": "2026-07-01", "to": "2026-07-31", "label": "Месяц"},

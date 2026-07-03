@@ -50,6 +50,7 @@
     chart: '<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2V5Z"/><path d="M8 7h7M8 11h7"/>',
     palette: '<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-.5-.3-.9-.6-1.2-.3-.3-.5-.6-.5-1 0-.8.7-1.3 1.5-1.3H15a5 5 0 0 0 5-5c0-4-3.6-7-8-7Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>',
+    desktop: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M3 13h18M9 21h6M12 17v4M7 9l2.5 2.5L13 8l4 4"/>',
   };
   function icon(name, cls) { return `<svg class="${cls || 'ic'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[name] || ''}</svg>`; }
   const APP_NAME = 'StratForge AI';
@@ -68,12 +69,33 @@
     applyTheme(m);
   }
   applyTheme(loadTheme());  // apply immediately to avoid a flash before shell builds
+
+  // ---- design settings: animated background · UI density · reduced motion -----
+  const BG_KEY = 'app.bg';               // 'off' | 'subtle' | 'medium'
+  const DENSITY_KEY = 'app.density';     // 'comfortable' | 'compact'
+  const MOTION_KEY = 'app.reduceMotion'; // 'auto' | 'on' | 'off'
+  function loadBg() { try { return localStorage.getItem(BG_KEY) || 'subtle'; } catch (e) { return 'subtle'; } }
+  function setBg(v) {
+    const m = (v === 'off' || v === 'medium') ? v : 'subtle';
+    if (window.Ambient) window.Ambient.setMode(m);
+    else { try { localStorage.setItem(BG_KEY, m); } catch (e) { /* ignore */ } }
+  }
+  function loadDensity() { try { return localStorage.getItem(DENSITY_KEY) || 'comfortable'; } catch (e) { return 'comfortable'; } }
+  function applyDensity(v) { const m = v === 'compact' ? 'compact' : 'comfortable'; if (document.documentElement) document.documentElement.setAttribute('data-density', m); }
+  function setDensity(v) { const m = v === 'compact' ? 'compact' : 'comfortable'; try { localStorage.setItem(DENSITY_KEY, m); } catch (e) { /* ignore */ } applyDensity(m); }
+  function loadMotion() { try { return localStorage.getItem(MOTION_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+  function applyMotion(v) { const m = (v === 'on' || v === 'off') ? v : 'auto'; if (document.documentElement) document.documentElement.setAttribute('data-reduce-motion', m); }
+  function setMotion(v) { const m = (v === 'on' || v === 'off') ? v : 'auto'; try { localStorage.setItem(MOTION_KEY, m); } catch (e) { /* ignore */ } applyMotion(m); if (window.Ambient) window.Ambient.setReduceMotion(m); }
+  applyDensity(loadDensity());
+  applyMotion(loadMotion());
+
   const BRAND_MARK = 'brand/stratforge-mark.png';
 
   const NAV = [
     { id: 'overview', label: 'Обзор', href: 'index.html', icon: 'overview' },
     { id: 'backtest', label: 'Бэктест', href: 'backtesting.html', icon: 'backtest' },
     { id: 'trading', label: 'Торговля', href: 'trading.html', icon: 'trading' },
+    { id: 'desktop', label: 'Рабочий стол', href: 'desktop.html', icon: 'desktop' },
     { id: 'performance', label: 'Финансы', href: 'performance.html', icon: 'performance' },
     { id: 'strategies', label: 'Стратегии', href: 'strategies.html', icon: 'strategies' },
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
@@ -440,11 +462,14 @@
     const kicker = document.body.dataset.kicker || APP_KICKER;
 
     const rail = el(`<nav class="rail">
-      <a class="rail-logo" href="index.html" title="${APP_NAME}"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}"></a>
+      <a class="rail-brand" href="index.html" title="${APP_NAME}">
+        <span class="rail-logo"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}"></span>
+        <span class="rail-brand-tx"><span class="rail-brand-name">${APP_NAME}</span><span class="rail-brand-sub">Strategy command center</span></span>
+      </a>
       <div class="rail-nav">
         ${NAV.map(n => `<a class="rail-item ${n.id === page ? 'active' : ''}" href="${n.href}" title="${n.label}">${icon(n.icon)}<span class="lb">${n.label}</span></a>`).join('')}
       </div>
-      <div class="rail-foot"><span class="rail-dot" title="Сервер онлайн"></span></div>
+      <div class="rail-foot"><span class="rail-dot" title="Сервер онлайн"></span><span class="rail-foot-tx">Сервер онлайн</span></div>
     </nav>`);
 
     const topbar = el(`<header class="topbar">
@@ -472,9 +497,14 @@
     const newsStrip = el('<div class="global-news-strip" data-global-news-strip><span class="global-news-label">РЫНОК</span><div class="global-news-window"><div class="global-news-track"><span class="global-news-static">Загрузка новостей…</span></div></div></div>');
     if (newsStrip) main.classList.add('has-global-news-strip');
     if (newsStrip) main.appendChild(newsStrip);
-    // move existing body content into <main class=content>
+    // move existing body content into <main class=content>, but leave the
+    // ambient background layers (canvas + vignette) as direct <body> children
+    // so they stay the deepest layer, behind the whole app shell.
     const content = el('<div class="content"></div>');
-    while (document.body.firstChild) content.appendChild(document.body.firstChild);
+    Array.from(document.body.childNodes).forEach(node => {
+      if (node.nodeType === 1 && node.classList && (node.classList.contains('ambient-bg') || node.classList.contains('ambient-vignette'))) return;
+      content.appendChild(node);
+    });
     main.appendChild(content);
     app.appendChild(rail);
     app.appendChild(main);
@@ -649,23 +679,47 @@
     return `<div class="row"><div class="row-main"><div class="row-title">${esc(label)}</div></div><div class="row-val ${ok ? 'pos' : 'neg'}">${ok ? 'да' : 'нет'}</div></div>`;
   }
 
-  function showThemePicker() {
-    const opts = [
-      ['auto', 'Автоматически', 'Как в системе (сейчас по умолчанию)'],
-      ['dark', 'Тёмная', 'Тёмный интерфейс Aurora'],
-      ['light', 'Светлая', 'Светлый интерфейс'],
+  function showDesignSettings() {
+    const groups = [
+      { key: 'theme', title: 'Тема', get: loadTheme, set: (v) => setTheme(v), opts: [
+        ['dark', 'Тёмная', 'Тёмный premium-интерфейс (по умолчанию)'],
+        ['light', 'Светлая', 'Светлый интерфейс'],
+        ['auto', 'Как в системе', 'Следовать теме операционной системы'],
+      ] },
+      { key: 'bg', title: 'Анимированный фон', get: loadBg, set: (v) => setBg(v), opts: [
+        ['subtle', 'Спокойный', 'Мягкое свечение и редкие частицы (по умолчанию)'],
+        ['medium', 'Насыщенный', 'Заметнее волны и частицы'],
+        ['off', 'Выключен', 'Полностью статичный фон'],
+      ] },
+      { key: 'density', title: 'Плотность интерфейса', get: loadDensity, set: (v) => setDensity(v), opts: [
+        ['comfortable', 'Просторная', 'Больше воздуха между блоками (по умолчанию)'],
+        ['compact', 'Компактная', 'Плотнее — больше данных на экране'],
+      ] },
+      { key: 'motion', title: 'Уменьшить движение', get: loadMotion, set: (v) => setMotion(v), opts: [
+        ['auto', 'Авто', 'Следовать системной настройке (по умолчанию)'],
+        ['off', 'Разрешить анимации', 'Не ограничивать движение'],
+        ['on', 'Остановить движение', 'Замереть фон и лишние анимации'],
+      ] },
     ];
+    const d = drawer('<h3>Настройки дизайна</h3>', '<div class="state-loading"><span class="spinner"></span></div>');
     const render = () => {
-      const current = loadTheme();
-      const html = `<div class="list theme-picker">${opts.map(o => `
-        <button class="row theme-opt ${o[0] === current ? 'active' : ''}" data-theme-opt="${o[0]}">
-          <div class="row-main"><div class="row-title">${esc(o[1])}</div><div class="row-sub">${esc(o[2])}</div></div>
-          <div class="row-val">${o[0] === current ? icon('check') : ''}</div>
-        </button>`).join('')}</div>
-        <div class="finance-note">Тема сохраняется в этом браузере и действует на всех страницах приложения.</div>`;
-      const d = drawer('<h3>Тема приложения</h3>', html);
       const body = qs('.drawer-b', d);
-      qsa('[data-theme-opt]', body).forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.themeOpt); toast('Тема применена'); render(); }));
+      body.innerHTML = groups.map((g, gi) => {
+        const cur = g.get();
+        return `<div class="settings-group">
+          <div class="settings-group-title">${esc(g.title)}</div>
+          <div class="settings-opts">${g.opts.map(o => `
+            <button class="row theme-opt ${o[0] === cur ? 'active' : ''}" data-group="${gi}" data-opt="${esc(o[0])}">
+              <div class="row-main"><div class="row-title">${esc(o[1])}</div><div class="row-sub">${esc(o[2])}</div></div>
+              <div class="row-val">${o[0] === cur ? icon('check') : ''}</div>
+            </button>`).join('')}</div>
+        </div>`;
+      }).join('') + `<div class="settings-note">Настройки сохраняются в этом браузере и действуют на всех страницах. Анимированный фон — самый задний слой; на слабых устройствах и в Telegram Mini App он автоматически облегчается, а при сворачивании вкладки останавливается.</div>`;
+      qsa('[data-opt]', body).forEach(b => b.addEventListener('click', () => {
+        groups[+b.dataset.group].set(b.dataset.opt);
+        toast('Настройка применена');
+        render();
+      }));
     };
     render();
   }
@@ -838,7 +892,7 @@
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
-        { icon: 'palette', label: 'Тема приложения', onClick: () => showThemePicker() },
+        { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
         { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
@@ -1120,8 +1174,28 @@
   const ORCH = {
     built: false, open: false, sending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
+    agent: 'auto',
   };
   const ORCH_KEY = 'orch.currentConversationId';
+  const ORCH_AGENT_KEY = 'orch.agent';
+  // Selectable "who answers" roles. Management tiers force a model strength;
+  // specialists are named domain experts. `auto` keeps automatic routing.
+  const ORCH_ROLES = {
+    manager:   { label: 'Управляющий', emoji: '🤵', role: 'Управляющий',         icon: 'target',     sub: 'важные решения · сильная модель',          cardTitle: 'Управляющий', cardSub: 'сильная модель',  ph: 'Обсудим и запустим — важное решение…' },
+    deputy:    { label: 'Зам.',         emoji: '👔',  role: 'Заместитель',       icon: 'layers',     sub: 'средние задачи · стандартная модель',   cardTitle: 'Заместитель',   cardSub: 'стандарт',          ph: 'Средняя по сложности задача…' },
+    secretary: { label: 'Секретарь', emoji: '🧑‍💼', role: 'Секретарь',          icon: 'bolt',       sub: 'быстрые задачи · лёгкая модель',          cardTitle: 'Секретарь',    cardSub: 'лёгкая',              ph: 'Быстрая команда или простой вопрос…' },
+    auto:      { label: 'Авто',         emoji: '🤖',  role: 'Автоподбор',        icon: 'spark',      sub: 'выбирает модель · работает вместо вас',   cardTitle: 'Авторежим',    cardSub: 'AI-подбор',          ph: 'Напишите задачу обычным текстом…' },
+    nikita:    { label: 'Никита',       emoji: '👨‍💼', role: 'Новостной аналитик', icon: 'news',    sub: 'разбор новостей и рыночных событий',   cardTitle: 'Аналитик',      cardSub: 'Никита · новости',   ph: 'Разобрать новость или рыночное событие…' },
+    tolik:     { label: 'Толик',        emoji: '🧑‍💻', role: 'Разработчик стратегий', icon: 'strategies', sub: 'стратегии, параметры, тесты',              cardTitle: 'Стратег',       cardSub: 'Толик · стратегии', ph: 'Вопрос по стратегиям, параметрам, тестам…' },
+    marina:    { label: 'Марина',       emoji: '👩‍💼', role: 'Бухгалтер',         icon: 'wallet',     sub: 'расчёты, финансы, отчёты',            cardTitle: 'Бухгалтер',    cardSub: 'Марина · финансы',  ph: 'Финансы, расчёты, отчёты…' },
+  };
+  const ORCH_ROLE_GROUPS = [
+    { cap: 'Руководство', ids: ['manager', 'deputy', 'secretary', 'auto'] },
+    { cap: 'Специалисты', ids: ['nikita', 'tolik', 'marina'] },
+  ];
+  function orchLoadAgent() {
+    try { const v = localStorage.getItem(ORCH_AGENT_KEY); return (v && ORCH_ROLES[v]) ? v : 'auto'; } catch (e) { return 'auto'; }
+  }
   function orchLoadLastId() {
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
@@ -1154,18 +1228,25 @@
         <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
         <div class="orch-main">
           <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
-          <div class="orch-experts" aria-label="Вызвать специалиста">
-            <span>Специалисты</span>
-            <button type="button" data-orch-agent="Марина" title="Финансы и бухгалтерия">Марина · финансы</button>
-            <button type="button" data-orch-agent="Толик" title="Стратегии и качество тестов">Толик · стратегии</button>
-            <button type="button" data-orch-agent="Никита" title="Новости рынка и события приложения">Никита · новости</button>
-          </div>
           <form class="orch-input" id="orch-form" autocomplete="off">
             <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
             <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
             <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
           </form>
         </div>
+        <nav class="orch-agent-rail" id="orch-agent-rail" role="radiogroup" aria-label="Выбор агента">
+          ${ORCH_ROLE_GROUPS.map((group, gi) =>
+            (gi ? '<div class="oac-sep" aria-hidden="true"></div>' : '') +
+            group.ids.map(id =>
+              `<button type="button" class="orch-agent-card" role="radio" aria-checked="false" data-orch-role="${id}"
+                title="${ORCH_ROLES[id].role} — ${ORCH_ROLES[id].sub}">
+                <span class="oac-emoji">${ORCH_ROLES[id].emoji}</span>
+                <span class="oac-title">${ORCH_ROLES[id].cardTitle}</span>
+                <span class="oac-sub">${ORCH_ROLES[id].cardSub}</span>
+              </button>`
+            ).join('')
+          ).join('')}
+        </nav>
       </div>
     </section>`);
     document.body.appendChild(fab);
@@ -1176,21 +1257,29 @@
     qs('#orch-list-toggle', panel).addEventListener('click', () => panel.classList.toggle('show-convos'));
     qs('#orch-new', panel).addEventListener('click', orchNewConversation);
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
-    qsa('[data-orch-agent]', panel).forEach(button => button.addEventListener('click', () => orchAddressAgent(button.dataset.orchAgent)));
+    qsa('[data-orch-role]', panel).forEach(button => button.addEventListener('click', () => orchSelectRole(button.dataset.orchRole)));
     const ta = qs('#orch-text', panel);
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ORCH.open) closeOrchestrator(); });
     wireOrchestratorVoice(panel);
+    orchSelectRole(orchLoadAgent(), { silent: true });
   }
-  function orchAddressAgent(name) {
-    const ta = qs('#orch-text');
-    if (!ta || ta.disabled) return;
-    const clean = ta.value.trim();
-    const withoutOldAddress = clean.replace(/^(Марина|Толик|Никита)\s*[,,:;-]?\s*/i, '');
-    ta.value = `${name}, ${withoutOldAddress}`;
-    ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
-    ta.focus();
+  // Persistent role selection: the chosen chip routes every message until the
+  // owner switches. `auto` restores automatic model routing.
+  function orchSelectRole(role, opts) {
+    const meta = ORCH_ROLES[role] ? role : 'auto';
+    ORCH.agent = meta;
+    try { localStorage.setItem(ORCH_AGENT_KEY, meta); } catch (e) { /* ignore */ }
+    qsa('[data-orch-role]').forEach(btn => {
+      const on = btn.dataset.orchRole === meta;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const info = ORCH_ROLES[meta];
+    const sub = qs('#orch-head-sub'); if (sub) sub.textContent = `${info.emoji} ` + (meta === 'auto' ? info.sub : `${info.role} · ${info.sub}`);
+    const ta = qs('#orch-text'); if (ta) ta.placeholder = info.ph;
+    if (!(opts && opts.silent) && ta && !ta.disabled) ta.focus();
   }
   // Voice input: dictate into the message box using the browser Web Speech API
   // (microphone). No external resources — CSP-safe. Hidden if unsupported.
@@ -1340,6 +1429,31 @@
       await orchLoadMessages(ORCH.currentId);
     } catch (e) { reportError(e); }
   }
+  // Collapsible "thinking" block (native model reasoning). Cursor-like: muted,
+  // smaller, secondary text. Collapsed by default in history; expanded live.
+  function orchThinkBlock(text, open) {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    return `<details class="orch-think"${open ? ' open' : ''}><summary class="orch-think-head">${icon('spark')}<span class="orch-think-label">Размышление</span><span class="orch-think-chevron" aria-hidden="true">▾</span></summary><div class="orch-think-body">${esc(t)}</div></details>`;
+  }
+  function orchRatingHtml(row, isUser) {
+    if (isUser || !row.message_id) return '';
+    const rating = Number(row.rating || 0);
+    const comment = String(row.feedback_comment || '');
+    const labels = { 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' };
+    const stars = [1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${rating >= n ? 'active' : ''}" data-orch-rate="${n}" title="${labels[n]}" aria-label="${labels[n]}">${icon('star')}</button>`).join('');
+    const feedbackOpen = rating === 1 || !!comment;
+    return `<div class="orch-rating" data-orch-message-id="${esc(row.message_id)}" data-rating="${rating || ''}">
+      <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${stars}</div><span class="orch-feedback-saved" ${rating ? '' : 'hidden'}>${rating ? 'сохранено' : ''}</span></div>
+      <div class="orch-feedback-area" ${feedbackOpen ? '' : 'hidden'}>
+        <textarea class="orch-feedback-text" rows="2" maxlength="2000" placeholder="Что исправить в ответе?">${esc(comment)}</textarea>
+        <div class="orch-feedback-actions">
+          <button type="button" class="orch-feedback-mic" title="Надиктовать комментарий" aria-label="Надиктовать комментарий" hidden>${icon('mic')}</button>
+          <button type="button" class="orch-feedback-save">Сохранить комментарий</button>
+        </div>
+      </div>
+    </div>`;
+  }
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
     const meta = [
@@ -1347,7 +1461,70 @@
       orchFmtTime(row.timestamp_utc),
       !isUser && row.model ? esc(row.model) : '',
     ].filter(Boolean).join(' · ');
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"><div class="orch-msg-body">${esc(row.content || '')}</div><div class="orch-msg-meta">${meta}</div></div>`;
+    const think = (!isUser && row.thinking) ? orchThinkBlock(row.thinking, false) : '';
+    const rating = orchRatingHtml(row, isUser);
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${think}<div class="orch-msg-body">${esc(row.content || '')}</div><div class="orch-msg-meta">${meta}</div>${rating}</div>`;
+  }
+  function orchStartFeedbackVoice(btn, ta) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || !btn || !ta) return;
+    let rec;
+    try { rec = new SR(); } catch (e) { return; }
+    rec.lang = document.documentElement.lang || navigator.language || 'ru-RU';
+    rec.interimResults = true;
+    rec.continuous = false;
+    const base = ta.value.trim();
+    btn.classList.add('listening');
+    btn.title = 'Идёт запись…';
+    rec.onresult = (ev) => {
+      let text = '';
+      for (let i = 0; i < ev.results.length; i++) text += ev.results[i][0].transcript;
+      ta.value = (base ? base + ' ' : '') + text.trim();
+    };
+    rec.onend = () => { btn.classList.remove('listening'); btn.title = 'Надиктовать комментарий'; };
+    try { rec.start(); } catch (e) { btn.classList.remove('listening'); }
+  }
+  async function orchSaveRating(node, rating, comment) {
+    if (!node || !window.API || API.config.offline) return;
+    const mid = node.dataset.orchMessageId || '';
+    if (!mid) return;
+    node.classList.add('saving');
+    try {
+      await API.http.aiOrchestratorRateMessage(ORCH.currentId, mid, rating, comment || '');
+      node.dataset.rating = String(rating);
+      qsa('[data-orch-rate]', node).forEach(btn => btn.classList.toggle('active', Number(btn.dataset.orchRate) <= rating));
+      const saved = qs('.orch-feedback-saved', node);
+      if (saved) { saved.hidden = false; saved.textContent = 'сохранено'; }
+      if (rating === 1) {
+        const area = qs('.orch-feedback-area', node); if (area) area.hidden = false;
+        const ta = qs('.orch-feedback-text', node); if (ta) ta.focus();
+      } else {
+        const area = qs('.orch-feedback-area', node); if (area) area.hidden = true;
+      }
+    } catch (e) { reportError(e); }
+    finally { node.classList.remove('saving'); }
+  }
+  function wireOrchFeedback(root) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    qsa('.orch-rating', root).forEach(node => {
+      qsa('[data-orch-rate]', node).forEach(btn => btn.addEventListener('click', () => {
+        const rating = Number(btn.dataset.orchRate || 0);
+        const ta = qs('.orch-feedback-text', node);
+        orchSaveRating(node, rating, ta ? ta.value : '');
+      }));
+      const save = qs('.orch-feedback-save', node);
+      if (save) save.addEventListener('click', () => {
+        const rating = Number(node.dataset.rating || 1) || 1;
+        const ta = qs('.orch-feedback-text', node);
+        orchSaveRating(node, rating, ta ? ta.value : '');
+      });
+      const mic = qs('.orch-feedback-mic', node);
+      const ta = qs('.orch-feedback-text', node);
+      if (mic && ta && SR && window.API && !API.config.offline) {
+        mic.hidden = false;
+        mic.addEventListener('click', () => orchStartFeedbackVoice(mic, ta));
+      }
+    });
   }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
@@ -1360,6 +1537,7 @@
     if (ORCH.currentId !== cid) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>';
+    wireOrchFeedback(box);
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
   }
   async function orchSend() {
@@ -1372,23 +1550,63 @@
     ORCH.sending = true;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
-    // optimistic render: show the owner message + a typing bubble immediately
+    // optimistic render: show the owner message immediately
     if (box.querySelector('.empty-state')) box.innerHTML = '';
     box.insertAdjacentHTML('beforeend', orchMessageHtml({ role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' }));
-    box.insertAdjacentHTML('beforeend', '<div class="orch-msg assistant orch-typing" id="orch-typing"><div class="orch-msg-body"><span class="orch-dots"><i></i><i></i><i></i></span> оркестратор работает…</div></div>');
+    // live block: Cursor-style faded "thoughts" above a pending answer bubble.
+    // The reasoning shows only the last couple of lines, muted and frameless,
+    // fading out at the top — it stays inside the current chat view.
+    const live = el(`<div class="orch-live" id="orch-live">
+      <div class="orch-think-live" id="orch-live-think">
+        <div class="orch-think-live-label">${icon('spark')}<span>Думаю…</span></div>
+        <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
+      </div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body"><span class="orch-dots"><i></i><i></i><i></i></span></div>
+    </div>`);
+    box.appendChild(live);
     box.scrollTop = box.scrollHeight;
     const cid = ORCH.currentId;
+    const thinkWrap = qs('#orch-live-think', live);
+    const thinkBody = qs('#orch-live-think-body', live);
+    const liveBody = qs('#orch-live-body', live);
+    let thinking = '';
+    let sawThinking = false;
+    const nearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 160;
+    const keepBottom = () => { if (nearBottom()) box.scrollTop = box.scrollHeight; };
+    const setThink = (t) => { if (thinkBody) thinkBody.textContent = t; keepBottom(); };
+    const removeThink = () => { if (thinkWrap) thinkWrap.remove(); };
+    const agent = ORCH.agent === 'auto' ? '' : ORCH.agent;
     try {
-      const res = await API.http.aiOrchestratorMessage(text, cid);
-      if (res && res.conversation_id) orchSaveCurrentId(res.conversation_id);
+      await API.http.aiOrchestratorMessageStream(text, cid, agent, {
+        onThinkingDelta: (delta) => { sawThinking = true; thinking += delta; setThink(thinking); },
+        onStatus: (s) => { if (!sawThinking) setThink(s); },
+        onFinal: (data) => {
+          if (data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
+          removeThink();
+          if (liveBody) liveBody.textContent = String((data && data.reply) || '');
+          keepBottom();
+        },
+        onError: (err) => {
+          removeThink();
+          if (liveBody) liveBody.innerHTML = `<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`;
+          keepBottom();
+        },
+      });
     } catch (e) {
-      const typing = qs('#orch-typing'); if (typing) typing.remove();
-      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><div class="orch-msg-body orch-err">Не удалось получить ответ: ${esc((e && e.message) || String(e))}</div></div>`);
-      box.scrollTop = box.scrollHeight;
+      // Streaming unavailable (older server / network) → synchronous fallback.
+      try {
+        const res = await API.http.aiOrchestratorMessage(text, cid, agent);
+        if (res && res.conversation_id) orchSaveCurrentId(res.conversation_id);
+        removeThink();
+      } catch (e2) {
+        removeThink();
+        if (liveBody) liveBody.innerHTML = `<span class="orch-err">Не удалось получить ответ: ${esc((e2 && e2.message) || String(e2))}</span>`;
+      }
     } finally {
       ORCH.sending = false;
       if (sendBtn) sendBtn.disabled = false;
-      const typing = qs('#orch-typing'); if (typing) typing.remove();
+      // Reload from storage so the persisted thinking + reply render canonically
+      // (collapsed thinking in history), replacing the transient live block.
       await orchLoadMessages(ORCH.currentId);
       await orchLoadConversations();
       if (ta && !ta.disabled) ta.focus();

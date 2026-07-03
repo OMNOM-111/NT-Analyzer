@@ -60,6 +60,60 @@
     return data;
   }
 
+  // Server-Sent Events client for the orchestrator chat. Streams two channels —
+  // native reasoning ("thinking") and then the final answer — over one POST.
+  // No polyfill/EventSource (that is GET-only): we read the fetch body stream
+  // and parse SSE frames manually. `handlers` = { onThinkingStart, onThinkingDelta,
+  // onStatus, onThinkingDone, onFinal, onError, onDone }. Resolves when the
+  // stream ends. Falls back gracefully if streaming is unsupported.
+  async function streamOrchestrator(message, conversationId, agent, handlers) {
+    const path = '/api/ai-lab/orchestrator/message/stream';
+    const h = handlers || {};
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ message, conversation_id: conversationId || 'default', agent: agent || '' }),
+    });
+    if (!res.ok || !res.body || !res.body.getReader) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch (e) { /* non-json */ }
+      throw new HttpError(res.status || 0, detail || res.statusText || 'stream unavailable', path);
+    }
+    const dispatch = (evt, data) => {
+      if (evt === 'thinking_start') { h.onThinkingStart && h.onThinkingStart(data); }
+      else if (evt === 'thinking_delta') { h.onThinkingDelta && h.onThinkingDelta(String(data.text || '')); }
+      else if (evt === 'status') { h.onStatus && h.onStatus(String(data.text || '')); }
+      else if (evt === 'thinking_done') { h.onThinkingDone && h.onThinkingDone(String(data.text || '')); }
+      else if (evt === 'final') { h.onFinal && h.onFinal(data); }
+      else if (evt === 'error') { h.onError && h.onError(String(data.error || 'error')); }
+      else if (evt === 'done') { h.onDone && h.onDone(data); }
+    };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const trimmed = block.replace(/\r/g, '');
+        if (!trimmed.trim() || trimmed.startsWith(':')) continue; // keepalive/comment
+        let evt = 'message';
+        let dataStr = '';
+        trimmed.split('\n').forEach((line) => {
+          if (line.indexOf('event:') === 0) evt = line.slice(6).trim();
+          else if (line.indexOf('data:') === 0) dataStr += line.slice(5).trim();
+        });
+        let data = {};
+        try { data = dataStr ? JSON.parse(dataStr) : {}; } catch (e) { data = {}; }
+        dispatch(evt, data);
+      }
+    }
+  }
+
   // Endpoint map mirrors app/server.py exactly.
   const http = {
     health: (o) => getJSON('/api/health', o),
@@ -115,6 +169,7 @@
     portfolioArchiveCell: (id, body) => send('/api/portfolio/cells/' + encodeURIComponent(id) + '/archive', 'POST', body || {}),
     aiCellHistory: (cell, o) => getJSON('/api/ai-lab/cell-history' + qs({ cell }), o),
     instruments: (o) => getJSON('/api/ops/runtime/instruments', o),
+    marketBars: (q, o) => getJSON('/api/ops/runtime/bars' + qs(q), o),
     reports: (q, o) => getJSON('/api/reports' + qs(q), o),
     jobs: (q, o) => getJSON('/api/jobs' + qs(q), o),
     job: (id, o) => getJSON('/api/jobs/' + encodeURIComponent(id), o),
@@ -177,7 +232,9 @@
     aiRunStatus: (o) => getJSON('/api/ai-lab/run/status', o),
     aiChiefStatus: (o) => getJSON('/api/ai-lab/chief-agent', o),
     aiOrchestratorStatus: (o) => getJSON('/api/ai-lab/orchestrator', o),
-    aiOrchestratorMessage: (message, conversationId) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default' }),
+    aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '' }),
+    aiOrchestratorMessageStream: (message, conversationId, agent, handlers) => streamOrchestrator(message, conversationId, agent, handlers),
+    aiOrchestratorRateMessage: (conversationId, messageId, rating, comment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/rating', 'POST', { conversation_id: conversationId || 'default', rating, feedback_comment: comment || '', feedback_source: 'owner' }),
     aiOrchestratorConversations: (o) => getJSON('/api/ai-lab/orchestrator/conversations', o),
     aiOrchestratorConversation: (id, q, o) => getJSON('/api/ai-lab/orchestrator/conversations/' + encodeURIComponent(id) + qs(q), o),
     aiOrchestratorCreateConversation: (title) => send('/api/ai-lab/orchestrator/conversations', 'POST', { title: title || '' }),

@@ -56,6 +56,16 @@ AI Lab остаётся local-first. После некорректного ло�
 `$0.50/run`. Cloud output снова проходит все deterministic gates и не имеет
 права на verdict. Полный контракт: `docs/AI_LAB_CLOUD_AGENTS.md`.
 
+## Competitive feedback для AI-ролей
+
+Управление ролями строится через проверяемую конкуренцию, а не через угрозы.
+Analyst, Coder, Judge и Reviewer могут сравниваться внутри одного cycle по
+фактическому результату: contract validity, compile, backtest, risk gates,
+arbitration и честность `unclear/reject/no_signal`. Слабый ответ получает
+feedback и временно меньший приоритет следующего вызова, но честный отказ при
+недостатке данных не считается браком. Полный контракт и MVP внедрения:
+`docs/AI_LAB_COMPETITIVE_FEEDBACK.md`.
+
 ## Реальные E2E результаты
 
 - `EXP-20260622-0006`: полный цикл до full backtest; compile/catalog/sanity

@@ -25,9 +25,18 @@ def test_runtime_defaults_shape() -> None:
 
 def test_governance_documents_exist() -> None:
     docs = {row["id"]: row for row in governance.list_documents()}
-    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map"):
+    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map", "ai-lab-competitive-feedback"):
         assert required in docs, f"missing document registry row: {required}"
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
+
+
+def test_competitive_feedback_law_is_registered() -> None:
+    laws = {row["id"]: row for row in governance.load_laws().get("laws", [])}
+    law = laws.get("GOV-AI-017")
+    assert law, "competitive feedback law must be registered"
+    assert law["audience"] == "local_ai"
+    assert law["value"] is True
+    assert "AI_LAB_COMPETITIVE_FEEDBACK.md" in " ".join(law.get("source_refs") or [])
 
 
 def test_north_star_goal_is_registered_and_readable() -> None:
@@ -93,6 +102,7 @@ def test_law_update_writes_history_and_overview() -> None:
 def main() -> int:
     test_runtime_defaults_shape()
     test_governance_documents_exist()
+    test_competitive_feedback_law_is_registered()
     test_change_log_reader_shape()
     test_law_update_writes_history_and_overview()
     print("test_governance: ok")

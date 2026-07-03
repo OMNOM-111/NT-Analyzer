@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "policy": "quality_over_speed",
+  "policy_note": "Timeout = достаточно времени для качественного ответа. Превышение hard ceiling означает, что модель точно не успеет — router переключается на следующего кандидата (cooldown 300 с), а не повторяет тот же запрос.",
+
+  "operations": {
+    "connection_test": {
+      "timeout_sec": 45,
+      "note": "короткий ping, не генерация; должен ответить немедленно"
+    },
+    "model_probe": {
+      "timeout_sec": 90,
+      "note": "health-check, 1–2 предложения; не полноценная генерация"
+    },
+    "list_models": {
+      "timeout_sec": 15
+    },
+    "embedding": {
+      "timeout_sec": 120,
+      "note": "векторизация; не зависит от качества"
+    },
+    "light_chat": {
+      "timeout_sec": 180,
+      "roles": ["telegram_assistant", "news_analyst", "accountant", "orchestrator_event"],
+      "note": "короткий аналитический ответ / событийная реакция; GPT-5 mini median ~10 с, облако median ~6–22 с"
+    },
+    "analysis": {
+      "timeout_sec": 300,
+      "roles": ["hypothesis", "backtest_analyst", "strategy_analyst", "overfit_detector", "optimizer", "backtest_audit", "chief_daily_audit"],
+      "note": "гипотеза + JSON, thinking tokens DeepSeek; облако median ~10–22 с, запас ×15"
+    },
+    "review": {
+      "timeout_sec": 300,
+      "roles": ["code_reviewer", "risk_manager", "final_judge", "committee"],
+      "note": "ревью кода / риска / арбитраж — длинный контекст"
+    },
+    "code_generation": {
+      "timeout_sec": 600,
+      "roles": ["coder", "compile_error_fixer"],
+      "note": "генерация C# 1500–2200 tokens; облако median ~10 с, safety ceiling ×60"
+    },
+    "code_autofix": {
+      "timeout_sec": 600,
+      "note": "исправление ошибок компиляции с полным файлом"
+    },
+    "orchestrator_plan": {
+      "timeout_sec": 420,
+      "note": "JSON-план Orchestrator; DeepSeek thinking + до 6000 токенов вывода"
+    },
+    "chief_dialogue": {
+      "timeout_sec": 600,
+      "note": "стратегический и менеджерский диалог с repair-pass; 8192 токена вывода"
+    },
+    "periodic_report": {
+      "timeout_sec": 300,
+      "note": "недельный / месячный / квартальный отчёт"
+    },
+    "local_judge": {
+      "timeout_sec": 300,
+      "transport": "lm_studio",
+      "note": "локальный judge (hypothesis/idea); GPT-OSS 20B median ~94 с; было DEFAULT_JUDGE_TIMEOUT 180"
+    },
+    "local_coder": {
+      "timeout_sec": 900,
+      "transport": "lm_studio",
+      "note": "локальный coder (генерация C#); GPT-OSS 20B p95 ~5 мин; было DEFAULT_CODER_TIMEOUT 480"
+    },
+    "local_chat_default": {
+      "timeout_sec": 240,
+      "transport": "lm_studio",
+      "note": "дефолт для прочих локальных вызовов; было DEFAULT_CHAT_TIMEOUT 120"
+    }
+  },
+
+  "failover": {
+    "on_timeout_cooldown_sec": 300,
+    "on_quota_cooldown_sec": 3600,
+    "note": "timeout → cooldown агента, router пробует следующего кандидата с тем же timeout (не уменьшать)"
+  },
+
+  "model_overrides": {
+    "openai/gpt-oss-20b": {
+      "code_generation": 900,
+      "analysis": 360,
+      "note": "benchmark median ~94 с; широкий ceiling для сложного NinjaScript"
+    }
+  },
+
+  "env_prefix": "AI_LAB_TIMEOUT_",
+  "env_examples": [
+    "AI_LAB_TIMEOUT_CODE_GENERATION=720",
+    "AI_LAB_TIMEOUT_LOCAL_CODER=1200",
+    "AI_LAB_TIMEOUT_CHIEF_DIALOGUE=900"
+  ]
+}

@@ -558,6 +558,38 @@ def t18a(tmp):
     assert saved["strategy_id"].startswith("runtime_connection_reconnect__"), saved["strategy_id"]
 
 
+@case("phase18: reconnect_account rejected for system accounts")
+def t18b(tmp):
+    try:
+        rt.submit_command(
+            command="reconnect_account",
+            strategy_id="",
+            account_name="Backtest",
+        )
+        raise AssertionError("expected OpsError for system account reconnect")
+    except ops.OpsError as e:
+        assert "system account" in str(e).lower(), str(e)
+
+
+@case("phase18: reconnect_account rejects data-feed connection names")
+def t18c(tmp):
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+    }])
+    try:
+        rt.submit_command(
+            command="reconnect_account",
+            strategy_id="",
+            account_name="DEMO3369390",
+            connection_name="Симуляционный Датафид",
+        )
+        raise AssertionError("expected data-feed reconnect rejection")
+    except ops.OpsError as e:
+        assert "data-feed" in str(e).lower(), str(e)
+
+
 # --------------------------------------------------------------------------
 # Phase 10 — normalization + selection_diff + command status
 # --------------------------------------------------------------------------
@@ -1254,7 +1286,7 @@ def t48_trade_window_merge(tmp):
 
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t11b, t11c, t12,
-             t13, t14, t15, t16, t17, t18, t18a,
+             t13, t14, t15, t16, t17, t18, t18a, t18b, t18c,
              t19, t20, t21, t22, t23, t24, t25, t26,
              t27, t28, t29, t30, t31, t31b, t32, t33, t34, t34a,
              t35, t36, t37,

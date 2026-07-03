@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "owner": "Черевко Дмитро",
-  "updated_at_utc": "2026-07-02T18:33:11Z",
+  "updated_at_utc": "2026-07-03T00:00:00Z",
   "documents": [
     {
       "id": "project-overview",
@@ -131,6 +131,14 @@
       "label": "AI Lab cloud agents, roles and budget",
       "category": "technical",
       "path": "docs/AI_LAB_CLOUD_AGENTS.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-lab-competitive-feedback",
+      "title": "AI_LAB_COMPETITIVE_FEEDBACK",
+      "label": "AI Lab competitive feedback contract",
+      "category": "technical",
+      "path": "docs/AI_LAB_COMPETITIVE_FEEDBACK.md",
       "editable_kind": "none"
     },
     {

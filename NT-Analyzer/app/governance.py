@@ -555,6 +555,25 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean", "value": True, "source_refs": [],
         "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/knowledge.py", "app/ai_lab/universal_llm.py"], "review_targets": [],
     },
+    {
+        "id": "GOV-AI-017", "key": "ai_roles_compete_through_feedback",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "ИИ-роли улучшаются через конкурентную обратную связь",
+        "summary": "Роли Analyst/Coder/Judge/Reviewer сравниваются по проверяемому результату; слабый ответ не наказывается, а получает детальный feedback и временно меньший приоритет следующего вызова, пока не восстановит качество.",
+        "kind": "boolean", "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
+        "dynamic_targets": ["governance docs", "docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
+        "review_targets": ["app/ai_lab/agent_router.py role ranking", "agent usage/feedback ledger", "AI Lab UI feedback report"],
+    },
+    {
+        "id": "GOV-AI-018", "key": "runtime_reconnect_fails_closed",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Переподключение NinjaTrader не подменяет торговое соединение Datafeed",
+        "summary": "Автоматический reconnect разрешён только для фактически активной Realtime-стратегии на paper/demo-счёте; системные Backtest/Sim/Playback-счета, исторические экземпляры, live-счета и Datafeed исключены. Bridge не выбирает неоднозначное соединение и не отключает другие соединения автоматически.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/runtime.py", "bridge/src/Runtime/RuntimeCommandProcessor.cs"],
+        "review_targets": [],
+    },
 ]
 
 
@@ -690,6 +709,14 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "label": "AI Lab cloud agents, roles and budget",
             "category": "technical",
             "path": "docs/AI_LAB_CLOUD_AGENTS.md",
+            "editable_kind": "none",
+        },
+        {
+            "id": "ai-lab-competitive-feedback",
+            "title": "AI_LAB_COMPETITIVE_FEEDBACK",
+            "label": "AI Lab competitive feedback contract",
+            "category": "technical",
+            "path": "docs/AI_LAB_COMPETITIVE_FEEDBACK.md",
             "editable_kind": "none",
         },
         {
@@ -1122,6 +1149,7 @@ def _render_readme_markdown() -> str:
 - `ROLES.md` — роли владельца и всех ИИ-каналов.
 - `LAWS.md` — общие законы проекта.
 - `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ и cloud fallback / AI Lab.
+- `../AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
 

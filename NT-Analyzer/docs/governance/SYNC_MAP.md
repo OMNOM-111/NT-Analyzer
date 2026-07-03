@@ -159,3 +159,15 @@
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/chief_agent.py, app/ai_lab/knowledge.py, app/ai_lab/universal_llm.py
 - Нужно проверить вручную: —
+
+## GOV-AI-017 — ИИ-роли улучшаются через конкурентную обратную связь
+
+- Текущее значение: `Да`
+- Автоматически обновляется: governance docs, docs/AI_LAB_COMPETITIVE_FEEDBACK.md
+- Нужно проверить вручную: app/ai_lab/agent_router.py role ranking, agent usage/feedback ledger, AI Lab UI feedback report
+
+## GOV-AI-018 — Переподключение NinjaTrader не подменяет торговое соединение Datafeed
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/chief_agent.py, app/runtime.py, bridge/src/Runtime/RuntimeCommandProcessor.cs
+- Нужно проверить вручную: —

@@ -305,6 +305,7 @@ def test_named_domain_agents_and_unified_finance_page_contract():
     strategies_js = (AURORA / "assets" / "pages" / "strategies.js").read_text(encoding="utf-8")
     api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
 
     assert "Финансы" in finance and "Марина · финансовый контроль" in finance
     assert "renderMarina" in finance_js and "API.http.accounting" in finance_js
@@ -312,8 +313,16 @@ def test_named_domain_agents_and_unified_finance_page_contract():
     assert "Толик · контроль качества стратегий" in strategies
     assert "tolik-message" not in strategies and "domainAgentMessage('tolik'" not in strategies_js
     assert "/api/ai-lab/accounting" in api and "/api/ai-lab/strategy-analysis" in api
-    assert 'data-orch-agent="Марина"' in ui and 'data-orch-agent="Толик"' in ui
-    assert 'data-orch-agent="Никита"' in ui
+    assert "aiOrchestratorRateMessage" in api and "/api/ai-lab/orchestrator/message/" in api
+    assert "rate_message" in server and "message/" in server and "/rating" in server
+    assert "orchRatingHtml" in ui and "data-orch-rate" in ui and "orch-feedback-area" in ui
+    assert "orchStartFeedbackVoice" in ui and "orch-feedback-mic" in ui
+    # Agent rail sidebar: management tiers in hierarchy order, then named specialists.
+    assert "data-orch-role=" in ui and "ORCH_ROLES" in ui
+    assert "['nikita', 'tolik', 'marina']" in ui
+    assert "['manager', 'deputy', 'secretary', 'auto']" in ui
+    for role_id in ("nikita:", "tolik:", "marina:", "secretary:", "deputy:", "manager:"):
+        assert role_id in ui
     assert "accounting.html" not in ui and "label: 'Финансы'" in ui
 
 
@@ -345,7 +354,7 @@ def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     assert "canvas.onmousemove" in charts and "t-detail" in charts
     assert "tooltipLabel: String(row.label" in overview
     assert "data-report-spark" in backtesting and "API.http.jobTrades" in backtesting
-    assert "AI стратегия" in backtesting and "ai-origin-ribbon" in strategies
+    assert "ai-origin-badge" in backtesting and "ai-origin-ribbon" in strategies
     assert "Простой" not in ai_lab and "Цикл не запущен" in ai_lab
 
 

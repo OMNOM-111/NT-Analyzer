@@ -91,7 +91,7 @@ UI.ready(async function () {
       ? `<span>${UI.esc(c.statusLabel || '')}</span><span>попыток <b>${c.attempts || 1}</b></span>`
       : `<span>P&L <b class="${UI.pnlClass(c.net || 0)}">${c.net != null ? UI.money(c.net, { sign: true }) : '—'}</b></span>${c.win != null ? `<span>WR <b class="${AuroraDomain.metricTone('win', c.win)}">${UI.pct(c.win)}</b></span>` : ''}${c.pf != null ? `<span>PF <b class="${AuroraDomain.metricTone('pf', c.pf)}">${Number(c.pf).toFixed(2)}</b></span>` : ''}`;
     const frequency = c.frequency || { key: 'unknown', label: 'частота неизвестна' };
-    return `<div class="kan-card ${c.isAi ? 'ai-origin' : ''}" data-id="${UI.esc(c.id)}">${c.isAi ? `<div class="ai-origin-ribbon">${UI.icon('ai')}AI стратегия · автономная лаборатория</div>` : ''}<div class="kc-top"><span class="kc-name">${UI.esc(c.name)}</span><span class="tag">${UI.esc(c.cell || c.root || '')}</span></div><div class="kc-meta">${meta}</div><div class="flex between" style="margin-top:9px"><span class="badge ${frequency.key === 'normal' ? 'live' : frequency.key === 'unknown' ? 'archived' : 'trial'}" title="${UI.esc(frequency.explanation || '')}">${UI.esc(frequency.label)}</span><span class="muted mono" style="font-size:10px">${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1) + '/нед'}</span></div></div>`;
+    return `<div class="kan-card ${c.isAi ? 'ai-origin' : ''}" data-id="${UI.esc(c.id)}">${c.isAi ? `<div class="ai-origin-ribbon">${UI.icon('ai')}AI · автономная лаборатория</div>` : ''}<div class="kc-top"><span class="kc-name">${UI.esc(c.name)}</span><span class="tag">${UI.esc(c.cell || c.root || '')}</span></div><div class="kc-meta">${meta}</div><div class="flex between" style="margin-top:9px"><span class="badge ${frequency.key === 'normal' ? 'live' : frequency.key === 'unknown' ? 'archived' : 'trial'}" title="${UI.esc(frequency.explanation || '')}">${UI.esc(frequency.label)}</span><span class="muted mono" style="font-size:10px">${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1) + '/нед'}</span></div></div>`;
   }
   function renderKanban() {
     let cards = [...profiles, ...aiCards];
@@ -276,7 +276,7 @@ UI.ready(async function () {
   async function openAiCard(c) {
     UI.drawer(
       `<div class="tb-title"><span class="tb-kicker">${UI.esc([c.cell, c.instrument, c.originLabel].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(c.name)}</span></div>`,
-      `<div class="flex wrap gap-sm"><span class="badge ai-origin-badge">${UI.icon('ai')}AI стратегия</span>${statusBadge(c)}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="tag">попыток: ${c.attempts || 1}</span></div>
+      `<div class="flex wrap gap-sm"><span class="badge ai-origin-badge">${UI.icon('ai')}AI</span>${statusBadge(c)}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="tag">попыток: ${c.attempts || 1}</span></div>
        ${c.archiveReason ? `<p class="muted" style="margin-top:12px;font-size:12.5px"><strong>Причина архива:</strong> ${UI.esc(c.archiveReason)}</p>` : ''}
        <div class="flex gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-lab.html?exp=${encodeURIComponent(c.experimentId || '')}">${UI.icon('ai')}Открыть в AI Lab</a></div>
        <h4 style="margin:16px 0 8px">История попыток по ячейке ${UI.esc(c.cell || '')}</h4><div id="ai-cell-hist"><div class="state-loading"><span class="spinner"></span>Загрузка…</div></div>`
@@ -299,7 +299,7 @@ UI.ready(async function () {
     );
     function tableHtml(list) {
       if (!list.length) return '<div class="empty-state">Пусто.</div>';
-      return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Слот</th><th>Стратегия</th><th>Инстр.</th><th>Причина</th></tr></thead><tbody>${list.map(c => `<tr class="clickable" data-id="${UI.esc(c.id)}"><td class="mono muted">${UI.esc(c.cell || '')}</td><td><div class="cell-strat"><strong>${UI.esc(c.name)}</strong>${c.isAi ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div></td><td class="mono muted">${UI.esc(c.root || c.instrument || '')}</td><td class="muted" style="font-size:11px;max-width:220px">${UI.esc(c.archiveReason || (c.raw && c.raw.archive_reason) || '')}</td></tr>`).join('')}</tbody></table></div>`;
+      return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Слот</th><th>Стратегия</th><th>Инстр.</th><th>Причина</th></tr></thead><tbody>${list.map(c => `<tr class="clickable" data-id="${UI.esc(c.id)}"><td class="mono muted">${UI.esc(c.cell || '')}</td><td><div class="cell-strat"><strong>${UI.esc(c.name)}</strong>${c.isAi ? '<span class="badge ai-origin-badge">AI</span>' : ''}</div></td><td class="mono muted">${UI.esc(c.root || c.instrument || '')}</td><td class="muted" style="font-size:11px;max-width:220px">${UI.esc(c.archiveReason || (c.raw && c.raw.archive_reason) || '')}</td></tr>`).join('')}</tbody></table></div>`;
     }
     function regHtml(entries) {
       if (!entries.length) return '<div class="empty-state">Реестр пуст.</div>';

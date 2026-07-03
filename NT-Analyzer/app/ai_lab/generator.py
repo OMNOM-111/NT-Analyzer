@@ -15,7 +15,7 @@ from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import governance
-from . import activity, agent_router, cloud_agents, lm_studio, paths
+from . import activity, agent_router, cloud_agents, llm_timeouts, lm_studio, paths
 from .guards import assert_sandbox_only
 from .validator import ValidationReport, validate_source
 
@@ -814,7 +814,7 @@ def generate(
         try:
             external_resp = agent_router.invoke_messages(
                 "compile_error_fixer", messages,
-                max_output_tokens=2200, timeout=240,
+                max_output_tokens=2200, timeout=llm_timeouts.CODE_AUTOFIX,
                 purpose="autofix_compile",
             )
             src = _extract_csharp(external_resp.get("content", "")) or None
@@ -840,7 +840,7 @@ def generate(
                     "compile_error_fixer_fallback", messages,
                     fallback_reason="local_compile_fix_failed_repeatedly",
                     experiment_id=experiment_id, purpose="autofix_compile_fallback",
-                    temperature=0.1, max_tokens=2200, timeout=240,
+                    temperature=0.1, max_tokens=2200, timeout=llm_timeouts.CODE_AUTOFIX,
                 )
                 src = _extract_csharp(cloud_resp.get("content", "")) or None
                 if src:
@@ -961,7 +961,7 @@ def generate(
             ]
             try:
                 resp = agent_router.invoke_messages(
-                    "coder", messages, max_output_tokens=2200, timeout=240,
+                    "coder", messages, max_output_tokens=2200, timeout=llm_timeouts.CODE_GENERATION,
                     purpose="generate_strategy",
                 )
                 meta["path"] = "external_primary"
@@ -1044,7 +1044,7 @@ def generate(
             try:
                 resp = agent_router.invoke_messages(
                     "code_reviewer", messages, max_output_tokens=2200,
-                    timeout=240, purpose="autofix_strategy",
+                    timeout=llm_timeouts.CODE_AUTOFIX, purpose="autofix_strategy",
                 )
             except agent_router.AgentRouterError:
                 resp = lm_studio.chat(

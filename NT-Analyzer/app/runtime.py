@@ -3280,6 +3280,13 @@ def _default_connection_command_strategy_id(account_name: str) -> str:
     return f"runtime_connection_reconnect__{safe}"
 
 
+def _is_datafeed_connection_name(connection_name: str) -> bool:
+    value = str(connection_name or "").strip().lower()
+    return any(marker in value for marker in (
+        "data feed", "datafeed", "датафид", "дата фид",
+    ))
+
+
 def submit_command(command: str,
                    strategy_id: str,
                    account_name: str,
@@ -3326,6 +3333,13 @@ def submit_command(command: str,
             raise ops.OpsError("class_name required (catalog strategy)", 400)
     if command == "enable_strategy" and s and s.get("status") in ("rejected", "archived"):
         raise ops.OpsError("strategy is archived/rejected — launch refused", 403)
+    if connection_command and _is_system_account(account_name):
+        raise ops.OpsError(
+            f"account '{account_name}' is a NinjaTrader system account — "
+            "reconnect is not allowed", 403)
+    if connection_command and _is_datafeed_connection_name(connection_name):
+        raise ops.OpsError(
+            "data-feed connections cannot be used for account reconnect", 403)
     acct_mode = _resolve_account_mode_for_command(account_name)
     if acct_mode == "unknown":
         raise ops.OpsError(

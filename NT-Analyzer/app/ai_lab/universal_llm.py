@@ -21,9 +21,9 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import agent_registry, response_cache
+from . import agent_registry, llm_timeouts, response_cache
 
 
 _BUDGET_LOCK = threading.RLock()
@@ -65,7 +65,7 @@ def _request_json(
     method: str = "POST",
     payload: Optional[Dict[str, Any]] = None,
     headers: Optional[Dict[str, str]] = None,
-    timeout: int = 90,
+    timeout: int = llm_timeouts.ANALYSIS,
     secret: str = "",
 ) -> Dict[str, Any]:
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -324,6 +324,17 @@ def _openai_compatible(
     if isinstance(content, list):
         content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
     text = str(content or "").strip()
+    # Capture the provider's native chain-of-thought when it is returned
+    # alongside a visible answer. This is already generated and billed, so
+    # surfacing it costs nothing extra. It is kept out of usage logs (the log
+    # row copies only explicit numeric fields) and is used by the app chat to
+    # show a live "thinking" block. Telegram never receives it.
+    try:
+        reasoning_text = str(doc["choices"][0]["message"].get("reasoning_content") or "")
+    except (KeyError, IndexError, TypeError):
+        reasoning_text = ""
+    if reasoning_text:
+        usage["reasoning_content"] = reasoning_text[:20000]
     if not text and _uses_responses_api(endpoint) and doc.get("incomplete_details"):
         reason = doc.get("incomplete_details")
         raise UniversalLLMError(f"Provider не завершил response: {reason}") from None
@@ -366,6 +377,166 @@ def _openai_compatible(
             "Provider израсходовал output allowance на reasoning и не вернул финальный ответ; "
             "увеличьте max_output_tokens."
             if reasoning else "Provider вернул пустой chat response."
+        )
+        raise ProviderResponseError(note, usage)
+    return text, usage
+
+
+def _request_stream(
+    url: str,
+    *,
+    payload: Dict[str, Any],
+    headers: Optional[Dict[str, str]] = None,
+    timeout: int = llm_timeouts.ANALYSIS,
+    secret: str = "",
+):
+    """Yield raw SSE lines from an OpenAI-compatible streaming chat endpoint.
+
+    The provider bills exactly one request regardless of transport; streaming
+    only changes *when* the already-generated tokens arrive.
+    """
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request_headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+        **(headers or {}),
+    }
+    request = urllib.request.Request(url, data=data, headers=request_headers, method="POST")
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail_raw = exc.read().decode("utf-8", errors="replace")
+            detail_doc = json.loads(detail_raw)
+            detail = detail_doc.get("error") if isinstance(detail_doc, dict) else detail_raw
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("code") or str(detail)
+        except Exception:
+            detail = f"HTTP {exc.code}"
+        raise UniversalLLMError(_safe_error(RuntimeError(f"Provider отклонил запрос (HTTP {exc.code}): {detail}"), secret)) from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise UniversalLLMError(_safe_error(RuntimeError(f"Provider недоступен: {exc}"), secret)) from None
+    try:
+        with response:
+            for raw in response:
+                yield raw.decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise UniversalLLMError(_safe_error(RuntimeError(f"Provider прервал поток: {exc}"), secret)) from None
+
+
+def _openai_compatible_stream(
+    agent: Dict[str, Any], api_key: str, prompt: str, system_prompt: str,
+    max_output_tokens: int, timeout: int, *, request_role: str = "", purpose: str = "",
+    on_reasoning: Optional[Callable[[str], None]] = None,
+    on_content: Optional[Callable[[str], None]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Streaming variant of :func:`_openai_compatible` for chat endpoints.
+
+    Separates the provider's native ``reasoning_content`` (thinking) deltas from
+    visible ``content`` deltas and forwards each to the supplied callbacks so the
+    app chat can render a live "thinking" block. Usage/cost accounting matches
+    the non-streaming path (a single billed request). Only used when a callback
+    is provided; every other caller keeps the synchronous transport untouched.
+    """
+    endpoint = _endpoint(agent)
+    messages: List[Dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    payload: Dict[str, Any] = {
+        "model": agent["model"], "messages": messages, "temperature": 0.0,
+        "stream": True, "stream_options": {"include_usage": True},
+    }
+    token_field = "max_completion_tokens" if agent.get("provider") in {"openai", "azure_foundry"} else "max_tokens"
+    payload[token_field] = max_output_tokens
+    if agent.get("provider") == "zai":
+        payload["thinking"] = {"type": "disabled"}
+    if agent.get("provider") == "deepseek":
+        critical_roles = {"chief_agent", "orchestrator", "final_judge", "risk_manager", "overfit_detector"}
+        thinking = request_role in critical_roles and purpose != "connection_test"
+        payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        payload["user_id"] = "nt-analyzer"
+        if thinking:
+            payload.pop("temperature", None)
+            payload["reasoning_effort"] = "max"
+    if agent.get("provider") == "openai" and system_prompt:
+        digest = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:24]
+        payload["prompt_cache_key"] = f"nt-analyzer-{digest}"
+
+    content_parts: List[str] = []
+    reasoning_parts: List[str] = []
+    usage: Dict[str, Any] = {
+        "input_tokens": 0, "cached_input_tokens": 0, "cache_miss_tokens": 0,
+        "output_tokens": 0, "actual_model": str(agent.get("model") or ""),
+    }
+    for raw_line in _request_stream(
+        endpoint, payload=payload, headers=_headers(agent, api_key),
+        timeout=timeout, secret=api_key,
+    ):
+        line = raw_line.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        data_str = line[len("data:"):].strip()
+        if data_str == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data_str)
+        except ValueError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        chunk_usage = chunk.get("usage")
+        if isinstance(chunk_usage, dict):
+            cdetails = chunk_usage.get("prompt_tokens_details") if isinstance(chunk_usage.get("prompt_tokens_details"), dict) else {}
+            usage["input_tokens"] = int(chunk_usage.get("prompt_tokens") or chunk_usage.get("input_tokens") or usage["input_tokens"])
+            usage["cached_input_tokens"] = int(cdetails.get("cached_tokens") or chunk_usage.get("prompt_cache_hit_tokens") or usage["cached_input_tokens"])
+            usage["cache_miss_tokens"] = int(chunk_usage.get("prompt_cache_miss_tokens") or usage["cache_miss_tokens"])
+            usage["output_tokens"] = int(chunk_usage.get("completion_tokens") or chunk_usage.get("output_tokens") or usage["output_tokens"])
+        if chunk.get("model"):
+            usage["actual_model"] = str(chunk.get("model"))
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        delta = first.get("delta") if isinstance(first.get("delta"), dict) else {}
+        piece_reasoning = delta.get("reasoning_content")
+        if piece_reasoning:
+            reasoning_parts.append(str(piece_reasoning))
+            if on_reasoning:
+                try:
+                    on_reasoning(str(piece_reasoning))
+                except Exception:
+                    pass
+        piece_content = delta.get("content")
+        if piece_content:
+            content_parts.append(str(piece_content))
+            if on_content:
+                try:
+                    on_content(str(piece_content))
+                except Exception:
+                    pass
+    reasoning_text = "".join(reasoning_parts)
+    if reasoning_text:
+        usage["reasoning_content"] = reasoning_text[:20000]
+    text = "".join(content_parts).strip()
+    if not text:
+        if reasoning_text and agent.get("provider") == "deepseek":
+            # Streaming spent the allowance on reasoning with no visible answer.
+            # Retry once in concise, non-streaming mode (same guard the sync
+            # path uses); both attempts stay in usage/cost accounting.
+            retry_text, retry_usage = _openai_compatible(
+                agent, api_key, prompt, system_prompt, max_output_tokens, timeout,
+                request_role="", purpose="connection_test",
+            )
+            for field in ("input_tokens", "cached_input_tokens", "cache_miss_tokens", "output_tokens"):
+                usage[field] = int(usage.get(field) or 0) + int(retry_usage.get(field) or 0)
+            usage["actual_model"] = str(retry_usage.get("actual_model") or usage.get("actual_model") or "")
+            if retry_text:
+                return retry_text, usage
+        note = (
+            "Provider израсходовал output allowance на reasoning и не вернул финальный ответ; "
+            "увеличьте max_output_tokens."
+            if reasoning_text else "Provider вернул пустой chat response."
         )
         raise ProviderResponseError(note, usage)
     return text, usage
@@ -426,11 +597,13 @@ def invoke_agent(
     *,
     system_prompt: str = "",
     max_output_tokens: int = 256,
-    timeout: int = 90,
+    timeout: int = llm_timeouts.ANALYSIS,
     allow_disabled: bool = False,
     request_role: str = "",
     purpose: str = "",
     cache_mode: str = "auto",
+    on_reasoning: Optional[Callable[[str], None]] = None,
+    on_content: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt or len(clean_prompt) > 20_000:
@@ -519,14 +692,38 @@ def invoke_agent(
     usage: Dict[str, Any] = {}
     try:
         api_key = agent_registry.get_api_key(agent_id)
+        # Stream only when a caller explicitly wants live reasoning/content
+        # (the app chat SSE endpoint). Every other caller — Telegram, missions,
+        # background jobs — keeps the untouched synchronous transport.
+        want_stream = (
+            bool(on_reasoning or on_content)
+            and agent.get("provider") != "gemini"
+            and resolved_type == "chat"
+            and not _uses_responses_api(_endpoint(agent))
+        )
         if agent.get("provider") == "gemini":
             response_text, usage = _gemini(agent, api_key, clean_prompt, system_prompt, max_output, timeout)
+        elif want_stream:
+            response_text, usage = _openai_compatible_stream(
+                agent, api_key, clean_prompt, system_prompt, max_output, timeout,
+                request_role=str(request_role or agent.get("role") or "general"),
+                purpose=str(purpose or "agent_request"),
+                on_reasoning=on_reasoning, on_content=on_content,
+            )
         else:
             response_text, usage = _openai_compatible(
                 agent, api_key, clean_prompt, system_prompt, max_output, timeout,
                 request_role=str(request_role or agent.get("role") or "general"),
                 purpose=str(purpose or "agent_request"),
             )
+        reasoning_out = str(usage.get("reasoning_content") or "")
+        # Providers that return their full reasoning only at the end (no live
+        # stream) still deliver it once so the chat can show the block.
+        if reasoning_out and on_reasoning and not want_stream:
+            try:
+                on_reasoning(reasoning_out)
+            except Exception:
+                pass
         estimated_input = int(estimate_info["estimated_input_tokens"])
         reported_input = int(usage.get("input_tokens") or 0)
         reported_output = int(usage.get("output_tokens") or 0)
@@ -571,6 +768,7 @@ def invoke_agent(
             "agent_id": agent_id, "agent_name": agent["name"],
             "provider": agent["provider"], "model": agent["model"], "actual_model": actual_model,
             "response": response_text[:30000],
+            "reasoning": reasoning_out[:20000],
             "dimensions": usage.get("dimensions"),
             "input_tokens": input_tokens, "cached_input_tokens": cached_tokens,
             "cache_miss_tokens": row["cache_miss_tokens"],
@@ -615,7 +813,7 @@ def test_connection(agent_id: str, prompt: str = "") -> Dict[str, Any]:
         result = invoke_agent(
             agent_id, test_prompt,
             system_prompt="This is a connection test. Return a short response only.",
-            max_output_tokens=128, timeout=45, allow_disabled=True,
+            max_output_tokens=128, timeout=llm_timeouts.CONNECTION_TEST, allow_disabled=True,
             request_role="connection_test", purpose="connection_test",
         )
         result["status"] = "connected"

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Рабочий стол — StratForge AI</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260703-desktop1">
+<link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
+<style>
+  /* ===================== Рабочий стол (desktop) ===================== */
+  .content:has(.dsk){padding:0;gap:0}
+  .dsk{flex:1;min-height:560px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+
+  /* toolbar */
+  .dsk-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line);
+    background:var(--bg-2);flex-wrap:wrap;position:relative;z-index:6}
+  .dsk-bar .sep{width:1px;height:22px;background:var(--line-2);margin:0 4px}
+  .dsk-bar .spacer{flex:1}
+  .dsk-bar .grp{display:flex;align-items:center;gap:4px}
+  .dsk-scale{display:flex;align-items:center;gap:2px;background:var(--bg-3);border:1px solid var(--line-2);border-radius:8px;padding:2px}
+  .dsk-scale button{background:none;border:0;color:var(--tx-2);cursor:pointer;width:26px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+  .dsk-scale button:hover{background:var(--bg-4,rgba(255,255,255,.06));color:var(--tx)}
+  .dsk-scale .zval{min-width:46px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--tx);cursor:pointer;user-select:none}
+  .dsk-res{font-size:12px;padding:5px 9px}
+  .dsk-layout-name{font-weight:600;font-size:12.5px;color:var(--tx);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dsk-dirty{color:var(--warn);font-size:11px;margin-left:4px}
+
+  /* viewport (scroll container) + virtual canvas */
+  .dsk-viewport{flex:1;min-height:0;position:relative;overflow:auto;background:
+     radial-gradient(circle at 20% 12%, rgba(79,209,224,.05), transparent 42%),
+     radial-gradient(circle at 82% 82%, rgba(180,140,255,.05), transparent 46%),
+     var(--bg-1,#0b1018)}
+  .dsk-canvas-wrap{position:relative}
+  .dsk-canvas{position:absolute;top:0;left:0;transform-origin:0 0;background-image:
+     linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+     linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+     background-size:40px 40px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+
+  .dsk-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+     gap:14px;text-align:center;color:var(--tx-2);pointer-events:none;padding:24px}
+  .dsk-empty svg{width:56px;height:56px;stroke:var(--tx-3);fill:none;stroke-width:1.4;opacity:.7}
+  .dsk-empty h3{margin:0;font-size:16px;color:var(--tx)}
+  .dsk-empty p{margin:0;max-width:420px;font-size:12.5px;line-height:1.6}
+  .dsk-empty .btn{pointer-events:auto;margin-top:4px}
+
+  /* window */
+  .dwin{position:absolute;display:flex;flex-direction:column;background:var(--panel,var(--bg-2));
+     border:1px solid var(--line-2);border-radius:10px;overflow:hidden;
+     box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:220px;min-height:120px}
+  .dwin.active{border-color:rgba(79,209,224,.55);box-shadow:0 14px 52px rgba(0,0,0,.55),0 0 0 1px rgba(79,209,224,.35)}
+  .dwin.pinned{border-color:rgba(252,197,90,.6)}
+  .dwin.maximized{border-radius:0}
+  .dwin.minimized{height:auto!important;min-height:0}
+  .dwin.minimized .dwin-body,.dwin.minimized .dwin-grip{display:none}
+
+  .dwin-head{display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;
+     background:linear-gradient(180deg, var(--bg-3), var(--bg-2));border-bottom:1px solid var(--line);cursor:move;user-select:none;flex:0 0 auto}
+  .dwin.pinned .dwin-head{cursor:default}
+  .dwin-sym{font-weight:750;font-size:13px;color:var(--tx);white-space:nowrap}
+  .dwin-tf{font-size:11px;color:var(--tx-2);background:var(--bg-4,rgba(255,255,255,.06));padding:1px 6px;border-radius:5px}
+  .dwin-meta{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+  .dwin-src{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+  .dwin-src .dot{width:6px;height:6px;border-radius:50%;background:var(--tx-3)}
+  .dwin-src.live .dot{background:var(--pos);box-shadow:0 0 6px var(--pos)}
+  .dwin-src.wait .dot{background:var(--warn)}
+  .dwin-src.err .dot{background:var(--neg)}
+  .dwin-ctl{margin-left:auto;display:flex;align-items:center;gap:1px}
+  .dwin-ctl button{background:none;border:0;color:var(--tx-2);cursor:pointer;width:26px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+  .dwin-ctl button:hover{background:rgba(255,255,255,.08);color:var(--tx)}
+  .dwin-ctl button.on{color:var(--warn)}
+  .dwin-ctl button.close:hover{background:rgba(255,107,129,.2);color:var(--neg)}
+  .dwin-ctl svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+  .dwin-body{flex:1;min-height:0;position:relative}
+  .dwin-chart{position:absolute;inset:0}
+
+  /* resize handles */
+  .dwin-grip{position:absolute;z-index:3}
+  .dwin-grip[data-dir="e"]{top:8px;right:-3px;bottom:8px;width:8px;cursor:ew-resize}
+  .dwin-grip[data-dir="w"]{top:8px;left:-3px;bottom:8px;width:8px;cursor:ew-resize}
+  .dwin-grip[data-dir="s"]{left:8px;right:8px;bottom:-3px;height:8px;cursor:ns-resize}
+  .dwin-grip[data-dir="n"]{left:8px;right:8px;top:-3px;height:8px;cursor:ns-resize}
+  .dwin-grip[data-dir="se"]{right:-3px;bottom:-3px;width:16px;height:16px;cursor:nwse-resize}
+  .dwin-grip[data-dir="sw"]{left:-3px;bottom:-3px;width:16px;height:16px;cursor:nesw-resize}
+  .dwin-grip[data-dir="ne"]{right:-3px;top:-3px;width:16px;height:16px;cursor:nesw-resize}
+  .dwin-grip[data-dir="nw"]{left:-3px;top:-3px;width:16px;height:16px;cursor:nwse-resize}
+  .dwin-grip[data-dir="se"]::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;
+     border-right:2px solid var(--tx-3);border-bottom:2px solid var(--tx-3);border-bottom-right-radius:3px;opacity:.6}
+  .dwin.pinned .dwin-grip,.dwin.maximized .dwin-grip{display:none}
+
+  /* ChartEngine skin */
+  .ce-host{position:absolute;inset:0;overflow:hidden;background:var(--bg-1,#0b1018)}
+  .ce-canvas{display:block;cursor:crosshair}
+  .ce-host.ce-grabbing .ce-canvas{cursor:grabbing}
+  .ce-legend{position:absolute;top:6px;left:8px;display:none;align-items:center;gap:7px;font-size:11px;
+     pointer-events:none;background:rgba(11,16,24,.55);padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);max-width:calc(100% - 16px);overflow:hidden;white-space:nowrap}
+  .ce-legend.show{display:flex}
+  .ce-legend .ce-sym{font-weight:750;color:var(--tx)}
+  .ce-legend .ce-tf{color:var(--tx-2);background:rgba(255,255,255,.08);padding:0 5px;border-radius:4px}
+  .ce-legend .ce-ohlc{color:var(--tx-2)}
+  .ce-legend .ce-k{color:var(--tx-3);margin-left:5px;margin-right:2px}
+  .ce-empty{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--tx-3);pointer-events:none}
+  .ce-empty.show{display:flex}
+  .ce-empty-mark{width:26px;height:26px;border-radius:50%;border:2px solid var(--warn);border-top-color:transparent;animation:ce-spin 1s linear infinite}
+  .ce-empty-tx{font-size:12px}
+  @keyframes ce-spin{to{transform:rotate(360deg)}}
+
+  /* minimized dock (taskbar for minimized windows) */
+  .dsk-dock{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;padding:6px 10px;flex-wrap:wrap;
+     background:linear-gradient(0deg, var(--bg-2), transparent);pointer-events:none;z-index:5}
+  .dsk-dock:empty{display:none}
+  .dsk-dock .dock-item{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;background:var(--bg-3);
+     border:1px solid var(--line-2);border-radius:8px;padding:4px 8px;font-size:11.5px;color:var(--tx);cursor:pointer}
+  .dsk-dock .dock-item:hover{border-color:rgba(79,209,224,.5)}
+  .dsk-dock .dock-item .dot{width:6px;height:6px;border-radius:50%;background:var(--pos)}
+
+  /* add-chart dialog form */
+  .dchart-form{display:flex;flex-direction:column;gap:16px}
+  .dchart-form .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .dchart-form label{display:flex;flex-direction:column;gap:5px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx-2)}
+  .dchart-form select,.dchart-form input{font:inherit;font-size:13px;padding:8px 10px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--tx);text-transform:none;letter-spacing:0}
+  .tf-seg,.type-seg{display:flex;gap:4px;flex-wrap:wrap}
+  .tf-seg button,.type-seg button{font:inherit;font-size:12px;padding:6px 11px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx-2);cursor:pointer}
+  .tf-seg button.on,.type-seg button.on{background:rgba(79,209,224,.16);border-color:rgba(79,209,224,.55);color:var(--info)}
+  .ind-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+  .ind-chip{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--tx)}
+  .ind-chip input{accent-color:var(--info);width:15px;height:15px}
+  .ind-chip.on{border-color:rgba(79,209,224,.5);background:rgba(79,209,224,.08)}
+  .dchart-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+  .dchart-hint{font-size:11.5px;color:var(--tx-3);line-height:1.6;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+</style>
+</head>
+<body data-page="desktop" data-title="Рабочий стол" data-kicker="StratForge AI · Торговое пространство">
+
+  <div class="dsk" id="dsk">
+    <div class="dsk-bar" id="dsk-bar">
+      <button class="btn sm primary" id="dsk-add">+ График</button>
+      <div class="sep"></div>
+      <button class="btn sm ghost" id="dsk-layouts">Макеты</button>
+      <span class="dsk-layout-name" id="dsk-layout-name">Рабочий стол 1</span>
+      <span class="dsk-dirty" id="dsk-dirty" hidden>● не сохранено</span>
+      <button class="btn sm" id="dsk-save">Сохранить</button>
+      <div class="spacer"></div>
+      <div class="grp">
+        <select class="field dsk-res" id="dsk-res" aria-label="Виртуальное разрешение"></select>
+      </div>
+      <div class="dsk-scale" id="dsk-scale">
+        <button id="dsk-zoom-out" title="Отдалить" aria-label="Отдалить">−</button>
+        <span class="zval" id="dsk-zoom-val" title="Сбросить масштаб">100%</span>
+        <button id="dsk-zoom-in" title="Приблизить" aria-label="Приблизить">+</button>
+        <button id="dsk-zoom-fit" title="Вместить всё" aria-label="Вместить">⤢</button>
+      </div>
+      <div class="sep"></div>
+      <button class="btn sm ghost" id="dsk-clear" title="Очистить рабочий стол">Очистить</button>
+    </div>
+
+    <div class="dsk-viewport" id="dsk-viewport">
+      <div class="dsk-canvas-wrap" id="dsk-canvas-wrap">
+        <div class="dsk-canvas" id="dsk-canvas"></div>
+      </div>
+    </div>
+    <div class="dsk-dock" id="dsk-dock"></div>
+  </div>
+
+<script src="assets/api.js?v=20260703-desktop1"></script>
+<script src="assets/domain.js?v=20260630-news6"></script>
+<script src="assets/ambient.js?v=20260703-stratforge1"></script>
+<script src="assets/ui.js?v=20260703-desktop1"></script>
+<script src="assets/chart-engine.js?v=20260703-desktop1"></script>
+<script src="assets/pages/desktop.js?v=20260703-desktop1"></script>
+</body>
+</html>

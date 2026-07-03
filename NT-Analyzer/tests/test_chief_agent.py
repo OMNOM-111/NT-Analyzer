@@ -134,6 +134,127 @@ def test_orchestrator_chat_uses_auto_model_and_executes_allowlisted_plan(tmp_pat
     assert [row["role"] for row in history] == ["user", "assistant"]
 
 
+def test_orchestrator_message_rating_updates_assistant_row(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    user = chief_agent._append_conversation("user", "Вопрос", source="test")
+    assistant = chief_agent._append_conversation("assistant", "Ответ", source="test")
+
+    result = chief_agent.rate_message("default", assistant["message_id"], 1, "Нужны факты", source="owner")
+
+    assert result["message"]["rating"] == 1
+    assert result["message"]["feedback_comment"] == "Нужны факты"
+    assert result["message"]["feedback_source"] == "owner"
+    assert result["message"]["feedback_timestamp_utc"]
+    rows = chief_agent._read_conversation(10)
+    assert rows[-1]["rating"] == 1
+    assert rows[-1]["feedback_comment"] == "Нужны факты"
+    try:
+        chief_agent.rate_message("default", user["message_id"], 3, "")
+    except chief_agent.ChiefAgentError as exc:
+        assert "только ответы" in str(exc)
+    else:
+        raise AssertionError("user message rating must fail")
+
+
+def test_manager_tier_forces_strong_model_complexity(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    captured = {}
+    complete_reply = (
+        "Дмитрий Сергеевич, вот мой разбор и рекомендация — почему я выбрал именно этот "
+        "подход и на чём он основан. Вход планирую по подтверждению сигнала на одном "
+        "инструменте, выход — защитный стоп и цель по риску, комиссия и просадка учтены и "
+        "ограничены. Проверку проведу через signal sanity, IS/OOS и walk-forward. "
+        "Альтернативу пока не выбрал, она ниже по приоритету. Скажите «Запускай», когда всё "
+        "готово, и только тогда я начну процесс."
+    )
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: captured.update(kwargs) or {
+        "content": complete_reply, "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+    })
+
+    result = chief_agent.handle_message("Как дела?", agent="manager", mirror_to_telegram=False)
+
+    # Управляющий always deliberates with the strong model and never executes.
+    assert captured["complexity"] == "critical"
+    assert result["complexity"] == "critical"
+    assert result["agent"] == "manager"
+    assert result["actions"] == []
+
+
+def test_manager_tier_plan_request_does_not_auto_execute(tmp_path, monkeypatch) -> None:
+    """Regression: asking the Управляющий to *form a plan* must only present the
+    plan and never launch research, even if the model proposes start_research."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    started: list = []
+    monkeypatch.setattr(chief_agent, "start_mission", lambda args: started.append(args) or {
+        "mission_id": "SHOULD-NOT-START", "ends_at_utc": "2026-07-03T00:00:00Z",
+    })
+    # Even if the model returns a JSON plan with actions, the deliberative lane
+    # strips them: the manager talks, it does not dispatch.
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"Запускаю исследование.","confidence":0.95,"actions":[{"name":"start_research","arguments":{"goal":"MGC","duration_minutes":300,"target_roots":["MGC"]}}]}',
+        "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+    })
+
+    result = chief_agent.handle_message(
+        "Сформируй план на реализацию следующей стратегии, я дам тебе 5 часов на реализацию",
+        agent="manager", mirror_to_telegram=False,
+    )
+
+    assert started == [], "a plan-formation request must never launch a mission"
+    assert result["actions"] == []
+    assert result["agent"] == "manager"
+
+
+def test_plan_request_is_discussion_only_across_tiers() -> None:
+    assert chief_agent._is_plan_request("Сформируй план на реализацию стратегии")
+    assert chief_agent._is_plan_request("составь план по разработке")
+    assert chief_agent._is_plan_request("предложи план действий")
+    # Running an already-agreed plan is not a plan-formation request.
+    assert not chief_agent._is_plan_request("Запусти по плану")
+    assert not chief_agent._is_plan_request("выполни план")
+    assert not chief_agent._is_plan_request("Как дела?")
+
+
+def test_secretary_tier_forces_light_model_complexity(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    captured = {}
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: captured.update(kwargs) or {
+        "content": '{"reply":"Готово.","confidence":0.2,"doubts":[],"actions":[]}',
+        "provider": "gemini", "actual_model": "gemini-2.5-flash",
+    })
+
+    result = chief_agent.handle_message("Как дела?", agent="secretary", mirror_to_telegram=False)
+
+    assert captured["complexity"] == "light"
+    assert result["complexity"] == "light"
+    assert result["agent"] == "secretary"
+
+
+def test_explicit_specialist_agent_routes_persona_without_name(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    from app.ai_lab import domain_agents
+    called = {}
+
+    def fake_answer(agent_id, message, **kwargs):
+        called["agent_id"] = agent_id
+        return {
+            "reply": "Никита на связи.", "model": "gemini-x", "provider": "gemini",
+            "complexity": "standard",
+            "agent": {"id": "nikita", "name": "Никита", "title": "AI-новостной аналитик", "page": "news.html"},
+        }
+
+    monkeypatch.setattr(domain_agents, "answer", fake_answer)
+
+    result = chief_agent.handle_message("Что там по рынку?", agent="nikita", mirror_to_telegram=False)
+
+    assert called["agent_id"] == "nikita"
+    assert result["domain_agent"] == "nikita"
+
+
 def test_orchestrator_blocks_unknown_model_action(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
@@ -489,6 +610,39 @@ def test_auto_reconnect_helper_uses_cooldown(tmp_path, monkeypatch) -> None:
     assert second["reason"] == "cooldown"
 
 
+def test_auto_reconnect_requires_actual_realtime_strategy(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+        "_connected": False,
+        "_has_enabled_strategy": False,
+    }])
+    monkeypatch.setattr(
+        chief_agent, "_queue_runtime_reconnect",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("historical research must never reconnect an account")
+        ),
+    )
+
+    result = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 8})
+
+    assert result == {
+        "attempted": False,
+        "reason": "no_active_realtime_paper_strategy",
+    }
+    assert chief_agent._active_runtime_strategy({
+        "enabled": True, "state": "Historical",
+    }) is False
+    assert chief_agent._active_runtime_strategy({
+        "enabled": True, "state": "Configure",
+    }) is False
+    assert chief_agent._active_runtime_strategy({
+        "enabled": True, "state": "Realtime",
+    }) is True
+
+
 def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_path, monkeypatch) -> None:
     from app import runtime as runtime_mod
 
@@ -496,6 +650,7 @@ def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_
     monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [{
         "account_name": "Backtest", "account_mode": "paper",
         "connection_status": "Disconnected", "_connected": False,
+        "_has_enabled_strategy": True,
     }])
     now = chief_agent._now()
     monkeypatch.setattr(runtime_mod, "read_commands", lambda limit=200: [{
@@ -514,6 +669,54 @@ def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_
 
     assert result["attempted"] is False
     assert result["reason"] == "previous_attempt_failed"
+
+
+def test_runtime_reconnect_accounts_exclude_system_accounts(tmp_path, monkeypatch) -> None:
+    from app import ops, runtime as runtime_mod
+
+    _isolate(tmp_path, monkeypatch)
+    rdir = tmp_path / "data" / "runtime"
+    rdir.mkdir(parents=True)
+    accounts = {
+        "accounts": [
+            {"account_name": "Backtest", "account_mode": "paper", "connection_status": "Disconnected"},
+            {"account_name": "Sim101", "account_mode": "paper", "connection_status": "Connected"},
+            {"account_name": "DEMO3369390", "account_mode": "demo", "connection_status": "Connected"},
+        ]
+    }
+    (rdir / "accounts.json").write_text(
+        __import__("json").dumps(accounts), encoding="utf-8",
+    )
+    monkeypatch.setattr(ops, "_project_root", lambda: tmp_path)
+    names = [row["account_name"] for row in chief_agent._runtime_reconnect_accounts()]
+    assert names == ["DEMO3369390"]
+    assert "Backtest" not in names
+    assert "Sim101" not in names
+
+
+def test_auto_reconnect_skips_disconnected_account_without_realtime_strategy(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [
+        {
+            "account_name": "DEMO3369390", "account_mode": "demo",
+            "connection_status": "Connected", "_connected": True,
+            "_has_enabled_strategy": False,
+        },
+        {
+            "account_name": "Playback101", "account_mode": "playback",
+            "connection_status": "Disconnected", "_connected": False,
+            "_has_enabled_strategy": False,
+        },
+    ])
+    monkeypatch.setattr(
+        chief_agent, "_queue_runtime_reconnect",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not queue")),
+    )
+
+    result = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 0})
+
+    assert result["attempted"] is False
+    assert result["reason"] == "no_active_realtime_paper_strategy"
 
 
 def test_failed_mission_archives_only_its_sandbox_sources(tmp_path, monkeypatch) -> None:
@@ -713,6 +916,31 @@ def test_continuous_profit_request_focuses_one_strategy_and_stays_quiet(tmp_path
     assert "цикл" not in result["reply"].lower()
 
 
+def test_conditional_stop_with_typo_starts_instead_of_stopping(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent.runner, "run_status", lambda: None)
+    monkeypatch.setattr(chief_agent.runner, "current", lambda: None)
+    monkeypatch.setattr(chief_agent, "_kick_mission_start", lambda: None)
+    monkeypatch.setattr(
+        chief_agent.agent_router, "invoke_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("conditional stop is a deterministic start command")
+        ),
+    )
+
+    result = chief_agent.handle_message(
+        "Начинай и усовершенствуй каждую стратегию. С каждым разом лучше и лучше. "
+        "До тех пор, пока мисси я не скажу, остановись.",
+        mirror_to_telegram=False,
+    )
+
+    mission = chief_agent._load()["mission"]
+    assert mission["status"] == "active"
+    assert mission["until_stopped"] is True
+    assert result["actions"][0]["name"] == "start_research"
+    assert chief_agent._stop_requested("стоп, остановись") is True
+
+
 def test_stop_is_deterministic_and_cancels_every_future_start(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent.runner, "run_status", lambda: {"run_id": "RUN-1"})
@@ -804,3 +1032,62 @@ def test_pin_conversation_floats_to_top(tmp_path, monkeypatch) -> None:
     order = [row["conversation_id"] for row in chief_agent.list_conversations()]
     assert order[0] == cid_a
     assert order.index(cid_a) < order.index(cid_b)
+
+
+def test_native_thinking_is_not_mirrored_to_telegram(tmp_path, monkeypatch) -> None:
+    """Native reasoning is shown in the app chat + stored in history, but only
+    the final reply is mirrored to Telegram — the thinking channel never is."""
+    from app import telegram_service
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    secret_thinking = "СКРЫТОЕ_РАЗМЫШЛЕНИЕ_модели_шаг_за_шагом"
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"Итоговый ответ владельцу.","confidence":0.2,"doubts":[],"actions":[]}',
+        "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+        "reasoning": secret_thinking,
+    })
+    sent = []
+    monkeypatch.setattr(telegram_service, "send_chief_report",
+                        lambda *args, **kwargs: sent.append((args, kwargs)))
+
+    result = chief_agent.handle_message("Как дела?", agent="manager", mirror_to_telegram=True)
+
+    # The reasoning is returned to the app and persisted for the chat history…
+    assert result["thinking"] == secret_thinking
+    stored = chief_agent._conversation_path().read_text(encoding="utf-8")
+    assert secret_thinking in stored
+    # …but Telegram received only the final reply, never the thinking.
+    assert sent, "Telegram mirror should have been called"
+    telegram_payload = repr(sent)
+    assert secret_thinking not in telegram_payload
+    assert "Итоговый ответ владельцу." in telegram_payload
+
+
+def test_handle_message_streams_thinking_to_callback(tmp_path, monkeypatch) -> None:
+    """handle_message forwards its on_thinking callback down to the model layer
+    so the SSE endpoint receives live reasoning deltas."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+
+    def fake_invoke_role(role, prompt, **kwargs):
+        cb = kwargs.get("on_reasoning")
+        if cb:
+            cb("думаю… ")
+            cb("почти готово")
+        return {
+            "content": '{"reply":"Готово.","confidence":0.2,"doubts":[],"actions":[]}',
+            "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+            "reasoning": "думаю… почти готово",
+        }
+
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", fake_invoke_role)
+    deltas = []
+
+    result = chief_agent.handle_message(
+        "Как дела?", agent="manager", mirror_to_telegram=False,
+        on_thinking=deltas.append,
+    )
+
+    assert deltas == ["думаю… ", "почти готово"]
+    assert result["thinking"] == "думаю… почти готово"
