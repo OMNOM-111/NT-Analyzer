@@ -7,6 +7,7 @@
   "heartbeat_ttl_ms": 60000,
   "rd_variant_preferred": "1_strategy_analyzer",
   "rd_variant_fallback_allowed": false,
+  "runtime_reconnect_connection_name": "",
   "enable_path_a_optimizer_runbacktest": false,
   "enable_verbose_diagnostics": false
 }

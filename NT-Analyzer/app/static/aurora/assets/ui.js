@@ -310,6 +310,20 @@
     return uniqueTickerRows(rows, limit || 10);
   }
 
+  function clipText(text, limit) {
+    const clean = String(text || '').trim();
+    if (clean.length <= limit) return clean;
+    return clean.slice(0, Math.max(0, limit - 1)).replace(/[\s.,;:—-]+$/, '') + '…';
+  }
+
+  // Compact one-line ticker text for a news-agent item: title + short advice,
+  // no long recommendation "water". Low severity shows the headline only.
+  function agentTickerText(item) {
+    const title = clipText(item && item.title, 74);
+    const advice = String((item && (item.ticker_line || item.short_recommendation)) || '').trim();
+    return (advice && item && item.severity !== 'low') ? `🧠 ${title} · ${advice}` : `🧠 ${title}`;
+  }
+
   function renderGlobalNewsStrip(strip, calendar, live, agentNews) {
     const label = qs('.global-news-label', strip);
     const track = qs('.global-news-track', strip);
@@ -374,7 +388,7 @@
     }));
     ((agentNews && agentNews.items) || []).slice(0, 6).forEach(item => rows.push({
       severity: item.severity || 'medium',
-      text: `🧠 Никита: ${item.title} — ${String(item.recommendation || '').slice(0, 180)}`,
+      text: agentTickerText(item),
       url: item.source_url || '',
       dedupeKey: `agent:${item.news_id || item.title}`,
     }));
@@ -455,7 +469,7 @@
     const app = el('<div class="app"></div>');
     const main = el('<div class="main"></div>');
     main.appendChild(topbar);
-    const newsStrip = page === 'news' ? null : el('<div class="global-news-strip" data-global-news-strip><span class="global-news-label">РЫНОК</span><div class="global-news-window"><div class="global-news-track"><span class="global-news-static">Загрузка новостей…</span></div></div></div>');
+    const newsStrip = el('<div class="global-news-strip" data-global-news-strip><span class="global-news-label">РЫНОК</span><div class="global-news-window"><div class="global-news-track"><span class="global-news-static">Загрузка новостей…</span></div></div></div>');
     if (newsStrip) main.classList.add('has-global-news-strip');
     if (newsStrip) main.appendChild(newsStrip);
     // move existing body content into <main class=content>
@@ -1328,9 +1342,11 @@
   }
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
-    // Provider/model/action diagnostics remain available on AI Agents and in
-    // backend logs. The owner-facing chat reads like a normal manager dialogue.
-    const meta = [row.agent_name && !isUser ? esc(row.agent_name) : '', orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ');
+    const meta = [
+      row.agent_name && !isUser ? esc(row.agent_name) : '',
+      orchFmtTime(row.timestamp_utc),
+      !isUser && row.model ? esc(row.model) : '',
+    ].filter(Boolean).join(' · ');
     return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"><div class="orch-msg-body">${esc(row.content || '')}</div><div class="orch-msg-meta">${meta}</div></div>`;
   }
   async function orchLoadMessages(cid, silent) {

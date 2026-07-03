@@ -135,12 +135,12 @@ def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
     news = (AURORA / "news.html").read_text(encoding="utf-8")
     page_js = (AURORA / "assets" / "pages" / "news.js").read_text(encoding="utf-8")
 
-    assert "data-global-news-strip" in ui and "page === 'news' ? null" in ui
+    assert "data-global-news-strip" in ui and "page === 'news' ? null" not in ui
     assert "global-news-window" in ui and "overflow: hidden" in theme
-    assert "ticker-window" in news and "repeat(7,minmax(0,1fr))" in news
+    assert "news-ticker" not in news and "repeat(7,minmax(0,1fr))" in news
     assert "scheduleStrategyRows" in ui and "cal-ev-title" in page_js
     assert "item.is_confirmed" in page_js
-    assert "ОТКЛЮЧИТЕ СТРАТЕГИИ" in ui and "ОТКЛЮЧИТЕ СТРАТЕГИИ" in page_js
+    assert "ОТКЛЮЧИТЕ СТРАТЕГИИ" in ui
 
 
 def test_live_static_handler_routes_csp_and_assets():
@@ -265,6 +265,20 @@ def test_aurora_keeps_legacy_operational_capabilities_wired():
         assert f"API.http.{method}" in ai_lab
 
 
+def test_aurora_trading_exposes_reconnect_modeling_control():
+    html = (AURORA / "trading.html").read_text(encoding="utf-8")
+    trading = (AURORA / "assets" / "pages" / "trading.js").read_text(encoding="utf-8")
+    assert 'id="ctrl-reconnect"' in html
+    assert "command: 'reconnect_account'" in trading
+    assert "#ctrl-reconnect" in trading
+
+
+def test_orchestrator_chat_shows_model_beside_message_time():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "orchFmtTime(row.timestamp_utc)" in ui
+    assert "!isUser && row.model ? esc(row.model)" in ui
+
+
 def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     html = (AURORA / "ai-lab.html").read_text(encoding="utf-8")
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
@@ -314,7 +328,7 @@ def test_news_agent_page_ticker_and_api_contract():
     assert "news-agent-instruments" in html and "agentWhen" in news and "agentRelevance" in news
     assert "news-agent-details" in html and "детерминированный анализ · без токенов" not in news
     assert "news-agent-thumb-wrap" in html and "agentThumbHtml" in news
-    assert "🧠 Никита:" in news and "🧠 Никита:" in ui
+    assert "🧠 Никита:" not in news and "🧠 Никита:" not in ui
     assert "/api/ai-lab/news-analysis" in api
 
 

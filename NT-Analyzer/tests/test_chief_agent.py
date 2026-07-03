@@ -70,6 +70,29 @@ def test_live_action_cannot_be_proposed(tmp_path, monkeypatch) -> None:
         raise AssertionError("live/order action must be rejected")
 
 
+def test_orchestrator_can_directly_reconnect_modeling(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_extract_account_name_from_message", lambda _msg: "DEMO3369390")
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("direct reconnect request should not need an LLM")
+    ))
+    queued = []
+    monkeypatch.setattr(
+        chief_agent,
+        "_queue_runtime_reconnect",
+        lambda account_name="", **kwargs: queued.append({"account_name": account_name, **kwargs}) or {
+            "account_name": account_name or "DEMO3369390",
+            "command_id": "cmd-reconnect-1",
+        },
+    )
+
+    result = chief_agent.handle_message("Включи моделирование на DEMO3369390", mirror_to_telegram=False)
+
+    assert result["actions"][0]["name"] == "reconnect_runtime_connection"
+    assert result["actions"][0]["status"] == "completed"
+    assert queued[0]["account_name"] == "DEMO3369390"
+
+
 def test_orchestrator_chat_uses_auto_model_and_executes_allowlisted_plan(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {"active_run": None})
@@ -140,6 +163,42 @@ def test_orchestrator_does_not_reuse_previous_research_action_for_lm_command(tmp
     assert result["actions"][0]["reason"] == "current_message_does_not_authorize_action"
 
 
+def test_strategy_question_is_discussion_only_even_if_model_requests_start(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {"recent_experiments": []})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"Предлагаю проверить возврат к VWAP.","confidence":0.99,"doubts":[],"actions":[{"name":"start_research","arguments":{"target_roots":["MNQ"]},"reason":"wrong"}]}',
+        "provider": "gemini", "actual_model": "gemini-2.5-flash",
+    })
+    monkeypatch.setattr(chief_agent, "start_mission", lambda _args: (_ for _ in ()).throw(
+        AssertionError("discussion must not start research")
+    ))
+
+    result = chief_agent.handle_message(
+        "Какую стратегию в этот раз разработаешь? Что можешь предложить?",
+        mirror_to_telegram=False,
+    )
+
+    assert result["actions"] == []
+    assert "VWAP" in result["reply"]
+
+
+def test_start_research_forces_local_model_unless_current_message_opts_out(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_kick_mission_start", lambda: None)
+    monkeypatch.setattr(chief_agent, "_lm_status_snapshot", lambda: {"run_allowed": True})
+    started = []
+    monkeypatch.setattr(chief_agent, "start_mission", lambda args: started.append(args) or {
+        "mission_id": "M1", "ends_at_utc": None, "target_roots": ["MNQ"],
+        "allow_local_models": args["allow_local_models"],
+    })
+    action = {"name": "start_research", "arguments": {"allow_local_models": False}}
+
+    chief_agent._execute_action(action, "Начинай разработку стратегии MNQ")
+
+    assert started[0]["allow_local_models"] is True
+
+
 def test_bounded_mission_completes_after_requested_cycle_count(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent.runner, "run_status", lambda: None)
@@ -192,9 +251,39 @@ def test_zero_paid_budget_is_propagated_to_research_router(tmp_path, monkeypatch
     assert started[0]["allow_paid_agents"] is False
 
 
+def test_mission_retries_lm_studio_before_any_research_fallback(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import bootstrap, lm_studio
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent.runner, "run_status", lambda: None)
+    monkeypatch.setattr(chief_agent.runner, "current", lambda: None)
+    monkeypatch.setattr(lm_studio, "lm_status", lambda allow_probe=False: {"run_allowed": False})
+    attempts = []
+    monkeypatch.setattr(bootstrap, "start", lambda **kwargs: attempts.append(kwargs) or {
+        "readiness": {"run_allowed": False, "message_ru": "server unavailable"},
+    })
+    started = []
+    monkeypatch.setattr(chief_agent.runner, "start", lambda args: started.append(args) or {"experiment_id": "EXP-1"})
+    monkeypatch.setattr(chief_agent, "_post_mission_update", lambda *args, **kwargs: None)
+    chief_agent.start_mission({"target_root": "MNQ", "duration_hours": 1, "paid_budget_usd": 0})
+
+    chief_agent._mission_tick()
+    chief_agent._mission_tick()
+    assert started == []
+    chief_agent._mission_tick()
+
+    assert len(attempts) == 3
+    assert started[0]["allow_template_fallback"] is True
+    assert chief_agent._load()["mission"]["local_model_fallback_authorized"] is True
+
+
 def test_connection_loss_without_active_strategies_uses_light_tier(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     captured = {}
+    monkeypatch.setattr(
+        chief_agent, "_maybe_auto_reconnect_connection",
+        lambda payload: {"attempted": False, "reason": "test_stub"},
+    )
     monkeypatch.setattr(
         chief_agent.agent_router, "invoke_role",
         lambda *args, **kwargs: captured.update(kwargs) or {
@@ -209,6 +298,69 @@ def test_connection_loss_without_active_strategies_uses_light_tier(tmp_path, mon
     )
 
     assert captured["complexity"] == "light"
+
+
+def test_auto_reconnect_helper_uses_cooldown(tmp_path, monkeypatch) -> None:
+    from app import runtime as runtime_mod
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+        "_connected": False,
+        "_has_enabled_strategy": True,
+    }])
+    command_rows = []
+    monkeypatch.setattr(runtime_mod, "read_commands", lambda limit=200: list(command_rows))
+    monkeypatch.setattr(runtime_mod, "read_command_results", lambda limit=500: [])
+    monkeypatch.setattr(
+        chief_agent,
+        "_queue_runtime_reconnect",
+        lambda account_name="", **kwargs: command_rows.append({
+            "command": "reconnect_account",
+            "account_name": account_name or "DEMO3369390",
+            "timestamp_utc": chief_agent._now(),
+        }) or {
+            "account_name": account_name or "DEMO3369390",
+            "command_id": "cmd-reconnect-1",
+            "state": "waiting_for_bridge",
+        },
+    )
+
+    first = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 1})
+    second = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 1})
+
+    assert first["queued"] is True
+    assert second["attempted"] is False
+    assert second["reason"] == "cooldown"
+
+
+def test_auto_reconnect_does_not_repeat_terminal_failure_every_five_minutes(tmp_path, monkeypatch) -> None:
+    from app import runtime as runtime_mod
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_runtime_reconnect_accounts", lambda: [{
+        "account_name": "Backtest", "account_mode": "paper",
+        "connection_status": "Disconnected", "_connected": False,
+    }])
+    now = chief_agent._now()
+    monkeypatch.setattr(runtime_mod, "read_commands", lambda limit=200: [{
+        "command": "reconnect_account", "command_id": "cmd-1",
+        "account_name": "Backtest", "timestamp_utc": now,
+    }])
+    monkeypatch.setattr(runtime_mod, "read_command_results", lambda limit=500: [{
+        "command_id": "cmd-1", "status": "rejected", "timestamp_utc": now,
+    }])
+    monkeypatch.setattr(chief_agent, "AUTO_RECONNECT_COOLDOWN_SEC", 0)
+    monkeypatch.setattr(chief_agent, "_queue_runtime_reconnect", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("terminal failure must not be immediately retried")
+    ))
+
+    result = chief_agent._maybe_auto_reconnect_connection({"enabled_strategies": 1})
+
+    assert result["attempted"] is False
+    assert result["reason"] == "previous_attempt_failed"
 
 
 def test_failed_mission_archives_only_its_sandbox_sources(tmp_path, monkeypatch) -> None:
@@ -452,6 +604,31 @@ def test_strategy_report_contains_evidence_not_internal_orchestration(tmp_path, 
     assert "стратегия отклонена" in text.lower()
     assert "mission" not in text.lower()
     assert "цикл" not in text.lower()
+
+
+def test_completed_strategy_report_is_claimed_once_across_stale_ticks(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    mission = {
+        "mission_id": "M1", "status": "active", "control_revision": 1,
+        "active_strategy_experiment_id": "EXP-1", "reported_experiment_ids": [],
+    }
+    chief_agent._save({"mission": mission})
+    exp = {
+        "experiment_id": "EXP-1", "class_name": "MNQTest", "status": "rejected",
+        "verdict": {"outcome": "reject", "rejection_code": "SMOKE_NO_EDGE"},
+        "model_chain": [{"selected_model": "openai/gpt-oss-20b"}],
+    }
+    monkeypatch.setattr(chief_agent.registry, "read_experiment", lambda _eid: exp)
+    sent = []
+    monkeypatch.setattr(chief_agent, "_post_mission_update", lambda *args, **kwargs: sent.append(kwargs))
+
+    chief_agent._report_completed_strategy(dict(mission))
+    chief_agent._report_completed_strategy(dict(mission))
+
+    assert len(sent) == 1
+    saved = chief_agent._load()["mission"]
+    assert saved["reported_experiment_ids"] == ["EXP-1"]
+    assert saved["last_strategy_model"] == "openai/gpt-oss-20b"
 
 
 def test_pin_conversation_floats_to_top(tmp_path, monkeypatch) -> None:

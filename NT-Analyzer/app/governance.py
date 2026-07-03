@@ -507,6 +507,38 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "dynamic_targets": ["app/local_secrets.py", "app/ai_lab/cloud_agents.py"],
         "review_targets": [],
     },
+    {
+        "id": "GOV-AI-011", "key": "orchestrator_discussion_is_not_execution",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Вопрос об исследовании не является командой запуска",
+        "summary": "Вопросы о выборе стратегии и обсуждение гипотез дают содержательный ответ без изменения mission state; запуск разрешён только явной командой владельца в текущем сообщении.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-012", "key": "orchestrator_lm_studio_required",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "LM Studio обязательна до начала research",
+        "summary": "До создания эксперимента Orchestrator самостоятельно запускает LM Studio и model server; fallback разрешён только после трёх зафиксированных неудач либо по явной команде владельца.",
+        "kind": "string", "value": "3 bounded self-heal attempts", "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/bootstrap.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-013", "key": "orchestrator_notifications_change_only",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Уведомления владельцу только по изменению фактов",
+        "summary": "Нормальный ход работы не отправляется; один experiment и одно завершение mission дают не более одного отчёта, а полностью одинаковое Telegram-сообщение подавляется на 24 часа.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/telegram_service.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-014", "key": "orchestrator_one_strategy_until_exhausted",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Одна стратегия до исчерпания гипотез",
+        "summary": "Orchestrator меняет фильтры, входы, выходы и режимы внутри одной основы и переходит к следующей только после кандидата либо доказанного исчерпания содержательно разных вариантов.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/runner.py"], "review_targets": [],
+    },
 ]
 
 
@@ -1110,11 +1142,17 @@ def _render_overview_markdown() -> str:
     ai_window = str(law_value("ai_lab_session_window_pt", "06:30-12:30 PT"))
     ai_sandbox = "Да" if bool(law_value("ai_lab_sandbox_only", True)) else "Нет"
     cloud_budget = str(law_value("ai_lab_cloud_budget_caps", "20.00 USD/month; 0.50 USD/run"))
+    # Generated docs are refreshed on every backend start. Their contents must
+    # not become dirty merely because the process restarted; use the latest
+    # actual governance mutation time instead of wall-clock render time.
+    mutation_times = [str(laws_doc.get("updated_at_utc") or "")]
+    mutation_times.extend(str(row.get("ts_utc") or "") for row in history)
+    updated_at = max((value for value in mutation_times if value), default="не указана")
 
     parts = [
         "# OVERVIEW",
         "",
-        f"Дата актуализации: {_now_iso()}",
+        f"Дата актуализации: {updated_at}",
         "",
         "## Короткое предисловие",
         "",

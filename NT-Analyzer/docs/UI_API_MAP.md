@@ -17,7 +17,7 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
 |---|---|---|
 | Обзор | `/api/health`, `/api/performance`, `/api/coverage`, `/api/ai-lab/summary`, `/api/reports`, `/api/news`, accounts/account-history | системные действия вынесены в общее меню |
 | Бэктест | catalog, instruments, profiles, coverage, reports, jobs, trades, bars, draw objects, favorites, batches | создать job/batch, отменить/удалить job, favorite/unfavorite; серверные фильтры/сортировка не изменяют данные |
-| Торговля | accounts, account-history, strategies, positions, orders, executions, errors, commands/results/status, runtime history, strategy history/display, start dates, performance, diagnostics, strategy journal | paper-only enable/disable, ручное движение, CSV-импорт, классификация движения, восстановление скрытого класса |
+| Торговля | accounts, account-history, strategies, positions, orders, executions, errors, commands/results/status, runtime history, strategy history/display, start dates, performance, diagnostics, strategy journal | paper-only enable/disable существующих strategy instances, reconnect modeling для paper/demo/playback, ручное движение, CSV-импорт, классификация движения, восстановление скрытого класса |
 | Финансы | performance, performance/trades, AI accounting, accounts, account-history, CSV | единые фильтры доходности и бухгалтерии, пагинация, drilldown и выгрузка; спорные записи не исправляются моделью |
 | Стратегии | profiles/archive, AI lifecycle/cell history, coverage, instruments, persistent portfolio registry | статус/удаление профиля, add root/cell, archive cell, hide runtime class, NinjaTrader cleanup |
 | AI Lab | summary, experiments/activity, staged run/current status, параллельно проектируемая следующая стратегия, Orchestrator conversation/model/actions, performance board, model-performance, cloud-agent roles/pricing/usage, calendar, compile source, errors, LM Studio | natural-language Orchestrator chat; ручной run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; локальная настройка cloud keys, role routes и hard budgets |
@@ -25,7 +25,7 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram | `/api/telegram/status` | token validation, one-time private-chat pairing, notification settings, test send, disconnect; токен и chat id не возвращаются |
-| StratForge Orchestrator | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | natural-language chat, auto complexity routing, historical mission, notes/tasks/calendar, backtest audit, budget/cache telemetry, bounded app allowlist and paper/demo approval queue |
+| StratForge Orchestrator | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | natural-language chat, auto complexity routing, historical mission, notes/tasks/calendar, backtest audit, budget/cache telemetry, bounded app allowlist, paper/demo approval queue for strategy enable/disable, and bounded paper/demo/playback connection self-heal |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
@@ -72,12 +72,15 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
   используют `app/telegram_service.py`. Фоновый notifier отслеживает heartbeat,
   runtime-стратегии, свежие ошибки, high-impact новости и расписание сводок.
   Свободный текст из единственного paired private chat передаётся Orchestrator;
-  исполняются только действия allowlist, а paper/demo требует отдельного approve.
+  исполняются только действия allowlist, strategy enable/disable для paper/demo
+  требует отдельного approve, а bounded reconnect paper/demo/playback остаётся
+  автономным self-heal действием без live-полномочий.
 
 ## Safety
 
 - Runtime-команды остаются paper/demo/playback-only. Backend отклоняет live и
-  неизвестные счета.
+  неизвестные счета; strategy enable/disable требует operator approval, а
+  reconnect paper/demo/playback ограничен безопасным infrastructure self-heal.
 - TopStep остаётся execution-disabled. Платные AI-роли могут выполнять только
   два sandbox fallback-сценария после отдельного разрешения и budget gate;
   runtime/account/paper/live действия для них всегда запрещены.

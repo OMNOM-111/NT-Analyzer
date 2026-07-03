@@ -37,6 +37,9 @@ namespace NTAnalyzerBridge.Config
         [JsonProperty("rd_variant_fallback_allowed")]
         public bool RdVariantFallbackAllowed { get; set; } = false;
 
+        [JsonProperty("runtime_reconnect_connection_name")]
+        public string RuntimeReconnectConnectionName { get; set; } = "";
+
         /// <summary>
         /// R&amp;D toggle for the private static
         /// NinjaTrader.NinjaScript.Optimizers.Optimizer.RunBacktest(template, Parameter[])

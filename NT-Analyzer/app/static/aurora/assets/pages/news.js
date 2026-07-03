@@ -470,95 +470,9 @@ UI.ready(async function () {
       (why ? `<br><em>${UI.esc(why)}</em>` : '');
   }
 
-  // ---- ticker: blackouts + upcoming + news (with fallback) ---------------
-  function blackoutAlerts(now) {
-    return state.events.filter(e => {
-      const t = new Date(e.event_time_utc).getTime();
-      return e.is_confirmed && sev(e) === 'high' && now >= t - (e.block_before_min || 0) * 60000 && now <= t + (e.block_after_min || 0) * 60000;
-    });
-  }
-  function renderTicker(now) {
-    const wrap  = UI.qs('#news-ticker');
-    const track = UI.qs('#news-track');
-    const lbl   = UI.qs('#ticker-lbl');
-    wrap.hidden = false;
-
-    // Layers of content (priority order)
-    const alerts = blackoutAlerts(now);
-
-    const upcomingCrit = state.events.filter(e => {
-      const ms = new Date(e.event_time_utc) - now;
-      return e.is_confirmed && ms > 0 && ms <= 30 * 60000 && sev(e) === 'high';
-    });
-    const upcomingWarn = state.events.filter(e => {
-      const ms = new Date(e.event_time_utc) - now;
-      return ms > 30 * 60000 && ms <= 24 * 3600000 && sev(e) === 'high';
-    });
-    const recentNews = recentLiveItems();
-
-    const hasCrit = alerts.length > 0 || upcomingCrit.length > 0;
-    const hasWarn = !hasCrit && (upcomingWarn.length > 0 || recentNews.some(i => sev(i) === 'high'));
-    wrap.classList.toggle('alert', hasCrit);
-    wrap.classList.toggle('warn', hasWarn);
-    lbl.textContent = hasCrit ? '🔴 СТОП' : hasWarn ? '⚠ ВАЖНО' : 'LIVE';
-
-    const rows = [];
-    alerts.forEach(e => rows.push({
-      severity: 'high',
-      tone: 'alert',
-      text: `⛔ ОТКЛЮЧИТЕ СТРАТЕГИИ: ${e.title} — защитное окно активно`,
-      dedupeKey: `event:${e.id || e.title}`,
-    }));
-    upcomingCrit.forEach(e => {
-      const e2 = eta(new Date(e.event_time_utc) - now);
-      rows.push({
-        severity: 'high',
-        tone: 'crit',
-        text: `🔴 ОЧЕНЬ СРОЧНО — ${e2.txt}: ${e.title}. Отключите затронутые стратегии`,
-        dedupeKey: `event:${e.id || e.title}`,
-      });
-    });
-    upcomingWarn.forEach(e => {
-      const e2 = eta(new Date(e.event_time_utc) - now);
-      rows.push({
-        severity: 'medium',
-        tone: 'warn',
-        text: `⚠ ${e2.txt}: ${e.title}${e.is_confirmed ? '' : ' · время требует проверки'}`,
-        dedupeKey: `event:${e.id || e.title}`,
-      });
-    });
-    recentNews.forEach(i => rows.push({
-      severity: sev(i),
-      tone: sev(i),
-      text: `${sev(i) === 'high' ? '🔴 ВАЖНАЯ НОВОСТЬ · ' : ''}${i.source || 'источник'}: ${i.title}${i.age_min == null ? '' : ' · ' + ago(i.age_min)}`,
-      dedupeKey: `live:${i.source || ''}:${i.title || ''}`,
-    }));
-    ((state.agent && state.agent.items) || []).slice(0, 6).forEach(item => rows.push({
-      severity: item.severity || 'medium',
-      tone: item.severity === 'high' ? 'warn' : 'medium',
-      text: `🧠 Никита: ${item.title} — ${item.recommendation}`,
-      dedupeKey: `agent:${item.news_id || item.title}`,
-    }));
-
-    let unique = UI.uniqueTickerRows(rows.concat(UI.scheduleStrategyRows(state.events, now, 12)), 24);
-    if (unique.length < 10) unique = UI.uniqueTickerRows(unique.concat(UI.marketNoticeRows(state.events, now)), 24);
-
-    if (!unique.length) {
-      wrap.classList.add('paused');
-      track.innerHTML = `<span class="static">${state.live.configured
-        ? 'Нет свежих данных. Запустите: python -m app.market_news'
-        : 'Лента не настроена (python -m app.market_news).'}</span>`;
-      return;
-    }
-    wrap.classList.remove('paused');
-    const expanded = UI.expandTickerRows(unique, unique.length < 10 ? 20 : 14);
-    const rollover = expanded.length > 1 ? expanded.slice(2).concat(expanded.slice(0, 2)) : expanded;
-    const renderRow = row => {
-      const tone = row.tone === 'alert' ? 'alert' : row.tone === 'crit' ? 't-crit' : row.tone === 'warn' ? 't-warn' : `s-${UI.esc(row.severity || 'low')}`;
-      return `<span class="tk ${tone}"><span class="dot"></span>${UI.esc(row.text)}</span>`;
-    };
-    track.innerHTML = expanded.map(renderRow).join('') + rollover.map(renderRow).join('');
-  }
+  // The running news strip is now a single shared component rendered by ui.js
+  // (`renderGlobalNewsStrip`) on every page, so this page no longer draws its
+  // own ticker — keeping one continuous, consistent strip across the app.
 
   // ---- orchestration -----------------------------------------------------
   function renderAll() {
@@ -573,7 +487,6 @@ UI.ready(async function () {
     renderLiveSide();
     renderFetchStatus();
     renderAgentAnalysis();
-    renderTicker(now);
   }
 
   // ---- load --------------------------------------------------------------
@@ -628,7 +541,6 @@ UI.ready(async function () {
       } catch (e) { /* keep last */ }
     }
     const now = Date.now();
-    renderTicker(now);
     renderAlertBanner(now);
     renderLiveSide();
     renderList();

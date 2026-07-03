@@ -170,6 +170,41 @@ def test_forum_topic_is_created_once_and_dedupes(monkeypatch, tmp_path) -> None:
     assert telegram_service._conversation_for_thread("-1001234567890", None) == "default"
 
 
+def test_forum_topic_title_tracks_app_conversation(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")
+    calls = []
+
+    def fake_api(method, payload=None, **kwargs):
+        calls.append((method, payload or {}))
+        if method == "createForumTopic":
+            return {"message_thread_id": 42, "name": (payload or {}).get("name")}
+        return {}
+
+    monkeypatch.setattr(telegram_service, "_api_call", fake_api)
+    telegram_service.ensure_topic("C-ABC", "Новый чат")
+    updated = telegram_service.sync_topic_title("C-ABC", "Исследование MNQ")
+
+    assert updated["name"] == "Исследование MNQ"
+    edits = [payload for method, payload in calls if method == "editForumTopic"]
+    assert edits == [{"chat_id": "-1001234567890", "message_thread_id": 42, "name": "Исследование MNQ"}]
+
+
+def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda text, **kwargs: sent.append(text) or {})
+
+    first = telegram_service.send_chief_report("Готово", ["Результат не изменился"])
+    second = telegram_service.send_chief_report("Готово", ["Результат не изменился"])
+
+    assert first is True
+    assert second is False
+    assert len(sent) == 1
+
+
 def test_group_topic_message_routes_to_bound_conversation(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")

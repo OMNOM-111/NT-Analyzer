@@ -134,10 +134,11 @@ namespace NTAnalyzerBridge
 
                 // Phase 18: paper-only command processor.
                 // Reads data/runtime/commands.jsonl and enable/disables NinjaScript
-                // strategy instances. Live accounts are hard-rejected.
+                // strategy instances or reconnects paper/demo/playback connections.
+                // Live accounts are hard-rejected.
                 try
                 {
-                    _commandProcessor = new RuntimeCommandProcessor(_cfg.ProjectRoot);
+                    _commandProcessor = new RuntimeCommandProcessor(_cfg);
                     _commandProcessor.Start();
                 }
                 catch (Exception cpex)

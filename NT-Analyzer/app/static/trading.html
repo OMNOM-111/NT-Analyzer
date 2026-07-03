@@ -894,6 +894,7 @@ table.tg-tbl tbody tr.strategy-out-window.sel { background: rgba(70, 80, 100, 0.
       <div class="btn-row">
         <button id="btn-start" class="primary" title="Включить существующий instance в NinjaTrader. Требует выбрать строку в таблице выше.">Включить instance в NT</button>
         <button id="btn-stop" class="danger" title="Отправить команду disable в NinjaTrader для выбранного instance.">Остановить</button>
+        <button id="btn-reconnect-sim" title="Переподключить paper/demo/playback соединение NinjaTrader для выбранного счёта.">Включить моделирование</button>
         <button id="btn-status" title="Принудительно обновить данные (автообновление каждые 5с)">Обновить</button>
         <button id="btn-open-backtest" title="Открыть выбранную runtime-стратегию в бэктестировании со всеми её параметрами (instrument, timeframe, params).">Открыть в бэктесте</button>
       </div>
@@ -910,7 +911,9 @@ table.tg-tbl tbody tr.strategy-out-window.sel { background: rgba(70, 80, 100, 0.
           1. Добавьте стратегию вручную в NinjaTrader → Strategies tab → Add.<br>
           2. Она появится в таблице выше — выберите строку.<br>
           3. Платформа проверит параметры и начнёт мониторинг.<br>
-          4. Кнопка «Включить / Остановить» управляет этим instance.<br><br>
+          4. Кнопки «Включить / Остановить» управляют этим instance.<br>
+          5. Если paper/demo connection_status ушёл в DISCONNECTED, кнопка
+             «Включить моделирование» отправит безопасный reconnect paper/demo/playback.<br><br>
           Live аккаунты отображаются только для мониторинга; команды включения и остановки для них заблокированы.
         </div>
       </div>

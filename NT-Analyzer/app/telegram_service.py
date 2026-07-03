@@ -7,6 +7,7 @@ values. Incoming trading commands are intentionally not implemented.
 from __future__ import annotations
 
 import calendar
+import hashlib
 import html
 import json
 import os
@@ -129,6 +130,13 @@ def update_settings(changes: Dict[str, Any]) -> Dict[str, Any]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _iso_timestamp(value: Any) -> float:
+    try:
+        return datetime.fromisoformat(str(value or "").replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _safe_error(error: BaseException, token: str = "") -> str:
@@ -492,6 +500,27 @@ def ensure_topic(conversation_id: str, title: str = "") -> Dict[str, Any]:
     return record
 
 
+def sync_topic_title(conversation_id: str, title: str = "") -> Dict[str, Any]:
+    """Create a conversation topic or rename the existing one to the app title."""
+    record = ensure_topic(conversation_id, title)
+    desired = _conversation_display_name(conversation_id, title)
+    if str(record.get("name") or "") == desired:
+        return record
+    _api_call("editForumTopic", {
+        "chat_id": record["chat_id"],
+        "message_thread_id": int(record["message_thread_id"]),
+        "name": desired,
+    })
+    updated = dict(record)
+    updated["name"] = desired
+    updated["updated_at_utc"] = _now_iso()
+    with _IO_LOCK:
+        doc = _load_topics()
+        doc["conversations"][str(conversation_id or "").strip() or DEFAULT_CONVERSATION_ID] = updated
+        _save_topics(doc)
+    return updated
+
+
 def _thread_for_conversation(conversation_id: str, title: str = "") -> Optional[int]:
     """Resolve (and lazily create) the topic thread id for a conversation.
 
@@ -599,16 +628,41 @@ def status() -> Dict[str, Any]:
 
 
 def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
-            thread_id: Optional[int] = None) -> bool:
+            thread_id: Optional[int] = None, dedupe_key: str = "") -> bool:
     settings = load_settings()
     if not settings.get("enabled") or not settings.get(setting):
         return False
     body = [f"<b>{html.escape(title)}</b>"]
     body.extend(html.escape(str(line)) for line in lines if str(line).strip())
+    signature = hashlib.sha256(
+        (dedupe_key or json.dumps(
+            [setting, title, lines, int(thread_id or 0)], ensure_ascii=False, sort_keys=True,
+        )).encode("utf-8")
+    ).hexdigest()
+    with _IO_LOCK:
+        state = _load_state()
+        recent = dict(state.get("recent_delivery_signatures") or {})
+        cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600
+        recent = {
+            key: value for key, value in recent.items()
+            if _iso_timestamp(value) >= cutoff
+        }
+        if signature in recent:
+            return False
+        # Claim before network I/O so concurrent workers cannot double-send.
+        recent[signature] = _now_iso()
+        state["recent_delivery_signatures"] = recent
+        _write_json(_state_path(), state)
     try:
         _send_raw("\n".join(body), silent=not urgent, thread_id=thread_id)
         return True
     except TelegramServiceError as exc:
+        with _IO_LOCK:
+            state = _load_state()
+            recent = dict(state.get("recent_delivery_signatures") or {})
+            recent.pop(signature, None)
+            state["recent_delivery_signatures"] = recent
+            _write_json(_state_path(), state)
         _record_delivery(success=False, error=str(exc))
         return False
 

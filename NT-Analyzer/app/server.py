@@ -2140,7 +2140,7 @@ class Handler(BaseHTTPRequestHandler):
             out = ops.request_live_unlock(reason=str(body.get("reason") or ""))
             self._json(HTTPStatus.FORBIDDEN, out)
             return
-        # /api/ops/runtime/command  (paper-only command queue)
+        # /api/ops/runtime/command  (paper/demo/playback runtime command queue)
         if path == "/api/ops/runtime/command":
             try:
                 out = ops_runtime.submit_command(
@@ -2156,6 +2156,7 @@ class Handler(BaseHTTPRequestHandler):
                     timeframe=str(body.get("timeframe") or ""),
                     runtime_instance_id=str(body.get("runtime_instance_id") or ""),
                     params=body.get("params") if isinstance(body.get("params"), dict) else None,
+                    connection_name=str(body.get("connection_name") or ""),
                 )
                 self._json(HTTPStatus.OK, out); return
             except ops.OpsError as e:

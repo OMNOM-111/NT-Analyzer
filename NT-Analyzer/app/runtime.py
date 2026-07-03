@@ -3245,7 +3245,9 @@ def confirm_runtime(strategy_id: str, action: str, reason: str = "") -> Dict[str
 COMMANDS_FILE = "commands.jsonl"
 COMMAND_RESULTS_FILE = "command_results.jsonl"
 
-ALLOWED_COMMANDS = ("enable_strategy", "disable_strategy")
+STRATEGY_RUNTIME_COMMANDS = ("enable_strategy", "disable_strategy")
+ACCOUNT_RUNTIME_COMMANDS = ("reconnect_account",)
+ALLOWED_COMMANDS = STRATEGY_RUNTIME_COMMANDS + ACCOUNT_RUNTIME_COMMANDS
 
 
 def _is_paper_account(account_name: str) -> bool:
@@ -3273,6 +3275,11 @@ def _resolve_account_mode_for_command(account_name: str) -> str:
     return _classify_account_mode(account_name, declared)
 
 
+def _default_connection_command_strategy_id(account_name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(account_name or "").strip()) or "account"
+    return f"runtime_connection_reconnect__{safe}"
+
+
 def submit_command(command: str,
                    strategy_id: str,
                    account_name: str,
@@ -3284,7 +3291,8 @@ def submit_command(command: str,
                    contract_month: str = "",
                    timeframe: str = "",
                    runtime_instance_id: str = "",
-                   params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   params: Optional[Dict[str, Any]] = None,
+                   connection_name: str = "") -> Dict[str, Any]:
     """Queue a command for the NT bridge (paper/playback/demo only).
 
     Hard rules:
@@ -3293,6 +3301,8 @@ def submit_command(command: str,
       * if strategy_id matches a registry entry → registry archived/rejected
         launch block applies to enable_strategy. disable_strategy remains
         allowed so a frozen strategy can still be stopped from runtime.
+      * reconnect_account targets the account connection only and therefore
+        does not require a strategy instance/class.
       * runtime_instance_id (when provided) targets the exact strategy
         instance the UI selected; the bridge uses it to disambiguate
         multiple instances of the same class on the same account.
@@ -3302,13 +3312,18 @@ def submit_command(command: str,
     """
     if command not in ALLOWED_COMMANDS:
         raise ops.OpsError(f"command not allowed: {command}", 400)
-    if not strategy_id:
-        raise ops.OpsError("strategy_id required", 400)
-    s = ops.get_strategy(strategy_id)
-    canonical_sid = str((s or {}).get("strategy_id") or strategy_id)
-    resolved_class = class_name or (s.get("class_name") if s else "")
-    if not resolved_class:
-        raise ops.OpsError("class_name required (catalog strategy)", 400)
+    connection_command = command in ACCOUNT_RUNTIME_COMMANDS
+    s = ops.get_strategy(strategy_id) if strategy_id else None
+    if connection_command:
+        canonical_sid = str(strategy_id or _default_connection_command_strategy_id(account_name))
+        resolved_class = str(class_name or "").strip()
+    else:
+        if not strategy_id:
+            raise ops.OpsError("strategy_id required", 400)
+        canonical_sid = str((s or {}).get("strategy_id") or strategy_id)
+        resolved_class = class_name or (s.get("class_name") if s else "")
+        if not resolved_class:
+            raise ops.OpsError("class_name required (catalog strategy)", 400)
     if command == "enable_strategy" and s and s.get("status") in ("rejected", "archived"):
         raise ops.OpsError("strategy is archived/rejected — launch refused", 403)
     acct_mode = _resolve_account_mode_for_command(account_name)
@@ -3397,6 +3412,7 @@ def submit_command(command: str,
         "reason": reason or "",
         "params": final_params,
         "runtime_instance_id": runtime_instance_id or "",
+        "connection_name": str(connection_name or "").strip(),
         "live_block_passed": True,
     }
     p = _path(COMMANDS_FILE)
@@ -3743,8 +3759,9 @@ def get_command_status(command_id: str,
         "stale_sec": (hb.get("age_sec") if hb.get("present") else None),
     }
 
-    raw_strats = read_strategies_raw()
-    rt_match_raw = _match_runtime_for_command(cmd, raw_strats)
+    cmd_kind = str(cmd.get("command") or "")
+    raw_strats = read_strategies_raw() if cmd_kind in STRATEGY_RUNTIME_COMMANDS else []
+    rt_match_raw = _match_runtime_for_command(cmd, raw_strats) if raw_strats else None
     runtime_match: Optional[Dict[str, Any]] = None
     if rt_match_raw is not None:
         runtime_match = {
@@ -3755,10 +3772,19 @@ def get_command_status(command_id: str,
             "enabled":        bool(rt_match_raw.get("enabled")),
             "timestamp_utc":  rt_match_raw.get("timestamp_utc"),
         }
+    account_match = next((
+        {
+            "account_name": row.get("account_name"),
+            "account_mode": row.get("account_mode"),
+            "connection_status": row.get("connection_status"),
+        }
+        for row in read_accounts()
+        if str(row.get("account_name") or "") == str(cmd.get("account_name") or "")
+    ), None)
 
     base: Dict[str, Any] = {
         "command_id":       command_id,
-        "command":          cmd.get("command"),
+        "command":          cmd_kind,
         "strategy_id":      cmd.get("strategy_id"),
         "strategy_class":   cmd.get("strategy_class"),
         "account_name":     cmd.get("account_name"),
@@ -3768,7 +3794,9 @@ def get_command_status(command_id: str,
         "elapsed_sec":      round(float(elapsed_sec), 2),
         "bridge_result":    bridge_result,
         "runtime_match":    runtime_match,
+        "account_match":    account_match,
         "heartbeat":        hb_view,
+        "connection_name":  cmd.get("connection_name") or "",
         "timeout_sec":      int(timeout_sec),
     }
 
@@ -3785,7 +3813,6 @@ def get_command_status(command_id: str,
             state  = "failed_other"
             reason = bmsg or "bridge reported failure"
         elif bstatus == "completed":
-            cmd_kind = str(cmd.get("command") or "")
             if (not hb_view["present"]) or (not hb_view["fresh"]):
                 state = "failed_bridge_offline"
                 reason = (
@@ -3817,6 +3844,18 @@ def get_command_status(command_id: str,
                     state  = "bridge_completed_awaiting_runtime"
                     reason = ("bridge completed; waiting up to "
                               f"{_BRIDGE_RUNTIME_GRACE_SEC}s for next telemetry tick")
+            elif cmd_kind == "reconnect_account":
+                if account_match and str(account_match.get("connection_status") or "").strip().lower() == "connected":
+                    state  = "confirmed_connected"
+                    reason = "account connection_status is Connected"
+                elif elapsed_sec > timeout_sec:
+                    state  = "failed_no_runtime_confirmation"
+                    reason = ("Bridge принял команду reconnect, но выбранный paper/demo "
+                              "account не перешёл в Connected в пределах таймаута.")
+                else:
+                    state  = "bridge_completed_awaiting_runtime"
+                    reason = ("bridge completed; waiting for accounts.json to report "
+                              "connection_status=Connected")
             else:
                 state  = "failed_other"
                 reason = f"unknown command kind: {cmd_kind}"

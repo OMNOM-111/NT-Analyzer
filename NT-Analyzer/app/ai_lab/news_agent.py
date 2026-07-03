@@ -105,6 +105,8 @@ def _ensure_display_fields(record: Dict[str, Any]) -> Dict[str, Any]:
         out["summary_ru"] = _source_note_ru(out, str(out.get("summary") or ""))
     if not out.get("short_recommendation"):
         out["short_recommendation"] = _compact(str(out.get("recommendation") or ""), 150)
+    if not out.get("ticker_line"):
+        out["ticker_line"] = _compact(str(out.get("short_recommendation") or out.get("recommendation") or ""), 90)
     if not out.get("relevance_until_utc"):
         out["relevance_until_utc"] = _relevance_until_utc(out, severity, kind)
     return out
@@ -136,13 +138,16 @@ def deterministic_record(item: Dict[str, Any], *, kind: str = "released") -> Dic
     summary = str(item.get("summary") or "").strip()[:600]
     if kind == "upcoming":
         impact = "Ожидается возможное изменение волатильности вокруг события."
-        recommendation = "Сверить время события с защитными окнами стратегий и не менять параметры без фактической реакции рынка."
+        recommendation = "Сверить время события с blackout-окнами; параметры не менять до реакции рынка."
+        ticker_line = "Сверить blackout-окна, параметры не менять"
     elif severity == "high":
-        impact = "Новость способна заметно изменить волатильность и ликвидность по отмеченным инструментам."
-        recommendation = "Проверить затронутые стратегии и действующие risk/blackout-правила; при недостатке данных не открывать новые позиции только на основании заголовка."
+        impact = "Новость способна заметно изменить волатильность и ликвидность по инструментам."
+        recommendation = "Проверить затронутые стратегии и risk/blackout-правила; не открывать позиции только по заголовку."
+        ticker_line = "Проверить стратегии и risk/blackout"
     else:
         impact = "Возможное умеренное влияние по отмеченным инструментам."
-        recommendation = "Наблюдать реакцию цены и исполнения; дополнительное действие нужно только при подтверждённом отклонении от нормального режима."
+        recommendation = "Наблюдать реакцию цены; действовать только при подтверждённом отклонении."
+        ticker_line = "Наблюдать реакцию, без резких действий"
     return {
         "news_id": _item_id(item), "kind": kind, "title": title,
         "summary": summary, "source": str(item.get("source") or "источник"),
@@ -155,6 +160,7 @@ def deterministic_record(item: Dict[str, Any], *, kind: str = "released") -> Dic
         "event_time_utc": item.get("event_time_utc") or item.get("published_at_utc"),
         "impact": impact, "recommendation": recommendation,
         "short_recommendation": _compact(recommendation, 150),
+        "ticker_line": _compact(ticker_line, 90),
         "relevance_until_utc": _relevance_until_utc(item, severity, kind),
         "uncertainty": "Направление движения нельзя надёжно определить только по заголовку; требуется фактическая реакция рынка.",
         "strategy_context": strategy_context,

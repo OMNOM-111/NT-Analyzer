@@ -121,6 +121,15 @@ def _write_hb(tmp: Path, fresh: bool = True):
     }), encoding="utf-8")
 
 
+def _write_accounts(tmp: Path, accounts, *, age_sec: float = 2):
+    rdir = tmp / "data" / "runtime"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "accounts.json").write_text(json.dumps({
+        "generated_at_utc": _now_iso(-age_sec),
+        "accounts": accounts,
+    }), encoding="utf-8")
+
+
 def _write_profiles_registry(tmp: Path, profiles):
     pdir = tmp / "data" / "profiles"
     pdir.mkdir(parents=True, exist_ok=True)
@@ -528,6 +537,27 @@ def t18(tmp):
     assert rec["command"] == "disable_strategy"
 
 
+@case("phase18: reconnect_account queues without strategy class")
+def t18a(tmp):
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+    }])
+    rec = rt.submit_command(
+        command="reconnect_account",
+        strategy_id="",
+        account_name="DEMO3369390",
+        connection_name="Simulation",
+    )
+    assert rec["status"] == "queued"
+    saved = rt.read_commands(1)[0]
+    assert saved["command"] == "reconnect_account"
+    assert saved["account_name"] == "DEMO3369390"
+    assert saved["connection_name"] == "Simulation"
+    assert saved["strategy_id"].startswith("runtime_connection_reconnect__"), saved["strategy_id"]
+
+
 # --------------------------------------------------------------------------
 # Phase 10 — normalization + selection_diff + command status
 # --------------------------------------------------------------------------
@@ -769,6 +799,32 @@ def t34(tmp):
     }) + "\n", encoding="utf-8")
     out = rt.get_command_status(cid, timeout_sec=30)
     assert out["state"] == "failed_account_mismatch", out
+
+
+@case("phase10: get_command_status -> confirmed_connected for reconnect_account")
+def t34a(tmp):
+    _write_hb(tmp, fresh=True)
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Connected",
+    }])
+    rec = rt.submit_command(
+        command="reconnect_account",
+        strategy_id="",
+        account_name="DEMO3369390",
+        connection_name="Simulation",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "completed",
+        "message": "reconnect issued",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "confirmed_connected", out
+    assert out["account_match"]["connection_status"] == "Connected", out["account_match"]
 
 
 @case("phase10: account display_name is preserved exactly (no ' sim' suffix)")
@@ -1198,9 +1254,9 @@ def t48_trade_window_merge(tmp):
 
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t11b, t11c, t12,
-             t13, t14, t15, t16, t17, t18,
+             t13, t14, t15, t16, t17, t18, t18a,
              t19, t20, t21, t22, t23, t24, t25, t26,
-             t27, t28, t29, t30, t31, t31b, t32, t33, t34,
+             t27, t28, t29, t30, t31, t31b, t32, t33, t34, t34a,
              t35, t36, t37,
              # Phase 19
              t38, t39, t40, t41, t42, t43, t44,
