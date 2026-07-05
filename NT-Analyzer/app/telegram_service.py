@@ -24,6 +24,9 @@ from typing import Any, Dict, List, Optional
 from . import local_secrets
 from . import performance
 from . import runtime
+from . import market_data
+from . import telegram_remote
+from . import account_auth
 
 
 TOKEN_ENV = "NTA_TELEGRAM_BOT_TOKEN"
@@ -37,6 +40,7 @@ SETTING_DEFINITIONS = (
     ("strategy_state", "Стратегии", "Включение, остановка и изменение состояния стратегии."),
     ("nt_connection", "Связь с NinjaTrader", "Потеря и восстановление heartbeat моста."),
     ("application_errors", "Ошибки", "Новые ошибки, переданные мостом NinjaTrader."),
+    ("price_alerts", "Ценовые алерты", "Касание линий, точек и стрелок на рабочем столе."),
     ("important_news", "Важные новости", "Новые high-impact новости и события календаря."),
     ("daily_summary", "Сводка за день", "После 16:00 PT: сделки, P&L, win rate и комиссия."),
     ("weekly_summary", "Сводка за неделю", "По пятницам после 16:05 PT."),
@@ -52,6 +56,7 @@ _PAIR_LOCK = threading.RLock()
 _PAIRING: Dict[str, Any] = {}
 _WORKER_LOCK = threading.Lock()
 _WORKER: Optional[threading.Thread] = None
+_COMMAND_WORKER: Optional[threading.Thread] = None
 _STOP = threading.Event()
 
 
@@ -476,28 +481,29 @@ def ensure_topic(conversation_id: str, title: str = "") -> Dict[str, Any]:
     if not gid:
         raise TelegramServiceError("Групповой режим Telegram не настроен.")
     cid = str(conversation_id or "").strip() or DEFAULT_CONVERSATION_ID
+    # Keep lookup, remote creation and persistence in one critical section.
+    # The first app message can trigger title synchronization and message
+    # mirroring concurrently; without this lock both paths could create a topic.
     with _IO_LOCK:
         doc = _load_topics()
         existing = doc["conversations"].get(cid)
         if isinstance(existing, dict) and existing.get("message_thread_id") and str(existing.get("chat_id")) == gid:
             return existing
-    name = _conversation_display_name(cid, title)
-    result = _api_call("createForumTopic", {"chat_id": gid, "name": name})
-    thread_id = int(result.get("message_thread_id") or 0) if isinstance(result, dict) else 0
-    if not thread_id:
-        raise TelegramServiceError("Не удалось создать тему Telegram.")
-    record = {
-        "conversation_id": cid,
-        "chat_id": gid,
-        "message_thread_id": thread_id,
-        "name": name,
-        "created_at_utc": _now_iso(),
-    }
-    with _IO_LOCK:
-        doc = _load_topics()
+        name = _conversation_display_name(cid, title)
+        result = _api_call("createForumTopic", {"chat_id": gid, "name": name})
+        thread_id = int(result.get("message_thread_id") or 0) if isinstance(result, dict) else 0
+        if not thread_id:
+            raise TelegramServiceError("Не удалось создать тему Telegram.")
+        record = {
+            "conversation_id": cid,
+            "chat_id": gid,
+            "message_thread_id": thread_id,
+            "name": name,
+            "created_at_utc": _now_iso(),
+        }
         doc["conversations"][cid] = record
         _save_topics(doc)
-    return record
+        return record
 
 
 def sync_topic_title(conversation_id: str, title: str = "") -> Dict[str, Any]:
@@ -529,7 +535,10 @@ def _thread_for_conversation(conversation_id: str, title: str = "") -> Optional[
     if not group_configured():
         return None
     try:
-        return int(ensure_topic(conversation_id, title).get("message_thread_id") or 0) or None
+        # Every outbound message is also a cheap reconciliation point. Usually
+        # this is only a local name comparison; if an older topic still has the
+        # placeholder, it is renamed before the message is sent.
+        return int(sync_topic_title(conversation_id, title).get("message_thread_id") or 0) or None
     except TelegramServiceError as exc:
         _record_delivery(success=False, error=str(exc))
         return None
@@ -578,7 +587,58 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
     return dict(result) if isinstance(result, dict) else {"ok": True}
 
 
-def send_test() -> Dict[str, Any]:
+def send_photo(image_path: Any, caption: str = "", *, conversation_id: Optional[str] = None,
+               conversation_title: str = "", silent: bool = True) -> bool:
+    """Upload a chart snapshot image into the conversation's Telegram topic."""
+    settings = load_settings()
+    if not settings.get("enabled") or not settings.get("chief_agent_reports"):
+        return False
+    token = str(os.environ.get(TOKEN_ENV) or "").strip()
+    chat = str(_primary_chat_id()).strip()
+    if not token or not chat:
+        return False
+    try:
+        path = Path(str(image_path))
+        blob = path.read_bytes()
+    except OSError:
+        return False
+    if not blob:
+        return False
+    thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
+    boundary = "----stratforge" + secrets.token_hex(16)
+    fields: Dict[str, str] = {
+        "chat_id": chat,
+        "caption": str(caption or "")[:1024],
+        "disable_notification": "true" if silent else "false",
+    }
+    if thread_id:
+        fields["message_thread_id"] = str(int(thread_id))
+    parts: List[bytes] = []
+    for key, value in fields.items():
+        parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n").encode("utf-8"))
+    name = path.name or "chart.jpg"
+    ctype = ("image/jpeg" if name.lower().endswith((".jpg", ".jpeg")) else
+             "image/png" if name.lower().endswith(".png") else
+             "image/webp" if name.lower().endswith(".webp") else "application/octet-stream")
+    parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"{name}\"\r\n"
+                  f"Content-Type: {ctype}\r\n\r\n").encode("utf-8"))
+    parts.append(blob)
+    parts.append((f"\r\n--{boundary}--\r\n").encode("utf-8"))
+    body = b"".join(parts)
+    base = str(os.environ.get(API_BASE_ENV) or "https://api.telegram.org").rstrip("/")
+    url = f"{base}/bot{token}/sendPhoto"
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            response.read()
+        _record_delivery(success=True)
+        return True
+    except Exception as exc:  # pragma: no cover - network failure path
+        _record_delivery(success=False, error=_safe_error(f"sendPhoto: {exc}", token))
+        return False
     identity = _bot_identity()
     _send_raw(
         "✅ <b>Тест StratForge AI</b>\n"
@@ -686,6 +746,37 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     )
 
 
+def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
+                         conversation_title: str = "") -> bool:
+    """Mirror a message the owner typed inside the app into its bound Telegram
+    topic, so the Telegram thread shows the full two-way conversation and not
+    only the assistant's replies.
+
+    Gated by the same master switch as chief reports; returns False silently
+    when the integration is off or not connected. Never called for messages
+    that originated in Telegram, so it cannot echo a message back to itself.
+    """
+    settings = load_settings()
+    if not settings.get("enabled") or not settings.get("chief_agent_reports"):
+        return False
+    body = str(text or "").strip()
+    if not body:
+        return False
+    thread_id = (
+        _thread_for_conversation(conversation_id, conversation_title)
+        if conversation_id else None
+    )
+    try:
+        _send_raw(
+            "🧑 <b>Вы:</b> " + html.escape(body[:3500]),
+            silent=True, thread_id=thread_id,
+        )
+        return True
+    except TelegramServiceError as exc:
+        _record_delivery(success=False, error=str(exc))
+        return False
+
+
 def send_news_alert(title: str, lines: List[str], *,
                     model_name: str = "deterministic news rules") -> bool:
     """Send one deduplicated news-agent alert through the news setting gate."""
@@ -774,7 +865,8 @@ def _auto_discover_group(updates: List[Dict[str, Any]]) -> None:
             _record_delivery(success=False, error=str(exc))
 
 
-def _poll_chief_commands(state: Dict[str, Any]) -> None:
+def _poll_chief_commands(state: Dict[str, Any], *, long_poll_timeout: int = 0,
+                         handle_owner_commands: bool = True) -> None:
     """Read the paired private chat and/or the bound group and route free text
     to the Orchestrator. One shared offset so private and group updates never
     consume each other. Also auto-discovers a new forum group if the bot was
@@ -784,12 +876,13 @@ def _poll_chief_commands(state: Dict[str, Any]) -> None:
     if not private_id and not gid:
         return
     offset = int(state.get("chief_update_id") or 0) + 1
-    # Include my_chat_member so we can auto-discover when the bot is added to a group.
+    poll_timeout = max(0, min(25, int(long_poll_timeout or 0)))
+    # Include callbacks for explicit owner approval of Mini App access.
     updates = _api_call(
         "getUpdates",
-        {"offset": offset, "limit": 30, "timeout": 0,
-         "allowed_updates": ["message", "my_chat_member"]},
-        timeout=12,
+        {"offset": offset, "limit": 30, "timeout": poll_timeout,
+         "allowed_updates": ["message", "my_chat_member", "callback_query"]},
+        timeout=max(12, poll_timeout + 5),
     )
     if not isinstance(updates, list) or not updates:
         state["chief_commands_initialized"] = True
@@ -808,6 +901,17 @@ def _poll_chief_commands(state: Dict[str, Any]) -> None:
     for update in updates:
         if not isinstance(update, dict):
             continue
+        try:
+            if private_id and account_auth.process_update(
+                update, api_call=_api_call, owner_chat_id=private_id,
+            ):
+                continue
+            if private_id and telegram_remote.process_update(
+                update, api_call=_api_call, owner_chat_id=private_id,
+            ):
+                continue
+        except telegram_remote.RemoteAccessError as exc:
+            _record_delivery(success=False, error=str(exc))
         message = update.get("message")
         if not isinstance(message, dict):
             continue
@@ -820,6 +924,8 @@ def _poll_chief_commands(state: Dict[str, Any]) -> None:
             continue
         chat_id_str = str(chat.get("id") or "")
         chat_type = str(chat.get("type") or "")
+        if not handle_owner_commands:
+            continue
         if gid and chat_id_str == gid:
             raw_thread = message.get("message_thread_id")
             thread_id = int(raw_thread) if raw_thread else None
@@ -923,13 +1029,28 @@ def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> N
     state["notified_calendar_events"] = list(notified)[-300:]
 
 
-def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = False) -> Dict[str, Any]:
+def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = False,
+              include_commands: bool = True) -> Dict[str, Any]:
     """Evaluate notification sources once. Public for deterministic tests."""
     now = now_utc or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     settings = load_settings()
     state = _load_state()
+    try:
+        market_data.evaluate_alerts()
+        for alert in market_data.pending_agent_alerts():
+            from .ai_lab import chief_agent
+            chief_agent.enqueue_event("price_alert_agent_task", {
+                "alert_id": alert.get("id"), "agent_id": alert.get("agent_id") or "chief",
+                "instruction": alert.get("agent_message") or alert.get("label") or "Проверь ценовой уровень.",
+                "instrument": alert.get("instrument"), "timeframe": alert.get("timeframe"),
+                "level": alert.get("price"), "trigger_price": alert.get("trigger_price"),
+                "triggered_at_utc": alert.get("triggered_at_utc"),
+            })
+            market_data.mark_agent_dispatched(alert.get("id"))
+    except Exception as exc:
+        state["price_agent_error"] = _safe_error(exc)
     configured = bool(os.environ.get(TOKEN_ENV) and os.environ.get(CHAT_ENV))
     if not configured or not settings.get("enabled"):
         state["monitoring"] = False
@@ -996,10 +1117,24 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     except Exception as exc:
         state["news_poll_error"] = _safe_error(exc)
 
+    if include_commands:
+        try:
+            _poll_chief_commands(state)
+        except Exception as exc:
+            state["chief_command_error"] = _safe_error(exc)
+
     try:
-        _poll_chief_commands(state)
+        for alert in market_data.pending_telegram_alerts():
+            price = float(alert.get("price") or 0)
+            trigger = float(alert.get("trigger_price") or price)
+            if _notify("price_alerts", "🔔 Цена коснулась отметки", [
+                f"{alert.get('instrument') or '—'} · {alert.get('timeframe') or '—'}",
+                f"{alert.get('label') or 'Ценовой уровень'}: {price:g}",
+                f"Текущая цена: {trigger:g}",
+            ], urgent=True, dedupe_key="price-alert:" + str(alert.get("id") or "")):
+                market_data.mark_telegram_notified(alert.get("id"))
     except Exception as exc:
-        state["chief_command_error"] = _safe_error(exc)
+        state["price_alert_error"] = _safe_error(exc)
 
     pt = _pt_now(now)
     day_key = pt.date().isoformat()
@@ -1040,7 +1175,10 @@ def _worker_loop(interval_sec: int) -> None:
     announce = True
     while not _STOP.is_set():
         try:
-            result = poll_once(announce_start=announce)
+            # Incoming chat uses a dedicated long-poll worker. Keeping the
+            # notification scan separate prevents news/runtime work from adding
+            # latency to owner messages and avoids concurrent getUpdates calls.
+            result = poll_once(announce_start=announce, include_commands=False)
             if result.get("active"):
                 announce = False
         except Exception as exc:
@@ -1051,20 +1189,71 @@ def _worker_loop(interval_sec: int) -> None:
         _STOP.wait(max(10, int(interval_sec)))
 
 
-def start_background_notifier(interval_sec: int = 30) -> bool:
-    global _WORKER
-    with _WORKER_LOCK:
-        if _WORKER is not None and _WORKER.is_alive():
-            return False
-        _STOP.clear()
-        _WORKER = threading.Thread(
-            target=_worker_loop,
-            args=(interval_sec,),
-            name="nta-telegram-notifier",
-            daemon=True,
+def _save_command_poll_state(state: Dict[str, Any]) -> None:
+    """Merge command offsets into the latest notifier state without clobbering it."""
+    with _IO_LOCK:
+        latest = _load_state()
+        for key in (
+            "chief_update_id", "chief_commands_initialized", "chief_command_error",
+            "last_command_poll_at_utc",
+        ):
+            if key in state:
+                latest[key] = state[key]
+            elif key == "chief_command_error":
+                latest.pop(key, None)
+        _write_json(_state_path(), latest)
+
+
+def _command_worker_loop() -> None:
+    """Receive Telegram owner messages continuously via Bot API long polling."""
+    while not _STOP.is_set():
+        settings = load_settings()
+        configured = bool(
+            os.environ.get(TOKEN_ENV)
+            and (str(os.environ.get(CHAT_ENV) or "").strip() or group_id())
         )
-        _WORKER.start()
-        return True
+        if not configured:
+            _STOP.wait(1.0)
+            continue
+        state = _load_state()
+        try:
+            _poll_chief_commands(
+                state, long_poll_timeout=20,
+                handle_owner_commands=bool(settings.get("enabled")),
+            )
+            state.pop("chief_command_error", None)
+            state["last_command_poll_at_utc"] = _now_iso()
+            _save_command_poll_state(state)
+        except Exception as exc:
+            state["chief_command_error"] = _safe_error(exc)
+            state["last_command_poll_at_utc"] = _now_iso()
+            _save_command_poll_state(state)
+            _STOP.wait(1.0)
+
+
+def start_background_notifier(interval_sec: int = 30) -> bool:
+    global _WORKER, _COMMAND_WORKER
+    with _WORKER_LOCK:
+        _STOP.clear()
+        started = False
+        if _COMMAND_WORKER is None or not _COMMAND_WORKER.is_alive():
+            _COMMAND_WORKER = threading.Thread(
+                target=_command_worker_loop,
+                name="nta-telegram-commands",
+                daemon=True,
+            )
+            _COMMAND_WORKER.start()
+            started = True
+        if _WORKER is None or not _WORKER.is_alive():
+            _WORKER = threading.Thread(
+                target=_worker_loop,
+                args=(interval_sec,),
+                name="nta-telegram-notifier",
+                daemon=True,
+            )
+            _WORKER.start()
+            started = True
+        return started
 
 
 def stop_background_notifier() -> None:

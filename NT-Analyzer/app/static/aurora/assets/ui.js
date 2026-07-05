@@ -15,6 +15,7 @@
     news: '<path d="M4 5h12v14H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1Z"/><path d="M16 8h4v9a2 2 0 0 1-2 2h-2M7 9h6M7 13h6M7 16h4"/>',
     trophy: '<path d="M8 4h8v4a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4v2a4 4 0 0 0 4 4M16 6h4v2a4 4 0 0 1-4 4M12 12v5M8 21h8M9 17h6"/>',
     telegram: '<path d="m21 3-4 18-6-5-4 3 1-6 9-7-11 6-4-2 19-7Z"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
     chat: '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10Z"/><path d="M8 9h8M8 13h5"/>',
     send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/>',
     mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/>',
@@ -55,6 +56,7 @@
   function icon(name, cls) { return `<svg class="${cls || 'ic'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[name] || ''}</svg>`; }
   const APP_NAME = 'StratForge AI';
   const APP_KICKER = 'StratForge AI · NTA Edition';
+  let CURRENT_AUTH = null;
 
   // ---- app theme (auto / dark / light) ---------------------------------------
   const THEME_KEY = 'app.theme';
@@ -479,6 +481,8 @@
         <div class="search-results" id="search-results" hidden></div>
       </div>
       <div class="tb-right">
+        ${window.API && API.config.miniApp ? '<span class="chip ok mini-app-chip" id="mini-app-chip"><span class="dot"></span>Telegram</span>' : ''}
+        <span class="chip ok" id="chip-user" hidden><span class="dot"></span><span id="chip-user-name">Пользователь</span></span>
         <span class="tb-page-actions" id="page-actions"></span>
         <span class="chip off" id="chip-nt" title="NinjaTrader"><span class="dot"></span>NinjaTrader</span>
         <span class="chip off" id="chip-bridge" title="Bridge (мост данных)"><span class="dot"></span>Bridge</span>
@@ -510,16 +514,9 @@
     app.appendChild(main);
     document.body.appendChild(app);
 
-    startClock();
-    wireSystemStatus();
-    wireTopbar();
-    wireSearch();
     wireDelegatedActions();
     wireA11y();
-    wireGlobalNewsStrip(newsStrip);
-    buildOrchestratorWidget();
-    // run page initializers (await async ones; route rejections to the global handler)
-    requestAnimationFrame(() => { runReady(); });
+    requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
   }
 
   // ---- accessibility: make non-semantic clickables keyboard-operable ---------
@@ -543,6 +540,95 @@
     let raf = null;
     const obs = new MutationObserver(() => { if (raf) cancelAnimationFrame(raf); raf = requestAnimationFrame(() => enhanceA11y(document)); });
     const content = qs('.content'); if (content) obs.observe(content, { childList: true, subtree: true });
+  }
+
+  async function authenticateAndStart(newsStrip) {
+    const result = window.API ? await API.authReady : { auth: null };
+    if (result.error) {
+      renderTelegramLogin(result.error);
+      return;
+    }
+    CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
+    document.documentElement.classList.remove('auth-locked');
+    const user = CURRENT_AUTH.user || {};
+    const chipUser = qs('#chip-user');
+    if (chipUser) {
+      chipUser.hidden = false;
+      const label = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || String(user.user_id || 'Пользователь');
+      const name = qs('#chip-user-name'); if (name) name.textContent = label;
+    }
+    const miniChip = qs('#mini-app-chip');
+    if (miniChip) miniChip.innerHTML = `<span class="dot"></span>${CURRENT_AUTH.role === 'read_only' ? 'Только чтение' : 'Управление'}`;
+    startClock();
+    wireSystemStatus();
+    wireTopbar();
+    wireSearch();
+    wireGlobalNewsStrip(newsStrip);
+    buildOrchestratorWidget();
+    runReady();
+  }
+
+  function loginCard(inner) {
+    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Telegram user id · requestContact · подтверждение владельца<br>Персональные данные защищены Windows DPAPI</div></section></div>`;
+  }
+
+  function renderTelegramLogin(initialError) {
+    document.documentElement.classList.add('auth-locked');
+    const content = qs('.content');
+    const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
+    if (!content) return;
+    let polling = null;
+    const stopPolling = () => { if (polling) clearInterval(polling); polling = null; };
+    const renderStart = (message) => {
+      stopPolling();
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Для нового аккаунта обязательны номер Telegram, профиль и личное разрешение владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start">Авторизоваться через Telegram</button>`);
+      const button = qs('#auth-start', content);
+      if (button) button.onclick = async () => {
+        button.disabled = true;
+        try { renderWaiting(await API.http.authLoginStart()); }
+        catch (error) { renderStart(error.message || String(error)); }
+      };
+    };
+    const renderProfile = (challengeId, state) => {
+      stopPolling();
+      const profile = state.profile || {};
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность и номер. Заполните обязательные данные перед отправкой владельцу.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><button class="btn primary auth-main-action" type="submit">Отправить профиль</button></form>`);
+      const form = qs('#auth-profile-form', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
+        try {
+          const next = await API.http.authProfile(challengeId, {
+            first_name: qs('#auth-first-name', form).value,
+            last_name: qs('#auth-last-name', form).value,
+            email: qs('#auth-email', form).value,
+          });
+          renderWaiting({ challenge_id: challengeId }, next);
+        } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
+      };
+    };
+    const check = async (challengeId) => {
+      try {
+        const state = await API.http.authLoginStatus(challengeId);
+        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
+        if (state.status === 'awaiting_profile') { renderProfile(challengeId, state); return; }
+        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) renderStart('Вход отклонён. Обратитесь к владельцу.');
+      } catch (error) {
+        if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
+      }
+    };
+    const renderWaiting = (login, knownState) => {
+      const challengeId = login.challenge_id;
+      const status = (knownState || {}).status || 'created';
+      if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
+      const pendingOwner = status === 'pending_owner';
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Начать заново</button>`);
+      const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
+      stopPolling();
+      polling = setInterval(() => check(challengeId), 2000);
+      check(challengeId);
+    };
+    renderStart(initialError && initialError.status !== 401 ? initialError.message : '');
   }
 
   async function runReady() {
@@ -733,7 +819,13 @@
       try {
         const status = await API.http.telegramStatus();
         let group = null;
+        let remote = null;
+        let accounts = null;
+        let tunnel = null;
         if (status.token_configured) { try { group = await API.http.telegramGroupStatus(); } catch (e) { group = null; } }
+        try { remote = await API.http.telegramRemoteAccess(); } catch (e) { remote = null; }
+        try { accounts = await API.http.authUsers(); } catch (e) { accounts = null; }
+        try { tunnel = await API.http.telegramTunnelStatus(); } catch (e) { tunnel = null; }
         const connectionLabel = status.configured ? 'подключён' : status.token_configured ? 'нужно подключить чат' : 'не настроен';
         const botLabel = status.bot_username ? `@${status.bot_username}` : (status.bot_name || 'бот не проверен');
         const settingRows = (status.setting_definitions || []).map(item => {
@@ -794,12 +886,45 @@
           </section>` : ''}
 
           <section class="telegram-card">
+            <div class="flex between"><div><div class="section-title">Telegram Mini App</div><div class="row-sub">HTTPS-туннель → 127.0.0.1:8765</div></div><span class="badge ${tunnel && tunnel.ready ? 'live' : tunnel && (tunnel.cloudflared && tunnel.cloudflared.running) ? 'pending' : remote && remote.remote_enabled ? 'pending' : 'archived'}"><span class="dot"></span>${tunnel && tunnel.ready ? 'готов к работе' : tunnel && tunnel.cloudflared && tunnel.cloudflared.running ? 'туннель запущен' : remote && remote.remote_enabled ? 'удалённый доступ включён' : 'выключен'}</span></div>
+            ${tunnel ? `<div class="list" style="margin:8px 0">
+              ${telegramRightRow('Backend', tunnel.backend && tunnel.backend.listening)}
+              ${telegramRightRow('Cloudflared', tunnel.cloudflared && tunnel.cloudflared.running)}
+              ${telegramRightRow('Публичный URL', tunnel.public && tunnel.public.reachable)}
+              ${telegramRightRow('Удалённый доступ', remote && remote.remote_enabled)}
+            </div>
+            <div class="row-sub">${esc(tunnel.message_ru || '')}${tunnel.public_url ? ` · <a href="${esc(tunnel.public_url)}/ui/" target="_blank" rel="noopener">${esc(tunnel.public_url)}</a>` : ''}</div>
+            <div class="flex wrap gap-sm" style="margin-top:10px">
+              <button class="btn primary" id="telegram-tunnel-launch">${tunnel.ready ? 'Перезапустить Mini App' : 'Запустить Mini App'}</button>
+              <button class="btn" id="telegram-tunnel-stop" ${tunnel.cloudflared && tunnel.cloudflared.running ? '' : 'disabled'}>Остановить туннель</button>
+              <button class="btn" id="telegram-tunnel-refresh">Обновить статус</button>
+            </div>
+            <div class="finance-note">Кнопка запускает cloudflared, включает удалённый доступ и проверяет <code>app.stratforges.com</code>. Backend и NinjaTrader должны уже работать на этом ПК.</div>` : ''}
+            ${remote ? `
+              <label class="telegram-setting">
+                <span class="telegram-setting-copy"><strong>Удалённый доступ</strong><small>Мгновенно блокирует все Mini App API-запросы при выключении.</small></span>
+                <input type="checkbox" id="telegram-remote-enabled" ${remote.remote_enabled ? 'checked' : ''}>
+                <span class="telegram-switch" aria-hidden="true"></span>
+              </label>
+              <div class="field"><label for="telegram-public-url">Публичный HTTPS URL туннеля</label><input id="telegram-public-url" type="url" value="${esc(remote.public_url || '')}" placeholder="https://stratforge.example.com"></div>
+              <div class="field"><label for="telegram-owner-phone">Номер владельца для дополнительной проверки (необязательно)</label><input id="telegram-owner-phone" type="tel" autocomplete="off" placeholder="${remote.owner_phone_configured ? 'Настроен — оставьте пустым без изменения' : '+1 555 000 0000'}"></div>
+              <div class="flex wrap gap-sm"><button class="btn primary" id="telegram-remote-save">Сохранить настройки</button><button class="btn" id="telegram-menu-button" ${remote.public_url && status.token_configured ? '' : 'disabled'}>Настроить Menu Button</button></div>
+              <div class="finance-note"><strong>Инварианты:</strong> каждый API-запрос проверяет HMAC initData и актуальный whitelist; live-торговля и live unlock запрещены; paper/demo сохраняет обязательное подтверждение backend.</div>
+            ` : '<div class="finance-note telegram-error">Не удалось загрузить настройки удалённого доступа.</div>'}
+          </section>
+
+          <section class="telegram-card">
+            <div class="flex between"><div><div class="section-title">Аккаунты и вход</div><div class="row-sub">${accounts ? `${(accounts.users || []).filter(user => user.status === 'active').length} активных · ${(accounts.users || []).filter(user => user.status === 'pending').length} ожидают` : 'статус недоступен'}</div></div><button class="btn" id="telegram-open-users">Управление пользователями</button></div>
+            <div class="finance-note"><strong>Новый порядок:</strong> пользователь нажимает «Войти через Telegram», подтверждает свой контакт и заполняет имя, фамилию и e-mail. Новый аккаунт активируется только вашей кнопкой в личном чате бота.</div>
+          </section>
+
+          <section class="telegram-card">
             <div class="section-title">Уведомления</div>
             <div class="telegram-settings">${settingRows}</div>
           </section>
 
-          <div class="finance-note"><strong>Команды из Telegram:</strong> выключены. Запуск бэктестов и торговые действия будут добавляться отдельно после авторизации чата, защиты от повторов и security-аудита.</div>
-          <div class="flex wrap gap-sm">${status.configured ? '<button class="btn primary" id="telegram-test">Отправить тест</button>' : ''}${status.token_configured ? '<button class="btn danger" id="telegram-disconnect">Отключить Telegram</button>' : ''}</div>`;
+          <div class="finance-note"><strong>Удалённые действия:</strong> разрешены только активным whitelist-пользователям. Все запросы пишутся в аудит с source=telegram_mini_app, Telegram user id, IP туннеля и UTC timestamp.</div>
+          <div class="flex wrap gap-sm">${status.configured ? '<button class="btn primary" id="telegram-test">Отправить тест</button>' : ''}</div>`;
 
         const saveToken = qs('#telegram-save-token', body);
         if (saveToken) saveToken.onclick = async () => {
@@ -843,6 +968,73 @@
           try { await API.http.telegramConfigureGroup(gid); toast('Группа привязана'); await refresh(); }
           catch (error) { reportError(error); groupConnect.disabled = false; }
         };
+
+        const remoteSave = qs('#telegram-remote-save', body);
+        if (remoteSave) remoteSave.onclick = async () => {
+          const ownerPhone = (qs('#telegram-owner-phone', body).value || '').trim();
+          const changes = {
+            remote_enabled: !!qs('#telegram-remote-enabled', body).checked,
+            public_url: (qs('#telegram-public-url', body).value || '').trim(),
+          };
+          if (ownerPhone) changes.owner_phone = ownerPhone;
+          remoteSave.disabled = true;
+          try { await API.http.telegramRemoteSettings(changes); toast('Настройки Mini App сохранены'); await refresh(); }
+          catch (error) { reportError(error); remoteSave.disabled = false; }
+        };
+        const menuButton = qs('#telegram-menu-button', body);
+        if (menuButton) menuButton.onclick = async () => {
+          menuButton.disabled = true;
+          try { await API.http.telegramRemoteMenuButton(); toast('Menu Button Web App настроена'); }
+          catch (error) { reportError(error); menuButton.disabled = false; }
+        };
+        const tunnelLaunch = qs('#telegram-tunnel-launch', body);
+        if (tunnelLaunch) tunnelLaunch.onclick = async () => {
+          tunnelLaunch.disabled = true;
+          try {
+            const result = await API.http.telegramTunnelLaunch({ enable_remote: true });
+            toast(result.ready ? 'Mini App готов к работе' : (result.message_ru || 'Туннель запускается'));
+            await refresh();
+          } catch (error) { reportError(error); tunnelLaunch.disabled = false; }
+        };
+        const tunnelStop = qs('#telegram-tunnel-stop', body);
+        if (tunnelStop) tunnelStop.onclick = async () => {
+          if (!confirm('Остановить cloudflared-туннель? Mini App из Telegram перестанет открываться.')) return;
+          tunnelStop.disabled = true;
+          try { await API.http.telegramTunnelStop(); toast('Туннель остановлен'); await refresh(); }
+          catch (error) { reportError(error); tunnelStop.disabled = false; }
+        };
+        const tunnelRefresh = qs('#telegram-tunnel-refresh', body);
+        if (tunnelRefresh) tunnelRefresh.onclick = async () => {
+          tunnelRefresh.disabled = true;
+          try { await refresh(); toast('Статус обновлён'); }
+          catch (error) { reportError(error); }
+          finally { tunnelRefresh.disabled = false; }
+        };
+        const openUsers = qs('#telegram-open-users', body);
+        if (openUsers) openUsers.onclick = () => { closeDrawer(); showUsers(); };
+        const accessPair = qs('#telegram-access-pair', body);
+        if (accessPair) accessPair.onclick = async () => {
+          accessPair.disabled = true;
+          try {
+            const pair = await API.http.telegramRemotePairStart({
+              role: qs('#telegram-access-role', body).value,
+              expected_user_id: (qs('#telegram-access-user-id', body).value || '').trim(),
+              require_phone: !!qs('#telegram-access-phone', body).checked,
+            });
+            qs('#telegram-access-pair-result', body).innerHTML = `<div class="telegram-pair"><div>Одноразовый код: <strong>${esc(pair.code)}</strong></div><a class="btn primary" href="${esc(pair.bot_url)}" target="_blank" rel="noopener">Открыть привязку в Telegram</a><div class="row-sub">После проверки контакта владелец должен нажать «Разрешить доступ» в личном чате бота.</div></div>`;
+          } catch (error) { reportError(error); accessPair.disabled = false; }
+        };
+        qsa('[data-remote-role]', body).forEach(select => select.onchange = async () => {
+          select.disabled = true;
+          try { await API.http.telegramRemoteSetRole(select.dataset.remoteRole, select.value); toast('Роль обновлена'); await refresh(); }
+          catch (error) { reportError(error); select.disabled = false; }
+        });
+        qsa('[data-remote-revoke]', body).forEach(button => button.onclick = async () => {
+          if (!confirm(`Отозвать удалённый доступ у Telegram user id ${button.dataset.remoteRevoke}?`)) return;
+          button.disabled = true;
+          try { await API.http.telegramRemoteRevoke(button.dataset.remoteRevoke); toast('Доступ отозван'); await refresh(); }
+          catch (error) { reportError(error); button.disabled = false; }
+        });
         const groupRecheck = qs('#telegram-group-recheck', body);
         if (groupRecheck) groupRecheck.onclick = async () => { groupRecheck.disabled = true; try { await refresh(); } catch (e) { groupRecheck.disabled = false; } };
         const groupDisconnect = qs('#telegram-group-disconnect', body);
@@ -882,17 +1074,43 @@
     await refresh();
   }
 
+  async function showUsers() {
+    if (!CURRENT_AUTH || !CURRENT_AUTH.is_owner) { toast('Управление пользователями доступно только владельцу'); return; }
+    const d = drawer('<h3>Пользователи</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка аккаунтов…</div>');
+    const body = qs('.drawer-b', d);
+    const refresh = async () => {
+      try {
+        const data = await API.http.authUsers();
+        const users = data.users || [];
+        body.innerHTML = `<div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}<br>Новый аккаунт активируется только вашим подтверждением в личном чате бота.</div><div class="list account-user-list">${users.map(user => `<div class="row"><div class="row-main"><div class="row-title">${esc([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || String(user.user_id))}${user.is_owner ? ' · владелец' : ''}</div><div class="row-sub">Telegram ID ${esc(user.user_id)} · ${esc(user.email || 'e-mail не заполнен')}${user.phone_mask ? ` · ${esc(user.phone_mask)}` : ''}<br>Создан: ${esc(user.created_at_utc || '—')} · вход: ${esc(user.last_login_at_utc || '—')}${user.revoked_at_utc ? ` · отозван: ${esc(user.revoked_at_utc)}` : ''}</div></div><span class="badge ${user.status === 'active' ? 'live' : user.status === 'pending' ? 'pending' : 'archived'}">${esc(user.status || '—')}</span>${user.is_owner ? '<span class="badge live">owner</span>' : `<select data-account-role="${esc(user.user_id)}" ${user.status === 'active' ? '' : 'disabled'}><option value="read_only" ${user.role === 'read_only' ? 'selected' : ''}>Только чтение</option><option value="full_control" ${user.role === 'full_control' ? 'selected' : ''}>Полное управление</option></select><button class="btn sm danger" data-account-revoke="${esc(user.user_id)}" ${user.status === 'active' ? '' : 'disabled'}>Отозвать</button>`}</div>`).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
+        qsa('[data-account-role]', body).forEach(select => select.onchange = async () => {
+          select.disabled = true;
+          try { await API.http.authUserRole(select.dataset.accountRole, select.value); toast('Роль обновлена'); await refresh(); }
+          catch (error) { reportError(error); select.disabled = false; }
+        });
+        qsa('[data-account-revoke]', body).forEach(button => button.onclick = async () => {
+          if (!confirm(`Отозвать аккаунт Telegram ID ${button.dataset.accountRevoke}? Все его сессии завершатся.`)) return;
+          button.disabled = true;
+          try { await API.http.authUserRevoke(button.dataset.accountRevoke); toast('Аккаунт отозван'); await refresh(); }
+          catch (error) { reportError(error); button.disabled = false; }
+        });
+      } catch (error) { renderError(body, error, refresh); }
+    };
+    await refresh();
+  }
+
   function wireTopbar() {
     const offline = !window.API || API.config.offline;
     const legacyUrl = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/';
     const more = qs('#tb-more');
     if (more) more.onclick = (e) => {
       e.stopPropagation();
-      menu(more, [
+      const systemItems = [
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
+        { icon: 'users', label: 'Пользователи', onClick: () => showUsers() },
         { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
@@ -904,7 +1122,13 @@
         { icon: 'coins', label: 'Пересчитать маржу', onClick: () => action('Обновление маржинальных требований', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => { }) },
         { divider: true },
         { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = legacyUrl; } },
-      ]);
+        { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
+      ];
+      const ownerOnly = new Set(['Запустить всё окружение', 'Состояние окружения', 'Диагностика системы', 'Пользователи', 'Telegram', 'Перезапустить backend', 'Освободить память ИИ', 'Обновить каталог стратегий', 'Пересчитать маржу', 'Перейти в старый интерфейс']);
+      let visibleItems = systemItems;
+      if (window.API && API.config.miniApp) visibleItems = systemItems.filter(item => item.label === 'Настройки дизайна');
+      else if (!CURRENT_AUTH || !CURRENT_AUTH.is_owner) visibleItems = systemItems.filter(item => item.divider || !ownerOnly.has(item.label));
+      menu(more, visibleItems);
     };
   }
 
@@ -1174,7 +1398,7 @@
   const ORCH = {
     built: false, open: false, sending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
-    agent: 'auto',
+    agent: 'auto', messagesSignature: '', feedbackVoice: null,
   };
   const ORCH_KEY = 'orch.currentConversationId';
   const ORCH_AGENT_KEY = 'orch.agent';
@@ -1188,10 +1412,11 @@
     nikita:    { label: 'Никита',       emoji: '👨‍💼', role: 'Новостной аналитик', icon: 'news',    sub: 'разбор новостей и рыночных событий',   cardTitle: 'Аналитик',      cardSub: 'Никита · новости',   ph: 'Разобрать новость или рыночное событие…' },
     tolik:     { label: 'Толик',        emoji: '🧑‍💻', role: 'Разработчик стратегий', icon: 'strategies', sub: 'стратегии, параметры, тесты',              cardTitle: 'Стратег',       cardSub: 'Толик · стратегии', ph: 'Вопрос по стратегиям, параметрам, тестам…' },
     marina:    { label: 'Марина',       emoji: '👩‍💼', role: 'Бухгалтер',         icon: 'wallet',     sub: 'расчёты, финансы, отчёты',            cardTitle: 'Бухгалтер',    cardSub: 'Марина · финансы',  ph: 'Финансы, расчёты, отчёты…' },
+    ivan:      { label: 'Иван',         emoji: '🧑‍🎨', role: 'Оператор графиков',  icon: 'trading',    sub: 'графики, линии, уровни, снимки',      cardTitle: 'Графист',      cardSub: 'Иван · графики',    ph: 'Команда по графикам: «поставь линию на MNQ 21500»…' },
   };
   const ORCH_ROLE_GROUPS = [
     { cap: 'Руководство', ids: ['manager', 'deputy', 'secretary', 'auto'] },
-    { cap: 'Специалисты', ids: ['nikita', 'tolik', 'marina'] },
+    { cap: 'Специалисты', ids: ['nikita', 'tolik', 'marina', 'ivan'] },
   ];
   function orchLoadAgent() {
     try { const v = localStorage.getItem(ORCH_AGENT_KEY); return (v && ORCH_ROLES[v]) ? v : 'auto'; } catch (e) { return 'auto'; }
@@ -1220,7 +1445,8 @@
     const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="Чат StratForge Orchestrator">
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
-        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">выбирает модель · работает вместо вас</span></div>
+        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">выбирает модель · работает вместо вас</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
+        <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
         <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
       </header>
@@ -1256,6 +1482,7 @@
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
     qs('#orch-list-toggle', panel).addEventListener('click', () => panel.classList.toggle('show-convos'));
     qs('#orch-new', panel).addEventListener('click', orchNewConversation);
+    qs('#orch-thread-state', panel).addEventListener('click', orchToggleConversationState);
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
     qsa('[data-orch-role]', panel).forEach(button => button.addEventListener('click', () => orchSelectRole(button.dataset.orchRole)));
     const ta = qs('#orch-text', panel);
@@ -1337,10 +1564,17 @@
     await orchLoadConversations();
     await orchLoadMessages(ORCH.currentId);
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
-    // gentle refresh only while open (keeps context in sync with Telegram/автономная работа)
+    // Fast local refresh while open: Telegram uses a separate long-poll receiver,
+    // so new messages and a first-request title become visible here almost at once.
     if (ORCH.pollStop) ORCH.pollStop();
     let stopped = false;
-    const id = setInterval(() => { if (!stopped && ORCH.open && !ORCH.sending) orchLoadMessages(ORCH.currentId, true).catch(() => {}); }, 8000);
+    const id = setInterval(() => {
+      if (stopped || !ORCH.open || ORCH.sending) return;
+      Promise.all([
+        orchLoadMessages(ORCH.currentId, true),
+        orchLoadConversations(),
+      ]).catch(() => {});
+    }, 1500);
     ORCH.pollStop = () => { stopped = true; clearInterval(id); };
   }
   function closeOrchestrator() {
@@ -1349,6 +1583,7 @@
     if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 220); }
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
+    orchStopFeedbackVoice();
   }
   async function orchLoadConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
@@ -1360,6 +1595,34 @@
       orchSaveCurrentId((ORCH.conversations[0] && ORCH.conversations[0].conversation_id) || 'default');
     }
     orchRenderConversations();
+    orchRenderWorkState();
+  }
+  const ORCH_WORK_STATES = {
+    open: ['Тема открыта', 'open'], awaiting_owner: ['Ожидается ваше решение', 'waiting'],
+    in_progress: ['Работа выполняется', 'running'], completed: ['Тема завершена', 'done'],
+    blocked: ['Требует внимания', 'blocked'],
+  };
+  function orchCurrentConversation() { return ORCH.conversations.find(c => c.conversation_id === ORCH.currentId) || null; }
+  function orchHasUnfinishedCurrent() {
+    const c = orchCurrentConversation();
+    return !!(c && !c.closed && ['awaiting_owner', 'in_progress', 'blocked'].includes(c.work_state));
+  }
+  function orchRenderWorkState() {
+    const c = orchCurrentConversation();
+    const meta = ORCH_WORK_STATES[(c && c.work_state) || 'open'] || ORCH_WORK_STATES.open;
+    const badge = qs('#orch-task-state');
+    if (badge) { badge.textContent = c && c.closed ? 'Тема закрыта' : meta[0]; badge.className = 'orch-task-state ' + (c && c.closed ? 'closed' : meta[1]); }
+    const toggle = qs('#orch-thread-state');
+    if (toggle) {
+      toggle.innerHTML = icon(c && c.closed ? 'refresh' : 'check');
+      toggle.title = c && c.closed ? 'Переоткрыть тему' : 'Закрыть тему';
+      toggle.setAttribute('aria-label', toggle.title);
+    }
+    const ta = qs('#orch-text'); const send = qs('#orch-send'); const mic = qs('#orch-mic');
+    const closed = !!(c && c.closed);
+    if (ta) { ta.disabled = closed || (!window.API || API.config.offline); ta.placeholder = closed ? 'Тема закрыта. Переоткройте её, чтобы продолжить.' : (ORCH_ROLES[ORCH.agent] || ORCH_ROLES.auto).ph; }
+    if (send) send.disabled = closed || (!window.API || API.config.offline);
+    if (mic) mic.hidden = closed || !(window.SpeechRecognition || window.webkitSpeechRecognition) || (!window.API || API.config.offline);
   }
   function orchRenderConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
@@ -1370,7 +1633,7 @@
       return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
         <div class="orch-convo-main">
           <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}</div>
-          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.</div>
+          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ. <span class="orch-convo-state ${(c.closed ? 'closed' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1])}">${c.closed ? 'закрыта' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0]}</span></div>
         </div>
         <div class="orch-convo-acts">
           <button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>
@@ -1394,14 +1657,19 @@
   }
   async function orchSelectConversation(cid) {
     if (!cid || cid === ORCH.currentId) { qs('#orch-panel').classList.remove('show-convos'); return; }
+    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Перейти в другой диалог?')) return;
     orchSaveCurrentId(cid);
+    ORCH.messagesSignature = '';
+    orchStopFeedbackVoice();
     orchRenderConversations();
     qs('#orch-panel').classList.remove('show-convos');
     await orchLoadMessages(cid);
+    orchRenderWorkState();
     const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
   }
   async function orchNewConversation() {
     if (!window.API || API.config.offline) return;
+    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
     try {
       const res = await API.http.aiOrchestratorCreateConversation('');
       orchSaveCurrentId((res.conversation && res.conversation.conversation_id) || 'default');
@@ -1440,15 +1708,21 @@
     if (isUser || !row.message_id) return '';
     const rating = Number(row.rating || 0);
     const comment = String(row.feedback_comment || '');
+    const hasComment = !!comment.trim();
     const labels = { 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' };
     const stars = [1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${rating >= n ? 'active' : ''}" data-orch-rate="${n}" title="${labels[n]}" aria-label="${labels[n]}">${icon('star')}</button>`).join('');
-    const feedbackOpen = rating === 1 || !!comment;
+    const feedbackOpen = rating === 1 && !hasComment;
     return `<div class="orch-rating" data-orch-message-id="${esc(row.message_id)}" data-rating="${rating || ''}">
       <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${stars}</div><span class="orch-feedback-saved" ${rating ? '' : 'hidden'}>${rating ? 'сохранено' : ''}</span></div>
+      <div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
+        <div><span class="orch-feedback-archive-label">Сохранённый комментарий</span><div class="orch-feedback-archive-text">${esc(comment)}</div></div>
+        <button type="button" class="orch-feedback-edit">Редактировать</button>
+      </div>
       <div class="orch-feedback-area" ${feedbackOpen ? '' : 'hidden'}>
-        <textarea class="orch-feedback-text" rows="2" maxlength="2000" placeholder="Что исправить в ответе?">${esc(comment)}</textarea>
+        <textarea class="orch-feedback-text" rows="2" maxlength="2000" placeholder="Что исправить в ответе?"></textarea>
         <div class="orch-feedback-actions">
           <button type="button" class="orch-feedback-mic" title="Надиктовать комментарий" aria-label="Надиктовать комментарий" hidden>${icon('mic')}</button>
+          <button type="button" class="orch-feedback-cancel" hidden>Отмена</button>
           <button type="button" class="orch-feedback-save">Сохранить комментарий</button>
         </div>
       </div>
@@ -1463,26 +1737,66 @@
     ].filter(Boolean).join(' · ');
     const think = (!isUser && row.thinking) ? orchThinkBlock(row.thinking, false) : '';
     const rating = orchRatingHtml(row, isUser);
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${think}<div class="orch-msg-body">${esc(row.content || '')}</div><div class="orch-msg-meta">${meta}</div>${rating}</div>`;
+    const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
+    const media = attachments.map(a =>
+      `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
+    ).join('');
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${think}<div class="orch-msg-body">${esc(row.content || '')}</div>${media}<div class="orch-msg-meta">${meta}</div>${rating}</div>`;
+  }
+  function orchStopFeedbackVoice() {
+    const voice = ORCH.feedbackVoice;
+    if (!voice) return;
+    ORCH.feedbackVoice = null;
+    voice.listening = false;
+    if (voice.btn) { voice.btn.classList.remove('listening'); voice.btn.title = 'Надиктовать комментарий'; }
+    try { if (voice.rec) voice.rec.stop(); } catch (e) { /* ignore */ }
+  }
+  async function orchToggleConversationState() {
+    const current = orchCurrentConversation();
+    if (!current || !window.API || API.config.offline) return;
+    const next = current.closed ? 'open' : 'closed';
+    if (next === 'closed' && orchHasUnfinishedCurrent() && !confirm('Вопрос ещё не завершён. Закрыть тему без продолжения?')) return;
+    try {
+      await API.http.aiOrchestratorSetConversationState(ORCH.currentId, next);
+      await orchLoadConversations();
+      orchRenderWorkState();
+      const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+    } catch (e) { reportError(e); }
   }
   function orchStartFeedbackVoice(btn, ta) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR || !btn || !ta) return;
+    if (ORCH.feedbackVoice && ORCH.feedbackVoice.btn === btn) { orchStopFeedbackVoice(); return; }
+    orchStopFeedbackVoice();
     let rec;
-    try { rec = new SR(); } catch (e) { return; }
-    rec.lang = document.documentElement.lang || navigator.language || 'ru-RU';
+    try { rec = new SR(); } catch (e) { toast('Голосовой ввод недоступен в этом браузере'); return; }
+    rec.lang = 'ru-RU';
     rec.interimResults = true;
-    rec.continuous = false;
-    const base = ta.value.trim();
+    rec.continuous = true;
+    const voice = { rec, btn, ta, listening: true, base: ta.value.trim() ? ta.value.trim() + ' ' : '' };
+    ORCH.feedbackVoice = voice;
     btn.classList.add('listening');
-    btn.title = 'Идёт запись…';
+    btn.title = 'Остановить запись';
     rec.onresult = (ev) => {
-      let text = '';
-      for (let i = 0; i < ev.results.length; i++) text += ev.results[i][0].transcript;
-      ta.value = (base ? base + ' ' : '') + text.trim();
+      let finalText = '', interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const text = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) finalText += text; else interim += text;
+      }
+      if (finalText) voice.base = (voice.base + finalText).replace(/\s+/g, ' ') + ' ';
+      ta.value = (voice.base + interim).trimStart().slice(0, 2000);
+      ta.dataset.dirty = '1';
     };
-    rec.onend = () => { btn.classList.remove('listening'); btn.title = 'Надиктовать комментарий'; };
-    try { rec.start(); } catch (e) { btn.classList.remove('listening'); }
+    rec.onerror = (event) => {
+      if (event && event.error === 'not-allowed') toast('Нет доступа к микрофону — разрешите его в браузере');
+      if (event && ['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) orchStopFeedbackVoice();
+    };
+    rec.onend = () => {
+      if (ORCH.feedbackVoice === voice && voice.listening && btn.isConnected) {
+        try { rec.start(); } catch (e) { orchStopFeedbackVoice(); }
+      }
+    };
+    try { rec.start(); } catch (e) { orchStopFeedbackVoice(); toast('Голосовой ввод недоступен в этом браузере'); }
   }
   async function orchSaveRating(node, rating, comment) {
     if (!node || !window.API || API.config.offline) return;
@@ -1490,17 +1804,22 @@
     if (!mid) return;
     node.classList.add('saving');
     try {
-      await API.http.aiOrchestratorRateMessage(ORCH.currentId, mid, rating, comment || '');
+      orchStopFeedbackVoice();
+      const result = await API.http.aiOrchestratorRateMessage(ORCH.currentId, mid, rating, comment || '');
+      const savedComment = String(result && result.message && result.message.feedback_comment || '');
       node.dataset.rating = String(rating);
       qsa('[data-orch-rate]', node).forEach(btn => btn.classList.toggle('active', Number(btn.dataset.orchRate) <= rating));
       const saved = qs('.orch-feedback-saved', node);
       if (saved) { saved.hidden = false; saved.textContent = 'сохранено'; }
-      if (rating === 1) {
-        const area = qs('.orch-feedback-area', node); if (area) area.hidden = false;
-        const ta = qs('.orch-feedback-text', node); if (ta) ta.focus();
-      } else {
-        const area = qs('.orch-feedback-area', node); if (area) area.hidden = true;
-      }
+      const archive = qs('.orch-feedback-archive', node);
+      const archiveText = qs('.orch-feedback-archive-text', node);
+      if (archiveText) archiveText.textContent = savedComment;
+      if (archive) archive.hidden = !savedComment;
+      const area = qs('.orch-feedback-area', node);
+      if (area) area.hidden = rating !== 1 || !!savedComment;
+      const ta = qs('.orch-feedback-text', node);
+      if (ta) { ta.value = ''; ta.dataset.dirty = ''; }
+      const cancel = qs('.orch-feedback-cancel', node); if (cancel) cancel.hidden = true;
     } catch (e) { reportError(e); }
     finally { node.classList.remove('saving'); }
   }
@@ -1510,7 +1829,10 @@
       qsa('[data-orch-rate]', node).forEach(btn => btn.addEventListener('click', () => {
         const rating = Number(btn.dataset.orchRate || 0);
         const ta = qs('.orch-feedback-text', node);
-        orchSaveRating(node, rating, ta ? ta.value : '');
+        const archive = qs('.orch-feedback-archive', node);
+        const archived = qs('.orch-feedback-archive-text', node);
+        const comment = archive && !archive.hidden && archived ? archived.textContent : (ta ? ta.value : '');
+        orchSaveRating(node, rating, comment);
       }));
       const save = qs('.orch-feedback-save', node);
       if (save) save.addEventListener('click', () => {
@@ -1518,8 +1840,29 @@
         const ta = qs('.orch-feedback-text', node);
         orchSaveRating(node, rating, ta ? ta.value : '');
       });
+      const edit = qs('.orch-feedback-edit', node);
+      if (edit) edit.addEventListener('click', () => {
+        orchStopFeedbackVoice();
+        const area = qs('.orch-feedback-area', node);
+        const archive = qs('.orch-feedback-archive', node);
+        const archived = qs('.orch-feedback-archive-text', node);
+        const ta = qs('.orch-feedback-text', node);
+        if (area) area.hidden = false;
+        if (archive) archive.hidden = true;
+        if (ta) { ta.value = archived ? archived.textContent : ''; ta.dataset.dirty = '1'; ta.focus(); }
+        const cancel = qs('.orch-feedback-cancel', node); if (cancel) cancel.hidden = false;
+      });
+      const cancel = qs('.orch-feedback-cancel', node);
+      if (cancel) cancel.addEventListener('click', () => {
+        orchStopFeedbackVoice();
+        const area = qs('.orch-feedback-area', node); if (area) area.hidden = true;
+        const archive = qs('.orch-feedback-archive', node); if (archive) archive.hidden = false;
+        const ta = qs('.orch-feedback-text', node); if (ta) { ta.value = ''; ta.dataset.dirty = ''; }
+        cancel.hidden = true;
+      });
       const mic = qs('.orch-feedback-mic', node);
       const ta = qs('.orch-feedback-text', node);
+      if (ta) ta.addEventListener('input', () => { ta.dataset.dirty = '1'; });
       if (mic && ta && SR && window.API && !API.config.offline) {
         mic.hidden = false;
         mic.addEventListener('click', () => orchStartFeedbackVoice(mic, ta));
@@ -1535,8 +1878,16 @@
       messages = data.messages || [];
     } catch (e) { if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return; } return; }
     if (ORCH.currentId !== cid) return;
+    const signature = JSON.stringify(messages.map(row => [
+      row.message_id, row.timestamp_utc, row.content, row.rating,
+      row.feedback_comment, row.feedback_timestamp_utc,
+    ]));
+    if (silent && signature === ORCH.messagesSignature) return;
+    if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    orchStopFeedbackVoice();
     box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>';
+    ORCH.messagesSignature = signature;
     wireOrchFeedback(box);
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
   }

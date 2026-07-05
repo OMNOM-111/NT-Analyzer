@@ -7,6 +7,34 @@
    ===================================================================== */
 (function () {
   const isFile = location.protocol === 'file:';
+  const INIT_DATA_KEY = 'stratforge.telegram.initData';
+
+  function discoverTelegramInitData() {
+    const sdkValue = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData;
+    let raw = String(sdkValue || '');
+    for (const source of [location.hash.slice(1), location.search.slice(1)]) {
+      if (raw || !source) continue;
+      const params = new URLSearchParams(source);
+      raw = String(params.get('tgWebAppData') || '');
+    }
+    try {
+      if (raw) sessionStorage.setItem(INIT_DATA_KEY, raw);
+      else raw = String(sessionStorage.getItem(INIT_DATA_KEY) || '');
+    } catch (e) { /* storage can be disabled inside hardened WebViews */ }
+    return raw;
+  }
+
+  const telegramInitData = discoverTelegramInitData();
+  const miniApp = !!telegramInitData;
+  let csrfToken = '';
+  if (miniApp) document.documentElement.classList.add('telegram-mini-app');
+
+  function requestHeaders(values) {
+    const headers = Object.assign({}, values || {});
+    if (telegramInitData) headers['X-Telegram-Init-Data'] = telegramInitData;
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    return headers;
+  }
 
   // "Старый интерфейс" target: served by backend → /ui/legacy/.
   const legacyUrl = '/ui/legacy/';
@@ -26,7 +54,7 @@
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const res = await fetch(path, { headers: { Accept: 'application/json' }, signal });
+        const res = await fetch(path, { headers: requestHeaders({ Accept: 'application/json' }), signal });
         if (!res.ok) {
           let detail = '';
           try { detail = (await res.json()).error || ''; } catch (e) { /* non-json */ }
@@ -44,7 +72,7 @@
   async function send(path, method, body) {
     const res = await fetch(path, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: requestHeaders({ 'Content-Type': 'application/json' }),
       body: body == null ? '{}' : JSON.stringify(body),
     });
     let data = null;
@@ -53,7 +81,7 @@
     return data;
   }
   async function del(path) {
-    const res = await fetch(path, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const res = await fetch(path, { method: 'DELETE', headers: requestHeaders({ 'Content-Type': 'application/json' }), body: '{}' });
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty */ }
     if (!res.ok) throw new HttpError(res.status, (data && data.error) || res.statusText, path);
@@ -71,7 +99,7 @@
     const h = handlers || {};
     const res = await fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      headers: requestHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
       body: JSON.stringify({ message, conversation_id: conversationId || 'default', agent: agent || '' }),
     });
     if (!res.ok || !res.body || !res.body.getReader) {
@@ -116,6 +144,18 @@
 
   // Endpoint map mirrors app/server.py exactly.
   const http = {
+    authStatus: (o) => getJSON('/api/auth/status', o),
+    authLoginStart: () => send('/api/auth/login/start', 'POST', {}),
+    authLoginStatus: async (challengeId) => {
+      const data = await send('/api/auth/login/status', 'POST', { challenge_id: challengeId });
+      if (data && data.csrf_token) csrfToken = data.csrf_token;
+      return data;
+    },
+    authProfile: (challengeId, profile) => send('/api/auth/profile', 'POST', { challenge_id: challengeId, profile }),
+    authLogout: () => send('/api/auth/logout', 'POST', {}),
+    authUsers: (o) => getJSON('/api/auth/users', o),
+    authUserRole: (id, role) => send('/api/auth/users/' + encodeURIComponent(id) + '/role', 'POST', { role }),
+    authUserRevoke: (id) => send('/api/auth/users/' + encodeURIComponent(id) + '/revoke', 'POST', {}),
     health: (o) => getJSON('/api/health', o),
     diagnostics: (o) => getJSON('/api/diagnostics', o),
     catalog: (o) => getJSON('/api/catalog', o),
@@ -123,6 +163,17 @@
     northStar: (o) => getJSON('/api/governance/north-star', o),
     integrationsStatus: (o) => getJSON('/api/integrations/status', o),
     telegramStatus: (o) => getJSON('/api/telegram/status', o),
+    telegramRemoteMe: (o) => getJSON('/api/telegram/remote/me', o),
+    telegramRemoteAccess: (o) => getJSON('/api/telegram/remote/access', o),
+    telegramRemoteSettings: (body) => send('/api/telegram/remote/settings', 'POST', body),
+    telegramRemotePairStart: (body) => send('/api/telegram/remote/pair/start', 'POST', body),
+    telegramRemoteSetRole: (id, role) => send('/api/telegram/remote/users/' + encodeURIComponent(id) + '/role', 'POST', { role }),
+    telegramRemoteRevoke: (id) => send('/api/telegram/remote/users/' + encodeURIComponent(id) + '/revoke', 'POST', {}),
+    telegramRemoteMenuButton: () => send('/api/telegram/remote/menu-button', 'POST', {}),
+    telegramTunnelStatus: (o) => getJSON('/api/telegram/tunnel/status', o),
+    telegramTunnelLaunch: (body) => send('/api/telegram/tunnel/launch', 'POST', body || {}),
+    telegramTunnelStart: () => send('/api/telegram/tunnel/start', 'POST', {}),
+    telegramTunnelStop: () => send('/api/telegram/tunnel/stop', 'POST', {}),
     telegramSaveToken: (token) => send('/api/telegram/token', 'POST', { token }),
     telegramPairStart: () => send('/api/telegram/pair/start', 'POST', {}),
     telegramPairComplete: () => send('/api/telegram/pair/complete', 'POST', {}),
@@ -168,8 +219,21 @@
     portfolioAddCell: (body) => send('/api/portfolio/cells', 'POST', body),
     portfolioArchiveCell: (id, body) => send('/api/portfolio/cells/' + encodeURIComponent(id) + '/archive', 'POST', body || {}),
     aiCellHistory: (cell, o) => getJSON('/api/ai-lab/cell-history' + qs({ cell }), o),
+    catalogRefresh: () => send('/api/catalog/refresh', 'POST', {}),
     instruments: (o) => getJSON('/api/ops/runtime/instruments', o),
+    desktopInstruments: (o) => getJSON('/api/ops/runtime/instruments?desktop=1', o),
+    marketBarsBatch: (body) => send('/api/ops/runtime/bars/batch', 'POST', body),
     marketBars: (q, o) => getJSON('/api/ops/runtime/bars' + qs(q), o),
+    priceAlerts: (q, o) => getJSON('/api/ops/runtime/price-alerts' + qs(q), o),
+    createPriceAlert: (body) => send('/api/ops/runtime/price-alerts', 'POST', body),
+    deletePriceAlert: (id) => del('/api/ops/runtime/price-alerts/' + encodeURIComponent(id)),
+    chartCommands: (q, o) => getJSON('/api/ops/runtime/chart-commands' + qs(q), o),
+    ackChartCommand: (id, status, result) => send('/api/ops/runtime/chart-commands/ack', 'POST', { id, status, result }),
+    chartSnapshot: (body) => send('/api/ops/runtime/chart-snapshot', 'POST', body),
+    snapshots: (q, o) => getJSON('/api/ops/runtime/snapshots' + qs(q), o),
+    updateSnapshot: (body) => send('/api/ops/runtime/snapshots/update', 'POST', body),
+    clearSnapshots: (keepFavorites) => send('/api/ops/runtime/snapshots/clear', 'POST', { keep_favorites: keepFavorites !== false }),
+    deleteSnapshot: (id) => del('/api/ops/runtime/snapshots/' + encodeURIComponent(id)),
     reports: (q, o) => getJSON('/api/reports' + qs(q), o),
     jobs: (q, o) => getJSON('/api/jobs' + qs(q), o),
     job: (id, o) => getJSON('/api/jobs/' + encodeURIComponent(id), o),
@@ -240,6 +304,7 @@
     aiOrchestratorCreateConversation: (title) => send('/api/ai-lab/orchestrator/conversations', 'POST', { title: title || '' }),
     aiOrchestratorRenameConversation: (id, title) => send('/api/ai-lab/orchestrator/conversations/rename', 'POST', { conversation_id: id, title }),
     aiOrchestratorPinConversation: (id, pinned) => send('/api/ai-lab/orchestrator/conversations/pin', 'POST', { conversation_id: id, pinned: pinned }),
+    aiOrchestratorSetConversationState: (id, state) => send('/api/ai-lab/orchestrator/conversations/state', 'POST', { conversation_id: id, state: state }),
     aiOrchestratorDeleteConversation: (id) => send('/api/ai-lab/orchestrator/conversations/delete', 'POST', { conversation_id: id }),
     domainAgents: (o) => getJSON('/api/ai-lab/domain-agents', o),
     accounting: (q, o) => getJSON('/api/ai-lab/accounting' + qs(q), o),
@@ -264,5 +329,11 @@
     aiUserResearchScan: (body) => send('/api/ai-lab/user-research/scan', 'POST', body || {}),
   };
 
-  window.API = { config: { legacyUrl, offline: isFile }, http, HttpError };
+  const authReady = isFile ? Promise.resolve({ auth: null }) : http.authStatus({ retries: 0 }).then(auth => {
+    csrfToken = String(auth.csrf_token || '');
+    document.documentElement.dataset.remoteRole = auth.role || 'read_only';
+    document.documentElement.classList.add('authenticated');
+    return { auth };
+  }).catch(error => ({ error }));
+  window.API = { config: { legacyUrl, offline: isFile, miniApp, telegramInitData }, http, HttpError, authReady };
 })();

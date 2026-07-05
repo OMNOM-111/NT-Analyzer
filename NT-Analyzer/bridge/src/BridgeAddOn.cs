@@ -30,6 +30,7 @@ namespace NTAnalyzerBridge
         private CatalogRefresher _catalogRefresher;
         private CompileErrorExporter _compileErrorExporter;
         private RuntimeTelemetryExporter _runtimeExporter;
+        private RuntimeMarketDataExporter _marketDataExporter;
         private RuntimeCommandProcessor _commandProcessor;
 
         protected override void OnStateChange()
@@ -132,6 +133,18 @@ namespace NTAnalyzerBridge
                     BridgeLog.Error("RuntimeTelemetryExporter start failed", rex);
                 }
 
+                // Dynamic historical + realtime bar subscriptions requested by
+                // the browser desktop. Read-only; never places orders.
+                try
+                {
+                    _marketDataExporter = new RuntimeMarketDataExporter(_cfg.ProjectRoot);
+                    _marketDataExporter.Start();
+                }
+                catch (Exception mdex)
+                {
+                    BridgeLog.Error("RuntimeMarketDataExporter start failed", mdex);
+                }
+
                 // Phase 18: paper-only command processor.
                 // Reads data/runtime/commands.jsonl and enable/disables NinjaScript
                 // strategy instances or reconnects paper/demo/playback connections.
@@ -157,6 +170,10 @@ namespace NTAnalyzerBridge
             try { _commandProcessor?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: command.Stop failed", ex); }
             finally { _commandProcessor = null; }
+
+            try { _marketDataExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: marketData.Stop failed", ex); }
+            finally { _marketDataExporter = null; }
 
             try { _runtimeExporter?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: runtime.Stop failed", ex); }

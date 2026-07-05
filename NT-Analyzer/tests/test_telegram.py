@@ -146,6 +146,25 @@ def test_paired_chat_routes_free_text_to_orchestrator(monkeypatch, tmp_path) -> 
     assert state["chief_update_id"] == 10
 
 
+def test_command_receiver_uses_long_poll_for_low_latency(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    captured = {}
+
+    def fake_api(method, payload=None, **kwargs):
+        captured.update({"method": method, "payload": payload or {}, **kwargs})
+        return []
+
+    monkeypatch.setattr(telegram_service, "_api_call", fake_api)
+    state = {"chief_commands_initialized": True, "chief_update_id": 10}
+
+    telegram_service._poll_chief_commands(state, long_poll_timeout=20)
+
+    assert captured["method"] == "getUpdates"
+    assert captured["payload"]["timeout"] == 20
+    assert captured["timeout"] == 25
+
+
 def test_forum_topic_is_created_once_and_dedupes(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")
@@ -188,6 +207,44 @@ def test_forum_topic_title_tracks_app_conversation(monkeypatch, tmp_path) -> Non
     assert updated["name"] == "Исследование MNQ"
     edits = [payload for method, payload in calls if method == "editForumTopic"]
     assert edits == [{"chat_id": "-1001234567890", "message_thread_id": 42, "name": "Исследование MNQ"}]
+
+
+def test_owner_app_message_is_mirrored_into_bound_topic(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    monkeypatch.setattr(telegram_service, "_api_call",
+                        lambda *a, **k: {"message_thread_id": 77, "name": "тема"})
+    telegram_service.ensure_topic("C-ABC", "тема")
+
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw",
+                        lambda text, **kwargs: sent.append((text, kwargs)) or {})
+
+    ok = telegram_service.mirror_owner_message(
+        "Проверь статус MNQ", conversation_id="C-ABC", conversation_title="тема",
+    )
+
+    assert ok is True
+    assert len(sent) == 1
+    text, kwargs = sent[0]
+    assert "Проверь статус MNQ" in text
+    assert "Вы:" in text
+    assert kwargs.get("thread_id") == 77
+
+
+def test_owner_app_message_mirror_respects_master_switch(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": False})
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw",
+                        lambda text, **kwargs: sent.append(text) or {})
+
+    ok = telegram_service.mirror_owner_message("привет", conversation_id="C-ABC")
+
+    assert ok is False
+    assert sent == []
 
 
 def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None:

@@ -10,6 +10,7 @@ connections are never reconnect targets.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,11 +39,60 @@ SAFE_PROPOSAL_ACTIONS = {"enable_strategy", "disable_strategy"}
 ORCHESTRATOR_NAME = "StratForge Orchestrator"
 ALLOWED_PLAN_ACTIONS = {
     "respond", "status", "start_research", "pause_research", "resume_research",
-    "stop_research", "update_research", "audit_backtests", "save_rule", "create_task",
+    "stop_research", "schedule_research_stop", "update_research", "audit_backtests", "save_rule", "create_task",
     "add_calendar_event", "comment_strategy", "create_cells",
     "propose_strategy_control", "reconnect_runtime_connection",
     "generate_report", "ensure_local_models",
 }
+
+# The owner asked not to be addressed the same way in every message. These are
+# the vocatives he explicitly allowed. An empty entry means the formal "вы" form
+# with no vocative at all (the sentence just starts normally).
+_OWNER_ADDRESSES = (
+    "Дмитрий Сергеевич",
+    "Начальник",
+    "Мой господин",
+    "Шеф",
+    "",  # plain "вы"-form, no vocative
+)
+
+
+def _owner_address(seed: str = "") -> str:
+    """Pick a varied way to address the owner.
+
+    With a ``seed`` (e.g. a strategy class name) the choice is deterministic and
+    side-effect free, so the same event always renders the same address and
+    tests stay stable. Without a seed the choice rotates through a small counter
+    persisted in the mission state, so consecutive unrelated messages differ.
+    """
+    forms = _OWNER_ADDRESSES
+    if seed:
+        digest = hashlib.sha1(str(seed).encode("utf-8")).hexdigest()
+        return forms[int(digest, 16) % len(forms)]
+    try:
+        with _LOCK:
+            doc = _load()
+            idx = int(doc.get("owner_address_index") or 0)
+            doc["owner_address_index"] = (idx + 1) % len(forms)
+            _save(doc)
+        return forms[idx % len(forms)]
+    except Exception:
+        return forms[0]
+
+
+def _greet(rest: str, seed: str = "") -> str:
+    """Prefix a message body with a varied vocative address to the owner.
+
+    ``rest`` is expected to start lowercase (e.g. "проверил trend_pullback.").
+    For the vocative-less "вы" form the first letter is capitalized instead.
+    """
+    body = str(rest or "").strip()
+    address = _owner_address(seed)
+    if not address:
+        return (body[:1].upper() + body[1:]) if body else ""
+    if not body:
+        return address
+    return f"{address}, {body}"
 
 ORCHESTRATOR_SYSTEM_PROMPT = """
 You are StratForge Orchestrator, the operating AI coordinator inside a local
@@ -102,8 +152,12 @@ EXECUTIVE MANAGER DOCTRINE
 - Never send periodic "still working" messages or repeat the same failure. When
   a recoverable problem occurs, solve it. One short heads-up is allowed only if
   the problem materially changes the plan or duration.
-- Treat "stop/останови/прекрати" as an immediate, highest-priority command.
-  Cancel the current run and prevent every queued or future run. Confirm once.
+- Interpret stop commands by intent, not by a keyword hit. A bare command such
+  as "остановись", "стоп сейчас" or "прекрати работу" is immediate and has
+  highest priority. A scheduled command such as "продолжай и остановись в
+  11:00" or "остановись через 15 минут" must keep working until that deadline.
+  Conditional, negated and quoted mentions ("пока не скажу остановись", "не
+  останавливайся", "слово остановись") are not immediate stop commands.
 - Develop one strategy deeply before starting another: initial hypothesis,
   compile/repair, smoke backtest, then evidence-driven mutations of regime,
   entry confirmation, filters, exits and risk. Do not create a new strategy
@@ -123,6 +177,24 @@ EXECUTIVE MANAGER DOCTRINE
   instrument, family, regime or failure mechanism actually bears on the current
   question. Name that link; otherwise do not claim the proposal "agrees" with
   them.
+
+CONVERSATION CONTINUITY AND COMPLETION
+- A short approval such as "да", "ок запускай", "делай", "начинай" or
+  "подтверждаю" authorizes the concrete plan in the immediately preceding
+  assistant turn of the same conversation. Execute every safe application step
+  needed for that plan; do not demand that the owner repeat action names.
+- If the preceding plan mentioned two implementation variants and the owner
+  simply approves, choose the safest useful default from the known state. For
+  strategy research, continue the matching stopped mission or replace a
+  cancelled experiment with a fresh variant, and use the application's standard
+  acceptance gates. Ask again only when the alternatives differ in external
+  authority, money, live-account risk or another irreversible consequence.
+- Never describe a cancelled experiment as a market rejection or success. It
+  has no result and may be replaced when the owner resumes the work.
+- Every operational reply must leave one unambiguous state: awaiting owner,
+  running, completed, or blocked. If blocked, name the exact action and the
+  concrete missing decision. Never output an internal phrase like "the current
+  message does not authorize this action" to the owner.
 
 PROJECT NORTH STAR
 - The project goal is in application_snapshot.north_star: $100,000 realized
@@ -150,6 +222,9 @@ PERMITTED APPLICATION CAPABILITIES
 - start_research: start or schedule historical-only AI strategy research for a
   bounded duration, goal, instruments, strategy count, iterations and budget;
 - pause_research, resume_research, stop_research: control that research mission;
+- schedule_research_stop: keep the active mission running and stop it at an
+  exact future `ends_at_utc`; use this instead of stop_research for a future
+  clock time or relative deadline;
 - update_research: change the active historical mission's safe research policy
   (for example, finish/refine the current strategy before creating another);
 - audit_backtests: inspect completed experiments for insufficient periods,
@@ -241,6 +316,8 @@ ACTION ARGUMENTS
   UTC, until_stopped, allow_local_models, notification_policy, and
   strategy_time_budget_minutes. Use one strategy per cycle and multiple
   evidence-driven iterations when the owner asks to finish/refine a strategy.
+- schedule_research_stop: ends_at_utc (required, future UTC timestamp no more
+  than 168 hours away).
 - create_task/add_calendar_event: title, due_at_utc, priority.
 - save_rule: text, priority (use high for permanent/never rules).
 - comment_strategy: experiment_id, text, priority.
@@ -368,17 +445,23 @@ def create_conversation(title: str = "", *, conversation_id: str = "") -> Dict[s
             "updated_at_utc": _now(),
             "message_count": 0,
             "auto_title": not bool(str(title or "").strip()),
+            "work_state": "open",
+            "work_detail": "",
+            "closed": False,
         }
         conversations.append(rec)
         index["conversations"] = conversations[-200:]
         _write_index(index)
-    _ensure_telegram_topic_async(cid, rec["title"])
+    # An untitled chat has no durable name until the owner's first request.
+    # Creating its Telegram topic here would permanently expose the placeholder
+    # "Новый чат" and race the first-message title assignment.
+    if not rec["auto_title"]:
+        _sync_telegram_topic_title_async(cid, rec["title"])
     return rec
 
 
-def _ensure_telegram_topic_async(conversation_id: str, title: str) -> None:
-    """Best-effort: create the Telegram forum topic for a new app chat (if the
-    group mode is configured). Non-blocking; deduplicated by telegram_service."""
+def _sync_telegram_topic_title_async(conversation_id: str, title: str) -> None:
+    """Best-effort non-blocking synchronization of an app title to Telegram."""
     # Test-created conversations must never mutate the real Telegram forum.
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
@@ -398,10 +481,19 @@ def _ensure_telegram_topic_async(conversation_id: str, title: str) -> None:
 
 def _touch_conversation(conversation_id: str, *, title_hint: str = "",
                         message_count: Optional[int] = None) -> None:
-    """Update a non-default conversation's index metadata (title/updated/count)."""
+    """Update metadata and permanently derive the title from the first request."""
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
         return  # implicit conversation; no index entry (keeps test isolation)
+    first_request = ""
+    if title_hint:
+        # Reading the transcript also repairs old auto-title rows that used to
+        # follow the latest message: the first owner request is authoritative.
+        for message in _read_conversation(500, path=_conversation_file(cid)):
+            if message.get("role") == "user" and str(message.get("content") or "").strip():
+                first_request = str(message["content"])
+                break
+        first_request = first_request or str(title_hint)
     title_changed = False
     synced_title = ""
     with _LOCK:
@@ -417,16 +509,85 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
         row["updated_at_utc"] = _now()
         if message_count is not None:
             row["message_count"] = int(message_count)
-        if title_hint and row.get("auto_title", True):
-            new_title = _title_from_message(title_hint)
+        if first_request and row.get("auto_title", True):
+            new_title = _title_from_message(first_request)
             title_changed = new_title != row.get("title")
             row["title"] = new_title
-            row["auto_title"] = True
-        synced_title = str(row.get("title") or "")
+            # False means the automatic title is finalized. Later requests can
+            # update activity/count only; they can never rename this dialogue.
+            row["auto_title"] = False
+            row["title_source"] = "first_request"
+            synced_title = new_title
         index["conversations"] = conversations[-200:]
         _write_index(index)
     if title_changed:
-        _ensure_telegram_topic_async(cid, synced_title)
+        _sync_telegram_topic_title_async(cid, synced_title)
+
+
+_CONVERSATION_WORK_STATES = {"open", "awaiting_owner", "in_progress", "completed", "blocked"}
+
+
+def _set_conversation_work_state(conversation_id: str, state: str, detail: str = "") -> None:
+    """Persist the task lifecycle separately from the chat transcript."""
+    cid = _safe_conversation_id(conversation_id)
+    clean_state = state if state in _CONVERSATION_WORK_STATES else "open"
+    with _LOCK:
+        index = _read_index()
+        if cid == DEFAULT_CONVERSATION_ID:
+            index["default_work_state"] = clean_state
+            index["default_work_detail"] = str(detail or "")[:300]
+        else:
+            conversations = list(index.get("conversations") or [])
+            row = next((r for r in conversations if r.get("conversation_id") == cid), None)
+            if row is None:
+                return
+            row["work_state"] = clean_state
+            row["work_detail"] = str(detail or "")[:300]
+            index["conversations"] = conversations
+        _write_index(index)
+
+
+def set_conversation_closed(conversation_id: str, closed: bool) -> Dict[str, Any]:
+    """Close a finished/abandoned topic or reopen it without deleting history."""
+    cid = _safe_conversation_id(conversation_id)
+    with _LOCK:
+        doc = _load()
+        mission = dict(doc.get("mission") or {})
+        if closed and mission.get("status") in {"active", "paused", "finishing"} and (
+            _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID) == cid
+        ):
+            raise ChiefAgentError("Нельзя закрыть тему, пока связанная работа выполняется или приостановлена.")
+        index = _read_index()
+        if cid == DEFAULT_CONVERSATION_ID:
+            index["default_closed"] = bool(closed)
+            if not closed:
+                index["default_work_state"] = "open"
+            result = {
+                "conversation_id": cid, "closed": bool(closed),
+                "work_state": index.get("default_work_state") or "open",
+            }
+        else:
+            conversations = list(index.get("conversations") or [])
+            row = next((r for r in conversations if r.get("conversation_id") == cid), None)
+            if row is None:
+                raise ChiefAgentError("Чат не найден.")
+            row["closed"] = bool(closed)
+            if not closed:
+                row["work_state"] = "open"
+            row["updated_at_utc"] = _now()
+            index["conversations"] = conversations
+            result = dict(row)
+        _write_index(index)
+    return result
+
+
+def _conversation_is_closed(conversation_id: str) -> bool:
+    cid = _safe_conversation_id(conversation_id)
+    index = _read_index()
+    if cid == DEFAULT_CONVERSATION_ID:
+        return bool(index.get("default_closed"))
+    row = next((r for r in (index.get("conversations") or []) if r.get("conversation_id") == cid), None)
+    return bool(row and row.get("closed"))
 
 
 def rename_conversation(conversation_id: str, title: str) -> Dict[str, Any]:
@@ -448,7 +609,7 @@ def rename_conversation(conversation_id: str, title: str) -> Dict[str, Any]:
         index["conversations"] = conversations
         _write_index(index)
         result = dict(row)
-    _ensure_telegram_topic_async(cid, result["title"])
+    _sync_telegram_topic_title_async(cid, result["title"])
     return result
 
 
@@ -490,9 +651,41 @@ def pin_conversation(conversation_id: str, pinned: bool = True) -> Dict[str, Any
         return row
 
 
+def _finalize_legacy_conversation_titles() -> Dict[str, Any]:
+    """Migrate old rolling titles to the first request and schedule topic sync."""
+    finalized: List[tuple[str, str]] = []
+    with _LOCK:
+        index = _read_index()
+        conversations = list(index.get("conversations") or [])
+        for row in conversations:
+            if not row.get("auto_title", True):
+                continue
+            cid = _safe_conversation_id(row.get("conversation_id"))
+            first_request = ""
+            for message in _read_conversation(500, path=_conversation_file(cid)):
+                if message.get("role") == "user" and str(message.get("content") or "").strip():
+                    first_request = str(message["content"])
+                    break
+            if not first_request:
+                continue
+            title = _title_from_message(first_request)
+            row["title"] = title
+            row["auto_title"] = False
+            row["title_source"] = "first_request"
+            finalized.append((cid, title))
+        if finalized:
+            index["conversations"] = conversations
+            _write_index(index)
+    # Sync every migrated row even when its app title already happened to be
+    # correct: its Telegram topic may still contain the old placeholder.
+    for cid, title in finalized:
+        _sync_telegram_topic_title_async(cid, title)
+    return index
+
+
 def list_conversations() -> List[Dict[str, Any]]:
     """All dialogues, pinned first then newest activity, with the default chat."""
-    index = _read_index()
+    index = _finalize_legacy_conversation_titles()
     conversations = [dict(row) for row in (index.get("conversations") or [])]
     default_msgs = _read_conversation(500, path=_conversation_file(DEFAULT_CONVERSATION_ID))
     default_updated = default_msgs[-1].get("timestamp_utc") if default_msgs else ""
@@ -503,9 +696,23 @@ def list_conversations() -> List[Dict[str, Any]]:
         "updated_at_utc": default_updated or _now(),
         "message_count": len(default_msgs),
         "pinned": bool(index.get("default_pinned")),
+        "closed": bool(index.get("default_closed")),
+        "work_state": str(index.get("default_work_state") or "open"),
+        "work_detail": str(index.get("default_work_detail") or ""),
         "is_default": True,
     }
     conversations.insert(0, default_row)
+    mission = dict(_load().get("mission") or {})
+    mission_cid = _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
+    if mission.get("status") in {"active", "paused", "finishing"}:
+        for row in conversations:
+            if row.get("conversation_id") == mission_cid:
+                row["work_state"] = "in_progress" if mission.get("status") != "paused" else "blocked"
+                row["work_detail"] = (
+                    "Исследование приостановлено" if mission.get("status") == "paused"
+                    else "Исследование выполняется"
+                )
+                break
     # Stable two-pass sort: newest first, then pinned rows floated to the top.
     conversations.sort(key=lambda row: str(row.get("updated_at_utc") or ""), reverse=True)
     conversations.sort(key=lambda row: 0 if row.get("pinned") else 1)
@@ -514,6 +721,54 @@ def list_conversations() -> List[Dict[str, Any]]:
 
 def conversation_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
     return _read_conversation(limit, path=_conversation_file(conversation_id))
+
+
+def report_chart_snapshot(*, conversation_id: str, text: str,
+                          image_url: str = "", image_file: str = "", caption: str = "",
+                          agent_name: str = "Иван",
+                          mirror_to_telegram: bool = True) -> Dict[str, Any]:
+    """Append a chart-operator report (with optional snapshot image) to a chat.
+
+    Used by the desktop when a price level is touched or a watch window expires:
+    the browser captures the chart canvas, the server stores it and this call
+    posts the result as a message from Иван into the originating conversation and
+    (in group mode) uploads the image into that conversation's Telegram topic.
+    """
+    cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
+    path = _conversation_file(cid)
+    attachments = None
+    if image_url:
+        attachments = [{"type": "image", "url": image_url, "caption": caption}]
+    message = _append_conversation(
+        "assistant", str(text or "Снимок графика").strip(), source="chart_snapshot",
+        model="chart operator", provider="local", agent_name=agent_name,
+        actions=[], doubts=[], attachments=attachments, path=path,
+    )
+    title = _conversation_title(cid)
+    try:
+        _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)))
+    except Exception:
+        pass
+    if mirror_to_telegram:
+        try:
+            from .. import telegram_service, market_data
+            sent_photo = False
+            if image_file:
+                photo_path = market_data.snapshot_path(image_file)
+                if photo_path:
+                    sent_photo = telegram_service.send_photo(
+                        photo_path, caption=(str(text or "")[:900]),
+                        conversation_id=cid, conversation_title=title,
+                    )
+            if not sent_photo:
+                lines = [str(text or "")[:1500]]
+                telegram_service.send_chief_report(
+                    f"{agent_name} · снимок графика", lines, model_name="chart operator",
+                    conversation_id=cid, conversation_title=title,
+                )
+        except Exception:
+            pass
+    return {"ok": True, "conversation_id": cid, "message": message}
 
 
 def rate_message(conversation_id: str, message_id: str, rating: Any,
@@ -587,6 +842,7 @@ def _append_conversation(role: str, content: str, *, source: str,
                          actions: Optional[List[Dict[str, Any]]] = None,
                          doubts: Optional[List[str]] = None,
                          thinking: str = "",
+                         attachments: Optional[List[Dict[str, Any]]] = None,
                          path: Optional[Path] = None) -> Dict[str, Any]:
     rec = {
         "message_id": f"MSG-{uuid.uuid4().hex[:12].upper()}",
@@ -600,6 +856,22 @@ def _append_conversation(role: str, content: str, *, source: str,
         "actions": list(actions or [])[:10],
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
     }
+    # Image/file attachments (e.g. chart snapshots) reference stored files by URL;
+    # never inline base64 payloads into the conversation log.
+    clean_attachments: List[Dict[str, Any]] = []
+    for item in (attachments or [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url.startswith("/api/") and not url.startswith("/"):
+            continue
+        clean_attachments.append({
+            "type": str(item.get("type") or "image")[:24],
+            "url": url[:400],
+            "caption": _redact_sensitive(str(item.get("caption") or ""))[:400],
+        })
+    if clean_attachments:
+        rec["attachments"] = clean_attachments
     # Native reasoning ("thinking") is stored for the app chat history only and
     # is never mirrored to Telegram. Redacted like content and length-bounded.
     clean_thinking = _redact_sensitive(str(thinking or "").strip())[:8000]
@@ -1593,6 +1865,7 @@ def _action_grounded_in_message(name: str, message: str) -> bool:
         "pause_research": ("приостанов", "пауза", "pause"),
         "resume_research": ("продолж", "возобнов", "resume"),
         "stop_research": ("останов", "прекрат", "stop"),
+        "schedule_research_stop": ("останов", "прекрат", "stop"),
         "update_research": ("исправляй", "дорабатывай", "не иди дальше", "одну стратег", "refine"),
         "audit_backtests": ("аудит", "проверь бэктест", "проверить бэктест", "audit"),
         "save_rule": ("запомни", "никогда", "правило", "не делай", "remember"),
@@ -1605,6 +1878,10 @@ def _action_grounded_in_message(name: str, message: str) -> bool:
         "generate_report": ("отчёт", "отчет", "report"),
         "ensure_local_models": ("lm studio", "лм студ", "локальн", "local model"),
     }
+    if name == "stop_research":
+        return _stop_requested(text)
+    if name == "schedule_research_stop":
+        return _extract_scheduled_stop_utc(text) is not None
     return any(token in text for token in groups.get(name, ()))
 
 
@@ -1648,9 +1925,17 @@ def _lm_env_text(lm: Dict[str, Any]) -> str:
 def _post_mission_update(mission: Dict[str, Any], text: str,
                          *, action_name: str = "research_progress",
                          action_status: str = "running",
-                         model_name: str = "") -> None:
+                         model_name: str = "",
+                         notify_telegram: bool = True) -> None:
     """Post an autonomous progress/report line into the conversation that
-    launched the mission (and keep it visible in the chat)."""
+    launched the mission (and keep it visible in the chat).
+
+    ``notify_telegram`` gates only the Telegram mirror. The app chat history is
+    always written, so the owner can still open the conversation and read the
+    full timeline; Telegram receives a message only when there is something new
+    worth pushing (a change, a candidate, or a material blocker) instead of a
+    stream of near-identical rejection lines.
+    """
     cid = _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
     actual_model = str(model_name or mission.get("last_strategy_model") or "StratForge Orchestrator")
     try:
@@ -1660,8 +1945,14 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
             doubts=[], path=_conversation_file(cid),
         )
         _touch_conversation(cid)
+        if action_status in {"error", "blocked"}:
+            _set_conversation_work_state(cid, "blocked", text[:300])
+        else:
+            _set_conversation_work_state(cid, "in_progress", "Исследование выполняется")
     except Exception:
         pass
+    if not notify_telegram:
+        return
     try:
         from .. import telegram_service
         title = "Результат по стратегии" if action_name == "strategy_result" else "Важное сообщение"
@@ -1675,7 +1966,8 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
 
 
 def _execute_action(action: Dict[str, Any], owner_message: str = "",
-                    conversation_id: str = DEFAULT_CONVERSATION_ID) -> Dict[str, Any]:
+                    conversation_id: str = DEFAULT_CONVERSATION_ID,
+                    *, context_authorized: bool = False) -> Dict[str, Any]:
     name = str(action.get("name") or "respond").strip()
     args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
     if name not in ALLOWED_PLAN_ACTIONS:
@@ -1684,7 +1976,11 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
     # self-service execution — they never require the current message to name
     # them (self-heal must not be blocked just because the owner said "develop
     # a strategy" instead of "start LM Studio").
-    if name not in {"respond", "status", "ensure_local_models"} and not _action_grounded_in_message(name, owner_message):
+    if (
+        name not in {"respond", "status", "ensure_local_models"}
+        and not context_authorized
+        and not _action_grounded_in_message(name, owner_message)
+    ):
         return {"name": name, "status": "blocked", "reason": "current_message_does_not_authorize_action"}
     try:
         if name == "respond":
@@ -1736,7 +2032,46 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
         if name in {"pause_research", "resume_research", "stop_research"}:
             verb = {"pause_research": "pause", "resume_research": "resume", "stop_research": "stop"}[name]
             mission = set_mission_state(verb)
-            return {"name": name, "status": "completed", "mission_status": mission["status"]}
+            if name == "resume_research":
+                if context_authorized:
+                    with _LOCK:
+                        doc = _load()
+                        attached = dict(doc.get("mission") or {})
+                        if attached.get("mission_id") == mission.get("mission_id"):
+                            attached["conversation_id"] = _safe_conversation_id(conversation_id)
+                            attached["updated_at_utc"] = _now()
+                            doc["mission"] = attached
+                            _save(doc)
+                            mission = attached
+                _kick_mission_start()
+            return {
+                "name": name, "status": "completed", "mission_status": mission["status"],
+            }
+        if name == "schedule_research_stop":
+            ends_at = _parse_time(args.get("ends_at_utc"))
+            now = _now_dt()
+            if not ends_at or ends_at <= now:
+                raise ChiefAgentError("Время отложенной остановки должно быть в будущем.")
+            if ends_at - now > timedelta(hours=MAX_MISSION_HOURS):
+                raise ChiefAgentError("Отложить остановку можно не более чем на 168 часов.")
+            with _LOCK:
+                doc = _load()
+                mission = dict(doc.get("mission") or {})
+                if mission.get("status") not in {"active", "paused"}:
+                    raise ChiefAgentError("Активная работа не найдена.")
+                mission["ends_at_utc"] = ends_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+                mission["until_stopped"] = False
+                mission["scheduled_stop_source"] = "owner"
+                mission["updated_at_utc"] = _now()
+                doc["mission"] = mission
+                _save(doc)
+            local_deadline = ends_at.astimezone(_pt_now().tzinfo).strftime("%H:%M")
+            return {
+                "name": name,
+                "status": "completed",
+                "ends_at_utc": mission["ends_at_utc"],
+                "scheduled_for_local": local_deadline,
+            }
         if name == "update_research":
             with _LOCK:
                 doc = _load()
@@ -1947,31 +2282,106 @@ def _is_continuous_strategy_request(low: str) -> bool:
     return has_work and persistent
 
 
+_STOP_COMMAND_PATTERN = (
+    r"(?:стоп|остановись|останови(?:те)?|останавливай(?:те)?|"
+    r"прекрати(?:те)?|прекращай(?:те)?|stop)"
+)
+
+
+def _extract_scheduled_stop_utc(text: str) -> Optional[str]:
+    """Return an exact future UTC deadline only when time modifies a stop command.
+
+    Numbers elsewhere in the message (for example, "через 15 минут я проверю")
+    must not become a stop deadline. The supported deterministic forms cover the
+    high-risk operational cases; less precise wording is left to the model.
+    """
+    low = str(text or "").lower().replace("ё", "е")
+    now = _now_dt()
+
+    relative_patterns = (
+        rf"{_STOP_COMMAND_PATTERN}[^.!?;]{{0,32}}?через\s+(\d{{1,4}})\s*"
+        r"(минут(?:у|ы)?|мин|час(?:а|ов)?|ч\b)",
+        r"через\s+(\d{1,4})\s*(минут(?:у|ы)?|мин|час(?:а|ов)?|ч\b)"
+        rf"[^.!?;]{{0,32}}?{_STOP_COMMAND_PATTERN}",
+    )
+    for pattern in relative_patterns:
+        match = re.search(pattern, low, flags=re.IGNORECASE)
+        if not match:
+            continue
+        amount = int(match.group(1))
+        unit = match.group(2)
+        delta = timedelta(hours=amount) if unit.startswith(("час", "ч")) else timedelta(minutes=amount)
+        if timedelta(minutes=1) <= delta <= timedelta(hours=MAX_MISSION_HOURS):
+            return (now + delta).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    clock_patterns = (
+        rf"(?P<tomorrow>завтра\s+)?{_STOP_COMMAND_PATTERN}[^.!?;]{{0,32}}?"
+        r"(?:в|к)\s*(?P<hour>[01]?\d|2[0-3])(?:[.:](?P<minute>[0-5]\d))?",
+        r"(?P<tomorrow>завтра\s+)?(?:в|к)\s*(?P<hour>[01]?\d|2[0-3])"
+        rf"(?:[.:](?P<minute>[0-5]\d))?[^.!?;]{{0,32}}?{_STOP_COMMAND_PATTERN}",
+    )
+    local_now = _pt_now()
+    for pattern in clock_patterns:
+        match = re.search(pattern, low, flags=re.IGNORECASE)
+        if not match:
+            continue
+        target = local_now.replace(
+            hour=int(match.group("hour")), minute=int(match.group("minute") or 0),
+            second=0, microsecond=0,
+        )
+        if match.group("tomorrow") or target <= local_now:
+            target += timedelta(days=1)
+        delta = target.astimezone(timezone.utc) - now
+        if timedelta(minutes=1) <= delta <= timedelta(hours=MAX_MISSION_HOURS):
+            return target.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return None
+
+
 def _stop_requested(low: str) -> bool:
+    """Recognize an immediate stop *command*, not the presence of a stop word."""
+    text = str(low or "").lower().replace("ё", "е")
     # A future condition ("работай, пока я не скажу остановись") is not an
     # immediate stop command. Ignore only that clause; an additional explicit
     # sentence such as "А сейчас останови" must still stop the mission.
     conditional = re.compile(
         r"(?:до\s+тех\s+пор|пока).{0,180}?\bне\b.{0,80}?"
-        r"(?:скаж|напиш|попрош|скоманд).{0,100}?"
-        r"(?:останов[\wё]*|стоп|прекрат[\wё]*)",
+        rf"(?:скаж|напиш|попрош|скоманд).{{0,100}}?{_STOP_COMMAND_PATTERN}",
         flags=re.DOTALL,
     )
-    remaining = conditional.sub("", str(low or ""))
+    remaining = conditional.sub("", text)
     remaining = re.sub(r"until\s+i\s+say\s+stop", "", remaining, flags=re.IGNORECASE)
-    return any(re.search(pattern, remaining) for pattern in (
-        r"\bостанов[\wё]*",
-        r"\bпрекрат[\wё]*",
-        r"\bstop\b",
+    # Negation, hypothetical/quoted mentions and explicit future modifiers do
+    # not grant immediate-stop authority.
+    remaining = re.sub(rf"\bне\s+(?:надо\s+|нужно\s+)?{_STOP_COMMAND_PATTERN}\b", "", remaining)
+    remaining = re.sub(rf"\b(?:слово|команда|фраза)\s+[«\"']?{_STOP_COMMAND_PATTERN}[»\"']?", "", remaining)
+    remaining = re.sub(rf"\bесли\b[^.!?;]{{0,100}}?{_STOP_COMMAND_PATTERN}\b", "", remaining)
+    remaining = re.sub(
+        rf"{_STOP_COMMAND_PATTERN}\b[^.!?;]{{0,48}}?"
+        r"(?:через\s+\d+|(?:в|к)\s*\d{1,2}(?:[.:]\d{2})?|потом|позже|завтра|после|по\s+окончании|в\s+конце)",
+        "", remaining,
+    )
+    remaining = re.sub(
+        r"(?:через\s+\d+[^.!?;]{0,24}|(?:в|к)\s*\d{1,2}(?:[.:]\d{2})?[^.!?;]{0,24})"
+        rf"{_STOP_COMMAND_PATTERN}\b",
+        "", remaining,
+    )
+    return re.search(rf"\b{_STOP_COMMAND_PATTERN}\b", remaining) is not None
+
+
+def _is_followup_approval(message: str) -> bool:
+    low = re.sub(r"\s+", " ", str(message or "").strip().lower()).strip(".! ")
+    if low in {"да", "подтверждаю", "согласен", "согласна", "start", "go ahead"}:
+        return True
+    return bool(re.fullmatch(
+        r"(?:(?:ок|окей|хорошо|да|согласен|подтверждаю)[,\s]+)?"
+        r"(?:начинай(?:те)?|запускай(?:те)?|приступай(?:те)?|делай(?:те)?|выполняй(?:те)?)"
+        r"(?:\s+(?:это|план|все|всё))?",
+        low,
     ))
 
 
 def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    low = str(message or "").strip().lower().strip(".! ")
-    if low not in {
-        "начинай", "начинайте", "запускай", "запускайте", "приступай",
-        "приступайте", "да начинай", "да запускай", "start", "go ahead",
-    }:
+    if not _is_followup_approval(message):
         return None
     last_assistant = next((
         str(row.get("content") or "") for row in reversed(history)
@@ -1982,6 +2392,23 @@ def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optiona
     )):
         return None
     root = _extract_root(last_assistant) or "MNQ"
+    current_mission = dict(_load().get("mission") or {})
+    mission_roots = [str(value).upper() for value in (current_mission.get("target_roots") or [])]
+    if current_mission.get("status") in {"stopped", "paused"} and root in mission_roots:
+        return {
+            "reply": (
+                f"Дмитрий Сергеевич, подтверждение принято. Возобновляю работу по {root}: "
+                "отменённый при остановке эксперимент не считаю результатом; запускаю новый вариант "
+                "той же гипотезы и довожу его до измеримого решения по стандартным критериям после издержек."
+            ),
+            "confidence": 1.0,
+            "doubts": [],
+            "context_authorized": True,
+            "actions": [{
+                "name": "resume_research", "arguments": {},
+                "reason": "owner approved the concrete continuation plan in this conversation",
+            }],
+        }
     return {
         "reply": (
             f"Дмитрий Сергеевич, начинаю реализацию согласованного плана по {root}. "
@@ -1990,6 +2417,7 @@ def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optiona
         ),
         "confidence": 1.0,
         "doubts": [],
+        "context_authorized": True,
         "actions": [{
             "name": "start_research",
             "arguments": {
@@ -2013,9 +2441,30 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
     normalized_low = low.rstrip("?! .")
     current_mission = dict(_load().get("mission") or {})
     continuous_request = _is_continuous_strategy_request(low)
+    scheduled_stop = _extract_scheduled_stop_utc(text)
+    if scheduled_stop and current_mission.get("status") in {"active", "paused"}:
+        deadline = _parse_time(scheduled_stop)
+        local_deadline = deadline.astimezone(_pt_now().tzinfo).strftime("%H:%M") if deadline else "указанное время"
+        actions: List[Dict[str, Any]] = []
+        if current_mission.get("status") == "paused" and any(value in low for value in ("продолж", "возобнов", "resume")):
+            actions.append({
+                "name": "resume_research", "arguments": {},
+                "reason": "owner asked to continue the paused mission",
+            })
+        actions.append({
+            "name": "schedule_research_stop",
+            "arguments": {"ends_at_utc": scheduled_stop},
+            "reason": "owner explicitly scheduled a future stop",
+        })
+        return {
+            "reply": f"Продолжаю текущую работу. Остановлю её в {local_deadline} по вашему времени и сохраню результат в отчёте.",
+            "confidence": 1.0,
+            "doubts": [],
+            "actions": actions,
+        }
     # "work until I say stop" describes mission lifetime; it is not an
     # immediate stop command in this turn.
-    wants_stop = _stop_requested(low) and not continuous_request
+    wants_stop = _stop_requested(low)
     wants_restart = wants_stop and any(value in low for value in (
         "запусти нов", "начни нов", "продолжи без", "restart", "start new",
     ))
@@ -2159,6 +2608,37 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+_ACTION_LABELS_RU = {
+    "start_research": "запуск исследования",
+    "resume_research": "возобновление исследования",
+    "pause_research": "приостановка исследования",
+    "stop_research": "остановка исследования",
+    "schedule_research_stop": "отложенная остановка исследования",
+    "update_research": "изменение правил исследования",
+    "ensure_local_models": "подготовка локальных моделей",
+}
+
+
+def _conversation_work_state(action_results: List[Dict[str, Any]], reply: str) -> tuple[str, str]:
+    failures = [row for row in action_results if row.get("status") in {"error", "blocked"}]
+    if failures:
+        names = ", ".join(_ACTION_LABELS_RU.get(str(row.get("name")), str(row.get("name"))) for row in failures)
+        return "blocked", f"Требует внимания: {names}"
+    running = [row for row in action_results if row.get("status") in {"running", "queued"} or row.get("name") in {
+        "start_research", "resume_research", "research_progress",
+    }]
+    if running:
+        return "in_progress", "Работа выполняется"
+    if any(row.get("name") in {"stop_research", "mission_completed"} for row in action_results):
+        return "completed", "Тема завершена"
+    low = str(reply or "").lower()
+    if "?" in reply or any(marker in low for marker in (
+        "уточните", "подтвердите", "скажите «", "скажите,", "жду решения",
+    )):
+        return "awaiting_owner", "Ожидается решение владельца"
+    return "open", ""
+
+
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                    on_thinking: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
@@ -2185,17 +2665,39 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     if len(clean) > 6000:
         raise ChiefAgentError("Сообщение должно быть короче 6000 символов.")
     cid = _safe_conversation_id(conversation_id)
+    if _conversation_is_closed(cid):
+        raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
     conv_path = _conversation_file(cid)
     _append_conversation("user", clean, source=source, path=conv_path)
     _touch_conversation(cid, title_hint=clean)
+    # Mirror the owner's own app-typed message into the bound Telegram topic so
+    # the Telegram thread shows the full conversation, not only replies. Never
+    # mirror a message that came from Telegram (it is already there).
+    if mirror_to_telegram and source == "app":
+        try:
+            from .. import telegram_service
+            telegram_service.mirror_owner_message(
+                clean, conversation_id=cid, conversation_title=_conversation_title(cid),
+            )
+        except Exception:
+            pass
     # Explicitly addressed domain experts share this same conversation and the
     # same Auto model pool.  Their persona is stable while the provider/model
     # may change per turn according to complexity and current quotas.
     from . import domain_agents
     requested_agent = str(agent or "").strip().lower()
-    persona = domain_agents.resolve_persona(clean, requested_agent)
+    operational_control = (
+        _is_followup_approval(clean)
+        or _is_research_start_command(clean)
+        or _stop_requested(clean)
+        or _extract_scheduled_stop_utc(clean) is not None
+    )
+    # Named specialists advise in the shared dialogue, but explicit execution
+    # and approvals return to the orchestrator so their selected persona cannot
+    # swallow an operational command as a chat-only answer.
+    persona = None if operational_control else domain_agents.resolve_persona(clean, requested_agent)
     if persona:
-        domain = domain_agents.answer(str(persona["id"]), clean)
+        domain = domain_agents.answer(str(persona["id"]), clean, conversation_id=cid)
         reply = str(domain.get("reply") or "")[:8000]
         model = str(domain.get("model") or "unknown")
         provider = str(domain.get("provider") or "")
@@ -2241,7 +2743,8 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     bypass_dialogue = bool(forced_complexity) and not manager_tier
     explicit_execution = any(token in clean.lower() for token in (
         "запусти", "запускай", "начинай", "приступай", "выполни", "создай",
-        "сделай", "включи", "отключи", "останови", "run ", "start ", "execute",
+        "сделай", "включи", "отключи", "останови", "остановись", "прекрати",
+        "продолжай", "возобнови", "run ", "start ", "execute",
     ))
     # Forming or presenting a plan is always discussion-only, whatever the tier:
     # the manager shows the plan and waits for an explicit go-ahead ("Запускай").
@@ -2350,7 +2853,11 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     if confidence < 0.45 and raw_actions:
         raw_actions = []
         plan.setdefault("doubts", []).append("Низкая уверенность плана; действия заблокированы.")
-    action_results = [_execute_action(row, clean, cid) for row in raw_actions[:5] if isinstance(row, dict)]
+    context_authorized = bool(direct is not None and direct.get("context_authorized"))
+    action_results = [
+        _execute_action(row, clean, cid, context_authorized=context_authorized)
+        for row in raw_actions[:5] if isinstance(row, dict)
+    ]
     reply = str(plan.get("reply") or "Готов продолжить после уточнения.").strip()[:8000]
     status_summaries = [str(row.get("summary")) for row in action_results if row.get("summary")]
     if status_summaries:
@@ -2364,18 +2871,24 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         readable = []
         for row in failures:
             reason = str(row.get("error") or row.get("reason") or "неизвестная ошибка")
+            action_label = _ACTION_LABELS_RU.get(str(row.get("name")), str(row.get("name") or "действие"))
             if reason == "current_message_does_not_authorize_action":
-                reason = "в сообщении не было команды на это действие"
+                reason = (
+                    f"«{action_label}» не выполнено: текущая реплика не подтверждает это действие, "
+                    "и в данном диалоге нет согласованного плана для него"
+                )
             elif reason == "capability_not_allowed":
-                reason = "это действие запрещено правилами безопасности"
+                reason = f"«{action_label}» запрещено правилами безопасности"
             readable.append(reason)
-        reply += "\n\nНе смог выполнить часть запроса: " + "; ".join(readable) + "."
+        reply += "\n\nНе выполнено: " + "; ".join(readable) + "."
     doubts = [str(item)[:500] for item in (plan.get("doubts") or [])[:10]]
     thinking = str(result.get("reasoning") or "")
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
         actions=action_results, doubts=doubts, thinking=thinking, path=conv_path,
     )
+    work_state, work_detail = _conversation_work_state(action_results, reply)
+    _set_conversation_work_state(cid, work_state, work_detail)
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)))
     with _LOCK:
         state = _load()
@@ -2693,6 +3206,21 @@ def _mission_control_is_current(mission: Dict[str, Any]) -> bool:
     )
 
 
+_REJECTION_REASONS_RU = {
+    "SMOKE_NO_EDGE": "Короткая историческая проверка показала отрицательное ожидание после комиссии",
+    "NO_EDGE": "Исторические проверки не подтвердили устойчивого преимущества",
+    "SMOKE_ZERO_TRADES": "Правила входа не дали сделок на проверочном участке",
+    "SMOKE_DATA_UNVERIFIED": "Не удалось подтвердить качество данных для проверки",
+    "FULL_DATA_INSUFFICIENT": "Истории или количества сделок недостаточно для надёжного вывода",
+    "OVERTRADING_RISK": "Частота сделок делает результат слишком чувствительным к издержкам",
+    "PIPELINE_EXCEPTION": "Техническая проверка завершилась ошибкой, которую нельзя считать рыночным результатом",
+}
+
+
+def _rejection_reason_ru(code: str) -> str:
+    return _REJECTION_REASONS_RU.get(str(code or "").upper(), "")
+
+
 def _strategy_result_text(mission: Dict[str, Any], exp: Dict[str, Any]) -> str:
     verdict = exp.get("verdict") if isinstance(exp.get("verdict"), dict) else {}
     analysis = exp.get("analysis") if isinstance(exp.get("analysis"), dict) else {}
@@ -2724,7 +3252,7 @@ def _strategy_result_text(mission: Dict[str, Any], exp: Dict[str, Any]) -> str:
     class_name = str(exp.get("class_name") or "").strip()
     identity = family or class_name or "текущей стратегией"
     parts = [
-        f"Дмитрий Сергеевич, проверил {identity}.",
+        _greet(f"проверил {identity}.", seed=class_name or family or str(exp.get("experiment_id") or "")),
         (
             "Стратегия прошла текущие проверки как кандидат."
             if accepted else
@@ -2749,15 +3277,7 @@ def _strategy_result_text(mission: Dict[str, Any], exp: Dict[str, Any]) -> str:
         effort += "."
     parts.append(effort)
     code = str(verdict.get("rejection_code") or "").upper()
-    reason_ru = {
-        "SMOKE_NO_EDGE": "Короткая историческая проверка показала отрицательное ожидание после комиссии",
-        "NO_EDGE": "Исторические проверки не подтвердили устойчивого преимущества",
-        "SMOKE_ZERO_TRADES": "Правила входа не дали сделок на проверочном участке",
-        "SMOKE_DATA_UNVERIFIED": "Не удалось подтвердить качество данных для проверки",
-        "FULL_DATA_INSUFFICIENT": "Истории или количества сделок недостаточно для надёжного вывода",
-        "OVERTRADING_RISK": "Частота сделок делает результат слишком чувствительным к издержкам",
-        "PIPELINE_EXCEPTION": "Техническая проверка завершилась ошибкой, которую нельзя считать рыночным результатом",
-    }.get(code)
+    reason_ru = _rejection_reason_ru(code)
     if reason_ru:
         parts.append("Почему: " + reason_ru + ".")
     elif not accepted:
@@ -2781,6 +3301,34 @@ def _experiment_model_name(exp: Dict[str, Any]) -> str:
     return str(exp.get("model") or "StratForge Orchestrator")
 
 
+# After this many rejections in a row that share the same idea + reason, the
+# stream is treated as a stuck loop: the orchestrator escalates to a stronger
+# model, changes the approach and stops sending near-identical rejection lines.
+_APPROACH_ESCALATION_STREAK = 3
+
+
+def _experiment_is_accepted(exp: Dict[str, Any]) -> bool:
+    verdict = exp.get("verdict") if isinstance(exp.get("verdict"), dict) else {}
+    return (
+        exp.get("status") in registry.PORTFOLIO_ELIGIBLE_STATUSES
+        or str(verdict.get("outcome") or "") in {"candidate", "keep"}
+    )
+
+
+def _reject_signature(exp: Dict[str, Any]) -> str:
+    """Stable fingerprint of *why* a strategy was rejected.
+
+    Two consecutive rejections with the same idea family and the same rejection
+    code are "the same problem" — reporting each of them individually is the
+    spam the owner complained about. A change in either part is genuinely new
+    information worth pushing to Telegram.
+    """
+    verdict = exp.get("verdict") if isinstance(exp.get("verdict"), dict) else {}
+    family = str(exp.get("family") or exp.get("hypothesis") or "").strip().lower()
+    code = str(verdict.get("rejection_code") or verdict.get("outcome") or "reject").strip().upper()
+    return f"{family}|{code}"
+
+
 def _report_completed_strategy(mission: Dict[str, Any]) -> Dict[str, Any]:
     experiment_id = str(mission.get("active_strategy_experiment_id") or "")
     if not experiment_id:
@@ -2790,6 +3338,22 @@ def _report_completed_strategy(mission: Dict[str, Any]) -> Dict[str, Any]:
         return mission
     exp = registry.read_experiment(experiment_id) or {}
     if not exp or not registry.is_terminal(str(exp.get("status") or "")):
+        return mission
+    if str(exp.get("status") or "") == "cancelled":
+        # Owner/system cancellation is not market evidence and must never be
+        # rendered as a rejected strategy. Clear it and let the resumed mission
+        # launch a fresh variant of the same goal.
+        abandoned = list(mission.get("cancelled_experiment_ids") or [])
+        abandoned.append(experiment_id)
+        mission["cancelled_experiment_ids"] = abandoned[-500:]
+        mission["active_strategy_experiment_id"] = ""
+        mission["active_strategy_started_at_utc"] = ""
+        with _LOCK:
+            doc = _load()
+            current = dict(doc.get("mission") or {})
+            if current.get("mission_id") == mission.get("mission_id"):
+                doc["mission"] = mission
+                _save(doc)
         return mission
     # Claim delivery before sending. Background ticks can overlap; persisting
     # this claim gives the owner an at-most-once report for each experiment.
@@ -2809,10 +3373,67 @@ def _report_completed_strategy(mission: Dict[str, Any]) -> Dict[str, Any]:
             mission.update(current)
     text = _strategy_result_text(mission, exp)
     model_name = _experiment_model_name(exp)
+    accepted = _experiment_is_accepted(exp)
+    signature = _reject_signature(exp)
+    verdict = exp.get("verdict") if isinstance(exp.get("verdict"), dict) else {}
+    code = str(verdict.get("rejection_code") or "").upper()
+    family = str(exp.get("family") or exp.get("hypothesis") or exp.get("class_name") or "этой идеи").strip()
+    seed = str(exp.get("class_name") or exp.get("experiment_id") or "")
+
+    # Decide how loud to be. The app chat always gets the full line; Telegram
+    # only gets a push when there is a real change, a candidate, or an escalation.
+    escalated_now = False
+    if accepted:
+        notify_telegram = True
+        mission["reject_streak"] = 0
+        mission["last_report_signature"] = signature
+        mission["escalated_signature"] = ""
+    else:
+        prev_signature = str(mission.get("last_report_signature") or "")
+        streak = int(mission.get("reject_streak") or 0)
+        streak = streak + 1 if signature == prev_signature else 1
+        mission["reject_streak"] = streak
+        mission["last_report_signature"] = signature
+        # A brand-new problem (different idea or different reason) is worth one
+        # push; further repeats of the same problem are suppressed on Telegram.
+        notify_telegram = signature != prev_signature
+        if (
+            streak >= _APPROACH_ESCALATION_STREAK
+            and str(mission.get("escalated_signature") or "") != signature
+        ):
+            escalated_now = True
+            notify_telegram = False  # the escalation message replaces the routine one
+
     _post_mission_update(
         mission, text, action_name="strategy_result",
         action_status="completed", model_name=model_name,
+        notify_telegram=notify_telegram,
     )
+
+    if escalated_now:
+        mission["escalated_signature"] = signature
+        mission["approach_escalation"] = {
+            "active": True,
+            "signature": signature,
+            "code": code,
+            "family": family,
+            "streak": int(mission.get("reject_streak") or 0),
+            "at_utc": _now(),
+        }
+        mission["reject_streak"] = 0  # give the changed approach a clean slate
+        reason_human = _rejection_reason_ru(code) or "проверенные варианты не подтвердили идею"
+        escalation_text = _greet(
+            f"«{family}» отклоняется подряд по одной причине: {reason_human.lower()}. "
+            "Перестаю слать однотипные отчёты и меняю подход: подключаю более сильную модель "
+            "и существенно переделываю параметры и логику входа/выхода, а не косметику. "
+            "Напишу снова, когда появится содержательный результат или кандидат.",
+            seed=seed,
+        )
+        _post_mission_update(
+            mission, escalation_text, action_name="approach_change",
+            action_status="running", model_name=model_name, notify_telegram=True,
+        )
+
     reported = list(mission.get("reported_experiment_ids") or [])
     reported.append(experiment_id)
     mission["reported_experiment_ids"] = reported[-500:]
@@ -2887,6 +3508,28 @@ def _mission_tick() -> None:
         int(mission.get("strategy_time_budget_minutes") or DEFAULT_STRATEGY_TIME_BUDGET_MINUTES),
         int((ends - _now_dt()).total_seconds() / 60),
     ))
+    # When the anti-spam layer escalated a stuck idea, this next cycle must
+    # actually change something: the same failing configuration should not be
+    # retried. We push a "change the approach" directive into the goal the
+    # strategy designer sees, give it more inner iterations to explore, and
+    # (when a paid budget exists) allow the stronger models for this cycle.
+    escalation = mission.get("approach_escalation") if isinstance(mission.get("approach_escalation"), dict) else {}
+    escalate_active = bool(escalation.get("active"))
+    base_goal = str(mission.get("goal") or "").strip()
+    cycle_goal = base_goal
+    cycle_iterations = int(mission.get("iterations_per_strategy", 5) or 5)
+    if escalate_active:
+        esc_reason = _rejection_reason_ru(str(escalation.get("code") or "")) or (
+            "предыдущие варианты не подтвердили преимущество после издержек"
+        )
+        esc_family = str(escalation.get("family") or "эта идея")
+        cycle_goal = (base_goal + (
+            f" [Смена подхода: варианты «{esc_family}» отклонялись подряд по одной причине "
+            f"({esc_reason.lower()}). Примени существенно другой вариант: измени параметры и логику "
+            "входа/выхода, фильтры и управление риском, а не косметику; не повторяй уже отклонённую "
+            "конфигурацию.]"
+        )).strip()
+        cycle_iterations = max(cycle_iterations, min(20, cycle_iterations + 3))
     try:
         from . import lm_studio
         local_ready = bool(lm_studio.lm_status(allow_probe=False).get("run_allowed"))
@@ -2944,9 +3587,9 @@ def _mission_tick() -> None:
         started_run = runner.start({
             "user_pref_root": root,
             "user_capital": mission.get("capital"),
-            "user_goal": mission.get("goal"),
+            "user_goal": cycle_goal,
             "strategy_count": mission.get("strategy_count_per_cycle", 3),
-            "iterations_per_strategy": mission.get("iterations_per_strategy", 5),
+            "iterations_per_strategy": cycle_iterations,
             "max_total_runtime_minutes": remaining_minutes,
             "use_llm": True,
             "allow_template_fallback": bool(
@@ -2964,6 +3607,13 @@ def _mission_tick() -> None:
         mission["consecutive_launch_failures"] = 0
         mission["active_strategy_experiment_id"] = started_run.get("experiment_id") or ""
         mission["active_strategy_started_at_utc"] = _now()
+        if escalate_active:
+            # One-shot: the directive has been handed to a fresh experiment.
+            applied = dict(mission.get("approach_escalation") or {})
+            applied["active"] = False
+            applied["applied_at_utc"] = _now()
+            applied["applied_experiment_id"] = started_run.get("experiment_id") or ""
+            mission["approach_escalation"] = applied
         if paid_budget <= 0:
             mission["execution_mode"] = "local_plus_free" if local_ready else "template_plus_free_fallback"
         else:
@@ -3128,6 +3778,10 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
         path=_conversation_file(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID),
     )
     _touch_conversation(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
+    _set_conversation_work_state(
+        mission.get("conversation_id") or DEFAULT_CONVERSATION_ID,
+        "completed", "Автономная работа завершена",
+    )
     try:
         from .. import telegram_service
         cid = mission.get("conversation_id") or DEFAULT_CONVERSATION_ID

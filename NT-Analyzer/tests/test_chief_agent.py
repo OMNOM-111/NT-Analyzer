@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.ai_lab import chief_agent
 
@@ -10,6 +11,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(chief_agent, "_tasks_path", lambda: tmp_path / "tasks.jsonl")
     monkeypatch.setattr(chief_agent, "_reports_dir", lambda: tmp_path)
     monkeypatch.setattr(chief_agent, "_conversation_path", lambda: tmp_path / "conversation.jsonl")
+    convs = tmp_path / "convs"
+    monkeypatch.setattr(chief_agent, "_conversations_index_path", lambda: tmp_path / "conv_index.json")
+    monkeypatch.setattr(chief_agent, "_conversations_dir", lambda: (convs.mkdir(parents=True, exist_ok=True) or convs))
     monkeypatch.setattr(chief_agent, "_usage_stats", lambda agent_id="": {
         "requests": 0, "successful_requests": 0, "input_tokens": 0,
         "cached_input_tokens": 0, "cache_hit_pct": 0, "output_tokens": 0, "cost_usd": 0,
@@ -863,6 +867,63 @@ def test_conversations_keep_isolated_context(tmp_path, monkeypatch) -> None:
     assert titles[cid_a] == "Стратегия А"
 
 
+def test_new_conversation_title_is_fixed_by_first_owner_request(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    _isolate_conversations(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"принято","confidence":1,"doubts":[],"actions":[]}',
+        "provider": "gemini", "actual_model": "gemini-2.5-flash",
+    })
+    synced = []
+    monkeypatch.setattr(
+        chief_agent, "_sync_telegram_topic_title_async",
+        lambda conversation_id, title: synced.append((conversation_id, title)),
+    )
+
+    conversation = chief_agent.create_conversation()
+    cid = conversation["conversation_id"]
+    assert conversation["title"] == "Новый чат"
+    assert synced == []  # no Telegram topic with a placeholder name
+
+    first = "Проверь поток сообщений между приложением и Telegram"
+    chief_agent.handle_message(first, conversation_id=cid, mirror_to_telegram=False)
+    chief_agent.handle_message("Это второе сообщение не должно менять название", conversation_id=cid,
+                               mirror_to_telegram=False)
+
+    saved = next(row for row in chief_agent.list_conversations() if row["conversation_id"] == cid)
+    expected = chief_agent._title_from_message(first)
+    assert saved["title"] == expected
+    assert saved["auto_title"] is False
+    assert saved["title_source"] == "first_request"
+    assert synced == [(cid, expected)]
+
+
+def test_listing_repairs_legacy_rolling_title_and_telegram_topic(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    _isolate_conversations(tmp_path, monkeypatch)
+    synced = []
+    monkeypatch.setattr(
+        chief_agent, "_sync_telegram_topic_title_async",
+        lambda conversation_id, title: synced.append((conversation_id, title)),
+    )
+    conversation = chief_agent.create_conversation()
+    cid = conversation["conversation_id"]
+    path = chief_agent._conversation_file(cid)
+    first = "Первый запрос задаёт постоянное название"
+    chief_agent._append_conversation("user", first, source="app", path=path)
+    chief_agent._append_conversation("user", "Последнее сообщение не является названием", source="app", path=path)
+
+    saved = next(row for row in chief_agent.list_conversations() if row["conversation_id"] == cid)
+
+    expected = chief_agent._title_from_message(first)
+    assert saved["title"] == expected
+    assert saved["auto_title"] is False
+    assert synced == [(cid, expected)]
+    chief_agent.list_conversations()
+    assert synced == [(cid, expected)]  # migration and remote rename run once
+
+
 def _isolate_conversations(tmp_path, monkeypatch):
     convs = tmp_path / "convs"
     monkeypatch.setattr(chief_agent, "_conversations_index_path", lambda: tmp_path / "conv_index.json")
@@ -920,6 +981,81 @@ def test_start_research_records_conversation_and_reports_launch(tmp_path, monkey
     assert mission["conversation_id"] == "C-TEST"
 
 
+def test_ok_launch_approves_previous_plan_and_resumes_matching_mission(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chief_agent.create_conversation("MGC completion", conversation_id="C-MGC")
+    chief_agent._append_conversation(
+        "assistant",
+        "План: продолжить стратегию MGC и получить итоговый бэктест. Подтвердите — сразу запущу.",
+        source="test", path=chief_agent._conversation_file("C-MGC"),
+    )
+    chief_agent._save({"mission": {
+        "mission_id": "M-MGC", "status": "stopped", "control_revision": 4,
+        "target_roots": ["MGC"], "goal": "VWAP Pullback MGC",
+        "active_strategy_experiment_id": "EXP-CANCELLED", "conversation_id": "C-MGC",
+    }})
+    monkeypatch.setattr(chief_agent, "_kick_mission_start", lambda: None)
+    monkeypatch.setattr(
+        chief_agent.agent_router, "invoke_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("follow-up approval must be deterministic")),
+    )
+
+    result = chief_agent.handle_message(
+        "ок запускай", conversation_id="C-MGC", agent="tolik", mirror_to_telegram=False,
+    )
+
+    assert result["model"] == "deterministic dispatcher"
+    assert result["actions"] == [{
+        "name": "resume_research", "status": "completed", "mission_status": "active",
+    }]
+    assert chief_agent._load()["mission"]["status"] == "active"
+    assert "Не выполнено" not in result["reply"]
+    conversation = next(row for row in chief_agent.list_conversations() if row["conversation_id"] == "C-MGC")
+    assert conversation["work_state"] == "in_progress"
+
+
+def test_cancelled_experiment_is_cleared_without_false_rejection_report(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    mission = {
+        "mission_id": "M1", "status": "active", "control_revision": 2,
+        "active_strategy_experiment_id": "EXP-CANCELLED",
+        "active_strategy_started_at_utc": "2026-07-03T18:00:00Z",
+    }
+    chief_agent._save({"mission": mission})
+    monkeypatch.setattr(chief_agent.registry, "read_experiment", lambda _eid: {
+        "experiment_id": "EXP-CANCELLED", "status": "cancelled",
+    })
+    monkeypatch.setattr(chief_agent.registry, "is_terminal", lambda status: status == "cancelled")
+    monkeypatch.setattr(
+        chief_agent, "_post_mission_update",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("cancel is not a rejection result")),
+    )
+
+    updated = chief_agent._report_completed_strategy(dict(mission))
+
+    assert updated["active_strategy_experiment_id"] == ""
+    assert updated["cancelled_experiment_ids"] == ["EXP-CANCELLED"]
+
+
+def test_conversation_can_close_reopen_and_reject_messages_while_closed(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chief_agent.create_conversation("Finished", conversation_id="C-DONE")
+    chief_agent._set_conversation_work_state("C-DONE", "completed", "Готово")
+
+    closed = chief_agent.set_conversation_closed("C-DONE", True)
+
+    assert closed["closed"] is True
+    try:
+        chief_agent.handle_message("новое сообщение", conversation_id="C-DONE", mirror_to_telegram=False)
+    except chief_agent.ChiefAgentError as exc:
+        assert "Тема закрыта" in str(exc)
+    else:
+        raise AssertionError("closed conversation must reject new messages")
+    reopened = chief_agent.set_conversation_closed("C-DONE", False)
+    assert reopened["closed"] is False
+    assert reopened["work_state"] == "open"
+
+
 def test_continuous_profit_request_focuses_one_strategy_and_stays_quiet(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent.runner, "run_status", lambda: None)
@@ -968,6 +1104,72 @@ def test_conditional_stop_with_typo_starts_instead_of_stopping(tmp_path, monkeyp
     assert mission["until_stopped"] is True
     assert result["actions"][0]["name"] == "start_research"
     assert chief_agent._stop_requested("стоп, остановись") is True
+
+
+def test_stop_intent_requires_an_immediate_command_not_a_keyword() -> None:
+    assert chief_agent._stop_requested("Остановись прямо сейчас") is True
+    assert chief_agent._stop_requested("Прекрати работу") is True
+    assert chief_agent._stop_requested("Работай, пока я не скажу остановись. А сейчас остановись") is True
+    assert chief_agent._stop_requested("Продолжай и остановись в 11:00") is False
+    assert chief_agent._stop_requested("Остановись через 15 минут") is False
+    assert chief_agent._stop_requested("Остановись потом") is False
+    assert chief_agent._stop_requested("Не останавливайся") is False
+    assert chief_agent._stop_requested("Если я скажу остановись, тогда завершай") is False
+    assert chief_agent._stop_requested("В предложении было слово «остановись»") is False
+    assert chief_agent._stop_requested("Почему ты остановился?") is False
+
+
+def test_scheduled_stop_keeps_active_mission_running_until_owner_time(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    fixed_utc = datetime(2026, 7, 3, 17, 45, tzinfo=timezone.utc)
+    fixed_pt = fixed_utc.astimezone(ZoneInfo("America/Los_Angeles"))
+    monkeypatch.setattr(chief_agent, "_now_dt", lambda: fixed_utc)
+    monkeypatch.setattr(chief_agent, "_pt_now", lambda: fixed_pt)
+    monkeypatch.setattr(
+        chief_agent.agent_router, "invoke_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("scheduled stop is deterministic")),
+    )
+    chief_agent._save({"mission": {
+        "mission_id": "M-SCHEDULED", "status": "active", "control_revision": 2,
+        "target_roots": ["MGC"], "until_stopped": True, "ends_at_utc": None,
+    }})
+
+    result = chief_agent.handle_message(
+        "Хорошо продолжай и остановись в 11:00. Через 15 минут я проверю, что получилось, пришлёшь отчёт.",
+        mirror_to_telegram=False,
+    )
+
+    mission = chief_agent._load()["mission"]
+    assert result["model"] == "deterministic dispatcher"
+    assert result["actions"][0]["name"] == "schedule_research_stop"
+    assert result["actions"][0]["status"] == "completed"
+    assert mission["status"] == "active"
+    assert mission["until_stopped"] is False
+    assert mission["ends_at_utc"] == "2026-07-03T18:00:00Z"
+    assert "11:00" in result["reply"]
+
+
+def test_model_cannot_turn_ambiguous_future_stop_into_immediate_stop(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": (
+            '{"reply":"Останавливаю.","confidence":0.99,"doubts":[],'
+            '"actions":[{"name":"stop_research","arguments":{},"reason":"bad keyword match"}]}'
+        ),
+        "provider": "test", "actual_model": "test-model",
+    })
+    chief_agent._save({"mission": {
+        "mission_id": "M-ACTIVE", "status": "active", "control_revision": 1,
+        "target_roots": ["MNQ"],
+    }})
+
+    result = chief_agent.handle_message("Продолжай, а остановись потом", mirror_to_telegram=False)
+
+    assert result["actions"][0]["name"] == "stop_research"
+    assert result["actions"][0]["status"] == "blocked"
+    assert result["actions"][0]["reason"] == "current_message_does_not_authorize_action"
+    assert chief_agent._load()["mission"]["status"] == "active"
 
 
 def test_stop_is_deterministic_and_cancels_every_future_start(tmp_path, monkeypatch) -> None:
@@ -1048,6 +1250,84 @@ def test_completed_strategy_report_is_claimed_once_across_stale_ticks(tmp_path, 
     saved = chief_agent._load()["mission"]
     assert saved["reported_experiment_ids"] == ["EXP-1"]
     assert saved["last_strategy_model"] == "openai/gpt-oss-20b"
+
+
+def test_owner_address_varies_and_is_deterministic_by_seed() -> None:
+    # Same seed always renders the same address (keeps rendered reports stable);
+    # across many seeds more than one form is used (no monotonous spam).
+    assert chief_agent._owner_address("MNQTest") == chief_agent._owner_address("MNQTest")
+    forms = {chief_agent._owner_address(f"seed-{i}") for i in range(40)}
+    assert forms.issubset(set(chief_agent._OWNER_ADDRESSES))
+    assert len(forms) > 1
+    # The vocative-less "вы" form capitalizes the sentence instead of prefixing.
+    seed_plain = next(f"seed-{i}" for i in range(500) if chief_agent._owner_address(f"seed-{i}") == "")
+    assert chief_agent._greet("проверил MNQ.", seed=seed_plain) == "Проверил MNQ."
+
+
+def test_repeated_identical_rejections_are_suppressed_then_escalate(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    mission = {"mission_id": "M1", "status": "active", "control_revision": 1,
+               "reported_experiment_ids": []}
+
+    def _rejected(exp_id: str) -> dict:
+        return {
+            "experiment_id": exp_id, "class_name": exp_id, "status": "rejected",
+            "family": "trend_pullback",
+            "verdict": {"outcome": "reject", "rejection_code": "OVERTRADING_RISK"},
+        }
+
+    experiments = {eid: _rejected(eid) for eid in ("E1", "E2", "E3")}
+    monkeypatch.setattr(chief_agent.registry, "read_experiment", lambda eid: experiments.get(eid))
+
+    posts: list = []
+    monkeypatch.setattr(
+        chief_agent, "_post_mission_update",
+        lambda mission, text, **kw: posts.append((kw.get("action_name"), kw.get("notify_telegram"), text)),
+    )
+
+    for eid in ("E1", "E2", "E3"):
+        mission["active_strategy_experiment_id"] = eid
+        chief_agent._save({"mission": mission})
+        mission = chief_agent._report_completed_strategy(mission)
+
+    routine = [p for p in posts if p[0] == "strategy_result"]
+    escalations = [p for p in posts if p[0] == "approach_change"]
+    # First repeat pushes to Telegram once; further identical repeats are muted.
+    assert [notify for _name, notify, _text in routine] == [True, False, False]
+    # The third identical failure triggers exactly one escalation message.
+    assert len(escalations) == 1
+    assert escalations[0][1] is True
+    saved = chief_agent._load()["mission"]
+    assert saved.get("approach_escalation", {}).get("active") is True
+    assert saved["approach_escalation"]["family"] == "trend_pullback"
+
+
+def test_new_rejection_reason_is_reported_again(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    mission = {"mission_id": "M1", "status": "active", "control_revision": 1,
+               "reported_experiment_ids": []}
+    experiments = {
+        "E1": {"experiment_id": "E1", "class_name": "E1", "status": "rejected",
+               "family": "trend_pullback",
+               "verdict": {"outcome": "reject", "rejection_code": "OVERTRADING_RISK"}},
+        "E2": {"experiment_id": "E2", "class_name": "E2", "status": "rejected",
+               "family": "trend_pullback",
+               "verdict": {"outcome": "reject", "rejection_code": "SMOKE_ZERO_TRADES"}},
+    }
+    monkeypatch.setattr(chief_agent.registry, "read_experiment", lambda eid: experiments.get(eid))
+    posts: list = []
+    monkeypatch.setattr(
+        chief_agent, "_post_mission_update",
+        lambda mission, text, **kw: posts.append((kw.get("action_name"), kw.get("notify_telegram"))),
+    )
+
+    for eid in ("E1", "E2"):
+        mission["active_strategy_experiment_id"] = eid
+        chief_agent._save({"mission": mission})
+        mission = chief_agent._report_completed_strategy(mission)
+
+    # A different rejection reason is genuinely new information → pushed again.
+    assert [notify for name, notify in posts if name == "strategy_result"] == [True, True]
 
 
 def test_pin_conversation_floats_to_top(tmp_path, monkeypatch) -> None:

@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from .. import account_ledger, performance, runtime
 from . import agent_router, llm_timeouts, news_agent, registry
 
-
 MONEY = Decimal("0.01")
 PERSONAS: Dict[str, Dict[str, Any]] = {
     "marina": {
@@ -55,6 +54,19 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "анализ опубликованных и предстоящих рыночных событий",
             "оценка влияния на стратегии и инфраструктуру",
             "срочные рекомендации через Telegram без торговых полномочий",
+        ),
+    },
+    "ivan": {
+        "id": "ivan",
+        "name": "Иван",
+        "title": "AI-оператор графиков",
+        "role": "chart_operator",
+        "page": "desktop.html",
+        "aliases": ("иван", "ivan", "график", "графист", "оператор графиков", "рабочий стол"),
+        "capabilities": (
+            "рисует линии и отметки на графиках по команде из чата",
+            "следит за достижением цены за заданный срок",
+            "делает снимок графика и присылает отчёт в чат",
         ),
     },
 }
@@ -396,10 +408,380 @@ def _llm_view(agent_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def answer(agent_id: str, message: str, *, period: str = "month", account: str = "") -> Dict[str, Any]:
+# =========================  CHART OPERATOR (Иван)  =========================
+# Instrument roots the desktop supports, each with Russian/English aliases so
+# a spoken command like "поставь линию на нэсдак 21500" resolves to a root.
+_CHART_ROOTS: Dict[str, Tuple[str, ...]] = {
+    "MBT": ("mbt", "битк", "биткоин", "bitcoin", "btc"),
+    "MET": ("met", "эфир", "эфириум", "ether", "eth"),
+    "MNQ": ("mnq", "насдак", "нэсдак", "наздак", "nasdaq", "нэсдэк"),
+    "MES": ("mes", "сипи", "сп500", "s&p", "sp500", "эсенпи"),
+    "MYM": ("mym", "доу", "dow"),
+    "M2K": ("m2k", "рассел", "russell"),
+    "RTY": ("rty",),
+    "MCL": ("mcl", "нефт", "нефть", "oil", "crude"),
+    "MNG": ("mng", "газ", "natural gas", "henry hub"),
+    "MGC": ("mgc", "золот", "золото", "gold"),
+    "SIL": ("sil", "серебр", "серебро", "silver"),
+    "MHG": ("mhg", "медь", "copper"),
+    "6E": ("евро", "euro", "eurusd", "eur"),
+    "6B": ("фунт", "pound", "gbp"),
+    "6J": ("иена", "йена", "yen", "jpy"),
+    "6A": ("осси", "aud", "australian"),
+    "6C": ("канадск", "cad", "canadian"),
+    "ZC": ("кукуруз", "corn"),
+    "ZW": ("пшениц", "wheat"),
+    "ZS": ("соя", "соев", "soybean"),
+    "ZN": ("трежерис", "10-year", "10 year", "ust"),
+    "ZB": ("бонд", "bond"),
+}
+_ROOT_TOKENS = set(_CHART_ROOTS.keys())
+
+_DRAWING_ALIASES: Tuple[Tuple[str, str], ...] = (
+    ("стрелк", "arrow"), ("arrow", "arrow"),
+    ("точк", "point"), ("метк", "point"), ("отмет", "point"), ("point", "point"), ("dot", "point"),
+    ("флаг", "flag"), ("flag", "flag"),
+    ("цел", "target"), ("мишен", "target"), ("target", "target"),
+    ("подпис", "label"), ("label", "label"), ("ярлык", "label"),
+    ("лини", "line"), ("уровн", "line"), ("линеечк", "line"), ("line", "line"), ("level", "line"),
+)
+
+
+def _resolve_chart_root(text: str) -> str:
+    low = " " + str(text or "").lower() + " "
+    best_root, best_len = "", 0
+    for root, aliases in _CHART_ROOTS.items():
+        for alias in aliases:
+            if alias in low and len(alias) > best_len:
+                best_root, best_len = root, len(alias)
+    if best_root:
+        return best_root
+    # explicit uppercase root token in the original message
+    for token in re.findall(r"[A-Za-z0-9]{2,4}", str(text or "")):
+        if token.upper() in _ROOT_TOKENS:
+            return token.upper()
+    return ""
+
+
+def _extract_duration_minutes(text: str) -> Tuple[Optional[int], str]:
+    """Return (minutes, matched_substring) for phrases like 'за 60 минут'."""
+    low = str(text or "").lower()
+    pat = re.compile(r"(\d+(?:[.,]\d+)?)\s*(секунд\w*|сек\b|мин\w*|час\w*|ч\b|дн\w*|день|сут\w*|недел\w*)")
+    for m in pat.finditer(low):
+        value = float(m.group(1).replace(",", "."))
+        unit = m.group(2)
+        if unit.startswith("сек") or unit == "сек":
+            minutes = max(1, round(value / 60))
+        elif unit.startswith("мин"):
+            minutes = round(value)
+        elif unit.startswith("час") or unit == "ч":
+            minutes = round(value * 60)
+        elif unit.startswith("недел"):
+            minutes = round(value * 60 * 24 * 7)
+        else:  # дни / сутки
+            minutes = round(value * 60 * 24)
+        return max(1, min(525600, int(minutes))), m.group(0)
+    return None, ""
+
+
+def _extract_price(text: str, exclude: Any = "") -> Optional[float]:
+    cleaned = str(text or "")
+    spans = exclude if isinstance(exclude, (list, tuple, set)) else [exclude]
+    for span in spans:
+        span = str(span or "").strip()
+        if span:
+            cleaned = cleaned.replace(span, " ")
+    # remove known root tokens so digits inside a symbol are not mistaken for price
+    for token in re.findall(r"[A-Za-z0-9]{2,4}", cleaned):
+        if token.upper() in _ROOT_TOKENS:
+            cleaned = cleaned.replace(token, " ")
+    # thousands with spaces (21 500) or plain / decimal numbers
+    grouped = re.search(r"\d{1,3}(?:[ \u00a0]\d{3})+(?:[.,]\d+)?", cleaned)
+    if grouped:
+        try:
+            return float(grouped.group(0).replace("\u00a0", "").replace(" ", "").replace(",", "."))
+        except ValueError:
+            pass
+    for m in re.finditer(r"\d+(?:[.,]\d+)?", cleaned):
+        try:
+            value = float(m.group(0).replace(",", "."))
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _extract_delay_seconds(text: str) -> Tuple[Optional[int], str]:
+    """Return (seconds, matched) for a *delay* like 'через 30 секунд' / 'через минуту'.
+
+    Distinct from a watch window ('за N минут'): a delay uses через/спустя/in.
+    """
+    low = str(text or "").lower()
+    pat = re.compile(r"(?:через|спустя|in)\s+(\d+(?:[.,]\d+)?)\s*(секунд\w*|сек\b|мин\w*|час\w*|ч\b)")
+    m = pat.search(low)
+    if m:
+        value = float(m.group(1).replace(",", "."))
+        unit = m.group(2)
+        if unit.startswith("сек") or unit == "сек":
+            secs = value
+        elif unit.startswith("мин"):
+            secs = value * 60
+        else:
+            secs = value * 3600
+        return max(1, min(31 * 24 * 3600, int(round(secs)))), m.group(0)
+    # number-less forms: "через минуту", "через час", "через секунду"
+    for phrase, secs in (("через секунд", 5), ("спустя секунд", 5),
+                         ("через полминуты", 30), ("через минуту", 60), ("спустя минуту", 60),
+                         ("через час", 3600), ("спустя час", 3600)):
+        if phrase in low:
+            return secs, phrase
+    return None, ""
+
+
+def _extract_timeframe(text: str) -> str:
+    low = str(text or "").lower()
+    m = re.search(r"\b(\d+)\s*(m|м|мин|h|ч|час)\b", low)
+    if m:
+        num = m.group(1)
+        unit = m.group(2)
+        if unit in ("h", "ч", "час"):
+            return f"{num}h"
+        return f"{num}m"
+    if "дневн" in low or "1d" in low or "1д" in low:
+        return "1D"
+    return ""
+
+
+def parse_chart_intent(message: str) -> Dict[str, Any]:
+    """Deterministically extract a chart operation from an owner command."""
+    text = str(message or "").strip()
+    low = text.lower()
+    intent: Dict[str, Any] = {"action": "", "root": _resolve_chart_root(text)}
+
+    if any(word in low for word in ("очист", "убер", "сотр", "удали все", "clear")):
+        intent["action"] = "clear"
+        return intent
+
+    delay_seconds, delay_span = _extract_delay_seconds(text)
+    dur_minutes, dur_span = _extract_duration_minutes(text)
+    # If the same phrase matched both, it is a delay ("через N"), not a window.
+    if delay_span and dur_span and (dur_span in delay_span or delay_span in dur_span):
+        dur_minutes = None
+    price = _extract_price(text, exclude=[delay_span, dur_span])
+    want_snapshot = any(word in low for word in (
+        "снимок", "снимк", "скрин", "скриншот", "сфотограф", "фото", "снять график"))
+    want_report = want_snapshot or any(word in low for word in (
+        "отчит", "отчёт", "отчет", "сообщи", "сообщить", "уведоми", "доложи", "пришли", "report"))
+    want_open = any(word in low for word in (
+        "открой", "открыть", "покажи", "показать", "выведи", "вывести", "open", "загрузи"))
+
+    drawing_type = "line"
+    for needle, mapped in _DRAWING_ALIASES:
+        if needle in low:
+            drawing_type = mapped
+            break
+    if drawing_type == "arrow":
+        if "вниз" in low or "down" in low or "падени" in low or "продаж" in low or "шорт" in low:
+            drawing_type = "arrow_down"
+        elif "вверх" in low or "up" in low or "рост" in low or "покупк" in low or "лонг" in low:
+            drawing_type = "arrow_up"
+
+    # Bare snapshot request without a price level → snapshot of a chart (the
+    # named instrument, or the currently active one), now or after a delay.
+    if want_snapshot and price is None:
+        intent["action"] = "snapshot"
+        intent["delay_seconds"] = delay_seconds or 0
+        intent["timeframe"] = _extract_timeframe(text)
+        return intent
+
+    # "Открой график MNQ" (без снимка) → just open + fit the chart.
+    if want_open and price is None and intent.get("root"):
+        intent["action"] = "open"
+        intent["timeframe"] = _extract_timeframe(text)
+        return intent
+
+    if price is not None:
+        report_mode = "touch"
+        if dur_minutes:
+            # "дойдёт или не дойдёт — отчитайся" → report on both outcomes.
+            report_mode = "both" if want_report else "touch"
+        # Иван reports with a chart snapshot — that IS his report, so any request
+        # to watch / report a level uses the snapshot rule (image + text to chat).
+        rule = "snapshot" if want_report else "none"
+        intent.update({
+            "action": "draw",
+            "type": drawing_type,
+            "price": price,
+            "timeframe": _extract_timeframe(text),
+            "duration_minutes": dur_minutes or 0,
+            "rule": rule,
+            "report_mode": report_mode,
+            "snapshot": rule == "snapshot",
+        })
+        return intent
+
+    return intent
+
+
+_DRAWING_HUMAN = {
+    "line": "горизонтальную линию", "point": "точку", "arrow": "стрелку",
+    "arrow_up": "стрелку вверх", "arrow_down": "стрелку вниз",
+    "flag": "флажок", "target": "цель", "label": "подпись",
+}
+
+
+def _fmt_price(value: float) -> str:
+    if value == int(value):
+        return f"{int(value)}"
+    return f"{value:g}"
+
+
+def _fmt_duration(minutes: int) -> str:
+    if minutes % (60 * 24) == 0:
+        days = minutes // (60 * 24)
+        return f"{days} дн."
+    if minutes % 60 == 0:
+        return f"{minutes // 60} ч."
+    return f"{minutes} мин."
+
+
+def _fmt_delay(seconds: int) -> str:
+    seconds = int(seconds or 0)
+    if seconds < 60:
+        return f"{seconds} сек."
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} ч."
+    if seconds % 60 == 0:
+        return f"{seconds // 60} мин."
+    return f"{seconds // 60} мин. {seconds % 60} сек."
+
+
+def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[str, Any]:
+    """Иван — turns a chat command into a live chart action via the command queue."""
+    from .. import market_data  # local import avoids any import cycle at load time
+
+    profile = PERSONAS["ivan"]
+    intent = parse_chart_intent(message)
+    action = intent.get("action")
+    reply_lines: List[str] = []
+    queued: List[str] = []
+
+    def _base_result(reply: str) -> Dict[str, Any]:
+        return {
+            "ok": True, "agent": {key: profile[key] for key in ("id", "name", "title", "page")},
+            "reply": reply, "snapshot": {}, "model": "chart operator", "provider": "local",
+            "complexity": "light", "actions": queued,
+        }
+
+    if action == "clear":
+        try:
+            market_data.enqueue_chart_command({
+                "type": "clear", "instrument": intent.get("root") or "",
+                "conversation_id": conversation_id, "agent_id": "ivan",
+                "note": "Убрать отметки с графиков",
+            })
+            queued.append("clear")
+        except market_data.MarketDataError:
+            pass
+        return _base_result(
+            "Убрал отметки" + (f" по {intent['root']}" if intent.get("root") else " со всех графиков")
+            + ". Если «Рабочий стол» открыт — изменения уже применены.")
+
+    if action == "snapshot":
+        delay = int(intent.get("delay_seconds") or 0)
+        root = intent.get("root") or ""
+        market_data.enqueue_chart_command({
+            "type": "snapshot", "instrument": root, "timeframe": intent.get("timeframe") or "",
+            "delay_seconds": delay,
+            "conversation_id": conversation_id, "agent_id": "ivan",
+            "note": message[:400],
+            "payload": {"fit": True},
+        })
+        queued.append("snapshot")
+        target = root if root else "текущего графика"
+        when = f"через {_fmt_delay(delay)}" if delay else "сейчас"
+        return _base_result(
+            f"Принял. Сделаю снимок {target} {when} и пришлю его в этот чат.\n"
+            "⚠️ «Рабочий стол» должен быть открыт в приложении.")
+
+    if action == "open":
+        root = intent.get("root") or ""
+        market_data.enqueue_chart_command({
+            "type": "open", "instrument": root, "timeframe": intent.get("timeframe") or "",
+            "conversation_id": conversation_id, "agent_id": "ivan",
+            "note": message[:400], "payload": {"fit": True},
+        })
+        queued.append("open")
+        return _base_result(
+            f"Открываю график {root} и настраиваю удобный вид. Скажите «сделай снимок», если нужно прислать его в чат.")
+
+    if action == "draw":
+        root = intent.get("root")
+        price = intent.get("price")
+        if not root:
+            return _base_result(
+                "Понял уровень " + _fmt_price(float(price)) + ", но не разобрал инструмент. "
+                "Уточните, например: «поставь линию на MNQ " + _fmt_price(float(price)) + "».")
+        payload = {
+            "drawing": {
+                "type": intent.get("type") or "line",
+                "price": float(price),
+                "label": f"{profile['name']}: {_fmt_price(float(price))}",
+                "color": "#4fd1e0",
+                "duration_minutes": int(intent.get("duration_minutes") or 0),
+                "rule": intent.get("rule") or "none",
+                "report_mode": intent.get("report_mode") or "touch",
+                "snapshot": bool(intent.get("snapshot")),
+            },
+        }
+        market_data.enqueue_chart_command({
+            "type": "draw", "instrument": root, "timeframe": intent.get("timeframe") or "",
+            "payload": payload, "conversation_id": conversation_id, "agent_id": "ivan",
+            "note": message[:400],
+        })
+        queued.append("draw")
+        human = _DRAWING_HUMAN.get(intent.get("type") or "line", "отметку")
+        reply_lines.append(f"Готово — ставлю {human} на {root} по уровню {_fmt_price(float(price))}.")
+        rule = intent.get("rule")
+        if rule == "snapshot" or intent.get("snapshot"):
+            if intent.get("duration_minutes"):
+                if intent.get("report_mode") == "both":
+                    reply_lines.append(
+                        f"Слежу {_fmt_duration(int(intent['duration_minutes']))}: как только цена коснётся уровня — "
+                        "пришлю снимок графика в этот чат; если не дойдёт за это время — тоже пришлю снимок и сообщу, что уровень не достигнут.")
+                else:
+                    reply_lines.append(
+                        f"Как только цена коснётся уровня в течение {_fmt_duration(int(intent['duration_minutes']))} — "
+                        "пришлю снимок графика в этот чат.")
+            else:
+                reply_lines.append("Как только цена коснётся уровня — пришлю снимок графика в этот чат.")
+        elif rule == "agent":
+            if intent.get("duration_minutes"):
+                reply_lines.append(
+                    f"Слежу {_fmt_duration(int(intent['duration_minutes']))} и отчитаюсь о достижении уровня в этот чат.")
+            else:
+                reply_lines.append("Отчитаюсь в этот чат, как только цена коснётся уровня.")
+        reply_lines.append("⚠️ Для рисования и снимков «Рабочий стол» должен быть открыт в приложении.")
+        return _base_result("\n".join(reply_lines))
+
+    # No actionable command recognised — explain capabilities briefly.
+    return _base_result(
+        "Я — Иван, оператор графиков. Управляю «Рабочим столом» по вашим командам:\n"
+        "• «поставь линию на MNQ 21500» — нарисую уровень на графике;\n"
+        "• «отметь 21500 на MNQ, если дойдёт за 60 минут — снимок в чат» — поставлю уровень, буду следить и пришлю снимок;\n"
+        "• «сделай снимок MES» — пришлю текущий снимок графика;\n"
+        "• «убери отметки с MNQ» — очищу разметку.\n"
+        "Скажите инструмент и цену — и я всё сделаю.")
+
+
+def answer(agent_id: str, message: str, *, period: str = "month", account: str = "",
+           conversation_id: str = "") -> Dict[str, Any]:
     profile = PERSONAS.get(str(agent_id or "").lower())
     if not profile:
         raise ValueError("unknown domain agent")
+    if profile["id"] == "ivan":
+        return chart_operator_answer(message, conversation_id=conversation_id)
     if profile["id"] == "marina":
         snapshot = accounting_snapshot(period, account)
     elif profile["id"] == "tolik":

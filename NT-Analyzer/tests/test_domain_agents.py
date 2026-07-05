@@ -14,6 +14,100 @@ def test_named_personas_require_explicit_address() -> None:
     assert domain_agents.resolve_persona("Никита, что произошло на рынке?")["id"] == "nikita"
 
 
+def test_chart_operator_ivan_addressing_and_intent() -> None:
+    assert domain_agents.resolve_persona("Иван, поставь линию на MNQ 21500")["id"] == "ivan"
+    assert domain_agents.resolve_persona("любой текст", "ivan")["name"] == "Иван"
+
+    intent = domain_agents.parse_chart_intent(
+        "поставь линию на MNQ 21500, если дойдёт за 60 минут сделай снимок и отчитайся")
+    assert intent["action"] == "draw"
+    assert intent["root"] == "MNQ"
+    assert intent["price"] == 21500.0
+    assert intent["duration_minutes"] == 60
+    assert intent["rule"] == "snapshot"
+    assert intent["report_mode"] == "both"
+
+    assert domain_agents.parse_chart_intent("сделай снимок нэсдак")["action"] == "snapshot"
+    assert domain_agents.parse_chart_intent("убери отметки с MES")["action"] == "clear"
+    down = domain_agents.parse_chart_intent("поставь стрелку вниз на золото 4200")
+    assert down["type"] == "arrow_down" and down["root"] == "MGC"
+
+
+def test_chart_operator_answer_enqueues_command(monkeypatch) -> None:
+    from app import market_data
+
+    captured = {}
+    monkeypatch.setattr(market_data, "enqueue_chart_command",
+                        lambda cmd: captured.setdefault("cmd", cmd) or {"command": cmd})
+    out = domain_agents.chart_operator_answer(
+        "поставь линию на MNQ 21500 если дойдёт за 60 минут снимок в чат",
+        conversation_id="c-42")
+    assert out["ok"] and out["agent"]["id"] == "ivan"
+    assert "draw" in out["actions"]
+    cmd = captured["cmd"]
+    assert cmd["type"] == "draw" and cmd["instrument"] == "MNQ"
+    assert cmd["conversation_id"] == "c-42"
+    assert cmd["payload"]["drawing"]["price"] == 21500.0
+    assert cmd["payload"]["drawing"]["snapshot"] is True
+
+
+def test_chart_operator_delayed_snapshot_and_active_chart(monkeypatch) -> None:
+    from app import market_data
+
+    # "через минуту" → delayed snapshot of the active (unnamed) chart.
+    it = domain_agents.parse_chart_intent("Пришли снимок графика через минуту")
+    assert it["action"] == "snapshot" and it["root"] == "" and it["delay_seconds"] == 60
+
+    it2 = domain_agents.parse_chart_intent("сделай снимок MES через 30 секунд")
+    assert it2["action"] == "snapshot" and it2["root"] == "MES" and it2["delay_seconds"] == 30
+    assert it2.get("price") is None
+
+    assert domain_agents.parse_chart_intent("открой график золото")["action"] == "open"
+
+    captured = {}
+    monkeypatch.setattr(market_data, "enqueue_chart_command",
+                        lambda cmd: captured.setdefault("cmd", cmd) or {"command": cmd})
+    out = domain_agents.chart_operator_answer("Пришли снимок графика через минуту", conversation_id="cX")
+    assert "snapshot" in out["actions"]
+    assert captured["cmd"]["type"] == "snapshot"
+    assert captured["cmd"]["instrument"] == ""       # active chart
+    assert captured["cmd"]["delay_seconds"] == 60
+    assert captured["cmd"]["conversation_id"] == "cX"
+
+
+def test_time_alert_and_snapshot_gallery(tmp_path, monkeypatch) -> None:
+    import base64
+    import time as _time
+    from app import market_data as md
+
+    monkeypatch.setattr(md, "_runtime_dir", lambda: tmp_path)
+
+    # time-based alert triggers on the clock, not on price.
+    alert = md.create_alert({"instrument": "MNQ", "timeframe": "5m", "price": 25000, "type": "point",
+                             "trigger": "time", "delay_seconds": 1, "action": "snapshot",
+                             "report_mode": "touch", "conversation_id": "c1", "label": "t"})["alert"]
+    assert alert["trigger"] == "time" and alert["due_at_utc"]
+    _time.sleep(1.2)
+    triggered = md.evaluate_alerts()
+    assert any(t["id"] == alert["id"] for t in triggered)
+
+    # snapshot gallery: save → list → favorite → survives clear → delete.
+    png = base64.b64encode(bytes([137, 80, 78, 71, 13, 10, 26, 10] + [0] * 32)).decode()
+    saved = md.save_snapshot("data:image/png;base64," + png,
+                             meta={"instrument": "MNQ", "timeframe": "5m", "outcome": "manual"})
+    sid = saved["id"]
+    assert md.list_snapshots()["total"] == 1
+    md.update_snapshot(sid, favorite=True, pattern="голова и плечи")
+    listing = md.list_snapshots()
+    assert listing["snapshots"][0]["favorite"] is True
+    assert any(p["name"] == "голова и плечи" for p in listing["patterns"])
+    md.clear_snapshots(keep_favorites=True)
+    assert md.list_snapshots()["total"] == 1     # favorite kept
+    md.delete_snapshot(sid)
+    assert md.list_snapshots()["total"] == 0
+
+
+
 def test_management_tiers_force_model_complexity() -> None:
     assert domain_agents.resolve_management("secretary")["forced_complexity"] == "light"
     assert domain_agents.resolve_management("deputy")["forced_complexity"] == "standard"

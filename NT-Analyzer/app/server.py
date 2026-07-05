@@ -31,12 +31,13 @@ import threading
 import time
 import traceback
 import urllib.parse
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 # Allow `python app/server.py` to import sibling module.
 if __package__ is None or __package__ == "":
@@ -45,6 +46,10 @@ if __package__ is None or __package__ == "":
     from app import governance  # type: ignore[no-redef]
     from app import integrations  # type: ignore[no-redef]
     from app import telegram_service  # type: ignore[no-redef]
+    from app import telegram_remote  # type: ignore[no-redef]
+    from app import tunnel_manager  # type: ignore[no-redef]
+    from app import account_auth  # type: ignore[no-redef]
+    from app import market_data  # type: ignore[no-redef]
     from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
@@ -80,6 +85,10 @@ else:
     from . import governance
     from . import integrations
     from . import telegram_service
+    from . import telegram_remote
+    from . import tunnel_manager
+    from . import account_auth
+    from . import market_data
     from . import secure_store as _secure_store
     from . import marginrefresh
     from . import ops
@@ -125,7 +134,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "
-    "object-src 'none'; frame-ancestors 'self'"
+    "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
 
 
@@ -150,6 +159,69 @@ def _do_restart_server() -> None:
 # not send it, which is also accepted (empty Origin == not a cross-site
 # browser request). The current bind port is appended at runtime.
 _ALLOWED_ORIGIN_HOSTS = ("127.0.0.1", "localhost")
+
+_DESKTOP_INSTRUMENT_ROOTS = {
+    "MBT", "MET", "RTY", "MES", "MNQ", "M2K", "MYM",
+    "MCL", "MNG", "RB", "HO", "MGC", "SIL", "MHG",
+    "6A", "6B", "6C", "6E", "6J", "6S", "E7", "6M", "6N",
+    "HE", "LE", "ZC", "ZW", "ZS", "ZM", "ZL",
+    "ZT", "ZF", "ZN", "TN", "ZB", "UB",
+}
+
+
+def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
+    raw = str(row.get("t") or row.get("time_utc") or row.get("time") or "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _market_bars_payload(instrument: str, timeframe: str, limit: int,
+                         range_days: int = 0, from_date: str = "",
+                         to_date: str = "", register: bool = True) -> Dict[str, Any]:
+    if register:
+        market_data.register_request(instrument, timeframe, limit, range_days, from_date, to_date)
+    runtime_bars = market_data.read_runtime_series(instrument, timeframe, limit)
+    if runtime_bars and runtime_bars.get("bars"):
+        out = runtime_bars
+    else:
+        out = jobqueue.read_instrument_bars(instrument, timeframe, limit)
+        out["status"] = "historical_fallback" if out.get("bars") else (
+            (runtime_bars or {}).get("status") or "waiting")
+        out["bridge"] = {
+            "status": (runtime_bars or {}).get("status") or "subscription_requested",
+            "error": (runtime_bars or {}).get("error") or "",
+        }
+        if not out.get("bars"):
+            detail = out["bridge"]["error"]
+            out["note"] = detail or (
+                "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
+                "актуальность контракта и установленную версию Bridge.")
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    try:
+        if from_date:
+            start = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+        if to_date:
+            end = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc) + timedelta(days=1)
+    except ValueError:
+        start = end = None
+    if not start and range_days > 0:
+        latest_times = [_market_bar_time(row) for row in (out.get("bars") or []) if isinstance(row, dict)]
+        latest = max((dt for dt in latest_times if dt is not None), default=datetime.now(timezone.utc))
+        start = latest - timedelta(days=range_days)
+        if out.get("status") == "historical_fallback":
+            end = latest + timedelta(seconds=1)
+    if start or end:
+        out["bars"] = [row for row in (out.get("bars") or []) if isinstance(row, dict)
+                       and (lambda dt: dt is not None and (start is None or dt >= start)
+                            and (end is None or dt < end))(_market_bar_time(row))]
+        out["total"] = len(out["bars"])
+    out["alerts"] = market_data.list_alerts(
+        instrument=instrument, include_inactive=True)["alerts"]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +547,113 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def _request_ips(self) -> Tuple[str, str]:
+        tunnel_ip = str((self.client_address or ("", 0))[0] or "")
+        forwarded = str(self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+        return tunnel_ip, forwarded
+
+    def _cookie_value(self, name: str) -> str:
+        try:
+            cookie = SimpleCookie()
+            cookie.load(str(self.headers.get("Cookie") or ""))
+            return str(cookie[name].value) if name in cookie else ""
+        except Exception:
+            return ""
+
+    def _set_session_cookie(self, token: str) -> None:
+        secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        value = (
+            f"{account_auth.SESSION_COOKIE}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
+            f"HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
+    def _clear_session_cookie(self) -> None:
+        secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        value = f"{account_auth.SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        self._extra_headers.append(("Set-Cookie", value))
+
+    @staticmethod
+    def _request_hostname(value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urllib.parse.urlparse(raw if "://" in raw else "//" + raw)
+            return str(parsed.hostname or "").lower()
+        except (TypeError, ValueError):
+            return ""
+
+    def _is_remote_api_request(self) -> bool:
+        if self.headers.get(telegram_remote.INIT_DATA_HEADER):
+            return True
+        hosts = [
+            self._request_hostname(self.headers.get("Host") or ""),
+            self._request_hostname(self.headers.get("X-Forwarded-Host") or ""),
+            self._request_hostname(self.headers.get("Origin") or ""),
+            self._request_hostname(self.headers.get("Referer") or ""),
+        ]
+        return any(host and host not in _ALLOWED_ORIGIN_HOSTS for host in hosts)
+
+    def _local_owner_context(self) -> Dict[str, Any]:
+        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        user: Dict[str, Any] = {}
+        if owner_id:
+            user = account_auth.ensure_owner(owner_id) or {}
+        return {
+            "source": "local", "user_id": int(owner_id or 0),
+            "role": "owner", "is_owner": True,
+            "csrf_token": "", "user": user,
+        }
+
+    def _authorize_api(self, path: str) -> bool:
+        if not account_auth.auth_required():
+            try:
+                self._remote_context = self._local_owner_context()
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc)); return False
+            return True
+        tunnel_ip, forwarded_ip = self._request_ips()
+        init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
+        if init_data:
+            self._remote_attempt = True
+            try:
+                self._remote_context = telegram_remote.authorize(
+                    init_data, str(os.environ.get(telegram_service.TOKEN_ENV) or ""),
+                    method=self.command, path=path, tunnel_ip=tunnel_ip,
+                    forwarded_ip=forwarded_ip,
+                )
+                account = account_auth.find_active_user(self._remote_context.get("user_id")) or {}
+                self._remote_context["is_owner"] = bool(account.get("is_owner"))
+                if path.startswith("/api/auth/users") and not self._remote_context["is_owner"]:
+                    raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
+                return True
+            except (telegram_remote.RemoteAccessError, account_auth.AccountAuthError) as exc:
+                self._remote_context = getattr(exc, "context", None)
+                self._remote_error = str(exc)
+                self._err(getattr(exc, "status", 403), str(exc))
+                return False
+        try:
+            context = account_auth.authenticate_session(
+                self._cookie_value(account_auth.SESSION_COOKIE),
+            )
+        except account_auth.AccountAuthError as exc:
+            self._err(exc.status, str(exc)); return False
+        if not context:
+            self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
+            return False
+        method = self.command.upper()
+        role = str(context.get("role") or "read_only")
+        if method not in {"GET", "HEAD"} and role == "read_only":
+            self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
+            return False
+        owner_only = path.startswith("/api/telegram/") or path.startswith("/api/auth/users") or path == "/api/server/restart"
+        if owner_only and not context.get("is_owner"):
+            self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+            return False
+        self._remote_context = context
+        return True
+
     def _check_local_post(self) -> bool:
         """Reject cross-site POSTs from a browser. Returns True if the request
         is allowed (and writes an error + returns False otherwise).
@@ -492,8 +671,127 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return self._check_local_origin()
 
+    def _check_json_content_type(self) -> bool:
+        ct = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ct != "application/json":
+            self._err(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
+            return False
+        return True
+
+    def _check_public_auth_origin(self) -> bool:
+        if not self._check_json_content_type():
+            return False
+        origin = self.headers.get("Origin")
+        if not origin:
+            self._err(HTTPStatus.FORBIDDEN, "Origin обязателен для входа.")
+            return False
+        origin_host = self._request_hostname(origin)
+        request_host = self._request_hostname(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "")
+        if not origin_host or origin_host != request_host:
+            self._err(HTTPStatus.FORBIDDEN, "Cross-origin запрос входа отклонён.")
+            return False
+        return True
+
+    def _auth_status(self) -> None:
+        try:
+            # Fast-path: no auth required (local-only or explicitly disabled).
+            # Return an anonymous local-owner context so the app shell loads
+            # without prompting for a Telegram login.
+            if not account_auth.auth_required():
+                context = self._local_owner_context()
+                self._json(HTTPStatus.OK, {
+                    "authenticated": True, "source": context.get("source"),
+                    "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
+                    "csrf_token": "", "user": context.get("user") or {},
+                })
+                return
+            owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+            account_auth.ensure_owner(owner_id)
+            init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
+            context = None
+            if init_data:
+                tunnel_ip, forwarded_ip = self._request_ips()
+                context = telegram_remote.authorize(
+                    init_data, str(os.environ.get(telegram_service.TOKEN_ENV) or ""),
+                    method="GET", path="/api/auth/status", tunnel_ip=tunnel_ip,
+                    forwarded_ip=forwarded_ip,
+                )
+                user = account_auth.find_active_user(context.get("user_id"))
+                context["user"] = account_auth._public_user(user or {}, include_contact=True)
+                context["role"] = str((user or {}).get("role") or context.get("role") or "read_only")
+                context["is_owner"] = bool((user or {}).get("is_owner"))
+            else:
+                context = account_auth.authenticate_session(self._cookie_value(account_auth.SESSION_COOKIE))
+            if not context:
+                self._json(HTTPStatus.UNAUTHORIZED, {
+                    "error": "Требуется вход через Telegram.", "authenticated": False,
+                    "auth_required": account_auth.auth_required(),
+                    "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                    "storage": account_auth.storage_status(),
+                })
+                return
+            self._json(HTTPStatus.OK, {
+                "authenticated": True, "source": context.get("source"),
+                "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
+                "csrf_token": str(context.get("csrf_token") or ""),
+                "user": context.get("user") or {},
+            })
+        except (account_auth.AccountAuthError, telegram_remote.RemoteAccessError) as exc:
+            self._err(getattr(exc, "status", 503), str(exc))
+
+    def _auth_public_post(self, path: str) -> None:
+        if not self._check_public_auth_origin():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        tunnel_ip, forwarded_ip = self._request_ips()
+        ip = forwarded_ip or tunnel_ip
+        try:
+            account_auth.ensure_owner(owner_id)
+            if path == "/api/auth/login/start":
+                out = account_auth.start_login(
+                    bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/auth/login/status":
+                out = account_auth.create_session_for_challenge(
+                    str(body.get("challenge_id") or ""), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+                if out.get("status") == "authenticated":
+                    self._set_session_cookie(str(out.pop("session_token")))
+            elif path == "/api/auth/profile":
+                out = account_auth.complete_profile(
+                    str(body.get("challenge_id") or ""), body.get("profile") or body,
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
+            self._json(HTTPStatus.OK, out)
+        except account_auth.AccountAuthError as exc:
+            self._err(exc.status, str(exc))
+
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
+        context = getattr(self, "_remote_context", None) or {}
+        if context.get("source") == telegram_remote.SOURCE:
+            return True
+        if context.get("source") == "desktop_session":
+            if not account_auth.verify_csrf(context, str(self.headers.get("X-CSRF-Token") or "")):
+                self._err(HTTPStatus.FORBIDDEN, "CSRF token отсутствует или недействителен.")
+                return False
+            origin = self.headers.get("Origin")
+            if not origin:
+                self._err(HTTPStatus.FORBIDDEN, "Origin обязателен для изменения данных.")
+                return False
+            origin_host = self._request_hostname(origin)
+            request_host = self._request_hostname(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "")
+            if not origin_host or not request_host or origin_host != request_host:
+                self._err(HTTPStatus.FORBIDDEN, "Cross-origin запрос отклонён.")
+                return False
+            return True
         origin = self.headers.get("Origin") or self.headers.get("Referer")
         if not origin:
             return True  # non-browser client (CLI, Invoke-RestMethod)
@@ -611,7 +909,25 @@ class Handler(BaseHTTPRequestHandler):
         # Track whether the response line has been emitted so the top-level
         # error guard knows if it can still send a clean 500 JSON body.
         self._response_started = True
+        if getattr(self, "_remote_attempt", False) and not getattr(self, "_remote_audited", False):
+            self._remote_audited = True
+            tunnel_ip, forwarded_ip = self._request_ips()
+            try:
+                telegram_remote.audit(
+                    method=self.command, path=urllib.parse.urlparse(self.path).path,
+                    status=int(code), context=getattr(self, "_remote_context", None),
+                    tunnel_ip=tunnel_ip, forwarded_ip=forwarded_ip,
+                    error=str(getattr(self, "_remote_error", "") or ""),
+                )
+            except Exception:
+                pass
         super().send_response(code, message)
+
+    def end_headers(self):  # type: ignore[override]
+        for name, value in getattr(self, "_extra_headers", []):
+            self.send_header(name, value)
+        self._extra_headers = []
+        super().end_headers()
 
     def _handle_unexpected(self, method: str) -> None:
         """Last-resort handler: turn any uncaught exception into a 500 JSON
@@ -633,6 +949,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         self._response_started = False
+        self._remote_attempt = False
+        self._remote_audited = False
+        self._remote_context = None
+        self._remote_error = ""
+        self._extra_headers = []
         try:
             self._route_get()
         except Exception:
@@ -640,6 +961,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         self._response_started = False
+        self._remote_attempt = False
+        self._remote_audited = False
+        self._remote_context = None
+        self._remote_error = ""
+        self._extra_headers = []
         try:
             self._route_post()
         except Exception:
@@ -647,6 +973,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         self._response_started = False
+        self._remote_attempt = False
+        self._remote_audited = False
+        self._remote_context = None
+        self._remote_error = ""
+        self._extra_headers = []
         try:
             self._route_delete()
         except Exception:
@@ -656,6 +987,13 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
         qs = urllib.parse.parse_qs(url.query)
+
+        if path == "/api/auth/status":
+            self._auth_status()
+            return
+
+        if path.startswith("/api/") and not self._authorize_api(path):
+            return
 
         if path == "/" or path == "":
             self.send_response(HTTPStatus.FOUND)
@@ -980,6 +1318,38 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/telegram/status":
             self._json(HTTPStatus.OK, telegram_service.status())
+            return
+
+        if path == "/api/auth/users":
+            try:
+                self._json(HTTPStatus.OK, account_auth.list_users(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id")
+                ))
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/telegram/remote/me":
+            context = getattr(self, "_remote_context", None)
+            if not context:
+                self._err(HTTPStatus.BAD_REQUEST, "Этот endpoint предназначен для Telegram Mini App.")
+                return
+            self._json(HTTPStatus.OK, {
+                "ok": True, "source": telegram_remote.SOURCE,
+                "user_id": context.get("user_id"), "username": context.get("username"),
+                "role": context.get("role"), "live_trading_allowed": False,
+            })
+            return
+
+        if path == "/api/telegram/remote/access":
+            self._json(HTTPStatus.OK, telegram_remote.admin_status())
+            return
+
+        if path == "/api/telegram/tunnel/status":
+            try:
+                self._json(HTTPStatus.OK, tunnel_manager.status(port=self.server.server_address[1]))
+            except tunnel_manager.TunnelManagerError as exc:
+                self._err(exc.status, str(exc))
             return
 
         if path == "/api/telegram/group":
@@ -1328,34 +1698,118 @@ class Handler(BaseHTTPRequestHandler):
                 root = str(ins.get("root") or name.split(" ", 1)[0])
                 if not root:
                     continue
+                if str((qs.get("desktop") or ["0"])[0]).lower() in {"1", "true", "yes"} and root not in _DESKTOP_INSTRUMENT_ROOTS:
+                    continue
                 root_map.setdefault(root, []).append(ins)
             result = []
             for root, contracts in sorted(root_map.items()):
                 def _dl(c: dict) -> str:
                     return str(c.get("data_last") or "")
                 contracts_sorted = sorted(contracts, key=_dl, reverse=True)
+                # Front month = the most-recently-active contract.
+                # Energy futures (and many others) expire during the preceding
+                # calendar month, so a pure "expiry month >= now.month" check
+                # wrongly keeps the expired contract for the whole calendar month.
+                # Robust rule: among contracts that have traded in the last 30 days
+                # pick the one with the most recent data_last; if none qualifies
+                # (catalog may be stale), fall back to calendar-month proximity.
+                now = datetime.now()
+                def _days_since(c: dict) -> float:
+                    raw = str(c.get("data_last") or "")
+                    if not raw:
+                        return float("inf")
+                    try:
+                        from datetime import datetime as _dt  # noqa: F811
+                        return (now - _dt.strptime(raw[:10], "%Y-%m-%d")).days
+                    except (ValueError, TypeError):
+                        return float("inf")
+
+                # Contracts with data within last 30 days are considered "live".
+                live = [c for c in contracts if _days_since(c) <= 30]
+                if live:
+                    # Among live contracts pick the one nearest to today
+                    # (smallest positive days-since, i.e. most recent data_last).
+                    front = min(live, key=_days_since)
+                else:
+                    # Catalog may be stale: fall back to nearest future expiry.
+                    future_contracts = []
+                    for contract in contracts:
+                        expiry = str(contract.get("expiry") or "")
+                        try:
+                            month, year = expiry.split("-", 1)
+                            expiry_key = (2000 + int(year), int(month))
+                        except (TypeError, ValueError):
+                            continue
+                        if expiry_key >= (now.year, now.month):
+                            future_contracts.append((expiry_key, contract))
+                    front = min(future_contracts, key=lambda item: item[0])[1] if future_contracts else (
+                        contracts_sorted[0] if contracts_sorted else None)
                 result.append({
                     "root": root,
-                    "front_month": contracts_sorted[0] if contracts_sorted else None,
+                    "front_month": front,
                     "contracts": contracts_sorted,
                 })
             self._json(HTTPStatus.OK, {"roots": result})
             return True
 
+        if path == "/api/ops/runtime/price-alerts":
+            market_data.evaluate_alerts()
+            instrument = (qs.get("instrument") or [""])[0]
+            include_inactive = str((qs.get("include_inactive") or ["1"])[0]).lower() not in {"0", "false", "no"}
+            self._json(HTTPStatus.OK, market_data.list_alerts(
+                instrument=instrument, include_inactive=include_inactive))
+            return True
+
+        if path == "/api/ops/runtime/chart-commands":
+            status = (qs.get("status") or ["pending"])[0]
+            self._json(HTTPStatus.OK, market_data.list_chart_commands(status=status))
+            return True
+
+        if path == "/api/ops/runtime/snapshots":
+            pattern = qs.get("pattern")[0] if qs.get("pattern") else None
+            favorites_only = str((qs.get("favorites") or ["0"])[0]).lower() in {"1", "true", "yes"}
+            try:
+                limit = int((qs.get("limit") or ["300"])[0])
+            except ValueError:
+                limit = 300
+            self._json(HTTPStatus.OK, market_data.list_snapshots(
+                pattern=pattern, favorites_only=favorites_only, limit=limit))
+            return True
+
+        if len(parts) == 5 and parts[:4] == ["api", "ops", "runtime", "snapshots"]:
+            found = market_data.read_snapshot(parts[4])
+            if not found:
+                self._err(HTTPStatus.NOT_FOUND, "snapshot not found")
+                return True
+            data, mime = found
+            self._bytes(HTTPStatus.OK, data, mime)
+            return True
+
         if path == "/api/ops/runtime/bars":
-            # Market bars for the Рабочий стол (desktop) charts — sourced from
-            # NinjaTrader. Honest-empty when no NT data exists for the symbol.
+            # Register a dynamic BarsRequest in the bridge, prefer its live
+            # series and fall back to the newest real Strategy Analyzer artifact.
             instrument = (qs.get("instrument") or [""])[0]
             timeframe = (qs.get("timeframe") or [""])[0]
             try:
                 limit = int((qs.get("limit") or ["1500"])[0])
             except ValueError:
                 limit = 1500
+            try:
+                range_days = int((qs.get("range_days") or ["0"])[0])
+            except ValueError:
+                range_days = 0
+            from_date = (qs.get("from") or [""])[0]
+            to_date = (qs.get("to") or [""])[0]
             if not instrument:
                 self._err(HTTPStatus.BAD_REQUEST, "instrument is required")
                 return True
-            self._json(HTTPStatus.OK,
-                       jobqueue.read_instrument_bars(instrument, timeframe, limit))
+            try:
+                payload = _market_bars_payload(instrument, timeframe, limit, range_days, from_date, to_date)
+            except market_data.MarketDataError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return True
+            market_data.evaluate_alerts()
+            self._json(HTTPStatus.OK, payload)
             return True
 
         if sub == "strategies" and len(parts) >= 4:
@@ -1939,6 +2393,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
+        if path == "/api/ai-lab/orchestrator/conversations/state":
+            try:
+                state = str(body.get("state") or "").strip().lower()
+                if state not in {"closed", "open"}:
+                    raise ai_chief_agent.ChiefAgentError("state должен быть open или closed.")
+                conv = ai_chief_agent.set_conversation_closed(
+                    str(body.get("conversation_id") or "default"), state == "closed",
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
         if path == "/api/ai-lab/orchestrator/conversations/delete":
             try:
                 out = ai_chief_agent.delete_conversation(str(body.get("conversation_id") or ""))
@@ -2296,6 +2763,75 @@ class Handler(BaseHTTPRequestHandler):
 
     def _ops_post(self, path: str, body: Dict[str, Any]) -> None:
         parts = [p for p in path.split("/") if p]
+        if path == "/api/ops/runtime/bars/batch":
+            rows = body.get("requests") if isinstance(body.get("requests"), list) else []
+            if len(rows) > 64:
+                self._err(HTTPStatus.BAD_REQUEST, "Не более 64 графиков в одном пакете."); return
+            result = []
+            try:
+                market_data.register_requests(row for row in rows if isinstance(row, dict))
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    result.append(_market_bars_payload(
+                        str(row.get("instrument") or ""), str(row.get("timeframe") or "5m"),
+                        int(row.get("limit") or 1500), int(row.get("range_days") or 0),
+                        str(row.get("from") or ""), str(row.get("to") or ""),
+                        register=False,
+                    ))
+                market_data.evaluate_alerts()
+            except (market_data.MarketDataError, TypeError, ValueError) as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
+            self._json(HTTPStatus.OK, {"series": result}); return
+        if path == "/api/ops/runtime/price-alerts":
+            try:
+                self._json(HTTPStatus.OK, market_data.create_alert(body)); return
+            except market_data.MarketDataError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
+        if path == "/api/ops/runtime/chart-commands/ack":
+            out = market_data.ack_chart_command(
+                str(body.get("id") or ""),
+                status=str(body.get("status") or "done"),
+                result=body.get("result") if isinstance(body.get("result"), dict) else None,
+            )
+            self._json(HTTPStatus.OK, out); return
+        if path == "/api/ops/runtime/snapshots/update":
+            out = market_data.update_snapshot(
+                str(body.get("id") or ""),
+                favorite=body.get("favorite") if isinstance(body.get("favorite"), bool) else None,
+                pattern=body.get("pattern") if body.get("pattern") is not None else None,
+                caption=body.get("caption") if body.get("caption") is not None else None,
+            )
+            self._json(HTTPStatus.OK, out); return
+        if path == "/api/ops/runtime/snapshots/clear":
+            keep_favorites = bool(body.get("keep_favorites", True))
+            self._json(HTTPStatus.OK, market_data.clear_snapshots(keep_favorites=keep_favorites)); return
+        if path == "/api/ops/runtime/chart-snapshot":
+            saved = None
+            if str(body.get("image") or "").strip():
+                try:
+                    saved = market_data.save_snapshot(body.get("image"), meta={
+                        "instrument": str(body.get("instrument") or ""),
+                        "timeframe": str(body.get("timeframe") or ""),
+                        "outcome": str(body.get("outcome") or ""),
+                    })
+                except market_data.MarketDataError as exc:
+                    self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
+            conversation_id = str(body.get("conversation_id") or "").strip()
+            report = None
+            if conversation_id:
+                text = str(body.get("text") or "Снимок графика.").strip()[:2000]
+                try:
+                    report = ai_chief_agent.report_chart_snapshot(
+                        conversation_id=conversation_id, text=text,
+                        image_url=(saved or {}).get("url") or "",
+                        image_file=(saved or {}).get("file") or "",
+                        caption=str(body.get("caption") or "")[:400],
+                        mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
+                    )
+                except Exception as exc:  # pragma: no cover - reporting is best-effort
+                    report = {"ok": False, "error": str(exc)[:300]}
+            self._json(HTTPStatus.OK, {"ok": True, "snapshot": saved, "report": report}); return
         # /api/ops/live/unlock-request
         if path == "/api/ops/live/unlock-request":
             out = ops.request_live_unlock(reason=str(body.get("reason") or ""))
@@ -2462,14 +2998,21 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path
         parts = [p for p in path.split("/") if p]
 
+        if not self._authorize_api(path):
+            return
+
         is_del_job   = (len(parts) == 3 and parts[0] == "api"
                         and parts[1] == "jobs")
         is_del_batch = (len(parts) == 3 and parts[0] == "api"
                         and parts[1] == "batches")
         is_del_favorite = (len(parts) == 4 and parts[0] == "api"
                            and parts[1] == "report-favorites")
+        is_del_price_alert = (len(parts) == 5 and parts[:4] ==
+                              ["api", "ops", "runtime", "price-alerts"])
+        is_del_snapshot = (len(parts) == 5 and parts[:4] ==
+                           ["api", "ops", "runtime", "snapshots"])
 
-        if not (is_del_job or is_del_batch or is_del_favorite):
+        if not (is_del_job or is_del_batch or is_del_favorite or is_del_price_alert or is_del_snapshot):
             self._err(HTTPStatus.NOT_FOUND, f"no DELETE route: {path}")
             return
 
@@ -2483,6 +3026,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
                 return
             self._json(HTTPStatus.OK, out)
+            return
+
+        if is_del_price_alert:
+            try:
+                out = market_data.delete_alert(urllib.parse.unquote(parts[4]))
+            except market_data.MarketDataError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
+            self._json(HTTPStatus.OK if out.get("deleted") else HTTPStatus.NOT_FOUND, out)
+            return
+
+        if is_del_snapshot:
+            out = market_data.delete_snapshot(urllib.parse.unquote(parts[4]))
+            self._json(HTTPStatus.OK if out.get("deleted") else HTTPStatus.NOT_FOUND, out)
             return
 
         if is_del_job:
@@ -2534,6 +3090,43 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
 
+        if path in {"/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile"}:
+            self._auth_public_post(path)
+            return
+
+        if not self._authorize_api(path):
+            return
+
+        if path == "/api/auth/logout":
+            if not self._check_local_post():
+                return
+            account_auth.revoke_session(self._cookie_value(account_auth.SESSION_COOKIE))
+            self._clear_session_cookie()
+            self._json(HTTPStatus.OK, {"ok": True})
+            return
+
+        if path.startswith("/api/auth/users/"):
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            parts_auth = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(parts_auth) != 5:
+                self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                if parts_auth[4] == "role":
+                    out = account_auth.update_user(actor, parts_auth[3], role=str(body.get("role") or ""))
+                elif parts_auth[4] == "revoke":
+                    out = account_auth.update_user(actor, parts_auth[3], revoke=True)
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
+                self._json(HTTPStatus.OK, out)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         # /api/jobs/<id>/cancel and /api/batches/<id>/cancel
         parts = [p for p in path.split("/") if p]
         is_cancel_job = (len(parts) == 4 and parts[0] == "api"
@@ -2577,6 +3170,39 @@ class Handler(BaseHTTPRequestHandler):
                     out = telegram_service.complete_pairing()
                 elif path == "/api/telegram/settings":
                     out = telegram_service.update_settings(body.get("settings") or body)
+                elif path == "/api/telegram/remote/settings":
+                    out = telegram_remote.update_settings(body.get("settings") or body)
+                elif path == "/api/telegram/remote/pair/start":
+                    out = telegram_remote.start_pairing(
+                        bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                        role=str(body.get("role") or "read_only"),
+                        expected_user_id=body.get("expected_user_id") or 0,
+                        require_phone=bool(body.get("require_phone", True)),
+                    )
+                elif path == "/api/telegram/remote/menu-button":
+                    out = telegram_remote.configure_menu_button(telegram_service._api_call)
+                elif path == "/api/telegram/tunnel/launch":
+                    out = tunnel_manager.launch(
+                        port=self.server.server_address[1],
+                        enable_remote=bool(body.get("enable_remote", True)),
+                    )
+                elif path == "/api/telegram/tunnel/start":
+                    out = tunnel_manager.start(port=self.server.server_address[1])
+                elif path == "/api/telegram/tunnel/stop":
+                    out = tunnel_manager.stop()
+                elif path.startswith("/api/telegram/remote/users/"):
+                    remote_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+                    if len(remote_parts) != 6:
+                        self._err(HTTPStatus.NOT_FOUND, f"no Telegram route: {path}")
+                        return
+                    user_id, action = remote_parts[4], remote_parts[5]
+                    if action == "role":
+                        out = telegram_remote.set_user_role(user_id, str(body.get("role") or ""))
+                    elif action == "revoke":
+                        out = telegram_remote.revoke_user(user_id)
+                    else:
+                        self._err(HTTPStatus.NOT_FOUND, f"no Telegram route: {path}")
+                        return
                 elif path == "/api/telegram/test":
                     out = telegram_service.send_test()
                 elif path == "/api/telegram/group":
@@ -2584,12 +3210,22 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/telegram/group/disconnect":
                     out = telegram_service.disconnect_group()
                 elif path == "/api/telegram/disconnect":
+                    if account_auth.auth_required():
+                        raise telegram_service.TelegramServiceError(
+                            "Нельзя отключить единственный способ входа, пока обязательна Telegram-авторизация."
+                        )
                     out = telegram_service.disconnect()
                 else:
                     self._err(HTTPStatus.NOT_FOUND, f"no Telegram route: {path}")
                     return
             except telegram_service.TelegramServiceError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except telegram_remote.RemoteAccessError as exc:
+                self._err(exc.status, str(exc))
+                return
+            except tunnel_manager.TunnelManagerError as exc:
+                self._err(exc.status, str(exc))
                 return
             self._json(HTTPStatus.OK, out)
             return

@@ -314,14 +314,20 @@ def test_named_domain_agents_and_unified_finance_page_contract():
     assert "tolik-message" not in strategies and "domainAgentMessage('tolik'" not in strategies_js
     assert "/api/ai-lab/accounting" in api and "/api/ai-lab/strategy-analysis" in api
     assert "aiOrchestratorRateMessage" in api and "/api/ai-lab/orchestrator/message/" in api
+    assert "aiOrchestratorSetConversationState" in api and "/orchestrator/conversations/state" in server
     assert "rate_message" in server and "message/" in server and "/rating" in server
     assert "orchRatingHtml" in ui and "data-orch-rate" in ui and "orch-feedback-area" in ui
     assert "orchStartFeedbackVoice" in ui and "orch-feedback-mic" in ui
+    assert "orch-feedback-archive" in ui and "orch-feedback-edit" in ui
+    assert "orchStopFeedbackVoice" in ui and "rec.continuous = true" in ui
+    assert "messagesSignature" in ui and "ta.dataset.dirty" in ui
+    assert "orch-task-state" in ui and "orchToggleConversationState" in ui
+    assert "Текущая тема ещё не завершена" in ui
     # Agent rail sidebar: management tiers in hierarchy order, then named specialists.
     assert "data-orch-role=" in ui and "ORCH_ROLES" in ui
-    assert "['nikita', 'tolik', 'marina']" in ui
+    assert "['nikita', 'tolik', 'marina', 'ivan']" in ui
     assert "['manager', 'deputy', 'secretary', 'auto']" in ui
-    for role_id in ("nikita:", "tolik:", "marina:", "secretary:", "deputy:", "manager:"):
+    for role_id in ("nikita:", "tolik:", "marina:", "ivan:", "secretary:", "deputy:", "manager:"):
         assert role_id in ui
     assert "accounting.html" not in ui and "label: 'Финансы'" in ui
 
@@ -503,3 +509,18 @@ def test_ai_model_telemetry_records_usage_and_aggregates(tmp_path, monkeypatch):
     assert result["models"][0]["total_tokens"] == 30
     assert result["models"][0]["p95_latency_sec"] == 10.0
     assert result["roles"][0]["role"] == "coder"
+
+
+def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
+    html = (AURORA / "documents.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "documents.js").read_text(encoding="utf-8")
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "assets/pages/documents.js" in html
+    assert "openAmendmentDrawer" in js
+    assert "resolveAmendmentTarget" in js
+    assert "parseLawIds" in js
+    assert "doc-law-anchor" in js
+    assert "data-amendment-no" in js
+    assert "API.http.governanceHistory" in js
+    assert ".tl-item.clickable" in theme
+    assert ".doc-law-highlight" in theme
