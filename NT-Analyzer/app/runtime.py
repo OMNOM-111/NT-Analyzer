@@ -30,6 +30,9 @@ import math
 import os
 import re
 import statistics
+import threading
+from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -50,9 +53,10 @@ RUNTIME_ORDER_JSONL_MAX_LINES = 100_000
 
 _JSONL_CACHE: Dict[str, Tuple[Tuple[int, int, int], List[Dict[str, Any]]]] = {}
 _JSONL_CACHE_ORDER: List[str] = []
-_JSONL_CACHE_MAX_ENTRIES = 8
+_JSONL_CACHE_MAX_ENTRIES = 32
 _ACTIVITY_VIEW_CACHE: Dict[Tuple[Any, ...], Tuple[List[Dict[str, Any]], Dict[str, Any]]] = {}
 _ACTIVITY_VIEW_CACHE_ORDER: List[Tuple[Any, ...]] = []
+_RUNTIME_CONTEXT = threading.local()
 _ACTIVITY_VIEW_CACHE_MAX_ENTRIES = 24
 
 # Subset of locked params we re-verify at runtime per Phase 17 spec.
@@ -785,8 +789,21 @@ def _normalize_runtime_strategy_row(row: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def runtime_dir() -> Path:
+    override = getattr(_RUNTIME_CONTEXT, "runtime_dir", "")
+    if override:
+        return Path(str(override))
     d = ops._project_root() / "data" / RUNTIME_DIR_NAME
     return d
+
+
+@contextmanager
+def runtime_dir_override(path: Any):
+    previous = getattr(_RUNTIME_CONTEXT, "runtime_dir", "")
+    _RUNTIME_CONTEXT.runtime_dir = str(path or "")
+    try:
+        yield
+    finally:
+        _RUNTIME_CONTEXT.runtime_dir = previous
 
 
 def _path(name: str) -> Path:
@@ -826,15 +843,15 @@ def _read_jsonl(p: Path, max_lines: Optional[int] = 5000) -> List[Dict[str, Any]
     except Exception:
         sig = None
         key = ""
-    out: List[Dict[str, Any]] = []
     try:
         with p.open("r", encoding="utf-8-sig") as f:
-            lines = f.readlines()
+            if max_lines is not None and max_lines > 0:
+                lines = list(deque(f, maxlen=max_lines))
+            else:
+                lines = list(f)
     except Exception:
         return []
-    # max_lines is None or <= 0  => read entire file (no tail truncation).
-    if max_lines is not None and max_lines > 0 and len(lines) > max_lines:
-        lines = lines[-max_lines:]
+    out: List[Dict[str, Any]] = []
     for ln in lines:
         ln = ln.strip()
         if not ln:

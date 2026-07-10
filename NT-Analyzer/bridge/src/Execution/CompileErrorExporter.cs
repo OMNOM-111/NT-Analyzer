@@ -52,8 +52,8 @@ namespace NTAnalyzerBridge.Execution
             _cfg = cfg ?? throw new ArgumentNullException(nameof(cfg));
             _compileErrorsTxtPath = Path.Combine(cfg.NinjaTraderUserDir, "bin", "Custom", "CompileErrors.txt");
             _traceDir = Path.Combine(cfg.NinjaTraderUserDir, "trace");
-            _outJsonlPath = Path.Combine(cfg.ProjectRoot, "data", "runtime", "compile_errors.jsonl");
-            _statusJsonPath = Path.Combine(cfg.ProjectRoot, "data", "runtime", "compile_error_source_status.json");
+            _outJsonlPath = Path.Combine(cfg.RuntimeDataDir, "compile_errors.jsonl");
+            _statusJsonPath = Path.Combine(cfg.RuntimeDataDir, "compile_error_source_status.json");
             _timer = new System.Threading.Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
         }
 

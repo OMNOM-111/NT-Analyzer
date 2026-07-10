@@ -31,6 +31,23 @@ PAIRING_TTL_SEC = 10 * 60
 READ_LIMIT_PER_MINUTE = 180
 WRITE_LIMIT_PER_MINUTE = 45
 ROLES = {"read_only", "full_control"}
+SELF_SERVICE_WRITE_PATHS = {
+    "/api/billing/promo/preview",
+    "/api/billing/promo/redeem",
+    "/api/billing/subscribe",
+    "/api/billing/checkout",
+    "/api/billing/payment-request",
+    "/api/workspaces/personal",
+    "/api/workspaces/select",
+    "/api/bridge/pair/start",
+    "/api/bridge/pair/complete",
+    "/api/auth/avatar/refresh",
+    "/api/ops/runtime/account-history/classify",
+    "/api/ops/runtime/account-history/events",
+    "/api/ops/runtime/account-history/import",
+    # Batch chart-bars poll is a read that carries its request list in the body.
+    "/api/ops/runtime/bars/batch",
+}
 
 _LOCK = threading.RLock()
 _RATE_LOCK = threading.Lock()
@@ -505,7 +522,8 @@ def authorize(raw: str, bot_token: str, *, method: str, path: str, tunnel_ip: st
             role = "full_control"
         context["role"] = role
         context["username"] = str(tg_user.get("username") or user.get("username") or "")
-    if method.upper() not in {"GET", "HEAD"} and role != "full_control":
+    if (method.upper() not in {"GET", "HEAD"} and role != "full_control" and path not in SELF_SERVICE_WRITE_PATHS
+            and not path.startswith("/api/bridge/connections/")):
         raise RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, context)
     if path.startswith("/api/telegram/") and path != "/api/telegram/remote/me":
         raise RemoteAccessError("Управление доступом разрешено только в desktop UI.", 403, context)

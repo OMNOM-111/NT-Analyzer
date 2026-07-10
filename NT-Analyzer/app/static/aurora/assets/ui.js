@@ -128,6 +128,23 @@
   function qs(s, r) { return (r || document).querySelector(s); }
   function qsa(s, r) { return Array.from((r || document).querySelectorAll(s)); }
 
+  // Open an external link. Inside the Telegram Mini App plain anchors are
+  // unreliable, so route through Telegram.WebApp.openLink when available.
+  function openExternal(url) {
+    const u = String(url || '').trim();
+    if (!u) return;
+    try {
+      const wa = window.Telegram && window.Telegram.WebApp;
+      if (wa && typeof wa.openLink === 'function') { wa.openLink(u); return; }
+    } catch (e) { /* fall through to window.open */ }
+    window.open(u, '_blank', 'noopener');
+  }
+  function bindExternalLinks(root) {
+    qsa('[data-external]', root || document).forEach(a => {
+      a.onclick = (ev) => { ev.preventDefault(); openExternal(a.getAttribute('href') || a.dataset.external); };
+    });
+  }
+
   function newsEta(ms) {
     const min = Math.max(0, Math.round(ms / 60000));
     if (min < 60) return `через ${min} мин`;
@@ -457,6 +474,32 @@
     onLeave(() => clearInterval(timer));
   }
 
+  function withMiniAppContext(href) {
+    if (!href || !window.API || !API.withTelegramContext) return href;
+    return API.withTelegramContext(href);
+  }
+
+  function patchMiniAppLinks(scope) {
+    if (!window.API || !API.config.miniApp) return;
+    qsa('a[href]', scope || document).forEach(anchor => {
+      const href = anchor.getAttribute('href') || '';
+      const next = withMiniAppContext(href);
+      if (next && next !== href) anchor.setAttribute('href', next);
+    });
+  }
+
+  function wireMiniAppNavigation() {
+    if (!window.API || !API.config.miniApp) return;
+    patchMiniAppLinks(document);
+    document.addEventListener('click', (e) => {
+      const anchor = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      const next = withMiniAppContext(href);
+      if (next && next !== href) anchor.setAttribute('href', next);
+    }, true);
+  }
+
   // ---- shell ------------------------------------------------------------------
   function buildShell() {
     const page = document.body.dataset.page;
@@ -469,7 +512,7 @@
         <span class="rail-brand-tx"><span class="rail-brand-name">${APP_NAME}</span><span class="rail-brand-sub">Strategy command center</span></span>
       </a>
       <div class="rail-nav">
-        ${NAV.map(n => `<a class="rail-item ${n.id === page ? 'active' : ''}" href="${n.href}" title="${n.label}">${icon(n.icon)}<span class="lb">${n.label}</span></a>`).join('')}
+        ${NAV.map(n => `<a class="rail-item ${n.id === page ? 'active' : ''}" href="${n.href}" title="${n.label}" data-nav="${n.id}">${icon(n.icon)}<span class="lb">${n.label}</span></a>`).join('')}
       </div>
       <div class="rail-foot"><span class="rail-dot" title="Сервер онлайн"></span><span class="rail-foot-tx">Сервер онлайн</span></div>
     </nav>`);
@@ -482,7 +525,8 @@
       </div>
       <div class="tb-right">
         ${window.API && API.config.miniApp ? '<span class="chip ok mini-app-chip" id="mini-app-chip"><span class="dot"></span>Telegram</span>' : ''}
-        <span class="chip ok" id="chip-user" hidden><span class="dot"></span><span id="chip-user-name">Пользователь</span></span>
+        <button class="chip ok user-chip" id="chip-user" type="button" hidden title="Мой кабинет"><span class="avatar avatar-sm" id="chip-avatar">·</span><span id="chip-user-name">Пользователь</span></button>
+        <button class="chip ok" id="chip-workspace" type="button" hidden><span class="dot"></span><span id="chip-workspace-name">Workspace</span></button>
         <span class="tb-page-actions" id="page-actions"></span>
         <span class="chip off" id="chip-nt" title="NinjaTrader"><span class="dot"></span>NinjaTrader</span>
         <span class="chip off" id="chip-bridge" title="Bridge (мост данных)"><span class="dot"></span>Bridge</span>
@@ -516,7 +560,57 @@
 
     wireDelegatedActions();
     wireA11y();
+    wireMiniAppNavigation();
+    wireRailResize(rail, app);
     requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
+  }
+
+  // ---- Rail (sidebar) drag-resize ------------------------------------------
+  // The handle is a 6px transparent strip on the right border of the rail.
+  // Width is clamped to 140..340px and persisted to localStorage.
+  const RAIL_W_KEY = 'ui.rail-width';
+  const RAIL_W_MIN = 140, RAIL_W_MAX = 340, RAIL_W_DEFAULT = 240;
+  function applyRailWidth(w, app) {
+    const clamped = Math.round(Math.max(RAIL_W_MIN, Math.min(RAIL_W_MAX, w)));
+    document.documentElement.style.setProperty('--rail-w', clamped + 'px');
+    if (app) app.style.gridTemplateColumns = clamped + 'px minmax(0,1fr)';
+    return clamped;
+  }
+  function wireRailResize(rail, app) {
+    if (!rail || !app || document.documentElement.classList.contains('telegram-mini-app')) return;
+    // Restore saved width
+    try {
+      const saved = parseInt(localStorage.getItem(RAIL_W_KEY) || '', 10);
+      if (saved >= RAIL_W_MIN) applyRailWidth(saved, app);
+    } catch (e) { /* ignore */ }
+    // Create the drag handle
+    const handle = document.createElement('div');
+    handle.className = 'rail-resize-handle';
+    handle.title = 'Потяните, чтобы изменить ширину панели';
+    rail.appendChild(handle);
+    // Pointer events
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.classList.add('dragging');
+      handle.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--rail-w') || RAIL_W_DEFAULT, 10) || RAIL_W_DEFAULT;
+      const move = (ev) => {
+        const w = applyRailWidth(startW + (ev.clientX - startX), app);
+        try { localStorage.setItem(RAIL_W_KEY, w); } catch (ex) { /* ignore */ }
+      };
+      const up = () => {
+        handle.classList.remove('dragging');
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+        // Trigger any canvas resize listeners (desktop charts etc.)
+        window.dispatchEvent(new Event('resize'));
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
   }
 
   // ---- accessibility: make non-semantic clickables keyboard-operable ---------
@@ -551,14 +645,24 @@
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
     document.documentElement.classList.remove('auth-locked');
     const user = CURRENT_AUTH.user || {};
+    applyChipUser(user);
+    captureReferral();
+    handlePaypalReturn();
+    applyNavAccess(CURRENT_AUTH);
     const chipUser = qs('#chip-user');
-    if (chipUser) {
-      chipUser.hidden = false;
-      const label = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || String(user.user_id || 'Пользователь');
-      const name = qs('#chip-user-name'); if (name) name.textContent = label;
+    if (chipUser) chipUser.onclick = () => openCabinet();
+    const activeWorkspace = CURRENT_AUTH.active_workspace || {};
+    const chipWorkspace = qs('#chip-workspace');
+    if (chipWorkspace && activeWorkspace.workspace_id) {
+      chipWorkspace.hidden = false;
+      const workspaceName = qs('#chip-workspace-name');
+      if (workspaceName) workspaceName.textContent = activeWorkspace.display_name || 'Workspace';
+      chipWorkspace.onclick = () => openCabinet('workspaces');
+      chipWorkspace.title = activeWorkspace.uses_owner_runtime ? 'Учебный контур владельца' : 'Личный контур пользователя';
     }
     const miniChip = qs('#mini-app-chip');
     if (miniChip) miniChip.innerHTML = `<span class="dot"></span>${CURRENT_AUTH.role === 'read_only' ? 'Только чтение' : 'Управление'}`;
+    maybeRefreshAvatar(user);
     startClock();
     wireSystemStatus();
     wireTopbar();
@@ -568,8 +672,709 @@
     runReady();
   }
 
+  // ---- avatars + personal / owner cabinet -----------------------------------
+  function hashCode(str) { let h = 0; for (let i = 0; i < String(str).length; i++) { h = (h << 5) - h + String(str).charCodeAt(i); h |= 0; } return h; }
+  function userLabel(user) { user = user || {}; return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || ('ID ' + (user.user_id || '')); }
+  function avatarHtml(user, cls) {
+    user = user || {};
+    const url = user.avatar_data_url || user.avatar_url || '';
+    const label = userLabel(user);
+    const initials = (label.trim().split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('') || '·').toUpperCase();
+    const hue = Math.abs(hashCode(String(user.user_id || label))) % 360;
+    if (url) return `<span class="avatar ${cls || ''}"><img src="${esc(url)}" alt="" referrerpolicy="no-referrer"></span>`;
+    return `<span class="avatar ${cls || ''}" style="--av-h:${hue}">${esc(initials)}</span>`;
+  }
+  function applyChipUser(user) {
+    const chip = qs('#chip-user'); if (!chip) return;
+    chip.hidden = false;
+    chip.innerHTML = avatarHtml(user, 'avatar-sm') + `<span id="chip-user-name">${esc(userLabel(user))}</span>`;
+  }
+  function applyNavFeatures(features) {
+    qsa('.rail-item[data-nav]').forEach(item => {
+      const id = item.dataset.nav;
+      if (id === 'overview') { item.hidden = false; return; }
+      item.hidden = !(!features || features[id] !== false);
+    });
+  }
+  function lockedNavClick(e) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    openCabinet('plans');
+  }
+  // Central access control: in Free Preview (or any non-owner with locked
+  // sections) the rail keeps every section VISIBLE but marks locked ones, and a
+  // locked page is covered by an unlock gate instead of being hidden.
+  function applyNavAccess(auth) {
+    auth = auth || {};
+    const isOwner = !!auth.is_owner;
+    const features = auth.features || (auth.user && auth.user.features) || null;
+    const hasLockList = Array.isArray(auth.locked_nav);
+    const locked = new Set(isOwner ? [] : (auth.locked_nav || []));
+    qsa('.rail-item[data-nav]').forEach(item => {
+      const id = item.dataset.nav;
+      item.hidden = false;
+      item.removeEventListener('click', lockedNavClick);
+      if (id === 'overview') { item.classList.remove('rail-locked'); return; }
+      let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
+      item.classList.toggle('rail-locked', !!isLocked);
+      let lk = item.querySelector('.rail-lock');
+      if (isLocked) {
+        if (!lk) { lk = document.createElement('span'); lk.className = 'rail-lock'; lk.textContent = '🔒'; item.appendChild(lk); }
+        item.addEventListener('click', lockedNavClick);
+      } else if (lk) { lk.remove(); }
+    });
+    const page = document.body.dataset.page;
+    if (!isOwner && page && locked.has(page)) {
+      renderLockGate(auth.unlock_message || 'Раздел доступен после активации подписки, промокода или доступа владельца.', auth.free_preview);
+    }
+  }
+  function renderLockGate(msg, freePreview) {
+    if (qs('#lock-gate')) return;
+    document.documentElement.classList.add('has-lock-gate');
+    const host = qs('.content') || document.body;
+    const gate = el(`<div id="lock-gate" class="lock-gate"><div class="lock-gate-card">
+      <div class="lock-gate-icon">🔒</div>
+      <h2>Раздел заблокирован</h2>
+      <p>${esc(msg)}</p>
+      <div class="lock-gate-actions">
+        <button class="btn primary" id="lock-gate-plans">Выбрать тариф</button>
+        <button class="btn ghost" id="lock-gate-promo">Ввести промокод</button>
+      </div>
+      ${freePreview ? '<div class="lock-gate-hint">Ознакомительный режим: открыты Обзор, Новости и Документы.</div>' : ''}
+    </div></div>`);
+    host.appendChild(gate);
+    const p = qs('#lock-gate-plans', gate); if (p) p.onclick = () => openCabinet('plans');
+    const q = qs('#lock-gate-promo', gate); if (q) q.onclick = () => openCabinet('plans');
+  }
+  async function maybeRefreshAvatar(user) {
+    if (!window.API || API.config.offline) return;
+    if (user && user.has_avatar) return;
+    try {
+      const out = await API.http.authAvatarRefresh();
+      if (out && out.ok && out.user) { if (CURRENT_AUTH) CURRENT_AUTH.user = out.user; applyChipUser(out.user); }
+    } catch (e) { /* best-effort avatar fetch */ }
+  }
+  function showCode(code, label) {
+    if (!code) return;
+    toast((label || 'Код') + ': ' + code);
+    try { if (navigator.clipboard) navigator.clipboard.writeText(code); } catch (e) { /* clipboard may be blocked */ }
+  }
+  const REF_KEY = 'app.ref';
+  function captureReferral() {
+    let code = '';
+    try {
+      const params = new URLSearchParams(location.search);
+      code = params.get('ref') || '';
+      if (!code && window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe) {
+        const sp = String(Telegram.WebApp.initDataUnsafe.start_param || '');
+        if (sp.indexOf('ref_') === 0) code = sp.slice(4);
+      }
+      code = code.replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
+      if (code) localStorage.setItem(REF_KEY, code);
+    } catch (e) { /* ignore */ }
+    return code;
+  }
+  function getReferral() { try { return localStorage.getItem(REF_KEY) || ''; } catch (e) { return ''; } }
+  function clearReferral() { try { localStorage.removeItem(REF_KEY); } catch (e) { /* ignore */ } }
+  function handlePaypalReturn() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const status = params.get('paypal');
+      if (!status) return;
+      if (status === 'success') toast('Оплата PayPal принята. Тариф активируется после подтверждения PayPal.');
+      else if (status === 'cancel') toast('Оплата отменена.');
+      params.delete('paypal');
+      const rest = params.toString();
+      history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+    } catch (e) { /* ignore */ }
+  }
+
+  async function openCabinet(initialTab) {
+    const d = drawer('<h3>Кабинет</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка кабинета…</div>');
+    const body = qs('.drawer-b', d);
+    const load = async () => {
+      let me;
+      try { me = await API.http.authMe(); }
+      catch (e) { renderError(body, e, load); return; }
+      CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, { user: me.user, features: me.features, is_owner: me.is_owner, role: me.role, active_workspace: me.active_workspace });
+      applyChipUser(me.user || {});
+      renderCabinet(body, me, initialTab || 'profile');
+    };
+    await load();
+  }
+
+  function cabinetHeader(me) {
+    const user = me.user || {};
+    const roleLabel = me.is_owner ? 'Владелец' : (me.role === 'read_only' ? 'Только чтение' : 'Полное управление');
+    return `<div class="cab-head">${avatarHtml(user, 'avatar-lg')}<div class="cab-id"><div class="cab-name">${esc(userLabel(user))}</div><div class="cab-sub">${user.username ? '@' + esc(user.username) + ' · ' : ''}${esc(user.email || 'e-mail не указан')}</div><div class="cab-badges"><span class="badge ${me.is_owner ? 'live' : 'demo'}">${esc(roleLabel)}</span>${user.phone_mask ? `<span class="badge archived">${esc(user.phone_mask)}</span>` : ''}</div></div><div class="cab-head-actions">${me.telegram_configured ? '<button class="btn sm ghost" id="cab-avatar-refresh">Обновить фото</button>' : ''}</div></div>`;
+  }
+  function cabinetProfile(me) {
+    const sub = me.subscription || {};
+    const plan = sub.plan || {};
+    const feats = me.features || {};
+    const activeFeatures = (me.feature_catalog || []).filter(f => feats[f.id] !== false);
+    const isOwner = !!me.is_owner;
+    const planLabel = sub.plan_id ? (plan.label || sub.plan_id) : (isOwner ? 'Founder' : 'Нет активной подписки');
+    const planBadge = isOwner
+      ? '<span class="badge trial">★ Золотая звезда · Основатель</span>'
+      : (sub.plan_id ? `<span class="badge ${(sub.status === 'active' || sub.status === 'promo_grant' || sub.status === 'founder') ? 'live' : 'archived'}">${esc(sub.status || '')}</span>` : '');
+    const expires = sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : '');
+    return `
+      <div class="cab-card"><h4>Подписка</h4>
+        <div class="cab-kv"><span class="k">Тариф</span><span class="v"><strong>${esc(planLabel)}</strong> ${planBadge}</span></div>
+        ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
+      </div>
+      <div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>
+      <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${activeFeatures.map(f => `<span class="chip-tag">${esc(f.label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
+  }
+
+  async function renderNinjaInto(node, me) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Проверка…</div>';
+    try {
+      const [ws, setup] = await Promise.all([API.http.workspaces(), API.http.bridgeSetup()]);
+      const active = ws.active_workspace || {};
+      const rows = ws.workspaces || [];
+      if (me && me.is_owner) {
+        node.innerHTML = `<div class="cab-kv"><span class="k">Статус</span><span class="v"><span class="badge live">Подключён ваш NinjaTrader</span></span></div><div class="cab-sub">Полный доступ владельца: все реальные счета и все возможности интерфейса.</div>`;
+        return;
+      }
+      const canPersonal = !!(me.is_owner || (me.capabilities || {}).personal_nt === true || (me.features || {}).personal_nt === true);
+      const areaSwitch = rows.length > 1
+        ? `<div class="cab-kv"><span class="k">Область</span><span class="v"><select id="nt-area">${rows.map(r => `<option value="${esc(r.workspace_id)}" ${r.workspace_id === active.workspace_id ? 'selected' : ''}>${esc(r.uses_owner_runtime ? 'Наблюдение за владельцем' : (r.display_name || 'Мой NinjaTrader'))}</option>`).join('')}</select></span></div>`
+        : '';
+      let inner = areaSwitch;
+      if (active.uses_owner_runtime) {
+        inner += `<div class="cab-sub">Сейчас вы наблюдаете за реальным аккаунтом владельца (только просмотр).</div>`;
+        inner += canPersonal
+          ? `<div class="dchart-actions"><button class="btn primary" id="nt-connect">Подключить свой NinjaTrader</button></div>`
+          : `<div class="cab-sub">Свой NinjaTrader доступен на тарифах «Стандарт» и выше.</div>`;
+      } else {
+        const conns = setup.connections || [];
+        inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${conns.length ? '<span class="badge live">подключён</span>' : '<span class="badge pending">ожидает подключения</span>'}</span></div>`;
+        inner += `<ol class="nt-steps">${(setup.steps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>`;
+        if (setup.runtime_data_dir) inner += `<div class="cab-kv"><span class="k">runtime_data_dir</span><span class="v mono nt-path">${esc(setup.runtime_data_dir)}</span></div>`;
+        inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-copycfg">Скопировать конфиг</button><button class="btn primary" id="nt-pair">Получить код подключения</button><button class="btn ghost" id="nt-observe">Вернуться к наблюдению</button></div>`;
+      }
+      node.innerHTML = inner;
+      const areaSel = qs('#nt-area', node);
+      if (areaSel) areaSel.onchange = async () => { try { await API.http.workspaceSelect(areaSel.value); toast('Область переключена'); location.reload(); } catch (e) { reportError(e); } };
+      const connect = qs('#nt-connect', node);
+      if (connect) connect.onclick = async () => { connect.disabled = true; try { await API.http.workspacePersonal({ display_name: 'Мой NinjaTrader' }); toast('Личный контур создан'); await renderNinjaInto(node, me); } catch (e) { reportError(e); connect.disabled = false; } };
+      const pair = qs('#nt-pair', node);
+      if (pair) pair.onclick = async () => { pair.disabled = true; try { const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер' }); showCode(out && out.code, 'Код подключения'); } catch (e) { reportError(e); } finally { pair.disabled = false; } };
+      const copycfg = qs('#nt-copycfg', node);
+      if (copycfg) copycfg.onclick = () => { try { navigator.clipboard.writeText(JSON.stringify(setup.config_template || {}, null, 2)); toast('Конфиг NinjaTrader скопирован'); } catch (e) { reportError(e); } };
+      const observe = qs('#nt-observe', node);
+      if (observe) observe.onclick = async () => { const ownerWs = (rows.find(r => r.uses_owner_runtime) || {}).workspace_id; if (!ownerWs) return; try { await API.http.workspaceSelect(ownerWs); toast('Вернулись к наблюдению'); location.reload(); } catch (e) { reportError(e); } };
+    } catch (e) { renderError(node, e, () => renderNinjaInto(node, me)); }
+  }
+
+  function userRowHtml(u, catalog, planOptions) {
+    const roleSel = u.is_owner ? '<span class="badge live">owner</span>' : `<select data-user-role="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}><option value="read_only" ${u.role === 'read_only' ? 'selected' : ''}>Только чтение</option><option value="full_control" ${u.role === 'full_control' ? 'selected' : ''}>Полное управление</option></select>`;
+    const revoke = u.is_owner ? '' : `<button class="btn sm danger" data-user-revoke="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}>Отозвать</button>`;
+    const featBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-feat="${esc(u.user_id)}">Параметры</button>`;
+    const planBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-plan="${esc(u.user_id)}">Тариф</button>`;
+    const detailBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-detail="${esc(u.user_id)}">Детали</button>`;
+    const blockBtn = u.is_owner ? '' : (u.status === 'blocked'
+      ? `<button class="btn sm ghost" data-user-unblock="${esc(u.user_id)}">Разблокировать</button>`
+      : `<button class="btn sm ghost" data-user-block="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}>Блокировать</button>`);
+    const delBtn = u.is_owner ? '' : `<button class="btn sm danger" data-user-delete="${esc(u.user_id)}">Удалить</button>`;
+    const feats = u.features || {};
+    const featPanel = u.is_owner ? '' : `<div class="feat-panel" data-feat-panel="${esc(u.user_id)}" hidden>${(catalog || []).map(f => `<div class="feat-row"><span>${esc(f.label)}</span><label class="switch"><input type="checkbox" data-feat-toggle="${esc(u.user_id)}" data-feat-id="${esc(f.id)}" ${feats[f.id] !== false ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
+    const planLabel = u.subscription && u.subscription.plan && u.subscription.plan.label ? u.subscription.plan.label : '';
+    const planPanel = u.is_owner ? '' : `<div class="feat-panel" data-plan-panel="${esc(u.user_id)}" hidden><div class="finance-note">Текущий тариф: <strong>${esc(planLabel || 'Free Preview')}</strong>. Назначьте тариф после проверки оплаты в PayPal.</div><div class="flex gap-sm" style="align-items:flex-end;flex-wrap:wrap"><label style="flex:1;min-width:160px">Тариф<select data-grant-plan="${esc(u.user_id)}">${planOptions || ''}</select></label><label>Срок дней (0=бессрочно)<input type="number" data-grant-days="${esc(u.user_id)}" min="0" max="3650" value="30" style="width:90px"></label><button class="btn sm primary" data-grant-apply="${esc(u.user_id)}">Назначить</button><button class="btn sm ghost" data-grant-clear="${esc(u.user_id)}">Сбросить</button></div></div>`;
+    const detailPanel = u.is_owner ? '' : `<div class="feat-panel user-detail-panel" data-detail-panel="${esc(u.user_id)}" hidden></div>`;
+    const statusCls = u.status === 'active' ? 'live' : u.status === 'pending' ? 'pending' : u.status === 'blocked' ? 'pending' : 'archived';
+    return `<div class="row user-row"><div class="row-main u-main">${avatarHtml(u, '')}<div class="u-txt"><div class="row-title">${esc(userLabel(u))}${u.is_owner ? ' · владелец' : ''}</div><div class="row-sub">ID ${esc(u.user_id)} · ${esc(u.email || 'e-mail не указан')}${u.phone_mask ? ' · ' + esc(u.phone_mask) : ''}${planLabel ? ' · ' + esc(planLabel) : ''}</div></div></div><span class="badge ${statusCls}">${esc(u.status || '—')}</span>${roleSel}${detailBtn}${featBtn}${planBtn}${blockBtn}${revoke}${delBtn}</div>${featPanel}${planPanel}${detailPanel}`;
+  }
+  function shortDt(value) { return value ? String(value).replace('T', ' ').replace('Z', '').slice(0, 16) : ''; }
+  async function renderUserDetail(panel, uid, listNode) {
+    panel.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const d = await API.http.authUserDetail(uid);
+      const u = d.user || {};
+      const caps = d.capabilities || {};
+      const catalog = d.capability_catalog || [];
+      const nt = d.nt_connection || {};
+      const hist = u.login_history || [];
+      const devices = u.devices || [];
+      const sub = d.subscription || {};
+      const planLabel = (sub.plan && sub.plan.label) || 'Free Preview';
+      const ntMode = nt.mode === 'own_ninjatrader' ? 'Свой NinjaTrader' : 'Наблюдение за владельцем';
+      panel.innerHTML = `
+        <div class="udetail-grid">
+          <div class="cab-kv"><span class="k">Статус</span><span class="v">${esc(u.status || '—')}${u.blocked_at_utc ? ' · заблокирован ' + esc(shortDt(u.blocked_at_utc)) : ''}</span></div>
+          <div class="cab-kv"><span class="k">Тариф</span><span class="v">${esc(planLabel)}</span></div>
+          <div class="cab-kv"><span class="k">Роль доступа</span><span class="v">${esc(u.role || '—')}</span></div>
+          <div class="cab-kv"><span class="k">Регистрация</span><span class="v">${esc(shortDt(u.created_at_utc) || '—')}</span></div>
+          <div class="cab-kv"><span class="k">Подтверждён</span><span class="v">${esc(shortDt(u.approved_at_utc) || '—')}</span></div>
+          <div class="cab-kv"><span class="k">Телефон</span><span class="v">${esc(u.phone_mask || '—')} ${u.phone_verified_at_utc ? '✓' : ''}</span></div>
+          <div class="cab-kv"><span class="k">Telegram</span><span class="v">${u.username ? '@' + esc(u.username) : 'ID ' + esc(u.user_id)}</span></div>
+          <div class="cab-kv"><span class="k">Последний вход</span><span class="v">${esc(shortDt(u.last_login_at_utc) || '—')}${u.last_login_device ? ' · ' + esc(u.last_login_device) : ''}${u.last_login_machine ? ' · ' + esc(u.last_login_machine) : ''}</span></div>
+          <div class="cab-kv"><span class="k">NinjaTrader</span><span class="v">${esc(ntMode)}${nt.workspace ? ' · ' + esc(nt.workspace) : ''} ${nt.connected ? '<span class="badge live">подключён</span>' : '<span class="badge pending">нет</span>'}</span></div>
+        </div>
+        <div class="section-title">Устройства</div>
+        <div class="list">${devices.length ? devices.map(device => `<div class="row"><div class="row-main"><div class="row-title">${esc(device.label || 'Этот компьютер')} · ${esc(device.client || 'Браузер')}</div><div class="row-sub">${esc(shortDt(device.last_seen_at_utc) || '—')}${device.email ? ' · ' + esc(device.email) : ''}${device.last_ip ? ' · ' + esc(device.last_ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Устройств пока нет.</div>'}</div>
+        <div class="section-title">История входов</div>
+        <div class="list">${hist.length ? hist.map(h => `<div class="row"><div class="row-main"><div class="row-title">${esc(h.machine || 'Этот компьютер')} · ${esc(h.device || '—')}</div><div class="row-sub">${esc(shortDt(h.at))} · ${esc(h.source === 'telegram_mini_app' ? 'Telegram Mini App' : 'Браузер')}${h.ip ? ' · ' + esc(h.ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Входов пока нет.</div>'}</div>
+        <div class="section-title">Разрешения (тариф + индивидуально)</div>
+        <div class="finance-note">Переключатель включает/выключает привилегию именно для этого пользователя поверх его тарифа.</div>
+        <div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)}${c.hint ? ` <span class="cab-sub">(${esc(c.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-cap-toggle="${esc(uid)}" data-cap-id="${esc(c.id)}" ${caps[c.id] ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
+      qsa('[data-cap-toggle]', panel).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.authUserPermission(t.dataset.capToggle, t.dataset.capId, t.checked); toast('Разрешение обновлено'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+    } catch (e) { renderError(panel, e, () => renderUserDetail(panel, uid, listNode)); }
+  }
+  async function renderUsersInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const [data, plansData] = await Promise.all([API.http.authUsers(), API.http.ownerPlans().catch(() => ({ plans: [] }))]);
+      const users = data.users || [];
+      const catalog = data.feature_catalog || [];
+      const planOptions = buildPlanOptions(plansData.plans || []);
+      node.innerHTML = `<div class="dchart-actions" style="justify-content:flex-start"><button class="btn primary" id="users-invite">＋ Пригласить (ссылка + промокод)</button></div>
+        <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. Новый аккаунт активируется только вашим подтверждением в боте.</div>
+        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions)).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
+      const invite = qs('#users-invite', node);
+      if (invite) invite.onclick = () => { const tab = document.querySelector('[data-cab-tab="invites"]'); if (tab) tab.click(); };
+      qsa('[data-user-role]', node).forEach(s => s.onchange = async () => { s.disabled = true; try { await API.http.authUserRole(s.dataset.userRole, s.value); toast('Роль обновлена'); } catch (e) { reportError(e); } finally { s.disabled = false; } });
+      qsa('[data-user-revoke]', node).forEach(b => b.onclick = async () => { if (!confirm('Отозвать аккаунт? Все его сессии завершатся.')) return; b.disabled = true; try { await API.http.authUserRevoke(b.dataset.userRevoke); toast('Аккаунт отозван'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-user-detail]', node).forEach(b => b.onclick = async () => { const uid = b.dataset.userDetail; const p = qs(`[data-detail-panel="${uid}"]`, node); if (!p) return; if (!p.hidden) { p.hidden = true; return; } p.hidden = false; await renderUserDetail(p, uid, node); });
+      qsa('[data-user-block]', node).forEach(b => b.onclick = async () => { if (!confirm('Заблокировать пользователя? Доступ и сессии будут приостановлены.')) return; b.disabled = true; try { await API.http.authUserStatus(b.dataset.userBlock, 'blocked'); toast('Пользователь заблокирован'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-user-unblock]', node).forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.authUserStatus(b.dataset.userUnblock, 'active'); toast('Пользователь разблокирован'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-user-delete]', node).forEach(b => b.onclick = async () => { if (!confirm('Удалить пользователя навсегда? Это действие необратимо.')) return; b.disabled = true; try { await API.http.authUserDelete(b.dataset.userDelete); toast('Пользователь удалён'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-user-feat]', node).forEach(b => b.onclick = () => { const p = qs(`[data-feat-panel="${b.dataset.userFeat}"]`, node); if (p) p.hidden = !p.hidden; });
+      qsa('[data-feat-toggle]', node).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.authUserFeature(t.dataset.featToggle, t.dataset.featId, t.checked); toast('Параметр обновлён'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+      qsa('[data-user-plan]', node).forEach(b => b.onclick = () => { const p = qs(`[data-plan-panel="${b.dataset.userPlan}"]`, node); if (p) p.hidden = !p.hidden; });
+      qsa('[data-grant-apply]', node).forEach(b => b.onclick = async () => {
+        const uid = b.dataset.grantApply;
+        const plan = (qs(`[data-grant-plan="${uid}"]`, node) || {}).value;
+        const days = Number((qs(`[data-grant-days="${uid}"]`, node) || {}).value || 0);
+        b.disabled = true;
+        try { await API.http.ownerGrant(uid, plan, days); toast('Тариф назначен'); await renderUsersInto(node); }
+        catch (e) { reportError(e); b.disabled = false; }
+      });
+      qsa('[data-grant-clear]', node).forEach(b => b.onclick = async () => {
+        const uid = b.dataset.grantClear;
+        b.disabled = true;
+        try { await API.http.ownerGrant(uid, '', 0); toast('Тариф сброшен'); await renderUsersInto(node); }
+        catch (e) { reportError(e); b.disabled = false; }
+      });
+      if (PENDING_USER_DETAIL) {
+        const uid = PENDING_USER_DETAIL; PENDING_USER_DETAIL = '';
+        const openBtn = qs(`[data-user-detail="${uid}"]`, node);
+        if (openBtn) { openBtn.click(); try { openBtn.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* ignore */ } }
+      }
+    } catch (e) { renderError(node, e, () => renderUsersInto(node)); }
+  }
+
+  function planPriceLabel(p) {
+    const v = Number(p.price_usd || 0);
+    if (!v) return 'Бесплатно';
+    const s = v.toFixed(2).replace(/\.00$/, '');
+    return '$' + s + (p.period ? ' / ' + esc(p.period) : '');
+  }
+  function paypalFor(handle, amount) {
+    const h = String(handle || '').replace(/[^A-Za-z0-9_.\-]/g, '');
+    if (!h) return '';
+    return 'https://www.paypal.com/paypalme/' + h + (amount ? '/' + Number(amount) : '');
+  }
+  function planCardHtml(p, catalog, opts) {
+    const feats = p.features || {};
+    const donation = p.category === 'donation';
+    const rows = (catalog || []).map(f => {
+      if (opts.isOwner && p.plan_id !== 'founder') {
+        return `<div class="feat-row"><span>${esc(f.label)}${f.hint ? ` <span class="cab-sub">(${esc(f.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-plan-toggle="${esc(p.plan_id)}" data-plan-feat="${esc(f.id)}" ${feats[f.id] ? 'checked' : ''}><span class="sl"></span></label></div>`;
+      }
+      return `<div class="feat-row"><span>${esc(f.label)}</span><span class="feat-mark ${feats[f.id] ? 'on' : 'off'}">${feats[f.id] ? '✓' : '—'}</span></div>`;
+    }).join('');
+    let action = '';
+    if (!opts.isOwner) {
+      if (opts.current) {
+        action = '<span class="badge live">Ваш тариф</span>';
+      } else if (!opts.paymentsEnabled) {
+        // Automatic/paid checkout is not live yet (no business payment account).
+        // Access is granted via promo code or directly by the owner.
+        action = '<span class="plan-soon">Скоро · оплата подключается</span>';
+      } else if (donation) {
+        const url = opts.paypal ? paypalFor(opts.paypal, p.price_usd) : '';
+        action = url
+          ? `<a class="btn primary" href="${esc(url)}" data-external target="_blank" rel="noopener">Поддержать ${planPriceLabel(p)}</a>`
+          : `<span class="cab-sub">Реквизиты владельца не заданы</span>`;
+      } else {
+        action = `<button class="btn primary" data-choose-plan="${esc(p.plan_id)}">Выбрать</button>`;
+      }
+    }
+    return `<div class="plan-card ${donation ? 'donation' : ''} ${opts.current ? 'current' : ''}">
+      <div class="plan-head"><div class="plan-name">${esc(p.label)}${p.badge ? ` <span class="badge trial">${esc(p.badge)}</span>` : ''}</div><div class="plan-price">${planPriceLabel(p)}</div></div>
+      <div class="plan-tag">${esc(p.tagline || '')}</div>
+      <div class="plan-feats">${rows}</div>
+      <div class="plan-action">${action}</div></div>`;
+  }
+  function renderCheckoutPanel(node, out) {
+    if (!node || !out) return;
+    const amount = out.amount_usd ? ('$' + Number(out.amount_usd).toFixed(2).replace(/\.00$/, '')) : '';
+    const payUrl = out.paypal_url || out.card_url || '';
+    node.innerHTML = `<div class="cab-card checkout-card"><h4>Оплата тарифа «${esc(out.label || out.plan_id)}» ${amount}</h4>
+      <div class="finance-note" style="white-space:pre-line">${esc(out.instructions || '')}</div>
+      <div class="dchart-actions" style="justify-content:flex-start">
+        ${payUrl ? `<a class="btn primary" href="${esc(payUrl)}" data-external target="_blank" rel="noopener">Оплатить ${amount} через PayPal</a>` : '<span class="cab-sub">Владелец ещё не указал реквизиты PayPal — попросите ссылку или промокод.</span>'}
+        <button class="btn ghost" id="checkout-paid" data-plan="${esc(out.plan_id)}">Я оплатил — сообщить владельцу</button>
+      </div>
+      <div class="cab-sub" id="checkout-msg"></div></div>`;
+    bindExternalLinks(node);
+    const paid = qs('#checkout-paid', node);
+    if (paid) paid.onclick = async () => {
+      paid.disabled = true;
+      try {
+        await API.http.billingPaymentRequest(paid.dataset.plan);
+        const m = qs('#checkout-msg', node);
+        if (m) m.textContent = 'Заявка отправлена владельцу. Тариф включат после проверки платежа в PayPal.';
+        toast('Заявка отправлена владельцу');
+      } catch (e) { reportError(e); paid.disabled = false; }
+    };
+    try { node.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* ignore */ }
+  }
+  async function renderPlansInto(node, me) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка тарифов…</div>';
+    try {
+      const isOwner = !!(me && me.is_owner);
+      const data = isOwner ? await API.http.ownerPlans() : await API.http.billingPlans();
+      let donate = { payment: {} };
+      try { donate = await API.http.billingDonate(); } catch (e) { /* optional */ }
+      const catalog = data.feature_catalog || [];
+      const plans = (data.plans || data.public_plans || []).filter(p => p.public);
+      const subs = plans.filter(p => p.category === 'subscription');
+      const donations = plans.filter(p => p.category === 'donation');
+      const currentPlan = (me && me.subscription && me.subscription.plan_id) || '';
+      const paypal = (donate.payment || {}).paypal_me || '';
+      const paymentsEnabled = !!(me && me.payments_enabled);
+      const ref = getReferral();
+      const promoBlock = isOwner ? '' : `<div class="cab-card"><h4>Промокод или приглашение</h4><div class="flex gap-sm"><input id="cab-promo" placeholder="Код приглашения" value="${esc(ref)}" style="flex:1"><button class="btn primary" id="cab-promo-apply">Активировать</button></div><div class="cab-sub" id="cab-promo-msg">${ref ? 'Найдено приглашение — нажмите «Активировать».' : ''}</div></div>`;
+      const soonNote = (!isOwner && !paymentsEnabled) ? '<div class="finance-note">Оплата подписок подключается позже. Сейчас доступ открывается промокодом или напрямую владельцем.</div>' : '';
+      const editHint = isOwner ? '<div class="finance-note">Переключатели включают/выключают привилегию для тарифа. Разница между тарифами видна по колонкам ниже.</div>' : '<div class="finance-note">Отметки ✓/— показывают, что входит в каждый тариф. Онлайн-графики и Pro-модели ИИ — самые дорогие возможности.</div>';
+      node.innerHTML = promoBlock + soonNote + editHint
+        + '<div id="cab-checkout"></div>'
+        + `<div class="section-title">Подписки</div><div class="plan-grid">${subs.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled })).join('')}</div>`
+        + `<div class="section-title">Донат — для своих</div><div class="plan-grid">${donations.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled })).join('')}</div>`;
+      bindExternalLinks(node);
+      qsa('[data-plan-toggle]', node).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.ownerPlanFeature(t.dataset.planToggle, t.dataset.planFeat, t.checked); toast('Привилегия тарифа обновлена'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+      qsa('[data-choose-plan]', node).forEach(b => b.onclick = async () => {
+        const pid = b.dataset.choosePlan;
+        b.disabled = true;
+        try {
+          const out = await API.http.billingCheckout(pid);
+          renderCheckoutPanel(qs('#cab-checkout', node), out);
+        } catch (e) { reportError(e); }
+        finally { b.disabled = false; }
+      });
+      const applyBtn = qs('#cab-promo-apply', node);
+      if (applyBtn) applyBtn.onclick = async () => {
+        const code = (qs('#cab-promo', node).value || '').trim();
+        if (!code) { toast('Введите код'); return; }
+        applyBtn.disabled = true;
+        const msg = qs('#cab-promo-msg', node);
+        try {
+          const out = await API.http.billingPromoRedeem({ code });
+          if (out && out.checkout_required) { if (msg) msg.textContent = 'Для этого кода нужна оплата тарифа.'; }
+          else { clearReferral(); toast('Доступ активирован'); setTimeout(() => location.reload(), 700); }
+        } catch (e) { reportError(e); } finally { applyBtn.disabled = false; }
+      };
+    } catch (e) { renderError(node, e, () => renderPlansInto(node, me)); }
+  }
+
+  function buildPlanOptions(plans) {
+    const order = ['developer_free', 'basic', 'standard', 'pro', 'donate_5', 'donate_3', 'donate_1', 'learner_viewer'];
+    const byId = {}; (plans || []).forEach(p => { byId[p.plan_id] = p; });
+    return order.filter(id => byId[id]).map(id => { const p = byId[id]; return `<option value="${esc(id)}">${esc(p.label)}${p.price_usd ? ' · ' + planPriceLabel(p) : ' · бесплатно'}</option>`; }).join('');
+  }
+  function voucherRowHtml(v) {
+    const isActive = v.status === 'active';
+    const actions = `<div class="flex gap-sm wrap inv-actions">
+      ${isActive ? `<button class="btn sm ghost" data-inv-status="${esc(v.voucher_id)}" data-inv-to="paused">Отменить</button>` : `<button class="btn sm ghost" data-inv-status="${esc(v.voucher_id)}" data-inv-to="active">Возобновить</button>`}
+      <button class="btn sm ghost" data-inv-status="${esc(v.voucher_id)}" data-inv-to="archived">В архив</button>
+      <button class="btn sm danger" data-inv-del="${esc(v.voucher_id)}">Удалить</button>
+    </div>`;
+    const badge = v.status === 'active' ? 'live' : v.status === 'paused' ? 'pending' : 'archived';
+    const reds = v.redemptions || [];
+    const redLine = reds.length
+      ? `<div class="inv-redeemers"><span class="cab-sub">Использовали:</span> ${reds.map(r => `<button class="btn sm ghost" data-open-user="${esc(r.user_id)}" ${r.user_exists ? '' : 'disabled'} title="Открыть аккаунт">${esc(r.user_label || ('ID ' + r.user_id))}${r.redeemed_at_utc ? ' · ' + esc(shortDt(r.redeemed_at_utc)) : ''}</button>`).join(' ')}</div>`
+      : '';
+    return `<div class="inv-wrap"><div class="row inv-row"><div class="row-main"><div class="row-title">${esc(v.label || v.voucher_id)}</div><div class="row-sub">${esc(v.grant_plan_id || 'скидка')} · ${Number(v.discount_percent || 0)}% · использовано ${Number(v.used_count || 0)}/${Number(v.usage_limit || 0)}</div></div><span class="badge ${badge}">${esc(v.status || '—')}</span>${actions}</div>${redLine}</div>`;
+  }
+  function renderInviteResult(node, out) {
+    if (!node) return;
+    const code = (out.voucher || {}).code || '';
+    const inv = out.invite || {};
+    const render = out.render || {};
+    const link = inv.telegram || inv.web || '';
+    const cardImg = render.image_data_url ? `<div class="invite-card-preview"><img src="${esc(render.image_data_url)}" alt="Приглашение"></div>` : '';
+    const sendBtn = render.image_data_url || render.text ? `<button class="btn primary" id="inv-send">Отправить себе в Telegram</button>` : '';
+    node.innerHTML = `<div class="invite-result">
+      ${cardImg}
+      <div class="cab-kv"><span class="k">Промокод</span><span class="v mono"><strong>${esc(code)}</strong> <button class="btn sm ghost" data-copy="${esc(code)}">Копировать</button></span></div>
+      ${inv.telegram ? `<div class="cab-kv"><span class="k">Ссылка Telegram</span><span class="v"><a href="${esc(inv.telegram)}" target="_blank" rel="noopener">${esc(inv.telegram)}</a> <button class="btn sm ghost" data-copy="${esc(inv.telegram)}">Копировать</button></span></div>` : ''}
+      ${inv.web ? `<div class="cab-kv"><span class="k">Ссылка Web</span><span class="v"><a href="${esc(inv.web)}" target="_blank" rel="noopener">${esc(inv.web)}</a> <button class="btn sm ghost" data-copy="${esc(inv.web)}">Копировать</button></span></div>` : ''}
+      ${render.text ? `<div class="cab-kv"><span class="k">Текст</span><span class="v"><button class="btn sm ghost" data-copy="${esc(render.text)}">Копировать текст</button></span></div>` : (inv.message ? `<div class="cab-kv"><span class="k">Текст</span><span class="v"><button class="btn sm ghost" data-copy="${esc(inv.message)}">Копировать приглашение</button></span></div>` : '')}
+      <div class="dchart-actions" style="justify-content:flex-start">${sendBtn}${render.image_data_url ? `<a class="btn ghost" href="${esc(render.image_data_url)}" download="invite.png">Скачать картинку</a>` : ''}</div>
+      ${(!inv.telegram && !inv.web) ? '<div class="cab-sub">Ссылка появится после настройки бота/Mini App URL в разделе Telegram. Промокод уже работает.</div>' : ''}</div>`;
+    qsa('[data-copy]', node).forEach(b => b.onclick = () => { try { navigator.clipboard.writeText(b.dataset.copy); toast('Скопировано'); } catch (e) { reportError(e); } });
+    const send = qs('#inv-send', node);
+    if (send) send.onclick = async () => {
+      send.disabled = true;
+      try {
+        const r = await API.http.ownerInviteSend({ text: render.text || inv.message || '', image_data_url: render.image_data_url || '' });
+        toast(r && r.ok ? 'Отправлено в ваш Telegram — можно переслать' : 'Не удалось отправить');
+      } catch (e) { reportError(e); } finally { send.disabled = false; }
+    };
+  }
+  async function renderInvitesInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const [plansData, vouchersData] = await Promise.all([API.http.billingPlans(), API.http.ownerVouchers()]);
+      const opts = buildPlanOptions(plansData.plans || []);
+      const vouchers = vouchersData.vouchers || [];
+      node.innerHTML = `<div class="cab-card"><h4>Пригласить пользователя</h4>
+        <div class="finance-note">Создаётся промокод и красивая ссылка-приглашение. Пользователь переходит по ссылке, входит через Telegram и получает выбранный уровень доступа.</div>
+        <form class="dchart-form" id="inv-form"><div class="fgrid">
+          <label>Название<input id="inv-label" value="Приглашение"></label>
+          <label>Тариф доступа<select id="inv-plan">${opts}</select></label>
+          <label>Скидка %, если платный<input id="inv-discount" type="number" min="0" max="100" value="0"></label>
+          <label>Сколько людей<input id="inv-limit" type="number" min="1" max="100000" value="1"></label>
+          <label>Срок дней (0=бессрочно)<input id="inv-days" type="number" min="0" max="3650" value="0"></label>
+          <label>Префикс кода<input id="inv-prefix" value="REF"></label>
+        </div><div class="dchart-actions"><button class="btn primary" type="submit">Создать приглашение</button></div></form>
+        <div id="inv-result"></div></div>
+        <div class="cab-card"><h4>Выданные приглашения</h4><div class="list account-user-list">${vouchers.map(voucherRowHtml).join('') || '<div class="empty-state">Пока нет.</div>'}</div></div>`;
+      const form = qs('#inv-form', node);
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          const out = await API.http.ownerInviteCreate({
+            label: qs('#inv-label', form).value,
+            grant_plan_id: qs('#inv-plan', form).value,
+            discount_percent: Number(qs('#inv-discount', form).value || 0),
+            usage_limit: Number(qs('#inv-limit', form).value || 1),
+            grant_duration_days: Number(qs('#inv-days', form).value || 0),
+            code_prefix: qs('#inv-prefix', form).value,
+          });
+          renderInviteResult(qs('#inv-result', node), out);
+          toast('Приглашение создано');
+        } catch (err) { reportError(err); } finally { btn.disabled = false; }
+      };
+      qsa('[data-inv-status]', node).forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.ownerInviteStatus(b.dataset.invStatus, b.dataset.invTo); toast('Приглашение обновлено'); await renderInvitesInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-inv-del]', node).forEach(b => b.onclick = async () => { if (!confirm('Удалить приглашение навсегда?')) return; b.disabled = true; try { await API.http.ownerInviteDelete(b.dataset.invDel); toast('Приглашение удалено'); await renderInvitesInto(node); } catch (e) { reportError(e); b.disabled = false; } });
+      qsa('[data-open-user]', node).forEach(b => b.onclick = () => { PENDING_USER_DETAIL = b.dataset.openUser; const tab = document.querySelector('[data-cab-tab="users"]'); if (tab) tab.click(); });
+    } catch (e) { renderError(node, e, () => renderInvitesInto(node)); }
+  }
+
+  async function renderPaymentInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const [data, pp] = await Promise.all([API.http.ownerPaymentGet(), API.http.ownerPaypalGet().catch(() => ({ paypal: {} }))]);
+      const p = data.payment || {};
+      const pay = pp.paypal || {};
+      const webhookUrl = location.origin + '/api/billing/paypal/webhook';
+      const planIds = pay.plans || {};
+      const previewMe = p.paypal_me ? ('https://www.paypal.com/paypalme/' + String(p.paypal_me).replace(/[^A-Za-z0-9_.\-]/g, '')) : '';
+      node.innerHTML = `<div class="cab-card"><h4>PayPal — ручная оплата</h4>
+        <div class="finance-note">Пользователь платит по вашей ссылке PayPal.me как разовый перевод/поддержку, затем нажимает «Я оплатил». Вы проверяете платёж в PayPal и включаете тариф во вкладке <strong>Заявки</strong> или прямо у пользователя. Карты и автосписания не используются.</div>
+        <form class="dchart-form" id="pm-form"><div class="fgrid">
+          <label>PayPal.me (ваш ник)<input id="pm-paypalme" value="${esc(p.paypal_me || '')}" placeholder="myhandle"></label>
+          <label>Готовая платёжная ссылка (необязательно)<input id="pm-cardurl" value="${esc(p.card_url || '')}" placeholder="https://paypal.com/ncp/payment/..."></label>
+          <label>Примечание к оплате<input id="pm-cardnote" value="${esc(p.card_note || '')}" placeholder="Напишите мне в Telegram после оплаты"></label>
+        </div>
+        <label class="drawing-lock"><input type="checkbox" id="pm-enabled" ${p.enabled !== false ? 'checked' : ''}><span>Показывать оплату и кнопки тарифов пользователям</span></label>
+        <div class="dchart-actions"><button class="btn primary" type="submit">Сохранить</button></div></form>
+        ${previewMe ? `<div class="cab-kv"><span class="k">Ссылка PayPal.me</span><span class="v mono nt-path"><a href="${esc(previewMe)}" target="_blank" rel="noopener">${esc(previewMe)}</a></span></div>` : ''}
+      </div>
+      <details class="cab-card"><summary><strong>Автоматические подписки PayPal (на будущее)</strong></summary>
+        <div class="finance-note">Не обязательно сейчас. Требует PayPal Business и публичный webhook. Заполните, когда захотите включить автосписание тарифов — ручная схема выше продолжит работать.</div>
+        <form class="dchart-form" id="pp-form"><div class="fgrid">
+          <label>Режим<select id="pp-mode"><option value="sandbox" ${pay.mode !== 'live' ? 'selected' : ''}>Sandbox (тест)</option><option value="live" ${pay.mode === 'live' ? 'selected' : ''}>Live (боевой)</option></select></label>
+          <label>Client ID<input id="pp-client" value="${esc(pay.client_id || '')}" placeholder="PayPal REST client id"></label>
+          <label>Secret ${pay.secret_set ? '(задан)' : ''}<input id="pp-secret" type="password" placeholder="${pay.secret_set ? '•••••• оставьте пустым, чтобы не менять' : 'PayPal REST secret'}"></label>
+          <label>Webhook ID<input id="pp-webhook" value="${esc(pay.webhook_id || '')}" placeholder="ID webhook из PayPal"></label>
+        </div>
+        <label class="drawing-lock"><input type="checkbox" id="pp-enabled" ${pay.enabled ? 'checked' : ''}><span>Включить автоматические подписки PayPal</span></label>
+        <div class="dchart-actions"><button class="btn primary" type="submit">Сохранить автоподписки</button><button class="btn ghost" type="button" id="pp-plans">Создать планы Basic/Standard/Pro в PayPal</button></div></form>
+        <div class="cab-kv"><span class="k">Webhook URL для PayPal</span><span class="v mono nt-path">${esc(webhookUrl)} <button class="btn sm ghost" data-copy-pp="${esc(webhookUrl)}">Копировать</button></span></div>
+        <div class="cab-kv"><span class="k">Продукт</span><span class="v mono">${esc(pay.product_id || '—')}</span></div>
+        <div class="cab-kv"><span class="k">Планы</span><span class="v mono">Basic: ${esc(planIds.basic || '—')} · Standard: ${esc(planIds.standard || '—')} · Pro: ${esc(planIds.pro || '—')}</span></div>
+      </details>`;
+      qsa('[data-copy-pp]', node).forEach(b => b.onclick = () => { try { navigator.clipboard.writeText(b.dataset.copyPp); toast('Скопировано'); } catch (e) { reportError(e); } });
+      const manual = qs('#pm-form', node);
+      manual.onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = manual.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          await API.http.ownerPaymentSet({
+            paypal_me: qs('#pm-paypalme', manual).value,
+            card_url: qs('#pm-cardurl', manual).value,
+            card_note: qs('#pm-cardnote', manual).value,
+            enabled: qs('#pm-enabled', manual).checked,
+          });
+          toast('Реквизиты сохранены');
+          await renderPaymentInto(node);
+        } catch (err) { reportError(err); btn.disabled = false; }
+      };
+      const form = qs('#pp-form', node);
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          await API.http.ownerPaypalSet({
+            mode: qs('#pp-mode', form).value,
+            client_id: qs('#pp-client', form).value,
+            secret: qs('#pp-secret', form).value,
+            webhook_id: qs('#pp-webhook', form).value,
+            enabled: qs('#pp-enabled', form).checked,
+          });
+          toast('Настройки автоподписок сохранены');
+          await renderPaymentInto(node);
+        } catch (err) { reportError(err); btn.disabled = false; }
+      };
+      const plansBtn = qs('#pp-plans', node);
+      if (plansBtn) plansBtn.onclick = async () => {
+        plansBtn.disabled = true; plansBtn.textContent = 'Создаю в PayPal…';
+        try { await API.http.ownerPaypalEnsurePlans(); toast('Планы PayPal созданы'); await renderPaymentInto(node); }
+        catch (err) { reportError(err); plansBtn.disabled = false; plansBtn.textContent = 'Создать планы Basic/Standard/Pro в PayPal'; }
+      };
+    } catch (e) { renderError(node, e, () => renderPaymentInto(node)); }
+  }
+
+  function requestRowHtml(r) {
+    const amount = r.amount_usd ? ('$' + Number(r.amount_usd).toFixed(2).replace(/\.00$/, '')) : '';
+    const pending = r.status === 'pending';
+    const who = r.user_label ? esc(r.user_label) : ('ID ' + esc(r.user_id));
+    const controls = pending
+      ? `<label class="req-days">срок дней<input type="number" data-req-days min="0" max="3650" value="30" style="width:64px"></label><button class="btn sm primary" data-req-approve="${esc(r.request_id)}">Включить</button><button class="btn sm danger" data-req-reject="${esc(r.request_id)}">Отклонить</button>`
+      : `<span class="badge ${r.status === 'approved' ? 'live' : 'archived'}">${esc(r.status || '—')}</span>`;
+    return `<div class="row" data-req><div class="row-main"><div class="row-title">${who} · ${esc(r.plan_label || r.plan_id)} ${amount}</div><div class="row-sub">${esc(r.created_at_utc || '')}${r.note ? ' · ' + esc(r.note) : ''}</div></div>${controls}</div>`;
+  }
+  async function renderRequestsInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const data = await API.http.ownerPaymentRequests();
+      const reqs = data.requests || [];
+      const pending = reqs.filter(r => r.status === 'pending');
+      const done = reqs.filter(r => r.status !== 'pending');
+      node.innerHTML = `<div class="finance-note">Пользователь нажал «Я оплатил» — проверьте платёж в PayPal и включите тариф с нужным сроком. Заявки не списывают деньги и не хранят карты.</div>
+        <div class="section-title">Новые заявки</div><div class="list account-user-list">${pending.map(requestRowHtml).join('') || '<div class="empty-state">Новых заявок нет.</div>'}</div>
+        ${done.length ? `<div class="section-title">История</div><div class="list account-user-list">${done.map(requestRowHtml).join('')}</div>` : ''}`;
+      qsa('[data-req-approve]', node).forEach(b => b.onclick = async () => {
+        const wrap = b.closest('[data-req]');
+        const days = Number(((wrap && qs('input[data-req-days]', wrap)) || {}).value || 30);
+        b.disabled = true;
+        try { await API.http.ownerPaymentRequestResolve(b.dataset.reqApprove, true, days); toast('Тариф включён'); await renderRequestsInto(node); }
+        catch (e) { reportError(e); b.disabled = false; }
+      });
+      qsa('[data-req-reject]', node).forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try { await API.http.ownerPaymentRequestResolve(b.dataset.reqReject, false, 0); toast('Заявка отклонена'); await renderRequestsInto(node); }
+        catch (e) { reportError(e); b.disabled = false; }
+      });
+    } catch (e) { renderError(node, e, () => renderRequestsInto(node)); }
+  }
+
+  let PENDING_USER_DETAIL = '';
+  const JOURNAL_STATE = { category: '', q: '', suspicious: false };
+  function journalRowHtml(e) {
+    return `<div class="row jrow ${e.suspicious ? 'jrow-warn' : ''}"><div class="row-main"><div class="row-title">${esc(e.event || '—')}${e.suspicious ? ' <span class="badge pending">внимание</span>' : ''}</div><div class="row-sub">${esc(shortDt(e.timestamp))} · <span class="badge">${esc(e.category_label || e.category)}</span> ${esc(e.summary || '')}</div></div></div>`;
+  }
+  async function renderJournalInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка журнала…</div>';
+    try {
+      const params = new URLSearchParams();
+      if (JOURNAL_STATE.category) params.set('category', JOURNAL_STATE.category);
+      if (JOURNAL_STATE.q) params.set('q', JOURNAL_STATE.q);
+      if (JOURNAL_STATE.suspicious) params.set('suspicious', '1');
+      params.set('limit', '300');
+      const data = await API.http.ownerJournal(params.toString());
+      const cats = data.categories || [];
+      const entries = data.entries || [];
+      node.innerHTML = `<div class="finance-note">Скрытый журнал администратора: регистрации, входы, изменения прав и подписок, ошибки и подозрительная активность. Только для владельца.</div>
+        <div class="flex gap-sm wrap" style="align-items:flex-end;margin-bottom:8px">
+          <label>Категория<select id="jr-cat"><option value="">Все</option>${cats.map(c => `<option value="${esc(c.id)}" ${c.id === JOURNAL_STATE.category ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></label>
+          <label style="flex:1;min-width:160px">Поиск<input id="jr-q" value="${esc(JOURNAL_STATE.q)}" placeholder="событие, id, путь…"></label>
+          <label class="flex gap-sm" style="align-items:center">Только подозрительные<input type="checkbox" id="jr-sus" ${JOURNAL_STATE.suspicious ? 'checked' : ''}></label>
+          <button class="btn ghost" id="jr-refresh">Обновить</button>
+        </div>
+        <div class="list account-user-list">${entries.map(journalRowHtml).join('') || '<div class="empty-state">Записей нет.</div>'}</div>`;
+      const apply = () => {
+        JOURNAL_STATE.category = (qs('#jr-cat', node) || {}).value || '';
+        JOURNAL_STATE.q = ((qs('#jr-q', node) || {}).value || '').trim();
+        JOURNAL_STATE.suspicious = !!(qs('#jr-sus', node) || {}).checked;
+        renderJournalInto(node);
+      };
+      const cat = qs('#jr-cat', node); if (cat) cat.onchange = apply;
+      const sus = qs('#jr-sus', node); if (sus) sus.onchange = apply;
+      const refresh = qs('#jr-refresh', node); if (refresh) refresh.onclick = apply;
+      const qInput = qs('#jr-q', node); if (qInput) qInput.onkeydown = (e) => { if (e.key === 'Enter') apply(); };
+    } catch (e) { renderError(node, e, () => renderJournalInto(node)); }
+  }
+
+  function wireCabinetHeader(body, me) {
+    const btn = qs('#cab-avatar-refresh', body);
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Обновляю…';
+      try {
+        const out = await API.http.authAvatarRefresh();
+        if (out && out.ok && out.user) {
+          if (CURRENT_AUTH) CURRENT_AUTH.user = out.user;
+          applyChipUser(out.user);
+          const head = qs('.cab-head', body);
+          if (head) { head.outerHTML = cabinetHeader(Object.assign({}, me, { user: out.user })); wireCabinetHeader(body, me); }
+          toast('Фото обновлено');
+        } else { toast('Фото профиля в Telegram не найдено'); }
+      } catch (e) { reportError(e); }
+      finally { const again = qs('#cab-avatar-refresh', body); if (again) { again.disabled = false; again.textContent = 'Обновить фото'; } }
+    };
+  }
+  function renderProfileInto(cb, me) {
+    cb.innerHTML = cabinetProfile(me);
+    const nt = qs('#cab-nt', cb);
+    if (nt) renderNinjaInto(nt, me);
+  }
+  function renderCabinet(body, me, tab) {
+    const header = cabinetHeader(me);
+    const tabs = me.is_owner
+      ? [['profile', 'Профиль'], ['users', 'Пользователи'], ['requests', 'Заявки'], ['plans', 'Тарифы'], ['invites', 'Приглашения'], ['payment', 'Оплата'], ['journal', 'Журнал']]
+      : [['profile', 'Профиль'], ['plans', 'Тарифы']];
+    const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
+    body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
+    const cb = qs('#cab-body', body);
+    const renderTab = (t) => {
+      qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
+      if (t === 'users') renderUsersInto(cb);
+      else if (t === 'requests') renderRequestsInto(cb);
+      else if (t === 'plans') renderPlansInto(cb, me);
+      else if (t === 'invites') renderInvitesInto(cb);
+      else if (t === 'payment') renderPaymentInto(cb);
+      else if (t === 'journal') renderJournalInto(cb);
+      else renderProfileInto(cb, me);
+    };
+    qsa('[data-cab-tab]', body).forEach(b => b.onclick = () => renderTab(b.dataset.cabTab));
+    renderTab(start);
+    wireCabinetHeader(body, me);
+  }
+
   function loginCard(inner) {
     return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Telegram user id · requestContact · подтверждение владельца<br>Персональные данные защищены Windows DPAPI</div></section></div>`;
+  }
+
+  async function showTermsModal() {
+    let data;
+    try { data = await (window.API ? API.http.legalTerms() : Promise.reject()); }
+    catch (e) { toast('Не удалось загрузить условия'); return; }
+    const sections = (data.sections || []).map(s => `<h4>${esc(s.heading)}</h4><p>${esc(s.body)}</p>`).join('');
+    const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${sections}<div class="cab-sub">Версия ${esc(data.version || '')}</div></div></div></div>`);
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    const closeBtn = qs('#terms-close', overlay); if (closeBtn) closeBtn.onclick = close;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   function renderTelegramLogin(initialError) {
@@ -592,16 +1397,20 @@
     const renderProfile = (challengeId, state) => {
       stopPolling();
       const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность и номер. Заполните обязательные данные перед отправкой владельцу.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><button class="btn primary auth-main-action" type="submit">Отправить профиль</button></form>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность и номер. Заполните данные и примите условия, чтобы войти в ознакомительном режиме.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Войти в ознакомительный режим</button></form>`);
       const form = qs('#auth-profile-form', content);
+      const termsLink = qs('#auth-terms-link', form);
+      if (termsLink) termsLink.onclick = () => showTermsModal();
       form.onsubmit = async (event) => {
         event.preventDefault();
+        if (!(qs('#auth-accept-terms', form) || {}).checked) { toast('Примите условия использования'); return; }
         const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
         try {
           const next = await API.http.authProfile(challengeId, {
             first_name: qs('#auth-first-name', form).value,
             last_name: qs('#auth-last-name', form).value,
             email: qs('#auth-email', form).value,
+            accept_terms: true,
           });
           renderWaiting({ challenge_id: challengeId }, next);
         } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
@@ -622,13 +1431,46 @@
       const status = (knownState || {}).status || 'created';
       if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
       const pendingOwner = status === 'pending_owner';
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Начать заново</button>`);
+      const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}${manual ? `<div class="finance-note"><strong>Если Telegram открылся без подтверждения:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Начать заново</button>`);
+      const copy = qs('#auth-copy-code', content);
+      if (copy) copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
+        catch (e) { toast(manual); }
+      };
       const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
       stopPolling();
       polling = setInterval(() => check(challengeId), 2000);
       check(challengeId);
     };
-    renderStart(initialError && initialError.status !== 401 ? initialError.message : '');
+    const renderMiniAppRegister = (message) => {
+      stopPolling();
+      const tg = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация через Telegram</h1><p>Ваша личность уже подтверждена Telegram. Заполните данные и примите условия — доступ откроется сразу в ознакомительном режиме.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я принимаю <button type="button" class="linklike" id="mini-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Войти в ознакомительный режим</button></form>`);
+      const form = qs('#auth-mini-form', content);
+      const link = qs('#mini-terms-link', form); if (link) link.onclick = () => showTermsModal();
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        if (!(qs('#mini-accept', form) || {}).checked) { toast('Примите условия использования'); return; }
+        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
+        try {
+          const out = await API.http.miniappRegister({
+            first_name: qs('#mini-first', form).value,
+            last_name: qs('#mini-last', form).value,
+            email: qs('#mini-email', form).value,
+            accept_terms: true,
+          });
+          if (out && out.ok) { toast('Доступ открыт'); location.reload(); }
+        } catch (error) { submit.disabled = false; renderMiniAppRegister(error.message || String(error)); }
+      };
+    };
+    // In the Telegram Mini App the initData already proves the Telegram identity,
+    // so register directly (no fragile bot round-trip). Desktop uses the bot flow.
+    if (window.API && API.config && API.config.miniApp) {
+      renderMiniAppRegister(initialError && initialError.status && initialError.status !== 401 && initialError.status !== 403 ? initialError.message : '');
+    } else {
+      renderStart(initialError && initialError.status !== 401 ? initialError.message : '');
+    }
   }
 
   async function runReady() {
@@ -1011,7 +1853,7 @@
           finally { tunnelRefresh.disabled = false; }
         };
         const openUsers = qs('#telegram-open-users', body);
-        if (openUsers) openUsers.onclick = () => { closeDrawer(); showUsers(); };
+        if (openUsers) openUsers.onclick = () => { closeDrawer(); openCabinet('users'); };
         const accessPair = qs('#telegram-access-pair', body);
         if (accessPair) accessPair.onclick = async () => {
           accessPair.disabled = true;
@@ -1074,31 +1916,6 @@
     await refresh();
   }
 
-  async function showUsers() {
-    if (!CURRENT_AUTH || !CURRENT_AUTH.is_owner) { toast('Управление пользователями доступно только владельцу'); return; }
-    const d = drawer('<h3>Пользователи</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка аккаунтов…</div>');
-    const body = qs('.drawer-b', d);
-    const refresh = async () => {
-      try {
-        const data = await API.http.authUsers();
-        const users = data.users || [];
-        body.innerHTML = `<div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}<br>Новый аккаунт активируется только вашим подтверждением в личном чате бота.</div><div class="list account-user-list">${users.map(user => `<div class="row"><div class="row-main"><div class="row-title">${esc([user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || String(user.user_id))}${user.is_owner ? ' · владелец' : ''}</div><div class="row-sub">Telegram ID ${esc(user.user_id)} · ${esc(user.email || 'e-mail не заполнен')}${user.phone_mask ? ` · ${esc(user.phone_mask)}` : ''}<br>Создан: ${esc(user.created_at_utc || '—')} · вход: ${esc(user.last_login_at_utc || '—')}${user.revoked_at_utc ? ` · отозван: ${esc(user.revoked_at_utc)}` : ''}</div></div><span class="badge ${user.status === 'active' ? 'live' : user.status === 'pending' ? 'pending' : 'archived'}">${esc(user.status || '—')}</span>${user.is_owner ? '<span class="badge live">owner</span>' : `<select data-account-role="${esc(user.user_id)}" ${user.status === 'active' ? '' : 'disabled'}><option value="read_only" ${user.role === 'read_only' ? 'selected' : ''}>Только чтение</option><option value="full_control" ${user.role === 'full_control' ? 'selected' : ''}>Полное управление</option></select><button class="btn sm danger" data-account-revoke="${esc(user.user_id)}" ${user.status === 'active' ? '' : 'disabled'}>Отозвать</button>`}</div>`).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
-        qsa('[data-account-role]', body).forEach(select => select.onchange = async () => {
-          select.disabled = true;
-          try { await API.http.authUserRole(select.dataset.accountRole, select.value); toast('Роль обновлена'); await refresh(); }
-          catch (error) { reportError(error); select.disabled = false; }
-        });
-        qsa('[data-account-revoke]', body).forEach(button => button.onclick = async () => {
-          if (!confirm(`Отозвать аккаунт Telegram ID ${button.dataset.accountRevoke}? Все его сессии завершатся.`)) return;
-          button.disabled = true;
-          try { await API.http.authUserRevoke(button.dataset.accountRevoke); toast('Аккаунт отозван'); await refresh(); }
-          catch (error) { reportError(error); button.disabled = false; }
-        });
-      } catch (error) { renderError(body, error, refresh); }
-    };
-    await refresh();
-  }
-
   function wireTopbar() {
     const offline = !window.API || API.config.offline;
     const legacyUrl = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/';
@@ -1106,11 +1923,11 @@
     if (more) more.onclick = (e) => {
       e.stopPropagation();
       const systemItems = [
+        { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
         { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
         { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
         { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
-        { icon: 'users', label: 'Пользователи', onClick: () => showUsers() },
         { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
         { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
           if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
@@ -1121,10 +1938,10 @@
         { icon: 'refresh', label: 'Обновить каталог стратегий', onClick: () => action('Обновление каталога стратегий', () => API.http.refreshCatalog(), 'Каталог обновлён').catch(() => { }) },
         { icon: 'coins', label: 'Пересчитать маржу', onClick: () => action('Обновление маржинальных требований', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => { }) },
         { divider: true },
-        { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = legacyUrl; } },
+        { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = withMiniAppContext(legacyUrl); } },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
       ];
-      const ownerOnly = new Set(['Запустить всё окружение', 'Состояние окружения', 'Диагностика системы', 'Пользователи', 'Telegram', 'Перезапустить backend', 'Освободить память ИИ', 'Обновить каталог стратегий', 'Пересчитать маржу', 'Перейти в старый интерфейс']);
+      const ownerOnly = new Set(['Запустить всё окружение', 'Состояние окружения', 'Диагностика системы', 'Telegram', 'Перезапустить backend', 'Освободить память ИИ', 'Обновить каталог стратегий', 'Пересчитать маржу', 'Перейти в старый интерфейс']);
       let visibleItems = systemItems;
       if (window.API && API.config.miniApp) visibleItems = systemItems.filter(item => item.label === 'Настройки дизайна');
       else if (!CURRENT_AUTH || !CURRENT_AUTH.is_owner) visibleItems = systemItems.filter(item => item.divider || !ownerOnly.has(item.label));
@@ -1212,6 +2029,7 @@
       items = index.filter(e => e.label.toLowerCase().includes(q) || (e.sub || '').toLowerCase().includes(q)).slice(0, 8);
       if (!items.length) { box.innerHTML = `<div class="search-empty">Ничего не найдено по «${esc(q)}»</div>`; box.hidden = false; return; }
       box.innerHTML = items.map((e, i) => `<a class="search-item ${i === 0 ? 'active' : ''}" href="${e.href}">${icon(e.icon)}<span class="si-main"><span class="si-label">${esc(e.label)}</span><span class="si-sub">${esc(e.sub)}</span></span></a>`).join('');
+      patchMiniAppLinks(box);
       box.hidden = false;
     }
     async function run(raw) {
@@ -1224,7 +2042,7 @@
     input.addEventListener('input', () => run(input.value));
     input.addEventListener('focus', () => { ensureIndex(); if (input.value) run(input.value); });
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && items.length) { e.preventDefault(); window.location.href = items[0].href; }
+      if (e.key === 'Enter' && items.length) { e.preventDefault(); window.location.href = withMiniAppContext(items[0].href); }
       else if (e.key === 'Escape') { close(); input.blur(); }
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.tb-search-wrap')) close(); });

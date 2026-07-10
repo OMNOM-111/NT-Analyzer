@@ -1149,6 +1149,40 @@ def test_scheduled_stop_keeps_active_mission_running_until_owner_time(tmp_path, 
     assert "11:00" in result["reply"]
 
 
+def test_announce_chart_task_opens_conversation_with_owner_and_ivan(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    conv = chief_agent.create_conversation("Иван · MNQ · цель")
+    cid = conv["conversation_id"]
+
+    out = chief_agent.announce_chart_task(
+        conversation_id=cid, instruction="Ваня, следи за 21500 на MNQ 60 минут и пришли снимок",
+        agent_id="ivan", instrument="MNQ", price=21500, drawing_type="line", label="цель",
+        duration_minutes=60, report_mode="both", action="snapshot", mirror_to_telegram=False,
+    )
+
+    assert out["ok"] and out["conversation_id"] == cid
+    rows = chief_agent._read_conversation(50, path=chief_agent._conversation_file(cid))
+    assert [r["role"] for r in rows] == ["user", "assistant"]
+    assert rows[0]["content"].startswith("Ваня")
+    assert rows[1]["agent_name"] == "Иван"
+    assert "MNQ" in rows[1]["content"] and "снимок" in rows[1]["content"].lower()
+
+
+def test_announce_chart_task_generates_instruction_when_note_blank(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    conv = chief_agent.create_conversation("Иван · MES · снимок")
+    cid = conv["conversation_id"]
+
+    chief_agent.announce_chart_task(
+        conversation_id=cid, instruction="", agent_id="ivan", instrument="MES",
+        price=5000, delay_seconds=60, action="snapshot", mirror_to_telegram=False,
+    )
+
+    rows = chief_agent._read_conversation(50, path=chief_agent._conversation_file(cid))
+    assert rows[0]["role"] == "user" and "MES" in rows[0]["content"]
+    assert "через" in rows[1]["content"].lower()
+
+
 def test_model_cannot_turn_ambiguous_future_stop_into_immediate_stop(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})

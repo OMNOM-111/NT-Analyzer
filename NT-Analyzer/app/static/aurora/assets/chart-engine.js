@@ -25,6 +25,10 @@
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const MAX_DPR = 1.5;
+  const MAX_CANVAS_SIDE = 4096;
+  const MAX_CANVAS_PIXELS = 5000000;
+  const MAX_BAR_PRICE_JUMP = 4;
 
   function cssVar(name, fallback) {
     try {
@@ -50,6 +54,11 @@
       axis: cssVar('--tx-3', '#8b93a7'),
       text: cssVar('--tx-2', '#aeb6c6'),
       textDim: cssVar('--tx-4', '#5c6478'),
+      // Axis labels (time + price) are kept deliberately brighter than the
+      // muted UI text so they stay readable over candles. `axisBrightness`
+      // (0.5..1.6, default 1) lets the owner tune it per chart.
+      axisText: mixWhite(style.axisText || cssVar('--tx-2', '#aeb6c6'), style.axisBrightness),
+      axisStrong: mixWhite(style.axisStrong || '#e8ecf5', style.axisBrightness),
       cross: 'rgba(180,200,255,0.55)',
       crossBg: cssVar('--bg-3', '#1a2030'),
       ma: ['#4fd1e0', '#fcc55a', '#b48cff', '#f59e6b', '#8a7cff'],
@@ -65,6 +74,9 @@
       macdFillToZero: macd.fillToZero === true,
       macdBetweenOpacity: macd.betweenOpacity == null ? 0.4 : clamp(Number(macd.betweenOpacity), 0, 1),
       macdZeroOpacity: macd.zeroOpacity == null ? 0.16 : clamp(Number(macd.zeroOpacity), 0, 1),
+      // Semi-transparent volume bars drawn inside the MACD pane (indicator over indicator).
+      macdVolOverlay: macd.vol === true,
+      macdVolOpacity: macd.volOpacity == null ? 0.2 : clamp(Number(macd.volOpacity), 0, 1),
       rsi: '#b48cff',
       volUp: 'rgba(52,211,153,0.40)',
       volDown: 'rgba(255,107,129,0.40)',
@@ -131,6 +143,42 @@
     }
     return out;
   }
+  // Weighted moving average (linear weights 1..period), used to build the HMA.
+  function wma(values, period) {
+    const out = new Array(values.length).fill(null);
+    const denom = period * (period + 1) / 2;
+    for (let i = period - 1; i < values.length; i++) {
+      let sum = 0, ok = true;
+      for (let k = 0; k < period; k++) {
+        const v = values[i - period + 1 + k];
+        if (v == null || !Number.isFinite(v)) { ok = false; break; }
+        sum += v * (k + 1);
+      }
+      out[i] = ok ? sum / denom : null;
+    }
+    return out;
+  }
+  // Hull Moving Average: WMA( 2*WMA(n/2) − WMA(n), sqrt(n) ) — fast & smooth,
+  // drawn as an overlay on the price bars just like MA/EMA.
+  function hma(values, period) {
+    const half = Math.max(1, Math.floor(period / 2));
+    const sq = Math.max(1, Math.round(Math.sqrt(period)));
+    const wHalf = wma(values, half);
+    const wFull = wma(values, period);
+    const diff = values.map((_, i) => (wHalf[i] != null && wFull[i] != null) ? 2 * wHalf[i] - wFull[i] : null);
+    const out = new Array(values.length).fill(null);
+    const denom = sq * (sq + 1) / 2;
+    for (let i = sq - 1; i < diff.length; i++) {
+      let sum = 0, ok = true;
+      for (let k = 0; k < sq; k++) {
+        const v = diff[i - sq + 1 + k];
+        if (v == null) { ok = false; break; }
+        sum += v * (k + 1);
+      }
+      out[i] = ok ? sum / denom : null;
+    }
+    return out;
+  }
 
   // ---- time formatting ------------------------------------------------------
   const PTZ = 'America/Los_Angeles';
@@ -154,11 +202,24 @@
       const n = parseInt(arg, 10);
       if (kind === 'ma' || kind === 'sma') overlays.push({ type: 'sma', period: n || 20 });
       else if (kind === 'ema') overlays.push({ type: 'ema', period: n || 21 });
+      else if (kind === 'hma') overlays.push({ type: 'hma', period: n || 21 });
       else if (kind === 'vol' || kind === 'volume') panes.push({ type: 'vol' });
       else if (kind === 'macd') panes.push({ type: 'macd', fast: 12, slow: 26, signal: 9 });
       else if (kind === 'rsi') panes.push({ type: 'rsi', period: n || 14 });
     });
     return { overlays, panes };
+  }
+
+  function indicatorWarmup(indicators) {
+    let warmup = 80;
+    (indicators && indicators.overlays || []).forEach((item) => {
+      warmup = Math.max(warmup, (Number(item.period) || 20) * 3);
+    });
+    (indicators && indicators.panes || []).forEach((item) => {
+      if (item.type === 'macd') warmup = Math.max(warmup, ((Number(item.slow) || 26) + (Number(item.signal) || 9)) * 3);
+      else if (item.type === 'rsi') warmup = Math.max(warmup, (Number(item.period) || 14) * 4);
+    });
+    return Math.min(360, Math.max(80, Math.round(warmup)));
   }
 
   // =========================================================================
@@ -177,7 +238,9 @@
       this.tool = null;
       this.selectedDrawingId = null;
       this.priceScale = 1;
-      this.listeners = { crosshair: [], drawing: [], drawingSelect: [], drawingChange: [], paneResize: [], viewport: [] };
+      // Right price-axis width in css px, draggable by the owner (40..200).
+      this.axisW = clamp(Number((opts.style && opts.style.axisWidth) || 62), 40, 200);
+      this.listeners = { crosshair: [], drawing: [], drawingSelect: [], drawingChange: [], viewport: [] };
 
       // Viewport over the bar array: `count` visible bars ending at `offset`
       // (offset = index of the right-most visible bar; -1 means "latest").
@@ -190,6 +253,7 @@
       this._drawingDrag = null;
       this._axisDrag = null;
       this._paneDrag = null;    // { index, startY, startH }
+      this._axisWidthDrag = null; // { startX, startW } — resize the price column
       this._raf = null;
       this.paneHeights = Object.assign({}, opts.paneHeights || {});  // index → height px
       this.aspect = opts.aspect || 'auto';  // 'auto' | 'square' | 'wide'
@@ -279,7 +343,9 @@
           }
         } else if (this._axisDrag && this._axisDrag.kind === 'time') {
           const delta = this.cursor.x - this._axisDrag.startX;
-          const factor = Math.exp(-delta / 180);
+          // NinjaTrader/TopStep convention: drag the time axis RIGHT to compress
+          // (more bars come in), drag LEFT to expand (fewer, wider bars).
+          const factor = Math.exp(delta / 180);
           this.view.count = clamp(Math.round(this._axisDrag.startCount * factor), this.minBars,
             Math.min(this.maxBars, Math.max(this.minBars, this.bars.length)));
           this._setOffset(this._resolvedOffset());
@@ -292,6 +358,11 @@
           const dy = this.cursor.y - this._paneDrag.startY;
           if (!this.paneHeights) this.paneHeights = {};
           this.paneHeights[this._paneDrag.index] = Math.max(40, Math.min(400, this._paneDrag.startH - dy));
+          this._schedule();
+        } else if (this._axisWidthDrag) {
+          // Drag the price column LEFT to widen it, RIGHT to narrow it.
+          const dx = this.cursor.x - this._axisWidthDrag.startX;
+          this.axisW = clamp(this._axisWidthDrag.startW - dx, 40, 200);
           this._schedule();
         } else if (this._dragging) {
           const dxBars = Math.round((this._dragging.startX - this.cursor.x) / this._barW);
@@ -362,18 +433,26 @@
           this._axisDrag = { kind: 'time', startX: p.x, startCount: this.view.count };
           this.host.classList.add('ce-grabbing'); return;
         }
+        // Grab the plot/price-axis boundary (±5px) to resize the price column.
+        if (this._geometry && p.y < this._geometry.priceBottom &&
+            Math.abs(p.x - this._geometry.plotW) <= 5) {
+          e.preventDefault();
+          this._axisWidthDrag = { startX: p.x, startW: this.axisW };
+          this.host.style.cursor = 'col-resize';
+          return;
+        }
         if (this._geometry && p.x >= this._geometry.plotW) {
           this._axisDrag = { kind: 'price', startY: p.y, startScale: this.priceScale };
           this.host.classList.add('ce-grabbing'); return;
         }
-        // Pane separator drag: 8px grab zone on each subpane top border.
+        // Pane separator drag: 12px grab zone on each subpane top border.
         if (this._geometry) {
-          for (const row of this._geometry.rows) {
+          for (const row of (this._geometry.rows || [])) {
             if (row.type === 'main') continue;
-            if (Math.abs(p.y - row.top) <= 8 && p.x <= this._geometry.plotW) {
+            if (Math.abs(p.y - row.top) <= 12 && p.x <= this._geometry.plotW) {
               e.preventDefault();
               this._paneDrag = { index: row.paneIndex, startY: p.y, startH: row.height };
-              this._setCanvasCursor('ns-resize');
+              this.host.style.cursor = 'ns-resize';
               return;
             }
           }
@@ -388,16 +467,11 @@
           if (changed) this._emit('drawingChange', changed);
         }
         if (this._paneDrag) {
-          const paneHeights = this.getPaneHeights();
-          this._emit('paneResize', {
-            index: this._paneDrag.index,
-            height: paneHeights[this._paneDrag.index] || 0,
-            paneHeights,
-          });
-          this._paneDrag = null;
-          this._setCanvasCursor('');
+          this._paneDrag = null; this.host.style.cursor = '';
+          this._emit('viewport', { paneHeights: Object.assign({}, this.paneHeights) });
           this._schedule();
         }
+        if (this._axisWidthDrag) { this._axisWidthDrag = null; this.host.style.cursor = ''; this._emit('viewport', { axisWidth: this.axisW }); this._schedule(); }
         this._dragging = null; this._drawingDrag = null; this._axisDrag = null;
         this.host.classList.remove('ce-grabbing');
       };
@@ -425,18 +499,6 @@
       const sx = r.width ? (this.canvas.clientWidth / r.width) : 1;
       const sy = r.height ? (this.canvas.clientHeight / r.height) : 1;
       return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
-    }
-    _setCanvasCursor(cursor) {
-      if (!this.canvas) return;
-      this.canvas.style.cursor = cursor || '';
-    }
-    _updateCanvasCursor(layout) {
-      if (this._paneDrag) { this._setCanvasCursor('ns-resize'); return; }
-      if (this._dragging || this._axisDrag || this._drawingDrag || this.tool) { this._setCanvasCursor(''); return; }
-      if (!this.cursor || !layout) { this._setCanvasCursor(''); return; }
-      const overPaneResize = (layout.rows || []).some((row, idx) =>
-        idx > 0 && Math.abs(this.cursor.y - row.top) <= 8 && this.cursor.x <= layout.plotW);
-      this._setCanvasCursor(overPaneResize ? 'ns-resize' : '');
     }
 
     _drawingPoint(p, g) {
@@ -529,8 +591,35 @@
 
     // ---- data ---------------------------------------------------------------
     setData(bars) {
-      this.bars = (Array.isArray(bars) ? bars : []).map(normalizeBar).filter(Boolean);
-      if (this.view.count > this.bars.length) this.view.count = Math.max(this.minBars, this.bars.length || this.minBars);
+      const next = normalizeBars(bars);
+      // Preserve the viewport across a live refresh so the chart never "jumps"
+      // or resets when the feed replaces the bar array every tick. If the user
+      // is pinned to the latest bar we keep following; if they panned into
+      // history we re-anchor by timestamp so the same time window stays put even
+      // when the source returns a different-length window.
+      const prev = this.bars;
+      const hadData = prev.length > 0;
+      let anchorMs = null;
+      if (this.view.offset !== -1 && hadData) {
+        const idx = clamp(this._resolvedOffset(), 0, prev.length - 1);
+        anchorMs = barMs(prev[idx]);
+      }
+      this.bars = next;
+      if (anchorMs != null && this.bars.length) {
+        let found = -1;
+        for (let i = this.bars.length - 1; i >= 0; i--) {
+          if (barMs(this.bars[i]) === anchorMs) { found = i; break; }
+        }
+        // Keep the same bar at the right edge; if it rolled off, follow latest.
+        this.view.offset = (found < 0 || found >= this.bars.length - 1) ? -1 : found;
+      }
+      // Only fit the zoom to the data on the FIRST load (e.g. a small instrument).
+      // A transient short live response must never shrink the user's zoom — the
+      // render clamps the visible count locally, so it restores when data returns.
+      if (!hadData && this.bars.length && this.view.count > this.bars.length) {
+        this.view.count = Math.max(this.minBars, this.bars.length);
+      }
+      if (this.view.count < this.minBars) this.view.count = this.minBars;
       if (!this.bars.length) this._empty('Ожидание данных NinjaTrader…');
       else this.emptyEl.classList.remove('show');
       this._schedule();
@@ -540,7 +629,9 @@
       const b = normalizeBar(bar);
       if (!b) return this;
       const last = this.bars[this.bars.length - 1];
-      if (last && barMs(last) === barMs(b)) this.bars[this.bars.length - 1] = b; // update forming bar
+      const lastMs = barMs(last), nextMs = barMs(b);
+      if (last && lastMs != null && nextMs != null && lastMs === nextMs) this.bars[this.bars.length - 1] = b; // update forming bar
+      else if (last && lastMs != null && nextMs != null && nextMs < lastMs) return this.setData(this.bars.concat([b]));
       else this.bars.push(b);
       this.emptyEl.classList.remove('show');
       this._schedule();
@@ -550,8 +641,10 @@
     setStyle(style) {
       this.style = Object.assign({}, this.style, style || {});
       this.host.style.background = this.style.background || '';
+      if (style && style.axisWidth != null) this.axisW = clamp(Number(style.axisWidth) || 62, 40, 200);
       this._schedule(); return this;
     }
+    getAxisWidth() { return this.axisW; }
     setDrawings(drawings) { this.drawings = Array.isArray(drawings) ? drawings.slice() : []; this._schedule(); return this; }
     updateDrawing(id, patch) {
       const row = this.drawings.find(d => d.id === id); if (!row) return null;
@@ -563,7 +656,6 @@
       if (this.selectedDrawingId === id) this.selectedDrawingId = null;
       this._schedule(); return this.drawings.length !== before;
     }
-    getSelectedDrawing() { return this.drawings.find(d => d.id === this.selectedDrawingId) || null; }
     selectDrawing(id) {
       this.selectedDrawingId = id || null;
       const row = this.drawings.find(d => d.id === id) || null;
@@ -657,14 +749,22 @@
     }
     resize() { this._schedule(); }
 
+    _canvasDpr(w, h, transformScale) {
+      let dpr = (window.devicePixelRatio || 1) * Math.max(1, transformScale || 1);
+      dpr = Math.min(MAX_DPR, dpr);
+      if (w > 0 && h > 0) {
+        dpr = Math.min(dpr, MAX_CANVAS_SIDE / Math.max(w, h));
+        dpr = Math.min(dpr, Math.sqrt(MAX_CANVAS_PIXELS / (w * h)));
+      }
+      return Math.max(0.35, dpr);
+    }
+
     _measure() {
       const w = this.host.clientWidth || 320;
       const h = this.host.clientHeight || 200;
       const rect = this.host.getBoundingClientRect();
       const transformScale = w ? rect.width / w : 1;
-      // A zoomed virtual desktop must increase the backing store as it grows;
-      // when it shrinks we retain native DPR so small 4K/8K charts stay crisp.
-      const dpr = Math.min(4, (window.devicePixelRatio || 1) * Math.max(1, transformScale || 1));
+      const dpr = this._canvasDpr(w, h, transformScale);
       if (this.canvas.width !== Math.round(w * dpr) || this.canvas.height !== Math.round(h * dpr)) {
         this.canvas.width = Math.round(w * dpr);
         this.canvas.height = Math.round(h * dpr);
@@ -676,7 +776,7 @@
     }
 
     _layout(w, h) {
-      const axisW = 62;               // right price axis
+      const axisW = clamp(this.axisW || 62, 40, 200);               // right price axis (draggable)
       const timeH = 22;               // bottom time axis
       const gap = 6;
       const panes = this.indicators.panes;
@@ -712,7 +812,7 @@
       const { w, h } = this._measure();
       const ctx = this.ctx;
       ctx.clearRect(0, 0, w, h);
-      if (!this.bars.length) { this.legend.classList.remove('show'); this._setCanvasCursor(''); return; }
+      if (!this.bars.length) { this.legend.classList.remove('show'); return; }
 
       const P = palette(this.style);
       const L = this._layout(w, h);
@@ -745,15 +845,21 @@
 
       // ---- main price pane ----
       const main = L.rows[0];
-      const closes = this.bars.map(b => b.c);
+      const warmup = indicatorWarmup(this.indicators);
+      const calcStart = Math.max(0, start - warmup);
+      const calcBars = this.bars.slice(calcStart, end);
+      const closes = calcBars.map(b => b.c);
       // overlays computed over full series, sliced to view
       const overlaySeries = this.indicators.overlays.map((o, idx) => {
-        const vals = o.type === 'ema' ? ema(closes, o.period) : sma(closes, o.period);
-        return { color: P.ma[idx % P.ma.length], label: (o.type === 'ema' ? 'EMA' : 'MA') + o.period, values: vals };
+        const vals = o.type === 'ema' ? ema(closes, o.period)
+          : o.type === 'hma' ? hma(closes, o.period)
+          : sma(closes, o.period);
+        const name = o.type === 'ema' ? 'EMA' : o.type === 'hma' ? 'HMA' : 'MA';
+        return { color: P.ma[idx % P.ma.length], label: name + o.period, values: vals, offset: calcStart };
       });
       let lo = Infinity, hi = -Infinity;
       vis.forEach(b => { if (b.l < lo) lo = b.l; if (b.h > hi) hi = b.h; });
-      overlaySeries.forEach(s => { for (let i = start; i < end; i++) { const v = s.values[i]; if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } } });
+      overlaySeries.forEach(s => { for (let i = start; i < end; i++) { const v = s.values[i - s.offset]; if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } } });
       if (!isNum(lo) || !isNum(hi) || lo === hi) { hi = (hi || 1) + 1; lo = (lo || 0) - 1; }
       const padP = (hi - lo) * 0.08; lo -= padP; hi += padP;
       if (this.priceScale !== 1) {
@@ -793,7 +899,7 @@
         ctx.strokeStyle = s.color; ctx.lineWidth = 1.4; ctx.beginPath();
         let started = false;
         for (let i = start; i < end; i++) {
-          const v = s.values[i]; if (v == null) { started = false; continue; }
+          const v = s.values[i - s.offset]; if (v == null) { started = false; continue; }
           const x = xOf(i - start), y = yOf(v);
           if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
         }
@@ -810,14 +916,35 @@
         this._axisTag(ctx, P, plotW, y, L.axisW, fmtPrice(lastBar.c), up ? P.up : P.down);
       }
 
-      this._geometry = { start, end, vis, barW, plotW, yOf, lo, hi, main, xOf, priceBottom: L.priceBottom, rows: L.rows };
-      this._updateCanvasCursor(L);
+      this._geometry = { start, end, vis, barW, plotW, yOf, lo, hi, main, rows: L.rows, xOf, priceBottom: L.priceBottom };
       this._drawDrawings(ctx, P, this._geometry);
 
       // ---- subpanes ----
       for (let r = 1; r < L.rows.length; r++) {
         const row = L.rows[r];
-        this._drawSubpane(ctx, P, row, { start, end, vis, xOf, plotW, axisW: L.axisW, w, closes, totalSlots });
+        this._drawSubpane(ctx, P, row, { start, end, calcStart, vis, xOf, plotW, axisW: L.axisW, w, closes, totalSlots });
+      }
+
+      // ---- cursor management (single pass, correct priority) ----
+      if (!this._paneDrag && !this._axisWidthDrag) {
+        const p = this.cursor;
+        let cur = '';
+        if (p) {
+          // Pane separator hover (12px zone)
+          if (L.rows.some(row => row.type !== 'main' && Math.abs(p.y - row.top) <= 12 && p.x <= L.plotW)) {
+            cur = 'ns-resize';
+          // Price-axis width drag handle (5px zone on plotW boundary)
+          } else if (p.y < L.priceBottom && Math.abs(p.x - L.plotW) <= 5) {
+            cur = 'col-resize';
+          // Price-axis drag zone
+          } else if (p.x >= L.plotW && p.y < L.priceBottom) {
+            cur = 'ns-resize';
+          // Time-axis drag zone
+          } else if (p.y >= L.priceBottom) {
+            cur = 'ew-resize';
+          }
+        }
+        this.host.style.cursor = cur;
       }
 
       // ---- bottom time axis ----
@@ -923,7 +1050,7 @@
 
     _drawGrid(ctx, P, x0, y0, plotW, paneH, lo, hi, axisW, w, yOf, withLabels) {
       ctx.save();
-      ctx.font = '10px Inter, system-ui, sans-serif';
+      ctx.font = '600 11px Inter, system-ui, sans-serif';
       ctx.textBaseline = 'middle';
       const steps = Math.max(2, Math.min(6, Math.round(paneH / 46)));
       for (let g = 0; g <= steps; g++) {
@@ -932,7 +1059,7 @@
         ctx.strokeStyle = P.grid; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + plotW, y); ctx.stroke();
         if (withLabels) {
-          ctx.fillStyle = P.textDim; ctx.textAlign = 'left';
+          ctx.fillStyle = P.axisText; ctx.textAlign = 'left';
           ctx.fillText(fmtPrice(val), x0 + plotW + 6, y);
         }
       }
@@ -955,18 +1082,23 @@
     }
 
     _drawSubpane(ctx, P, row, g) {
-      const { start, end, vis, xOf, plotW, axisW, closes, totalSlots } = g;
+      const { start, end, calcStart, vis, xOf, plotW, axisW, closes, totalSlots } = g;
+      const localStart = Math.max(0, start - (calcStart || 0));
+      const localEnd = Math.max(localStart, end - (calcStart || 0));
       const useTotalSlots = totalSlots || Math.max(this.view.count, vis.length);
       const top = row.top, hgt = row.height;
-      // Pane separator + resize handle (8px grab zone indicated by small dots).
+      // Pane separator + resize handle (12px grab zone indicated by small dots).
       ctx.strokeStyle = P.gridStrong; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(0, top + 0.5); ctx.lineTo(plotW, top + 0.5); ctx.stroke();
       // Draw subtle resize gripper dots in the middle of the separator.
       const mx = Math.round(plotW / 2);
-      ctx.fillStyle = P.axis;
-      for (let dx = -12; dx <= 12; dx += 6) {
-        ctx.beginPath(); ctx.arc(mx + dx, top + 0.5, 1.5, 0, Math.PI * 2); ctx.fill();
+      const nearSep = this.cursor && !this._paneDrag && Math.abs(this.cursor.y - top) <= 12 && this.cursor.x <= plotW;
+      ctx.fillStyle = nearSep ? P.text : P.axis;
+      for (let dx = -18; dx <= 18; dx += 6) {
+        ctx.beginPath(); ctx.arc(mx + dx, top + 0.5, nearSep ? 2 : 1.5, 0, Math.PI * 2); ctx.fill();
       }
+      // Cursor is set once at the end of _draw so it is not overridden mid-draw.
+
       const label = (t) => {
         ctx.save(); ctx.font = '10px Inter, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
         ctx.fillStyle = P.textDim; ctx.fillText(t, 6, top + 4); ctx.restore();
@@ -987,7 +1119,7 @@
       } else if (row.type === 'macd') {
         const m = macd(closes, row.cfg.fast, row.cfg.slow, row.cfg.signal);
         let lo = Infinity, hi = -Infinity;
-        for (let i = start; i < end; i++) {
+        for (let i = localStart; i < localEnd; i++) {
           [m.line[i], m.signal[i], m.hist[i]].forEach(v => { if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } });
         }
         if (!isNum(lo) || !isNum(hi) || lo === hi) { hi = 1; lo = -1; }
@@ -997,9 +1129,24 @@
         ctx.strokeStyle = P.grid; ctx.beginPath(); ctx.moveTo(0, yOf(0)); ctx.lineTo(plotW, yOf(0)); ctx.stroke();
         const barW = plotW / useTotalSlots;
         const cw = Math.max(1, Math.min(barW * 0.72, 16));
-        for (let i = start; i < end; i++) {
+        // Optional volume overlay INSIDE the MACD pane (semi-transparent, behind
+        // the histogram) — lets the owner read volume without a separate pane.
+        if (P.macdVolOverlay) {
+          let mxv = 0;
+          for (let i = start; i < end; i++) { const b = this.bars[i]; if (b && b.v > mxv) mxv = b.v; }
+          if (mxv > 0) {
+            const cwv = Math.max(1, Math.min(barW * 0.72, 16));
+            for (let i = start; i < end; i++) {
+              const b = this.bars[i]; if (!b || !(b.v > 0)) continue;
+              const vh = (b.v / mxv) * (hgt - 6);
+              ctx.fillStyle = withA(b.c >= b.o ? P.macdUpColor : P.macdDownColor, P.macdVolOpacity);
+              ctx.fillRect(xOf(i - start) - cwv / 2, top + hgt - vh, cwv, vh);
+            }
+          }
+        }
+        for (let i = localStart; i < localEnd; i++) {
           const hv = m.hist[i]; if (hv == null) continue;
-          const x = xOf(i - start); const y0 = yOf(0), y1 = yOf(hv);
+          const x = xOf(i - localStart); const y0 = yOf(0), y1 = yOf(hv);
           const top = Math.min(y0, y1), bh = Math.max(1, Math.abs(y1 - y0));
           if (P.macdFillOn) {
             ctx.fillStyle = hv >= 0 ? P.macdUp : P.macdDown;
@@ -1011,10 +1158,11 @@
         }
         // optional shaded fills — down to the zero baseline, and between lines,
         // both coloured by MACD-vs-signal direction (NinjaTrader-style).
-        if (P.macdFillToZero) this._macdFillToZero(ctx, m.line, m.signal, start, end, xOf, yOf, P);
-        if (P.macdFillBetween) this._macdFillBetween(ctx, m.line, m.signal, start, end, xOf, yOf, P);
-        this._paneLine(ctx, m.line, start, end, xOf, yOf, P.macdLine, 1.5);
-        this._paneLine(ctx, m.signal, start, end, xOf, yOf, P.macdSignal, 1.5);
+        const localX = (slot) => xOf(slot);
+        if (P.macdFillToZero) this._macdFillToZero(ctx, m.line, m.signal, localStart, localEnd, localX, yOf, P);
+        if (P.macdFillBetween) this._macdFillBetween(ctx, m.line, m.signal, localStart, localEnd, localX, yOf, P);
+        this._paneLine(ctx, m.line, localStart, localEnd, localX, yOf, P.macdLine, 1.5);
+        this._paneLine(ctx, m.signal, localStart, localEnd, localX, yOf, P.macdSignal, 1.5);
         label('MACD ' + row.cfg.fast + '·' + row.cfg.slow + '·' + row.cfg.signal);
       } else if (row.type === 'rsi') {
         const r = rsi(closes, row.cfg.period);
@@ -1026,7 +1174,8 @@
           ctx.fillStyle = P.textDim; ctx.font = '9px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
           ctx.fillText(String(lvl), plotW + 6, yOf(lvl));
         });
-        this._paneLine(ctx, r, start, end, xOf, yOf, P.rsi, 1.4);
+        const localX = (slot) => xOf(slot);
+        this._paneLine(ctx, r, localStart, localEnd, localX, yOf, P.rsi, 1.4);
         label('RSI ' + row.cfg.period);
       }
       // axis separator for subpane
@@ -1084,8 +1233,8 @@
 
     _drawTimeAxis(ctx, P, vis, start, xOf, top, timeH, plotW, futureSlots) {
       ctx.save();
-      ctx.font = '10px Inter, system-ui, sans-serif';
-      ctx.fillStyle = P.textDim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '600 11px Inter, system-ui, sans-serif';
+      ctx.fillStyle = P.axisText; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.strokeStyle = P.gridStrong; ctx.beginPath(); ctx.moveTo(0, top + 0.5); ctx.lineTo(plotW, top + 0.5); ctx.stroke();
       const n = vis.length;
       const total = n + (futureSlots || 0);
@@ -1100,7 +1249,7 @@
         const lbl = showDay ? dayKey : fTime.format(d);
         const x = xOf(i);
         ctx.strokeStyle = P.grid; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + 4); ctx.stroke();
-        ctx.fillStyle = showDay ? P.text : P.textDim;
+        ctx.fillStyle = showDay ? P.axisStrong : P.axisText;
         ctx.fillText(lbl, x, top + timeH / 2 + 2);
       }
       // Future projected labels (when panned right)
@@ -1194,11 +1343,55 @@
       window.removeEventListener('mouseup', this._onUp);
       this.canvas.removeEventListener('wheel', this._onWheel);
       this.canvas.removeEventListener('dblclick', this._onDbl);
-      this.listeners = { crosshair: [], drawing: [], drawingSelect: [], drawingChange: [], paneResize: [], viewport: [] };
+      this.listeners = { crosshair: [], drawing: [], drawingSelect: [], drawingChange: [], viewport: [] };
     }
   }
 
   // ---- helpers --------------------------------------------------------------
+  function normalizeBars(bars) {
+    const rows = [];
+    (Array.isArray(bars) ? bars : []).forEach((bar, seq) => {
+      const row = normalizeBar(bar);
+      if (!row) return;
+      rows.push({ row, seq, ms: barMs(row) });
+    });
+    rows.sort((a, b) => {
+      if (a.ms == null && b.ms == null) return a.seq - b.seq;
+      if (a.ms == null) return 1;
+      if (b.ms == null) return -1;
+      return a.ms - b.ms || a.seq - b.seq;
+    });
+    const out = [];
+    const byTime = new Map();
+    rows.forEach((item) => {
+      if (item.ms == null) { out.push(item.row); return; }
+      const key = String(item.ms);
+      const existing = byTime.get(key);
+      if (existing == null) {
+        byTime.set(key, out.length);
+        out.push(item.row);
+      } else {
+        out[existing] = item.row;
+      }
+    });
+    return filterBadBars(out);
+  }
+  function filterBadBars(rows) {
+    const out = [];
+    let prevClose = null;
+    rows.forEach((row) => {
+      if (!row || row.o <= 0 || row.h <= 0 || row.l <= 0 || row.c <= 0) return;
+      if (row.h < row.l) return;
+      if (prevClose != null && prevClose > 0) {
+        const hi = Math.max(row.h, row.o, row.c);
+        const lo = Math.min(row.l, row.o, row.c);
+        if (hi / prevClose > MAX_BAR_PRICE_JUMP || prevClose / lo > MAX_BAR_PRICE_JUMP) return;
+      }
+      out.push(row);
+      prevClose = row.c;
+    });
+    return out;
+  }
   function normalizeBar(b) {
     if (!b || typeof b !== 'object') return null;
     const o = Number(b.o != null ? b.o : b.open);
@@ -1208,7 +1401,14 @@
     if (![o, h, l, c].every(Number.isFinite)) return null;
     const v = Number(b.v != null ? b.v : (b.volume != null ? b.volume : 0));
     const t = b.t || b.time_utc || b.time || b.timestamp || null;
-    return { o, h, l, c, v: Number.isFinite(v) ? v : 0, t };
+    return {
+      o,
+      h: Math.max(h, o, c),
+      l: Math.min(l, o, c),
+      c,
+      v: Number.isFinite(v) ? Math.max(0, v) : 0,
+      t,
+    };
   }
   function withA(color, a) {
     const c = String(color || '').trim();
@@ -1223,6 +1423,23 @@
       return `rgba(${parts.join(',')},${a})`;
     });
     return c;
+  }
+  // Brighten a colour toward white by `factor` (1 = unchanged, >1 lighter,
+  // <1 darker). Lets axis labels be tuned for readability without a theme change.
+  function mixWhite(color, factor) {
+    let f = Number(factor);
+    if (!Number.isFinite(f)) f = 1;
+    f = clamp(f, 0.4, 1.8);
+    const hex = String(color || '').trim();
+    if (f === 1 || !hex.startsWith('#')) return hex;
+    let h = hex.slice(1);
+    if (h.length === 3) h = h.split('').map(x => x + x).join('');
+    const n = parseInt(h, 16);
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    if (f >= 1) { const t = f - 1; r += (255 - r) * t; g += (255 - g) * t; b += (255 - b) * t; }
+    else { r *= f; g *= f; b *= f; }
+    const cl = (x) => clamp(Math.round(x), 0, 255);
+    return `rgb(${cl(r)},${cl(g)},${cl(b)})`;
   }
   function fmtPrice(v) {
     if (!Number.isFinite(v)) return '—';

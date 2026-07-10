@@ -70,6 +70,10 @@ dotnet build bridge\NTAnalyzerBridge.csproj -c Debug `
 - `project_root` — путь к `NT-Analyzer`;
 - `ninjatrader_user_dir` — путь к `%USERPROFILE%\Documents\NinjaTrader 8`;
 - `jobs_dir` — необязательный внешний каталог очереди jobs; если не задан, используется `<project_root>/jobs`;
+- `runtime_data_dir` — необязательный каталог runtime telemetry; если не задан,
+  используется `<project_root>/data/runtime`. Для personal workspace можно
+  указать `<project_root>/data/tenants/<workspace_id>/runtime`, чтобы локальный
+  NinjaTrader пользователя писал в изолированный контур.
 - `poll_interval_ms` — частота проверки очереди;
 - `heartbeat_interval_ms` — частота heartbeat running job.
 

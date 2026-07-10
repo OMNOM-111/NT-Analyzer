@@ -25,6 +25,8 @@
   var MOTION_KEY = 'app.reduceMotion'; // 'auto' | 'on' | 'off'
   var DEFAULT_MODE = 'subtle';
   var DEFAULT_MOTION = 'auto';
+  var MAX_BG_CANVAS_SIDE = 2560;
+  var MAX_BG_CANVAS_PIXELS = 2500000;
 
   // Intensity presets (desktop baseline). Mobile / low-end scales these down.
   var PRESETS = {
@@ -77,6 +79,10 @@
 
   function normalizeMode(m) { return (m === 'off' || m === 'medium' || m === 'subtle') ? m : DEFAULT_MODE; }
   function normalizeMotion(m) { return (m === 'on' || m === 'off' || m === 'auto') ? m : DEFAULT_MOTION; }
+
+  function isTradingDesktop() {
+    return /\/desktop\.html$/i.test(location.pathname || '');
+  }
 
   // Resolve whether the scene should animate given the motion setting.
   function shouldAnimate() {
@@ -191,6 +197,11 @@
     A.dpr = Math.min(window.devicePixelRatio || 1, isMobile() || isLowEnd() ? 1.25 : 1.5);
     A.w = window.innerWidth;
     A.h = window.innerHeight;
+    if (A.w > 0 && A.h > 0) {
+      A.dpr = Math.min(A.dpr, MAX_BG_CANVAS_SIDE / Math.max(A.w, A.h));
+      A.dpr = Math.min(A.dpr, Math.sqrt(MAX_BG_CANVAS_PIXELS / (A.w * A.h)));
+      A.dpr = Math.max(0.4, A.dpr);
+    }
     A.canvas.width = Math.round(A.w * A.dpr);
     A.canvas.height = Math.round(A.h * A.dpr);
     A.canvas.style.width = A.w + 'px';
@@ -290,7 +301,7 @@
   // a single static frame (reduced motion) or clear (off).
   function apply() {
     ensureNodes();
-    if (A.mode === 'off') {
+    if (A.mode === 'off' || isTradingDesktop()) {
       stop();
       if (A.canvas) A.canvas.style.display = 'none';
       if (A.vignette) A.vignette.classList.add('is-off');

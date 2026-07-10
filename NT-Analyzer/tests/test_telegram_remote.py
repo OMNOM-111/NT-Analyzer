@@ -78,6 +78,26 @@ def test_whitelist_roles_revocation_and_live_lock(isolated) -> None:
         telegram_remote.authorize(raw, TOKEN, method="GET", path="/api/health", tunnel_ip="127.0.0.1")
 
 
+def test_read_only_viewer_can_poll_chart_bars(isolated) -> None:
+    # Charts are read-only observation; a viewer must be able to POST the batch
+    # bars request (it carries its request list in the body) so the desktop grid
+    # works in the Telegram Mini App exactly like the local UI.
+    telegram_remote._write({
+        "remote_enabled": True,
+        "users": [{"user_id": 42, "role": "read_only", "status": "active"}],
+        "pairings": [],
+    })
+    raw = _init_data(42)
+    context = telegram_remote.authorize(
+        raw, TOKEN, method="POST", path="/api/ops/runtime/bars/batch", tunnel_ip="127.0.0.1")
+    assert context["role"] == "read_only"
+    # A genuine mutation still requires full control.
+    with pytest.raises(telegram_remote.RemoteAccessError) as exc:
+        telegram_remote.authorize(
+            raw, TOKEN, method="POST", path="/api/ops/runtime/price-alerts", tunnel_ip="127.0.0.1")
+    assert exc.value.status == 403
+
+
 def test_two_step_pairing_contact_and_owner_approval(isolated) -> None:
     telegram_remote.update_settings({"owner_phone": "+1 555 123 4567"})
     pair = telegram_remote.start_pairing(

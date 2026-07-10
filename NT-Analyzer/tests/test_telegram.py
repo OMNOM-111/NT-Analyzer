@@ -262,6 +262,25 @@ def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None
     assert len(sent) == 1
 
 
+def test_interactive_reply_with_dedupe_key_is_always_sent(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda text, **kwargs: sent.append(text) or {})
+
+    # Two identical chat replies (e.g. two answers to "Как дела?") must both be
+    # delivered — the 24h text-dedup must not swallow the second.
+    first = telegram_service.send_chief_report("StratForge Orchestrator", ["Всё под контролем."], dedupe_key="MSG-1")
+    second = telegram_service.send_chief_report("StratForge Orchestrator", ["Всё под контролем."], dedupe_key="MSG-2")
+    # The very same message id is still a true duplicate and is suppressed.
+    third = telegram_service.send_chief_report("StratForge Orchestrator", ["Всё под контролем."], dedupe_key="MSG-2")
+
+    assert first is True and second is True
+    assert third is False
+    assert len(sent) == 2
+
+
 def test_group_topic_message_routes_to_bound_conversation(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")

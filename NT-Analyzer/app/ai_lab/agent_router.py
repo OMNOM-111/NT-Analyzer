@@ -14,29 +14,29 @@ from . import agent_registry, llm_timeouts, universal_llm
 ROLE_PROVIDER_ORDER: Dict[str, List[str]] = {
     # Benchmark 2026-06-30: GPT-5 mini was the only external model that was
     # both strong across the full suite and deterministic enough for gates.
-    "orchestrator": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
-    "chief_agent": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter"],
-    "hypothesis": ["azure_foundry", "gemini", "zai", "openrouter", "deepseek"],
-    "strategy_analyst": ["gemini", "zai", "openrouter", "azure_foundry"],
-    "accountant": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
-    "news_analyst": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
-    "coder": ["azure_foundry", "openrouter", "gemini", "zai"],
-    "code_reviewer": ["azure_foundry", "openrouter", "gemini", "zai"],
-    "compile_error_fixer": ["azure_foundry", "openrouter", "gemini", "zai"],
-    "backtest_analyst": ["gemini", "zai", "openrouter", "azure_foundry"],
-    "risk_manager": ["azure_foundry", "openrouter", "gemini", "zai"],
-    "optimizer": ["gemini", "zai", "openrouter", "azure_foundry"],
-    "overfit_detector": ["azure_foundry", "openrouter", "gemini", "zai"],
-    "final_judge": ["deepseek", "azure_foundry", "openrouter", "gemini", "zai"],
-    "telegram_assistant": ["gemini", "zai", "openrouter", "azure_foundry"],
-    "embedding": ["azure_foundry", "openai", "gemini"],
-    "general": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
+    "orchestrator": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
+    "chief_agent": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter", "github_models"],
+    "hypothesis": ["azure_foundry", "gemini", "zai", "openrouter", "deepseek", "github_models"],
+    "strategy_analyst": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
+    "accountant": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
+    "news_analyst": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
+    "coder": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "code_reviewer": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "compile_error_fixer": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "backtest_analyst": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
+    "risk_manager": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "optimizer": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
+    "overfit_detector": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "final_judge": ["deepseek", "azure_foundry", "openrouter", "gemini", "zai", "github_models"],
+    "telegram_assistant": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
+    "embedding": ["azure_foundry", "openai", "gemini", "github_models"],
+    "general": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
 }
 
 COMPLEXITY_PROVIDER_ORDER: Dict[str, List[str]] = {
-    "light": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek"],
-    "standard": ["gemini", "zai", "deepseek", "azure_foundry", "openrouter"],
-    "critical": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter"],
+    "light": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
+    "standard": ["gemini", "zai", "deepseek", "azure_foundry", "openrouter", "github_models"],
+    "critical": ["deepseek", "azure_foundry", "gemini", "zai", "openrouter", "github_models"],
 }
 
 

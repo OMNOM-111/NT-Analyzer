@@ -52,6 +52,20 @@ def azure_payload(**overrides):
     return payload
 
 
+def github_models_payload(**overrides):
+    payload = {
+        "name": "GitHub Models GPT-4.1",
+        "provider": "github_models",
+        "model": "openai/gpt-4.1",
+        "api_key": "github-models-test-token-not-real",
+        "role": "general",
+        "purpose": "GitHub-hosted GPT-4.1 within Copilot quota",
+        "enabled": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_dpapi_store_masks_and_never_writes_plaintext(isolated_agents) -> None:
     secret = "sk-student-example-1234abcd"
     secure_store.set_secret("agent:test", secret)
@@ -321,6 +335,61 @@ def test_openrouter_free_model_normalization_helpers() -> None:
     assert agent_registry.infer_billing_mode("openrouter", "openrouter/free", 0) == "free_tier"
 
 
+def test_github_models_defaults_to_free_tier_for_copilot_quota(isolated_agents) -> None:
+    created = agent_registry.create_agent(github_models_payload())
+
+    assert created["base_url"] == "https://models.github.ai/inference"
+    assert created["billing_mode"] == "free_tier"
+    assert created["pricing_status"] == "free"
+    assert created["input_price_usd_per_m"] == 0.0
+    assert created["cached_input_price_usd_per_m"] == 0.0
+    assert created["output_price_usd_per_m"] == 0.0
+    assert created["pricing_source_url"] == agent_registry.PROVIDERS["github_models"]["pricing_url"]
+
+
+def test_github_models_payg_uses_github_token_unit_pricing(isolated_agents) -> None:
+    created = agent_registry.create_agent(github_models_payload(
+        name="GitHub Models paid",
+        billing_mode="payg",
+        monthly_budget_usd=1.0,
+        enabled=True,
+    ))
+
+    assert created["billing_mode"] == "payg"
+    assert created["pricing_status"] == "configured"
+    assert created["input_price_usd_per_m"] == 2.0
+    assert created["cached_input_price_usd_per_m"] == 0.5
+    assert created["output_price_usd_per_m"] == 8.0
+    assert created["pricing_source_url"] == "https://docs.github.com/en/billing/reference/models-multipliers-and-costs"
+
+
+@pytest.mark.parametrize(
+    ("model", "input_price", "cached_price", "output_price"),
+    [
+        ("openai/gpt-4.1-mini", 0.4, 0.1, 1.6),
+        ("openai/gpt-4o-mini", 0.15, 0.08, 0.6),
+        ("deepseek/DeepSeek-R1", 1.35, None, 5.4),
+        ("microsoft/phi-4", 0.13, None, 0.5),
+        ("meta/Llama-3.3-70B-Instruct", 0.71, None, 0.71),
+    ],
+)
+def test_github_models_additional_payg_catalog_rows(isolated_agents, model: str, input_price: float,
+                                                     cached_price: float | None, output_price: float) -> None:
+    created = agent_registry.create_agent(github_models_payload(
+        name=f"GitHub Models {model}",
+        model=model,
+        billing_mode="payg",
+        monthly_budget_usd=1.0,
+        enabled=True,
+    ))
+
+    assert created["billing_mode"] == "payg"
+    assert created["pricing_status"] == "configured"
+    assert created["input_price_usd_per_m"] == input_price
+    assert created["cached_input_price_usd_per_m"] == cached_price
+    assert created["output_price_usd_per_m"] == output_price
+
+
 def test_zai_catalog_distinguishes_flagship_trial_from_permanent_free(isolated_agents) -> None:
     flagship = agent_registry.create_agent({
         "name": "ZAI GLM 5.2 trial",
@@ -562,6 +631,59 @@ def test_exact_response_cache_avoids_second_provider_call(isolated_agents, monke
     assert second["application_cache_saved_input_tokens"] == 1200
     logged = agent_registry.usage_rows(agent_id=agent["id"])[-1]
     assert logged["application_cache_hit"] is True
+
+
+def test_legacy_custom_github_models_agent_is_repaired_on_read(isolated_agents) -> None:
+    path = agent_registry.registry_path()
+    path.write_text(json.dumps({
+        "schema_version": agent_registry.SCHEMA_VERSION,
+        "updated_at_utc": "2026-07-05T00:00:00Z",
+        "agents": [{
+            "id": "AGT-GITHUBLEGACY",
+            "name": "GitHub Models API · openai/gpt-4.1",
+            "provider": "custom",
+            "account_name": "GitHub Models API",
+            "billing_mode": "unknown",
+            "rotation_group": "custom-pool",
+            "priority": 100,
+            "base_url": "https://models.github.ai/inference/chat/completions",
+            "model": "openai/gpt-4.1",
+            "role": "general",
+            "purpose": "General assistant",
+            "endpoint_type": "chat",
+            "auth_type": "bearer",
+            "api_version": "",
+            "enabled": False,
+            "input_price_usd_per_m": 0.0,
+            "cached_input_price_usd_per_m": None,
+            "output_price_usd_per_m": 0.0,
+            "pricing_status": "unpriced",
+            "pricing_basis": "Manual/custom configuration",
+            "pricing_source_url": "",
+            "daily_budget_usd": 0.0,
+            "monthly_budget_usd": 0.0,
+            "credit_total_usd": 0.0,
+            "credit_started_at_utc": "",
+            "credit_expires_at_utc": "",
+            "credit_remaining_reported_usd": None,
+            "credit_reported_at_utc": "",
+            "notes": "",
+            "created_at_utc": "2026-07-05T00:00:00Z",
+            "updated_at_utc": "2026-07-05T00:00:00Z",
+            "last_test": None,
+            "last_used_at_utc": "",
+            "disabled_reason": "disabled_by_operator",
+        }],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    listed = agent_registry.list_agents()
+
+    assert listed[0]["provider"] == "github_models"
+    assert listed[0]["billing_mode"] == "free_tier"
+    assert listed[0]["pricing_status"] == "free"
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert repaired["agents"][0]["provider"] == "github_models"
+    assert repaired["agents"][0]["rotation_group"] == "github-models"
 
 
 def test_openrouter_repair_doc_fixes_legacy_registry(isolated_agents) -> None:

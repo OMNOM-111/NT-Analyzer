@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Рабочий стол — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260704-ivan7">
+<link rel="stylesheet" href="assets/theme.css?v=20260708-access5">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
   /* ===================== Рабочий стол (desktop) ===================== */
@@ -154,18 +154,23 @@
   .tf-seg-btn.on{background:rgba(79,209,224,.16);border-color:rgba(79,209,224,.5);color:var(--info)}
   @keyframes dwin-alert-in{from{transform:translateY(-5px);opacity:0}to{transform:none;opacity:1}}
 
-  /* resize handles */
+  /* resize handles — wider touch zone, visible on hover */
   .dwin-grip{position:absolute;z-index:3}
-  .dwin-grip[data-dir="e"]{top:8px;right:-3px;bottom:8px;width:8px;cursor:ew-resize}
-  .dwin-grip[data-dir="w"]{top:8px;left:-3px;bottom:8px;width:8px;cursor:ew-resize}
-  .dwin-grip[data-dir="s"]{left:8px;right:8px;bottom:-3px;height:8px;cursor:ns-resize}
-  .dwin-grip[data-dir="n"]{left:8px;right:8px;top:-3px;height:8px;cursor:ns-resize}
-  .dwin-grip[data-dir="se"]{right:-3px;bottom:-3px;width:16px;height:16px;cursor:nwse-resize}
-  .dwin-grip[data-dir="sw"]{left:-3px;bottom:-3px;width:16px;height:16px;cursor:nesw-resize}
-  .dwin-grip[data-dir="ne"]{right:-3px;top:-3px;width:16px;height:16px;cursor:nesw-resize}
-  .dwin-grip[data-dir="nw"]{left:-3px;top:-3px;width:16px;height:16px;cursor:nwse-resize}
-  .dwin-grip[data-dir="se"]::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;
-     border-right:2px solid var(--tx-3);border-bottom:2px solid var(--tx-3);border-bottom-right-radius:3px;opacity:.6}
+  .dwin-grip[data-dir="e"]{top:8px;right:-4px;bottom:8px;width:10px;cursor:ew-resize}
+  .dwin-grip[data-dir="w"]{top:8px;left:-4px;bottom:8px;width:10px;cursor:ew-resize}
+  .dwin-grip[data-dir="s"]{left:8px;right:8px;bottom:-4px;height:10px;cursor:ns-resize}
+  .dwin-grip[data-dir="n"]{left:8px;right:8px;top:-4px;height:10px;cursor:ns-resize}
+  .dwin-grip[data-dir="se"]{right:-4px;bottom:-4px;width:20px;height:20px;cursor:nwse-resize}
+  .dwin-grip[data-dir="sw"]{left:-4px;bottom:-4px;width:20px;height:20px;cursor:nesw-resize}
+  .dwin-grip[data-dir="ne"]{right:-4px;top:-4px;width:20px;height:20px;cursor:nesw-resize}
+  .dwin-grip[data-dir="nw"]{left:-4px;top:-4px;width:20px;height:20px;cursor:nwse-resize}
+  /* SE corner chevron indicator */
+  .dwin-grip[data-dir="se"]::after{content:"";position:absolute;right:4px;bottom:4px;width:9px;height:9px;
+     border-right:2px solid rgba(255,255,255,.35);border-bottom:2px solid rgba(255,255,255,.35);border-bottom-right-radius:3px;opacity:.7}
+  .dwin-grip[data-dir="se"]:hover::after{border-color:rgba(79,209,224,.9);opacity:1}
+  /* Side/top/bottom grips: subtle highlight strip on hover */
+  .dwin-grip[data-dir="e"]:hover,.dwin-grip[data-dir="w"]:hover{background:linear-gradient(90deg,transparent,rgba(79,209,224,.2),transparent);border-radius:2px}
+  .dwin-grip[data-dir="s"]:hover,.dwin-grip[data-dir="n"]:hover{background:linear-gradient(180deg,transparent,rgba(79,209,224,.2),transparent);border-radius:2px}
   .dwin.pinned .dwin-grip,.dwin.maximized .dwin-grip{display:none}
 
   /* ChartEngine skin */
@@ -198,28 +203,28 @@
   .dsk-dock .dock-item:hover{border-color:rgba(79,209,224,.5)}
   .dsk-dock .dock-item .dot{width:6px;height:6px;border-radius:50%;background:var(--pos)}
 
-  /* add-chart dialog form */
-  .dchart-form{display:flex;flex-direction:column;gap:16px}
-  .dchart-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr);gap:18px;align-items:start}
-  .dchart-settings{display:flex;flex-direction:column;gap:14px;min-width:0}
-  .dchart-preview-wrap{position:sticky;top:0;display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg-2)}
-  .dchart-preview-title{display:flex;align-items:center;justify-content:space-between;gap:10px}.dchart-preview-title span{font-size:11px;color:var(--tx-3)}
-  .dchart-preview{position:relative;height:330px;overflow:hidden;border:1px solid var(--line);border-radius:9px}
-  .dchart-form .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .dchart-form label{display:flex;flex-direction:column;gap:5px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx-2)}
-  .dchart-form select,.dchart-form input{font:inherit;font-size:13px;padding:8px 10px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;color:var(--tx);text-transform:none;letter-spacing:0}
-  .dchart-form input[type="color"]{padding:2px;height:36px;width:100%}
-  .style-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .style-options{margin-top:10px}.dc-custom-range{display:none!important}.dc-custom-range.show{display:grid!important}
+  /* add-chart dialog form (compact density) */
+  .dchart-form{display:flex;flex-direction:column;gap:11px}
+  .dchart-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr);gap:14px;align-items:start}
+  .dchart-settings{display:flex;flex-direction:column;gap:9px;min-width:0}
+  .dchart-preview-wrap{position:sticky;top:0;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg-2)}
+  .dchart-preview-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.dchart-preview-title span{font-size:10.5px;color:var(--tx-3)}
+  .dchart-preview{position:relative;height:280px;overflow:hidden;border:1px solid var(--line);border-radius:9px}
+  .dchart-form .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .dchart-form label{display:flex;flex-direction:column;gap:3px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx-2)}
+  .dchart-form select,.dchart-form input{font:inherit;font-size:12px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx);text-transform:none;letter-spacing:0}
+  .dchart-form input[type="color"]{padding:2px;height:28px;width:100%}
+  .style-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .style-options{margin-top:6px}.dc-custom-range{display:none!important}.dc-custom-range.show{display:grid!important}
   .tf-seg,.type-seg{display:flex;gap:4px;flex-wrap:wrap}
-  .tf-seg button,.type-seg button{font:inherit;font-size:12px;padding:6px 11px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx-2);cursor:pointer}
+  .tf-seg button,.type-seg button{font:inherit;font-size:11.5px;padding:5px 9px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx-2);cursor:pointer}
   .tf-seg button.on,.type-seg button.on{background:rgba(79,209,224,.16);border-color:rgba(79,209,224,.55);color:var(--info)}
-  .ind-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
-  .ind-chip{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--tx)}
-  .ind-chip input{accent-color:var(--info);width:15px;height:15px}
+  .ind-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px}
+  .ind-chip{display:flex;align-items:center;gap:7px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;cursor:pointer;font-size:11.5px;color:var(--tx)}
+  .ind-chip input{accent-color:var(--info);width:14px;height:14px}
   .ind-chip.on{border-color:rgba(79,209,224,.5);background:rgba(79,209,224,.08)}
-  .dchart-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
-  .dchart-hint{font-size:11.5px;color:var(--tx-3);line-height:1.6;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .dchart-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}
+  .dchart-hint{font-size:11px;color:var(--tx-3);line-height:1.55;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 
   /* snapshot gallery */
   .snap-gallery-bar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
@@ -238,6 +243,22 @@
   .snap-actions button{width:28px;height:26px;border:0;border-radius:7px;background:rgba(11,16,24,.82);color:var(--tx);cursor:pointer;font-size:13px;backdrop-filter:blur(5px)}
   .snap-actions button:hover{background:rgba(79,209,224,.3)}
   .snap-actions [data-snap-del]:hover{background:rgba(255,107,129,.4)}
+
+  /* instrument picker (manual chart selection) */
+  .dsk-pick{display:flex;flex-direction:column;gap:12px}
+  .dsk-pick-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:sticky;top:0;z-index:2;padding-bottom:8px;background:var(--panel,var(--bg-1))}
+  .dsk-pick-bar .spacer{flex:1}
+  .dsk-pick-tf{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--tx-2)}
+  .dsk-pick-tf select{font:inherit;font-size:12.5px;padding:5px 8px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx)}
+  .dsk-pick-groups{display:flex;flex-direction:column;gap:14px}
+  .dsk-pick-group{display:flex;flex-direction:column;gap:8px}
+  .dsk-pick-ghead{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx);cursor:pointer;padding-bottom:2px;border-bottom:1px solid var(--line)}
+  .dsk-pick-ghead input{accent-color:var(--info);width:15px;height:15px}
+  .dsk-pick-ghead b{font-weight:700}
+  .dsk-pick-gc{color:var(--tx-3);font-size:11px}
+  .dsk-pick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
+  .dsk-pick-grid .ind-chip.dsk-pick-off{opacity:.45}
+  .dsk-pick-grid .ind-chip.dsk-pick-off input{cursor:not-allowed}
   @media(max-width:1000px){.dchart-layout{grid-template-columns:1fr}.dchart-preview-wrap{position:relative}.dchart-preview{height:260px}}
 </style>
 </head>
@@ -248,7 +269,8 @@
       <button class="btn sm primary" id="dsk-add">+ График</button>
       <div class="sep"></div>
       <button class="btn sm ghost" id="dsk-layouts">Макеты</button>
-      <button class="btn sm ghost" id="dsk-grid">Сетка графиков</button>
+      <button class="btn sm ghost" id="dsk-grid">Наборы графиков</button>
+      <button class="btn sm ghost" id="dsk-template" title="Стандартный макет для всех графиков">Макет графика</button>
       <button class="btn sm ghost" id="dsk-gallery" title="Снимки графиков от Ивана">Снимки</button>
       <span class="dsk-layout-name" id="dsk-layout-name">Рабочий стол 1</span>
       <span class="dsk-dirty" id="dsk-dirty" hidden>● не сохранено</span>
@@ -277,11 +299,11 @@
     <button class="dsk-focus-exit" id="dsk-focus-exit" title="Вернуться в обычный режим" aria-label="Выйти из полноэкранного режима">×</button>
   </div>
 
-<script src="assets/api.js?v=20260704-ivan4"></script>
+<script src="assets/api.js?v=20260708-access5"></script>
 <script src="assets/domain.js?v=20260630-news6"></script>
-<script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260704-ivan4"></script>
-<script src="assets/chart-engine.js?v=20260705-bulk1"></script>
-<script src="assets/pages/desktop.js?v=20260705-bulk1"></script>
+<script src="assets/ambient.js?v=20260707-gpu1"></script>
+<script src="assets/ui.js?v=20260708-access5"></script>
+<script src="assets/chart-engine.js?v=20260707-gpu1"></script>
+<script src="assets/pages/desktop.js?v=20260708-charts2"></script>
 </body>
 </html>

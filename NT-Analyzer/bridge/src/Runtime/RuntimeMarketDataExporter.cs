@@ -21,6 +21,7 @@ namespace NTAnalyzerBridge.Runtime
     internal sealed class RuntimeMarketDataExporter
     {
         private const int TickMs = 1000;
+        private const int SnapshotMinIntervalMs = 125;
         private const int RequestTtlSec = 180;
         private readonly string _runtimeDir;
         private readonly string _requestPath;
@@ -30,6 +31,9 @@ namespace NTAnalyzerBridge.Runtime
         private readonly Dictionary<string, Subscription> _subscriptions =
             new Dictionary<string, Subscription>(StringComparer.OrdinalIgnoreCase);
         private int _running;
+        private int _snapshotQueued;
+        private volatile bool _started;
+        private DateTime _lastSnapshotWriteUtc = DateTime.MinValue;
 
         private sealed class Subscription
         {
@@ -43,6 +47,7 @@ namespace NTAnalyzerBridge.Runtime
             public DateTime RequestedAtUtc;
             public DateTime UpdatedAtUtc;
             public DateTime LastCaptureUtc;
+            public DateTime LastMarketDataUtc;
             public string Status = "starting";
             public string Error = "";
             public JArray Bars = new JArray();
@@ -50,13 +55,15 @@ namespace NTAnalyzerBridge.Runtime
             public int SourceCount;
             public BarsRequest Request;
             public EventHandler<BarsUpdateEventArgs> UpdateHandler;
+            public MarketData MarketData;
+            public EventHandler<MarketDataEventArgs> MarketDataHandler;
         }
 
-        public RuntimeMarketDataExporter(string projectRoot)
+        public RuntimeMarketDataExporter(string projectRoot, string runtimeDir = null)
         {
             if (string.IsNullOrWhiteSpace(projectRoot))
                 throw new ArgumentNullException(nameof(projectRoot));
-            _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
+            _runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? Path.Combine(projectRoot, "data", "runtime") : runtimeDir;
             Directory.CreateDirectory(_runtimeDir);
             _requestPath = Path.Combine(_runtimeDir, "market_data_requests.json");
             _snapshotPath = Path.Combine(_runtimeDir, "market_bars.json");
@@ -66,11 +73,13 @@ namespace NTAnalyzerBridge.Runtime
         public void Start()
         {
             BridgeLog.Info("RuntimeMarketDataExporter: started");
+            _started = true;
             _timer.Change(0, TickMs);
         }
 
         public void Stop()
         {
+            _started = false;
             try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
             try { _timer.Dispose(); } catch { }
             List<Subscription> rows;
@@ -89,7 +98,8 @@ namespace NTAnalyzerBridge.Runtime
             try
             {
                 SyncRequests();
-                WriteSnapshot();
+                CaptureMarketDataPoll();
+                RequestSnapshotWrite();
             }
             catch (Exception ex)
             {
@@ -196,6 +206,16 @@ namespace NTAnalyzerBridge.Runtime
                 sub.Request = request;
                 sub.UpdateHandler = (sender, args) => CaptureUpdate(sub, args);
                 request.Update += sub.UpdateHandler;
+                try
+                {
+                    sub.MarketData = new MarketData(instrument);
+                    sub.MarketDataHandler = (sender, args) => CaptureMarketData(sub, args);
+                    sub.MarketData.Update += sub.MarketDataHandler;
+                }
+                catch (Exception mdex)
+                {
+                    BridgeLog.Warn("RuntimeMarketDataExporter: " + sub.Key + " live ticks unavailable: " + mdex.Message);
+                }
                 request.Request(new Action<BarsRequest, ErrorCode, string>((bars, code, message) =>
                 {
                     if (code != ErrorCode.NoError)
@@ -206,7 +226,7 @@ namespace NTAnalyzerBridge.Runtime
                             sub.Error = code + (string.IsNullOrWhiteSpace(message) ? "" : ": " + message);
                             sub.UpdatedAtUtc = DateTime.UtcNow;
                         }
-                        WriteSnapshot();
+                        RequestSnapshotWrite();
                         return;
                     }
                     Capture(sub, bars.Bars, true);
@@ -221,6 +241,7 @@ namespace NTAnalyzerBridge.Runtime
                     sub.Error = ex.Message;
                     sub.UpdatedAtUtc = DateTime.UtcNow;
                 }
+                RequestSnapshotWrite();
                 BridgeLog.Warn("RuntimeMarketDataExporter: " + sub.Key + " failed: " + ex.Message);
             }
         }
@@ -272,6 +293,47 @@ namespace NTAnalyzerBridge.Runtime
                     sub.UpdatedAtUtc = now;
                 }
             }
+            RequestSnapshotWrite();
+        }
+
+        private void CaptureMarketData(Subscription sub, MarketDataEventArgs args)
+        {
+            if (sub == null || args == null || args.MarketDataType != MarketDataType.Last) return;
+            double price = args.Price;
+            if (double.IsNaN(price) || double.IsInfinity(price) || price <= 0) return;
+            DateTime now = DateTime.UtcNow;
+            lock (_gate)
+            {
+                if ((now - sub.LastMarketDataUtc).TotalMilliseconds < 80) return;
+                if (sub.Bars == null || sub.Bars.Count == 0) return;
+                JObject last = sub.Bars[sub.Bars.Count - 1] as JObject;
+                if (last == null) return;
+                sub.LastMarketDataUtc = now;
+                double high = JsonDouble(last, "h", price);
+                double low = JsonDouble(last, "l", price);
+                last["c"] = price;
+                last["h"] = Math.Max(high, price);
+                last["l"] = Math.Min(low, price);
+                sub.Status = "live";
+                sub.Error = "";
+                sub.UpdatedAtUtc = now;
+            }
+            RequestSnapshotWrite();
+        }
+
+        private void CaptureMarketDataPoll()
+        {
+            List<Subscription> rows;
+            lock (_gate) rows = _subscriptions.Values.ToList();
+            foreach (var sub in rows)
+            {
+                try
+                {
+                    if (sub.MarketData == null) continue;
+                    CaptureMarketData(sub, sub.MarketData.Last);
+                }
+                catch { }
+            }
         }
 
         private void CaptureUpdate(Subscription sub, BarsUpdateEventArgs args)
@@ -313,6 +375,7 @@ namespace NTAnalyzerBridge.Runtime
                 sub.Status = sub.Bars.Count > 0 ? "live" : "waiting";
                 sub.Error = ""; sub.UpdatedAtUtc = now;
             }
+            RequestSnapshotWrite();
         }
 
         private static JObject SerializeBar(Bars bars, int i)
@@ -324,6 +387,60 @@ namespace NTAnalyzerBridge.Runtime
                 ["l"] = bars.GetLow(i), ["c"] = bars.GetClose(i),
                 ["v"] = bars.GetVolume(i),
             };
+        }
+
+        private static double JsonDouble(JObject row, string name, double fallback)
+        {
+            if (row == null) return fallback;
+            JToken token = row[name];
+            if (token == null) return fallback;
+            double value;
+            if (double.TryParse(token.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out value))
+                return value;
+            return fallback;
+        }
+
+        private void RequestSnapshotWrite()
+        {
+            if (!_started) return;
+            DateTime now = DateTime.UtcNow;
+            int delayMs = 0;
+            lock (_gate)
+            {
+                double elapsed = (now - _lastSnapshotWriteUtc).TotalMilliseconds;
+                if (_lastSnapshotWriteUtc == DateTime.MinValue || elapsed >= SnapshotMinIntervalMs)
+                {
+                    _lastSnapshotWriteUtc = now;
+                }
+                else
+                {
+                    if (_snapshotQueued != 0) return;
+                    _snapshotQueued = 1;
+                    delayMs = Math.Max(20, SnapshotMinIntervalMs - (int)elapsed);
+                }
+            }
+            if (delayMs <= 0)
+            {
+                WriteSnapshotSafe();
+                return;
+            }
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                Thread.Sleep(delayMs);
+                if (!_started) return;
+                lock (_gate)
+                {
+                    _snapshotQueued = 0;
+                    _lastSnapshotWriteUtc = DateTime.UtcNow;
+                }
+                WriteSnapshotSafe();
+            });
+        }
+
+        private void WriteSnapshotSafe()
+        {
+            try { WriteSnapshot(); }
+            catch (Exception ex) { BridgeLog.Error("RuntimeMarketDataExporter snapshot write failed", ex); }
         }
 
         private void WriteSnapshot()
@@ -360,6 +477,13 @@ namespace NTAnalyzerBridge.Runtime
                 if (sub.UpdateHandler != null) sub.Request.Update -= sub.UpdateHandler;
             }
             catch { }
+            try
+            {
+                if (sub.MarketData != null && sub.MarketDataHandler != null)
+                    sub.MarketData.Update -= sub.MarketDataHandler;
+            }
+            catch { }
+            sub.MarketData = null;
             try { sub.Request.Dispose(); } catch { }
             sub.Request = null;
         }

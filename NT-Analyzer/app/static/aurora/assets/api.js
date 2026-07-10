@@ -8,30 +8,67 @@
 (function () {
   const isFile = location.protocol === 'file:';
   const INIT_DATA_KEY = 'stratforge.telegram.initData';
+  const INIT_DATA_QUERY_KEY = 'tgWebAppData';
+
+  function readTelegramInitDataFromLocation() {
+    for (const source of [location.hash.slice(1), location.search.slice(1)]) {
+      if (!source) continue;
+      const params = new URLSearchParams(source);
+      const raw = String(params.get(INIT_DATA_QUERY_KEY) || '');
+      if (raw) return raw;
+    }
+    return '';
+  }
+
+  function readTelegramInitDataFromStorage() {
+    try { return String(sessionStorage.getItem(INIT_DATA_KEY) || ''); }
+    catch (e) { return ''; }
+  }
+
+  function persistTelegramInitData(raw) {
+    try {
+      if (raw) sessionStorage.setItem(INIT_DATA_KEY, raw);
+    } catch (e) { /* storage can be disabled inside hardened WebViews */ }
+  }
 
   function discoverTelegramInitData() {
     const sdkValue = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData;
     let raw = String(sdkValue || '');
-    for (const source of [location.hash.slice(1), location.search.slice(1)]) {
-      if (raw || !source) continue;
-      const params = new URLSearchParams(source);
-      raw = String(params.get('tgWebAppData') || '');
-    }
-    try {
-      if (raw) sessionStorage.setItem(INIT_DATA_KEY, raw);
-      else raw = String(sessionStorage.getItem(INIT_DATA_KEY) || '');
-    } catch (e) { /* storage can be disabled inside hardened WebViews */ }
+    if (!raw) raw = readTelegramInitDataFromLocation();
+    if (!raw) raw = readTelegramInitDataFromStorage();
+    persistTelegramInitData(raw);
     return raw;
   }
 
-  const telegramInitData = discoverTelegramInitData();
-  const miniApp = !!telegramInitData;
+  let telegramInitData = '';
+  function refreshTelegramInitData() {
+    const raw = discoverTelegramInitData();
+    if (raw) {
+      telegramInitData = raw;
+      document.documentElement.classList.add('telegram-mini-app');
+    }
+    return telegramInitData;
+  }
+
+  function withTelegramContext(path) {
+    const raw = refreshTelegramInitData();
+    if (!raw || !path) return path;
+    let url;
+    try { url = new URL(path, location.href); }
+    catch (e) { return path; }
+    if (url.origin !== location.origin || url.pathname.indexOf('/api/') === 0) return path;
+    if (!url.searchParams.has(INIT_DATA_QUERY_KEY)) url.searchParams.set(INIT_DATA_QUERY_KEY, raw);
+    return url.pathname + (url.search || '') + (url.hash || '');
+  }
+
+  const miniApp = !!refreshTelegramInitData();
   let csrfToken = '';
   if (miniApp) document.documentElement.classList.add('telegram-mini-app');
 
   function requestHeaders(values) {
     const headers = Object.assign({}, values || {});
-    if (telegramInitData) headers['X-Telegram-Init-Data'] = telegramInitData;
+    const initData = refreshTelegramInitData();
+    if (initData) headers['X-Telegram-Init-Data'] = initData;
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     return headers;
   }
@@ -152,10 +189,52 @@
       return data;
     },
     authProfile: (challengeId, profile) => send('/api/auth/profile', 'POST', { challenge_id: challengeId, profile }),
+    miniappRegister: (body) => send('/api/auth/miniapp/register', 'POST', body || {}),
+    legalTerms: (o) => getJSON('/api/legal/terms', o),
     authLogout: () => send('/api/auth/logout', 'POST', {}),
     authUsers: (o) => getJSON('/api/auth/users', o),
+    authUserDetail: (id, o) => getJSON('/api/auth/users/' + encodeURIComponent(id), o),
     authUserRole: (id, role) => send('/api/auth/users/' + encodeURIComponent(id) + '/role', 'POST', { role }),
     authUserRevoke: (id) => send('/api/auth/users/' + encodeURIComponent(id) + '/revoke', 'POST', {}),
+    authUserFeature: (id, feature, enabled) => send('/api/auth/users/' + encodeURIComponent(id) + '/features', 'POST', { feature, enabled }),
+    authUserPermission: (id, capability, enabled) => send('/api/auth/users/' + encodeURIComponent(id) + '/permission', 'POST', { capability, enabled }),
+    authUserStatus: (id, status) => send('/api/auth/users/' + encodeURIComponent(id) + '/status', 'POST', { status }),
+    authUserDelete: (id) => send('/api/auth/users/' + encodeURIComponent(id) + '/delete', 'POST', {}),
+    authMe: (o) => getJSON('/api/auth/me', o),
+    authAvatarRefresh: () => send('/api/auth/avatar/refresh', 'POST', {}),
+    billingPlans: (o) => getJSON('/api/billing/plans', o),
+    billingMe: (o) => getJSON('/api/billing/me', o),
+    billingDonate: (o) => getJSON('/api/billing/donate', o),
+    billingPromoPreview: (body) => send('/api/billing/promo/preview', 'POST', body || {}),
+    billingPromoRedeem: (body) => send('/api/billing/promo/redeem', 'POST', body || {}),
+    billingSubscribe: (planId) => send('/api/billing/subscribe', 'POST', { plan_id: planId }),
+    billingCheckout: (planId) => send('/api/billing/checkout', 'POST', { plan_id: planId }),
+    billingPaymentRequest: (planId, note) => send('/api/billing/payment-request', 'POST', { plan_id: planId, note: note || '' }),
+    ownerVouchers: (o) => getJSON('/api/owner/vouchers', o),
+    ownerVoucherCreate: (body) => send('/api/owner/vouchers', 'POST', body || {}),
+    ownerInviteCreate: (body) => send('/api/owner/invites', 'POST', body || {}),
+    ownerInviteStatus: (id, status) => send('/api/owner/invites/' + encodeURIComponent(id) + '/status', 'POST', { status }),
+    ownerInviteDelete: (id) => send('/api/owner/invites/' + encodeURIComponent(id) + '/delete', 'POST', {}),
+    ownerInviteSend: (body) => send('/api/owner/invites/send', 'POST', body || {}),
+    ownerPlans: (o) => getJSON('/api/owner/plans', o),
+    ownerJournal: (query, o) => getJSON('/api/owner/journal' + (query ? ('?' + query) : ''), o),
+    ownerPlanFeature: (planId, feature, enabled) => send('/api/owner/plans/feature', 'POST', { plan_id: planId, feature, enabled }),
+    ownerPaymentGet: (o) => getJSON('/api/owner/payment', o),
+    ownerPaymentSet: (body) => send('/api/owner/payment', 'POST', body || {}),
+    ownerPaypalGet: (o) => getJSON('/api/owner/paypal', o),
+    ownerPaypalSet: (body) => send('/api/owner/paypal', 'POST', body || {}),
+    ownerPaypalEnsurePlans: () => send('/api/owner/paypal/plans', 'POST', {}),
+    ownerGrant: (userId, planId, durationDays) => send('/api/owner/grant', 'POST', { user_id: userId, plan_id: planId, duration_days: durationDays }),
+    ownerPaymentRequests: (o) => getJSON('/api/owner/payment-requests', o),
+    ownerPaymentRequestResolve: (id, approve, durationDays) => send('/api/owner/payment-requests/resolve', 'POST', { request_id: id, approve, duration_days: durationDays }),
+    bridgeSetup: (o) => getJSON('/api/bridge/setup', o),
+    workspaces: (o) => getJSON('/api/workspaces', o),
+    workspacePersonal: (body) => send('/api/workspaces/personal', 'POST', body || {}),
+    workspaceSelect: (workspaceId) => send('/api/workspaces/select', 'POST', { workspace_id: workspaceId }),
+    bridgeConnections: (o) => getJSON('/api/bridge/connections', o),
+    bridgePairStart: (body) => send('/api/bridge/pair/start', 'POST', body || {}),
+    bridgePairComplete: (body) => send('/api/bridge/pair/complete', 'POST', body || {}),
+    bridgeConnectionRevoke: (id) => send('/api/bridge/connections/' + encodeURIComponent(id) + '/revoke', 'POST', {}),
     health: (o) => getJSON('/api/health', o),
     diagnostics: (o) => getJSON('/api/diagnostics', o),
     catalog: (o) => getJSON('/api/catalog', o),
@@ -302,6 +381,7 @@
     aiOrchestratorConversations: (o) => getJSON('/api/ai-lab/orchestrator/conversations', o),
     aiOrchestratorConversation: (id, q, o) => getJSON('/api/ai-lab/orchestrator/conversations/' + encodeURIComponent(id) + qs(q), o),
     aiOrchestratorCreateConversation: (title) => send('/api/ai-lab/orchestrator/conversations', 'POST', { title: title || '' }),
+    aiOrchestratorAnnounceChartTask: (conversationId, payload) => send('/api/ai-lab/orchestrator/chart-task', 'POST', Object.assign({ conversation_id: conversationId || 'default' }, payload || {})),
     aiOrchestratorRenameConversation: (id, title) => send('/api/ai-lab/orchestrator/conversations/rename', 'POST', { conversation_id: id, title }),
     aiOrchestratorPinConversation: (id, pinned) => send('/api/ai-lab/orchestrator/conversations/pin', 'POST', { conversation_id: id, pinned: pinned }),
     aiOrchestratorSetConversationState: (id, state) => send('/api/ai-lab/orchestrator/conversations/state', 'POST', { conversation_id: id, state: state }),
@@ -335,5 +415,10 @@
     document.documentElement.classList.add('authenticated');
     return { auth };
   }).catch(error => ({ error }));
-  window.API = { config: { legacyUrl, offline: isFile, miniApp, telegramInitData }, http, HttpError, authReady };
+  const config = { legacyUrl, offline: isFile };
+  Object.defineProperties(config, {
+    miniApp: { enumerable: true, get: () => !!refreshTelegramInitData() },
+    telegramInitData: { enumerable: true, get: () => refreshTelegramInitData() },
+  });
+  window.API = { config, http, HttpError, authReady, getTelegramInitData: refreshTelegramInitData, withTelegramContext };
 })();

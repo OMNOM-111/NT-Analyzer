@@ -4,6 +4,11 @@
 StratForge Orchestrator. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
+Планируемый multi-user слой не должен расширять текущую роль auth до подписки
+или владения NinjaTrader. Новые контракты `workspace`, `subscription`,
+`promo voucher` и `NinjaTraderConnection` описаны в
+`MULTI_USER_ACCOUNT_ARCHITECTURE.md`.
+
 Именованные domain agents добавляют `/api/ai-lab/accounting`,
 `/api/ai-lab/strategy-analysis`, `/api/ai-lab/domain-agents` и POST
 `/api/ai-lab/domain-agents/message`. Общий endpoint Orchestrator также
@@ -33,6 +38,28 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
 - `GET/POST /api/portfolio/*` использует `app/portfolio_registry.py`. ID ячейки
   неизменяем, архивный ID не переиспользуется. Базовая схема `CELL-001..180`
   сохранена, включая `MNQ slot 11 = CELL-126`.
+- `GET /api/billing/plans`, `GET /api/billing/me`,
+  `POST /api/billing/promo/{preview,redeem}` и `GET/POST /api/owner/vouchers`
+  используют `app/subscriptions.py`. Промокод хранится только как hash; plaintext
+  code показывается owner один раз при создании. `read_only` пользователь может
+  выполнить только self-service preview/redeem, owner-voucher endpoints остаются
+  owner-only.
+- `GET /api/workspaces`, `POST /api/workspaces/{personal,select}`,
+  `GET /api/bridge/connections`, `POST /api/bridge/pair/{start,complete}` и
+  `POST /api/bridge/connections/<id>/revoke` используют `app/workspaces.py`.
+  Auth status возвращает `workspaces`, `active_workspace` и
+  `active_membership`. Runtime endpoints читают общий `data/runtime/*` только
+  для `owner_training`; personal workspace получает isolated empty runtime до
+  pairing, после pairing читает `data/tenants/<workspace_id>/runtime` и имеет
+  собственный tenant statement ledger. Bridge поддерживает `runtime_data_dir` в
+  `NTAnalyzerBridge.config.json`.
+- `GET /api/auth/me` собирает «личный кабинет»: профиль (с аватаром), роль,
+  подписка, активная область, статус NinjaTrader, эффективные `features` и
+  `feature_catalog`. `GET /api/auth/avatar/<id>` отдаёт кэшированный аватар
+  (self или owner); `POST /api/auth/avatar/refresh` тянет фото профиля через Bot
+  API (`getUserProfilePhotos`) в `data/integrations/avatars/` и в inline
+  `avatar_data_url`. `POST /api/auth/users/<id>/features` (owner-only) включает
+  или выключает пользователю раздел из каталога возможностей.
 - `GET /api/ops/runtime/account-history` использует `app/account_ledger.py`.
   Необъяснённый delta NetLiq записывается только как
   `unclassified_adjustment`; он не становится прибылью или пополнением без
@@ -81,6 +108,9 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
 - Runtime-команды остаются paper/demo/playback-only. Backend отклоняет live и
   неизвестные счета; strategy enable/disable требует operator approval, а
   reconnect paper/demo/playback ограничен безопасным infrastructure self-heal.
+- Multi-user isolation выполняется до чтения runtime: personal workspace не
+  проваливается к owner `data/runtime/*`, а учебный workspace владельца остаётся
+  read-only для не-owner пользователей.
 - TopStep остаётся execution-disabled. Платные AI-роли могут выполнять только
   два sandbox fallback-сценария после отдельного разрешения и budget gate;
   runtime/account/paper/live действия для них всегда запрещены.

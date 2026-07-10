@@ -84,7 +84,7 @@ namespace NTAnalyzerBridge.Runtime
             _cfg = cfg ?? throw new ArgumentNullException(nameof(cfg));
             if (string.IsNullOrEmpty(cfg.ProjectRoot))
                 throw new ArgumentNullException(nameof(cfg.ProjectRoot));
-            _runtimeDir   = Path.Combine(cfg.ProjectRoot, "data", "runtime");
+            _runtimeDir   = cfg.RuntimeDataDir;
             _commandsPath = Path.Combine(_runtimeDir, "commands.jsonl");
             _resultsPath  = Path.Combine(_runtimeDir, "command_results.jsonl");
             Directory.CreateDirectory(_runtimeDir);

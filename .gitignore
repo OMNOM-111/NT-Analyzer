@@ -50,9 +50,14 @@
 /NT-Analyzer/data/integrations/telegram.remote-access.json
 /NT-Analyzer/data/integrations/cloudflared-tunnel.state.json
 /NT-Analyzer/data/integrations/accounts.dpapi
+/NT-Analyzer/data/integrations/*.dpapi
+/NT-Analyzer/data/integrations/*.dpapi.*
+/NT-Analyzer/data/integrations/*.recovery.json
+/NT-Analyzer/data/integrations/avatars/
 /NT-Analyzer/data/integrations/ai_agents.settings.json
 /NT-Analyzer/data/integrations/ai_agents.registry.json
 /NT-Analyzer/data/integrations/ai_agent_keys.dpapi
+/NT-Analyzer/data/tenants/
 /NT-Analyzer/logs/
 /NT-Analyzer/_backup_before_restore_*/
 /NT-Analyzer/research_archive/

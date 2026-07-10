@@ -33,6 +33,8 @@ UI.ready(async function () {
     { id: 'ma:20', label: 'MA 20', kind: 'overlay' },
     { id: 'ema:21', label: 'EMA 21', kind: 'overlay' },
     { id: 'ema:50', label: 'EMA 50', kind: 'overlay' },
+    { id: 'hma:21', label: 'HMA 21', kind: 'overlay' },
+    { id: 'hma:55', label: 'HMA 55', kind: 'overlay' },
     { id: 'macd', label: 'MACD 12·26·9', kind: 'pane' },
     { id: 'rsi', label: 'RSI 14', kind: 'pane' },
   ];
@@ -54,13 +56,42 @@ UI.ready(async function () {
     ['ZC','Corn','Зерно и соевые'],['ZW','Wheat','Зерно и соевые'],['ZS','Soybeans','Зерно и соевые'],['ZM','Soybean Meal','Зерно и соевые'],['ZL','Soybean Oil','Зерно и соевые'],
     ['ZT','2-Year Note','Облигации'],['ZF','5-Year Note','Облигации'],['ZN','10-Year Note','Облигации'],['TN','10-Year Ultra Note','Облигации'],['ZB','30-Year Bond','Облигации'],['UB','Ultra-Bond','Облигации'],
   ];
-  const GRID_COUNTS = [1, 2, 4, 6, 9, 12, 16, 24, 36, 48, 64];
   const MIN_W = 260, MIN_H = 180;
   const ZOOM_MIN = 0.05, ZOOM_MAX = 2;
+  const LIVE_POLL_MS = 350;
   const DEFAULT_STYLE = { upColor: '#34d399', downColor: '#ff6b81', upFill: '#34d399',
     downFill: '#ff6b81', background: '#0b1018', bodyWidth: 0.7, wickWidth: 1,
     borderWidth: 1, fillOpacity: 0.85, legendMode: 'compact',
-    macd: { fill: true, up: '#34d399', down: '#ff6b81', line: '#4fd1e0', signal: '#fcc55a', opacity: 0.85, area: true, fillToZero: true } };
+    macd: { fill: true, up: '#34d399', down: '#ff6b81', line: '#4fd1e0', signal: '#fcc55a', opacity: 0.85, area: true, fillToZero: true, vol: false } };
+
+  // ---- global chart template ("макет") ---------------------------------
+  // A single, editable standard applied to every newly created chart. It is
+  // just a saved config without an instrument (timeframe, indicators, type,
+  // range, aspect, candle/MACD style). The default is the built-in standard.
+  const TEMPLATE_KEY = 'desktop.chart-template.v1';
+  function cloneStyle(style) {
+    const s = Object.assign({}, DEFAULT_STYLE, style || {});
+    s.macd = Object.assign({}, DEFAULT_STYLE.macd, (style && style.macd) || {});
+    return s;
+  }
+  const DEFAULT_TEMPLATE = { timeframe: '5m', type: 'candles', indicators: [],
+    range: { id: '1m', days: 31, from: '', to: '' }, aspect: 'auto', style: Object.assign({}, DEFAULT_STYLE) };
+  function loadTemplate() {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(TEMPLATE_KEY) || 'null'); } catch (e) { raw = null; }
+    const t = Object.assign({}, DEFAULT_TEMPLATE, raw || {});
+    t.indicators = Array.isArray(t.indicators) ? t.indicators.slice() : [];
+    t.range = Object.assign({}, DEFAULT_TEMPLATE.range, t.range || {});
+    t.style = cloneStyle(t.style);
+    return t;
+  }
+  function saveTemplate(t) { try { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(t)); } catch (e) { /* storage off */ } }
+  function makeTemplateFromConfig(cfg) {
+    return { timeframe: cfg.timeframe || '5m', type: cfg.type || 'candles',
+      indicators: Array.isArray(cfg.indicators) ? cfg.indicators.slice() : [],
+      range: Object.assign({ id: '1m', days: 31, from: '', to: '' }, cfg.range || {}),
+      aspect: cfg.aspect || 'auto', style: cloneStyle(cfg.style) };
+  }
 
   // window-control icons (kept local so the desktop owns its chrome)
   const wIcon = (name) => {
@@ -72,6 +103,7 @@ UI.ready(async function () {
       close: '<path d="M6 6l12 12M18 6L6 18"/>',
       cfg: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
       bare: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+      trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 15h10l1-15"/><path d="M10 11v6M14 11v6"/>',
       pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/>',
       sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
     };
@@ -101,12 +133,14 @@ UI.ready(async function () {
   // ---- runtime state -----------------------------------------------------
   let store = loadStore();
   let layout = store.layouts[store.activeId];
+  let template = loadTemplate();
   const wins = new Map();     // id → { model, node, chart, chartHost, refresh }
   let zTop = 10;
   let instrumentCache = null;
   let agentCache = null;
   let persistTimer = null;
   let bulkMounting = false;
+  let drawingClipboard = null;
 
   // ---- persistence -------------------------------------------------------
   function loadStore() {
@@ -127,6 +161,9 @@ UI.ready(async function () {
       if (typeof l.zoom !== 'number') l.zoom = 1;
       if (typeof l.screenFit !== 'boolean') l.screenFit = false;
       if (typeof l.grid !== 'number') l.grid = 0;
+      if (l.gridMode !== 'instruments') l.gridMode = 'free';
+      if (!Array.isArray(l.gridRoots)) l.gridRoots = [];
+      if (typeof l.gridTimeframe !== 'string') l.gridTimeframe = '5m';
       if (!Array.isArray(l.windows)) l.windows = [];
       if (typeof l.seq !== 'number') l.seq = l.windows.length;
       if (!l.scroll) l.scroll = { x: 0, y: 0 };
@@ -146,6 +183,7 @@ UI.ready(async function () {
   }
   function newLayout(id, name) {
     return { id, name, resolution: { w: 1920, h: 1080 }, zoom: 1, screenFit: true, grid: 0,
+      gridMode: 'free', gridRoots: [], gridTimeframe: '5m',
       scroll: { x: 0, y: 0 }, windows: [], seq: 0 };
   }
   function persistNow() {
@@ -282,6 +320,7 @@ UI.ready(async function () {
         </div>
         <div class="dwin-ctl">
           <button class="cfg" data-act="config" title="Параметры графика">${wIcon('cfg')}</button>
+          <button class="clear-drawings" data-act="clear-drawings" title="Очистить все рисунки">${wIcon('trash')}</button>
           <button class="pin" data-act="pin" title="Закрепить">${wIcon('pin')}</button>
           <button class="min" data-act="min" title="Свернуть">${wIcon('min')}</button>
           <button class="max" data-act="max" title="Развернуть">${wIcon('max')}</button>
@@ -357,6 +396,14 @@ UI.ready(async function () {
       markDirty();
       if (obj.alertId) syncDrawingRule(rec, obj, true);
     });
+    // Persist pane heights and price-axis width immediately when the drag ends.
+    chart.on('viewport', (vp) => {
+      if (vp && vp.paneHeights) { model.config.paneHeights = vp.paneHeights; markDirty(); }
+      if (vp && vp.axisWidth != null) {
+        model.config.style = Object.assign({}, model.config.style || {}, { axisWidth: vp.axisWidth });
+        markDirty();
+      }
+    });
 
     const rec = { model, node, chart, chartHost, srcEl: qs('.dwin-src', node), inFlight: false };
     wins.set(model.id, rec);
@@ -431,7 +478,7 @@ UI.ready(async function () {
         head.removeEventListener('pointermove', move);
         head.removeEventListener('pointerup', up);
         head.removeEventListener('pointercancel', up);
-        layout.grid = 0;
+        layout.grid = 0; layout.gridMode = 'free';
         markDirty();
       };
       head.addEventListener('pointermove', move);
@@ -464,7 +511,7 @@ UI.ready(async function () {
           grip.removeEventListener('pointermove', move);
           grip.removeEventListener('pointerup', up);
           grip.removeEventListener('pointercancel', up);
-          layout.grid = 0;
+          layout.grid = 0; layout.gridMode = 'free';
           markDirty();
         };
         grip.addEventListener('pointermove', move);
@@ -483,6 +530,7 @@ UI.ready(async function () {
       else if (act === 'max') toggleMaximize(rec);
       else if (act === 'bare') toggleBare(rec, true);
       else if (act === 'config') openChartDialog(rec);
+      else if (act === 'clear-drawings') clearWindowDrawings(rec);
     }));
 
     const toolsWrap = qs('.dwin-tools', node);
@@ -561,17 +609,46 @@ UI.ready(async function () {
     renderDock();
     markDirty();
   }
+  // Low-level teardown of a single window (no grid bookkeeping / no confirm).
+  function destroyWindow(model) {
+    deleteModelAlerts(model);
+    const rec = wins.get(model.id);
+    if (rec) {
+      if (rec.chart) rec.chart.destroy();
+      if (rec.refreshStop) rec.refreshStop();
+      rec.node.remove();
+      wins.delete(model.id);
+    }
+    layout.windows = layout.windows.filter(m => m.id !== model.id);
+  }
+
   function closeWindow(rec) {
-    deleteModelAlerts(rec.model);
-    if (rec.chart) rec.chart.destroy();
-    if (rec.refreshStop) rec.refreshStop();
-    rec.node.remove();
-    wins.delete(rec.model.id);
-    layout.windows = layout.windows.filter(m => m.id !== rec.model.id);
-    layout.grid = 0;
+    const root = modelRoot(rec.model);
+    destroyWindow(rec.model);
+    // In an instrument grid, dropping one chart re-tiles the rest evenly; in
+    // free mode we just clear the grid marker so windows keep their positions.
+    if (layout.gridMode === 'instruments') {
+      layout.gridRoots = (layout.gridRoots || []).filter(r => r !== root);
+      if (layout.windows.length) { layout.grid = layout.windows.length; retileGrid(); }
+      else { layout.grid = 0; layout.gridMode = 'free'; }
+    } else {
+      layout.grid = 0;
+    }
     renderDock();
     refreshEmpty();
     markDirty();
+  }
+
+  function clearWindowDrawings(rec) {
+    const count = (rec.model.drawings || []).length;
+    if (!count) { toast('На графике нет рисунков'); return; }
+    deleteModelAlerts(rec.model);
+    rec.model.drawings = [];
+    if (rec.chart) { rec.chart.setDrawings([]); rec.chart.selectDrawing(null); }
+    const editor = qs('.dwin-drawing-editor', rec.node);
+    if (editor) { editor.classList.remove('show', 'collapsed'); editor.innerHTML = ''; }
+    markDirty();
+    toast('Все рисунки на графике очищены');
   }
 
   function renderDock() {
@@ -643,7 +720,7 @@ UI.ready(async function () {
       model.config.root = root; model.config.instrument = current.symbol;
       rolled++;
       const rec = wins.get(model.id);
-      if (rec) { renderWindowMeta(rec); rec.hasBars = false; rec.nextPollAt = 0; loadWindowData(rec); }
+      if (rec) { renderWindowMeta(rec); rec.hasBars = false; rec.nextPollAt = 0; resetDataTracking(rec); loadWindowData(rec); }
       for (const drawing of (model.drawings || [])) if (drawing.ruleAction && drawing.ruleAction !== 'none' && rec) syncDrawingRule(rec, drawing, true);
       markDirty();
     }
@@ -664,15 +741,63 @@ UI.ready(async function () {
       range_days: range.id === 'custom' ? 0 : (days || 0), from: range.from || '', to: range.to || '' };
   }
 
+  function dataSignature(config) {
+    config = config || {};
+    const range = config.range || {};
+    return [config.instrument || '', config.timeframe || '', range.id || '', range.days || '', range.from || '', range.to || ''].join('|');
+  }
+
+  function beginDataRequest(rec) {
+    const stamp = { seq: (rec.dataSeq || 0) + 1, sig: dataSignature(rec.model.config) };
+    rec.dataSeq = stamp.seq;
+    rec.inFlight = true;
+    return stamp;
+  }
+
+  function requestStillCurrent(rec, stamp) {
+    return !!(rec && stamp && wins.has(rec.model.id) && rec.dataSeq === stamp.seq && dataSignature(rec.model.config) === stamp.sig);
+  }
+
+  function finishDataRequest(rec, stamp) {
+    if (rec && stamp && rec.dataSeq === stamp.seq) rec.inFlight = false;
+  }
+
+  function resetDataTracking(rec) {
+    if (!rec) return;
+    rec.lastUpdated = '';
+    rec.lastBarMs = null;
+    rec.lastStatus = '';
+    rec.rejectedPayloads = 0;
+  }
+
+  function payloadLastBarMs(bars) {
+    const last = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+    const raw = last && (last.t || last.time_utc || last.time || last.timestamp);
+    const ms = Date.parse(raw || '');
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  function sourceAgeSec(source) {
+    const age = Number(source && source.age_sec);
+    return Number.isFinite(age) ? age : null;
+  }
+
+  function ageText(age) {
+    if (!Number.isFinite(age)) return '';
+    if (age < 1) return 'сейчас';
+    if (age < 60) return `${Math.round(age)}с назад`;
+    return `${Math.round(age / 60)}м назад`;
+  }
+
   async function loadWindowData(rec) {
     const m = rec.model;
     if (m.minimized) return;
     if (rec.inFlight) return;
-    rec.inFlight = true;
+    const stamp = beginDataRequest(rec);
     setSrc(rec, 'wait', 'NinjaTrader · загрузка…');
     const payload = await NTData.bars(m.config.instrument, m.config.timeframe, { signal: UI.signal(), config: m.config });
-    rec.inFlight = false;
-    if (!wins.has(m.id)) return;
+    finishDataRequest(rec, stamp);
+    if (!requestStillCurrent(rec, stamp)) return;
     applyWindowPayload(rec, payload);
   }
 
@@ -682,22 +807,44 @@ UI.ready(async function () {
     const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
     const note = payload.note || '', live = !!payload.live, status = payload.status || '';
     if (bars.length) {
+      const lastMs = payloadLastBarMs(bars);
+      const staleBars = rec.lastBarMs != null && lastMs != null && lastMs < rec.lastBarMs - 1000;
+      if (staleBars) {
+        rec.rejectedPayloads = (rec.rejectedPayloads || 0) + 1;
+        rec.nextPollAt = Date.now() + 500;
+        setSrc(rec, 'wait', `NinjaTrader · устаревший пакет пропущен · ${bars.length} баров`);
+        return;
+      }
       const updated = payload.source && payload.source.updated_at_utc || `${payload.status || ''}:${bars.length}:${bars[bars.length - 1] && (bars[bars.length - 1].t || bars[bars.length - 1].c)}`;
       if (updated !== rec.lastUpdated) { rec.chart.setData(bars); rec.lastUpdated = updated; }
+      if (lastMs != null) rec.lastBarMs = lastMs;
+      rec.rejectedPayloads = 0;
       rec.hasBars = true;
-      setSrc(rec, live ? 'live' : 'wait', `${live ? 'NinjaTrader · live' : 'История NinjaTrader'} · ${bars.length} баров${note ? ' · ' + note : ''}`);
+      const age = sourceAgeSec(payload.source);
+      const fresh = age == null || age <= 8;
+      const freshness = age == null ? '' : ` · обновлено ${ageText(age)}`;
+      const label = live ? (fresh ? 'NinjaTrader · live' : 'NinjaTrader · задержка') : 'История NinjaTrader';
+      setSrc(rec, live && fresh ? 'live' : 'wait', `${label} · ${bars.length} баров${freshness}${note ? ' · ' + note : ''}`);
     } else {
       if (!rec.hasBars) rec.chart.setData([]);
       setSrc(rec, 'err', 'Нет данных NinjaTrader' + (note ? ' · ' + note : ''));
     }
     rec.lastStatus = status || (live ? 'live' : 'waiting');
-    rec.nextPollAt = Date.now() + (live ? 500 : rec.lastStatus === 'historical_fallback' ? 10000 : 2000);
+    rec.nextPollAt = Date.now() + (live ? Math.max(100, LIVE_POLL_MS - 50) : rec.lastStatus === 'historical_fallback' ? 10000 : 2000);
     if (rec.chart && rec.chart.setLoading && (bars.length || status === 'error')) rec.chart.setLoading(false);
     // Persist pane heights lazily (they are updated by the user dragging the separator).
     if (rec.chart && rec.chart.getPaneHeights) {
       const ph = rec.chart.getPaneHeights();
       if (JSON.stringify(ph) !== JSON.stringify(rec.model.config.paneHeights || {})) {
         rec.model.config.paneHeights = ph; markDirty();
+      }
+    }
+    // Persist the draggable price-column width the same way.
+    if (rec.chart && rec.chart.getAxisWidth) {
+      const aw = Math.round(rec.chart.getAxisWidth());
+      if (aw && aw !== Math.round((rec.model.config.style || {}).axisWidth || 62)) {
+        rec.model.config.style = Object.assign({}, rec.model.config.style || {}, { axisWidth: aw });
+        markDirty();
       }
     }
     syncAlerts(rec, alerts);
@@ -716,33 +863,42 @@ UI.ready(async function () {
     const now = Date.now();
     const recs = Array.from(wins.values()).filter(rec => !rec.model.minimized && !rec.inFlight && (!rec.nextPollAt || rec.nextPollAt <= now));
     if (!recs.length) return;
-    recs.forEach(rec => { rec.inFlight = true; });
+    const batch = recs.map(rec => ({ rec, stamp: beginDataRequest(rec), request: marketRequest(rec.model.config) }));
     try {
-      const out = await API.http.marketBarsBatch({ requests: recs.map(rec => marketRequest(rec.model.config)) });
+      const out = await API.http.marketBarsBatch({ requests: batch.map(item => item.request) });
       const rows = (out && out.series) || [];
-      recs.forEach((rec, index) => { if (wins.has(rec.model.id)) applyWindowPayload(rec, rows[index] || { bars: [], alerts: [], status: 'waiting' }); });
+      batch.forEach((item, index) => {
+        if (requestStillCurrent(item.rec, item.stamp)) applyWindowPayload(item.rec, rows[index] || { bars: [], alerts: [], status: 'waiting' });
+      });
     } catch (e) {
-      recs.forEach(rec => { rec.nextPollAt = Date.now() + 2000; setSrc(rec, 'err', 'Ошибка потока данных: ' + (e.message || e)); });
-    } finally { recs.forEach(rec => { rec.inFlight = false; }); }
-  }, 650);
+      batch.forEach(item => {
+        if (requestStillCurrent(item.rec, item.stamp)) {
+          item.rec.nextPollAt = Date.now() + 2000;
+          setSrc(item.rec, 'err', 'Ошибка потока данных: ' + (e.message || e));
+        }
+      });
+    } finally { batch.forEach(item => finishDataRequest(item.rec, item.stamp)); }
+  }, LIVE_POLL_MS);
 
   // ---- add / configure chart dialog -------------------------------------
-  async function openChartDialog(existingRec) {
+  async function openChartDialog(existingRec, mode) {
     const editing = !!existingRec;
+    const templateMode = mode === 'template';
     const cfg = editing ? Object.assign({}, existingRec.model.config) : {
-      instrument: '', root: '', timeframe: '5m', indicators: [], type: 'candles',
-      range: { id: '1m', days: 31, from: '', to: '' }, style: Object.assign({}, DEFAULT_STYLE),
+      instrument: '', root: '', timeframe: template.timeframe, type: template.type,
+      indicators: template.indicators.slice(), range: Object.assign({}, template.range),
+      aspect: template.aspect, style: cloneStyle(template.style),
     };
     cfg.style = Object.assign({}, DEFAULT_STYLE, cfg.style || {});
     cfg.style.macd = Object.assign({}, DEFAULT_STYLE.macd, cfg.style.macd || {});
     cfg.range = Object.assign({ id: '1m', days: 31, from: '', to: '' }, cfg.range || {});
     const d = UI.drawer(
-      editing ? 'Параметры графика' : 'Новый график',
+      editing ? 'Параметры графика' : templateMode ? 'Макет графика — стандарт для всех' : 'Новый график',
       `<form class="dchart-form" id="dchart-form">
         <div class="dchart-layout">
           <div class="dchart-settings">
             <div class="fgrid">
-              <label>Инструмент (актуальный контракт)
+              <label id="dc-inst-field" ${templateMode ? 'hidden' : ''}>Инструмент (актуальный контракт)
                 <select id="dc-inst"><option value="">Загрузка инструментов…</option></select>
               </label>
               <label>Тип графика
@@ -782,6 +938,7 @@ UI.ready(async function () {
                 <label class="ind-chip ${cfg.style.macd.fill ? 'on' : ''}"><input type="checkbox" id="dc-macd-fill" ${cfg.style.macd.fill ? 'checked' : ''}><span>Заливка гистограммы</span></label>
                 <label class="ind-chip ${cfg.style.macd.area ? 'on' : ''}"><input type="checkbox" id="dc-macd-area" ${cfg.style.macd.area ? 'checked' : ''}><span>Заливка между линиями</span></label>
                 <label class="ind-chip ${cfg.style.macd.fillToZero ? 'on' : ''}"><input type="checkbox" id="dc-macd-zero" ${cfg.style.macd.fillToZero ? 'checked' : ''}><span>Заливка до нуля</span></label>
+                <label class="ind-chip ${cfg.style.macd.vol ? 'on' : ''}"><input type="checkbox" id="dc-macd-vol" ${cfg.style.macd.vol ? 'checked' : ''}><span>Объём поверх MACD</span></label>
               </div>
               <div class="style-grid">
                 <label>Гист. ↑<input type="color" id="dc-macd-up" value="${escAttr(cfg.style.macd.up)}"></label>
@@ -795,29 +952,35 @@ UI.ready(async function () {
           <div class="dchart-preview-wrap">
             <div class="dchart-preview-title"><b>Живой предпросмотр</b><span>${editing ? 'Текущие данные графика' : 'Наглядный пример свечей'} · изменения видны сразу</span></div>
             <div class="dchart-preview" id="dc-preview"></div>
+            ${templateMode ? '<div class="dchart-hint">Это стандартный макет: по нему создаются все новые графики. Чтобы обновить уже открытые — отметьте галочку ниже.</div>' : ''}
             ${editing ? '<button type="button" class="btn" id="dc-style-all">Применить этот стиль ко всем графикам</button>' : ''}
           </div>
         </div>
         <div class="dchart-actions">
+          ${templateMode
+            ? '<label class="ind-chip" id="dc-tpl-all-wrap" style="margin-right:auto"><input type="checkbox" id="dc-tpl-all"><span>Применить ко всем открытым графикам</span></label>'
+            : '<label class="ind-chip" id="dc-as-default-wrap" style="margin-right:auto" title="Сохранить эти параметры как стандарт для новых графиков"><input type="checkbox" id="dc-as-default"><span>Использовать по умолчанию</span></label>'}
           <button type="button" class="btn ghost" data-close-drawer>Отмена</button>
-          <button type="submit" class="btn primary" id="dc-submit">${editing ? 'Применить' : 'Добавить график'}</button>
+          <button type="submit" class="btn primary" id="dc-submit">${editing ? 'Применить' : templateMode ? 'Сохранить макет' : 'Добавить график'}</button>
         </div>
       </form>`
     );
     d.classList.add('wide');
 
     const instSel = qs('#dc-inst', d);
-    const list = await NTData.instruments();
-    if (!list.length) {
-      instSel.innerHTML = '<option value="">Нет инструментов — NinjaTrader офлайн</option>';
-    } else {
-      const groups = new Map(); list.forEach(x => { if (!groups.has(x.group)) groups.set(x.group, []); groups.get(x.group).push(x); });
-      instSel.innerHTML = Array.from(groups.entries()).map(([group, rows]) => `<optgroup label="${escAttr(group)}">${rows.map(x => `<option value="${escAttr(x.symbol)}" data-root="${escAttr(x.root)}" ${x.available ? '' : 'disabled'}>${escAttr(x.root)} — ${escAttr(x.name)}${x.available ? ` · ${escAttr(x.symbol)}` : ' · контракт пока недоступен'}</option>`).join('')}</optgroup>`).join('');
-      const firstAvailable = list.find(x => x.available);
-      const chosen = cfg.instrument || (firstAvailable && firstAvailable.symbol) || '';
-      instSel.value = chosen;
-      if (!instSel.value) instSel.selectedIndex = 0;
-      cfg.instrument = instSel.value;
+    if (!templateMode) {
+      const list = await NTData.instruments();
+      if (!list.length) {
+        instSel.innerHTML = '<option value="">Нет инструментов — NinjaTrader офлайн</option>';
+      } else {
+        const groups = new Map(); list.forEach(x => { if (!groups.has(x.group)) groups.set(x.group, []); groups.get(x.group).push(x); });
+        instSel.innerHTML = Array.from(groups.entries()).map(([group, rows]) => `<optgroup label="${escAttr(group)}">${rows.map(x => `<option value="${escAttr(x.symbol)}" data-root="${escAttr(x.root)}" ${x.available ? '' : 'disabled'}>${escAttr(x.root)} — ${escAttr(x.name)}${x.available ? ` · ${escAttr(x.symbol)}` : ' · контракт пока недоступен'}</option>`).join('')}</optgroup>`).join('');
+        const firstAvailable = list.find(x => x.available);
+        const chosen = cfg.instrument || (firstAvailable && firstAvailable.symbol) || '';
+        instSel.value = chosen;
+        if (!instSel.value) instSel.selectedIndex = 0;
+        cfg.instrument = instSel.value;
+      }
     }
 
     const preview = window.ChartEngine.create(qs('#dc-preview', d), {
@@ -842,7 +1005,7 @@ UI.ready(async function () {
           fillOpacity: qs('#dc-fill', d).checked ? 0.85 : 0, legendMode: qs('#dc-legend', d).value,
           macd: {
             fill: qs('#dc-macd-fill', d).checked, area: qs('#dc-macd-area', d).checked,
-            fillToZero: qs('#dc-macd-zero', d).checked,
+            fillToZero: qs('#dc-macd-zero', d).checked, vol: qs('#dc-macd-vol', d).checked,
             up: qs('#dc-macd-up', d).value, down: qs('#dc-macd-down', d).value,
             line: qs('#dc-macd-line', d).value, signal: qs('#dc-macd-signal', d).value,
             opacity: Number(qs('#dc-macd-op', d).value) / 100,
@@ -880,7 +1043,7 @@ UI.ready(async function () {
       qs('#dc-custom-range', d).classList.toggle('show', b.dataset.v === 'custom');
     });
     instSel.addEventListener('change', refreshPreview);
-    qsaLocal('#dc-up,#dc-down,#dc-bg,#dc-body,#dc-wick,#dc-border,#dc-fill,#dc-legend,#dc-macd-fill,#dc-macd-area,#dc-macd-zero,#dc-macd-up,#dc-macd-down,#dc-macd-op,#dc-macd-line,#dc-macd-signal', d).forEach(node => node.addEventListener('input', () => {
+    qsaLocal('#dc-up,#dc-down,#dc-bg,#dc-body,#dc-wick,#dc-border,#dc-fill,#dc-legend,#dc-macd-fill,#dc-macd-area,#dc-macd-zero,#dc-macd-vol,#dc-macd-up,#dc-macd-down,#dc-macd-op,#dc-macd-line,#dc-macd-signal', d).forEach(node => node.addEventListener('input', () => {
       if (node.closest('.ind-chip')) node.closest('.ind-chip').classList.toggle('on', node.checked);
       refreshPreview();
     }));
@@ -890,6 +1053,13 @@ UI.ready(async function () {
       layout.windows.forEach(model => { model.config.style = Object.assign({}, style); const rec = wins.get(model.id); if (rec) rec.chart.setStyle(style); });
       markDirty(); toast('Стиль применён ко всем графикам');
     });
+    const asDefaultWrap = qs('#dc-as-default-wrap', d);
+    if (asDefaultWrap) {
+      const asDefaultCb = qs('#dc-as-default', d);
+      asDefaultCb.addEventListener('change', () => {
+        asDefaultWrap.classList.toggle('on', asDefaultCb.checked);
+      });
+    }
 
     const cleanup = () => preview.destroy();
     qsaLocal('[data-close-drawer]', d).forEach(btn => btn.addEventListener('click', cleanup, { once: true }));
@@ -897,12 +1067,29 @@ UI.ready(async function () {
     qs('#dchart-form', d).addEventListener('submit', (e) => {
       e.preventDefault();
       const next = readForm();
-      if (!next.instrument) { toast('Выберите инструмент'); return; }
       if (next.range.id === 'custom' && (!next.range.from || !next.range.to)) { toast('Укажите обе даты диапазона'); return; }
+      if (templateMode) {
+        template = makeTemplateFromConfig(next);
+        saveTemplate(template);
+        const applyAll = qs('#dc-tpl-all', d);
+        const toAll = !!(applyAll && applyAll.checked);
+        if (toAll) applyTemplateToAll();
+        cleanup();
+        toast(toAll ? 'Макет сохранён и применён ко всем графикам' : 'Макет графика сохранён — по нему создаются новые графики');
+        UI.closeDrawer();
+        return;
+      }
+      if (!next.instrument) { toast('Выберите инструмент'); return; }
+      const asDefault = !!(qs('#dc-as-default', d) && qs('#dc-as-default', d).checked);
+      if (asDefault) {
+        template = makeTemplateFromConfig(next);
+        saveTemplate(template);
+      }
       cleanup();
       if (editing) applyChartConfig(existingRec, next);
       else addChart(next);
       UI.closeDrawer();
+      if (asDefault) toast(editing ? 'Параметры применены и сохранены по умолчанию' : 'График добавлен — эти параметры теперь по умолчанию');
     });
   }
 
@@ -924,6 +1111,7 @@ UI.ready(async function () {
       rec.model.drawings = [];
       rec.chart.setDrawings([]);
       rec.hasBars = false;
+      resetDataTracking(rec);
     }
     rec.model.config = Object.assign({}, rec.model.config, cfg);
     renderWindowMeta(rec);
@@ -932,6 +1120,26 @@ UI.ready(async function () {
     renderSidePanel(rec);
     if (rec.chart && rec.chart.setLoading) rec.chart.setLoading(true, 'Загрузка…');
     loadWindowData(rec);
+    markDirty();
+  }
+
+  // Push the current template onto every open chart (used by the "применить
+  // ко всем" checkbox in the template editor).
+  function applyTemplateToAll() {
+    layout.windows.forEach(model => {
+      const rec = wins.get(model.id);
+      const cfg = Object.assign({}, model.config, {
+        timeframe: template.timeframe, indicators: template.indicators.slice(),
+        type: template.type, range: Object.assign({}, template.range),
+        aspect: template.aspect, style: cloneStyle(template.style),
+      });
+      if (rec) {
+        applyChartConfig(rec, cfg);
+        if (rec.chart && rec.chart.setAspect) rec.chart.setAspect(template.aspect);
+      } else {
+        model.config = cfg;
+      }
+    });
     markDirty();
   }
 
@@ -953,7 +1161,7 @@ UI.ready(async function () {
     };
     clampModel(model);
     layout.windows.push(model);
-    layout.grid = 0;
+    layout.grid = 0; layout.gridMode = 'free';
     createWindow(model);
     refreshEmpty();
     renderDock();
@@ -995,6 +1203,7 @@ UI.ready(async function () {
     rec.model.config.timeframe = tf;
     renderWindowMeta(rec);
     rec.hasBars = false; rec.nextPollAt = 0;
+    resetDataTracking(rec);
     if (rec.chart && rec.chart.setLoading) rec.chart.setLoading(true, 'Загрузка ' + tf + '…');
     loadWindowData(rec);
     renderSidePanel(rec);
@@ -1022,6 +1231,7 @@ UI.ready(async function () {
       </div>
       <label class="drawing-lock"><input type="checkbox" id="mc-area" ${macd.area ? 'checked' : ''}><span>Заливка между линиями</span></label>
       <label class="drawing-lock"><input type="checkbox" id="mc-zero" ${macd.fillToZero ? 'checked' : ''}><span>Заливка до нуля (вниз)</span></label>
+      <label class="drawing-lock"><input type="checkbox" id="mc-vol" ${macd.vol ? 'checked' : ''}><span>Объём поверх MACD (полупрозрачно)</span></label>
       <div class="dchart-actions"><button type="button" class="btn ghost" id="mc-all">Применить ко всем</button><button type="button" class="btn primary" data-close-drawer>Готово</button></div>
     </form>`);
     const read = () => ({
@@ -1031,6 +1241,7 @@ UI.ready(async function () {
       line: qs('#mc-line', d).value, signal: qs('#mc-signal', d).value,
       area: qs('#mc-area', d).checked,
       fillToZero: qs('#mc-zero', d).checked,
+      vol: qs('#mc-vol', d).checked,
     });
     const apply = () => {
       const next = read();
@@ -1038,7 +1249,7 @@ UI.ready(async function () {
       rec.chart.setStyle({ macd: next });
       markDirty();
     };
-    qsaLocal('#mc-fill,#mc-op,#mc-up,#mc-down,#mc-line,#mc-signal,#mc-area,#mc-zero', d).forEach(node => node.addEventListener('input', apply));
+    qsaLocal('#mc-fill,#mc-op,#mc-up,#mc-down,#mc-line,#mc-signal,#mc-area,#mc-zero,#mc-vol', d).forEach(node => node.addEventListener('input', apply));
     qs('#mc-all', d).addEventListener('click', () => {
       const next = read();
       layout.windows.forEach(model => {
@@ -1124,6 +1335,7 @@ UI.ready(async function () {
     // Always start collapsed; stay open if the user already expanded for this drawing.
     if (!alreadyOpen) box.classList.add('collapsed'); else box.classList.remove('collapsed');
     box.querySelector('[data-draw-close]').addEventListener('click', () => { box.classList.remove('show', 'collapsed'); rec.chart.selectDrawing(null); });
+    box.querySelector('[data-draw-collapse]').addEventListener('click', () => { box.classList.toggle('collapsed'); });
     // Duration presets
     box.querySelector('[data-draw-dur-on]')?.addEventListener('change', e => {
       box.querySelector('[data-draw-dur-wrap]').classList.toggle('hidden', !e.target.checked);
@@ -1195,7 +1407,29 @@ UI.ready(async function () {
       }
       Object.assign(drawing, patch); rec.chart.updateDrawing(drawing.id, patch); markDirty();
       await syncDrawingRule(rec, drawing, false); box.classList.remove('show');
-      if (isTask && window.UI && UI.openOrchestrator) { try { UI.openOrchestrator(); } catch (er) {} }
+      if (isTask) {
+        // Open the task's own chat with the owner's поручение as its first
+        // message and Иван's confirmation, so the same thread already exists in
+        // the app and Telegram before the scheduled snapshot/report arrives.
+        const convId = patch.conversationId;
+        if (convId && convId !== 'default') {
+          try {
+            await API.http.aiOrchestratorAnnounceChartTask(convId, {
+              instruction: patch.agentMessage || '',
+              agent_id: patch.agentId || 'ivan',
+              instrument: rec.model.config.instrument,
+              price: Number(drawing.price),
+              type: drawing.type,
+              label: patch.label || '',
+              delay_seconds: parseDelaySeconds(patch.agentMessage),
+              duration_minutes: patch.durationMinutes || 0,
+              report_mode: patch.reportMode || 'touch',
+              action: ruleAction,
+            });
+          } catch (er) { /* announcement is best-effort */ }
+        }
+        if (window.UI && UI.openOrchestrator) { try { UI.openOrchestrator(); } catch (er) {} }
+      }
     });
   }
 
@@ -1243,6 +1477,78 @@ UI.ready(async function () {
     rec.chart.removeDrawing(drawing.id); qs('.dwin-drawing-editor', rec.node).classList.remove('show'); markDirty();
     if (drawing.alertId) try { await API.http.deletePriceAlert(drawing.alertId); } catch (e) { /* already removed */ }
     toast('Отметка удалена');
+  }
+
+  function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  }
+
+  function selectedDrawingCtx() {
+    const active = activeRec();
+    if (active && active.chart) {
+      const drawing = active.chart.getSelectedDrawing();
+      if (drawing) return { rec: active, drawing };
+    }
+    for (const rec of wins.values()) {
+      if (rec.model.minimized || !rec.chart) continue;
+      const drawing = rec.chart.getSelectedDrawing();
+      if (drawing) return { rec, drawing };
+    }
+    return null;
+  }
+
+  function cloneDrawing(drawing) {
+    const clone = JSON.parse(JSON.stringify(drawing));
+    clone.id = 'dr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    delete clone.alertId;
+    clone.status = 'local-only';
+    clone.createdAt = new Date().toISOString();
+    const px = Number(drawing.price);
+    const priceStep = Number.isFinite(px) ? Math.max(Math.abs(px) * 0.001, 0.25) : 0.25;
+    const indexStep = 3;
+    if (Array.isArray(clone.points)) {
+      clone.points = clone.points.map(pt => Object.assign({}, pt, {
+        price: Number(pt.price) + priceStep,
+        index: (Number(pt.index) || 0) + indexStep,
+      }));
+      delete clone.price;
+    } else {
+      if (Number.isFinite(Number(clone.price))) clone.price = Number(clone.price) + priceStep;
+      if (clone.index != null) clone.index = Number(clone.index) + indexStep;
+    }
+    return clone;
+  }
+
+  function copySelectedDrawing() {
+    const ctx = selectedDrawingCtx();
+    if (!ctx) return false;
+    drawingClipboard = JSON.parse(JSON.stringify(ctx.drawing));
+    toast('Отметка скопирована');
+    return true;
+  }
+
+  function pasteDrawingClipboard() {
+    if (!drawingClipboard) return false;
+    const rec = activeRec();
+    if (!rec || !rec.chart) return false;
+    const clone = cloneDrawing(drawingClipboard);
+    rec.model.drawings = Array.isArray(rec.model.drawings) ? rec.model.drawings : [];
+    rec.model.drawings.push(clone);
+    rec.chart.setDrawings(rec.model.drawings);
+    rec.chart.selectDrawing(clone.id);
+    renderDrawingEditor(rec, clone);
+    markDirty();
+    toast('Отметка вставлена');
+    return true;
+  }
+
+  async function deleteSelectedDrawing() {
+    const ctx = selectedDrawingCtx();
+    if (!ctx) return false;
+    await removeDrawing(ctx.rec, ctx.drawing);
+    return true;
   }
 
   function deleteModelAlerts(model) {
@@ -1489,12 +1795,169 @@ UI.ready(async function () {
     finally { cmdInFlight = false; }
   }, 2000);
 
-  // ---- proportional chart grids ----------------------------------------
-  function openGridMenu(anchor) {
-    UI.menu(anchor, GRID_COUNTS.map(count => ({
-      icon: 'grid', label: `${count} ${count === 1 ? 'график' : count < 5 ? 'графика' : 'графиков'}`,
-      onClick: () => applyGrid(count),
-    })));
+  // ---- proportional chart grids (all / group / manual) ------------------
+  function modelRoot(model) {
+    return (model.config && (model.config.root || String(model.config.instrument || '').split(' ')[0])) || '';
+  }
+
+  // Build ordered groups from the static catalog: 'Индексы' → [{root,name,group}].
+  function instrumentGroups() {
+    const map = new Map();
+    DESKTOP_INSTRUMENTS.forEach(([root, name, group]) => {
+      if (!map.has(group)) map.set(group, []);
+      map.get(group).push({ root, name, group });
+    });
+    return map;
+  }
+
+  // Toolbar menu: whole catalog, a single category, or manual checkbox picker.
+  function openChartsMenu(anchor) {
+    const items = [{ icon: 'grid', label: `Все графики (${DESKTOP_INSTRUMENTS.length})`, onClick: () => applyAllInstruments() },
+      { divider: true }];
+    for (const [group, rows] of instrumentGroups()) {
+      items.push({ icon: 'layers', label: `${group} (${rows.length})`, onClick: () => applyGroup(group) });
+    }
+    items.push({ divider: true });
+    items.push({ icon: 'list', label: 'Выбрать вручную…', onClick: () => openInstrumentPicker() });
+    UI.menu(anchor, items);
+  }
+
+  // Presets replace the whole set; the manual picker (below) is additive.
+  function applyAllInstruments() { return syncInstrumentGrid(DESKTOP_INSTRUMENTS.map(r => r[0])); }
+  function applyGroup(group) {
+    return syncInstrumentGrid(DESKTOP_INSTRUMENTS.filter(r => r[2] === group).map(r => r[0]));
+  }
+
+  // Core: reconcile the open windows with the requested instrument roots and
+  // tile them into equal cells filling the screen. Every selection mode funnels
+  // through here, so add/remove always ends in a proportional retileGrid().
+  async function syncInstrumentGrid(roots, opts) {
+    opts = opts || {};
+    const wanted = new Set(roots);
+    const all = (await NTData.instruments()).filter(item => item.available && item.symbol);
+    const byRoot = new Map(all.map(item => [item.root, item]));
+    // Keep catalog order and only roots that actually have a live contract.
+    const desired = [];
+    DESKTOP_INSTRUMENTS.forEach(([root]) => { if (wanted.has(root) && byRoot.has(root)) desired.push(root); });
+    if (!desired.length) { toast('Нет доступных контрактов для выбранных инструментов'); return; }
+
+    const tf = opts.timeframe || layout.gridTimeframe || '5m';
+    layout.gridMode = 'instruments';
+    layout.gridRoots = desired.slice();
+    layout.gridTimeframe = tf;
+    layout.screenFit = true;
+    applyCanvas();
+
+    const desiredSet = new Set(desired);
+    const bigGrid = desired.length >= 12;
+    bulkMounting = true;
+    try {
+      // Drop windows whose instrument is no longer requested.
+      layout.windows.slice().forEach(model => { if (!desiredSet.has(modelRoot(model))) destroyWindow(model); });
+      // Add windows for newly requested instruments.
+      const have = new Set(layout.windows.map(modelRoot));
+      desired.forEach(root => {
+        if (have.has(root)) return;
+        const item = byRoot.get(root);
+        const cfg = { instrument: item.symbol, root: item.root, timeframe: tf || template.timeframe,
+          indicators: template.indicators.slice(), type: template.type,
+          range: bigGrid ? { id: '1d', days: 1, from: '', to: '' } : Object.assign({}, template.range),
+          aspect: template.aspect, style: cloneStyle(template.style) };
+        layout.seq = (layout.seq || 0) + 1;
+        const model = { id: 'c' + Date.now() + '_' + layout.seq, x: 0, y: 0, w: 640, h: 420,
+          z: 10, minimized: false, maximized: false, pinned: false, bare: false, config: cfg, drawings: [] };
+        layout.windows.push(model);
+        createWindow(model);
+      });
+      // Stable, catalog-ordered layout so tiling is deterministic.
+      layout.windows.sort((a, b) => desired.indexOf(modelRoot(a)) - desired.indexOf(modelRoot(b)));
+    } finally { bulkMounting = false; }
+
+    layout.grid = layout.windows.length;
+    retileGrid();
+    wins.forEach(rec => { rec.nextPollAt = 0; if (rec.chart) rec.chart.resize(); });
+    viewport.scrollLeft = 0; viewport.scrollTop = 0;
+    renderDock(); refreshEmpty(); markDirty();
+    const n = layout.windows.length;
+    toast(`На весь экран: ${n} ${n === 1 ? 'график' : n < 5 ? 'графика' : 'графиков'}`);
+  }
+
+  // Manual picker: checkbox list grouped by category, with per-group toggles.
+  // Pre-checks the current set, so applying is additive relative to what's open.
+  async function openInstrumentPicker() {
+    const all = (await NTData.instruments());
+    const availByRoot = new Map(all.map(item => [item.root, !!item.available]));
+    const current = (layout.gridMode === 'instruments' && (layout.gridRoots || []).length)
+      ? layout.gridRoots
+      : layout.windows.map(modelRoot).filter(Boolean);
+    const sel = new Set(current);
+    const curTf = layout.gridTimeframe || '5m';
+
+    const groupsHtml = Array.from(instrumentGroups().entries()).map(([group, rows]) => `
+      <div class="dsk-pick-group" data-group="${escAttr(group)}">
+        <label class="dsk-pick-ghead"><input type="checkbox" data-group-cb><b>${escAttr(group)}</b><span class="dsk-pick-gc">${rows.length}</span></label>
+        <div class="dsk-pick-grid">${rows.map(x => {
+          const avail = availByRoot.get(x.root);
+          return `<label class="ind-chip ${sel.has(x.root) ? 'on' : ''} ${avail ? '' : 'dsk-pick-off'}">
+            <input type="checkbox" value="${escAttr(x.root)}" ${sel.has(x.root) ? 'checked' : ''} ${avail ? '' : 'disabled'}>
+            <span>${escAttr(x.root)} · ${escAttr(x.name)}${avail ? '' : ' · нет контракта'}</span></label>`;
+        }).join('')}</div>
+      </div>`).join('');
+
+    const d = UI.drawer('Инструменты на рабочем столе', `<div class="dsk-pick" id="dsk-pick">
+      <div class="dsk-pick-bar">
+        <button type="button" class="btn sm" data-pick-all>Включить все</button>
+        <button type="button" class="btn sm ghost" data-pick-none>Снять все</button>
+        <div class="spacer"></div>
+        <label class="dsk-pick-tf">Таймфрейм<select data-pick-tf>${TIMEFRAMES.map(t => `<option value="${t}" ${t === curTf ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      </div>
+      <div class="dsk-pick-groups">${groupsHtml}</div>
+      <div class="dchart-hint">Пресеты («Все графики» и группы) заменяют набор целиком. Здесь набор пополняется: отметьте нужные графики, снимите лишние. Все окна разложатся пропорционально одинаковыми ячейками на весь экран.</div>
+      <div class="dchart-actions">
+        <button type="button" class="btn ghost" data-close-drawer>Отмена</button>
+        <button type="button" class="btn primary" data-pick-apply>Применить (<span data-pick-count>${sel.size}</span>)</button>
+      </div>
+    </div>`);
+    d.classList.add('wide');
+    const root = qs('#dsk-pick', d);
+
+    function refreshState() {
+      const cEl = qs('[data-pick-count]', d);
+      if (cEl) cEl.textContent = String(root.querySelectorAll('.dsk-pick-grid input:checked').length);
+      qsaLocal('.dsk-pick-group', root).forEach(g => {
+        const boxes = Array.from(g.querySelectorAll('.dsk-pick-grid input:not(:disabled)'));
+        const on = boxes.filter(b => b.checked).length;
+        const head = qs('[data-group-cb]', g);
+        head.checked = boxes.length > 0 && on === boxes.length;
+        head.indeterminate = on > 0 && on < boxes.length;
+      });
+    }
+    root.addEventListener('change', (e) => {
+      const inst = e.target.closest('.dsk-pick-grid input[type="checkbox"]');
+      if (inst) { inst.closest('.ind-chip').classList.toggle('on', inst.checked); refreshState(); return; }
+      const gh = e.target.closest('[data-group-cb]');
+      if (gh) {
+        gh.closest('.dsk-pick-group').querySelectorAll('.dsk-pick-grid input:not(:disabled)')
+          .forEach(b => { b.checked = gh.checked; b.closest('.ind-chip').classList.toggle('on', b.checked); });
+        refreshState();
+      }
+    });
+    qs('[data-pick-all]', d).addEventListener('click', () => {
+      root.querySelectorAll('.dsk-pick-grid input:not(:disabled)').forEach(b => { b.checked = true; b.closest('.ind-chip').classList.add('on'); });
+      refreshState();
+    });
+    qs('[data-pick-none]', d).addEventListener('click', () => {
+      root.querySelectorAll('.dsk-pick-grid input').forEach(b => { b.checked = false; b.closest('.ind-chip').classList.remove('on'); });
+      refreshState();
+    });
+    qs('[data-pick-apply]', d).addEventListener('click', () => {
+      const roots = Array.from(root.querySelectorAll('.dsk-pick-grid input:checked')).map(b => b.value);
+      if (!roots.length) { toast('Отметьте хотя бы один график'); return; }
+      const tf = qs('[data-pick-tf]', d).value || '5m';
+      UI.closeDrawer();
+      syncInstrumentGrid(roots, { timeframe: tf });
+    });
+    refreshState();
   }
 
   // ---- snapshot gallery (Иван's captures + saved patterns) --------------
@@ -1508,6 +1971,13 @@ UI.ready(async function () {
     const d = UI.drawer('Снимки графиков — Иван', `<div class="snap-gallery-wrap">
       <div class="snap-gallery-bar">
         <select id="snap-pattern"><option value="">Все снимки</option></select>
+        <select id="snap-inst"><option value="">Все инструменты</option></select>
+        <select id="snap-sort">
+          <option value="new">Сначала новые</option>
+          <option value="old">Сначала старые</option>
+          <option value="inst">По инструменту</option>
+          <option value="pattern">По паттерну</option>
+        </select>
         <label class="snap-fav-toggle"><input type="checkbox" id="snap-fav-only"><span>Только избранное</span></label>
         <div class="spacer"></div>
         <button class="btn sm" id="snap-refresh">Обновить</button>
@@ -1518,16 +1988,32 @@ UI.ready(async function () {
     </div>`);
     d.classList.add('wide');
     const grid = qs('#snap-grid', d), patternSel = qs('#snap-pattern', d), favOnly = qs('#snap-fav-only', d);
+    const instSel = qs('#snap-inst', d), sortSel = qs('#snap-sort', d);
+    function sortSnaps(items, mode) {
+      const rows = items.slice();
+      if (mode === 'old') rows.sort((a, b) => String(a.created_at_utc || '').localeCompare(String(b.created_at_utc || '')));
+      else if (mode === 'inst') rows.sort((a, b) => String(a.instrument || '').localeCompare(String(b.instrument || '')) || String(b.created_at_utc || '').localeCompare(String(a.created_at_utc || '')));
+      else if (mode === 'pattern') rows.sort((a, b) => String(a.pattern || 'яяя').localeCompare(String(b.pattern || 'яяя')) || String(b.created_at_utc || '').localeCompare(String(a.created_at_utc || '')));
+      else rows.sort((a, b) => String(b.created_at_utc || '').localeCompare(String(a.created_at_utc || '')));
+      return rows;
+    }
     async function reload() {
       grid.innerHTML = '<div class="empty-state">Загрузка…</div>';
       let data;
       try { data = await API.http.snapshots({ pattern: patternSel.value || undefined, favorites: favOnly.checked ? 1 : undefined }); }
       catch (e) { grid.innerHTML = '<div class="empty-state">Не удалось загрузить снимки.</div>'; return; }
-      const items = (data && data.snapshots) || [];
+      let items = (data && data.snapshots) || [];
       const patterns = (data && data.patterns) || [];
       const cur = patternSel.value;
       patternSel.innerHTML = '<option value="">Все снимки</option>' +
         patterns.map(p => `<option value="${escAttr(p.name)}" ${p.name === cur ? 'selected' : ''}>${escAttr(p.name)} · ${p.count}</option>`).join('');
+      // Instrument filter is populated from what is present, then applied.
+      const instruments = Array.from(new Set(items.map(s => s.instrument).filter(Boolean))).sort();
+      const curInst = instSel.value;
+      instSel.innerHTML = '<option value="">Все инструменты</option>' +
+        instruments.map(i => `<option value="${escAttr(i)}" ${i === curInst ? 'selected' : ''}>${escAttr(i)}</option>`).join('');
+      if (curInst) items = items.filter(s => s.instrument === curInst);
+      items = sortSnaps(items, sortSel.value);
       grid.innerHTML = items.length ? items.map(s => `
         <div class="snap-card ${s.favorite ? 'fav' : ''}" data-id="${escAttr(s.id)}">
           <a href="${escAttr(s.url)}" target="_blank" rel="noopener"><img loading="lazy" src="${escAttr(s.url)}" alt=""></a>
@@ -1559,6 +2045,8 @@ UI.ready(async function () {
     });
     patternSel.addEventListener('change', reload);
     favOnly.addEventListener('change', reload);
+    instSel.addEventListener('change', reload);
+    sortSel.addEventListener('change', reload);
     qs('#snap-refresh', d).addEventListener('click', reload);
     qs('#snap-clear', d).addEventListener('click', async () => {
       if (!confirm('Очистить все снимки, кроме избранных?')) return;
@@ -1566,40 +2054,6 @@ UI.ready(async function () {
       reload();
     });
     reload();
-  }
-
-  async function applyGrid(count) {
-    const list = (await NTData.instruments()).filter(item => item.available && item.symbol);
-    if (!list.length) { toast('Список актуальных инструментов пока недоступен'); return; }
-    // Grids fill the actual screen: switch to screen-fit so N charts tile the
-    // whole visible area (and the whole monitor in fullscreen), no letterboxing.
-    layout.screenFit = true;
-    layout.grid = count;
-    applyCanvas();
-
-    while (layout.windows.length > count) {
-      const model = layout.windows.pop(); deleteModelAlerts(model);
-      const rec = wins.get(model.id); if (rec) { rec.chart.destroy(); rec.node.remove(); wins.delete(model.id); }
-    }
-    const shuffled = list.slice().sort(() => Math.random() - 0.5);
-    bulkMounting = true;
-    try {
-      while (layout.windows.length < count) {
-        const item = shuffled[layout.windows.length % shuffled.length];
-        const cfg = { instrument: item.symbol, root: item.root, timeframe: '5m', indicators: [], type: 'candles',
-          range: { id: count >= 12 ? '1d' : '1m', days: count >= 12 ? 1 : 31, from: '', to: '' }, style: Object.assign({}, DEFAULT_STYLE) };
-        layout.seq = (layout.seq || 0) + 1;
-        const model = { id: 'c' + Date.now() + '_' + layout.seq, x: 0, y: 0, w: 640, h: 420,
-          z: 10, minimized: false, maximized: false, pinned: false, bare: false, config: cfg, drawings: [] };
-        layout.windows.push(model); createWindow(model);
-      }
-    } finally { bulkMounting = false; }
-
-    retileGrid();
-    wins.forEach(rec => { rec.nextPollAt = 0; if (rec.chart) rec.chart.resize(); });
-    viewport.scrollLeft = 0; viewport.scrollTop = 0;
-    renderDock(); refreshEmpty(); markDirty();
-    toast(`Сетка на весь экран: ${count} ${count === 1 ? 'график' : count < 5 ? 'графика' : 'графиков'}`);
   }
 
   // ---- layouts menu ------------------------------------------------------
@@ -1688,7 +2142,8 @@ UI.ready(async function () {
   qs('#dsk-add').addEventListener('click', () => openChartDialog(null));
   qs('#dsk-empty-add').addEventListener('click', () => openChartDialog(null));
   qs('#dsk-layouts').addEventListener('click', (e) => { e.stopPropagation(); openLayoutsMenu(e.currentTarget); });
-  qs('#dsk-grid').addEventListener('click', (e) => { e.stopPropagation(); openGridMenu(e.currentTarget); });
+  qs('#dsk-grid').addEventListener('click', (e) => { e.stopPropagation(); openChartsMenu(e.currentTarget); });
+  const templateBtn = qs('#dsk-template'); if (templateBtn) templateBtn.addEventListener('click', () => openChartDialog(null, 'template'));
   const galleryBtn = qs('#dsk-gallery'); if (galleryBtn) galleryBtn.addEventListener('click', openGallery);
   qs('#dsk-save').addEventListener('click', () => { persistNow(); toast('Рабочий стол сохранён'); });
   qs('#dsk-clear').addEventListener('click', () => {
@@ -1764,6 +2219,26 @@ UI.ready(async function () {
   document.addEventListener('pointerdown', (e) => {
     qsaLocal('.dwin-tools.open', canvas).forEach(w => { if (!w.contains(e.target)) { w.classList.remove('open'); const m = qs('.dwin-tools-menu', w); if (m) m.classList.remove('open'); } });
     qsaLocal('.dwin-side.open', canvas).forEach(s => { if (!s.contains(e.target)) s.classList.remove('open'); });
+  }, true);
+
+  // Delete / copy / paste for selected drawings (lines, points, arrows, …).
+  // Use e.code (KeyC/KeyV) — e.key is layout-dependent (Russian «с»/«м» break Ctrl+C/V).
+  document.addEventListener('keydown', (e) => {
+    if (!wins.size || isTypingTarget(document.activeElement)) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (!selectedDrawingCtx()) return;
+      e.preventDefault();
+      deleteSelectedDrawing();
+      return;
+    }
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.code === 'KeyC') {
+      if (!copySelectedDrawing()) return;
+      e.preventDefault();
+    } else if (e.code === 'KeyV') {
+      if (!pasteDrawingClipboard()) return;
+      e.preventDefault();
+    }
   }, true);
 
   // ---- boot --------------------------------------------------------------

@@ -125,7 +125,7 @@ namespace NTAnalyzerBridge
                 // No order placement, no strategy enable/disable.
                 try
                 {
-                    _runtimeExporter = new RuntimeTelemetryExporter(_cfg.ProjectRoot);
+                    _runtimeExporter = new RuntimeTelemetryExporter(_cfg.ProjectRoot, _cfg.RuntimeDataDir);
                     _runtimeExporter.Start();
                 }
                 catch (Exception rex)
@@ -137,7 +137,7 @@ namespace NTAnalyzerBridge
                 // the browser desktop. Read-only; never places orders.
                 try
                 {
-                    _marketDataExporter = new RuntimeMarketDataExporter(_cfg.ProjectRoot);
+                    _marketDataExporter = new RuntimeMarketDataExporter(_cfg.ProjectRoot, _cfg.RuntimeDataDir);
                     _marketDataExporter.Start();
                 }
                 catch (Exception mdex)

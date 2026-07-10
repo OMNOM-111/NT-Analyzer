@@ -63,6 +63,54 @@ MODEL_PRICING: Dict[tuple[str, str], Dict[str, Any]] = {
         "pricing_basis": "OpenAI public reference; Azure invoice is authoritative",
         "pricing_source_url": "https://platform.openai.com/docs/models/text-embedding-3-small",
     },
+    ("github_models", "openai/gpt-4.1"): {
+        "input_price_usd_per_m": 2.0,
+        "cached_input_price_usd_per_m": 0.5,
+        "output_price_usd_per_m": 8.0,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
+    ("github_models", "openai/gpt-4.1-mini"): {
+        "input_price_usd_per_m": 0.4,
+        "cached_input_price_usd_per_m": 0.1,
+        "output_price_usd_per_m": 1.6,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
+    ("github_models", "openai/gpt-4o-mini"): {
+        "input_price_usd_per_m": 0.15,
+        "cached_input_price_usd_per_m": 0.08,
+        "output_price_usd_per_m": 0.6,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
+    ("github_models", "deepseek/deepseek-r1"): {
+        "input_price_usd_per_m": 1.35,
+        "cached_input_price_usd_per_m": None,
+        "output_price_usd_per_m": 5.4,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
+    ("github_models", "microsoft/phi-4"): {
+        "input_price_usd_per_m": 0.13,
+        "cached_input_price_usd_per_m": None,
+        "output_price_usd_per_m": 0.5,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
+    ("github_models", "meta/llama-3.3-70b-instruct"): {
+        "input_price_usd_per_m": 0.71,
+        "cached_input_price_usd_per_m": None,
+        "output_price_usd_per_m": 0.71,
+        "pricing_status": "configured",
+        "pricing_basis": "Official GitHub Models direct billing token-unit pricing",
+        "pricing_source_url": "https://docs.github.com/en/billing/reference/models-multipliers-and-costs",
+    },
     ("zai", "glm-5.2"): {
         "input_price_usd_per_m": 1.4,
         "cached_input_price_usd_per_m": 0.26,
@@ -90,6 +138,19 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "supports_balance_sync": False,
         "help_url": "https://platform.openai.com/api-keys",
         "pricing_url": "https://openai.com/api/pricing/",
+    },
+    "github_models": {
+        "label": "GitHub Models",
+        "base_url": "https://models.github.ai/inference",
+        "auth_type": "bearer",
+        "supports_balance_sync": False,
+        "help_url": "https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models#experimenting-with-ai-models-using-the-api",
+        "pricing_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/about-billing-for-github-models",
+        "note": (
+            "Используйте GitHub PAT с правом models:read. Copilot Pro даёт "
+            "бесплатный rate-limited доступ; paid usage для GitHub Models "
+            "включается отдельно и не зависит от способа оплаты Copilot."
+        ),
     },
     "deepseek": {
         "label": "DeepSeek",
@@ -250,6 +311,11 @@ def normalize_openrouter_model(model: str) -> str:
     return OPENROUTER_DEPRECATED_FREE_MODELS.get(lowered, text)
 
 
+def _is_github_models_host(base_url: str) -> bool:
+    host = (urlparse(str(base_url or "")).hostname or "").lower()
+    return host == "models.github.ai"
+
+
 def is_openrouter_free_model(model: str) -> bool:
     lowered = str(model or "").strip().lower()
     if lowered in OPENROUTER_FREE_MODELS:
@@ -260,6 +326,8 @@ def is_openrouter_free_model(model: str) -> bool:
 def infer_billing_mode(provider: str, model: str, credit_total: float = 0.0) -> str:
     if credit_total > 0:
         return "credit"
+    if provider == "github_models":
+        return "free_tier"
     if provider == "gemini":
         return "free_tier"
     if provider == "openrouter" and is_openrouter_free_model(model):
@@ -275,6 +343,8 @@ def _default_account_name(provider: str, base_url: str, credit_total: float = 0.
             return "Azure Student Grant ($100)" if abs(credit_total - 100.0) < 0.001 else "Azure Student Grant"
         host = urlparse(str(base_url or "")).hostname or "Foundry"
         return f"Azure · {host.split('.')[0]}"
+    if provider == "github_models":
+        return "GitHub Models API"
     if provider == "gemini":
         suffix = str(agent_name or "").replace("Gemini", "").strip(" _-")
         return f"Google AI Studio · {suffix}" if suffix else "Google AI Studio"
@@ -332,6 +402,20 @@ def _repair_doc(doc: Dict[str, Any]) -> bool:
             continue
         provider = str(row.get("provider") or "")
         model = str(row.get("model") or "")
+        if provider == "custom" and _is_github_models_host(str(row.get("base_url") or "")):
+            row["provider"] = "github_models"
+            provider = "github_models"
+            if str(row.get("billing_mode") or "").strip().lower() in {"", "unknown"}:
+                row["billing_mode"] = "free_tier"
+            if str(row.get("rotation_group") or "").strip() in {"", "custom-pool"}:
+                row["rotation_group"] = "github-models"
+            if str(row.get("pricing_status") or "").strip() in {"", "unpriced"}:
+                row["pricing_status"] = "free" if row.get("billing_mode") == "free_tier" else "configured"
+            if not str(row.get("pricing_basis") or "").strip() or str(row.get("pricing_basis")) == "Manual/custom configuration":
+                row["pricing_basis"] = "GitHub Models free quota by default; paid usage uses GitHub token-unit billing"
+            if not str(row.get("pricing_source_url") or "").strip():
+                row["pricing_source_url"] = PROVIDERS["github_models"].get("pricing_url") or ""
+            changed = True
         if provider == "openrouter":
             normalized = normalize_openrouter_model(model)
             if normalized != model:

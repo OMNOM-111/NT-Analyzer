@@ -48,6 +48,15 @@ def test_status_reports_backend_and_config(isolated, monkeypatch) -> None:
     assert "не запущен" in doc["message_ru"].lower()
 
 
+def test_find_executable_uses_portable_cloudflared_copy(isolated, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_CLOUDFLARED_EXE", raising=False)
+    portable = isolated / "tools" / "cloudflared" / "cloudflared.exe"
+    portable.parent.mkdir(parents=True, exist_ok=True)
+    portable.write_text("", encoding="utf-8")
+
+    assert tunnel_manager._find_executable() == portable
+
+
 def test_launch_enables_remote_and_starts_tunnel(isolated, monkeypatch) -> None:
     monkeypatch.setattr(tunnel_manager, "_backend_listening", lambda port=8765: True)
     monkeypatch.setattr(tunnel_manager, "_spawn_tunnel", lambda exe, config, tunnel_ref: 4242)

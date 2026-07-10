@@ -17,7 +17,7 @@ namespace NTAnalyzerBridge.Runtime
     /// Phase 17 - NinjaTrader runtime telemetry exporter.
     ///
     /// Writes JSON snapshots and JSONL append-only event streams under
-    ///   {project_root}/data/runtime/
+    ///   runtime_data_dir if configured, otherwise {project_root}/data/runtime/
     /// so the NT-Analyzer Strategy Control Center (app/runtime.py) can
     /// merge real Ninja runtime state with its registry/state machine.
     ///
@@ -44,12 +44,12 @@ namespace NTAnalyzerBridge.Runtime
         private string _activeCycleId = "";
         private long _activeCycleStamp;
 
-        public RuntimeTelemetryExporter(string projectRoot)
+        public RuntimeTelemetryExporter(string projectRoot, string runtimeDir = null)
         {
             if (string.IsNullOrEmpty(projectRoot))
                 throw new ArgumentNullException(nameof(projectRoot));
             _projectRoot = projectRoot;
-            _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
+            _runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? Path.Combine(projectRoot, "data", "runtime") : runtimeDir;
             Directory.CreateDirectory(_runtimeDir);
             LoadKnownExecutionIds();
             _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);

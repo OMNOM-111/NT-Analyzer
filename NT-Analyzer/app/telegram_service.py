@@ -195,6 +195,71 @@ def _bot_identity(token: Optional[str] = None) -> Dict[str, Any]:
     return result
 
 
+def download_file(file_path: str, *, token: Optional[str] = None, timeout: float = 20.0) -> Optional[bytes]:
+    """Download a Telegram file by its ``file_path`` via the bot file endpoint.
+
+    Returns raw bytes or ``None``. Never raises: avatar fetching is best-effort
+    and must never break login or the cabinet.
+    """
+    secret_token = str(token or os.environ.get(TOKEN_ENV) or "").strip()
+    path = str(file_path or "").strip().lstrip("/")
+    if not secret_token or not path:
+        return None
+    base = str(os.environ.get(API_BASE_ENV) or "https://api.telegram.org").rstrip("/")
+    url = f"{base}/file/bot{secret_token}/{path}"
+    request = urllib.request.Request(url, headers={"Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            blob = response.read()
+        return blob if blob and len(blob) <= 3_000_000 else (blob if blob else None)
+    except Exception:  # pragma: no cover - network failure path
+        return None
+
+
+def fetch_user_avatar(user_id: Any, *, size_pref: int = 200) -> Optional[Dict[str, Any]]:
+    """Best-effort fetch of a Telegram user's profile photo through the bot.
+
+    Returns ``{"bytes", "ext", "file_unique_id"}`` or ``None``. The bot can read
+    ``getUserProfilePhotos`` for any user that has started it (all StratForge
+    users authenticate via ``requestContact``). Never raises.
+    """
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    if uid <= 0 or not str(os.environ.get(TOKEN_ENV) or "").strip():
+        return None
+    try:
+        photos = _api_call("getUserProfilePhotos", {"user_id": uid, "limit": 1})
+    except TelegramServiceError:
+        return None
+    sets = (photos or {}).get("photos") if isinstance(photos, dict) else None
+    if not sets or not isinstance(sets, list) or not sets[0]:
+        return None
+    sizes = [s for s in sets[0] if isinstance(s, dict) and s.get("file_id")]
+    if not sizes:
+        return None
+    # Prefer the smallest size that is still >= size_pref (a crisp thumbnail);
+    # otherwise take the largest available.
+    ordered = sorted(sizes, key=lambda s: int(s.get("width") or 0))
+    chosen = ordered[-1]
+    for size in ordered:
+        if int(size.get("width") or 0) >= size_pref:
+            chosen = size
+            break
+    try:
+        file_info = _api_call("getFile", {"file_id": chosen.get("file_id")})
+    except TelegramServiceError:
+        return None
+    file_path = (file_info or {}).get("file_path") if isinstance(file_info, dict) else ""
+    blob = download_file(str(file_path or ""))
+    if not blob:
+        return None
+    lowered = str(file_path or "").lower()
+    ext = "png" if lowered.endswith(".png") else "webp" if lowered.endswith(".webp") else "jpg"
+    return {"bytes": blob, "ext": ext, "file_unique_id": str(chosen.get("file_unique_id") or "")}
+
+
 def configure_token(token: str) -> Dict[str, Any]:
     candidate = str(token or "").strip()
     if not re.fullmatch(r"\d{5,}:[A-Za-z0-9_-]{20,}", candidate):
@@ -587,6 +652,37 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
     return dict(result) if isinstance(result, dict) else {"ok": True}
 
 
+def send_photo_bytes(chat_id: Any, blob: bytes, *, caption: str = "", filename: str = "invite.png") -> bool:
+    """Send a raw image (bytes) to a specific chat. Used for shareable artifacts
+    like invitation cards. Not gated by chief-agent report settings."""
+    token = str(os.environ.get(TOKEN_ENV) or "").strip()
+    chat = str(chat_id or "").strip()
+    if not token or not chat or not blob:
+        return False
+    boundary = "----stratforge" + secrets.token_hex(16)
+    fields = {"chat_id": chat, "caption": str(caption or "")[:1024]}
+    parts: List[bytes] = []
+    for key, value in fields.items():
+        parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n").encode("utf-8"))
+    name = filename or "invite.png"
+    ctype = "image/jpeg" if name.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"{name}\"\r\n"
+                  f"Content-Type: {ctype}\r\n\r\n").encode("utf-8"))
+    parts.append(bytes(blob))
+    parts.append((f"\r\n--{boundary}--\r\n").encode("utf-8"))
+    body = b"".join(parts)
+    base = str(os.environ.get(API_BASE_ENV) or "https://api.telegram.org").rstrip("/")
+    request = urllib.request.Request(
+        f"{base}/bot{token}/sendPhoto", data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            return 200 <= int(response.status) < 300
+    except Exception:  # noqa: BLE001 — best-effort delivery
+        return False
+
+
 def send_photo(image_path: Any, caption: str = "", *, conversation_id: Optional[str] = None,
                conversation_title: str = "", silent: bool = True) -> bool:
     """Upload a chart snapshot image into the conversation's Telegram topic."""
@@ -730,11 +826,18 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
 def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
                       model_name: str = "Chief agent / deterministic",
                       conversation_id: Optional[str] = None,
-                      conversation_title: str = "") -> bool:
+                      conversation_title: str = "",
+                      dedupe_key: str = "") -> bool:
     """Send a model-attributed chief-agent report through the normal settings gate.
 
     In group mode the report is delivered into the Telegram forum topic bound to
     the originating app conversation (created once, then reused).
+
+    ``dedupe_key`` uniquely identifies an interactive reply (the assistant
+    message id). It bypasses the 24-hour text-dedup that exists only to swallow
+    repeated *automatic* notifications, so two identical chat answers (e.g. two
+    replies to "Как дела?") are both delivered instead of the second being
+    silently dropped.
     """
     thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
     # Model/provider attribution belongs in diagnostics, not in every message
@@ -742,7 +845,7 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     # callers, but executive reports intentionally contain only useful facts.
     return _notify(
         "chief_agent_reports", title, lines,
-        urgent=urgent, thread_id=thread_id,
+        urgent=urgent, thread_id=thread_id, dedupe_key=dedupe_key,
     )
 
 

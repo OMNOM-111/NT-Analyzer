@@ -723,6 +723,78 @@ def conversation_messages(conversation_id: str, limit: int = 200) -> List[Dict[s
     return _read_conversation(limit, path=_conversation_file(conversation_id))
 
 
+def announce_chart_task(*, conversation_id: str, instruction: str = "",
+                        agent_id: str = "ivan", instrument: str = "", price: Any = None,
+                        drawing_type: str = "line", label: str = "",
+                        delay_seconds: int = 0, duration_minutes: int = 0,
+                        report_mode: str = "touch", action: str = "snapshot",
+                        mirror_to_telegram: bool = True) -> Dict[str, Any]:
+    """Open a desktop chart task inside its own conversation.
+
+    A task drawn on the desktop (a watched level or a scheduled snapshot) starts
+    a dedicated dialogue: the owner's поручение becomes the first user message and
+    Иван immediately confirms it, so the same thread already exists in the app and
+    (in group mode) in Telegram before the scheduled snapshot/report arrives.
+    """
+    from . import domain_agents
+    cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
+    path = _conversation_file(cid)
+    profile = domain_agents.PERSONAS.get(str(agent_id or "ivan").lower()) or domain_agents.PERSONAS["ivan"]
+    agent_name = str(profile.get("name") or "Иван")
+    agent_title = str(profile.get("title") or "AI-оператор графиков")
+    ack = domain_agents.chart_task_acknowledgement(
+        instrument=instrument, price=price, drawing_type=drawing_type, label=label,
+        delay_seconds=delay_seconds, duration_minutes=duration_minutes,
+        report_mode=report_mode, action=action,
+    )
+    # Build a readable owner instruction when the editor left the note blank, so
+    # the chat always opens with a first-person поручение.
+    text = _redact_sensitive(str(instruction or "").strip())[:2000]
+    if not text:
+        root = " ".join(str(instrument or "").strip().upper().split())
+        try:
+            lvl = float(price) if price not in (None, "") else None
+        except (TypeError, ValueError):
+            lvl = None
+        parts = [f"{agent_name},"]
+        if lvl is not None and root:
+            parts.append(f"следи за уровнем {lvl:g} на {root}")
+        elif root:
+            parts.append(f"поработай по графику {root}")
+        else:
+            parts.append("сделай снимок активного графика")
+        if int(delay_seconds or 0) > 0:
+            mins = max(1, int(round(int(delay_seconds) / 60)))
+            parts.append(f"и пришли снимок через {mins} мин.")
+        elif int(duration_minutes or 0) > 0:
+            parts.append(f"в течение {int(duration_minutes)} мин. и пришли снимок в чат.")
+        else:
+            parts.append("и пришли снимок в чат.")
+        text = " ".join(parts)
+
+    user_msg = _append_conversation("user", text, source="app", path=path)
+    _touch_conversation(cid, title_hint=text)
+    assistant = _append_conversation(
+        "assistant", ack, source="chart_task", model="chart operator", provider="local",
+        agent_name=agent_name, actions=[], doubts=[], path=path,
+    )
+    _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков")
+    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)))
+    if mirror_to_telegram:
+        try:
+            from .. import telegram_service
+            title = _conversation_title(cid)
+            telegram_service.mirror_owner_message(text, conversation_id=cid, conversation_title=title)
+            telegram_service.send_chief_report(
+                f"{agent_name} · {agent_title}", [ack[:1500]], model_name="chart operator",
+                conversation_id=cid, conversation_title=title,
+                dedupe_key=str(assistant.get("message_id") or ""),
+            )
+        except Exception:
+            pass
+    return {"ok": True, "conversation_id": cid, "user_message": user_msg, "message": assistant}
+
+
 def report_chart_snapshot(*, conversation_id: str, text: str,
                           image_url: str = "", image_file: str = "", caption: str = "",
                           agent_name: str = "Иван",
@@ -765,6 +837,7 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
                 telegram_service.send_chief_report(
                     f"{agent_name} · снимок графика", lines, model_name="chart operator",
                     conversation_id=cid, conversation_title=title,
+                    dedupe_key=str(message.get("message_id") or ""),
                 )
         except Exception:
             pass
@@ -2696,14 +2769,28 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     # and approvals return to the orchestrator so their selected persona cannot
     # swallow an operational command as a chat-only answer.
     persona = None if operational_control else domain_agents.resolve_persona(clean, requested_agent)
+    # A concrete chart command ("поставь линию на MNQ 21500", "сделай снимок",
+    # "убери отметки") is exclusively the chart operator's job — the orchestrator
+    # cannot draw or snapshot. Route it to Иван even when nobody was named, so a
+    # chart request is never refused as "not my task".
+    if persona is None and not operational_control and not requested_agent:
+        if domain_agents.chart_command_persona(clean):
+            persona = domain_agents.PERSONAS["ivan"]
     if persona:
         domain = domain_agents.answer(str(persona["id"]), clean, conversation_id=cid)
         reply = str(domain.get("reply") or "")[:8000]
         model = str(domain.get("model") or "unknown")
         provider = str(domain.get("provider") or "")
+        # The responsible specialist may differ from the addressed one (a
+        # misdirected request is handed off), so attribute the reply to whoever
+        # actually answered — in the app history and in the Telegram mirror.
+        responder = domain.get("agent") if isinstance(domain.get("agent"), dict) else {}
+        responder_id = str(responder.get("id") or persona["id"])
+        responder_name = str(responder.get("name") or persona["name"])
+        responder_title = str(responder.get("title") or persona["title"])
         assistant = _append_conversation(
             "assistant", reply, source=source, model=model, provider=provider,
-            agent_name=str(persona["name"]), actions=[], doubts=[], path=conv_path,
+            agent_name=responder_name, actions=[], doubts=[], path=conv_path,
         )
         _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)))
         with _LOCK:
@@ -2711,20 +2798,22 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             state["last_model"] = model
             state["last_provider"] = provider
             state["last_complexity"] = domain.get("complexity")
-            state["last_domain_agent"] = persona["id"]
+            state["last_domain_agent"] = responder_id
             state["last_message_at_utc"] = _now()
             _save(state)
         if mirror_to_telegram and source != "telegram":
             try:
                 from .. import telegram_service
                 telegram_service.send_chief_report(
-                    f"{persona['name']} · {persona['title']}", [reply[:3200]], model_name=model,
+                    f"{responder_name} · {responder_title}", [reply[:3200]], model_name=model,
+                    conversation_id=cid, conversation_title=_conversation_title(cid),
+                    dedupe_key=str(assistant.get("message_id") or ""),
                 )
             except Exception:
                 pass
         return {
             **domain, "message": assistant, "conversation_id": cid,
-            "domain_agent": persona["id"], "actions": [], "doubts": [],
+            "domain_agent": responder_id, "actions": [], "doubts": [],
         }
     history = [
         {"role": row.get("role"), "content": row.get("content")}
@@ -2907,6 +2996,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             telegram_service.send_chief_report(
                 "StratForge Orchestrator", lines, model_name=model,
                 conversation_id=cid, conversation_title=_conversation_title(cid),
+                dedupe_key=str(assistant.get("message_id") or ""),
             )
         except Exception:
             pass

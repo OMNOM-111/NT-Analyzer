@@ -23,7 +23,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "title": "AI-финансовый контролёр",
         "role": "accountant",
         "page": "performance.html",
-        "aliases": ("марина", "marina", "бухгалтер", "финансовый контролёр", "финансовый контролер"),
+        "aliases": ("марина", "марин", "маришк", "marina", "бухгалтер", "финансовый контролёр", "финансовый контролер"),
         "capabilities": (
             "сверка P&L, комиссий и движения средств",
             "поиск дублей, пропусков и неклассифицированных операций",
@@ -36,7 +36,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "title": "AI-аналитик стратегий",
         "role": "strategy_analyst",
         "page": "strategies.html",
-        "aliases": ("толик", "tolik", "аналитик стратегий", "стратегический аналитик"),
+        "aliases": ("толик", "толя", "толян", "анатолий", "tolik", "anatoly", "аналитик стратегий", "стратегический аналитик"),
         "capabilities": (
             "контроль жизненного цикла стратегий",
             "сравнение результатов и поиск методологических рисков",
@@ -49,7 +49,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "title": "AI-новостной аналитик",
         "role": "news_analyst",
         "page": "news.html",
-        "aliases": ("никита", "nikita", "новостной агент", "аналитик новостей"),
+        "aliases": ("никита", "никит", "nikita", "новостной агент", "аналитик новостей"),
         "capabilities": (
             "анализ опубликованных и предстоящих рыночных событий",
             "оценка влияния на стратегии и инфраструктуру",
@@ -62,7 +62,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "title": "AI-оператор графиков",
         "role": "chart_operator",
         "page": "desktop.html",
-        "aliases": ("иван", "ivan", "график", "графист", "оператор графиков", "рабочий стол"),
+        "aliases": ("иван", "ваня", "вань", "ванюш", "иваныч", "ivan", "vanya", "график", "графист", "оператор графиков", "рабочий стол"),
         "capabilities": (
             "рисует линии и отметки на графиках по команде из чата",
             "следит за достижением цены за заданный срок",
@@ -178,6 +178,103 @@ def resolve_persona(message: str, requested_agent: str = "") -> Optional[Dict[st
         if any(head.startswith(alias) for alias in profile["aliases"]):
             return profile
     return None
+
+
+# Domain keyword signals used only to decide a *handoff* once a specialist is
+# already addressed. They must be specific enough that the responsible expert
+# takes over a misdirected request, and forgiving enough that a request which
+# also touches the addressed expert's own domain stays with them.
+_DOMAIN_KEYWORDS: Dict[str, Tuple[str, ...]] = {
+    "marina": (
+        "бухгалт", "комисси", "депозит", "вывод средств", "вывод денег", "сверк",
+        "проводк", "ведомост", "движени средств", "сальдо", "остаток на счёт",
+        "остаток на счет", "прибыл", "убыт", "пнл", "p&l", "п&л", "доход", "расход",
+        "налог", "дивиденд", "касс", "баланс счёт", "баланс счет", "финансов отчёт",
+        "финансов отчет", "заработа", "потеря",
+    ),
+    "nikita": (
+        "новост", "макроэконом", "экономическ календар", "календар событ",
+        "заседани фрс", "нонфарм", "инфляц", "cpi", "nfp", "фомс", "fomc",
+    ),
+    "tolik": (
+        "стратег", "бэктест", "backtest", "эксперимент", "переобуч", "оверфит",
+        "overfit", "walk-forward", "walk forward", "out-of-sample", "просадк",
+        "профит-фактор", "profit factor", "гипотез", "мутаци",
+    ),
+}
+
+
+def chart_command_persona(message: str) -> str:
+    """Return ``"ivan"`` when the message is a concrete desktop chart command.
+
+    Used to route chart work to the operator even when the owner did not name
+    anyone: drawing/opening/clearing a level or asking for a chart snapshot is
+    exclusively Иван's job and the orchestrator cannot perform it.
+
+    Deliberately conservative: a bare number without an instrument root (which
+    could be an account id, a job id or an amount) is NOT treated as a chart
+    command, so unrelated operational messages are never hijacked.
+    """
+    low = str(message or "").lower()
+    has_chart_word = any(word in low for word in ("график", "снимок", "скрин", "рабочий стол"))
+    intent = parse_chart_intent(message)
+    action = str(intent.get("action") or "")
+    root = bool(intent.get("root"))
+    if action == "clear" and (root or has_chart_word):
+        return "ivan"
+    if action in {"draw", "open"} and root:
+        return "ivan"
+    if action == "snapshot" and (root or has_chart_word):
+        return "ivan"
+    return ""
+
+
+def _domain_signals(message: str) -> List[str]:
+    """Return the specialist domains a message clearly touches (priority order)."""
+    low = str(message or "").lower()
+    signals: List[str] = []
+    if chart_command_persona(message):
+        signals.append("ivan")
+    for agent_id in ("marina", "nikita", "tolik"):
+        if any(word in low for word in _DOMAIN_KEYWORDS[agent_id]):
+            signals.append(agent_id)
+    return signals
+
+
+def route_specialist(addressed_id: str, message: str) -> Tuple[str, str]:
+    """Resolve the responsible specialist for a message addressed to ``addressed_id``.
+
+    Returns ``(responder_id, handoff_from_id)``. When the request clearly belongs
+    to the addressed expert (or to nobody in particular) it stays with them and
+    ``handoff_from`` is empty. When it unambiguously belongs to a different
+    expert, that expert takes over and ``handoff_from`` names the misaddressed
+    one so the reply can politely note the correction. Specialists never refuse.
+    """
+    addressed = str(addressed_id or "").lower()
+    if addressed not in PERSONAS:
+        return addressed, ""
+    signals = _domain_signals(message)
+    if not signals or addressed in signals:
+        return addressed, ""
+    return signals[0], addressed
+
+
+def _domain_scope_phrase(agent_id: str) -> str:
+    return {
+        "marina": "по бухгалтерии и финансам",
+        "tolik": "по стратегиям и исследованиям",
+        "nikita": "по новостям и рыночным событиям",
+        "ivan": "по графикам",
+    }.get(str(agent_id or ""), "по этому вопросу")
+
+
+def _handoff_note(from_id: str, to_id: str) -> str:
+    from_name = PERSONAS.get(str(from_id or ""), {}).get("name") or "другой агент"
+    to_name = PERSONAS.get(str(to_id or ""), {}).get("name") or "ответственный"
+    return (
+        f"Дмитрий Сергеевич, это не {from_name} — {_domain_scope_phrase(to_id)} "
+        f"отвечаю я, {to_name}."
+    )
 
 
 def _complexity(message: str, role: str) -> str:
@@ -657,6 +754,65 @@ def _fmt_delay(seconds: int) -> str:
     return f"{seconds // 60} мин. {seconds % 60} сек."
 
 
+def chart_task_acknowledgement(*, instrument: str = "", price: Any = None,
+                               drawing_type: str = "line", label: str = "",
+                               delay_seconds: int = 0, duration_minutes: int = 0,
+                               report_mode: str = "touch", action: str = "snapshot") -> str:
+    """Иван's spoken confirmation of a task configured from the desktop editor.
+
+    Mirrors the phrasing of :func:`chart_operator_answer` so a поручение created
+    with the on-chart drawing editor reads the same as one dictated in the chat.
+    """
+    root = " ".join(str(instrument or "").strip().upper().split())
+    delay = int(delay_seconds or 0)
+    duration = int(duration_minutes or 0)
+    mode = str(report_mode or "touch").strip().lower()
+    lines: List[str] = []
+    try:
+        level = float(price) if price is not None and str(price) != "" else None
+    except (TypeError, ValueError):
+        level = None
+
+    if str(action) == "agent":
+        where = f" на {root}" if root else ""
+        lvl = f" по уровню {_fmt_price(level)}" if level is not None else ""
+        lines.append(f"Принял поручение{where}{lvl}. Беру в работу и отчитаюсь в этот чат.")
+        if duration:
+            lines.append(f"Слежу {_fmt_duration(duration)} и вернусь с результатом.")
+        return "\n".join(lines)
+
+    human = _DRAWING_HUMAN.get(str(drawing_type or "line"), "отметку")
+    if level is not None and root:
+        lines.append(f"Готово — ставлю {human} на {root} по уровню {_fmt_price(level)}.")
+    elif root:
+        lines.append(f"Принял задачу по {root}.")
+    else:
+        lines.append("Принял задачу по активному графику.")
+
+    if delay:
+        lines.append(f"Сделаю снимок через {_fmt_delay(delay)} и пришлю его в этот чат.")
+    elif level is not None and duration:
+        if mode == "both":
+            lines.append(
+                f"Слежу {_fmt_duration(duration)}: как только цена коснётся уровня — пришлю снимок "
+                "графика в этот чат; если не дойдёт за это время — тоже пришлю снимок и сообщу, "
+                "что уровень не достигнут.")
+        elif mode == "expire":
+            lines.append(
+                f"Если за {_fmt_duration(duration)} цена не дойдёт до уровня — пришлю снимок графика "
+                "и сообщу, что уровень не достигнут.")
+        else:
+            lines.append(
+                f"Как только цена коснётся уровня в течение {_fmt_duration(duration)} — пришлю снимок "
+                "графика в этот чат.")
+    elif level is not None:
+        lines.append("Как только цена коснётся уровня — пришлю снимок графика в этот чат.")
+    else:
+        lines.append("Сделаю снимок и пришлю его в этот чат.")
+    lines.append("⚠️ Для рисования и снимков «Рабочий стол» должен быть открыт в приложении.")
+    return "\n".join(lines)
+
+
 def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[str, Any]:
     """Иван — turns a chat command into a live chart action via the command queue."""
     from .. import market_data  # local import avoids any import cycle at load time
@@ -777,11 +933,20 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
 
 def answer(agent_id: str, message: str, *, period: str = "month", account: str = "",
            conversation_id: str = "") -> Dict[str, Any]:
-    profile = PERSONAS.get(str(agent_id or "").lower())
-    if not profile:
+    addressed = str(agent_id or "").lower()
+    if addressed not in PERSONAS:
         raise ValueError("unknown domain agent")
+    # A misaddressed request is handled by the responsible specialist, who
+    # politely notes the correction. No specialist ever refuses a request that
+    # belongs to a colleague; it is simply routed to the right person.
+    responder_id, handoff_from = route_specialist(addressed, message)
+    profile = PERSONAS[responder_id]
     if profile["id"] == "ivan":
-        return chart_operator_answer(message, conversation_id=conversation_id)
+        result = chart_operator_answer(message, conversation_id=conversation_id)
+        if handoff_from:
+            result["reply"] = _handoff_note(handoff_from, responder_id) + "\n\n" + str(result.get("reply") or "")
+            result["handoff_from"] = handoff_from
+        return result
     if profile["id"] == "marina":
         snapshot = accounting_snapshot(period, account)
     elif profile["id"] == "tolik":
@@ -813,10 +978,13 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
     reply = _fact_block(profile["id"], snapshot)
     if narrative:
         reply += "\n\n" + narrative[:7000]
+    if handoff_from:
+        reply = _handoff_note(handoff_from, profile["id"]) + "\n\n" + reply
     return {
         "ok": True, "agent": {key: profile[key] for key in ("id", "name", "title", "page")},
         "reply": reply, "snapshot": snapshot, "model": model, "provider": provider,
         "complexity": complexity, "input_tokens": result.get("input_tokens"),
         "cached_input_tokens": result.get("cached_input_tokens"),
         "output_tokens": result.get("output_tokens"), "cost_usd": result.get("cost_usd"),
+        "handoff_from": handoff_from or None,
     }

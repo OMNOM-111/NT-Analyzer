@@ -49,6 +49,13 @@ if __package__ is None or __package__ == "":
     from app import telegram_remote  # type: ignore[no-redef]
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
+    from app import subscriptions  # type: ignore[no-redef]
+    from app import permissions  # type: ignore[no-redef]
+    from app import admin_journal  # type: ignore[no-redef]
+    from app import invitations  # type: ignore[no-redef]
+    from app import legal  # type: ignore[no-redef]
+    from app import paypal  # type: ignore[no-redef]
+    from app import workspaces  # type: ignore[no-redef]
     from app import market_data  # type: ignore[no-redef]
     from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
@@ -88,6 +95,13 @@ else:
     from . import telegram_remote
     from . import tunnel_manager
     from . import account_auth
+    from . import subscriptions
+    from . import permissions
+    from . import admin_journal
+    from . import invitations
+    from . import legal
+    from . import paypal
+    from . import workspaces
     from . import market_data
     from . import secure_store as _secure_store
     from . import marginrefresh
@@ -137,6 +151,27 @@ STATIC_CSP = (
     "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
 
+_SELF_SERVICE_POSTS = {
+    "/api/billing/promo/preview",
+    "/api/billing/promo/redeem",
+    "/api/billing/subscribe",
+    "/api/billing/checkout",
+    "/api/billing/payment-request",
+    "/api/workspaces/personal",
+    "/api/workspaces/select",
+    "/api/bridge/pair/start",
+    "/api/bridge/pair/complete",
+    "/api/auth/avatar/refresh",
+    # Chart data is a read that carries its request list in the body; viewers
+    # (read_only) must be able to poll it so the desktop grid works in the
+    # Telegram Mini App exactly like the local UI.
+    "/api/ops/runtime/bars/batch",
+}
+_BILLING_PROMO_POSTS = {
+    "/api/billing/promo/preview",
+    "/api/billing/promo/redeem",
+}
+
 
 def _do_restart_server() -> None:
     """Spawn a helper that waits for the old process to exit, then starts a new one."""
@@ -180,10 +215,15 @@ def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
 
 def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          range_days: int = 0, from_date: str = "",
-                         to_date: str = "", register: bool = True) -> Dict[str, Any]:
+                         to_date: str = "", register: bool = True,
+                         snapshot_index: Optional[Dict[str, Any]] = None,
+                         alerts_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if register:
         market_data.register_request(instrument, timeframe, limit, range_days, from_date, to_date)
-    runtime_bars = market_data.read_runtime_series(instrument, timeframe, limit)
+    if snapshot_index is not None:
+        runtime_bars = market_data.series_from_index(snapshot_index, instrument, timeframe, limit)
+    else:
+        runtime_bars = market_data.read_runtime_series(instrument, timeframe, limit)
     if runtime_bars and runtime_bars.get("bars"):
         out = runtime_bars
     else:
@@ -219,8 +259,12 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                        and (lambda dt: dt is not None and (start is None or dt >= start)
                             and (end is None or dt < end))(_market_bar_time(row))]
         out["total"] = len(out["bars"])
-    out["alerts"] = market_data.list_alerts(
-        instrument=instrument, include_inactive=True)["alerts"]
+    if alerts_index is not None:
+        symbol = " ".join(str(instrument or "").strip().upper().split())
+        out["alerts"] = list(alerts_index.get(symbol, []))
+    else:
+        out["alerts"] = market_data.list_alerts(
+            instrument=instrument, include_inactive=True)["alerts"]
     return out
 
 
@@ -338,7 +382,7 @@ def _build_scc_strategies() -> Dict[str, Any]:
         if entry.is_dir():
             name = entry.name
             cs_files = sorted(entry.glob("*.cs"))
-        elif entry.is_file() and entry.suffix.lower() == ".cs" and not entry.name.startswith("@"): 
+        elif entry.is_file() and entry.suffix.lower() == ".cs" and not entry.name.startswith("@"):
             name = entry.stem
             cs_files = [entry]
         else:
@@ -600,14 +644,45 @@ class Handler(BaseHTTPRequestHandler):
         user: Dict[str, Any] = {}
         if owner_id:
             user = account_auth.ensure_owner(owner_id) or {}
-        return {
+        return self._decorate_workspace_context({
             "source": "local", "user_id": int(owner_id or 0),
             "role": "owner", "is_owner": True,
             "csrf_token": "", "user": user,
-        }
+        })
+
+    def _decorate_workspace_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        try:
+            workspace_context = workspaces.context_for_user(
+                context.get("user_id"),
+                is_owner=bool(context.get("is_owner")),
+                owner_id=owner_id,
+            )
+        except workspaces.WorkspaceError as exc:
+            workspace_context = {"error": str(exc), "workspaces": [], "active_workspace": {}, "active_membership": {}}
+        context["workspace_context"] = workspace_context
+        context["workspaces"] = workspace_context.get("workspaces") or []
+        context["active_workspace"] = workspace_context.get("active_workspace") or {}
+        context["active_membership"] = workspace_context.get("active_membership") or {}
+        return context
+
+    def _workspace_runtime_stubbed(self, path: str, qs: Dict[str, Any]) -> bool:
+        context = getattr(self, "_remote_context", None) or {}
+        payload = workspaces.runtime_stub(path, qs, context.get("workspace_context") or {})
+        if payload is None:
+            return False
+        self._json(HTTPStatus.OK, payload)
+        return True
 
     def _authorize_api(self, path: str) -> bool:
-        if not account_auth.auth_required():
+        # The local-owner bypass (no Telegram login) is ONLY safe for requests
+        # that physically originate on the owner's machine: loopback, no Telegram
+        # initData header and no public tunnel host. A remote request — the public
+        # Mini App tunnel or anything carrying Telegram initData — must ALWAYS be
+        # authenticated against the approved account allowlist, even when desktop
+        # auth is disabled. Otherwise every Mini App visitor would inherit full
+        # owner access (the reported "instant access" security hole).
+        if not account_auth.auth_required() and not self._is_remote_api_request():
             try:
                 self._remote_context = self._local_owner_context()
             except account_auth.AccountAuthError as exc:
@@ -625,8 +700,27 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 account = account_auth.find_active_user(self._remote_context.get("user_id")) or {}
                 self._remote_context["is_owner"] = bool(account.get("is_owner"))
-                if path.startswith("/api/auth/users") and not self._remote_context["is_owner"]:
+                # Populate the public profile so /api/auth/me and other handlers
+                # that read context["user"] (name, e-mail, avatar, features) work
+                # over the Telegram Mini App, exactly like the desktop session path.
+                self._remote_context["user"] = (
+                    account_auth._public_user(account, include_contact=True, include_avatar=True)
+                    if account else {}
+                )
+                self._remote_context = self._decorate_workspace_context(self._remote_context)
+                method = self.command.upper()
+                role = str(self._remote_context.get("role") or "read_only")
+                workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
+                personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+                if (method not in {"GET", "HEAD"} and role == "read_only" and path not in _SELF_SERVICE_POSTS
+                        and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
+                    raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
+                if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
+                try:
+                    permissions.enforce(path, self._remote_context)
+                except permissions.PermissionError as exc:
+                    raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
                 return True
             except (telegram_remote.RemoteAccessError, account_auth.AccountAuthError) as exc:
                 self._remote_context = getattr(exc, "context", None)
@@ -642,15 +736,24 @@ class Handler(BaseHTTPRequestHandler):
         if not context:
             self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
             return False
+        context = self._decorate_workspace_context(context)
         method = self.command.upper()
         role = str(context.get("role") or "read_only")
-        if method not in {"GET", "HEAD"} and role == "read_only":
+        workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+        if (method not in {"GET", "HEAD"} and role == "read_only" and path not in _SELF_SERVICE_POSTS
+            and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
-        owner_only = path.startswith("/api/telegram/") or path.startswith("/api/auth/users") or path == "/api/server/restart"
+        owner_only = (path.startswith("/api/telegram/") or path.startswith("/api/auth/users")
+                      or path.startswith("/api/owner/") or path == "/api/server/restart")
         if owner_only and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
+        try:
+            permissions.enforce(path, context)
+        except permissions.PermissionError as exc:
+            self._err(exc.status, str(exc)); return False
         self._remote_context = context
         return True
 
@@ -692,18 +795,46 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _augment_permissions(self, context: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach the central authorization view (subscription-driven nav +
+        capabilities + Free Preview state) to an auth payload."""
+        user = payload.get("user") or {}
+        is_owner = bool(payload.get("is_owner"))
+        subscription: Dict[str, Any] = {}
+        if not is_owner:
+            try:
+                subscription = subscriptions.active_entitlement(context.get("user_id"))
+            except subscriptions.SubscriptionError:
+                subscription = {}
+        perm = permissions.resolve(user, None if is_owner else subscription)
+        if isinstance(user, dict):
+            payload["user"] = {**user, "features": perm["nav"]}
+        payload["features"] = perm["nav"]
+        payload["capabilities"] = perm["capabilities"]
+        payload["capability_catalog"] = permissions.capability_catalog()
+        payload["plan_id"] = perm["plan_id"]
+        payload["free_preview"] = perm["free_preview"]
+        payload["locked_nav"] = perm["locked_nav"]
+        payload["unlock_message"] = perm["unlock_message"]
+        return payload
+
     def _auth_status(self) -> None:
         try:
-            # Fast-path: no auth required (local-only or explicitly disabled).
-            # Return an anonymous local-owner context so the app shell loads
-            # without prompting for a Telegram login.
-            if not account_auth.auth_required():
+            # Fast-path: no auth required AND the request is genuinely local
+            # (loopback desktop, no Telegram initData, no public tunnel host).
+            # Return the local-owner context so the desktop shell loads without a
+            # Telegram login. Remote requests never take this path — they are
+            # always authenticated below so Mini App visitors can't inherit owner.
+            if not account_auth.auth_required() and not self._is_remote_api_request():
                 context = self._local_owner_context()
-                self._json(HTTPStatus.OK, {
+                self._json(HTTPStatus.OK, self._augment_permissions(context, {
                     "authenticated": True, "source": context.get("source"),
                     "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
                     "csrf_token": "", "user": context.get("user") or {},
-                })
+                    "workspaces": context.get("workspaces") or [],
+                    "active_workspace": context.get("active_workspace") or {},
+                    "active_membership": context.get("active_membership") or {},
+                }))
                 return
             owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
             account_auth.ensure_owner(owner_id)
@@ -717,11 +848,20 @@ class Handler(BaseHTTPRequestHandler):
                     forwarded_ip=forwarded_ip,
                 )
                 user = account_auth.find_active_user(context.get("user_id"))
-                context["user"] = account_auth._public_user(user or {}, include_contact=True)
+                context["user"] = account_auth._public_user(user or {}, include_contact=True, include_avatar=True)
                 context["role"] = str((user or {}).get("role") or context.get("role") or "read_only")
                 context["is_owner"] = bool((user or {}).get("is_owner"))
+                # Record the Mini App session for the admin login history (throttled
+                # so repeated status polls during one session don't spam the log).
+                account_auth.record_login(
+                    context.get("user_id"), source=telegram_remote.SOURCE,
+                    ip=forwarded_ip or tunnel_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    throttle_sec=6 * 3600)
             else:
                 context = account_auth.authenticate_session(self._cookie_value(account_auth.SESSION_COOKIE))
+            if context:
+                context = self._decorate_workspace_context(context)
             if not context:
                 self._json(HTTPStatus.UNAUTHORIZED, {
                     "error": "Требуется вход через Telegram.", "authenticated": False,
@@ -730,14 +870,260 @@ class Handler(BaseHTTPRequestHandler):
                     "storage": account_auth.storage_status(),
                 })
                 return
-            self._json(HTTPStatus.OK, {
+            self._json(HTTPStatus.OK, self._augment_permissions(context, {
                 "authenticated": True, "source": context.get("source"),
                 "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
                 "csrf_token": str(context.get("csrf_token") or ""),
                 "user": context.get("user") or {},
-            })
+                "workspaces": context.get("workspaces") or [],
+                "active_workspace": context.get("active_workspace") or {},
+                "active_membership": context.get("active_membership") or {},
+            }))
         except (account_auth.AccountAuthError, telegram_remote.RemoteAccessError) as exc:
             self._err(getattr(exc, "status", 503), str(exc))
+
+    def _user_nt_info(self, user_id: Any, is_owner: bool = False) -> Dict[str, Any]:
+        """NinjaTrader connection summary for one user: observing the owner's
+        runtime vs. running their own bridge, plus the active workspace name."""
+        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        try:
+            wc = workspaces.context_for_user(user_id, is_owner=is_owner, owner_id=owner_id)
+        except workspaces.WorkspaceError:
+            return {"uses_owner_runtime": True, "connected": bool(is_owner),
+                    "connection_id": "", "mode": "observe_owner", "workspace": ""}
+        active = wc.get("active_workspace") or {}
+        uses_owner = bool(active.get("uses_owner_runtime"))
+        conn_id = str(active.get("default_runtime_connection_id") or "")
+        return {
+            "uses_owner_runtime": uses_owner,
+            "connection_id": conn_id,
+            "connected": (is_owner and uses_owner) or (not uses_owner and bool(conn_id)),
+            "mode": "observe_owner" if uses_owner else "own_ninjatrader",
+            "workspace": str(active.get("display_name") or ""),
+        }
+
+    def _render_invite(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        voucher = out.get("voucher") or {}
+        invite = out.get("invite") or {}
+        code = str(voucher.get("code") or invite.get("code") or "")
+        plan_label = str((subscriptions.PLANS.get(str(voucher.get("grant_plan_id") or "")) or {}).get("label") or "")
+        ctx = getattr(self, "_remote_context", None) or {}
+        who = ctx.get("user") or {}
+        inviter = (" ".join([str(who.get("first_name") or ""), str(who.get("last_name") or "")]).strip()
+                   or str(who.get("username") or ""))
+        rendered = invitations.render_invitation(
+            code=code, telegram_link=str(invite.get("telegram") or ""),
+            web_link=str(invite.get("web") or ""), plan_label=plan_label, inviter=inviter)
+        rendered.pop("png_bytes", None)  # bytes are not JSON serialisable
+        return rendered
+
+    def _send_invite(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        import base64 as _b64
+        text = str(body.get("text") or "")[:3500]
+        image_data_url = str(body.get("image_data_url") or "")
+        owner_chat = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        if not owner_chat:
+            return {"ok": False, "error": "Telegram владельца не настроен."}
+        png: Optional[bytes] = None
+        if image_data_url.startswith("data:image/png;base64,") and len(image_data_url) < 4_000_000:
+            try:
+                png = _b64.b64decode(image_data_url.split(",", 1)[1], validate=True)
+            except Exception:
+                png = None
+        sent = False
+        if png and telegram_service.send_photo_bytes(owner_chat, png, caption=text[:1024], filename="invite.png"):
+            sent = True
+        else:
+            try:
+                telegram_service._send_raw(text or "Приглашение StratForge AI", chat_id=owner_chat)
+                sent = True
+            except telegram_service.TelegramServiceError:
+                sent = False
+        return {"ok": bool(sent), "sent_to": "owner"}
+
+    def _cabinet_payload(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        uid = context.get("user_id")
+        user = context.get("user") or {}
+        is_owner = bool(context.get("is_owner"))
+        try:
+            subs = subscriptions.entitlements_for_user(uid)
+        except subscriptions.SubscriptionError:
+            subs = {"entitlements": []}
+        entitlements = subs.get("entitlements") or []
+        if is_owner:
+            try:
+                subscription = subscriptions.owner_entitlement()
+            except subscriptions.SubscriptionError:
+                subscription = {}
+        else:
+            try:
+                subscription = subscriptions.active_entitlement(uid)
+            except subscriptions.SubscriptionError:
+                subscription = entitlements[0] if entitlements else {}
+        active = context.get("active_workspace") or {}
+        membership = context.get("active_membership") or {}
+        # The owner is NOT a learner: their contour is the real NinjaTrader with
+        # full access. Only non-owner viewers are "observing" the owner account.
+        owner_full_access = is_owner and bool(active.get("uses_owner_runtime"))
+        # Central authorization: turn the plan (or Free Preview) + owner overrides
+        # into concrete capabilities and navigation. The client gates the rail and
+        # locks premium sections from this single source of truth.
+        perm = permissions.resolve(user, None if is_owner else subscription)
+        nav_features = perm["nav"]
+        if isinstance(user, dict):
+            user = {**user, "features": nav_features}
+        return {
+            "authenticated": True,
+            "source": context.get("source"),
+            "user": user,
+            "role": context.get("role"),
+            "is_owner": is_owner,
+            "workspaces": context.get("workspaces") or [],
+            "active_workspace": active,
+            "active_membership": membership,
+            "subscription": subscription,
+            "entitlements": entitlements,
+            "features": nav_features,
+            "feature_catalog": account_auth.feature_catalog(),
+            "capabilities": perm["capabilities"],
+            "capability_catalog": permissions.capability_catalog(),
+            "plan_id": perm["plan_id"],
+            "free_preview": perm["free_preview"],
+            "locked_nav": perm["locked_nav"],
+            "unlock_message": perm["unlock_message"],
+            "payments_enabled": bool(subscriptions.payments_active()),
+            "telegram_configured": bool(str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()),
+            "nt_connection": {
+                "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
+                "owner_full_access": owner_full_access,
+                "connected": (owner_full_access
+                              or (bool(active.get("default_runtime_connection_id")) and not active.get("uses_owner_runtime"))),
+                "connection_id": str(active.get("default_runtime_connection_id") or ""),
+            },
+        }
+
+    def _auth_me(self) -> None:
+        self._json(HTTPStatus.OK, self._cabinet_payload())
+
+    def _serve_avatar(self, target: str) -> None:
+        context = getattr(self, "_remote_context", None) or {}
+        try:
+            target_id = int(target)
+        except (TypeError, ValueError):
+            self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
+        requester = int(context.get("user_id") or 0)
+        if not context.get("is_owner") and requester != target_id:
+            self._err(HTTPStatus.FORBIDDEN, "Доступ к аватару запрещён."); return
+        path = account_auth.avatar_file(target_id)
+        if not path:
+            self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
+        try:
+            blob = path.read_bytes()
+        except OSError:
+            self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
+        ext = path.suffix.lstrip(".").lower()
+        ctype = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+        self._bytes(HTTPStatus.OK, blob, ctype)
+
+    def _refresh_avatar(self) -> None:
+        context = getattr(self, "_remote_context", None) or {}
+        out = account_auth.refresh_avatar(context.get("user_id"), fetcher=telegram_service.fetch_user_avatar)
+        self._json(HTTPStatus.OK, out)
+
+    def _paypal_audit(self, event: Dict[str, Any], result: Dict[str, Any], verified: bool) -> None:
+        try:
+            path = _PROJECT_ROOT / "data" / "audit" / "paypal-webhook.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "event_type": str(event.get("event_type") or ""),
+                "event_id": str(event.get("id") or ""),
+                "verified": bool(verified),
+                "result": result,
+            }
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+        except OSError:
+            pass
+
+    def _paypal_webhook(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        raw = self.rfile.read(length) if 0 < length <= 1_000_000 else b""
+        try:
+            event = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            event = {}
+        if not isinstance(event, dict) or not event.get("event_type"):
+            # Return 200 so PayPal does not retry obviously-empty deliveries.
+            self._json(HTTPStatus.OK, {"ok": False, "reason": "empty_event"})
+            return
+        headers = {str(key).lower(): str(value) for key, value in self.headers.items()}
+        try:
+            verified = paypal.verify_webhook(headers, event)
+        except paypal.PayPalError:
+            verified = False
+        if not verified:
+            self._paypal_audit(event, {"ok": False, "reason": "unverified"}, False)
+            self._err(HTTPStatus.BAD_REQUEST, "PayPal webhook signature not verified.")
+            return
+        try:
+            result = paypal.process_event(event)
+        except Exception as exc:  # pragma: no cover - defensive
+            result = {"ok": False, "error": str(exc)[:200]}
+        self._paypal_audit(event, result, True)
+        self._json(HTTPStatus.OK, result)
+
+    def _notify_owner_payment_request(self, context: Dict[str, Any], request: Dict[str, Any]) -> None:
+        try:
+            if not request:
+                return
+            user = (context or {}).get("user") or {}
+            name = " ".join([str(user.get("first_name") or ""), str(user.get("last_name") or "")]).strip() \
+                or str(user.get("username") or context.get("user_id") or "")
+            plan_id = str(request.get("plan_id") or "")
+            plan = subscriptions.PLANS.get(plan_id) or {}
+            lines = [
+                f"Пользователь {name} (ID {context.get('user_id')}) сообщает об оплате.",
+                f"Тариф: {plan.get('label') or plan_id} · ${request.get('amount_usd')}",
+                "Проверьте платёж в PayPal и включите тариф: Кабинет → Заявки.",
+            ]
+            telegram_service.send_chief_report("💳 Заявка на оплату", lines, urgent=True)
+        except Exception:  # pragma: no cover - notification is best-effort
+            pass
+
+    def _miniapp_register(self) -> None:
+        if not self._check_public_auth_origin():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or body.get("init_data") or "")
+        try:
+            verified = telegram_remote.validate_init_data(
+                init_data, str(os.environ.get(telegram_service.TOKEN_ENV) or ""))
+        except telegram_remote.RemoteAccessError as exc:
+            self._err(getattr(exc, "status", 401), str(exc)); return
+        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        try:
+            account_auth.ensure_owner(owner_id)
+        except account_auth.AccountAuthError:
+            pass
+        try:
+            user = account_auth.register_via_telegram(
+                verified["user"],
+                email=str(body.get("email") or ""),
+                first_name=str(body.get("first_name") or ""),
+                last_name=str(body.get("last_name") or ""),
+                accept_terms=bool(body.get("accept_terms")),
+                api_call=telegram_service._api_call, owner_chat_id=owner_id,
+            )
+            self._json(HTTPStatus.OK, {"ok": True, "authenticated": True, "user": user})
+        except account_auth.AccountAuthError as exc:
+            self._err(exc.status, str(exc))
 
     def _auth_public_post(self, path: str) -> None:
         if not self._check_public_auth_origin():
@@ -766,6 +1152,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = account_auth.complete_profile(
                     str(body.get("challenge_id") or ""), body.get("profile") or body,
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
             else:
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
@@ -795,6 +1182,18 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin") or self.headers.get("Referer")
         if not origin:
             return True  # non-browser client (CLI, Invoke-RestMethod)
+        # A same-origin POST is never a cross-site (CSRF) request. Allow it when
+        # the Origin host matches the host the request actually arrived on — this
+        # covers the HTTPS Telegram Mini App tunnel (e.g. app.stratforges.com)
+        # even when auth is disabled and the request is treated as local owner,
+        # where the context source is "local" rather than the Mini App source.
+        origin_host = self._request_hostname(origin)
+        same_origin_hosts = {
+            self._request_hostname(self.headers.get("X-Forwarded-Host") or ""),
+            self._request_hostname(self.headers.get("Host") or ""),
+        }
+        if origin_host and origin_host in same_origin_hosts:
+            return True
         try:
             u = urllib.parse.urlparse(origin)
         except Exception:
@@ -990,6 +1389,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/status":
             self._auth_status()
+            return
+
+        if path == "/api/legal/terms":
+            # Public: the terms must be readable during registration, before auth.
+            self._json(HTTPStatus.OK, legal.terms_payload())
             return
 
         if path.startswith("/api/") and not self._authorize_api(path):
@@ -1308,7 +1712,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # /api/ops/* routes (Strategy Control Center, read-only here)
         if path.startswith("/api/ops"):
-            handled = self._ops_get(path, qs)
+            runtime_override = ""
+            context = getattr(self, "_remote_context", None) or {}
+            if path.startswith("/api/ops/runtime/"):
+                runtime_override = workspaces.runtime_dir_for_context(context.get("workspace_context") or {})
+            if runtime_override:
+                with ops_runtime.runtime_dir_override(runtime_override):
+                    handled = self._ops_get(path, qs)
+            else:
+                handled = self._ops_get(path, qs)
             if handled:
                 return
 
@@ -1322,10 +1734,168 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/users":
             try:
-                self._json(HTTPStatus.OK, account_auth.list_users(
-                    (getattr(self, "_remote_context", None) or {}).get("user_id")
-                ))
+                out = account_auth.list_users(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"))
+                for row in out.get("users") or []:
+                    if row.get("is_owner"):
+                        continue
+                    try:
+                        row["subscription"] = subscriptions.active_entitlement(row.get("user_id"))
+                    except subscriptions.SubscriptionError:
+                        row["subscription"] = {}
+                self._json(HTTPStatus.OK, out)
             except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/auth/users/"):
+            uparts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(uparts) == 4:  # GET /api/auth/users/<id> — full admin detail
+                try:
+                    actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                    detail = account_auth.user_detail(actor, uparts[3])
+                    user = detail.get("user") or {}
+                    target = user.get("user_id")
+                    try:
+                        subscription = subscriptions.active_entitlement(target)
+                    except subscriptions.SubscriptionError:
+                        subscription = {}
+                    try:
+                        entitlements = (subscriptions.entitlements_for_user(target) or {}).get("entitlements") or []
+                    except subscriptions.SubscriptionError:
+                        entitlements = []
+                    perm = permissions.resolve(user, subscription)
+                    detail["subscription"] = subscription
+                    detail["entitlements"] = entitlements
+                    detail["capabilities"] = perm["capabilities"]
+                    detail["capability_catalog"] = permissions.capability_catalog()
+                    detail["nt_connection"] = self._user_nt_info(target, bool(user.get("is_owner")))
+                    detail["public_plans"] = subscriptions.list_plans().get("public_plans") or []
+                    self._json(HTTPStatus.OK, detail)
+                except account_auth.AccountAuthError as exc:
+                    self._err(exc.status, str(exc))
+                return
+            self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}")
+            return
+
+        if path == "/api/auth/me":
+            self._auth_me()
+            return
+
+        if path.startswith("/api/auth/avatar/"):
+            self._serve_avatar(urllib.parse.unquote(path[len("/api/auth/avatar/"):]))
+            return
+
+        if path == "/api/billing/plans":
+            self._json(HTTPStatus.OK, subscriptions.list_plans())
+            return
+
+        if path == "/api/billing/me":
+            context = getattr(self, "_remote_context", None) or {}
+            self._json(HTTPStatus.OK, subscriptions.entitlements_for_user(context.get("user_id")))
+            return
+
+        if path == "/api/billing/donate":
+            self._json(HTTPStatus.OK, subscriptions.donation_options())
+            return
+
+        if path == "/api/owner/plans":
+            try:
+                self._json(HTTPStatus.OK, subscriptions.plan_matrix(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id")))
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/journal":
+            raw_limit = (qs.get("limit") or ["200"])[0]
+            self._json(HTTPStatus.OK, admin_journal.read_journal(
+                category=(qs.get("category") or [""])[0],
+                query=(qs.get("q") or [""])[0],
+                limit=int(raw_limit) if str(raw_limit).isdigit() else 200,
+                suspicious_only=(qs.get("suspicious") or [""])[0] in ("1", "true", "yes"),
+            ))
+            return
+
+        if path == "/api/owner/payment":
+            try:
+                self._json(HTTPStatus.OK, subscriptions.get_payment_config(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id")))
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/paypal":
+            try:
+                self._json(HTTPStatus.OK, subscriptions.get_paypal_config(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id")))
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/payment-requests":
+            try:
+                out = subscriptions.list_payment_requests(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"),
+                    status=(qs.get("status") or [""])[0])
+                for row in out.get("requests") or []:
+                    plan = subscriptions.PLANS.get(str(row.get("plan_id"))) or {}
+                    row["plan_label"] = plan.get("label") or row.get("plan_id")
+                    try:
+                        who = account_auth.find_active_user(row.get("user_id")) or {}
+                        row["user_label"] = (" ".join([
+                            str(who.get("first_name") or ""), str(who.get("last_name") or "")]).strip()
+                            or str(who.get("username") or ""))
+                    except Exception:
+                        row["user_label"] = ""
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/bridge/setup":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, workspaces.bridge_setup(context.get("user_id")))
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/workspaces":
+            context = getattr(self, "_remote_context", None) or {}
+            workspace_context = context.get("workspace_context") or workspaces.context_for_user(
+                context.get("user_id"), is_owner=bool(context.get("is_owner")),
+                owner_id=str(os.environ.get(telegram_service.CHAT_ENV) or ""),
+            )
+            self._json(HTTPStatus.OK, workspace_context)
+            return
+
+        if path == "/api/bridge/connections":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, workspaces.list_connections(context.get("user_id")))
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/vouchers":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                out = subscriptions.list_vouchers(actor)
+                # Enrich each redemption with the redeemer's label so the owner can
+                # see who used an invite and jump straight to that account.
+                for voucher in out.get("vouchers") or []:
+                    for red in voucher.get("redemptions") or []:
+                        try:
+                            who = account_auth.find_active_user(red.get("user_id")) or {}
+                        except Exception:
+                            who = {}
+                        red["user_label"] = (" ".join([
+                            str(who.get("first_name") or ""), str(who.get("last_name") or "")]).strip()
+                            or str(who.get("username") or "") or f"ID {red.get('user_id')}")
+                        red["user_exists"] = bool(who)
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
                 self._err(exc.status, str(exc))
             return
 
@@ -1489,6 +2059,9 @@ class Handler(BaseHTTPRequestHandler):
             return False
         sub = parts[2]
 
+        if path.startswith("/api/ops/runtime/") and self._workspace_runtime_stubbed(path, qs):
+            return True
+
         if path == "/api/ops/strategies":
             self._json(HTTPStatus.OK, {"strategies": ops.list_strategies()})
             return True
@@ -1596,6 +2169,14 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((qs.get("limit") or ["500"])[0])
             except ValueError:
                 limit = 500
+            context = getattr(self, "_remote_context", None) or {}
+            workspace_context = context.get("workspace_context") or {}
+            active_workspace = workspace_context.get("active_workspace") if isinstance(workspace_context, dict) else {}
+            if isinstance(active_workspace, dict) and active_workspace and not active_workspace.get("uses_owner_runtime"):
+                self._json(HTTPStatus.OK, workspaces.workspace_account_history(
+                    str(active_workspace.get("workspace_id") or ""), account, limit,
+                ))
+                return True
             self._json(HTTPStatus.OK, account_ledger.account_history(account, limit))
             return True
         if path == "/api/ops/runtime/executions":
@@ -1706,13 +2287,16 @@ class Handler(BaseHTTPRequestHandler):
                 def _dl(c: dict) -> str:
                     return str(c.get("data_last") or "")
                 contracts_sorted = sorted(contracts, key=_dl, reverse=True)
-                # Front month = the most-recently-active contract.
+                # Front month = the most-recently-active *unexpired* contract.
                 # Energy futures (and many others) expire during the preceding
                 # calendar month, so a pure "expiry month >= now.month" check
                 # wrongly keeps the expired contract for the whole calendar month.
-                # Robust rule: among contracts that have traded in the last 30 days
-                # pick the one with the most recent data_last; if none qualifies
-                # (catalog may be stale), fall back to calendar-month proximity.
+                # Robust rule:
+                # 1) among contracts with data in the last 30 days whose expiry
+                #    month is still current/future, pick the freshest data_last;
+                # 2) if only expired-month contracts are "live", prefer the
+                #    nearest future expiry when the catalog has one;
+                # 3) otherwise fall back to calendar-month proximity / freshest.
                 now = datetime.now()
                 def _days_since(c: dict) -> float:
                     raw = str(c.get("data_last") or "")
@@ -1724,24 +2308,37 @@ class Handler(BaseHTTPRequestHandler):
                     except (ValueError, TypeError):
                         return float("inf")
 
+                def _expiry_key(c: dict):
+                    expiry = str(c.get("expiry") or "")
+                    try:
+                        month, year = expiry.split("-", 1)
+                        return (2000 + int(year), int(month))
+                    except (TypeError, ValueError):
+                        return None
+
+                future_contracts = []
+                for contract in contracts:
+                    key = _expiry_key(contract)
+                    if key is not None and key >= (now.year, now.month):
+                        future_contracts.append((key, contract))
+
                 # Contracts with data within last 30 days are considered "live".
                 live = [c for c in contracts if _days_since(c) <= 30]
-                if live:
-                    # Among live contracts pick the one nearest to today
-                    # (smallest positive days-since, i.e. most recent data_last).
-                    front = min(live, key=_days_since)
+                active = [c for c in live if (_expiry_key(c) or (0, 0)) >= (now.year, now.month)]
+                def _front_rank(c: dict):
+                    # Freshest data first; on a tie prefer the nearer expiry month.
+                    key = _expiry_key(c) or (9999, 99)
+                    return (_days_since(c), key)
+
+                if active:
+                    front = min(active, key=_front_rank)
+                elif future_contracts:
+                    # Prefer a still-listed future month over a recently-expired
+                    # contract that still has bars within the 30-day window.
+                    front = min(future_contracts, key=lambda item: item[0])[1]
+                elif live:
+                    front = min(live, key=_front_rank)
                 else:
-                    # Catalog may be stale: fall back to nearest future expiry.
-                    future_contracts = []
-                    for contract in contracts:
-                        expiry = str(contract.get("expiry") or "")
-                        try:
-                            month, year = expiry.split("-", 1)
-                            expiry_key = (2000 + int(year), int(month))
-                        except (TypeError, ValueError):
-                            continue
-                        if expiry_key >= (now.year, now.month):
-                            future_contracts.append((expiry_key, contract))
                     front = min(future_contracts, key=lambda item: item[0])[1] if future_contracts else (
                         contracts_sorted[0] if contracts_sorted else None)
                 result.append({
@@ -2373,6 +2970,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
+        if path == "/api/ai-lab/orchestrator/chart-task":
+            try:
+                out = ai_chief_agent.announce_chart_task(
+                    conversation_id=str(body.get("conversation_id") or "default"),
+                    instruction=str(body.get("instruction") or body.get("message") or ""),
+                    agent_id=str(body.get("agent_id") or "ivan"),
+                    instrument=str(body.get("instrument") or ""),
+                    price=body.get("price"),
+                    drawing_type=str(body.get("drawing_type") or body.get("type") or "line"),
+                    label=str(body.get("label") or ""),
+                    delay_seconds=int(body.get("delay_seconds") or 0),
+                    duration_minutes=int(body.get("duration_minutes") or 0),
+                    report_mode=str(body.get("report_mode") or "touch"),
+                    action=str(body.get("action") or "snapshot"),
+                    mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
+                )
+                self._json(HTTPStatus.OK, out)
+            except (ai_chief_agent.ChiefAgentError, ValueError, TypeError) as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
         if path == "/api/ai-lab/orchestrator/conversations/rename":
             try:
                 conv = ai_chief_agent.rename_conversation(
@@ -2770,15 +3388,31 @@ class Handler(BaseHTTPRequestHandler):
             result = []
             try:
                 market_data.register_requests(row for row in rows if isinstance(row, dict))
+                # Read the bridge snapshot and alerts ONCE for the whole batch —
+                # a 64-chart grid must not re-parse market_bars.json/price_alerts.json
+                # once per instrument on every poll tick.
+                snapshot_index = market_data.read_snapshot_index()
+                alerts_index = market_data.read_alerts_index()
+                batch_cache: Dict[Tuple[str, str, int, int, str, str], Dict[str, Any]] = {}
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    result.append(_market_bars_payload(
-                        str(row.get("instrument") or ""), str(row.get("timeframe") or "5m"),
-                        int(row.get("limit") or 1500), int(row.get("range_days") or 0),
-                        str(row.get("from") or ""), str(row.get("to") or ""),
-                        register=False,
-                    ))
+                    req_key = (
+                        str(row.get("instrument") or ""),
+                        str(row.get("timeframe") or "5m"),
+                        int(row.get("limit") or 1500),
+                        int(row.get("range_days") or 0),
+                        str(row.get("from") or ""),
+                        str(row.get("to") or ""),
+                    )
+                    payload = batch_cache.get(req_key)
+                    if payload is None:
+                        payload = _market_bars_payload(
+                            req_key[0], req_key[1], req_key[2], req_key[3], req_key[4], req_key[5],
+                            register=False, snapshot_index=snapshot_index, alerts_index=alerts_index,
+                        )
+                        batch_cache[req_key] = payload
+                    result.append(payload)
                 market_data.evaluate_alerts()
             except (market_data.MarketDataError, TypeError, ValueError) as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
@@ -3094,6 +3728,18 @@ class Handler(BaseHTTPRequestHandler):
             self._auth_public_post(path)
             return
 
+        if path == "/api/auth/miniapp/register":
+            # Public: register/activate straight from a verified Telegram Mini App
+            # identity (initData), no bot round-trip. initData HMAC is the auth.
+            self._miniapp_register()
+            return
+
+        # PayPal webhook is a PUBLIC endpoint (PayPal cannot pass Telegram auth).
+        # It is authenticated by verifying the PayPal signature instead.
+        if path == "/api/billing/paypal/webhook":
+            self._paypal_webhook()
+            return
+
         if not self._authorize_api(path):
             return
 
@@ -3120,10 +3766,348 @@ class Handler(BaseHTTPRequestHandler):
                     out = account_auth.update_user(actor, parts_auth[3], role=str(body.get("role") or ""))
                 elif parts_auth[4] == "revoke":
                     out = account_auth.update_user(actor, parts_auth[3], revoke=True)
+                elif parts_auth[4] == "features":
+                    out = account_auth.set_user_feature(actor, parts_auth[3], str(body.get("feature") or ""), bool(body.get("enabled")))
+                elif parts_auth[4] == "permission":
+                    out = account_auth.set_user_permission(actor, parts_auth[3], str(body.get("capability") or ""), body.get("enabled"))
+                elif parts_auth[4] == "status":
+                    out = account_auth.set_user_status(actor, parts_auth[3], str(body.get("status") or ""))
+                elif parts_auth[4] == "delete":
+                    out = account_auth.delete_user(actor, parts_auth[3])
                 else:
                     self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
                 self._json(HTTPStatus.OK, out)
             except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/auth/avatar/refresh":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            self._refresh_avatar()
+            return
+
+        if path in _BILLING_PROMO_POSTS:
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            user_id = context.get("user_id")
+            account = account_auth.find_active_user(user_id) or {}
+            email = str(body.get("email") or account.get("email") or "")
+            requested_plan = str(body.get("requested_plan_id") or body.get("plan_id") or "")
+            try:
+                if path == "/api/billing/promo/preview":
+                    out = subscriptions.preview_voucher(
+                        body.get("code"), user_id=user_id, email=email,
+                        requested_plan_id=requested_plan,
+                    )
+                else:
+                    out = subscriptions.redeem_voucher(
+                        body.get("code"), user_id=user_id, email=email,
+                        requested_plan_id=requested_plan,
+                        workspace_id=str(body.get("workspace_id") or ""),
+                    )
+                    entitlement = out.get("entitlement") if isinstance(out, dict) else {}
+                    plan = entitlement.get("plan") if isinstance(entitlement, dict) and isinstance(entitlement.get("plan"), dict) else {}
+                    features = plan.get("features") if isinstance(plan.get("features"), dict) else {}
+                    if features.get("personal_nt") and not out.get("checkout_required"):
+                        out["personal_workspace"] = workspaces.ensure_personal_workspace(
+                            user_id, entitlement_id=str(entitlement.get("entitlement_id") or ""), require_entitlement=False,
+                        )
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/workspaces/select":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, workspaces.select_workspace(context.get("user_id"), body.get("workspace_id")))
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/workspaces/personal":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = workspaces.ensure_personal_workspace(
+                    context.get("user_id"), display_name=str(body.get("display_name") or ""),
+                    require_entitlement=not bool(context.get("is_owner")),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "workspace": out})
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/bridge/pair/start":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = workspaces.start_bridge_pairing(
+                    context.get("user_id"), workspace_id=str(body.get("workspace_id") or ""),
+                    machine_label=str(body.get("machine_label") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/bridge/pair/complete":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = workspaces.complete_bridge_pairing(
+                    context.get("user_id"), code=body.get("code"), device_id=str(body.get("device_id") or ""),
+                    bridge_instance_id=str(body.get("bridge_instance_id") or ""),
+                    machine_label=str(body.get("machine_label") or ""), capabilities=body.get("capabilities") or [],
+                )
+                self._json(HTTPStatus.OK, out)
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/bridge/connections/"):
+            if not self._check_local_post():
+                return
+            parts_bridge = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(parts_bridge) != 5 or parts_bridge[4] != "revoke":
+                self._err(HTTPStatus.NOT_FOUND, f"no bridge route: {path}"); return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, workspaces.revoke_connection(context.get("user_id"), parts_bridge[3]))
+            except workspaces.WorkspaceError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/vouchers":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = subscriptions.create_voucher(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"), body,
+                )
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/invites":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                bot_username = str(telegram_service.load_settings().get("bot_username") or "")
+                try:
+                    public_url = str(telegram_remote.admin_status().get("public_url") or "")
+                except Exception:
+                    public_url = ""
+                out = subscriptions.create_invite(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"), body,
+                    bot_username=bot_username, public_url=public_url,
+                )
+                out["render"] = self._render_invite(out)
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/owner/invites/"):
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            inv_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+            # /api/owner/invites/send            -> 4 parts, [3]=="send"
+            # /api/owner/invites/<id>/status     -> 5 parts, [3]=id, [4]=action
+            # /api/owner/invites/<id>/delete     -> 5 parts, [3]=id, [4]=action
+            try:
+                if len(inv_parts) == 4 and inv_parts[3] == "send":
+                    out = self._send_invite(body)
+                elif len(inv_parts) == 5 and inv_parts[4] == "status":
+                    out = subscriptions.set_voucher_status(actor, inv_parts[3], str(body.get("status") or ""))
+                elif len(inv_parts) == 5 and inv_parts[4] == "delete":
+                    out = subscriptions.delete_voucher(actor, inv_parts[3])
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no invite route: {path}"); return
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/plans/feature":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = subscriptions.set_plan_feature(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"),
+                    str(body.get("plan_id") or ""), str(body.get("feature") or ""), bool(body.get("enabled")),
+                )
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/payment":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = subscriptions.set_payment_config(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"), body,
+                )
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/paypal":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = subscriptions.set_paypal_config(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"), body,
+                )
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/paypal/plans":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = paypal.ensure_plans((getattr(self, "_remote_context", None) or {}).get("user_id"))
+                self._json(HTTPStatus.OK, out)
+            except (paypal.PayPalError, subscriptions.SubscriptionError) as exc:
+                self._err(getattr(exc, "status", 400), str(exc))
+            return
+
+        if path == "/api/billing/subscribe":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            base = self.headers.get("Origin") or ("http://" + (self.headers.get("Host") or "127.0.0.1"))
+            base = base.rstrip("/")
+            try:
+                out = paypal.create_subscription(
+                    context.get("user_id"), str(body.get("plan_id") or ""),
+                    return_url=f"{base}/ui/?paypal=success",
+                    cancel_url=f"{base}/ui/?paypal=cancel",
+                )
+                self._json(HTTPStatus.OK, out)
+            except paypal.PayPalError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/billing/checkout":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, subscriptions.manual_checkout(
+                    context.get("user_id"), str(body.get("plan_id") or "")))
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/billing/payment-request":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = subscriptions.create_payment_request(
+                    context.get("user_id"), str(body.get("plan_id") or ""), note=str(body.get("note") or ""))
+                self._notify_owner_payment_request(context, out.get("request") or {})
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/grant":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+            try:
+                if str(body.get("plan_id") or "").strip():
+                    out = subscriptions.grant_plan(
+                        actor, body.get("user_id"), str(body.get("plan_id") or ""),
+                        duration_days=body.get("duration_days"), note=str(body.get("note") or ""))
+                else:
+                    out = subscriptions.clear_user_plan(actor, body.get("user_id"))
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/payment-requests/resolve":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                out = subscriptions.resolve_payment_request(
+                    (getattr(self, "_remote_context", None) or {}).get("user_id"),
+                    str(body.get("request_id") or ""), approve=bool(body.get("approve")),
+                    duration_days=body.get("duration_days"))
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
                 self._err(exc.status, str(exc))
             return
 
@@ -3278,6 +4262,30 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             try:
+                context = getattr(self, "_remote_context", None) or {}
+                workspace_context = context.get("workspace_context") or {}
+                active_workspace = workspace_context.get("active_workspace") if isinstance(workspace_context, dict) else {}
+                if isinstance(active_workspace, dict) and active_workspace and not active_workspace.get("uses_owner_runtime"):
+                    workspace_id = str(active_workspace.get("workspace_id") or "")
+                    if path == "/api/ops/runtime/account-history/classify":
+                        out = workspaces.workspace_classify_event(
+                            workspace_id, str(body.get("account_name") or ""), str(body.get("event_id") or ""),
+                            str(body.get("kind") or ""), str(body.get("actor") or "ui"), str(body.get("note") or ""),
+                        )
+                    elif path == "/api/ops/runtime/account-history/events":
+                        out = workspaces.workspace_add_event(
+                            workspace_id, str(body.get("account_name") or ""), str(body.get("kind") or ""), body.get("amount"),
+                            str(body.get("actor") or "ui"), str(body.get("note") or ""), body.get("at_utc"),
+                            str(body.get("source") or "manual"), str(body.get("source_id") or ""),
+                        )
+                    elif path == "/api/ops/runtime/account-history/import":
+                        out = workspaces.workspace_import_events(
+                            workspace_id, str(body.get("account_name") or ""), body.get("rows") or [],
+                            str(body.get("actor") or "ui"), str(body.get("source") or "broker_statement"),
+                        )
+                    else:
+                        self._err(HTTPStatus.NOT_FOUND, f"no account-history route: {path}"); return
+                    self._json(HTTPStatus.OK, out); return
                 if path == "/api/ops/runtime/account-history/classify":
                     out = account_ledger.classify_event(
                         str(body.get("account_name") or ""), str(body.get("event_id") or ""),

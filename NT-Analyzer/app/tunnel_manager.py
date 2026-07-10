@@ -46,6 +46,16 @@ def _state_path() -> Path:
     return _root() / "data" / "integrations" / "cloudflared-tunnel.state.json"
 
 
+def _portable_exe_candidates() -> List[Path]:
+    root = _root()
+    return [
+        root / "tools" / "cloudflared" / "cloudflared.exe",
+        root / "tools" / "cloudflared.exe",
+        root / "bin" / "cloudflared.exe",
+        root / "cloudflared.exe",
+    ]
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -83,6 +93,9 @@ def _find_executable() -> Path:
         if path.is_file():
             return path
         raise TunnelManagerError(f"cloudflared не найден: {path}", 503)
+    for candidate in _portable_exe_candidates():
+        if candidate.is_file():
+            return candidate
     found = shutil.which("cloudflared")
     if found:
         return Path(found)
@@ -90,7 +103,8 @@ def _find_executable() -> Path:
         if candidate.is_file():
             return candidate
     raise TunnelManagerError(
-        "cloudflared не установлен. Установите Cloudflare Tunnel или задайте NTA_CLOUDFLARED_EXE.",
+        "cloudflared не найден. Положите cloudflared.exe в tools\\cloudflared\\ внутри папки приложения, "
+        "установите Cloudflare Tunnel или задайте NTA_CLOUDFLARED_EXE.",
         503,
     )
 
@@ -108,7 +122,9 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         os.kill(pid, 0)
-    except OSError:
+    except (OSError, SystemError):
+        # OSError is the documented exception; SystemError can also occur on
+        # Windows when the process is in a transitional state (WinError 87).
         return False
     return True
 

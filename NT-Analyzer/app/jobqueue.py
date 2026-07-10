@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -90,6 +91,15 @@ _JOB_LOCATION_INDEX: Dict[str, Tuple[str, Path, float]] = {}
 # batch_id -> (signature, aggregate_dict).  signature combines bdir mtime,
 # child status, and child mtime so aggregate refreshes whenever any child moves.
 _BATCH_METRICS_CACHE: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
+
+# Chart historical fallback index: root -> [ {job_id, dir, instrument, timeframe}, ... ]
+# newest-first.  Building it walks thousands of job dirs and reads job.json, so
+# it is TTL-cached: the desktop chart grid calls read_instrument_bars for every
+# "waiting" instrument on every poll tick and must never pay that scan per chart.
+_INSTR_BARS_INDEX_LOCK = threading.Lock()
+_INSTR_BARS_INDEX: Dict[str, List[Dict[str, Any]]] = {}
+_INSTR_BARS_INDEX_AT: float = 0.0
+_INSTR_BARS_INDEX_TTL: float = 20.0
 
 # Last queue fingerprint that triggered a sync_report_numbers() call; reused
 # until the queue itself changes.  Avoids the per-request full scan.
@@ -2135,9 +2145,72 @@ def read_strategies_catalog() -> Optional[Dict[str, Any]]:
     return _read_catalog_file("strategies.json")
 
 
+def _merge_instruments_front_months(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Upsert preferred front-month contracts over the bridge catalog.
+
+    Bridge rebuilds instruments.json from db\\minute only, so newly rolled
+    contracts can be missing until NT accumulates local bars. The overlay
+    file keeps Desktop rollover pointed at the live month across refreshes.
+    """
+    overlay = _read_catalog_file("instruments_front_months.json") or {}
+    extras = overlay.get("contracts")
+    if not isinstance(extras, list) or not extras:
+        return doc
+    instruments = list(doc.get("instruments") or [])
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for ins in instruments:
+        if isinstance(ins, dict):
+            name = str(ins.get("instrument") or "")
+            if name:
+                by_name[name] = ins
+    changed = False
+    for row in extras:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("instrument") or "").strip()
+        if not name:
+            continue
+        existing = by_name.get(name)
+        if existing is None:
+            instruments.append(dict(row))
+            by_name[name] = instruments[-1]
+            changed = True
+            continue
+        # Keep bridge metadata, but never let overlay lose a fresher data_last.
+        overlay_last = str(row.get("data_last") or "")
+        existing_last = str(existing.get("data_last") or "")
+        if overlay_last and overlay_last > existing_last:
+            existing["data_last"] = overlay_last
+            if row.get("data_first") and not existing.get("data_first"):
+                existing["data_first"] = row.get("data_first")
+            existing["has_minute_data"] = True
+            changed = True
+        for key in ("tick_size", "point_value", "tick_value", "currency",
+                    "exchange", "instrument_type", "master_instrument",
+                    "asset_class", "root", "expiry"):
+            if existing.get(key) in (None, "") and row.get(key) not in (None, ""):
+                existing[key] = row.get(key)
+                changed = True
+    if not changed:
+        return doc
+    instruments.sort(key=lambda c: str((c or {}).get("instrument") or ""))
+    out = dict(doc)
+    out["instruments"] = instruments
+    out["count"] = len(instruments)
+    out["front_months_overlay"] = {
+        "applied": True,
+        "count": len(extras),
+        "updated_at_utc": overlay.get("updated_at_utc"),
+    }
+    return out
+
+
 def read_instruments_catalog() -> Optional[Dict[str, Any]]:
-    """Returns parsed data/catalog/instruments.json or None."""
-    return _read_catalog_file("instruments.json")
+    """Returns parsed data/catalog/instruments.json (plus front-month overlay)."""
+    doc = _read_catalog_file("instruments.json")
+    if not isinstance(doc, dict):
+        return None
+    return _merge_instruments_front_months(doc)
 
 
 def read_templates_catalog() -> Optional[Dict[str, Any]]:
@@ -4288,6 +4361,36 @@ def _timeframe_label(doc: Dict[str, Any]) -> str:
     return f"{val}{abbr}" if abbr else ""
 
 
+def _instrument_bars_index() -> Dict[str, List[Dict[str, Any]]]:
+    """TTL-cached map of instrument root -> newest-first jobs that carry a
+    ``bars.json`` artifact.  Refreshed at most once per ``_INSTR_BARS_INDEX_TTL``
+    seconds so a large chart grid does not re-scan the whole jobs tree per poll.
+    """
+    global _INSTR_BARS_INDEX, _INSTR_BARS_INDEX_AT
+    now = time.monotonic()
+    with _INSTR_BARS_INDEX_LOCK:
+        if _INSTR_BARS_INDEX_AT and (now - _INSTR_BARS_INDEX_AT) < _INSTR_BARS_INDEX_TTL:
+            return _INSTR_BARS_INDEX
+    rows, _ = _indexed_job_rows()
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows[:120]:
+        jdir = Path(r["path"])
+        if not (jdir / "bars.json").is_file():
+            continue
+        job = _read_json_safe(jdir / "job.json") or {}
+        root = portfolio_cells.normalize_root(job.get("instrument"))
+        if not root:
+            continue
+        index.setdefault(root, []).append({
+            "job_id": r["job_id"], "dir": str(jdir),
+            "instrument": job.get("instrument"), "timeframe": _timeframe_label(job),
+        })
+    with _INSTR_BARS_INDEX_LOCK:
+        _INSTR_BARS_INDEX = index
+        _INSTR_BARS_INDEX_AT = time.monotonic()
+    return index
+
+
 def read_instrument_bars(instrument: str, timeframe: str = "",
                          limit: int = 1500) -> Dict[str, Any]:
     """Return the most recent OHLCV bars for an instrument, sourced from
@@ -4306,22 +4409,12 @@ def read_instrument_bars(instrument: str, timeframe: str = "",
                 "source": None, "live": False,
                 "note": "инструмент не указан"}
 
-    rows, _ = _indexed_job_rows()
     want_tf = str(timeframe or "").strip().lower()
+    candidates = _instrument_bars_index().get(root, [])
     best: Optional[Dict[str, Any]] = None
     fallback: Optional[Dict[str, Any]] = None
-    for r in rows[:120]:
-        jdir = Path(r["path"])
-        job = _read_json_safe(jdir / "job.json") or {}
-        if portfolio_cells.normalize_root(job.get("instrument")) != root:
-            continue
-        if not (jdir / "bars.json").is_file():
-            continue
-        label = _timeframe_label(job)
-        candidate = {
-            "job_id": r["job_id"], "dir": jdir,
-            "instrument": job.get("instrument"), "timeframe": label,
-        }
+    for candidate in candidates:
+        label = str(candidate.get("timeframe") or "")
         if want_tf and label.lower() == want_tf:
             best = candidate
             break
@@ -4334,7 +4427,7 @@ def read_instrument_bars(instrument: str, timeframe: str = "",
                 "source": None, "live": False,
                 "note": f"нет данных NinjaTrader по {root}"}
 
-    arr = _read_json_array_cached(chosen["dir"] / "bars.json")
+    arr = _read_json_array_cached(Path(chosen["dir"]) / "bars.json")
     if not isinstance(arr, list):
         arr = []
     total = len(arr)

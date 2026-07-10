@@ -10,8 +10,10 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 import re
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -100,9 +102,29 @@ def _read(path: Path) -> Dict[str, Any]:
 
 def _write(path: Path, doc: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    # Use a unique temp name per writer so two backends (or the bridge reading
+    # the file) never collide on the same ``.tmp``. On Windows os.replace raises
+    # PermissionError (WinError 5) when the destination is momentarily open by
+    # another process, so retry a few times with a tiny backoff before giving up.
+    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        last_err: Optional[OSError] = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as exc:  # transient Windows sharing violation
+                last_err = exc
+                time.sleep(0.02 * (attempt + 1))
+        if last_err is not None:
+            raise last_err
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def normalize_timeframe(value: Any) -> str:
@@ -156,11 +178,37 @@ def register_requests(requests: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
             kept.append(row)
         by_key = {str(row.get("key") or ""): row for row in kept}
         for row in normalized:
-            by_key[row["key"]] = row
+            current = by_key.get(row["key"])
+            by_key[row["key"]] = _merge_request(current, row)
         kept = list(by_key.values())
         _write(_requests_path(), {"version": 1, "generated_at_utc": _iso(now),
                                   "ttl_sec": _REQUEST_TTL_SEC, "requests": kept[-64:]})
     return normalized
+
+
+def _merge_request(current: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(current, dict):
+        return dict(incoming)
+    merged = dict(current)
+    merged.update({
+        "key": incoming.get("key") or current.get("key"),
+        "instrument": incoming.get("instrument") or current.get("instrument"),
+        "timeframe": incoming.get("timeframe") or current.get("timeframe"),
+        "requested_at_utc": incoming.get("requested_at_utc") or current.get("requested_at_utc"),
+    })
+    try:
+        merged["limit"] = max(int(current.get("limit") or 0), int(incoming.get("limit") or 0), 100)
+    except (TypeError, ValueError):
+        merged["limit"] = incoming.get("limit") or current.get("limit") or 1500
+    try:
+        merged["range_days"] = max(int(current.get("range_days") or 0), int(incoming.get("range_days") or 0), 0)
+    except (TypeError, ValueError):
+        merged["range_days"] = incoming.get("range_days") or current.get("range_days") or 0
+    current_from, incoming_from = str(current.get("from") or "")[:10], str(incoming.get("from") or "")[:10]
+    current_to, incoming_to = str(current.get("to") or "")[:10], str(incoming.get("to") or "")[:10]
+    merged["from"] = min([v for v in (current_from, incoming_from) if v], default="")
+    merged["to"] = max([v for v in (current_to, incoming_to) if v], default="")
+    return merged
 
 
 def read_runtime_series(instrument: Any, timeframe: Any, limit: int = 1500) -> Optional[Dict[str, Any]]:
@@ -169,8 +217,35 @@ def read_runtime_series(instrument: Any, timeframe: Any, limit: int = 1500) -> O
     rows = doc.get("series") if isinstance(doc.get("series"), list) else []
     row = next((item for item in rows if isinstance(item, dict)
                 and str(item.get("key") or "") == key), None)
+    return _series_from_row(row, instrument, timeframe, limit)
+
+
+def read_snapshot_index() -> Dict[str, Dict[str, Any]]:
+    """Read the bridge snapshot ONCE and index it by series key.
+
+    The desktop grid polls up to 64 charts per batch; building this index a
+    single time (instead of re-reading and re-parsing ``market_bars.json`` for
+    every instrument) keeps a large grid fast and off the disk.
+    """
+    doc = _read(_snapshot_path())
+    rows = doc.get("series") if isinstance(doc.get("series"), list) else []
+    return {str(item.get("key") or ""): item for item in rows
+            if isinstance(item, dict) and item.get("key")}
+
+
+def series_from_index(index: Optional[Dict[str, Dict[str, Any]]], instrument: Any,
+                      timeframe: Any, limit: int = 1500) -> Optional[Dict[str, Any]]:
+    """Build a runtime series payload from a pre-read snapshot index."""
+    key = series_key(instrument, timeframe)
+    row = (index or {}).get(key)
+    return _series_from_row(row, instrument, timeframe, limit)
+
+
+def _series_from_row(row: Optional[Dict[str, Any]], instrument: Any,
+                     timeframe: Any, limit: int = 1500) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
+    key = series_key(instrument, timeframe)
     bars = row.get("bars") if isinstance(row.get("bars"), list) else []
     limit = max(1, min(50000, int(limit or 1500)))
     updated = _parse_iso(row.get("updated_at_utc"))
@@ -205,6 +280,21 @@ def list_alerts(*, instrument: Any = "", include_inactive: bool = True) -> Dict[
         rows = [row for row in rows if row.get("status") == "active"]
     rows.sort(key=lambda row: str(row.get("created_at_utc") or ""), reverse=True)
     return {"alerts": rows, "total": len(rows)}
+
+
+def read_alerts_index() -> Dict[str, List[Dict[str, Any]]]:
+    """Read alerts ONCE and group them by instrument symbol (all statuses).
+
+    Used by the batch bars endpoint so a 64-chart grid does not re-read
+    ``price_alerts.json`` once per instrument on every poll tick.
+    """
+    with _LOCK:
+        rows = [dict(row) for row in _load_alert_doc()["alerts"] if isinstance(row, dict)]
+    rows.sort(key=lambda row: str(row.get("created_at_utc") or ""), reverse=True)
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        index.setdefault(str(row.get("instrument") or "").upper(), []).append(row)
+    return index
 
 
 def create_alert(payload: Dict[str, Any]) -> Dict[str, Any]:

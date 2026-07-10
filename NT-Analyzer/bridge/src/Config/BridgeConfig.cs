@@ -22,6 +22,9 @@ namespace NTAnalyzerBridge.Config
         [JsonProperty("jobs_dir")]
         public string JobsDirOverride { get; set; }
 
+        [JsonProperty("runtime_data_dir")]
+        public string RuntimeDataDirOverride { get; set; }
+
         [JsonProperty("poll_interval_ms")]
         public int PollIntervalMs { get; set; } = 1500;
 
@@ -127,6 +130,7 @@ namespace NTAnalyzerBridge.Config
 
         // Convenience accessors for queue layout.
         public string JobsDir       => ResolveProjectPath(JobsDirOverride) ?? Path.Combine(ProjectRoot, "jobs");
+        public string RuntimeDataDir => ResolveProjectPath(RuntimeDataDirOverride) ?? Path.Combine(ProjectRoot, "data", "runtime");
         public string PendingDir    => Path.Combine(JobsDir, "pending");
         public string PendingStaging=> Path.Combine(PendingDir, ".staging");
         public string RunningDir    => Path.Combine(JobsDir, "running");
