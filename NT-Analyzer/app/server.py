@@ -32,6 +32,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
@@ -65,6 +66,7 @@ if __package__ is None or __package__ == "":
     from app import account_ledger  # type: ignore[no-redef]
     from app import portfolio_registry  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
+    from app import local_worker  # type: ignore[no-redef]
     from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
     from app.ai_lab import registry as ai_registry  # type: ignore[no-redef]
     from app.ai_lab import orchestrator as ai_orchestrator  # type: ignore[no-redef]
@@ -111,6 +113,7 @@ else:
     from . import account_ledger
     from . import portfolio_registry
     from . import runtime as ops_runtime
+    from . import local_worker
     from .ai_lab import read_model as ai_read_model
     from .ai_lab import registry as ai_registry
     from .ai_lab import orchestrator as ai_orchestrator
@@ -172,6 +175,9 @@ _BILLING_PROMO_POSTS = {
     "/api/billing/promo/preview",
     "/api/billing/promo/redeem",
 }
+_API_RATE_LOCK = threading.Lock()
+_API_RATE: Dict[Tuple[str, str, str], Any] = defaultdict(deque)
+_API_RATE_LIMITS = {"read": 600, "write": 120, "owner": 60, "auth": 45}
 
 
 def _do_restart_server() -> None:
@@ -740,6 +746,32 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.OK, payload)
         return True
 
+    def _api_action_class(self, path: str, method: str) -> str:
+        if path.startswith("/api/auth/"):
+            return "auth"
+        if path.startswith("/api/owner/") or path.startswith("/api/telegram/") or path.startswith("/api/worker/"):
+            return "owner"
+        return "read" if method.upper() in {"GET", "HEAD"} else "write"
+
+    def _check_api_rate_limit(self, context: Dict[str, Any], path: str) -> bool:
+        if os.environ.get("NTA_DISABLE_RATE_LIMIT") == "1":
+            return True
+        action = self._api_action_class(path, self.command)
+        limit = int(_API_RATE_LIMITS.get(action, 120))
+        tunnel_ip, _forwarded_ip = self._request_ips()
+        user_id = str(context.get("user_id") or "anonymous")
+        key = (user_id, str(tunnel_ip or ""), action)
+        now = time.time()
+        with _API_RATE_LOCK:
+            q = _API_RATE[key]
+            while q and q[0] <= now - 60:
+                q.popleft()
+            if len(q) >= limit:
+                self._err(HTTPStatus.TOO_MANY_REQUESTS, "Слишком много запросов. Повторите позже.")
+                return False
+            q.append(now)
+        return True
+
     def _authorize_api(self, path: str) -> bool:
         # The local-owner bypass (no Telegram login) is ONLY safe for requests
         # that physically originate on the owner's machine: loopback, no Telegram
@@ -781,12 +813,15 @@ class Handler(BaseHTTPRequestHandler):
                 if (method not in {"GET", "HEAD"} and role == "read_only" and path not in _SELF_SERVICE_POSTS
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
-                if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")) and not self._remote_context["is_owner"]:
+                if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")
+                        or path.startswith("/api/worker/")) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
                 try:
                     permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
                     raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
+                if not self._check_api_rate_limit(self._remote_context, path):
+                    return False
                 return True
             except (telegram_remote.RemoteAccessError, account_auth.AccountAuthError) as exc:
                 self._remote_context = getattr(exc, "context", None)
@@ -812,7 +847,8 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
         owner_only = (path.startswith("/api/telegram/") or path.startswith("/api/auth/users")
-                      or path.startswith("/api/owner/") or path == "/api/server/restart")
+                      or path.startswith("/api/owner/") or path.startswith("/api/worker/")
+                      or path == "/api/server/restart")
         if owner_only and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
@@ -820,6 +856,8 @@ class Handler(BaseHTTPRequestHandler):
             permissions.enforce(path, context)
         except permissions.PermissionError as exc:
             self._err(exc.status, str(exc)); return False
+        if not self._check_api_rate_limit(context, path):
+            return False
         self._remote_context = context
         return True
 
@@ -1536,7 +1574,21 @@ class Handler(BaseHTTPRequestHandler):
                 "project_root": str(jobqueue.project_root()),
                 "jobs_dir": str(jobqueue.jobs_dir()),
                 "ninjatrader_running": jobqueue.ninjatrader_running(),
+                "worker": local_worker.status(),
             })
+            return
+
+        if path == "/api/worker/jobs":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            try:
+                limit = int((qs.get("limit") or ["100"])[0])
+            except ValueError:
+                limit = 100
+            status_filter = str((qs.get("status") or [""])[0] or "")
+            self._json(HTTPStatus.OK, local_worker.list_jobs(status=status_filter, limit=limit))
             return
 
         if path == "/api/strategies":
@@ -3866,6 +3918,44 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"ok": True})
             return
 
+        if path == "/api/worker/jobs" or (
+            path.startswith("/api/worker/jobs/") and path.endswith("/cancel")
+        ):
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            if path == "/api/worker/jobs":
+                kind = str(body.get("kind") or "").strip()
+                if kind not in {"durable_sweep", "telemetry_index"}:
+                    self._err(HTTPStatus.BAD_REQUEST, "unsupported worker job kind")
+                    return
+                try:
+                    out = local_worker.enqueue(
+                        kind,
+                        body.get("payload") if isinstance(body.get("payload"), dict) else {},
+                        priority=int(body.get("priority") or 100),
+                        max_attempts=int(body.get("max_attempts") or 1),
+                        timeout_sec=int(body.get("timeout_sec") or 300),
+                        user_id=context.get("user_id") or "",
+                        workspace_id=str((context.get("active_workspace") or {}).get("workspace_id") or ""),
+                    )
+                    self._json(HTTPStatus.ACCEPTED, {"ok": True, "job": out})
+                except (TypeError, ValueError) as exc:
+                    self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            parts_worker = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(parts_worker) != 5:
+                self._err(HTTPStatus.NOT_FOUND, f"no worker route: {path}")
+                return
+            self._json(HTTPStatus.OK, local_worker.cancel(parts_worker[3]))
+            return
+
         if path.startswith("/api/auth/users/"):
             if not self._check_local_post():
                 return
@@ -3887,6 +3977,14 @@ class Handler(BaseHTTPRequestHandler):
                     out = account_auth.set_user_permission(actor, parts_auth[3], str(body.get("capability") or ""), body.get("enabled"))
                 elif parts_auth[4] == "status":
                     out = account_auth.set_user_status(actor, parts_auth[3], str(body.get("status") or ""))
+                elif parts_auth[4] == "sessions":
+                    out = account_auth.revoke_user_sessions(
+                        actor,
+                        parts_auth[3],
+                        session_id=str(body.get("session_id") or ""),
+                        device_id=str(body.get("device_id") or ""),
+                        all_sessions=bool(body.get("all_sessions")),
+                    )
                 elif parts_auth[4] == "delete":
                     out = account_auth.delete_user(actor, parts_auth[3])
                 else:
@@ -4652,6 +4750,11 @@ def run(port: Optional[int] = None) -> None:
     except Exception as e:
         print(f"[nta-backend] news refresher NOT started: {e}")
     try:
+        local_worker.start_background_worker(interval_sec=2.0)
+        print("[nta-backend] local worker process started")
+    except Exception as e:
+        print(f"[nta-backend] local worker process NOT started: {e}")
+    try:
         telegram_service.start_background_notifier(interval_sec=30)
         print("[nta-backend] Telegram notifier started (every 30 sec)")
     except Exception as e:
@@ -4668,6 +4771,7 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] shutting down")
     finally:
         ai_chief_agent.stop_background_worker()
+        local_worker.stop_background_worker()
         telegram_service.stop_background_notifier()
         server.server_close()
 

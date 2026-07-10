@@ -50,6 +50,9 @@ STRATEGY_DISPLAY_PREFS_FILE = "strategy_display_prefs.json"
 # FIFO PnL in the UI. Prefer a generous tail (or unlimited via max_lines <= 0).
 RUNTIME_EXEC_JSONL_MAX_LINES = 250_000
 RUNTIME_ORDER_JSONL_MAX_LINES = 100_000
+RUNTIME_JSONL_ROTATE_BYTES = 32 * 1024 * 1024
+RUNTIME_JSONL_ROTATE_KEEP = 6
+RUNTIME_JSONL_ROTATE_FILES = ("executions.jsonl", "orders.jsonl", "errors.jsonl")
 
 _JSONL_CACHE: Dict[str, Tuple[Tuple[int, int, int], List[Dict[str, Any]]]] = {}
 _JSONL_CACHE_ORDER: List[str] = []
@@ -880,6 +883,120 @@ def _jsonl_file_sig(name: str) -> Tuple[str, Optional[int], Optional[int]]:
     except OSError:
         return (str(p.resolve()), None, None)
     return (str(p.resolve()), st.st_size, st.st_mtime_ns)
+
+
+def _clear_jsonl_cache_for(path: Path) -> None:
+    try:
+        prefix = str(path.resolve()) + "|"
+    except Exception:
+        prefix = str(path) + "|"
+    for key in list(_JSONL_CACHE.keys()):
+        if key.startswith(prefix):
+            _JSONL_CACHE.pop(key, None)
+            try:
+                _JSONL_CACHE_ORDER.remove(key)
+            except ValueError:
+                pass
+    _ACTIVITY_VIEW_CACHE.clear()
+    _ACTIVITY_VIEW_CACHE_ORDER.clear()
+
+
+def _runtime_rotation_stamp(now: Optional[datetime] = None) -> str:
+    dt = now or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _rotated_jsonl_files(path: Path) -> List[Path]:
+    try:
+        candidates = list(path.parent.glob(path.name + ".*.rotated"))
+    except Exception:
+        return []
+
+    def sort_key(p: Path) -> Tuple[int, str]:
+        try:
+            return (p.stat().st_mtime_ns, p.name)
+        except OSError:
+            return (0, p.name)
+
+    return sorted([p for p in candidates if p.is_file()], key=sort_key, reverse=True)
+
+
+def rotate_runtime_jsonl_files(*, max_bytes: int = RUNTIME_JSONL_ROTATE_BYTES,
+                               keep: int = RUNTIME_JSONL_ROTATE_KEEP,
+                               names: Optional[Iterable[str]] = None,
+                               now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Rotate large runtime JSONL ingress files without blocking readers.
+
+    The NinjaTrader bridge can continue appending to the canonical file name;
+    after a successful rename we create a fresh empty file in the same location.
+    Rotation is best-effort because Windows file locks may temporarily block a
+    rename while the bridge is writing.
+    """
+    rdir = runtime_dir()
+    threshold = max(0, int(max_bytes or 0))
+    retention = max(0, int(keep or 0))
+    selected = tuple(names or RUNTIME_JSONL_ROTATE_FILES)
+    result: Dict[str, Any] = {
+        "ok": True,
+        "runtime_dir": str(rdir),
+        "max_bytes": threshold,
+        "keep": retention,
+        "files": [],
+    }
+    if not rdir.is_dir():
+        return result
+
+    stamp = _runtime_rotation_stamp(now)
+    for raw_name in selected:
+        safe_name = Path(str(raw_name or "")).name
+        row: Dict[str, Any] = {
+            "name": safe_name,
+            "path": str(rdir / safe_name),
+            "exists": False,
+            "size": 0,
+            "rotated": False,
+            "pruned": [],
+        }
+        if not safe_name or safe_name != str(raw_name or "") or not safe_name.endswith(".jsonl"):
+            row["error"] = "invalid_name"
+            result["ok"] = False
+            result["files"].append(row)
+            continue
+        path = rdir / safe_name
+        try:
+            st = path.stat()
+        except OSError:
+            result["files"].append(row)
+            continue
+        row["exists"] = True
+        row["size"] = st.st_size
+        try:
+            if threshold > 0 and st.st_size >= threshold and st.st_size > 0:
+                idx = 0
+                rotated = path.with_name(f"{path.name}.{stamp}.rotated")
+                while rotated.exists():
+                    idx += 1
+                    rotated = path.with_name(f"{path.name}.{stamp}.{idx}.rotated")
+                os.replace(str(path), str(rotated))
+                path.touch()
+                _clear_jsonl_cache_for(path)
+                row["rotated"] = True
+                row["rotated_path"] = str(rotated)
+            rotated_files = _rotated_jsonl_files(path)
+            for stale in rotated_files[retention:]:
+                try:
+                    stale.unlink()
+                    row["pruned"].append(str(stale))
+                except OSError as exc:
+                    row["prune_error"] = str(exc)
+                    result["ok"] = False
+        except OSError as exc:
+            row["error"] = str(exc)
+            result["ok"] = False
+        result["files"].append(row)
+    return result
 
 
 def _clone_activity_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

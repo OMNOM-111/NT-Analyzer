@@ -785,7 +785,73 @@ def user_detail(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         history = user.get("login_history") if isinstance(user.get("login_history"), list) else []
         pub["login_history"] = list(reversed(history))[:20]
         pub["blocked_at_utc"] = str(user.get("blocked_at_utc") or "")
+        pub["active_sessions"] = _public_sessions(doc, uid)
     return {"user": pub, "feature_catalog": feature_catalog(), "storage": storage_status()}
+
+
+def _session_id(session: Dict[str, Any]) -> str:
+    sid = str(session.get("session_id") or "").strip()
+    if sid:
+        return sid
+    digest = str(session.get("token_hash") or "")
+    return hashlib.sha256(digest.encode()).hexdigest()[:16] if digest else ""
+
+
+def _public_sessions(doc: Dict[str, Any], user_id: int) -> list[Dict[str, Any]]:
+    now = time.time()
+    out = []
+    for row in doc.get("sessions") or []:
+        if int(row.get("user_id") or 0) != int(user_id):
+            continue
+        if row.get("revoked") or float(row.get("expires_at") or 0) <= now:
+            continue
+        out.append({
+            "session_id": _session_id(row),
+            "device_id": str(row.get("device_id") or ""),
+            "created_at_utc": str(row.get("created_at_utc") or ""),
+            "expires_at": float(row.get("expires_at") or 0),
+            "client": str(row.get("client") or ""),
+            "machine": str(row.get("machine") or ""),
+            "ip": str(row.get("ip") or ""),
+        })
+    out.sort(key=lambda item: str(item.get("created_at_utc") or ""), reverse=True)
+    return out[:50]
+
+
+def revoke_user_sessions(owner_id: Any, user_id: Any, *, session_id: str = "",
+                         device_id: str = "", all_sessions: bool = False) -> Dict[str, Any]:
+    uid = int(user_id)
+    target_session = str(session_id or "").strip()
+    target_device = str(device_id or "").strip()
+    if not (target_session or target_device or all_sessions):
+        raise AccountAuthError("Укажите session_id, device_id или all_sessions=true.")
+    with _LOCK:
+        doc = _read_doc()
+        try:
+            _require_owner_in_doc(doc, owner_id)
+        except AccountAuthError:
+            raise AccountAuthError("Только владелец может отзывать сессии.", 403) from None
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        revoked = 0
+        for session in doc["sessions"]:
+            if int(session.get("user_id") or 0) != uid:
+                continue
+            if all_sessions:
+                matched = True
+            elif target_session:
+                matched = hmac.compare_digest(_session_id(session), target_session)
+            else:
+                matched = hmac.compare_digest(str(session.get("device_id") or ""), target_device)
+            if matched and not session.get("revoked"):
+                session["revoked"] = True
+                session["revoked_at_utc"] = _now_iso()
+                revoked += 1
+        _write_doc(doc)
+        sessions = _public_sessions(doc, uid)
+    _audit("session_revoked", owner_id=int(owner_id), user_id=uid)
+    return {"ok": True, "revoked": revoked, "sessions": sessions}
 
 
 def _cleanup(doc: Dict[str, Any]) -> None:
@@ -1245,11 +1311,14 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str)
         csrf = secrets.token_urlsafe(32)
         now = time.time()
         doc["sessions"].append({
+            "session_id": "sess_" + secrets.token_hex(8),
             "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
             "csrf_token": csrf,
             "user_id": uid, "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(), "revoked": False,
+            "device_id": _device_id(user_agent), "client": _device_label(user_agent),
+            "machine": _machine_label(), "ip": _mask_ip(ip),
         })
         challenge["status"] = "consumed"
         _append_login(user, source="desktop_session", ip=ip, user_agent=user_agent)

@@ -144,6 +144,74 @@ def test_paired_chat_routes_free_text_to_orchestrator(monkeypatch, tmp_path) -> 
 
     assert received == ["Проверь сегодняшние бэктесты"]
     assert state["chief_update_id"] == 10
+    assert state["last_command_update_id"] == 10
+    assert state["last_command_handler"] == "chief_private"
+
+
+def test_command_dispatcher_persists_offset_and_audit_per_update(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    updates = [
+        {
+            "update_id": 10,
+            "message": {"text": "Первое", "from": {"is_bot": False},
+                        "chat": {"id": 987654, "type": "private"}},
+        },
+        {
+            "update_id": 11,
+            "message": {"text": "Второе", "from": {"is_bot": False},
+                        "chat": {"id": 987654, "type": "private"}},
+        },
+    ]
+    monkeypatch.setattr(telegram_service, "_api_call", lambda *_a, **_k: updates)
+    received = []
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text: received.append(text))
+    state = {"chief_commands_initialized": True, "chief_update_id": 9}
+
+    telegram_service._poll_chief_commands(state)
+
+    assert received == ["Первое", "Второе"]
+    assert state["chief_update_id"] == 11
+    assert int(state.get("chief_update_inflight") or 0) == 0
+    audit_path = tmp_path / "data" / "audit" / "telegram-updates.jsonl"
+    rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+    assert [row["update_id"] for row in rows] == [10, 11]
+    assert all(row["consumed"] for row in rows)
+    assert telegram_service.status()["telegram_update_offset"] == 11
+
+
+def test_command_dispatcher_retries_then_drops_poison_update(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    update = {
+        "update_id": 12,
+        "message": {"text": "сломайся", "from": {"is_bot": False},
+                    "chat": {"id": 987654, "type": "private"}},
+    }
+    monkeypatch.setattr(telegram_service, "_api_call", lambda *_a, **_k: [update])
+    monkeypatch.setattr(
+        telegram_service,
+        "_handle_chief_command",
+        lambda text: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    state = {"chief_commands_initialized": True, "chief_update_id": 11}
+
+    telegram_service._poll_chief_commands(state)
+    assert state["chief_update_id"] == 11
+    assert state["chief_update_retries"]["12"] == 1
+
+    telegram_service._poll_chief_commands(state)
+    telegram_service._poll_chief_commands(state)
+    assert state["chief_update_id"] == 12
+    assert "12" not in state.get("chief_update_retries", {})
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "data" / "audit" / "telegram-updates.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[-1]["dropped"] is True
+    assert rows[-1]["retry_count"] == 3
 
 
 def test_command_receiver_uses_long_poll_for_low_latency(monkeypatch, tmp_path) -> None:

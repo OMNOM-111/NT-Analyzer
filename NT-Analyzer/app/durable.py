@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -109,6 +110,31 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           first_seen_utc TEXT NOT NULL DEFAULT '',
           updated_at_utc TEXT NOT NULL DEFAULT ''
         );
+
+        CREATE TABLE IF NOT EXISTS worker_jobs (
+          worker_job_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          priority INTEGER NOT NULL DEFAULT 100,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 1,
+          timeout_sec INTEGER NOT NULL DEFAULT 300,
+          queued_at_utc TEXT NOT NULL DEFAULT '',
+          started_at_utc TEXT NOT NULL DEFAULT '',
+          finished_at_utc TEXT NOT NULL DEFAULT '',
+          updated_at_utc TEXT NOT NULL DEFAULT '',
+          locked_until REAL NOT NULL DEFAULT 0,
+          cancel_requested INTEGER NOT NULL DEFAULT 0,
+          user_id TEXT NOT NULL DEFAULT '',
+          workspace_id TEXT NOT NULL DEFAULT '',
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          result_json TEXT NOT NULL DEFAULT '{}',
+          error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_worker_jobs_status_priority
+          ON worker_jobs(status, priority, queued_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_worker_jobs_workspace_status
+          ON worker_jobs(workspace_id, status, updated_at_utc);
         """
     )
     conn.execute(
@@ -392,3 +418,209 @@ def record_telemetry_file(root: Optional[Path], *, name: str, path: Path,
                 (key,),
             ).fetchone()
     return dict(row) if row else {"name": key}
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def enqueue_worker_job(root: Optional[Path], *, worker_job_id: str, kind: str,
+                       payload: Optional[Dict[str, Any]] = None,
+                       priority: int = 100, max_attempts: int = 1,
+                       timeout_sec: int = 300, user_id: Any = "",
+                       workspace_id: str = "") -> Dict[str, Any]:
+    jid = str(worker_job_id or "").strip()
+    clean_kind = str(kind or "").strip()
+    if not jid:
+        raise ValueError("worker_job_id required")
+    if not clean_kind:
+        raise ValueError("worker job kind required")
+    now = _now_iso()
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                INSERT INTO worker_jobs(
+                  worker_job_id, kind, status, priority, max_attempts,
+                  timeout_sec, queued_at_utc, updated_at_utc, user_id,
+                  workspace_id, payload_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    jid, clean_kind, "queued", int(priority), max(1, int(max_attempts or 1)),
+                    max(1, int(timeout_sec or 300)), now, now, str(user_id or ""),
+                    str(workspace_id or ""), _compact_json(payload or {}),
+                ),
+            )
+            conn.commit()
+    return get_worker_job(root, jid) or {"worker_job_id": jid}
+
+
+def _worker_row(row: sqlite3.Row) -> Dict[str, Any]:
+    out = dict(row)
+    for key in ("payload_json", "result_json"):
+        try:
+            out[key[:-5]] = json.loads(out.get(key) or "{}")
+        except (TypeError, ValueError):
+            out[key[:-5]] = {}
+    return out
+
+
+def get_worker_job(root: Optional[Path], worker_job_id: str) -> Optional[Dict[str, Any]]:
+    with _LOCK:
+        with connect(root) as conn:
+            row = conn.execute(
+                "SELECT * FROM worker_jobs WHERE worker_job_id=?",
+                (str(worker_job_id),),
+            ).fetchone()
+    return _worker_row(row) if row else None
+
+
+def list_worker_jobs(root: Optional[Path], *, status: str = "",
+                     limit: int = 100) -> List[Dict[str, Any]]:
+    limit = max(1, min(1000, int(limit or 100)))
+    with _LOCK:
+        with connect(root) as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM worker_jobs WHERE status=? ORDER BY updated_at_utc DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM worker_jobs ORDER BY updated_at_utc DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+    return [_worker_row(row) for row in rows]
+
+
+def worker_job_counts(root: Optional[Path]) -> Dict[str, int]:
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS count FROM worker_jobs GROUP BY status"
+            ).fetchall()
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def request_worker_cancel(root: Optional[Path], worker_job_id: str) -> Optional[Dict[str, Any]]:
+    now = _now_iso()
+    with _LOCK:
+        with connect(root) as conn:
+            row = conn.execute(
+                "SELECT status FROM worker_jobs WHERE worker_job_id=?",
+                (str(worker_job_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            if str(row["status"]) == "queued":
+                conn.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET status='cancelled', cancel_requested=1, finished_at_utc=?,
+                        updated_at_utc=?
+                    WHERE worker_job_id=?
+                    """,
+                    (now, now, str(worker_job_id)),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET cancel_requested=1, updated_at_utc=?
+                    WHERE worker_job_id=?
+                    """,
+                    (now, str(worker_job_id)),
+                )
+            conn.commit()
+    return get_worker_job(root, worker_job_id)
+
+
+def sweep_stale_worker_jobs(root: Optional[Path], *, now: Optional[float] = None) -> int:
+    current = time.time() if now is None else float(now)
+    stamp = _now_iso()
+    with _LOCK:
+        with connect(root) as conn:
+            cur = conn.execute(
+                """
+                UPDATE worker_jobs
+                SET status='stale', finished_at_utc=?, updated_at_utc=?,
+                    error='worker heartbeat timed out'
+                WHERE status='running' AND locked_until > 0 AND locked_until < ?
+                """,
+                (stamp, stamp, current),
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
+
+def claim_worker_job(root: Optional[Path], *, worker_id: str,
+                     now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    current = time.time() if now is None else float(now)
+    stamp = _now_iso()
+    with _LOCK:
+        with connect(root) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM worker_jobs
+                WHERE status='queued'
+                ORDER BY priority ASC, queued_at_utc ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            timeout_sec = max(1, int(row["timeout_sec"] or 300))
+            conn.execute(
+                """
+                UPDATE worker_jobs
+                SET status='running', attempts=attempts+1, started_at_utc=?,
+                    updated_at_utc=?, locked_until=?, error=''
+                WHERE worker_job_id=? AND status='queued'
+                """,
+                (stamp, stamp, current + timeout_sec, str(row["worker_job_id"])),
+            )
+            conn.commit()
+    return get_worker_job(root, str(row["worker_job_id"]))
+
+
+def finish_worker_job(root: Optional[Path], worker_job_id: str,
+                      result: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    now = _now_iso()
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                UPDATE worker_jobs
+                SET status='succeeded', finished_at_utc=?, updated_at_utc=?,
+                    locked_until=0, result_json=?, error=''
+                WHERE worker_job_id=?
+                """,
+                (now, now, _compact_json(result or {}), str(worker_job_id)),
+            )
+            conn.commit()
+    return get_worker_job(root, worker_job_id)
+
+
+def fail_worker_job(root: Optional[Path], worker_job_id: str, error: str,
+                    *, retry: bool = True) -> Optional[Dict[str, Any]]:
+    now = _now_iso()
+    current = get_worker_job(root, worker_job_id) or {}
+    attempts = int(current.get("attempts") or 0)
+    max_attempts = int(current.get("max_attempts") or 1)
+    status = "queued" if retry and attempts < max_attempts else "failed"
+    finished = "" if status == "queued" else now
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                UPDATE worker_jobs
+                SET status=?, finished_at_utc=?, updated_at_utc=?,
+                    locked_until=0, error=?
+                WHERE worker_job_id=?
+                """,
+                (status, finished, now, str(error or "")[:1000], str(worker_job_id)),
+            )
+            conn.commit()
+    return get_worker_job(root, worker_job_id)

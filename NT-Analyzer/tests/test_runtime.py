@@ -1284,6 +1284,33 @@ def t48_trade_window_merge(tmp):
   assert rt.is_hhmm_in_trade_window(1300, tw) is False
 
 
+@case("jsonl lifecycle: rotate large runtime file and prune old archives")
+def t51_jsonl_rotation(tmp):
+    rdir = tmp / "data" / "runtime"
+    target = rdir / "errors.jsonl"
+    target.write_text('{"message":"a"}\n{"message":"b"}\n', encoding="utf-8")
+    old_a = rdir / "errors.jsonl.20000101T000000Z.rotated"
+    old_b = rdir / "errors.jsonl.20000101T000001Z.rotated"
+    old_a.write_text('{"old":1}\n', encoding="utf-8")
+    old_b.write_text('{"old":2}\n', encoding="utf-8")
+    os.utime(old_a, (1, 1))
+    os.utime(old_b, (2, 2))
+
+    res = rt.rotate_runtime_jsonl_files(
+        max_bytes=10,
+        keep=1,
+        names=("errors.jsonl",),
+        now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+    )
+    assert res["ok"], res
+    row = res["files"][0]
+    assert row["rotated"] is True, row
+    assert target.is_file(), "canonical JSONL should be recreated for bridge appends"
+    assert target.read_text(encoding="utf-8") == ""
+    rotated = sorted(p.name for p in rdir.glob("errors.jsonl.*.rotated"))
+    assert rotated == ["errors.jsonl.20260710T000000Z.rotated"], rotated
+
+
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t11b, t11c, t12,
              t13, t14, t15, t16, t17, t18, t18a, t18b, t18c,
@@ -1297,7 +1324,8 @@ def main() -> int:
              # Phase 23
              t45, t46,
              t47_trade_window_helpers, t48_trade_window_merge,
-             t49_inactive_second_window_skipped, t50_c012_stale_window_mismatch]
+             t49_inactive_second_window_skipped, t50_c012_stale_window_mismatch,
+             t51_jsonl_rotation]
     print(f"Running {len(cases)} Phase 17/18/10/19 runtime tests:")
     for c in cases:
         c()

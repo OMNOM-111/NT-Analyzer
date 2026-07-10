@@ -392,19 +392,64 @@ def series_from_index(index: Optional[Dict[str, Dict[str, Any]]], instrument: An
     return _series_from_row(row, instrument, timeframe, limit)
 
 
+def _bar_ohlc(row: Any) -> Optional[Tuple[float, float, float, float]]:
+    if not isinstance(row, dict):
+        return None
+    try:
+        o = float(row.get("o", row.get("open")))
+        h = float(row.get("h", row.get("high")))
+        l = float(row.get("l", row.get("low")))
+        c = float(row.get("c", row.get("close")))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) and v > 0 for v in (o, h, l, c)):
+        return None
+    return o, h, l, c
+
+
+def quarantine_impossible_bars(bars: Iterable[Any]) -> Tuple[List[Any], Dict[str, Any]]:
+    clean: List[Any] = []
+    rejected = 0
+    reasons: Dict[str, int] = {}
+    previous_close: Optional[float] = None
+    for row in bars or []:
+        ohlc = _bar_ohlc(row)
+        reason = ""
+        if ohlc is None:
+            reason = "non_finite_or_non_positive"
+        else:
+            o, h, l, c = ohlc
+            if h < l:
+                reason = "high_below_low"
+            elif max(o, c) > h or min(o, c) < l:
+                reason = "ohlc_outside_range"
+            elif previous_close and (h - l) > max(previous_close * 50.0, 10_000_000.0):
+                reason = "range_explosion"
+        if reason:
+            rejected += 1
+            reasons[reason] = reasons.get(reason, 0) + 1
+            continue
+        clean.append(row)
+        previous_close = ohlc[3] if ohlc else previous_close
+    diagnostics = {"rejected_bars": rejected, "reasons": reasons} if rejected else {}
+    return clean, diagnostics
+
+
 def _series_from_row(row: Optional[Dict[str, Any]], instrument: Any,
                      timeframe: Any, limit: int = 1500) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     key = series_key(instrument, timeframe)
     bars = row.get("bars") if isinstance(row.get("bars"), list) else []
+    clean_bars, diagnostics = quarantine_impossible_bars(bars)
     limit = max(1, min(50000, int(limit or 1500)))
     updated = _parse_iso(row.get("updated_at_utc"))
     age = max(0.0, (_utcnow() - updated).total_seconds()) if updated else None
     status = str(row.get("status") or ("live" if bars else "waiting"))
-    return {
+    payload = {
         "instrument": row.get("instrument") or instrument,
-        "bars": bars[-limit:], "total": len(bars), "live": status == "live" and bool(bars),
+        "bars": clean_bars[-limit:], "total": len(clean_bars), "raw_total": len(bars),
+        "live": status == "live" and bool(clean_bars),
         "source": {"kind": "ninjatrader_runtime", "key": key,
                    "updated_at_utc": row.get("updated_at_utc"), "age_sec": age},
         "status": status, "error": str(row.get("error") or ""),
@@ -412,6 +457,10 @@ def _series_from_row(row: Optional[Dict[str, Any]], instrument: Any,
         "requested_timeframe": normalize_timeframe(timeframe),
         "matched_timeframe": row.get("timeframe") or normalize_timeframe(timeframe),
     }
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+        payload["note"] = (str(payload.get("note") or "") + " · " if payload.get("note") else "") + "Часть битых баров изолирована backend."
+    return payload
 
 
 def _load_alert_doc() -> Dict[str, Any]:

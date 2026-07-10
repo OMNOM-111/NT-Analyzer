@@ -34,6 +34,22 @@ Telegram Mini App, графики, AI-чат и пользовательские
   signature и opt-in `max_points` LTTB downsampling для слабых ПК.
 - Desktop-графики теперь отправляют `max_points` от ширины окна, чтобы canvas не
   получал десятки тысяч баров без необходимости.
+- Добавлен recoverable local worker process поверх SQLite WAL: jobs имеют
+  `queued/running/succeeded/failed/stale/cancelled`, attempts, timeout, priority,
+  cancel flag и owner-only API `/api/worker/jobs`.
+- `telemetry_index` worker-job теперь ротирует большие
+  `executions.jsonl`, `orders.jsonl`, `errors.jsonl`, оставляет свежий пустой
+  canonical-файл для bridge и индексирует текущие file signatures в SQLite.
+- Telegram long-poll переведён на единый dispatcher: `account_auth`,
+  `telegram_remote` и owner commands обрабатываются одним consumer path, offset,
+  retries, poison-drop и audit пишутся в `data/audit/telegram-updates.jsonl`.
+- `/api/health` показывает состояние local worker и Telegram update offset/error,
+  чтобы на втором ПК было видно, где завис вход/команды.
+- Backend-графики изолируют impossible bars до отдачи в UI и возвращают
+  diagnostics, чтобы один битый/огромный бар не сжимал весь chart в линию.
+- API получил rate limits per `user_id + tunnel_ip + action class`, а owner
+  видит active sessions/devices и может revoke одну сессию, одно устройство или
+  все сессии пользователя без удаления самого пользователя.
 
 ## P0: Identity, Workspaces, Data Isolation
 
@@ -98,6 +114,10 @@ Postgres/Celery может быть тяжёлым для локального W
 - Для Windows local-first использовать `multiprocessing` или `rq`-style worker;
   Celery/Dramatiq оставить как production option, не как обязательный первый шаг.
 
+Текущий статус: vertical slice готов для `durable_sweep` и `telemetry_index`.
+Следующий шаг - переводить backtest/LLM/heavy chart precompute на этот contract,
+не расширяя HTTP request path.
+
 Acceptance:
 
 - `POST /api/jobs` отвечает быстро и не держит HTTP thread во время backtest.
@@ -118,6 +138,10 @@ Acceptance:
   должны иметь явные ответы на unknown/expired cases.
 - В UI Telegram status показать last update time, last command error и offset.
 
+Текущий статус: единый dispatcher, persisted offset/retry/drop audit и status
+поля добавлены. Дальше стоит вынести все Telegram handlers в явный registry и
+добавить UI-кнопку диагностики последнего update.
+
 ## P1: Charts on Weak PC
 
 Сделать:
@@ -131,6 +155,10 @@ Acceptance:
 - WebSocket/SSE для live invalidation позже; сначала достаточно etag/signature.
 - Anomaly quarantine: backend должен помечать series с impossible bars и писать
   diagnostics вместо передачи мусора в UI.
+
+Текущий статус: cache/downsampling и backend anomaly quarantine добавлены.
+Открытым остаётся adaptive polling/minimized tab и live invalidation через
+SSE/WebSocket.
 
 Acceptance:
 
@@ -146,6 +174,10 @@ Acceptance:
 - SQLite index по timestamp, account, strategy, instrument.
 - Tail-reader без `readlines()`, уже начато; добавить tests на большие файлы.
 - Отдельный compactor, который не блокирует API.
+
+Текущий статус: ротация по размеру и signature-index через worker готовы.
+Открытым остаётся полноценный SQLite row-index по timestamp/account/strategy/
+instrument и scheduled compaction policy.
 
 ## P1: LLM and AI Chat Safety
 
@@ -171,6 +203,9 @@ Acceptance:
   traversal, workspace isolation.
 - Audit export для account-auth, mini-app, workspace-access, billing,
   bridge-pairing.
+
+Текущий статус: rate limits и session/device revoke готовы. Открытым остаётся
+полный endpoint threat review, CSRF/Origin matrix и secrets inventory/export.
 
 ## P2: Deployment and Operations
 
@@ -199,7 +234,10 @@ Acceptance:
 1. Trace all AI chat/orchestrator storage and add `user_id + workspace_id`
    isolation.
 2. Add focused tests proving two users cannot share chat/history/performance.
-3. Introduce SQLite WAL index for telemetry/job/chat metadata.
-4. Move one heavy path to worker process as a vertical slice.
-5. Add chart cache/downsampling signatures.
-6. Add owner session/device management UI.
+3. Finish endpoint threat review: owner/self/read-only matrix + CSRF/Origin
+   tests.
+4. Add SQLite row-index for runtime telemetry by timestamp/account/strategy/
+   instrument.
+5. Move backtest/LLM/heavy chart precompute to worker jobs using the existing
+   `worker_jobs` contract.
+6. Add owner session/device management UI controls over the backend revoke API.

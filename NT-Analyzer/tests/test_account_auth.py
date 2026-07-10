@@ -150,6 +150,38 @@ def test_revocation_invalidates_all_sessions(auth_store) -> None:
     assert account_auth.authenticate_session(token) is None
 
 
+def test_owner_can_revoke_one_session_or_device_without_deleting_user(auth_store) -> None:
+    now = time.time()
+    token_a = "a" * 64
+    token_b = "b" * 64
+    csrf = "c" * 48
+    account_auth._write_doc({
+        "version": 1,
+        "users": [
+            {"user_id": 999, "first_name": "Owner", "last_name": "One", "email": "owner@example.com", "role": "owner", "status": "active", "is_owner": True},
+            {"user_id": 42, "first_name": "User", "last_name": "Two", "email": "user@example.com", "role": "full_control", "status": "active", "is_owner": False},
+        ],
+        "challenges": [],
+        "sessions": [
+            {"session_id": "sess_A", "user_id": 42, "token_hash": hashlib.sha256(token_a.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(), "csrf_token": csrf, "expires_at": now + 3600, "created_at_utc": "2026-07-10T00:00:00Z", "device_id": "pc1", "revoked": False},
+            {"session_id": "sess_B", "user_id": 42, "token_hash": hashlib.sha256(token_b.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(), "csrf_token": csrf, "expires_at": now + 3600, "created_at_utc": "2026-07-10T00:01:00Z", "device_id": "pc2", "revoked": False},
+        ],
+    })
+
+    detail = account_auth.user_detail(999, 42)
+    assert [row["session_id"] for row in detail["user"]["active_sessions"]] == ["sess_B", "sess_A"]
+
+    out = account_auth.revoke_user_sessions(999, 42, session_id="sess_A")
+    assert out["revoked"] == 1
+    assert account_auth.authenticate_session(token_a) is None
+    assert account_auth.authenticate_session(token_b) is not None
+
+    out = account_auth.revoke_user_sessions(999, 42, device_id="pc2")
+    assert out["revoked"] == 1
+    assert account_auth.authenticate_session(token_b) is None
+    assert account_auth.find_active_user(42) is not None
+
+
 def test_owner_can_list_users_before_profile_is_completed(auth_store) -> None:
     account_auth.ensure_owner(999)
 
@@ -198,6 +230,42 @@ def test_server_requires_session_and_csrf_even_on_localhost(auth_store, monkeypa
         with urllib.request.urlopen(logout, timeout=5) as response:
             assert response.status == 200
     finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_server_rate_limits_authenticated_api_by_user_and_ip(auth_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    monkeypatch.setenv("NTA_TELEGRAM_CHAT_ID", "999")
+    account_auth.set_auth_required(True)
+    token = "r" * 64
+    csrf = "c" * 48
+    account_auth._write_doc({
+        "version": 1,
+        "users": [{"user_id": 999, "first_name": "Owner", "last_name": "One", "email": "owner@example.com", "role": "owner", "status": "active", "is_owner": True}],
+        "challenges": [],
+        "sessions": [{"user_id": 999, "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(), "csrf_token": csrf, "expires_at": time.time() + 3600, "revoked": False}],
+    })
+    with server_mod._API_RATE_LOCK:
+        server_mod._API_RATE.clear()
+    original = dict(server_mod._API_RATE_LIMITS)
+    server_mod._API_RATE_LIMITS["read"] = 2
+    srv = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True); thread.start()
+    base = f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+    try:
+        for _ in range(2):
+            req = urllib.request.Request(base + "/api/health", headers={"Cookie": f"{account_auth.SESSION_COOKIE}={token}"})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                assert response.status == 200
+        req = urllib.request.Request(base + "/api/health", headers={"Cookie": f"{account_auth.SESSION_COOKIE}={token}"})
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc.value.code == 429
+    finally:
+        server_mod._API_RATE_LIMITS.clear()
+        server_mod._API_RATE_LIMITS.update(original)
+        with server_mod._API_RATE_LOCK:
+            server_mod._API_RATE.clear()
         srv.shutdown(); srv.server_close()
 
 

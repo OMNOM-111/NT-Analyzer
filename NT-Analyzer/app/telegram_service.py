@@ -76,6 +76,10 @@ def _state_path() -> Path:
     return _root() / "data" / "integrations" / "telegram.state.json"
 
 
+def _updates_audit_path() -> Path:
+    return _root() / "data" / "audit" / "telegram-updates.jsonl"
+
+
 def _topics_path() -> Path:
     return _root() / "data" / "integrations" / "telegram.topics.json"
 
@@ -490,6 +494,23 @@ def _record_delivery(*, success: bool, error: str = "") -> None:
         _write_json(_state_path(), state)
 
 
+def _append_update_audit(row: Dict[str, Any]) -> None:
+    payload = {
+        "timestamp": _now_iso(),
+        "update_id": int(row.get("update_id") or 0),
+        "handler": str(row.get("handler") or ""),
+        "consumed": bool(row.get("consumed")),
+        "error": str(row.get("error") or "")[:500],
+        "retry_count": int(row.get("retry_count") or 0),
+        "dropped": bool(row.get("dropped")),
+    }
+    path = _updates_audit_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _IO_LOCK:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Group forum-topics mode: each internal app chat (orchestrator conversation)
 # maps to a Telegram forum topic (message_thread_id) inside one supergroup.
@@ -776,6 +797,13 @@ def status() -> Dict[str, Any]:
         "last_delivery_at_utc": str(state.get("last_delivery_at_utc") or ""),
         "last_error_at_utc": str(state.get("last_error_at_utc") or ""),
         "last_error": str(state.get("last_error") or ""),
+        "last_command_poll_at_utc": str(state.get("last_command_poll_at_utc") or ""),
+        "last_command_update_at_utc": str(state.get("last_command_update_at_utc") or ""),
+        "last_command_update_id": int(state.get("last_command_update_id") or state.get("chief_update_id") or 0),
+        "last_command_handler": str(state.get("last_command_handler") or ""),
+        "last_command_error": str(state.get("chief_command_error") or ""),
+        "telegram_update_offset": int(state.get("chief_update_id") or 0),
+        "telegram_update_inflight": int(state.get("chief_update_inflight") or 0),
         "note": (
             "StratForge Orchestrator понимает обычный текст только из привязанного личного чата. "
             "Исполняются лишь allowlisted функции; paper/demo требует approve, live заблокирован backend."
@@ -968,6 +996,65 @@ def _auto_discover_group(updates: List[Dict[str, Any]]) -> None:
             _record_delivery(success=False, error=str(exc))
 
 
+def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: str,
+                             handle_owner_commands: bool) -> Dict[str, Any]:
+    update_id = int(update.get("update_id") or 0)
+    result = {"update_id": update_id, "handler": "ignored", "consumed": False, "error": ""}
+    try:
+        if private_id and account_auth.process_update(
+            update, api_call=_api_call, owner_chat_id=private_id,
+        ):
+            result.update({"handler": "account_auth", "consumed": True})
+            return result
+        if private_id and telegram_remote.process_update(
+            update, api_call=_api_call, owner_chat_id=private_id,
+        ):
+            result.update({"handler": "telegram_remote", "consumed": True})
+            return result
+    except telegram_remote.RemoteAccessError as exc:
+        result.update({"handler": "telegram_remote", "consumed": True, "error": str(exc)})
+        _record_delivery(success=False, error=str(exc))
+        return result
+
+    message = update.get("message")
+    if not isinstance(message, dict):
+        result["handler"] = "non_message"
+        return result
+    chat = message.get("chat") or {}
+    sender = message.get("from") or {}
+    if sender.get("is_bot"):
+        result["handler"] = "bot_message"
+        return result
+    text = str(message.get("text") or "").strip()
+    if not text:
+        result["handler"] = "empty_message"
+        return result
+    if text.lower().startswith("/start"):
+        # /start with login/access payload is consumed by the handlers above.
+        # A plain /start remains explicit in diagnostics instead of silently
+        # looking like a broken bot command.
+        result["handler"] = "plain_start"
+        return result
+    if not handle_owner_commands:
+        result["handler"] = "commands_disabled"
+        return result
+    chat_id_str = str(chat.get("id") or "")
+    chat_type = str(chat.get("type") or "")
+    if gid and chat_id_str == gid:
+        raw_thread = message.get("message_thread_id")
+        thread_id = int(raw_thread) if raw_thread else None
+        conversation_id = _conversation_for_thread(gid, thread_id)
+        _handle_chief_command(text, conversation_id=conversation_id, thread_id=thread_id)
+        result.update({"handler": "chief_group", "consumed": True})
+        return result
+    if private_id and chat_id_str == private_id and chat_type == "private":
+        _handle_chief_command(text)
+        result.update({"handler": "chief_private", "consumed": True})
+        return result
+    result["handler"] = "unmatched_chat"
+    return result
+
+
 def _poll_chief_commands(state: Dict[str, Any], *, long_poll_timeout: int = 0,
                          handle_owner_commands: bool = True) -> None:
     """Read the paired private chat and/or the bound group and route free text
@@ -1001,42 +1088,56 @@ def _poll_chief_commands(state: Dict[str, Any], *, long_poll_timeout: int = 0,
         state["chief_update_id"] = newest
         state["chief_commands_initialized"] = True
         return
+    retry_map = state.get("chief_update_retries") if isinstance(state.get("chief_update_retries"), dict) else {}
     for update in updates:
         if not isinstance(update, dict):
             continue
+        update_id = int(update.get("update_id") or 0)
+        if update_id <= int(state.get("chief_update_id") or 0):
+            continue
+        state["chief_update_inflight"] = update_id
+        state["last_command_update_at_utc"] = _now_iso()
+        _save_command_poll_state(state)
         try:
-            if private_id and account_auth.process_update(
-                update, api_call=_api_call, owner_chat_id=private_id,
-            ):
-                continue
-            if private_id and telegram_remote.process_update(
-                update, api_call=_api_call, owner_chat_id=private_id,
-            ):
-                continue
-        except telegram_remote.RemoteAccessError as exc:
-            _record_delivery(success=False, error=str(exc))
-        message = update.get("message")
-        if not isinstance(message, dict):
+            dispatch = _dispatch_command_update(
+                update, private_id=private_id, gid=gid,
+                handle_owner_commands=handle_owner_commands,
+            )
+        except Exception as exc:
+            key = str(update_id)
+            retry_count = int(retry_map.get(key) or 0) + 1
+            retry_map[key] = retry_count
+            safe = _safe_error(exc)
+            state["chief_command_error"] = safe
+            state["chief_update_retries"] = retry_map
+            state["last_command_handler"] = "exception"
+            state["last_command_update_id"] = update_id
+            dropped = retry_count >= 3
+            if dropped:
+                state["chief_update_id"] = update_id
+                state.pop("chief_update_inflight", None)
+                retry_map.pop(key, None)
+            _append_update_audit({
+                "update_id": update_id, "handler": "exception",
+                "consumed": False, "error": safe, "retry_count": retry_count,
+                "dropped": dropped,
+            })
+            _save_command_poll_state(state)
+            if not dropped:
+                break
             continue
-        chat = message.get("chat") or {}
-        sender = message.get("from") or {}
-        if sender.get("is_bot"):
-            continue
-        text = str(message.get("text") or "").strip()
-        if not text or text.lower().startswith("/start"):
-            continue
-        chat_id_str = str(chat.get("id") or "")
-        chat_type = str(chat.get("type") or "")
-        if not handle_owner_commands:
-            continue
-        if gid and chat_id_str == gid:
-            raw_thread = message.get("message_thread_id")
-            thread_id = int(raw_thread) if raw_thread else None
-            conversation_id = _conversation_for_thread(gid, thread_id)
-            _handle_chief_command(text, conversation_id=conversation_id, thread_id=thread_id)
-        elif private_id and chat_id_str == private_id and chat_type == "private":
-            _handle_chief_command(text)
-    state["chief_update_id"] = newest
+        state["chief_update_id"] = update_id
+        state.pop("chief_update_inflight", None)
+        retry_map.pop(str(update_id), None)
+        state["chief_update_retries"] = retry_map
+        state["last_command_update_id"] = update_id
+        state["last_command_handler"] = str(dispatch.get("handler") or "")
+        if dispatch.get("error"):
+            state["chief_command_error"] = str(dispatch.get("error") or "")
+        else:
+            state.pop("chief_command_error", None)
+        _append_update_audit(dispatch)
+        _save_command_poll_state(state)
 
 
 def _strategy_snapshot() -> Dict[str, Dict[str, Any]]:
@@ -1298,11 +1399,13 @@ def _save_command_poll_state(state: Dict[str, Any]) -> None:
         latest = _load_state()
         for key in (
             "chief_update_id", "chief_commands_initialized", "chief_command_error",
-            "last_command_poll_at_utc",
+            "chief_update_inflight", "chief_update_retries",
+            "last_command_poll_at_utc", "last_command_update_at_utc",
+            "last_command_update_id", "last_command_handler",
         ):
             if key in state:
                 latest[key] = state[key]
-            elif key == "chief_command_error":
+            elif key in {"chief_command_error", "chief_update_inflight"}:
                 latest.pop(key, None)
         _write_json(_state_path(), latest)
 

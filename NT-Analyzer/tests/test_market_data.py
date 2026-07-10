@@ -193,6 +193,30 @@ def test_lttb_downsample_preserves_edges_and_visible_extreme() -> None:
     assert any(row.get("h") == 5000 for row in sampled)
 
 
+def test_runtime_series_quarantines_impossible_bars(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    path = tmp_path / "data" / "runtime" / "market_bars.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "series": [{
+            "key": "MNQ 09-26|5m", "instrument": "MNQ 09-26", "timeframe": "5m",
+            "status": "live", "updated_at_utc": "2026-07-04T20:00:00Z",
+            "bars": [
+                {"t": "2026-07-04T19:50:00Z", "o": 100, "h": 101, "l": 99, "c": 100, "v": 10},
+                {"t": "2026-07-04T19:55:00Z", "o": 100, "h": 1_000_000_000, "l": 99, "c": 100, "v": 10},
+                {"t": "2026-07-04T20:00:00Z", "o": 101, "h": 102, "l": 100, "c": 101, "v": 10},
+            ],
+        }],
+    }), encoding="utf-8")
+
+    series = market_data.read_runtime_series("MNQ 09-26", "5m", 10)
+
+    assert series["total"] == 2
+    assert series["raw_total"] == 3
+    assert series["diagnostics"]["rejected_bars"] == 1
+    assert series["diagnostics"]["reasons"]["range_explosion"] == 1
+
+
 def test_cached_series_payload_reuses_workspace_signature_entry(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
     _write_snapshot(tmp_path, close=100, high=101, low=99)
