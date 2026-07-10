@@ -18,6 +18,14 @@ Telegram Mini App, графики, AI-чат и пользовательские
 - Batch-запросы графиков дедуплицируют одинаковые series внутри одного poll.
 - Canvas-график фильтрует явно битые бары и считает индикаторы только по
   видимой области плюс warmup.
+- AI Orchestrator HTTP-чаты теперь scoped по `user_id + workspace_id`: один и
+  тот же `conversation_id=default` у разных пользователей пишет в разные
+  истории, а строки истории содержат `user_id`, `workspace_id`, роль membership.
+- Non-owner AI-chat ответы нормализуются, чтобы ассистент не обращался к
+  другому пользователю как к Дмитрию Сергеевичу.
+- `market_data.read_snapshot_index()` и `read_alerts_index()` используют
+  signature cache по `mtime+size`, поэтому одинаковые poll-запросы нескольких
+  пользователей не парсят одни и те же JSON snapshots заново.
 
 ## P0: Identity, Workspaces, Data Isolation
 

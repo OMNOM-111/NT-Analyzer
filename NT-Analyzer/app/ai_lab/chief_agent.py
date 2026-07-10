@@ -94,6 +94,38 @@ def _greet(rest: str, seed: str = "") -> str:
         return address
     return f"{address}, {body}"
 
+
+def _actor_prompt(scope_info: Dict[str, Any]) -> str:
+    if not scope_info:
+        return ""
+    display = str(scope_info.get("display_name") or "").strip()
+    if scope_info.get("is_owner"):
+        return (
+            "CURRENT REQUEST CONTEXT: the current user is the global owner "
+            f"(user_id={scope_info.get('user_id')}, workspace_id={scope_info.get('workspace_id')})."
+        )
+    name_part = f" The user's display name is {display!r}." if display else ""
+    return (
+        "CURRENT REQUEST CONTEXT: the current user is NOT the global owner. "
+        f"user_id={scope_info.get('user_id')}, workspace_id={scope_info.get('workspace_id')}, "
+        f"membership_role={scope_info.get('membership_role') or 'unknown'}."
+        f"{name_part} Address this user neutrally or by their display name. "
+        "Do not call them Дмитрий Сергеевич, Начальник, Шеф or owner."
+    )
+
+
+def _reply_for_actor(reply: str, scope_info: Dict[str, Any]) -> str:
+    text = str(reply or "")
+    if not scope_info or scope_info.get("is_owner"):
+        return text
+    for prefix in ("Дмитрий Сергеевич", "Начальник", "Мой господин", "Шеф"):
+        text = re.sub(rf"^\s*{re.escape(prefix)}[,\s]+", "", text, flags=re.IGNORECASE)
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _can_mirror_to_telegram(scope_info: Dict[str, Any]) -> bool:
+    return (not scope_info) or bool(scope_info.get("is_owner"))
+
 ORCHESTRATOR_SYSTEM_PROMPT = """
 You are StratForge Orchestrator, the operating AI coordinator inside a local
 NinjaTrader research application. You act ON THE OWNER'S BEHALF: everything the
@@ -387,6 +419,58 @@ def _conversation_path() -> Path:
 DEFAULT_CONVERSATION_ID = "default"
 
 
+def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Normalize an optional user/workspace scope for chat history storage.
+
+    ``scope=None`` deliberately means legacy global storage so existing local
+    owner flows and tests keep their historical paths. When a scope is supplied
+    by the HTTP/Telegram layer it must identify both the user and workspace:
+    there is no safe write target for a multi-user conversation without both.
+    """
+    if not scope:
+        return {}
+    if not isinstance(scope, dict):
+        raise ChiefAgentError("Некорректный контекст AI-чата.")
+    active = scope.get("active_workspace") if isinstance(scope.get("active_workspace"), dict) else {}
+    membership = scope.get("active_membership") if isinstance(scope.get("active_membership"), dict) else {}
+    try:
+        user_id = int(scope.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    workspace_id = str(scope.get("workspace_id") or active.get("workspace_id") or "").strip()
+    safe_workspace = re.sub(r"[^A-Za-z0-9_-]", "", workspace_id)[:96]
+    if user_id <= 0 or not safe_workspace:
+        raise ChiefAgentError("Для AI-чата нужна активная рабочая область пользователя.")
+    role = str(scope.get("membership_role") or membership.get("role") or scope.get("role") or "").strip()[:40]
+    display_name = " ".join(str(scope.get("display_name") or "").split())[:120]
+    return {
+        "scope_id": f"u{user_id}__{safe_workspace}",
+        "user_id": user_id,
+        "workspace_id": safe_workspace,
+        "membership_role": role,
+        "is_owner": bool(scope.get("is_owner")),
+        "display_name": display_name,
+    }
+
+
+def _conversation_scope_key(scope: Optional[Dict[str, Any]] = None) -> str:
+    return str(_normalize_conversation_scope(scope).get("scope_id") or "")
+
+
+def _scoped_conversation_root(scope: Optional[Dict[str, Any]]) -> Optional[Path]:
+    info = _normalize_conversation_scope(scope)
+    if not info:
+        return None
+    root = _conversations_index_path().parent / "orchestrator_scopes" / str(info["scope_id"])
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _index_path(scope: Optional[Dict[str, Any]] = None) -> Path:
+    root = _scoped_conversation_root(scope)
+    return (root / "index.json") if root else _conversations_index_path()
+
+
 def _conversations_dir() -> Path:
     path = paths.REGISTRY_DIR / "orchestrator_conversations"
     path.mkdir(parents=True, exist_ok=True)
@@ -402,8 +486,15 @@ def _safe_conversation_id(conversation_id: Any) -> str:
     return cid or DEFAULT_CONVERSATION_ID
 
 
-def _conversation_file(conversation_id: str) -> Path:
+def _conversation_file(conversation_id: str, *, scope: Optional[Dict[str, Any]] = None) -> Path:
     cid = _safe_conversation_id(conversation_id)
+    root = _scoped_conversation_root(scope)
+    if root is not None:
+        if cid == DEFAULT_CONVERSATION_ID:
+            return root / "default.jsonl"
+        directory = root / "conversations"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{cid}.jsonl"
     if cid == DEFAULT_CONVERSATION_ID:
         # The default conversation keeps its historical single-file location so
         # existing history and tests (which monkeypatch _conversation_path) work.
@@ -411,14 +502,14 @@ def _conversation_file(conversation_id: str) -> Path:
     return _conversations_dir() / f"{cid}.jsonl"
 
 
-def _read_index() -> Dict[str, Any]:
-    doc = read_json(_conversations_index_path(), default={})
+def _read_index(scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    doc = read_json(_index_path(scope), default={})
     return dict(doc) if isinstance(doc, dict) else {}
 
 
-def _write_index(doc: Dict[str, Any]) -> None:
+def _write_index(doc: Dict[str, Any], *, scope: Optional[Dict[str, Any]] = None) -> None:
     paths.ensure_dirs()
-    write_json_atomic(_conversations_index_path(), doc)
+    write_json_atomic(_index_path(scope), doc)
 
 
 def _title_from_message(message: str) -> str:
@@ -428,10 +519,12 @@ def _title_from_message(message: str) -> str:
     return text[:48] + ("…" if len(text) > 48 else "")
 
 
-def create_conversation(title: str = "", *, conversation_id: str = "") -> Dict[str, Any]:
+def create_conversation(title: str = "", *, conversation_id: str = "",
+                        scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Register a new orchestrator dialogue with its own isolated context."""
+    scope_info = _normalize_conversation_scope(scope)
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         conversations = list(index.get("conversations") or [])
         cid = _safe_conversation_id(conversation_id) if conversation_id else (
             "C-" + uuid.uuid4().hex[:12].upper()
@@ -449,13 +542,20 @@ def create_conversation(title: str = "", *, conversation_id: str = "") -> Dict[s
             "work_detail": "",
             "closed": False,
         }
+        if scope_info:
+            rec.update({
+                "conversation_scope_id": scope_info["scope_id"],
+                "user_id": scope_info["user_id"],
+                "workspace_id": scope_info["workspace_id"],
+                "membership_role": scope_info["membership_role"],
+            })
         conversations.append(rec)
         index["conversations"] = conversations[-200:]
-        _write_index(index)
+        _write_index(index, scope=scope)
     # An untitled chat has no durable name until the owner's first request.
     # Creating its Telegram topic here would permanently expose the placeholder
     # "Новый чат" and race the first-message title assignment.
-    if not rec["auto_title"]:
+    if not rec["auto_title"] and _can_mirror_to_telegram(scope_info):
         _sync_telegram_topic_title_async(cid, rec["title"])
     return rec
 
@@ -480,16 +580,18 @@ def _sync_telegram_topic_title_async(conversation_id: str, title: str) -> None:
 
 
 def _touch_conversation(conversation_id: str, *, title_hint: str = "",
-                        message_count: Optional[int] = None) -> None:
+                        message_count: Optional[int] = None,
+                        scope: Optional[Dict[str, Any]] = None) -> None:
     """Update metadata and permanently derive the title from the first request."""
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
         return  # implicit conversation; no index entry (keeps test isolation)
+    scope_info = _normalize_conversation_scope(scope)
     first_request = ""
     if title_hint:
         # Reading the transcript also repairs old auto-title rows that used to
         # follow the latest message: the first owner request is authoritative.
-        for message in _read_conversation(500, path=_conversation_file(cid)):
+        for message in _read_conversation(500, path=_conversation_file(cid, scope=scope)):
             if message.get("role") == "user" and str(message.get("content") or "").strip():
                 first_request = str(message["content"])
                 break
@@ -497,7 +599,7 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
     title_changed = False
     synced_title = ""
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         conversations = list(index.get("conversations") or [])
         row = next((r for r in conversations if r.get("conversation_id") == cid), None)
         if row is None:
@@ -505,6 +607,13 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
                 "conversation_id": cid, "title": "Новый чат",
                 "created_at_utc": _now(), "message_count": 0, "auto_title": True,
             }
+            if scope_info:
+                row.update({
+                    "conversation_scope_id": scope_info["scope_id"],
+                    "user_id": scope_info["user_id"],
+                    "workspace_id": scope_info["workspace_id"],
+                    "membership_role": scope_info["membership_role"],
+                })
             conversations.append(row)
         row["updated_at_utc"] = _now()
         if message_count is not None:
@@ -519,20 +628,21 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
             row["title_source"] = "first_request"
             synced_title = new_title
         index["conversations"] = conversations[-200:]
-        _write_index(index)
-    if title_changed:
+        _write_index(index, scope=scope)
+    if title_changed and _can_mirror_to_telegram(scope_info):
         _sync_telegram_topic_title_async(cid, synced_title)
 
 
 _CONVERSATION_WORK_STATES = {"open", "awaiting_owner", "in_progress", "completed", "blocked"}
 
 
-def _set_conversation_work_state(conversation_id: str, state: str, detail: str = "") -> None:
+def _set_conversation_work_state(conversation_id: str, state: str, detail: str = "",
+                                 *, scope: Optional[Dict[str, Any]] = None) -> None:
     """Persist the task lifecycle separately from the chat transcript."""
     cid = _safe_conversation_id(conversation_id)
     clean_state = state if state in _CONVERSATION_WORK_STATES else "open"
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         if cid == DEFAULT_CONVERSATION_ID:
             index["default_work_state"] = clean_state
             index["default_work_detail"] = str(detail or "")[:300]
@@ -544,20 +654,24 @@ def _set_conversation_work_state(conversation_id: str, state: str, detail: str =
             row["work_state"] = clean_state
             row["work_detail"] = str(detail or "")[:300]
             index["conversations"] = conversations
-        _write_index(index)
+        _write_index(index, scope=scope)
 
 
-def set_conversation_closed(conversation_id: str, closed: bool) -> Dict[str, Any]:
+def set_conversation_closed(conversation_id: str, closed: bool,
+                            *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Close a finished/abandoned topic or reopen it without deleting history."""
     cid = _safe_conversation_id(conversation_id)
+    scope_key = _conversation_scope_key(scope)
     with _LOCK:
         doc = _load()
         mission = dict(doc.get("mission") or {})
+        if scope_key and mission.get("conversation_scope_id") != scope_key:
+            mission = {}
         if closed and mission.get("status") in {"active", "paused", "finishing"} and (
             _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID) == cid
         ):
             raise ChiefAgentError("Нельзя закрыть тему, пока связанная работа выполняется или приостановлена.")
-        index = _read_index()
+        index = _read_index(scope)
         if cid == DEFAULT_CONVERSATION_ID:
             index["default_closed"] = bool(closed)
             if not closed:
@@ -577,20 +691,21 @@ def set_conversation_closed(conversation_id: str, closed: bool) -> Dict[str, Any
             row["updated_at_utc"] = _now()
             index["conversations"] = conversations
             result = dict(row)
-        _write_index(index)
+        _write_index(index, scope=scope)
     return result
 
 
-def _conversation_is_closed(conversation_id: str) -> bool:
+def _conversation_is_closed(conversation_id: str, *, scope: Optional[Dict[str, Any]] = None) -> bool:
     cid = _safe_conversation_id(conversation_id)
-    index = _read_index()
+    index = _read_index(scope)
     if cid == DEFAULT_CONVERSATION_ID:
         return bool(index.get("default_closed"))
     row = next((r for r in (index.get("conversations") or []) if r.get("conversation_id") == cid), None)
     return bool(row and row.get("closed"))
 
 
-def rename_conversation(conversation_id: str, title: str) -> Dict[str, Any]:
+def rename_conversation(conversation_id: str, title: str,
+                        *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cid = _safe_conversation_id(conversation_id)
     clean = str(title or "").strip()
     if not clean:
@@ -598,7 +713,7 @@ def rename_conversation(conversation_id: str, title: str) -> Dict[str, Any]:
     if cid == DEFAULT_CONVERSATION_ID:
         raise ChiefAgentError("Основной чат нельзя переименовать.")
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         conversations = list(index.get("conversations") or [])
         row = next((r for r in conversations if r.get("conversation_id") == cid), None)
         if row is None:
@@ -607,39 +722,41 @@ def rename_conversation(conversation_id: str, title: str) -> Dict[str, Any]:
         row["auto_title"] = False
         row["updated_at_utc"] = _now()
         index["conversations"] = conversations
-        _write_index(index)
+        _write_index(index, scope=scope)
         result = dict(row)
-    _sync_telegram_topic_title_async(cid, result["title"])
+    if _can_mirror_to_telegram(_normalize_conversation_scope(scope)):
+        _sync_telegram_topic_title_async(cid, result["title"])
     return result
 
 
-def delete_conversation(conversation_id: str) -> Dict[str, Any]:
+def delete_conversation(conversation_id: str, *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
         raise ChiefAgentError("Основной чат нельзя удалить.")
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         conversations = [
             r for r in (index.get("conversations") or [])
             if r.get("conversation_id") != cid
         ]
         index["conversations"] = conversations
-        _write_index(index)
+        _write_index(index, scope=scope)
     try:
-        _conversation_file(cid).unlink(missing_ok=True)
+        _conversation_file(cid, scope=scope).unlink(missing_ok=True)
     except Exception:
         pass
     return {"ok": True, "conversation_id": cid}
 
 
-def pin_conversation(conversation_id: str, pinned: bool = True) -> Dict[str, Any]:
+def pin_conversation(conversation_id: str, pinned: bool = True,
+                     *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Pin/unpin a dialogue so it stays at the top of the list."""
     cid = _safe_conversation_id(conversation_id)
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         if cid == DEFAULT_CONVERSATION_ID:
             index["default_pinned"] = bool(pinned)
-            _write_index(index)
+            _write_index(index, scope=scope)
             return {"conversation_id": cid, "pinned": bool(pinned)}
         conversations = list(index.get("conversations") or [])
         row = next((r for r in conversations if r.get("conversation_id") == cid), None)
@@ -647,22 +764,22 @@ def pin_conversation(conversation_id: str, pinned: bool = True) -> Dict[str, Any
             raise ChiefAgentError("Чат не найден.")
         row["pinned"] = bool(pinned)
         index["conversations"] = conversations
-        _write_index(index)
+        _write_index(index, scope=scope)
         return row
 
 
-def _finalize_legacy_conversation_titles() -> Dict[str, Any]:
+def _finalize_legacy_conversation_titles(scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Migrate old rolling titles to the first request and schedule topic sync."""
     finalized: List[tuple[str, str]] = []
     with _LOCK:
-        index = _read_index()
+        index = _read_index(scope)
         conversations = list(index.get("conversations") or [])
         for row in conversations:
             if not row.get("auto_title", True):
                 continue
             cid = _safe_conversation_id(row.get("conversation_id"))
             first_request = ""
-            for message in _read_conversation(500, path=_conversation_file(cid)):
+            for message in _read_conversation(500, path=_conversation_file(cid, scope=scope)):
                 if message.get("role") == "user" and str(message.get("content") or "").strip():
                     first_request = str(message["content"])
                     break
@@ -675,19 +792,21 @@ def _finalize_legacy_conversation_titles() -> Dict[str, Any]:
             finalized.append((cid, title))
         if finalized:
             index["conversations"] = conversations
-            _write_index(index)
+            _write_index(index, scope=scope)
     # Sync every migrated row even when its app title already happened to be
     # correct: its Telegram topic may still contain the old placeholder.
-    for cid, title in finalized:
-        _sync_telegram_topic_title_async(cid, title)
+    if _can_mirror_to_telegram(_normalize_conversation_scope(scope)):
+        for cid, title in finalized:
+            _sync_telegram_topic_title_async(cid, title)
     return index
 
 
-def list_conversations() -> List[Dict[str, Any]]:
+def list_conversations(*, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """All dialogues, pinned first then newest activity, with the default chat."""
-    index = _finalize_legacy_conversation_titles()
+    scope_key = _conversation_scope_key(scope)
+    index = _finalize_legacy_conversation_titles(scope)
     conversations = [dict(row) for row in (index.get("conversations") or [])]
-    default_msgs = _read_conversation(500, path=_conversation_file(DEFAULT_CONVERSATION_ID))
+    default_msgs = _read_conversation(500, path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope))
     default_updated = default_msgs[-1].get("timestamp_utc") if default_msgs else ""
     default_row = {
         "conversation_id": DEFAULT_CONVERSATION_ID,
@@ -703,6 +822,8 @@ def list_conversations() -> List[Dict[str, Any]]:
     }
     conversations.insert(0, default_row)
     mission = dict(_load().get("mission") or {})
+    if scope_key and mission.get("conversation_scope_id") != scope_key:
+        mission = {}
     mission_cid = _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
     if mission.get("status") in {"active", "paused", "finishing"}:
         for row in conversations:
@@ -719,8 +840,9 @@ def list_conversations() -> List[Dict[str, Any]]:
     return conversations
 
 
-def conversation_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
-    return _read_conversation(limit, path=_conversation_file(conversation_id))
+def conversation_messages(conversation_id: str, limit: int = 200,
+                          *, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    return _read_conversation(limit, path=_conversation_file(conversation_id, scope=scope))
 
 
 def announce_chart_task(*, conversation_id: str, instruction: str = "",
@@ -728,7 +850,8 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
                         drawing_type: str = "line", label: str = "",
                         delay_seconds: int = 0, duration_minutes: int = 0,
                         report_mode: str = "touch", action: str = "snapshot",
-                        mirror_to_telegram: bool = True) -> Dict[str, Any]:
+                        mirror_to_telegram: bool = True,
+                        scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Open a desktop chart task inside its own conversation.
 
     A task drawn on the desktop (a watched level or a scheduled snapshot) starts
@@ -737,8 +860,9 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     (in group mode) in Telegram before the scheduled snapshot/report arrives.
     """
     from . import domain_agents
+    scope_info = _normalize_conversation_scope(scope)
     cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
-    path = _conversation_file(cid)
+    path = _conversation_file(cid, scope=scope)
     profile = domain_agents.PERSONAS.get(str(agent_id or "ivan").lower()) or domain_agents.PERSONAS["ivan"]
     agent_name = str(profile.get("name") or "Иван")
     agent_title = str(profile.get("title") or "AI-оператор графиков")
@@ -772,18 +896,18 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
             parts.append("и пришли снимок в чат.")
         text = " ".join(parts)
 
-    user_msg = _append_conversation("user", text, source="app", path=path)
-    _touch_conversation(cid, title_hint=text)
+    user_msg = _append_conversation("user", text, source="app", path=path, scope=scope)
+    _touch_conversation(cid, title_hint=text, scope=scope)
     assistant = _append_conversation(
         "assistant", ack, source="chart_task", model="chart operator", provider="local",
-        agent_name=agent_name, actions=[], doubts=[], path=path,
+        agent_name=agent_name, actions=[], doubts=[], path=path, scope=scope,
     )
-    _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков")
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)))
-    if mirror_to_telegram:
+    _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
+    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
+    if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
         try:
             from .. import telegram_service
-            title = _conversation_title(cid)
+            title = _conversation_title(cid, scope=scope)
             telegram_service.mirror_owner_message(text, conversation_id=cid, conversation_title=title)
             telegram_service.send_chief_report(
                 f"{agent_name} · {agent_title}", [ack[:1500]], model_name="chart operator",
@@ -798,7 +922,8 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
 def report_chart_snapshot(*, conversation_id: str, text: str,
                           image_url: str = "", image_file: str = "", caption: str = "",
                           agent_name: str = "Иван",
-                          mirror_to_telegram: bool = True) -> Dict[str, Any]:
+                          mirror_to_telegram: bool = True,
+                          scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Append a chart-operator report (with optional snapshot image) to a chat.
 
     Used by the desktop when a price level is touched or a watch window expires:
@@ -806,22 +931,23 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
     posts the result as a message from Иван into the originating conversation and
     (in group mode) uploads the image into that conversation's Telegram topic.
     """
+    scope_info = _normalize_conversation_scope(scope)
     cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
-    path = _conversation_file(cid)
+    path = _conversation_file(cid, scope=scope)
     attachments = None
     if image_url:
         attachments = [{"type": "image", "url": image_url, "caption": caption}]
     message = _append_conversation(
         "assistant", str(text or "Снимок графика").strip(), source="chart_snapshot",
         model="chart operator", provider="local", agent_name=agent_name,
-        actions=[], doubts=[], attachments=attachments, path=path,
+        actions=[], doubts=[], attachments=attachments, path=path, scope=scope,
     )
-    title = _conversation_title(cid)
+    title = _conversation_title(cid, scope=scope)
     try:
-        _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)))
+        _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
     except Exception:
         pass
-    if mirror_to_telegram:
+    if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
         try:
             from .. import telegram_service, market_data
             sent_photo = False
@@ -845,7 +971,8 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
 
 
 def rate_message(conversation_id: str, message_id: str, rating: Any,
-                 comment: str = "", *, source: str = "owner") -> Dict[str, Any]:
+                 comment: str = "", *, source: str = "owner",
+                 scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cid = _safe_conversation_id(conversation_id)
     mid = str(message_id or "").strip()
     if not mid:
@@ -856,7 +983,7 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
         raise ChiefAgentError("rating должен быть числом 1, 2 или 3.") from None
     if score not in {1, 2, 3}:
         raise ChiefAgentError("rating должен быть числом 1, 2 или 3.")
-    path = _conversation_file(cid)
+    path = _conversation_file(cid, scope=scope)
     if not path.is_file():
         raise ChiefAgentError("Чат не найден.")
     clean_comment = _redact_sensitive(str(comment or "").strip())[:2000]
@@ -881,12 +1008,12 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
     return {"ok": True, "conversation_id": cid, "message": updated}
 
 
-def _conversation_title(conversation_id: str) -> str:
+def _conversation_title(conversation_id: str, *, scope: Optional[Dict[str, Any]] = None) -> str:
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
         return "Основной чат"
     try:
-        for row in list_conversations():
+        for row in list_conversations(scope=scope):
             if row.get("conversation_id") == cid:
                 return str(row.get("title") or "Чат")
     except Exception:
@@ -916,7 +1043,9 @@ def _append_conversation(role: str, content: str, *, source: str,
                          doubts: Optional[List[str]] = None,
                          thinking: str = "",
                          attachments: Optional[List[Dict[str, Any]]] = None,
-                         path: Optional[Path] = None) -> Dict[str, Any]:
+                         path: Optional[Path] = None,
+                         scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    scope_info = _normalize_conversation_scope(scope)
     rec = {
         "message_id": f"MSG-{uuid.uuid4().hex[:12].upper()}",
         "timestamp_utc": _now(),
@@ -929,6 +1058,15 @@ def _append_conversation(role: str, content: str, *, source: str,
         "actions": list(actions or [])[:10],
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
     }
+    if scope_info:
+        rec.update({
+            "conversation_scope_id": scope_info["scope_id"],
+            "user_id": scope_info["user_id"],
+            "workspace_id": scope_info["workspace_id"],
+            "membership_role": scope_info["membership_role"],
+            "actor_name": scope_info.get("display_name") or "",
+            "actor_is_owner": bool(scope_info.get("is_owner")),
+        })
     # Image/file attachments (e.g. chart snapshots) reference stored files by URL;
     # never inline base64 payloads into the conversation log.
     clean_attachments: List[Dict[str, Any]] = []
@@ -950,7 +1088,7 @@ def _append_conversation(role: str, content: str, *, source: str,
     clean_thinking = _redact_sensitive(str(thinking or "").strip())[:8000]
     if clean_thinking:
         rec["thinking"] = clean_thinking
-    append_jsonl(path or _conversation_path(), rec)
+    append_jsonl(path or _conversation_file(DEFAULT_CONVERSATION_ID, scope=scope), rec)
     return rec
 
 
@@ -1178,6 +1316,9 @@ def start_mission(payload: Dict[str, Any]) -> Dict[str, Any]:
     if max_cycles == 0 and requested_iterations == 1:
         requested_iterations = DEFAULT_STRATEGY_ITERATIONS
     allow_local_models = payload.get("allow_local_models") is not False
+    conversation_scope = _normalize_conversation_scope(
+        payload.get("conversation_scope") if isinstance(payload.get("conversation_scope"), dict) else None
+    )
     mission = {
         "mission_id": f"MISSION-{uuid.uuid4().hex[:10].upper()}",
         "control_revision": 1,
@@ -1214,6 +1355,9 @@ def start_mission(payload: Dict[str, Any]) -> Dict[str, Any]:
         "historical_only": True,
         "paper_live_authority": False,
     }
+    if conversation_scope:
+        mission["conversation_scope"] = conversation_scope
+        mission["conversation_scope_id"] = conversation_scope["scope_id"]
     with _LOCK:
         doc = _load()
         doc["mission"] = mission
@@ -2010,21 +2154,23 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
     stream of near-identical rejection lines.
     """
     cid = _safe_conversation_id(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
+    scope = mission.get("conversation_scope") if isinstance(mission.get("conversation_scope"), dict) else None
+    scope_info = _normalize_conversation_scope(scope)
     actual_model = str(model_name or mission.get("last_strategy_model") or "StratForge Orchestrator")
     try:
         _append_conversation(
             "assistant", text, source="mission", model=actual_model,
             provider="local", actions=[{"name": action_name, "status": action_status}],
-            doubts=[], path=_conversation_file(cid),
+            doubts=[], path=_conversation_file(cid, scope=scope), scope=scope,
         )
-        _touch_conversation(cid)
+        _touch_conversation(cid, scope=scope)
         if action_status in {"error", "blocked"}:
-            _set_conversation_work_state(cid, "blocked", text[:300])
+            _set_conversation_work_state(cid, "blocked", text[:300], scope=scope)
         else:
-            _set_conversation_work_state(cid, "in_progress", "Исследование выполняется")
+            _set_conversation_work_state(cid, "in_progress", "Исследование выполняется", scope=scope)
     except Exception:
         pass
-    if not notify_telegram:
+    if not notify_telegram or not _can_mirror_to_telegram(scope_info):
         return
     try:
         from .. import telegram_service
@@ -2032,7 +2178,7 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
         telegram_service.send_chief_report(
             title, [text[:3200]],
             model_name=actual_model,
-            conversation_id=cid, conversation_title=_conversation_title(cid),
+            conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
         )
     except Exception:
         pass
@@ -2040,7 +2186,8 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
 
 def _execute_action(action: Dict[str, Any], owner_message: str = "",
                     conversation_id: str = DEFAULT_CONVERSATION_ID,
-                    *, context_authorized: bool = False) -> Dict[str, Any]:
+                    *, context_authorized: bool = False,
+                    scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     name = str(action.get("name") or "respond").strip()
     args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
     if name not in ALLOWED_PLAN_ACTIONS:
@@ -2068,6 +2215,9 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
                 "allow_local_models": not _owner_explicitly_disables_local_models(owner_message),
                 "conversation_id": _safe_conversation_id(conversation_id),
             }
+            scope_info = _normalize_conversation_scope(scope)
+            if scope_info:
+                args["conversation_scope"] = scope_info
             try:
                 mission = start_mission(args)
             except ChiefAgentError:
@@ -2112,6 +2262,10 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
                         attached = dict(doc.get("mission") or {})
                         if attached.get("mission_id") == mission.get("mission_id"):
                             attached["conversation_id"] = _safe_conversation_id(conversation_id)
+                            scope_info = _normalize_conversation_scope(scope)
+                            if scope_info:
+                                attached["conversation_scope"] = scope_info
+                                attached["conversation_scope_id"] = scope_info["scope_id"]
                             attached["updated_at_utc"] = _now()
                             doc["mission"] = attached
                             _save(doc)
@@ -2714,7 +2868,8 @@ def _conversation_work_state(action_results: List[Dict[str, Any]], reply: str) -
 
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
-                   on_thinking: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+                   on_thinking: Optional[Callable[[str], None]] = None,
+                   scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Understand one owner message, validate a plan and execute allowlisted actions.
 
     Each ``conversation_id`` keeps its own isolated dialogue context. The memory
@@ -2737,20 +2892,21 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         raise ChiefAgentError("Сообщение не может быть пустым.")
     if len(clean) > 6000:
         raise ChiefAgentError("Сообщение должно быть короче 6000 символов.")
+    scope_info = _normalize_conversation_scope(scope)
     cid = _safe_conversation_id(conversation_id)
-    if _conversation_is_closed(cid):
+    if _conversation_is_closed(cid, scope=scope):
         raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
-    conv_path = _conversation_file(cid)
-    _append_conversation("user", clean, source=source, path=conv_path)
-    _touch_conversation(cid, title_hint=clean)
+    conv_path = _conversation_file(cid, scope=scope)
+    _append_conversation("user", clean, source=source, path=conv_path, scope=scope)
+    _touch_conversation(cid, title_hint=clean, scope=scope)
     # Mirror the owner's own app-typed message into the bound Telegram topic so
     # the Telegram thread shows the full conversation, not only replies. Never
     # mirror a message that came from Telegram (it is already there).
-    if mirror_to_telegram and source == "app":
+    if mirror_to_telegram and source == "app" and _can_mirror_to_telegram(scope_info):
         try:
             from .. import telegram_service
             telegram_service.mirror_owner_message(
-                clean, conversation_id=cid, conversation_title=_conversation_title(cid),
+                clean, conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
             )
         except Exception:
             pass
@@ -2788,11 +2944,12 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         responder_id = str(responder.get("id") or persona["id"])
         responder_name = str(responder.get("name") or persona["name"])
         responder_title = str(responder.get("title") or persona["title"])
+        reply = _reply_for_actor(reply, scope_info)
         assistant = _append_conversation(
             "assistant", reply, source=source, model=model, provider=provider,
-            agent_name=responder_name, actions=[], doubts=[], path=conv_path,
+            agent_name=responder_name, actions=[], doubts=[], path=conv_path, scope=scope,
         )
-        _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)))
+        _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
         with _LOCK:
             state = _load()
             state["last_model"] = model
@@ -2801,12 +2958,12 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             state["last_domain_agent"] = responder_id
             state["last_message_at_utc"] = _now()
             _save(state)
-        if mirror_to_telegram and source != "telegram":
+        if mirror_to_telegram and source != "telegram" and _can_mirror_to_telegram(scope_info):
             try:
                 from .. import telegram_service
                 telegram_service.send_chief_report(
                     f"{responder_name} · {responder_title}", [reply[:3200]], model_name=model,
-                    conversation_id=cid, conversation_title=_conversation_title(cid),
+                    conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                     dedupe_key=str(assistant.get("message_id") or ""),
                 )
             except Exception:
@@ -2903,13 +3060,21 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
             "recent_dialogue": history,
             "application_snapshot": snapshot,
         }
+        if scope_info:
+            dynamic["request_context"] = {
+                "user_id": scope_info.get("user_id"),
+                "workspace_id": scope_info.get("workspace_id"),
+                "membership_role": scope_info.get("membership_role"),
+                "is_owner": scope_info.get("is_owner"),
+                "display_name": scope_info.get("display_name"),
+            }
         if _needs_strategy_knowledge(clean):
             dynamic["strategy_research_packet"] = _manager_strategy_context(clean)
         try:
             result = agent_router.invoke_role(
                 "orchestrator",
                 json.dumps(dynamic, ensure_ascii=False, default=str)[:19_000],
-                system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+                system_prompt="\n\n".join(part for part in (ORCHESTRATOR_SYSTEM_PROMPT, _actor_prompt(scope_info)) if part),
                 # DeepSeek thinking tokens share the output allowance. Complex
                 # plans have exceeded 3k before the final JSON, so reserve
                 # enough room while retaining fail-closed JSON validation.
@@ -2944,10 +3109,11 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         plan.setdefault("doubts", []).append("Низкая уверенность плана; действия заблокированы.")
     context_authorized = bool(direct is not None and direct.get("context_authorized"))
     action_results = [
-        _execute_action(row, clean, cid, context_authorized=context_authorized)
+        _execute_action(row, clean, cid, context_authorized=context_authorized, scope=scope)
         for row in raw_actions[:5] if isinstance(row, dict)
     ]
     reply = str(plan.get("reply") or "Готов продолжить после уточнения.").strip()[:8000]
+    reply = _reply_for_actor(reply, scope_info)
     status_summaries = [str(row.get("summary")) for row in action_results if row.get("summary")]
     if status_summaries:
         research_summaries = [
@@ -2975,10 +3141,11 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
         actions=action_results, doubts=doubts, thinking=thinking, path=conv_path,
+        scope=scope,
     )
     work_state, work_detail = _conversation_work_state(action_results, reply)
-    _set_conversation_work_state(cid, work_state, work_detail)
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)))
+    _set_conversation_work_state(cid, work_state, work_detail, scope=scope)
+    _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
     with _LOCK:
         state = _load()
         state["last_model"] = model
@@ -2987,7 +3154,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         state["last_agent"] = management["id"] if management else "auto"
         state["last_message_at_utc"] = _now()
         _save(state)
-    if mirror_to_telegram and source != "telegram":
+    if mirror_to_telegram and source != "telegram" and _can_mirror_to_telegram(scope_info):
         try:
             from .. import telegram_service
             lines = [reply[:3200]]
@@ -2995,7 +3162,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 lines.append("Сомнения: " + "; ".join(doubts[:3]))
             telegram_service.send_chief_report(
                 "StratForge Orchestrator", lines, model_name=model,
-                conversation_id=cid, conversation_title=_conversation_title(cid),
+                conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                 dedupe_key=str(assistant.get("message_id") or ""),
             )
         except Exception:
@@ -3862,22 +4029,25 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
     completed["failed_mission_cleanup"] = archived_sources
     with _LOCK:
         doc = _load(); doc["mission"] = completed; _save(doc)
+    scope = mission.get("conversation_scope") if isinstance(mission.get("conversation_scope"), dict) else None
+    scope_info = _normalize_conversation_scope(scope)
+    cid = mission.get("conversation_id") or DEFAULT_CONVERSATION_ID
     _append_conversation(
         "assistant", content, source="mission_report", model=model,
         provider="", actions=[{"name": "mission_completed", "status": "completed"}], doubts=[],
-        path=_conversation_file(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID),
+        path=_conversation_file(cid, scope=scope), scope=scope,
     )
-    _touch_conversation(mission.get("conversation_id") or DEFAULT_CONVERSATION_ID)
+    _touch_conversation(cid, scope=scope)
     _set_conversation_work_state(
-        mission.get("conversation_id") or DEFAULT_CONVERSATION_ID,
-        "completed", "Автономная работа завершена",
+        cid, "completed", "Автономная работа завершена", scope=scope,
     )
+    if not _can_mirror_to_telegram(scope_info):
+        return
     try:
         from .. import telegram_service
-        cid = mission.get("conversation_id") or DEFAULT_CONVERSATION_ID
         telegram_service.send_chief_report(
             "Автономная работа завершена", [content[:3500]], model_name=model,
-            conversation_id=cid, conversation_title=_conversation_title(cid),
+            conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
         )
     except Exception:
         pass

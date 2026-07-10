@@ -818,6 +818,25 @@ class Handler(BaseHTTPRequestHandler):
         payload["unlock_message"] = perm["unlock_message"]
         return payload
 
+    def _ai_conversation_scope(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        active = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        membership = context.get("active_membership") if isinstance(context.get("active_membership"), dict) else {}
+        user = context.get("user") if isinstance(context.get("user"), dict) else {}
+        display = " ".join(
+            str(user.get(key) or "").strip() for key in ("first_name", "last_name")
+        ).strip() or str(user.get("username") or "")
+        if not context.get("user_id") or not active.get("workspace_id"):
+            raise ai_chief_agent.ChiefAgentError("Для AI-чата нужна активная рабочая область пользователя.")
+        return {
+            "user_id": context.get("user_id"),
+            "workspace_id": active.get("workspace_id"),
+            "membership_role": membership.get("role") or context.get("role") or "",
+            "is_owner": bool(context.get("is_owner")),
+            "display_name": display,
+            "capabilities": context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {},
+        }
+
     def _auth_status(self) -> None:
         try:
             # Fast-path: no auth required AND the request is genuinely local
@@ -2626,7 +2645,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations":
             try:
-                self._json(HTTPStatus.OK, {"ok": True, "conversations": ai_chief_agent.list_conversations()})
+                scope = self._ai_conversation_scope()
+                self._json(HTTPStatus.OK, {"ok": True, "conversations": ai_chief_agent.list_conversations(scope=scope)})
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversations list failed: {e}")
             return True
@@ -2639,10 +2659,11 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 200
             try:
+                scope = self._ai_conversation_scope()
                 self._json(HTTPStatus.OK, {
                     "ok": True,
                     "conversation_id": conversation_id,
-                    "messages": ai_chief_agent.conversation_messages(conversation_id, limit=limit),
+                    "messages": ai_chief_agent.conversation_messages(conversation_id, limit=limit, scope=scope),
                 })
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversation load failed: {e}")
@@ -2771,7 +2792,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             raise
 
-    def _ai_lab_orchestrator_stream(self, body: Dict[str, Any]) -> None:
+    def _ai_lab_orchestrator_stream(self, body: Dict[str, Any], *, scope: Dict[str, Any]) -> None:
         """Stream the orchestrator reply as Server-Sent Events.
 
         A live "thinking" channel (the provider's native reasoning) is streamed
@@ -2796,7 +2817,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = ai_chief_agent.handle_message(
                     message, source="app", mirror_to_telegram=True,
                     conversation_id=conversation_id, agent=agent,
-                    on_thinking=on_thinking,
+                    on_thinking=on_thinking, scope=scope,
                 )
                 events.put(("result", out))
             except ai_chief_agent.ChiefAgentError as exc:
@@ -2919,16 +2940,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/orchestrator/message/stream":
-            self._ai_lab_orchestrator_stream(body)
+            self._ai_lab_orchestrator_stream(body, scope=self._ai_conversation_scope())
             return
 
         if path == "/api/ai-lab/orchestrator/message":
             try:
+                scope = self._ai_conversation_scope()
                 out = ai_chief_agent.handle_message(
                     str(body.get("message") or body.get("text") or ""),
                     source="app", mirror_to_telegram=True,
                     conversation_id=str(body.get("conversation_id") or "default"),
-                    agent=str(body.get("agent") or ""),
+                    agent=str(body.get("agent") or ""), scope=scope,
                 )
                 self._json(HTTPStatus.OK, out)
             except ai_chief_agent.ChiefAgentError as e:
@@ -2937,6 +2959,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/ai-lab/orchestrator/message/") and path.endswith("/rating"):
             try:
+                scope = self._ai_conversation_scope()
                 parts = path.strip("/").split("/")
                 message_id = urllib.parse.unquote(parts[-2]) if len(parts) >= 6 else ""
                 out = ai_chief_agent.rate_message(
@@ -2945,6 +2968,7 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("rating"),
                     str(body.get("feedback_comment") or body.get("comment") or ""),
                     source=str(body.get("feedback_source") or "owner"),
+                    scope=scope,
                 )
                 self._json(HTTPStatus.OK, out)
             except ai_chief_agent.ChiefAgentError as e:
@@ -2964,7 +2988,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations":
             try:
-                conv = ai_chief_agent.create_conversation(str(body.get("title") or ""))
+                scope = self._ai_conversation_scope()
+                conv = ai_chief_agent.create_conversation(str(body.get("title") or ""), scope=scope)
                 self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
             except ai_chief_agent.ChiefAgentError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
@@ -2972,6 +2997,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/chart-task":
             try:
+                scope = self._ai_conversation_scope()
                 out = ai_chief_agent.announce_chart_task(
                     conversation_id=str(body.get("conversation_id") or "default"),
                     instruction=str(body.get("instruction") or body.get("message") or ""),
@@ -2985,6 +3011,7 @@ class Handler(BaseHTTPRequestHandler):
                     report_mode=str(body.get("report_mode") or "touch"),
                     action=str(body.get("action") or "snapshot"),
                     mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
+                    scope=scope,
                 )
                 self._json(HTTPStatus.OK, out)
             except (ai_chief_agent.ChiefAgentError, ValueError, TypeError) as e:
@@ -2993,8 +3020,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations/rename":
             try:
+                scope = self._ai_conversation_scope()
                 conv = ai_chief_agent.rename_conversation(
                     str(body.get("conversation_id") or ""), str(body.get("title") or ""),
+                    scope=scope,
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
             except ai_chief_agent.ChiefAgentError as e:
@@ -3003,8 +3032,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations/pin":
             try:
+                scope = self._ai_conversation_scope()
                 conv = ai_chief_agent.pin_conversation(
                     str(body.get("conversation_id") or ""), bool(body.get("pinned", True)),
+                    scope=scope,
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
             except ai_chief_agent.ChiefAgentError as e:
@@ -3013,11 +3044,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations/state":
             try:
+                scope = self._ai_conversation_scope()
                 state = str(body.get("state") or "").strip().lower()
                 if state not in {"closed", "open"}:
                     raise ai_chief_agent.ChiefAgentError("state должен быть open или closed.")
                 conv = ai_chief_agent.set_conversation_closed(
                     str(body.get("conversation_id") or "default"), state == "closed",
+                    scope=scope,
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "conversation": conv})
             except ai_chief_agent.ChiefAgentError as e:
@@ -3026,7 +3059,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/conversations/delete":
             try:
-                out = ai_chief_agent.delete_conversation(str(body.get("conversation_id") or ""))
+                scope = self._ai_conversation_scope()
+                out = ai_chief_agent.delete_conversation(str(body.get("conversation_id") or ""), scope=scope)
                 self._json(HTTPStatus.OK, out)
             except ai_chief_agent.ChiefAgentError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
@@ -3456,12 +3490,14 @@ class Handler(BaseHTTPRequestHandler):
             if conversation_id:
                 text = str(body.get("text") or "Снимок графика.").strip()[:2000]
                 try:
+                    scope = self._ai_conversation_scope()
                     report = ai_chief_agent.report_chart_snapshot(
                         conversation_id=conversation_id, text=text,
                         image_url=(saved or {}).get("url") or "",
                         image_file=(saved or {}).get("file") or "",
                         caption=str(body.get("caption") or "")[:400],
                         mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
+                        scope=scope,
                     )
                 except Exception as exc:  # pragma: no cover - reporting is best-effort
                     report = {"ok": False, "error": str(exc)[:300]}

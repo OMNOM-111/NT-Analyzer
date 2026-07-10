@@ -156,6 +156,28 @@ def test_alerts_index_groups_by_symbol(tmp_path: Path, monkeypatch) -> None:
         instrument="MNQ 09-26", include_inactive=True)["alerts"]
 
 
+def test_snapshot_and_alert_indexes_reuse_signature_cache(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    _write_snapshot(tmp_path, close=100, high=101, low=99)
+    market_data.create_alert({"instrument": "MNQ 09-26", "timeframe": "5m", "price": 105})
+    real_read = market_data._read
+    calls: list[str] = []
+
+    def counted(path: Path):
+        calls.append(path.name)
+        return real_read(path)
+
+    monkeypatch.setattr(market_data, "_read", counted)
+
+    assert market_data.read_snapshot_index()
+    assert market_data.read_snapshot_index()
+    assert calls.count("market_bars.json") == 1
+
+    assert market_data.read_alerts_index()
+    assert market_data.read_alerts_index()
+    assert calls.count("price_alerts.json") == 1
+
+
 def _batch_status(base: str, *, origin: str, host: str = "", xfh: str = "", init_data: str = ""):
     body = json.dumps({"requests": [{"instrument": "MNQ 09-26", "timeframe": "5m", "limit": 50}]}).encode("utf-8")
     headers = {"Content-Type": "application/json"}

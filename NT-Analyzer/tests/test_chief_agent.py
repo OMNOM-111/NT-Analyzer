@@ -1377,6 +1377,41 @@ def test_pin_conversation_floats_to_top(tmp_path, monkeypatch) -> None:
     assert order.index(cid_a) < order.index(cid_b)
 
 
+def test_scoped_default_conversations_do_not_share_history(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"Дмитрий Сергеевич, готово.","confidence":0.9,"doubts":[],"actions":[]}',
+        "provider": "gemini", "actual_model": "gemini-2.5-flash",
+    })
+    scope_a = {
+        "user_id": 101, "workspace_id": "ws_personal_AAAAAAAA",
+        "membership_role": "owner", "display_name": "Alice",
+        "is_owner": False,
+    }
+    scope_b = {
+        "user_id": 202, "workspace_id": "ws_personal_BBBBBBBB",
+        "membership_role": "owner", "display_name": "Bob",
+        "is_owner": False,
+    }
+
+    chief_agent.handle_message("одинаковый текст", conversation_id="default",
+                               mirror_to_telegram=False, scope=scope_a)
+    chief_agent.handle_message("одинаковый текст", conversation_id="default",
+                               mirror_to_telegram=False, scope=scope_b)
+
+    history_a = chief_agent.conversation_messages("default", scope=scope_a)
+    history_b = chief_agent.conversation_messages("default", scope=scope_b)
+    legacy = chief_agent._read_conversation(10)
+
+    assert [row["user_id"] for row in history_a] == [101, 101]
+    assert [row["workspace_id"] for row in history_a] == ["ws_personal_AAAAAAAA"] * 2
+    assert history_a[-1]["content"] == "Готово."
+    assert [row["user_id"] for row in history_b] == [202, 202]
+    assert [row["workspace_id"] for row in history_b] == ["ws_personal_BBBBBBBB"] * 2
+    assert legacy == []
+
+
 def test_native_thinking_is_not_mirrored_to_telegram(tmp_path, monkeypatch) -> None:
     """Native reasoning is shown in the app chat + stored in history, but only
     the final reply is mirrored to Telegram — the thinking channel never is."""

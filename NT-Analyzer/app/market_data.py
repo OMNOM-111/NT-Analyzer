@@ -29,6 +29,8 @@ _VALID_REPORT_MODES = {"touch", "expire", "both"}
 _COMMAND_TTL_SEC = 600
 _SNAPSHOT_KEEP = 400
 _SNAPSHOT_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+_SNAPSHOT_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
+_ALERTS_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
 
 
 class MarketDataError(ValueError):
@@ -125,6 +127,27 @@ def _write(path: Path, doc: Dict[str, Any]) -> None:
                 tmp.unlink()
         except OSError:
             pass
+
+
+def _file_signature(path: Path) -> str:
+    try:
+        st = path.stat()
+        return f"{path}:{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        return f"{path}:missing"
+
+
+def snapshot_source_signature() -> str:
+    """Stable signature for the current bridge bars snapshot.
+
+    Used by caches so many chart polls can share the same parsed snapshot until
+    the bridge atomically replaces ``market_bars.json``.
+    """
+    return _file_signature(_snapshot_path())
+
+
+def alerts_source_signature() -> str:
+    return _file_signature(_alerts_path())
 
 
 def normalize_timeframe(value: Any) -> str:
@@ -227,10 +250,18 @@ def read_snapshot_index() -> Dict[str, Dict[str, Any]]:
     single time (instead of re-reading and re-parsing ``market_bars.json`` for
     every instrument) keeps a large grid fast and off the disk.
     """
+    signature = snapshot_source_signature()
+    with _LOCK:
+        if _SNAPSHOT_INDEX_CACHE.get("signature") == signature:
+            return dict(_SNAPSHOT_INDEX_CACHE.get("index") or {})
     doc = _read(_snapshot_path())
     rows = doc.get("series") if isinstance(doc.get("series"), list) else []
-    return {str(item.get("key") or ""): item for item in rows
-            if isinstance(item, dict) and item.get("key")}
+    index = {str(item.get("key") or ""): item for item in rows
+             if isinstance(item, dict) and item.get("key")}
+    with _LOCK:
+        _SNAPSHOT_INDEX_CACHE["signature"] = signature
+        _SNAPSHOT_INDEX_CACHE["index"] = index
+    return dict(index)
 
 
 def series_from_index(index: Optional[Dict[str, Dict[str, Any]]], instrument: Any,
@@ -288,12 +319,19 @@ def read_alerts_index() -> Dict[str, List[Dict[str, Any]]]:
     Used by the batch bars endpoint so a 64-chart grid does not re-read
     ``price_alerts.json`` once per instrument on every poll tick.
     """
+    signature = alerts_source_signature()
+    with _LOCK:
+        if _ALERTS_INDEX_CACHE.get("signature") == signature:
+            return {key: list(value) for key, value in (_ALERTS_INDEX_CACHE.get("index") or {}).items()}
     with _LOCK:
         rows = [dict(row) for row in _load_alert_doc()["alerts"] if isinstance(row, dict)]
     rows.sort(key=lambda row: str(row.get("created_at_utc") or ""), reverse=True)
     index: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         index.setdefault(str(row.get("instrument") or "").upper(), []).append(row)
+    with _LOCK:
+        _ALERTS_INDEX_CACHE["signature"] = signature
+        _ALERTS_INDEX_CACHE["index"] = index
     return index
 
 
