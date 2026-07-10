@@ -26,6 +26,14 @@ Telegram Mini App, графики, AI-чат и пользовательские
 - `market_data.read_snapshot_index()` и `read_alerts_index()` используют
   signature cache по `mtime+size`, поэтому одинаковые poll-запросы нескольких
   пользователей не парсят одни и те же JSON snapshots заново.
+- Добавлен локальный SQLite WAL durable index (`data/durable/nt_analyzer.sqlite3`)
+  для job metadata, chat conversation metadata и telemetry file metadata.
+- `jobqueue.create_job()` после атомарной публикации job пишет status/index в
+  SQLite, а `jobqueue.sync_durable_index()` восстанавливает индекс из queue dirs.
+- Batch/GET графики получили server-side payload cache по workspace/range/source
+  signature и opt-in `max_points` LTTB downsampling для слабых ПК.
+- Desktop-графики теперь отправляют `max_points` от ширины окна, чтобы canvas не
+  получал десятки тысяч баров без необходимости.
 
 ## P0: Identity, Workspaces, Data Isolation
 

@@ -178,6 +178,44 @@ def test_snapshot_and_alert_indexes_reuse_signature_cache(tmp_path: Path, monkey
     assert calls.count("price_alerts.json") == 1
 
 
+def test_lttb_downsample_preserves_edges_and_visible_extreme() -> None:
+    bars = [
+        {"t": f"2026-07-04T10:{i:02d}:00Z", "o": i, "h": i + 1, "l": i - 1, "c": i}
+        for i in range(120)
+    ]
+    bars[60] = {"t": "2026-07-04T11:00:00Z", "o": 60, "h": 5000, "l": 59, "c": 60}
+
+    sampled = market_data.downsample_bars(bars, 24)
+
+    assert len(sampled) <= 24
+    assert sampled[0] == bars[0]
+    assert sampled[-1] == bars[-1]
+    assert any(row.get("h") == 5000 for row in sampled)
+
+
+def test_cached_series_payload_reuses_workspace_signature_entry(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    _write_snapshot(tmp_path, close=100, high=101, low=99)
+    index = market_data.read_snapshot_index()
+    real_series_from_index = market_data.series_from_index
+    calls = {"count": 0}
+
+    def counted(*args, **kwargs):
+        calls["count"] += 1
+        return real_series_from_index(*args, **kwargs)
+
+    monkeypatch.setattr(market_data, "series_from_index", counted)
+
+    first = market_data.cached_series_from_index(
+        index, "MNQ 09-26", "5m", 10, workspace_id="ws_1", max_points=8)
+    second = market_data.cached_series_from_index(
+        index, "MNQ 09-26", "5m", 10, workspace_id="ws_1", max_points=8)
+
+    assert first and second
+    assert first["bars"] == second["bars"]
+    assert calls["count"] == 1
+
+
 def _batch_status(base: str, *, origin: str, host: str = "", xfh: str = "", init_data: str = ""):
     body = json.dumps({"requests": [{"instrument": "MNQ 09-26", "timeframe": "5m", "limit": 50}]}).encode("utf-8")
     headers = {"Content-Type": "application/json"}

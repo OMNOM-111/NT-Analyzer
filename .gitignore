@@ -36,6 +36,7 @@
 /NT-Analyzer/jobs/
 /NT-Analyzer/data/batches/
 /NT-Analyzer/data/commands/
+/NT-Analyzer/data/durable/
 /NT-Analyzer/data/reports/
 /NT-Analyzer/data/profiles/
 /NT-Analyzer/data/research/

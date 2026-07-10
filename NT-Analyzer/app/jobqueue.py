@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import governance
+from . import durable
 from . import marginrefresh  # informational margin catalog auto-refresh
 from . import portfolio_cells
 from . import report_assessment
@@ -3682,7 +3683,40 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     if not req.batch_id:
         _ensure_report_number("job", job_id, created_at_utc)
 
+    _record_job_durable_best_effort(job_id, pending_job, job_doc)
+
     return job_id, pending_job
+
+
+def _record_job_durable_best_effort(job_id: str, path: Path,
+                                    job_doc: Dict[str, Any],
+                                    status: str = "pending") -> None:
+    strategy = job_doc.get("strategy") if isinstance(job_doc.get("strategy"), dict) else {}
+    timeframe = job_doc.get("timeframe") if isinstance(job_doc.get("timeframe"), dict) else {}
+    origin = job_doc.get("origin") if isinstance(job_doc.get("origin"), dict) else {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    try:
+        durable.record_job(project_root(), {
+            "job_id": job_id,
+            "workspace_id": origin.get("workspace_id") or job_doc.get("workspace_id") or "",
+            "user_id": origin.get("user_id") or job_doc.get("user_id") or "",
+            "status": status,
+            "kind": job_doc.get("kind") or "",
+            "class_name": strategy.get("class_name") or "",
+            "instrument": job_doc.get("instrument") or "",
+            "timeframe": f"{timeframe.get('value', '')} {timeframe.get('bars_period_type', '')}".strip(),
+            "created_at_utc": job_doc.get("created_at_utc") or "",
+            "updated_at_utc": job_doc.get("created_at_utc") or "",
+            "path": str(path),
+            "dir_mtime": mtime,
+            "origin": origin,
+            "job": job_doc,
+        })
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -3730,6 +3764,11 @@ def queue_counts() -> Dict[str, int]:
                 n += 1
         out[sub] = n
     return out
+
+
+def sync_durable_index() -> Dict[str, Any]:
+    """Recover/update the SQLite WAL job index from queue directories."""
+    return durable.sweep_job_queue(project_root(), jobs_dir(), QUEUE_SUBDIRS)
 
 
 def _scan_job_location_index() -> Tuple[Tuple[int, float], Dict[str, Tuple[str, Path, float]]]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from app import durable
 from app.ai_lab import chief_agent
 
 
@@ -158,6 +159,31 @@ def test_orchestrator_message_rating_updates_assistant_row(tmp_path, monkeypatch
         assert "только ответы" in str(exc)
     else:
         raise AssertionError("user message rating must fail")
+
+
+def test_scoped_conversation_metadata_is_indexed_in_sqlite(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setenv("NT_ANALYZER_SQLITE_PATH", str(tmp_path / "durable.sqlite3"))
+    scope = {
+        "user_id": 101,
+        "workspace_id": "ws_personal_AAAAAAAA",
+        "membership_role": "owner",
+        "is_owner": True,
+    }
+
+    chief_agent.create_conversation("Risk review", conversation_id="C-META", scope=scope)
+    scope_id = chief_agent._conversation_scope_key(scope)
+    row = durable.get_chat_conversation(None, "C-META", scope_id=scope_id)
+
+    assert row is not None
+    assert row["workspace_id"] == "ws_personal_AAAAAAAA"
+    assert row["user_id"] == "101"
+    assert row["title"] == "Risk review"
+
+    chief_agent.rename_conversation("C-META", "Renamed", scope=scope)
+    assert durable.get_chat_conversation(None, "C-META", scope_id=scope_id)["title"] == "Renamed"
+    chief_agent.delete_conversation("C-META", scope=scope)
+    assert durable.get_chat_conversation(None, "C-META", scope_id=scope_id) is None
 
 
 def test_manager_tier_forces_strong_model_complexity(tmp_path, monkeypatch) -> None:

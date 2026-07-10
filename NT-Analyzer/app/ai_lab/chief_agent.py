@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from .. import durable
 from . import agent_registry, agent_router, llm_timeouts, operator_notes, paths, registry, runner
 from .io_utils import append_jsonl, read_json, read_jsonl, write_json_atomic, write_jsonl_atomic
 
@@ -512,6 +513,42 @@ def _write_index(doc: Dict[str, Any], *, scope: Optional[Dict[str, Any]] = None)
     write_json_atomic(_index_path(scope), doc)
 
 
+def _record_conversation_durable_best_effort(row: Dict[str, Any],
+                                             scope: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        cid = _safe_conversation_id(row.get("conversation_id"))
+        info = _normalize_conversation_scope(scope)
+        scope_id = str(row.get("conversation_scope_id") or (info or {}).get("scope_id") or "")
+        durable.record_chat_conversation(paths.PROJECT_ROOT, {
+            "scope_id": scope_id,
+            "conversation_id": cid,
+            "user_id": row.get("user_id") or (info or {}).get("user_id") or "",
+            "workspace_id": row.get("workspace_id") or (info or {}).get("workspace_id") or "",
+            "membership_role": row.get("membership_role") or (info or {}).get("membership_role") or "",
+            "title": row.get("title") or ("Основной чат" if cid == DEFAULT_CONVERSATION_ID else "Чат"),
+            "message_count": row.get("message_count") or 0,
+            "work_state": row.get("work_state") or "",
+            "closed": bool(row.get("closed")),
+            "created_at_utc": row.get("created_at_utc") or "",
+            "updated_at_utc": row.get("updated_at_utc") or "",
+            "path": str(_conversation_file(cid, scope=scope)),
+        })
+    except Exception:
+        pass
+
+
+def _delete_conversation_durable_best_effort(conversation_id: str,
+                                             scope: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        durable.delete_chat_conversation(
+            paths.PROJECT_ROOT,
+            _safe_conversation_id(conversation_id),
+            scope_id=_conversation_scope_key(scope),
+        )
+    except Exception:
+        pass
+
+
 def _title_from_message(message: str) -> str:
     text = re.sub(r"\s+", " ", str(message or "").strip())
     if not text:
@@ -552,6 +589,7 @@ def create_conversation(title: str = "", *, conversation_id: str = "",
         conversations.append(rec)
         index["conversations"] = conversations[-200:]
         _write_index(index, scope=scope)
+    _record_conversation_durable_best_effort(rec, scope)
     # An untitled chat has no durable name until the owner's first request.
     # Creating its Telegram topic here would permanently expose the placeholder
     # "Новый чат" and race the first-message title assignment.
@@ -598,6 +636,7 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
         first_request = first_request or str(title_hint)
     title_changed = False
     synced_title = ""
+    durable_row: Dict[str, Any] = {}
     with _LOCK:
         index = _read_index(scope)
         conversations = list(index.get("conversations") or [])
@@ -627,8 +666,11 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
             row["auto_title"] = False
             row["title_source"] = "first_request"
             synced_title = new_title
+        durable_row = dict(row)
         index["conversations"] = conversations[-200:]
         _write_index(index, scope=scope)
+    if durable_row:
+        _record_conversation_durable_best_effort(durable_row, scope)
     if title_changed and _can_mirror_to_telegram(scope_info):
         _sync_telegram_topic_title_async(cid, synced_title)
 
@@ -692,6 +734,8 @@ def set_conversation_closed(conversation_id: str, closed: bool,
             index["conversations"] = conversations
             result = dict(row)
         _write_index(index, scope=scope)
+    if cid != DEFAULT_CONVERSATION_ID:
+        _record_conversation_durable_best_effort(result, scope)
     return result
 
 
@@ -724,6 +768,7 @@ def rename_conversation(conversation_id: str, title: str,
         index["conversations"] = conversations
         _write_index(index, scope=scope)
         result = dict(row)
+    _record_conversation_durable_best_effort(result, scope)
     if _can_mirror_to_telegram(_normalize_conversation_scope(scope)):
         _sync_telegram_topic_title_async(cid, result["title"])
     return result
@@ -745,6 +790,7 @@ def delete_conversation(conversation_id: str, *, scope: Optional[Dict[str, Any]]
         _conversation_file(cid, scope=scope).unlink(missing_ok=True)
     except Exception:
         pass
+    _delete_conversation_durable_best_effort(cid, scope)
     return {"ok": True, "conversation_id": cid}
 
 

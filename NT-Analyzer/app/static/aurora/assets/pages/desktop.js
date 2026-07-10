@@ -686,7 +686,7 @@ UI.ready(async function () {
     async bars(instrument, timeframe, opts) {
       opts = opts || {};
       try {
-        const q = marketRequest(opts.config || { instrument, timeframe }, opts.limit);
+        const q = marketRequest(opts.config || { instrument, timeframe }, opts.limit, opts.maxPoints);
         const res = await window.API.http.marketBars(q, { signal: opts.signal });
         return {
           bars: Array.isArray(res && res.bars) ? res.bars : [],
@@ -727,7 +727,13 @@ UI.ready(async function () {
     if (rolled) toast(`Rollover: обновлено ${rolled} ${rolled === 1 ? 'контракт' : 'контракта'} до актуального фронт-мансяца`);
   }
 
-  function marketRequest(config, forcedLimit) {
+  function chartMaxPoints(rec) {
+    const box = rec && rec.node ? rec.node.getBoundingClientRect() : null;
+    const width = box && Number.isFinite(box.width) ? box.width : 1200;
+    return Math.max(800, Math.min(8000, Math.ceil(width * 3)));
+  }
+
+  function marketRequest(config, forcedLimit, maxPoints) {
     const range = config.range || { days: 31 };
     let days = Number(range.days || 0);
     if (range.id === 'custom' && range.from && range.to) {
@@ -737,8 +743,10 @@ UI.ready(async function () {
     let perDay = tf === '1D' ? 1 : tf.endsWith('h') ? 24 / Math.max(1, Number(tf.slice(0, -1))) :
       1440 / Math.max(1, Number(tf.slice(0, -1)) || 5);
     const limit = forcedLimit || Math.max(500, Math.min(50000, Math.ceil((days || 60) * perDay * 1.15)));
+    const points = Math.max(0, Math.min(20000, Number(maxPoints || 0)));
     return { instrument: config.instrument, timeframe: config.timeframe, limit,
-      range_days: range.id === 'custom' ? 0 : (days || 0), from: range.from || '', to: range.to || '' };
+      range_days: range.id === 'custom' ? 0 : (days || 0), from: range.from || '', to: range.to || '',
+      max_points: points };
   }
 
   function dataSignature(config) {
@@ -795,7 +803,9 @@ UI.ready(async function () {
     if (rec.inFlight) return;
     const stamp = beginDataRequest(rec);
     setSrc(rec, 'wait', 'NinjaTrader · загрузка…');
-    const payload = await NTData.bars(m.config.instrument, m.config.timeframe, { signal: UI.signal(), config: m.config });
+    const payload = await NTData.bars(m.config.instrument, m.config.timeframe, {
+      signal: UI.signal(), config: m.config, maxPoints: chartMaxPoints(rec),
+    });
     finishDataRequest(rec, stamp);
     if (!requestStillCurrent(rec, stamp)) return;
     applyWindowPayload(rec, payload);
@@ -863,7 +873,11 @@ UI.ready(async function () {
     const now = Date.now();
     const recs = Array.from(wins.values()).filter(rec => !rec.model.minimized && !rec.inFlight && (!rec.nextPollAt || rec.nextPollAt <= now));
     if (!recs.length) return;
-    const batch = recs.map(rec => ({ rec, stamp: beginDataRequest(rec), request: marketRequest(rec.model.config) }));
+    const batch = recs.map(rec => ({
+      rec,
+      stamp: beginDataRequest(rec),
+      request: marketRequest(rec.model.config, null, chartMaxPoints(rec)),
+    }));
     try {
       const out = await API.http.marketBarsBatch({ requests: batch.map(item => item.request) });
       const rows = (out && out.series) || [];

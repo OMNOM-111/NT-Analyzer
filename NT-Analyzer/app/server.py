@@ -20,6 +20,7 @@ Endpoints:
 from __future__ import annotations
 
 import errno
+import copy
 import json
 import math
 import os
@@ -203,6 +204,10 @@ _DESKTOP_INSTRUMENT_ROOTS = {
     "ZT", "ZF", "ZN", "TN", "ZB", "UB",
 }
 
+_MARKET_BARS_PAYLOAD_CACHE_LOCK = threading.RLock()
+_MARKET_BARS_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_MARKET_BARS_PAYLOAD_CACHE_MAX = 512
+
 
 def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
     raw = str(row.get("t") or row.get("time_utc") or row.get("time") or "")
@@ -213,13 +218,70 @@ def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
         return None
 
 
+def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else None
+    if not source:
+        return payload
+    updated = source.get("updated_at_utc")
+    if not updated:
+        return payload
+    try:
+        dt = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+    except ValueError:
+        pass
+    return payload
+
+
+def _market_payload_cache_get(key: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
+    with _MARKET_BARS_PAYLOAD_CACHE_LOCK:
+        cached = _MARKET_BARS_PAYLOAD_CACHE.get(key)
+    if cached is None:
+        return None
+    return _refresh_market_payload_age(copy.deepcopy(cached))
+
+
+def _market_payload_cache_put(key: Tuple[Any, ...], payload: Dict[str, Any]) -> None:
+    with _MARKET_BARS_PAYLOAD_CACHE_LOCK:
+        _MARKET_BARS_PAYLOAD_CACHE[key] = copy.deepcopy(payload)
+        while len(_MARKET_BARS_PAYLOAD_CACHE) > _MARKET_BARS_PAYLOAD_CACHE_MAX:
+            try:
+                oldest = next(iter(_MARKET_BARS_PAYLOAD_CACHE))
+            except StopIteration:
+                return
+            _MARKET_BARS_PAYLOAD_CACHE.pop(oldest, None)
+
+
 def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          range_days: int = 0, from_date: str = "",
                          to_date: str = "", register: bool = True,
                          snapshot_index: Optional[Dict[str, Any]] = None,
-                         alerts_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         alerts_index: Optional[Dict[str, Any]] = None,
+                         max_points: int = 0,
+                         workspace_id: str = "") -> Dict[str, Any]:
     if register:
         market_data.register_request(instrument, timeframe, limit, range_days, from_date, to_date)
+    try:
+        max_points = max(0, min(20000, int(max_points or 0)))
+    except (TypeError, ValueError):
+        max_points = 0
+    cache_key = (
+        str(workspace_id or ""),
+        " ".join(str(instrument or "").strip().upper().split()),
+        str(timeframe or "5m"),
+        int(limit or 1500),
+        int(range_days or 0),
+        str(from_date or "")[:10],
+        str(to_date or "")[:10],
+        max_points,
+        market_data.snapshot_source_signature(),
+        market_data.alerts_source_signature(),
+    )
+    cached = _market_payload_cache_get(cache_key)
+    if cached is not None:
+        return cached
     if snapshot_index is not None:
         runtime_bars = market_data.series_from_index(snapshot_index, instrument, timeframe, limit)
     else:
@@ -265,6 +327,10 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
     else:
         out["alerts"] = market_data.list_alerts(
             instrument=instrument, include_inactive=True)["alerts"]
+    if max_points:
+        out = market_data.downsample_series_payload(out, max_points) or out
+    if out.get("bars") and (out.get("source") or {}).get("kind") == "ninjatrader_runtime":
+        _market_payload_cache_put(cache_key, out)
     return out
 
 
@@ -2414,13 +2480,22 @@ class Handler(BaseHTTPRequestHandler):
                 range_days = int((qs.get("range_days") or ["0"])[0])
             except ValueError:
                 range_days = 0
+            try:
+                max_points = int((qs.get("max_points") or ["0"])[0])
+            except ValueError:
+                max_points = 0
             from_date = (qs.get("from") or [""])[0]
             to_date = (qs.get("to") or [""])[0]
             if not instrument:
                 self._err(HTTPStatus.BAD_REQUEST, "instrument is required")
                 return True
             try:
-                payload = _market_bars_payload(instrument, timeframe, limit, range_days, from_date, to_date)
+                context = getattr(self, "_remote_context", None) or {}
+                payload = _market_bars_payload(
+                    instrument, timeframe, limit, range_days, from_date, to_date,
+                    max_points=max_points,
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
                 return True
@@ -3427,7 +3502,9 @@ class Handler(BaseHTTPRequestHandler):
                 # once per instrument on every poll tick.
                 snapshot_index = market_data.read_snapshot_index()
                 alerts_index = market_data.read_alerts_index()
-                batch_cache: Dict[Tuple[str, str, int, int, str, str], Dict[str, Any]] = {}
+                context = getattr(self, "_remote_context", None) or {}
+                workspace_id = str(context.get("workspace_id") or "")
+                batch_cache: Dict[Tuple[str, str, int, int, str, str, int], Dict[str, Any]] = {}
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
@@ -3438,12 +3515,14 @@ class Handler(BaseHTTPRequestHandler):
                         int(row.get("range_days") or 0),
                         str(row.get("from") or ""),
                         str(row.get("to") or ""),
+                        int(row.get("max_points") or 0),
                     )
                     payload = batch_cache.get(req_key)
                     if payload is None:
                         payload = _market_bars_payload(
                             req_key[0], req_key[1], req_key[2], req_key[3], req_key[4], req_key[5],
                             register=False, snapshot_index=snapshot_index, alerts_index=alerts_index,
+                            max_points=req_key[6], workspace_id=workspace_id,
                         )
                         batch_cache[req_key] = payload
                     result.append(payload)

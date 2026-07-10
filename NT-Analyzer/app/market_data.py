@@ -8,6 +8,7 @@ working when the desktop page is closed.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import math
 import os
@@ -31,6 +32,8 @@ _SNAPSHOT_KEEP = 400
 _SNAPSHOT_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 _SNAPSHOT_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
 _ALERTS_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
+_SERIES_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_SERIES_PAYLOAD_CACHE_MAX = 256
 
 
 class MarketDataError(ValueError):
@@ -148,6 +151,123 @@ def snapshot_source_signature() -> str:
 
 def alerts_source_signature() -> str:
     return _file_signature(_alerts_path())
+
+
+def _clone_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return copy.deepcopy(payload) if isinstance(payload, dict) else None
+
+
+def _bar_y(row: Any) -> float:
+    if not isinstance(row, dict):
+        return 0.0
+    values: List[float] = []
+    for key in ("h", "high", "c", "close", "l", "low"):
+        try:
+            value = float(row.get(key))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            values.append(value)
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def downsample_bars(bars: Iterable[Any], max_points: int = 0) -> List[Any]:
+    """LTTB downsample for visual chart payloads.
+
+    The original bars are returned unchanged unless ``max_points`` is at least
+    3 and smaller than the source length. First and last bars are always kept.
+    """
+    rows = list(bars or [])
+    try:
+        threshold = int(max_points or 0)
+    except (TypeError, ValueError):
+        threshold = 0
+    if threshold < 3 or len(rows) <= threshold:
+        return rows
+    n = len(rows)
+    every = (n - 2) / float(threshold - 2)
+    sampled: List[Any] = [rows[0]]
+    a = 0
+    for i in range(threshold - 2):
+        avg_start = int(math.floor((i + 1) * every)) + 1
+        avg_end = int(math.floor((i + 2) * every)) + 1
+        avg_end = min(avg_end, n)
+        avg_range = rows[avg_start:avg_end] or [rows[min(n - 1, avg_start)]]
+        avg_x = sum(range(avg_start, avg_start + len(avg_range))) / max(1, len(avg_range))
+        avg_y = sum(_bar_y(row) for row in avg_range) / max(1, len(avg_range))
+
+        range_start = int(math.floor(i * every)) + 1
+        range_end = int(math.floor((i + 1) * every)) + 1
+        range_end = min(range_end, n - 1)
+        ax = float(a)
+        ay = _bar_y(rows[a])
+        max_area = -1.0
+        next_a = range_start
+        for idx in range(range_start, max(range_start + 1, range_end)):
+            y = _bar_y(rows[idx])
+            area = abs((ax - avg_x) * (y - ay) - (ax - idx) * (avg_y - ay)) * 0.5
+            if area > max_area:
+                max_area = area
+                next_a = idx
+        sampled.append(rows[next_a])
+        a = next_a
+    sampled.append(rows[-1])
+    return sampled
+
+
+def downsample_series_payload(payload: Optional[Dict[str, Any]],
+                              max_points: int = 0) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    bars = payload.get("bars") if isinstance(payload.get("bars"), list) else []
+    sampled = downsample_bars(bars, max_points)
+    if len(sampled) == len(bars):
+        return _clone_payload(payload)
+    out = _clone_payload(payload) or {}
+    out["bars"] = sampled
+    out["raw_total"] = int(payload.get("total") or len(bars))
+    out["returned"] = len(sampled)
+    out["downsampled"] = True
+    out["downsample_method"] = "lttb"
+    return out
+
+
+def _trim_series_payload_cache() -> None:
+    while len(_SERIES_PAYLOAD_CACHE) > _SERIES_PAYLOAD_CACHE_MAX:
+        try:
+            oldest = next(iter(_SERIES_PAYLOAD_CACHE))
+        except StopIteration:
+            return
+        _SERIES_PAYLOAD_CACHE.pop(oldest, None)
+
+
+def cached_series_from_index(index: Optional[Dict[str, Dict[str, Any]]], instrument: Any,
+                             timeframe: Any, limit: int = 1500, *,
+                             workspace_id: str = "", range_key: str = "",
+                             max_points: int = 0) -> Optional[Dict[str, Any]]:
+    signature = snapshot_source_signature()
+    key = (
+        str(workspace_id or ""),
+        series_key(instrument, timeframe),
+        int(limit or 1500),
+        str(range_key or ""),
+        int(max_points or 0),
+        signature,
+    )
+    with _LOCK:
+        cached = _SERIES_PAYLOAD_CACHE.get(key)
+        if cached is not None:
+            return _clone_payload(cached)
+    payload = series_from_index(index, instrument, timeframe, limit)
+    payload = downsample_series_payload(payload, max_points)
+    if payload is None:
+        return None
+    with _LOCK:
+        _SERIES_PAYLOAD_CACHE[key] = _clone_payload(payload) or {}
+        _trim_series_payload_cache()
+    return _clone_payload(payload)
 
 
 def normalize_timeframe(value: Any) -> str:
