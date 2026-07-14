@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import account_ledger, performance, runtime
-from . import agent_router, llm_timeouts, news_agent, registry
+from . import agent_router, command_language, llm_timeouts, news_agent, registry
 
 MONEY = Decimal("0.01")
 PERSONAS: Dict[str, Dict[str, Any]] = {
@@ -28,6 +29,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "сверка P&L, комиссий и движения средств",
             "поиск дублей, пропусков и неклассифицированных операций",
             "точные отчёты за выбранный период",
+            "доставка отчёта в чат и Telegram",
         ),
     },
     "tolik": {
@@ -41,6 +43,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "контроль жизненного цикла стратегий",
             "сравнение результатов и поиск методологических рисков",
             "рекомендации до новой разработки и повторного теста",
+            "запуск historical-бэктеста и выдача его идентификатора",
         ),
     },
     "nikita": {
@@ -67,6 +70,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "рисует линии и отметки на графиках по команде из чата",
             "следит за достижением цены за заданный срок",
             "делает снимок графика и присылает отчёт в чат",
+            "создаёт серверный снимок без открытой вкладки Desktop",
         ),
     },
 }
@@ -292,7 +296,8 @@ def _complexity(message: str, role: str) -> str:
 
 
 def accounting_snapshot(period: str = "month", account: str = "", *, repair_safe: bool = False,
-                        from_date: Optional[str] = None, to_date: Optional[str] = None) -> Dict[str, Any]:
+                        from_date: Optional[str] = None, to_date: Optional[str] = None,
+                        workspace_id: str = "", uses_owner_runtime: bool = True) -> Dict[str, Any]:
     if str(period or "").lower() == "custom" and from_date and to_date:
         preset, from_date, to_date = "custom", str(from_date)[:10], str(to_date)[:10]
     else:
@@ -302,8 +307,16 @@ def accounting_snapshot(period: str = "month", account: str = "", *, repair_safe
     )
     resolved = perf.get("period") or {}
     start, end = str(resolved.get("from") or "0000-01-01"), str(resolved.get("to") or "9999-12-31")
-    ledger = account_ledger.account_history(account, limit=5000)
-    integrity = account_ledger.audit_integrity(account, repair_safe=repair_safe)
+    if workspace_id and not uses_owner_runtime:
+        from .. import workspaces
+        ledger = workspaces.workspace_account_history(workspace_id, account, limit=5000)
+        # Tenant ledgers enforce unique source ids at write/import time. Keep a
+        # compatible deterministic integrity block without touching the owner's
+        # global ledger audit or repair path.
+        integrity = {"ok": True, "issues": [], "repair_safe": False, "workspace_id": workspace_id}
+    else:
+        ledger = account_ledger.account_history(account, limit=5000)
+        integrity = account_ledger.audit_integrity(account, repair_safe=repair_safe)
     account_rows: List[Dict[str, Any]] = []
     totals = {kind: Decimal("0") for kind in ("deposit", "withdrawal", "transfer", "fee")}
     needs_review = 0
@@ -366,9 +379,15 @@ def accounting_snapshot(period: str = "month", account: str = "", *, repair_safe
     }
 
 
-def strategy_snapshot(period: str = "month") -> Dict[str, Any]:
+def strategy_snapshot(period: str = "month", *, workspace_id: str = "",
+                      uses_owner_runtime: bool = True) -> Dict[str, Any]:
     perf = performance.build_performance_response(period=period if period in {"today", "week", "month", "year"} else "month")
     experiments = registry.list_experiments(limit=1000)
+    if workspace_id and not uses_owner_runtime:
+        experiments = [
+            row for row in experiments
+            if str(row.get("workspace_id") or "") == str(workspace_id)
+        ]
     runtime_rows = runtime.read_strategies_raw()
     status_counts: Dict[str, int] = {}
     findings: List[Dict[str, Any]] = []
@@ -393,12 +412,19 @@ def strategy_snapshot(period: str = "month") -> Dict[str, Any]:
                 "experiment_id": exp.get("experiment_id"), "class_name": exp.get("class_name"),
                 "root": exp.get("target_root"), "status": status, "flags": flags,
                 "trades": trades, "years_tested": years, "profit_factor": pf,
+                "severity": "error" if "technical_failure" in flags else "warning",
+                "kind": "technical_error" if "technical_failure" in flags else "quality_warning",
             })
     enabled = [row for row in runtime_rows if row.get("enabled")]
     finding_counts: Dict[str, int] = {}
     for finding in findings:
         for flag in finding.get("flags") or []:
             finding_counts[str(flag)] = finding_counts.get(str(flag), 0) + 1
+    technical_failures = int(finding_counts.get("technical_failure") or 0)
+    quality_warnings = sum(
+        int(value or 0) for key, value in finding_counts.items()
+        if key != "technical_failure"
+    )
     ranking = sorted(
         perf.get("strategies") or [],
         key=lambda row: (_decimal(row.get("pnl")), _decimal(row.get("profit_factor"))), reverse=True,
@@ -414,6 +440,8 @@ def strategy_snapshot(period: str = "month") -> Dict[str, Any]:
             "runtime_strategies": len(runtime_rows), "enabled_runtime": len(enabled),
             "strategies_with_trades": len(perf.get("strategies") or []),
             "findings": len(findings), "finding_counts": finding_counts,
+            "technical_failures": technical_failures,
+            "quality_warnings": quality_warnings,
         },
         "ranking": ranking[:50],
         "findings": findings[:100],
@@ -425,10 +453,19 @@ def strategy_snapshot(period: str = "month") -> Dict[str, Any]:
 def _fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
     summary = snapshot.get("summary") or {}
     if agent_id == "marina":
+        win_rate = summary.get("win_rate")
+        win_rate_text = "—" if win_rate in (None, "") else f"{float(win_rate):.2f}%"
+        profit_factor = summary.get("profit_factor")
+        pf_text = "—" if profit_factor in (None, "") else f"{float(profit_factor):.3f}"
         return (
             f"Точные данные системы: P&L после комиссий {_usd(summary.get('trading_pnl', '0.00'))}; "
             f"валовый P&L {_usd(summary.get('gross_pnl', '0.00'))}; "
-            f"комиссии {_usd(summary.get('commission', '0.00'))}; сделок {summary.get('trades', 0)}; "
+            f"комиссии {_usd(summary.get('commission', '0.00'))}. "
+            f"Денежные потоки: пополнения {_usd(summary.get('deposits', '0.00'))}; "
+            f"выводы {_usd(summary.get('withdrawals', '0.00'))}; переводы {_usd(summary.get('transfers', '0.00'))}; "
+            f"прочие сборы {_usd(summary.get('fees', '0.00'))}. "
+            f"Сделок {summary.get('trades', 0)}: прибыльных {summary.get('wins', 0)}, "
+            f"убыточных {summary.get('losses', 0)}; win rate {win_rate_text}; profit factor {pf_text}. "
             f"операций на проверке {summary.get('needs_review', 0)}; нарушений целостности {summary.get('integrity_issues', 0)}."
         )
     if agent_id == "nikita":
@@ -445,6 +482,19 @@ def _fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
         f"активных runtime-стратегий {summary.get('enabled_runtime', 0)}; "
         f"замечаний контроля качества {summary.get('findings', 0)}."
     )
+    statuses = summary.get("status_counts") or {}
+    if statuses:
+        ordered = sorted(statuses.items(), key=lambda item: (-int(item[1] or 0), str(item[0])))[:5]
+        base += " Статусы: " + "; ".join(f"{name} — {count}" for name, count in ordered) + "."
+    ranking = snapshot.get("ranking") or []
+    if ranking:
+        leaders = []
+        for row in ranking[:3]:
+            leaders.append(
+                f"{row.get('strategy') or row.get('name') or 'без имени'}: "
+                f"P&L {_usd(row.get('pnl') or 0)}, PF {row.get('profit_factor') or '—'}, сделок {row.get('trades') or 0}"
+            )
+        base += " Лидеры периода: " + "; ".join(leaders) + "."
     counts = summary.get("finding_counts") or {}
     if not counts:
         return base
@@ -458,12 +508,43 @@ def _fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
     return base + f" Главный сигнал: {top} — {counts[top]} записей. Следующий проверяемый шаг: {recommendations.get(top, 'разобрать отмеченные записи по приоритету')}."
 
 
+def deliver_report(period: str = "month", *, workspace_id: str = "",
+                   uses_owner_runtime: bool = True) -> Dict[str, Any]:
+    """Build a deterministic combined report without depending on an LLM."""
+    accounting = accounting_snapshot(
+        period, workspace_id=workspace_id, uses_owner_runtime=uses_owner_runtime,
+    )
+    strategies = strategy_snapshot(
+        period, workspace_id=workspace_id, uses_owner_runtime=uses_owner_runtime,
+    )
+    reply = (
+        f"Сводный отчёт за период «{period}».\n\n"
+        f"Финансы — {_fact_block('marina', accounting)}\n\n"
+        f"Стратегии — {_fact_block('tolik', strategies)}"
+    )
+    return {
+        "ok": True,
+        "reply": reply,
+        "snapshot": {"accounting": accounting, "strategies": strategies, "period": period},
+        "model": "deterministic combined report",
+        "provider": "local",
+        "complexity": "light",
+        "actions": [{"name": "deliver_report", "status": "completed", "period": period}],
+        "agent": {
+            "id": "orchestrator", "name": "StratForge Orchestrator",
+            "title": "сводный отчёт", "page": "index.html",
+        },
+    }
+
+
 def _non_numeric_narrative(text: str) -> str:
     """Keep model judgement while preventing it from overriding exact facts."""
     kept: List[str] = []
     for line in str(text or "").splitlines():
         clean = line.strip()
         if not clean:
+            continue
+        if re.fullmatch(r"(?:\*\*|#+\s*)?[^.!?]{1,100}:?(?:\*\*)?", clean) and clean.rstrip("*").endswith(":"):
             continue
         if re.search(r"\d|[$€£¥₽]|\b(единствен\w*|все|всего|никак\w*|большинств\w*|меньш\w*|больше|половин\w*|кажд\w*|оба|обе)\b", clean, re.IGNORECASE):
             continue
@@ -508,30 +589,7 @@ def _llm_view(agent_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
 # =========================  CHART OPERATOR (Иван)  =========================
 # Instrument roots the desktop supports, each with Russian/English aliases so
 # a spoken command like "поставь линию на нэсдак 21500" resolves to a root.
-_CHART_ROOTS: Dict[str, Tuple[str, ...]] = {
-    "MBT": ("mbt", "битк", "биткоин", "bitcoin", "btc"),
-    "MET": ("met", "эфир", "эфириум", "ether", "eth"),
-    "MNQ": ("mnq", "насдак", "нэсдак", "наздак", "nasdaq", "нэсдэк"),
-    "MES": ("mes", "сипи", "сп500", "s&p", "sp500", "эсенпи"),
-    "MYM": ("mym", "доу", "dow"),
-    "M2K": ("m2k", "рассел", "russell"),
-    "RTY": ("rty",),
-    "MCL": ("mcl", "нефт", "нефть", "oil", "crude"),
-    "MNG": ("mng", "газ", "natural gas", "henry hub"),
-    "MGC": ("mgc", "золот", "золото", "gold"),
-    "SIL": ("sil", "серебр", "серебро", "silver"),
-    "MHG": ("mhg", "медь", "copper"),
-    "6E": ("евро", "euro", "eurusd", "eur"),
-    "6B": ("фунт", "pound", "gbp"),
-    "6J": ("иена", "йена", "yen", "jpy"),
-    "6A": ("осси", "aud", "australian"),
-    "6C": ("канадск", "cad", "canadian"),
-    "ZC": ("кукуруз", "corn"),
-    "ZW": ("пшениц", "wheat"),
-    "ZS": ("соя", "соев", "soybean"),
-    "ZN": ("трежерис", "10-year", "10 year", "ust"),
-    "ZB": ("бонд", "bond"),
-}
+_CHART_ROOTS: Dict[str, Tuple[str, ...]] = command_language.INSTRUMENT_ALIASES
 _ROOT_TOKENS = set(_CHART_ROOTS.keys())
 
 _DRAWING_ALIASES: Tuple[Tuple[str, str], ...] = (
@@ -545,19 +603,7 @@ _DRAWING_ALIASES: Tuple[Tuple[str, str], ...] = (
 
 
 def _resolve_chart_root(text: str) -> str:
-    low = " " + str(text or "").lower() + " "
-    best_root, best_len = "", 0
-    for root, aliases in _CHART_ROOTS.items():
-        for alias in aliases:
-            if alias in low and len(alias) > best_len:
-                best_root, best_len = root, len(alias)
-    if best_root:
-        return best_root
-    # explicit uppercase root token in the original message
-    for token in re.findall(r"[A-Za-z0-9]{2,4}", str(text or "")):
-        if token.upper() in _ROOT_TOKENS:
-            return token.upper()
-    return ""
+    return command_language.resolve_instrument(text)
 
 
 def _extract_duration_minutes(text: str) -> Tuple[Optional[int], str]:
@@ -652,7 +698,7 @@ def _extract_timeframe(text: str) -> str:
 
 def parse_chart_intent(message: str) -> Dict[str, Any]:
     """Deterministically extract a chart operation from an owner command."""
-    text = str(message or "").strip()
+    text = command_language.normalize_command(message)
     low = text.lower()
     intent: Dict[str, Any] = {"action": "", "root": _resolve_chart_root(text)}
 
@@ -665,13 +711,31 @@ def parse_chart_intent(message: str) -> Dict[str, Any]:
     # If the same phrase matched both, it is a delay ("через N"), not a window.
     if delay_span and dur_span and (dur_span in delay_span or delay_span in dur_span):
         dur_minutes = None
-    price = _extract_price(text, exclude=[delay_span, dur_span])
+    timeframe = _extract_timeframe(text)
+    timeframe_spans = [m.group(0) for m in re.finditer(
+        r"\b\d+\s*(?:s|sec|сек|m|м|мин|h|ч|час|d|д)\b", text, flags=re.IGNORECASE,
+    )]
+    price = _extract_price(text, exclude=[delay_span, dur_span, *timeframe_spans])
+    chart_word = any(word in low for word in ("график", "чарт", "chart", "котиров"))
+    show_word = any(word in low for word in (
+        "покажи", "показать", "покажите", "выведи", "вывести", "отобрази",
+        "продемонстр", "дай посмотреть", "хочу увидеть", "где график", "show",
+    ))
+    send_word = any(word in low for word in ("пришли", "пришлите", "скинь", "отправь", "дай"))
+    explicit_open = any(word in low for word in (
+        "открой", "открыть", "перейди", "open", "загрузи"))
     want_snapshot = any(word in low for word in (
-        "снимок", "снимк", "скрин", "скриншот", "сфотограф", "фото", "снять график"))
+        "снимок", "снимк", "скрин", "скриншот", "сфотограф", "фото", "снять график"
+    )) or (show_word and (intent.get("root") or chart_word)) or (send_word and chart_word) or (
+        chart_word and bool(intent.get("root")) and not explicit_open
+    )
     want_report = want_snapshot or any(word in low for word in (
         "отчит", "отчёт", "отчет", "сообщи", "сообщить", "уведоми", "доложи", "пришли", "report"))
-    want_open = any(word in low for word in (
-        "открой", "открыть", "покажи", "показать", "выведи", "вывести", "open", "загрузи"))
+    want_open = explicit_open
+    explicit_draw = any(word in low for word in (
+        "поставь", "поставить", "нарисуй", "нарисовать", "отметь", "отметить",
+        "лини", "уровн", "стрелк", "точк", "метк", "target", "line", "level",
+    ))
 
     drawing_type = "line"
     for needle, mapped in _DRAWING_ALIASES:
@@ -686,16 +750,16 @@ def parse_chart_intent(message: str) -> Dict[str, Any]:
 
     # Bare snapshot request without a price level → snapshot of a chart (the
     # named instrument, or the currently active one), now or after a delay.
-    if want_snapshot and price is None:
+    if want_snapshot and not explicit_draw:
         intent["action"] = "snapshot"
         intent["delay_seconds"] = delay_seconds or 0
-        intent["timeframe"] = _extract_timeframe(text)
+        intent["timeframe"] = timeframe
         return intent
 
     # "Открой график MNQ" (без снимка) → just open + fit the chart.
     if want_open and price is None and intent.get("root"):
         intent["action"] = "open"
-        intent["timeframe"] = _extract_timeframe(text)
+        intent["timeframe"] = timeframe
         return intent
 
     if price is not None:
@@ -710,7 +774,7 @@ def parse_chart_intent(message: str) -> Dict[str, Any]:
             "action": "draw",
             "type": drawing_type,
             "price": price,
-            "timeframe": _extract_timeframe(text),
+            "timeframe": timeframe,
             "duration_minutes": dur_minutes or 0,
             "rule": rule,
             "report_mode": report_mode,
@@ -809,11 +873,12 @@ def chart_task_acknowledgement(*, instrument: str = "", price: Any = None,
         lines.append("Как только цена коснётся уровня — пришлю снимок графика в этот чат.")
     else:
         lines.append("Сделаю снимок и пришлю его в этот чат.")
-    lines.append("⚠️ Для рисования и снимков «Рабочий стол» должен быть открыт в приложении.")
+    lines.append("Команда сохранена в backend и будет выполнена автоматически.")
     return "\n".join(lines)
 
 
-def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[str, Any]:
+def chart_operator_answer(message: str, *, conversation_id: str = "",
+                          scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Иван — turns a chat command into a live chart action via the command queue."""
     from .. import market_data  # local import avoids any import cycle at load time
 
@@ -822,6 +887,14 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
     action = intent.get("action")
     reply_lines: List[str] = []
     queued: List[str] = []
+    scope_meta = {
+        key: (scope or {}).get(key)
+        for key in (
+            "user_id", "workspace_id", "workspace_kind", "uses_owner_runtime",
+            "membership_role", "is_owner", "display_name",
+        )
+        if (scope or {}).get(key) not in (None, "")
+    }
 
     def _base_result(reply: str) -> Dict[str, Any]:
         return {
@@ -830,47 +903,153 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
             "complexity": "light", "actions": queued,
         }
 
+    def _queue_desktop_open(delay_seconds: int = 0) -> None:
+        """Ask the global Aurora shell to open Desktop before a canvas command."""
+        try:
+            market_data.enqueue_chart_command({
+                "type": "open_desktop_tab", "delay_seconds": int(delay_seconds or 0),
+                "conversation_id": conversation_id, "agent_id": "ivan",
+                "note": "Автоматически открыть Рабочий стол для выполнения команды графика",
+                "scope": scope_meta,
+            })
+            queued.append("open_desktop_tab")
+        except market_data.MarketDataError:
+            pass
+
+    if action in {"clear", "snapshot", "open", "draw"}:
+        availability = market_data.ensure_chart_runtime(
+            intent.get("root") or "", intent.get("timeframe") or "5m",
+            wait_seconds=10,
+        )
+        if not availability.get("ready"):
+            # A healthy Bridge with a not-yet-populated subscription is a
+            # transient queue state, not an execution refusal. The headless
+            # worker keeps retrying and posts the actual image when bars land.
+            if availability.get("nt_running") and availability.get("heartbeat_fresh"):
+                if action == "snapshot":
+                    root = intent.get("root") or ""
+                    market_data.enqueue_chart_command({
+                        "type": "snapshot", "instrument": root,
+                        "timeframe": intent.get("timeframe") or "5m",
+                        "conversation_id": conversation_id, "agent_id": "ivan",
+                        "note": message[:400], "scope": scope_meta,
+                        "payload": {"headless_backend": True, "fit": True},
+                    })
+                    queued.append("snapshot")
+                    result = _base_result(
+                        f"Запросил у Bridge бары {root or 'активного инструмента'} и поставил снимок в серверную очередь. "
+                        "Как только данные поступят, реальный PNG автоматически появится в этом чате."
+                    )
+                    result["runtime"] = availability
+                    result["actions"] = [{
+                        "name": "chart_snapshot", "status": "queued",
+                        "reason": "waiting_for_bridge_bars",
+                    }]
+                    return result
+                # open/draw/clear are durable commands; enqueue them below and
+                # let Desktop consume them after the requested series arrives.
+            else:
+                operation = {
+                    "clear": "очистить график", "snapshot": "показать график и прислать снимок",
+                    "open": "открыть график", "draw": "поставить отметку на графике",
+                }.get(str(action), "выполнить команду графика")
+                result = _base_result(
+                    f"Сейчас не могу {operation}: {availability.get('reason') or 'NinjaTrader/Bridge не отвечает.'} "
+                    "Команду не считаю выполненной. После восстановления связи повторите запрос."
+                )
+                result["ok"] = False
+                result["runtime"] = availability
+                result["actions"] = [{
+                    "name": f"chart_{action}", "status": "blocked",
+                    "reason": "chart_runtime_unavailable",
+                }]
+                return result
+
     if action == "clear":
+        # The global Aurora shell must see navigation before the canvas
+        # operation. It opens Desktop first; desktop.js then consumes the
+        # still-pending chart command behind it.
+        _queue_desktop_open()
         try:
             market_data.enqueue_chart_command({
                 "type": "clear", "instrument": intent.get("root") or "",
                 "conversation_id": conversation_id, "agent_id": "ivan",
                 "note": "Убрать отметки с графиков",
+                "scope": scope_meta,
             })
             queued.append("clear")
         except market_data.MarketDataError:
             pass
         return _base_result(
             "Убрал отметки" + (f" по {intent['root']}" if intent.get("root") else " со всех графиков")
-            + ". Если «Рабочий стол» открыт — изменения уже применены.")
+            + ". Команда сохранена и синхронизируется с графиками автоматически.")
 
     if action == "snapshot":
         delay = int(intent.get("delay_seconds") or 0)
         root = intent.get("root") or ""
+        # Immediate snapshots are rendered from bridge bars on the backend, so
+        # the owner receives an image even when no Desktop page is open.
+        if not delay:
+            try:
+                saved = market_data.render_chart_snapshot(
+                    root, intent.get("timeframe") or "5m",
+                    meta={"conversation_id": conversation_id, "outcome": "headless"},
+                )
+                target = str(saved.get("instrument") or root or "активного инструмента")
+                result = _base_result(f"Готово — серверный снимок {target} сформирован и приложен к сообщению.")
+                result["snapshot"] = saved
+                result["attachments"] = [{
+                    "type": "image", "url": saved.get("url"),
+                    "caption": f"{target} · {saved.get('timeframe') or '5m'}",
+                }]
+                return result
+            except market_data.MarketDataError as exc:
+                # Runtime was healthy at preflight, so retain a browser-canvas
+                # fallback while reporting the real renderer failure.
+                render_error = str(exc)
+        else:
+            render_error = ""
+        if delay:
+            market_data.enqueue_chart_command({
+                "type": "snapshot", "instrument": root,
+                "timeframe": intent.get("timeframe") or "5m",
+                "delay_seconds": delay,
+                "conversation_id": conversation_id, "agent_id": "ivan",
+                "note": message[:400], "scope": scope_meta,
+                "payload": {"headless_backend": True, "fit": True},
+            })
+            queued.append("snapshot")
+            target = root if root else "текущего графика"
+            return _base_result(
+                f"Поставил серверный снимок {target} через {_fmt_delay(delay)}. "
+                "Он сформируется в backend и появится в этом чате автоматически."
+            )
+        _queue_desktop_open(delay)
         market_data.enqueue_chart_command({
             "type": "snapshot", "instrument": root, "timeframe": intent.get("timeframe") or "",
             "delay_seconds": delay,
             "conversation_id": conversation_id, "agent_id": "ivan",
             "note": message[:400],
-            "payload": {"fit": True},
+            "payload": {"fit": True}, "scope": scope_meta,
         })
         queued.append("snapshot")
         target = root if root else "текущего графика"
         when = f"через {_fmt_delay(delay)}" if delay else "сейчас"
+        detail = f" Серверный renderer сообщил: {render_error}." if render_error else ""
         return _base_result(
-            f"Принял. Сделаю снимок {target} {when} и пришлю его в этот чат.\n"
-            "⚠️ «Рабочий стол» должен быть открыт в приложении.")
+            f"Поставил снимок {target} {when} в очередь и автоматически открываю Рабочий стол; результат появится в этом чате.{detail}")
 
     if action == "open":
         root = intent.get("root") or ""
+        _queue_desktop_open()
         market_data.enqueue_chart_command({
             "type": "open", "instrument": root, "timeframe": intent.get("timeframe") or "",
             "conversation_id": conversation_id, "agent_id": "ivan",
-            "note": message[:400], "payload": {"fit": True},
+            "note": message[:400], "payload": {"fit": True}, "scope": scope_meta,
         })
         queued.append("open")
         return _base_result(
-            f"Открываю график {root} и настраиваю удобный вид. Скажите «сделай снимок», если нужно прислать его в чат.")
+            f"Открываю график {root} и настраиваю удобный вид. Команда «покажи график» всегда означает снимок в чат.")
 
     if action == "draw":
         root = intent.get("root")
@@ -879,8 +1058,29 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
             return _base_result(
                 "Понял уровень " + _fmt_price(float(price)) + ", но не разобрал инструмент. "
                 "Уточните, например: «поставь линию на MNQ " + _fmt_price(float(price)) + "».")
+        drawing_id = "dr_ivan_" + uuid.uuid4().hex[:18]
+        resolved_instrument = str(availability.get("instrument") or root)
+        alert = market_data.create_alert({
+            "drawing_id": drawing_id,
+            "instrument": resolved_instrument,
+            "timeframe": intent.get("timeframe") or "5m",
+            "type": intent.get("type") or "line",
+            "price": float(price),
+            "label": f"{profile['name']}: {_fmt_price(float(price))}",
+            "color": "#4fd1e0",
+            "duration_minutes": int(intent.get("duration_minutes") or 0),
+            "action": intent.get("rule") or "none",
+            "telegram": False,
+            "snapshot": bool(intent.get("snapshot")),
+            "report_mode": intent.get("report_mode") or "touch",
+            "conversation_id": conversation_id,
+            "agent_id": "ivan",
+            "agent_message": message[:400],
+        }).get("alert") or {}
         payload = {
             "drawing": {
+                "drawing_id": drawing_id,
+                "alert_id": alert.get("id"),
                 "type": intent.get("type") or "line",
                 "price": float(price),
                 "label": f"{profile['name']}: {_fmt_price(float(price))}",
@@ -891,10 +1091,11 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
                 "snapshot": bool(intent.get("snapshot")),
             },
         }
+        _queue_desktop_open()
         market_data.enqueue_chart_command({
             "type": "draw", "instrument": root, "timeframe": intent.get("timeframe") or "",
             "payload": payload, "conversation_id": conversation_id, "agent_id": "ivan",
-            "note": message[:400],
+            "note": message[:400], "scope": scope_meta,
         })
         queued.append("draw")
         human = _DRAWING_HUMAN.get(intent.get("type") or "line", "отметку")
@@ -918,8 +1119,10 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
                     f"Слежу {_fmt_duration(int(intent['duration_minutes']))} и отчитаюсь о достижении уровня в этот чат.")
             else:
                 reply_lines.append("Отчитаюсь в этот чат, как только цена коснётся уровня.")
-        reply_lines.append("⚠️ Для рисования и снимков «Рабочий стол» должен быть открыт в приложении.")
-        return _base_result("\n".join(reply_lines))
+        reply_lines.append("Команда и правило наблюдения сохранены в backend; выполнение и отчёт автоматические.")
+        result = _base_result("\n".join(reply_lines))
+        result["drawing"] = {"drawing_id": drawing_id, "alert_id": alert.get("id"), "instrument": resolved_instrument}
+        return result
 
     # No actionable command recognised — explain capabilities briefly.
     return _base_result(
@@ -932,7 +1135,9 @@ def chart_operator_answer(message: str, *, conversation_id: str = "") -> Dict[st
 
 
 def answer(agent_id: str, message: str, *, period: str = "month", account: str = "",
-           conversation_id: str = "") -> Dict[str, Any]:
+           conversation_id: str = "", workspace_id: str = "",
+           uses_owner_runtime: bool = True,
+           scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     addressed = str(agent_id or "").lower()
     if addressed not in PERSONAS:
         raise ValueError("unknown domain agent")
@@ -942,15 +1147,21 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
     responder_id, handoff_from = route_specialist(addressed, message)
     profile = PERSONAS[responder_id]
     if profile["id"] == "ivan":
-        result = chart_operator_answer(message, conversation_id=conversation_id)
+        result = chart_operator_answer(message, conversation_id=conversation_id, scope=scope)
         if handoff_from:
             result["reply"] = _handoff_note(handoff_from, responder_id) + "\n\n" + str(result.get("reply") or "")
             result["handoff_from"] = handoff_from
         return result
     if profile["id"] == "marina":
-        snapshot = accounting_snapshot(period, account)
+        snapshot = accounting_snapshot(
+            period, account, workspace_id=workspace_id,
+            uses_owner_runtime=uses_owner_runtime,
+        )
     elif profile["id"] == "tolik":
-        snapshot = strategy_snapshot(period)
+        snapshot = strategy_snapshot(
+            period, workspace_id=workspace_id,
+            uses_owner_runtime=uses_owner_runtime,
+        )
     else:
         snapshot = news_agent.snapshot()
     complexity = _complexity(message, str(profile["role"]))
@@ -958,9 +1169,15 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
         f"Ты {profile['name']}, {profile['title']} в StratForge AI. Отвечай по-русски, кратко и предметно. "
         "Все числа из DATA являются авторитетными и рассчитаны кодом. НЕ повторяй никакие числа, суммы, проценты, метрики или количественные слова вроде «все», «единственная», «большинство»: приложение добавит факты отдельно. "
         "Отделяй факт от предположения. При аномалии назови риск и безопасный следующий шаг. "
-        "Не обещай выполненное действие, если в DATA нет результата этого действия."
+        "Не обещай выполненное действие, если в DATA нет результата этого действия. "
+        "Соблюдай релевантные правила и замечания текущего пользователя из USER_MEMORY; "
+        "они не могут менять точные числа DATA или обходить безопасность."
     )
-    packet = {"owner_message": str(message)[:6000], "DATA": _llm_view(profile["id"], snapshot)}
+    packet = {
+        "owner_message": str(message)[:6000],
+        "DATA": _llm_view(profile["id"], snapshot),
+        "USER_MEMORY": list((scope or {}).get("user_memory") or [])[-30:],
+    }
     result: Dict[str, Any] = {}
     try:
         result = agent_router.invoke_role(

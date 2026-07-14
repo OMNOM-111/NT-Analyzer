@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>StratForge AI Lab — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260708-access5">
+<link rel="stylesheet" href="assets/theme.css?v=20260711-chatmodel3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
   .ai-matrix { display:grid; grid-template-columns: repeat(auto-fill, 26px); gap:5px; }
@@ -14,6 +14,28 @@
   .ai-cell.champion { background:var(--pos); } .ai-cell.candidate { background:var(--warn); }
   .ai-cell.running { background:var(--info); animation:pulse 1.4s infinite; } .ai-cell.rejected { background:var(--neg); opacity:.65; }
   .ai-cell.compileFail { background:var(--tx-4); }
+  .research-layout { display:grid; grid-template-columns:320px minmax(0,1fr); min-height:410px; }
+  .research-nav { border-right:1px solid var(--line); min-width:0; }
+  .research-nav-tools { padding:12px; border-bottom:1px solid var(--line); display:grid; gap:8px; }
+  .research-list { max-height:560px; overflow:auto; }
+  .research-group-label { padding:12px 14px 5px; color:var(--tx-4); font-size:10px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; }
+  .research-row { padding:12px 14px; border-bottom:1px solid var(--line); cursor:pointer; transition:background .12s; }
+  .research-row:hover, .research-row.active { background:var(--bg-3); }
+  .research-row.active { box-shadow:inset 3px 0 var(--brand); }
+  .research-row-head { display:flex; align-items:flex-start; gap:8px; }
+  .research-row-title { min-width:0; flex:1; font-size:12.5px; font-weight:750; line-height:1.35; }
+  .research-mini-progress { height:3px; margin-top:9px; border-radius:4px; overflow:hidden; background:var(--line-2); }
+  .research-mini-progress span { display:block; height:100%; background:var(--brand); }
+  .research-detail { min-width:0; padding:18px; }
+  .research-summary { font-size:13px; line-height:1.65; color:var(--tx-2); max-width:980px; }
+  .research-tree { display:flex; flex-direction:column; gap:8px; }
+  .research-tree details { border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-2); padding:10px 12px; }
+  .research-tree summary { cursor:pointer; font-weight:750; font-size:12.5px; }
+  .research-strategy { margin:8px 0 0 14px; padding:9px 10px; border-left:2px solid var(--line-2); }
+  .research-policy { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:8px; }
+  .research-policy > div { border:1px solid var(--line); border-radius:var(--r-sm); padding:9px 10px; background:var(--bg-2); }
+  .research-policy b { display:block; margin-top:3px; font-size:15px; }
+  @media (max-width:900px) { .research-layout { grid-template-columns:1fr; } .research-nav { border-right:0; border-bottom:1px solid var(--line); } .research-list { max-height:260px; } .research-policy { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 </style>
 </head>
 <body data-page="ai" data-title="StratForge AI Lab" data-kicker="StratForge AI · Автономный контур">
@@ -33,8 +55,22 @@
   <!-- KPI -->
   <div class="grid cols-5" id="ai-kpis"></div>
 
+  <section class="panel" id="research-hub">
+    <div class="panel-h"><h2>Исследования и семьи стратегий</h2><span class="sub" id="research-total">единый накопительный контекст</span><div class="spacer"></div><button class="btn primary" id="research-add">Добавить исследование</button></div>
+    <div class="research-layout">
+      <aside class="research-nav">
+        <div class="research-nav-tools">
+          <label class="tb-search" style="width:100%;margin:0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><input type="search" id="research-search" placeholder="Поиск по исследованиям…"></label>
+          <select id="research-status-filter" aria-label="Фильтр статуса"><option value="">Все статусы</option><option value="new">Новые</option><option value="active">В работе</option><option value="at_risk">Под риском</option><option value="promising">Перспективные</option><option value="validated">Подтверждённые</option><option value="exhausted">Неактуальные</option><option value="paused">На паузе</option><option value="archived">Архив</option></select>
+        </div>
+        <div class="research-list" id="research-list"><div class="state-loading"><span class="spinner"></span>Загрузка исследований…</div></div>
+      </aside>
+      <div class="research-detail" id="research-detail"><div class="empty-state">Выберите исследование слева или добавьте новое. Здесь появятся семья, стратегии, варианты параметров и лучший инструмент / таймфрейм / окно.</div></div>
+    </div>
+  </section>
+
   <section class="panel">
-    <div class="panel-h"><h2>StratForge Orchestrator</h2><div class="spacer"></div><span class="badge" id="chief-badge"><span class="dot"></span>Auto · проверка</span></div>
+    <div class="panel-h"><h2>Витёк · правая рука руководителя</h2><div class="spacer"></div><span class="badge" id="chief-badge"><span class="dot"></span>На связи</span></div>
     <div class="panel-b col gap-lg">
       <div class="grid cols-5" id="chief-kpis"></div>
       <div class="grid" style="grid-template-columns:1.55fr 1fr">
@@ -54,6 +90,7 @@
       <div class="panel-h"><h2>Новый цикл</h2><div class="spacer"></div><span class="badge" id="lm-badge"><span class="dot"></span>LM Studio</span></div>
       <div class="panel-b col gap-lg">
         <div id="lm-panel" class="col gap-sm"></div>
+        <div class="field"><label for="ai-research">Активное исследование</label><select id="ai-research"><option value="">Без исследования (разовая задача)</option></select><span class="row-sub" id="ai-research-hint">Выберите сохранённый контекст — цикл будет привязан к его семье и критериям.</span></div>
         <div class="field"><label for="ai-goal">Цель (свободно)</label><textarea id="ai-goal" placeholder="Например: скальп MNQ с просадкой < $300"></textarea></div>
         <div class="grid cols-2">
           <div class="field"><label for="ai-root">Инструмент</label><select id="ai-root"><option value="">авто</option><option>MNQ</option><option>MGC</option><option>MES</option><option>MCL</option></select></div>
@@ -165,10 +202,10 @@
   </div>
 
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260708-access5"></script>
+<script src="assets/api.js?v=20260711-chatmodel3"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260708-access5"></script>
-<script src="assets/pages/ai-lab.js?v=20260702-staged1"></script>
+<script src="assets/ui.js?v=20260713-vitek5"></script>
+<script src="assets/pages/ai-lab.js?v=20260713-research1"></script>
 </body>
 </html>

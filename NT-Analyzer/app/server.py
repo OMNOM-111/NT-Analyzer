@@ -67,6 +67,7 @@ if __package__ is None or __package__ == "":
     from app import portfolio_registry  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
     from app import local_worker  # type: ignore[no-redef]
+    from app import vitek  # type: ignore[no-redef]
     from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
     from app.ai_lab import registry as ai_registry  # type: ignore[no-redef]
     from app.ai_lab import orchestrator as ai_orchestrator  # type: ignore[no-redef]
@@ -88,6 +89,7 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import chief_agent as ai_chief_agent  # type: ignore[no-redef]
     from app.ai_lab import domain_agents as ai_domain_agents  # type: ignore[no-redef]
     from app.ai_lab import news_agent as ai_news_agent  # type: ignore[no-redef]
+    from app.ai_lab import research_catalog as ai_research_catalog  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
 else:
@@ -114,6 +116,7 @@ else:
     from . import portfolio_registry
     from . import runtime as ops_runtime
     from . import local_worker
+    from . import vitek
     from .ai_lab import read_model as ai_read_model
     from .ai_lab import registry as ai_registry
     from .ai_lab import orchestrator as ai_orchestrator
@@ -135,6 +138,7 @@ else:
     from .ai_lab import chief_agent as ai_chief_agent
     from .ai_lab import domain_agents as ai_domain_agents
     from .ai_lab import news_agent as ai_news_agent
+    from .ai_lab import research_catalog as ai_research_catalog
     from . import local_secrets as _local_secrets
     from . import news_refresh
 
@@ -749,7 +753,8 @@ class Handler(BaseHTTPRequestHandler):
     def _api_action_class(self, path: str, method: str) -> str:
         if path.startswith("/api/auth/"):
             return "auth"
-        if path.startswith("/api/owner/") or path.startswith("/api/telegram/") or path.startswith("/api/worker/"):
+        if (path.startswith("/api/owner/") or path.startswith("/api/telegram/")
+                or path.startswith("/api/worker/") or path.startswith("/api/vitek/")):
             return "owner"
         return "read" if method.upper() in {"GET", "HEAD"} else "write"
 
@@ -814,7 +819,7 @@ class Handler(BaseHTTPRequestHandler):
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
                 if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")
-                        or path.startswith("/api/worker/")) and not self._remote_context["is_owner"]:
+                        or path.startswith("/api/worker/") or path.startswith("/api/vitek/")) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
                 try:
                     permissions.enforce(path, self._remote_context)
@@ -848,6 +853,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         owner_only = (path.startswith("/api/telegram/") or path.startswith("/api/auth/users")
                       or path.startswith("/api/owner/") or path.startswith("/api/worker/")
+                      or path.startswith("/api/vitek/")
                       or path == "/api/server/restart")
         if owner_only and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
@@ -932,9 +938,17 @@ class Handler(BaseHTTPRequestHandler):
         ).strip() or str(user.get("username") or "")
         if not context.get("user_id") or not active.get("workspace_id"):
             raise ai_chief_agent.ChiefAgentError("Для AI-чата нужна активная рабочая область пользователя.")
+        workspace_context = context.get("workspace_context") if isinstance(context.get("workspace_context"), dict) else {
+            "active_workspace": active,
+            "active_membership": membership,
+            "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
+        }
         return {
             "user_id": context.get("user_id"),
             "workspace_id": active.get("workspace_id"),
+            "workspace_kind": active.get("kind") or "",
+            "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
+            "runtime_dir": workspaces.runtime_storage_dir_for_context(workspace_context),
             "membership_role": membership.get("role") or context.get("role") or "",
             "is_owner": bool(context.get("is_owner")),
             "display_name": display,
@@ -1029,14 +1043,25 @@ class Handler(BaseHTTPRequestHandler):
         voucher = out.get("voucher") or {}
         invite = out.get("invite") or {}
         code = str(voucher.get("code") or invite.get("code") or "")
-        plan_label = str((subscriptions.PLANS.get(str(voucher.get("grant_plan_id") or "")) or {}).get("label") or "")
+        plan = subscriptions.PLANS.get(str(voucher.get("grant_plan_id") or "")) or {}
+        plan_label = str(plan.get("label") or "")
+        try:
+            discount_percent = int(voucher.get("discount_percent") or 0)
+        except (TypeError, ValueError):
+            discount_percent = 0
+        try:
+            price_usd = float(plan.get("price_usd") or 0)
+        except (TypeError, ValueError):
+            price_usd = 0.0
+        period = str(plan.get("period") or "")
         ctx = getattr(self, "_remote_context", None) or {}
         who = ctx.get("user") or {}
         inviter = (" ".join([str(who.get("first_name") or ""), str(who.get("last_name") or "")]).strip()
                    or str(who.get("username") or ""))
         rendered = invitations.render_invitation(
             code=code, telegram_link=str(invite.get("telegram") or ""),
-            web_link=str(invite.get("web") or ""), plan_label=plan_label, inviter=inviter)
+            web_link=str(invite.get("web") or ""), plan_label=plan_label, inviter=inviter,
+            discount_percent=discount_percent, price_usd=price_usd, period=period)
         rendered.pop("png_bytes", None)  # bytes are not JSON serialisable
         return rendered
 
@@ -1236,7 +1261,7 @@ class Handler(BaseHTTPRequestHandler):
         except account_auth.AccountAuthError:
             pass
         try:
-            user = account_auth.register_via_telegram(
+            out = account_auth.register_via_telegram(
                 verified["user"],
                 email=str(body.get("email") or ""),
                 first_name=str(body.get("first_name") or ""),
@@ -1244,7 +1269,14 @@ class Handler(BaseHTTPRequestHandler):
                 accept_terms=bool(body.get("accept_terms")),
                 api_call=telegram_service._api_call, owner_chat_id=owner_id,
             )
-            self._json(HTTPStatus.OK, {"ok": True, "authenticated": True, "user": user})
+            # New accounts return pending_owner until the owner confirms.
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "authenticated": bool(out.get("authenticated")),
+                "status": str(out.get("status") or ""),
+                "challenge_id": str(out.get("challenge_id") or ""),
+                "user": out.get("user") or {},
+            })
         except account_auth.AccountAuthError as exc:
             self._err(exc.status, str(exc))
 
@@ -1519,6 +1551,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, legal.terms_payload())
             return
 
+        if path == "/api/billing/access-options":
+            # Public: pre-auth welcome screen needs donate tiers + PayPal handle.
+            self._json(HTTPStatus.OK, subscriptions.donation_options())
+            return
+
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
@@ -1575,7 +1612,16 @@ class Handler(BaseHTTPRequestHandler):
                 "jobs_dir": str(jobqueue.jobs_dir()),
                 "ninjatrader_running": jobqueue.ninjatrader_running(),
                 "worker": local_worker.status(),
+                "vitek": vitek.status(),
             })
+            return
+
+        if path == "/api/vitek/status":
+            self._json(HTTPStatus.OK, vitek.status())
+            return
+
+        if path == "/api/vitek/time-windows":
+            self._json(HTTPStatus.OK, vitek.build_time_windows())
             return
 
         if path == "/api/worker/jobs":
@@ -1791,6 +1837,20 @@ class Handler(BaseHTTPRequestHandler):
                     "staleness":        cat.get("staleness") or {},
                 },
             })
+            return
+
+        if path == "/api/chart/snapshot":
+            root = (qs.get("root") or qs.get("instrument") or [""])[0]
+            timeframe = (qs.get("timeframe") or ["5m"])[0]
+            try:
+                saved = market_data.render_chart_snapshot(root, timeframe)
+                found = market_data.read_snapshot(saved.get("file"))
+                if not found:
+                    raise market_data.MarketDataError("Сформированный снимок не найден.")
+                data, mime = found
+                self._bytes(HTTPStatus.OK, data, mime)
+            except market_data.MarketDataError as exc:
+                self._err(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
             return
 
         # /api/batches collection + per-batch detail/results.
@@ -2817,6 +2877,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"source_status failed: {e}")
             return True
 
+        if path == "/api/ai-lab/researches":
+            try:
+                self._json(HTTPStatus.OK, ai_research_catalog.list_researches())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research list failed: {e}")
+            return True
+
+        if sub == "researches" and len(parts) == 4:
+            try:
+                self._json(HTTPStatus.OK, ai_research_catalog.detail(parts[3]))
+            except ai_research_catalog.ResearchCatalogError as e:
+                self._err(HTTPStatus.NOT_FOUND, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research detail failed: {e}")
+            return True
+
         # /api/ai-lab/experiments
         if path == "/api/ai-lab/experiments":
             root = (qs.get("root") or [None])[0]
@@ -3020,6 +3096,39 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
     def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
+        parts = [part for part in path.split("/") if part]
+        if path == "/api/ai-lab/researches":
+            try:
+                research = ai_research_catalog.create(body)
+                self._json(HTTPStatus.CREATED, {
+                    "ok": True,
+                    "created": True,
+                    "message": f"Добавлено исследование «{research.get('title') or research.get('research_id')}».",
+                    "summary": research.get("summary"),
+                    "automatic_conclusion": (research.get("evaluation") or {}).get("automatic_conclusion"),
+                    "research": research,
+                })
+            except ai_research_catalog.ResearchCatalogError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research create failed: {e}")
+            return
+
+        if len(parts) == 4 and parts[0:3] == ["api", "ai-lab", "researches"]:
+            try:
+                research = ai_research_catalog.update(parts[3], body)
+                self._json(HTTPStatus.OK, {
+                    "ok": True, "updated": True,
+                    "message": f"Исследование «{research.get('title') or parts[3]}» обновлено.",
+                    "research": research,
+                })
+            except ai_research_catalog.ResearchCatalogError as e:
+                status = HTTPStatus.NOT_FOUND if "не найдено" in str(e) else HTTPStatus.BAD_REQUEST
+                self._err(status, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research update failed: {e}")
+            return
+
         if path.startswith("/api/ai-lab/cloud-agents/"):
             try:
                 if path == "/api/ai-lab/cloud-agents/settings":
@@ -3104,12 +3213,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/domain-agents/message":
             try:
-                out = ai_domain_agents.answer(
-                    str(body.get("agent_id") or ""), str(body.get("message") or body.get("text") or ""),
-                    period=str(body.get("period") or "month"), account=str(body.get("account") or ""),
+                # Legacy specialist endpoint still enters through the same
+                # Orchestrator gateway as app chat and Telegram.  The selected
+                # agent is a routing hint, never a bypass around authorization,
+                # conversation audit or capability execution.
+                out = ai_chief_agent.handle_message(
+                    str(body.get("message") or body.get("text") or ""),
+                    source="app", mirror_to_telegram=bool(body.get("mirror_to_telegram", False)),
+                    conversation_id=str(body.get("conversation_id") or "default"),
+                    agent=str(body.get("agent_id") or ""), scope=self._ai_conversation_scope(),
                 )
                 self._json(HTTPStatus.OK, out)
-            except (ValueError, ai_agent_router.AgentRouterError) as e:
+            except (ValueError, ai_agent_router.AgentRouterError, ai_chief_agent.ChiefAgentError) as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
@@ -3257,6 +3372,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/run":
             try:
+                research_id = str(body.get("research_id") or "").strip()
+                selected_research: Dict[str, Any] = {}
+                if research_id:
+                    selected_research = ai_research_catalog.run_context(research_id)
+                user_goal = str(body.get("goal") or body.get("user_goal") or "").strip()
+                if selected_research:
+                    user_goal = (selected_research["context"] + (
+                        "\n\nCURRENT CYCLE INSTRUCTIONS:\n" + user_goal if user_goal else ""
+                    ))[:12_000]
                 capital_value = body.get("capital")
                 if capital_value in (None, ""):
                     capital_value = body.get("user_capital")
@@ -3287,7 +3411,12 @@ class Handler(BaseHTTPRequestHandler):
                         or body.get("user_pref_root") or body.get("instrument_root") or None
                     ),
                     "user_capital": (float(capital_value) if capital_value not in (None, "") else None),
-                    "user_goal": body.get("goal") or body.get("user_goal"),
+                    "user_goal": user_goal or None,
+                    "research_id": research_id,
+                    "research_title": selected_research.get("research_title"),
+                    "research_family_name": selected_research.get("family_name"),
+                    "research_family_key": selected_research.get("family_key"),
+                    "research_knowledge_ref": selected_research.get("knowledge_rel_path"),
                     "dry_run": bool(body.get("dry_run", False)),
                     "skip_compile": bool(body.get("skip_compile", False)),
                     "skip_backtest": bool(body.get("skip_backtest", False)),
@@ -3309,6 +3438,9 @@ class Handler(BaseHTTPRequestHandler):
                     "smoke_timeout_sec": max(30, min(1800, int(body.get("smoke_timeout_sec", 180)))),
                     "min_signal_sanity": max(1, min(100, int(body.get("min_signal_sanity", 8)))),
                 }
+            except ai_research_catalog.ResearchCatalogError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
             except (TypeError, ValueError) as e:
                 self._err(HTTPStatus.BAD_REQUEST, f"invalid run parameters: {e}")
                 return
@@ -3907,6 +4039,20 @@ class Handler(BaseHTTPRequestHandler):
             self._paypal_webhook()
             return
 
+        if path == "/api/telegram/webhook":
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                dispatch = telegram_service.process_webhook_update(
+                    body,
+                    str(self.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""),
+                )
+                self._json(HTTPStatus.OK, {"ok": True, "handler": dispatch.get("handler")})
+            except telegram_service.TelegramServiceError as exc:
+                self._err(HTTPStatus.FORBIDDEN, str(exc))
+            return
+
         if not self._authorize_api(path):
             return
 
@@ -4340,6 +4486,7 @@ class Handler(BaseHTTPRequestHandler):
         is_governance = path.startswith("/api/governance/")
         is_portfolio = path.startswith("/api/portfolio/")
         is_telegram = path.startswith("/api/telegram/")
+        is_vitek = path.startswith("/api/vitek/")
         is_ai_agents = path == "/api/ai-agents" or path.startswith("/api/ai-agents/")
 
         if not (path in ("/api/jobs", "/api/batches")
@@ -4347,12 +4494,57 @@ class Handler(BaseHTTPRequestHandler):
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
                 or is_ops or is_profiles or is_report_favorites
-                or is_ai_lab or is_governance or is_portfolio or is_telegram or is_ai_agents):
+                or is_ai_lab or is_governance or is_portfolio or is_telegram or is_vitek or is_ai_agents):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
         if not self._check_local_post():
             return  # _check_local_post already wrote an error
+
+        if is_vitek:
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                vitek_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+                if path == "/api/vitek/scan":
+                    out = vitek.scan(notify=bool(body.get("notify", False)))
+                elif path == "/api/vitek/rest":
+                    out = {"ok": True, "rest": vitek.set_rest(
+                        duration_minutes=body.get("duration_minutes") or 0,
+                        until_utc=body.get("until_utc") or "",
+                        reason=str(body.get("reason") or ""),
+                    )}
+                elif path == "/api/vitek/resume":
+                    out = {"ok": True, "rest": vitek.resume()}
+                elif path == "/api/vitek/tasks":
+                    out = {"ok": True, "task": vitek.add_task(body)}
+                elif path == "/api/vitek/events":
+                    out = vitek.emit_event(
+                        str(body.get("event_type") or "app_event"),
+                        body.get("payload") if isinstance(body.get("payload"), dict) else {},
+                        source=str(body.get("source") or "app"),
+                        severity=str(body.get("severity") or ""),
+                        dedupe_key=str(body.get("dedupe_key") or ""),
+                    )
+                elif path == "/api/vitek/plans":
+                    out = {"ok": True, "plan": vitek.set_plan(body)}
+                elif (len(vitek_parts) == 4 and vitek_parts[:3] == ["api", "vitek", "tasks"]):
+                    out = {"ok": True, "task": vitek.update_task(vitek_parts[3], body)}
+                elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "incidents"]
+                      and vitek_parts[4] == "decision"):
+                    out = {"ok": True, "incident": vitek.decide_incident(
+                        vitek_parts[3], str(body.get("decision") or ""), note=str(body.get("note") or ""),
+                    )}
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no Vitek route: {path}")
+                    return
+                self._json(HTTPStatus.OK, out)
+            except vitek.VitekError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            except Exception as exc:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"Vitek action failed: {exc}")
+            return
 
         if is_telegram:
             body = self._read_body()
@@ -4550,7 +4742,17 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             if body is None:
                 return
-            self._ops_post(path, body)
+            context = getattr(self, "_remote_context", None) or {}
+            runtime_override = ""
+            if path.startswith("/api/ops/runtime/"):
+                runtime_override = workspaces.runtime_storage_dir_for_context(
+                    context.get("workspace_context") or {}
+                )
+            if runtime_override:
+                with ops_runtime.runtime_dir_override(runtime_override):
+                    self._ops_post(path, body)
+            else:
+                self._ops_post(path, body)
             return
 
         if is_catalog_refresh:
@@ -4764,6 +4966,16 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] StratForge Orchestrator started (every 30 sec)")
     except Exception as e:
         print(f"[nta-backend] StratForge Orchestrator NOT started: {e}")
+    try:
+        vitek.start_background_worker(interval_sec=1)
+        print("[nta-backend] Vitek duty controller started (event-driven)")
+    except Exception as e:
+        print(f"[nta-backend] Vitek duty controller NOT started: {e}")
+    try:
+        market_data.start_chart_worker(interval_sec=1.0)
+        print("[nta-backend] headless chart scheduler started (every 1 sec)")
+    except Exception as e:
+        print(f"[nta-backend] headless chart scheduler NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()
@@ -4771,8 +4983,10 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] shutting down")
     finally:
         ai_chief_agent.stop_background_worker()
+        vitek.stop_background_worker()
         local_worker.stop_background_worker()
         telegram_service.stop_background_notifier()
+        market_data.stop_chart_worker()
         server.server_close()
 
 

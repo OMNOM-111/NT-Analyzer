@@ -639,11 +639,17 @@
   async function authenticateAndStart(newsStrip) {
     const result = window.API ? await API.authReady : { auth: null };
     if (result.error) {
-      renderTelegramLogin(result.error);
+      // Always mount the real first page as a guest, then optionally show the
+      // access sheet on top. Never replace .content with the promo screen —
+      // that destroyed the overview and made "close" feel broken.
+      startGuestBrowse(newsStrip);
+      const dismissed = (() => { try { return sessionStorage.getItem('stratforge.welcome.dismissed') === '1'; } catch (e) { return false; } })();
+      if (!dismissed) renderWelcomeAccess({ asOverlay: true });
       return;
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
     document.documentElement.classList.remove('auth-locked');
+    document.documentElement.classList.remove('guest-browse');
     const user = CURRENT_AUTH.user || {};
     applyChipUser(user);
     captureReferral();
@@ -669,7 +675,111 @@
     wireSearch();
     wireGlobalNewsStrip(newsStrip);
     buildOrchestratorWidget();
+    startDesktopCommandBridge();
     runReady();
+    maybeRedeemStoredPromo();
+  }
+
+  async function maybeRedeemStoredPromo() {
+    let code = '';
+    try { code = String(sessionStorage.getItem('stratforge.pending.promo') || '').trim(); } catch (e) { code = ''; }
+    if (!code || !window.API) return;
+    try {
+      const out = await API.http.billingPromoRedeem({ code });
+      try { sessionStorage.removeItem('stratforge.pending.promo'); } catch (e) { /* ignore */ }
+      if (out && !out.checkout_required) { toast('Промокод активирован'); setTimeout(() => location.reload(), 700); }
+    } catch (e) { /* keep code for retry from cabinet */ }
+  }
+
+  function guestAuthStub() {
+    return {
+      role: 'guest', is_owner: false, guest: true, free_preview: true,
+      plan_id: 'free_preview',
+      features: { overview: true, news: true, docs: true },
+      locked_nav: ['backtest', 'trading', 'desktop', 'performance', 'strategies', 'ai', 'agents', 'topstep'],
+      unlock_message: 'Чтобы открыть больше возможностей — введите промокод или отблагодарите донатом.',
+      user: { first_name: 'Гость', last_name: '', user_id: 0 },
+    };
+  }
+
+  function isGuest() {
+    return !!(CURRENT_AUTH && CURRENT_AUTH.guest);
+  }
+
+  function startGuestBrowse(newsStrip) {
+    CURRENT_AUTH = guestAuthStub();
+    document.documentElement.classList.remove('auth-locked');
+    document.documentElement.classList.add('guest-browse');
+    const news = qs('[data-global-news-strip]');
+    if (news) news.hidden = false;
+    // If a previous full-screen auth/welcome wiped the page, go back to overview.
+    const content = qs('.content');
+    if (content && (qs('#welcome-access', content) || qs('.auth-screen', content))) {
+      try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
+      location.href = 'index.html';
+      return;
+    }
+    applyChipUser(CURRENT_AUTH.user);
+    applyNavAccess(CURRENT_AUTH);
+    const chipUser = qs('#chip-user');
+    if (chipUser) chipUser.onclick = () => renderWelcomeAccess({ asOverlay: true });
+    startClock();
+    // Guest preview must not hit authenticated APIs (whitelist 403 spam).
+    wireGuestPreviewChrome();
+    wireTopbar();
+    wireSearch();
+    // Keep the established StratForge Orchestrator entry point visible.  In
+    // guest mode it becomes a clear sign-in surface instead of disappearing.
+    buildOrchestratorWidget();
+    if (newsStrip) {
+      const track = qs('.global-news-track', newsStrip);
+      if (track) track.innerHTML = '<span class="global-news-static">Ознакомительный просмотр · войдите, чтобы видеть живую ленту</span>';
+    }
+    ensureGuestPreviewBanner();
+    if (!READY._done) runReady();
+  }
+
+  function wireGuestPreviewChrome() {
+    const ntC = qs('#chip-nt'), brC = qs('#chip-bridge'), lmC = qs('#chip-lm'), mkC = qs('#chip-market'), accC = qs('#chip-account');
+    const tickMarket = () => {
+      try {
+        const m = AuroraDomain.marketStatus(new Date());
+        setChip(mkC, m.state, m.label, m.title);
+      } catch (e) { setChip(mkC, 'off', 'Рынок', 'ознакомительный просмотр'); }
+    };
+    tickMarket();
+    setChip(ntC, 'off', 'NinjaTrader', 'ознакомительный просмотр');
+    setChip(brC, 'off', 'Bridge', 'ознакомительный просмотр');
+    setChip(lmC, 'off', 'LM Studio', 'ознакомительный просмотр');
+    setChip(accC, 'off', 'Счёт · демо', 'Войдите, чтобы видеть реальные счета');
+  }
+
+  function ensureGuestPreviewBanner() {
+    if (qs('#guest-preview-banner')) return;
+    const main = qs('.main');
+    if (!main) return;
+    const bar = el(`<div id="guest-preview-banner" class="guest-preview-banner">
+      <span>Ознакомительный просмотр · под размытием демо-данные интерфейса</span>
+      <button type="button" class="btn sm primary" id="guest-preview-open">Войти через Telegram</button>
+    </div>`);
+    const content = qs('.content', main);
+    if (content) main.insertBefore(bar, content);
+    else main.appendChild(bar);
+    const btn = qs('#guest-preview-open', bar);
+    if (btn) btn.onclick = () => renderTelegramLogin('');
+  }
+
+  function dismissWelcomeAccess() {
+    try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
+    const node = qs('#welcome-access');
+    if (node) node.remove();
+    document.documentElement.classList.remove('auth-locked');
+  }
+
+  function lockedNavClick(e) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    if (CURRENT_AUTH && CURRENT_AUTH.guest) renderWelcomeAccess({ asOverlay: true });
+    else openCabinet('plans');
   }
 
   // ---- avatars + personal / owner cabinet -----------------------------------
@@ -695,10 +805,6 @@
       if (id === 'overview') { item.hidden = false; return; }
       item.hidden = !(!features || features[id] !== false);
     });
-  }
-  function lockedNavClick(e) {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    openCabinet('plans');
   }
   // Central access control: in Free Preview (or any non-owner with locked
   // sections) the rail keeps every section VISIBLE but marks locked ones, and a
@@ -736,14 +842,129 @@
       <h2>Раздел заблокирован</h2>
       <p>${esc(msg)}</p>
       <div class="lock-gate-actions">
-        <button class="btn primary" id="lock-gate-plans">Выбрать тариф</button>
-        <button class="btn ghost" id="lock-gate-promo">Ввести промокод</button>
+        <button class="btn primary" id="lock-gate-plans">Промокод или донат</button>
       </div>
       ${freePreview ? '<div class="lock-gate-hint">Ознакомительный режим: открыты Обзор, Новости и Документы.</div>' : ''}
     </div></div>`);
     host.appendChild(gate);
-    const p = qs('#lock-gate-plans', gate); if (p) p.onclick = () => openCabinet('plans');
-    const q = qs('#lock-gate-promo', gate); if (q) q.onclick = () => openCabinet('plans');
+    const p = qs('#lock-gate-plans', gate);
+    if (p) p.onclick = () => {
+      if (CURRENT_AUTH && CURRENT_AUTH.guest) renderWelcomeAccess({ asOverlay: true });
+      else openCabinet('plans');
+    };
+  }
+
+  async function renderWelcomeAccess(opts) {
+    opts = opts || {};
+    const existing = qs('#welcome-access');
+    if (existing) existing.remove();
+    // Ensure guest shell under the sheet (e.g. after leaving Telegram login).
+    if (!(CURRENT_AUTH && CURRENT_AUTH.guest)) startGuestBrowse(opts.newsStrip);
+    const ref = (typeof getReferral === 'function' ? getReferral() : '') || '';
+    let donate = { tiers: [], payment: {} };
+    try { donate = await API.http.billingAccessOptions({ retries: 0 }); } catch (e) {
+      try { donate = await API.http.billingDonate({ retries: 0 }); } catch (e2) { /* optional */ }
+    }
+    const paypal = (donate.payment || {}).paypal_me || '';
+    const tiers = donate.tiers || [];
+    const tierBtns = tiers.map(t => {
+      const amount = Number(t.price_usd || 0);
+      const label = amount ? ('$' + String(amount).replace(/\.0$/, '')) : esc(t.label || t.plan_id);
+      const url = t.paypal_url || (paypal ? paypalFor(paypal, amount) : '');
+      return `<button type="button" class="btn wa-tier ${url ? 'primary' : 'ghost'}" data-wa-tier="${esc(t.plan_id)}" data-wa-amount="${esc(String(amount))}" data-wa-url="${esc(url)}" ${url ? '' : 'disabled'}>${label}</button>`;
+    }).join('');
+
+    const host = el(`<div id="welcome-access" class="welcome-access-overlay" role="dialog" aria-modal="true" aria-label="Доступ">
+      <div class="welcome-access-card">
+        <div class="welcome-access-head">
+          <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Открыть больше возможностей</span></div></div>
+          <button type="button" class="btn icon ghost welcome-access-x" id="wa-x" title="Закрыть" aria-label="Закрыть">✕</button>
+        </div>
+        <p class="welcome-access-lead">Войдите через Telegram, чтобы открыть свои чаты и рабочие данные. Промокод или донат используются только для выдачи доступа новым пользователям.</p>
+        <div class="access-promo">
+          <label class="cab-sub">Промокод</label>
+          <div class="flex gap-sm"><input id="wa-promo" placeholder="Код приглашения" value="${esc(ref)}" style="flex:1"><button class="btn primary" id="wa-promo-go">Далее</button></div>
+          <div class="cab-sub" id="wa-promo-msg"></div>
+        </div>
+        <div class="access-donate">
+          <label class="cab-sub">Отблагодарить</label>
+          <div class="wa-tiers">${tierBtns || '<span class="cab-sub">Суммы скоро появятся</span>'}</div>
+          <div class="flex gap-sm wa-custom">
+            <input id="wa-donate-custom" type="number" min="1" step="1" placeholder="Своя сумма, $">
+            <button type="button" class="btn ghost" id="wa-donate-custom-go" ${paypal ? '' : 'disabled'}>PayPal</button>
+          </div>
+          <label class="access-request"><input type="checkbox" id="wa-donate-request" checked><span>Запросить доступ после доната</span></label>
+          <div class="cab-sub" id="wa-donate-msg"></div>
+        </div>
+        <div class="welcome-access-actions">
+          <button type="button" class="btn primary" id="wa-telegram">Войти через Telegram</button>
+          <button type="button" class="btn ghost" id="wa-close">Смотреть бесплатно</button>
+        </div>
+      </div>
+    </div>`);
+    document.body.appendChild(host);
+
+    const root = host;
+    const beginAuth = (intent) => {
+      try {
+        if (intent && intent.promo) sessionStorage.setItem('stratforge.pending.promo', intent.promo);
+        if (intent && intent.donatePlan) sessionStorage.setItem('stratforge.pending.donate', JSON.stringify(intent));
+      } catch (e) { /* ignore */ }
+      host.remove();
+      renderTelegramLogin('');
+    };
+    const openPay = (url) => { if (url) try { window.open(url, '_blank', 'noopener'); } catch (e) { location.href = url; } };
+    const wantAccess = () => !!(qs('#wa-donate-request', root) && qs('#wa-donate-request', root).checked);
+    const onClose = () => {
+      dismissWelcomeAccess();
+      if (!(CURRENT_AUTH && CURRENT_AUTH.guest)) startGuestBrowse(opts.newsStrip);
+      // Stay on the current first page under the sheet — do not navigate away.
+      if (document.body.dataset.page && document.body.dataset.page !== 'overview') {
+        location.href = 'index.html';
+      }
+    };
+
+    const xBtn = qs('#wa-x', root); if (xBtn) xBtn.onclick = onClose;
+    const closeBtn = qs('#wa-close', root); if (closeBtn) closeBtn.onclick = onClose;
+    host.addEventListener('click', (e) => { if (e.target === host) onClose(); });
+
+    const tgBtn = qs('#wa-telegram', root);
+    if (tgBtn) tgBtn.onclick = () => beginAuth({});
+
+    const promoGo = qs('#wa-promo-go', root);
+    if (promoGo) promoGo.onclick = () => {
+      const code = ((qs('#wa-promo', root) || {}).value || '').trim();
+      if (!code) { toast('Введите промокод'); return; }
+      const msg = qs('#wa-promo-msg', root);
+      if (msg) msg.textContent = 'Дальше — Telegram и регистрация. Владелец подтвердит доступ.';
+      beginAuth({ promo: code });
+    };
+
+    qsa('[data-wa-tier]', root).forEach(b => b.onclick = () => {
+      const url = b.dataset.waUrl || '';
+      const planId = b.dataset.waTier || '';
+      const amount = b.dataset.waAmount || '';
+      if (url) openPay(url);
+      const msg = qs('#wa-donate-msg', root);
+      if (wantAccess()) {
+        if (msg) msg.textContent = 'Оплатите в PayPal, затем войдите через Telegram.';
+        beginAuth({ donatePlan: planId, amount });
+      } else if (msg) {
+        msg.textContent = 'Чтобы получить доступ — включите галочку и войдите через Telegram.';
+      }
+    });
+
+    const customGo = qs('#wa-donate-custom-go', root);
+    if (customGo) customGo.onclick = () => {
+      const raw = Number((qs('#wa-donate-custom', root) || {}).value || 0);
+      if (!(raw >= 1)) { toast('Укажите сумму от $1'); return; }
+      const amount = Math.round(raw * 100) / 100;
+      const url = paypal ? paypalFor(paypal, amount) : '';
+      const tier = donationPlanForAmount(tiers, amount);
+      if (url) openPay(url);
+      if (wantAccess() && tier) beginAuth({ donatePlan: tier.plan_id, amount });
+      else toast(url ? 'Оплатите в PayPal, затем войдите через Telegram' : 'PayPal владельца ещё не настроен');
+    };
   }
   async function maybeRefreshAvatar(user) {
     if (!window.API || API.config.offline) return;
@@ -976,6 +1197,16 @@
     if (!h) return '';
     return 'https://www.paypal.com/paypalme/' + h + (amount ? '/' + Number(amount) : '');
   }
+  function donationPlanForAmount(tiers, amount) {
+    const sorted = (tiers || []).slice().sort((a, b) => Number(a.price_usd || 0) - Number(b.price_usd || 0));
+    if (!sorted.length) return null;
+    let pick = sorted[0];
+    const n = Number(amount || 0);
+    for (const t of sorted) {
+      if (n >= Number(t.price_usd || 0)) pick = t;
+    }
+    return pick;
+  }
   function planCardHtml(p, catalog, opts) {
     const feats = p.features || {};
     const donation = p.category === 'donation';
@@ -989,20 +1220,19 @@
     if (!opts.isOwner) {
       if (opts.current) {
         action = '<span class="badge live">Ваш тариф</span>';
-      } else if (!opts.paymentsEnabled) {
-        // Automatic/paid checkout is not live yet (no business payment account).
-        // Access is granted via promo code or directly by the owner.
-        action = '<span class="plan-soon">Скоро · оплата подключается</span>';
       } else if (donation) {
+        // Donations stay available even while automatic subscriptions are in development.
         const url = opts.paypal ? paypalFor(opts.paypal, p.price_usd) : '';
         action = url
           ? `<a class="btn primary" href="${esc(url)}" data-external target="_blank" rel="noopener">Поддержать ${planPriceLabel(p)}</a>`
           : `<span class="cab-sub">Реквизиты владельца не заданы</span>`;
+      } else if (!opts.paymentsEnabled || opts.subscriptionsSoon) {
+        action = '<span class="plan-soon">В разработке</span>';
       } else {
         action = `<button class="btn primary" data-choose-plan="${esc(p.plan_id)}">Выбрать</button>`;
       }
     }
-    return `<div class="plan-card ${donation ? 'donation' : ''} ${opts.current ? 'current' : ''}">
+    return `<div class="plan-card ${donation ? 'donation' : ''} ${opts.current ? 'current' : ''}${opts.subscriptionsSoon && !donation ? ' soon' : ''}">
       <div class="plan-head"><div class="plan-name">${esc(p.label)}${p.badge ? ` <span class="badge trial">${esc(p.badge)}</span>` : ''}</div><div class="plan-price">${planPriceLabel(p)}</div></div>
       <div class="plan-tag">${esc(p.tagline || '')}</div>
       <div class="plan-feats">${rows}</div>
@@ -1037,25 +1267,128 @@
     try {
       const isOwner = !!(me && me.is_owner);
       const data = isOwner ? await API.http.ownerPlans() : await API.http.billingPlans();
-      let donate = { payment: {} };
+      let donate = { payment: {}, tiers: [] };
       try { donate = await API.http.billingDonate(); } catch (e) { /* optional */ }
       const catalog = data.feature_catalog || [];
       const plans = (data.plans || data.public_plans || []).filter(p => p.public);
       const subs = plans.filter(p => p.category === 'subscription');
       const donations = plans.filter(p => p.category === 'donation');
+      const tiers = (donate.tiers && donate.tiers.length)
+        ? donate.tiers
+        : donations.map(p => ({
+            plan_id: p.plan_id, label: p.label, badge: p.badge, tagline: p.tagline,
+            price_usd: p.price_usd, paypal_url: '', features: p.features,
+          }));
       const currentPlan = (me && me.subscription && me.subscription.plan_id) || '';
       const paypal = (donate.payment || {}).paypal_me || '';
       const paymentsEnabled = !!(me && me.payments_enabled);
+      // Automatic subscription checkout stays secondary until payments are live.
+      const subscriptionsSoon = !paymentsEnabled;
       const ref = getReferral();
-      const promoBlock = isOwner ? '' : `<div class="cab-card"><h4>Промокод или приглашение</h4><div class="flex gap-sm"><input id="cab-promo" placeholder="Код приглашения" value="${esc(ref)}" style="flex:1"><button class="btn primary" id="cab-promo-apply">Активировать</button></div><div class="cab-sub" id="cab-promo-msg">${ref ? 'Найдено приглашение — нажмите «Активировать».' : ''}</div></div>`;
-      const soonNote = (!isOwner && !paymentsEnabled) ? '<div class="finance-note">Оплата подписок подключается позже. Сейчас доступ открывается промокодом или напрямую владельцем.</div>' : '';
-      const editHint = isOwner ? '<div class="finance-note">Переключатели включают/выключают привилегию для тарифа. Разница между тарифами видна по колонкам ниже.</div>' : '<div class="finance-note">Отметки ✓/— показывают, что входит в каждый тариф. Онлайн-графики и Pro-модели ИИ — самые дорогие возможности.</div>';
-      node.innerHTML = promoBlock + soonNote + editHint
+
+      if (isOwner) {
+        node.innerHTML = '<div class="finance-note">Переключатели включают/выключают привилегию для тарифа. Разница между тарифами видна по колонкам ниже.</div>'
+          + `<div class="section-title">Подписки</div><div class="plan-grid">${subs.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled, subscriptionsSoon: false })).join('')}</div>`
+          + `<div class="section-title">Донат — для своих</div><div class="plan-grid">${donations.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled, subscriptionsSoon: false })).join('')}</div>`;
+        qsa('[data-plan-toggle]', node).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.ownerPlanFeature(t.dataset.planToggle, t.dataset.planFeat, t.checked); toast('Привилегия тарифа обновлена'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+        return;
+      }
+
+      const tierBtns = tiers.map(t => {
+        const amount = Number(t.price_usd || 0);
+        const label = amount ? ('$' + String(amount).replace(/\.0$/, '')) : esc(t.label || t.plan_id);
+        const url = t.paypal_url || (paypal ? paypalFor(paypal, amount) : '');
+        return `<button type="button" class="btn ${url ? 'primary' : 'ghost'}" data-donate-tier="${esc(t.plan_id)}" data-donate-amount="${esc(String(amount))}" data-donate-url="${esc(url)}" ${url ? '' : 'disabled'}>${label}</button>`;
+      }).join('');
+
+      const accessBlock = `<div class="cab-card access-primary">
+        <h4>Введите промокод или отблагодарите</h4>
+        <p class="cab-sub">Основной способ получить доступ сейчас — промокод от разработчиков или донат с запросом доступа. Автоматическая подписка ещё в разработке.</p>
+        <div class="access-promo">
+          <label class="cab-sub">Промокод</label>
+          <div class="flex gap-sm"><input id="cab-promo" placeholder="Код приглашения" value="${esc(ref)}" style="flex:1"><button class="btn primary" id="cab-promo-apply">Активировать</button></div>
+          <div class="cab-sub" id="cab-promo-msg">${ref ? 'Найдено приглашение — нажмите «Активировать».' : ''}</div>
+        </div>
+        <div class="access-donate" style="margin-top:16px">
+          <label class="cab-sub">Отблагодарить</label>
+          <div class="flex gap-sm" style="flex-wrap:wrap;margin-top:8px">${tierBtns || '<span class="cab-sub">Суммы доната пока не настроены.</span>'}</div>
+          <div class="flex gap-sm" style="margin-top:10px;flex-wrap:wrap;align-items:center">
+            <input id="cab-donate-custom" type="number" min="1" step="1" placeholder="Своя сумма, $" style="width:140px">
+            <button type="button" class="btn ghost" id="cab-donate-custom-go" ${paypal ? '' : 'disabled'}>PayPal</button>
+          </div>
+          <label class="access-request" style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;cursor:pointer">
+            <input type="checkbox" id="cab-donate-request" checked style="margin-top:3px">
+            <span>Запросить доступ после доната — владелец проверит платёж и откроет тариф</span>
+          </label>
+          <div class="dchart-actions" style="justify-content:flex-start;margin-top:10px">
+            <button type="button" class="btn ghost" id="cab-donate-paid">Я поддержал — запросить доступ</button>
+          </div>
+          <div class="cab-sub" id="cab-donate-msg"></div>
+        </div>
+      </div>`;
+
+      node.innerHTML = accessBlock
         + '<div id="cab-checkout"></div>'
-        + `<div class="section-title">Подписки</div><div class="plan-grid">${subs.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled })).join('')}</div>`
-        + `<div class="section-title">Донат — для своих</div><div class="plan-grid">${donations.map(p => planCardHtml(p, catalog, { isOwner, current: p.plan_id === currentPlan, paypal, paymentsEnabled })).join('')}</div>`;
+        + `<div class="section-title" style="margin-top:18px">Автоматическая подписка · в разработке</div>`
+        + `<div class="finance-note">Онлайн-оплата подписок подключается позже. Карточки ниже — для ознакомления с будущими тарифами.</div>`
+        + `<div class="plan-grid">${subs.map(p => planCardHtml(p, catalog, { isOwner: false, current: p.plan_id === currentPlan, paypal, paymentsEnabled, subscriptionsSoon: true })).join('')}</div>`;
+
       bindExternalLinks(node);
-      qsa('[data-plan-toggle]', node).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.ownerPlanFeature(t.dataset.planToggle, t.dataset.planFeat, t.checked); toast('Привилегия тарифа обновлена'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+
+      const setDonateMsg = (text) => { const m = qs('#cab-donate-msg', node); if (m) m.textContent = text || ''; };
+      const wantAccess = () => !!(qs('#cab-donate-request', node) && qs('#cab-donate-request', node).checked);
+      const openPay = (url) => { if (url) try { window.open(url, '_blank', 'noopener'); } catch (e) { location.href = url; } };
+      const requestAccess = async (planId, amount, btn) => {
+        if (!planId) { toast('Не удалось определить тариф доната'); return; }
+        if (btn) btn.disabled = true;
+        try {
+          const note = amount ? (`Донат $${Number(amount)} через PayPal`) : 'Донат через PayPal';
+          await API.http.billingPaymentRequest(planId, note);
+          setDonateMsg('Заявка отправлена владельцу. Доступ включат после проверки платежа в PayPal.');
+          toast('Заявка на доступ отправлена');
+        } catch (e) { reportError(e); }
+        finally { if (btn) btn.disabled = false; }
+      };
+
+      qsa('[data-donate-tier]', node).forEach(b => b.onclick = async () => {
+        const url = b.dataset.donateUrl || '';
+        const planId = b.dataset.donateTier || '';
+        const amount = b.dataset.donateAmount || '';
+        if (url) openPay(url);
+        if (wantAccess()) await requestAccess(planId, amount, b);
+        else if (url) setDonateMsg('Откройте PayPal и оплатите. Чтобы получить доступ — включите галочку и нажмите «Я поддержал».');
+        else toast('PayPal владельца ещё не настроен');
+      });
+
+      const customGo = qs('#cab-donate-custom-go', node);
+      if (customGo) customGo.onclick = async () => {
+        const raw = Number((qs('#cab-donate-custom', node) || {}).value || 0);
+        if (!(raw >= 1)) { toast('Укажите сумму от $1'); return; }
+        const amount = Math.round(raw * 100) / 100;
+        const url = paypal ? paypalFor(paypal, amount) : '';
+        const tier = donationPlanForAmount(tiers, amount);
+        if (url) openPay(url);
+        if (wantAccess() && tier) await requestAccess(tier.plan_id, amount, customGo);
+        else if (url) setDonateMsg('Откройте PayPal и оплатите. Чтобы получить доступ — включите галочку и нажмите «Я поддержал».');
+        else toast('PayPal владельца ещё не настроен');
+      };
+
+      const paidBtn = qs('#cab-donate-paid', node);
+      if (paidBtn) paidBtn.onclick = async () => {
+        const customRaw = Number((qs('#cab-donate-custom', node) || {}).value || 0);
+        let tier = null;
+        let amount = 0;
+        if (customRaw >= 1) {
+          amount = Math.round(customRaw * 100) / 100;
+          tier = donationPlanForAmount(tiers, amount);
+        } else {
+          tier = tiers[0] || null;
+          amount = tier ? Number(tier.price_usd || 0) : 0;
+        }
+        if (!tier) { toast('Нет доступных уровней доната'); return; }
+        await requestAccess(tier.plan_id, amount, paidBtn);
+      };
+
       qsa('[data-choose-plan]', node).forEach(b => b.onclick = async () => {
         const pid = b.dataset.choosePlan;
         b.disabled = true;
@@ -1065,6 +1398,7 @@
         } catch (e) { reportError(e); }
         finally { b.disabled = false; }
       });
+
       const applyBtn = qs('#cab-promo-apply', node);
       if (applyBtn) applyBtn.onclick = async () => {
         const code = (qs('#cab-promo', node).value || '').trim();
@@ -1386,18 +1720,20 @@
     const stopPolling = () => { if (polling) clearInterval(polling); polling = null; };
     const renderStart = (message) => {
       stopPolling();
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Для нового аккаунта обязательны номер Telegram, профиль и личное разрешение владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start">Авторизоваться через Telegram</button>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Для нового аккаунта обязательны номер Telegram, профиль и личное разрешение владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start">Авторизоваться через Telegram</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button>`);
       const button = qs('#auth-start', content);
       if (button) button.onclick = async () => {
         button.disabled = true;
         try { renderWaiting(await API.http.authLoginStart()); }
         catch (error) { renderStart(error.message || String(error)); }
       };
+      const back = qs('#auth-back-preview', content);
+      if (back) back.onclick = () => startGuestBrowse();
     };
     const renderProfile = (challengeId, state) => {
       stopPolling();
       const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность и номер. Заполните данные и примите условия, чтобы войти в ознакомительном режиме.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Войти в ознакомительный режим</button></form>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — затем дождитесь личного подтверждения владельца.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться и ждать подтверждения</button></form>`);
       const form = qs('#auth-profile-form', content);
       const termsLink = qs('#auth-terms-link', form);
       if (termsLink) termsLink.onclick = () => showTermsModal();
@@ -1421,6 +1757,7 @@
         const state = await API.http.authLoginStatus(challengeId);
         if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
         if (state.status === 'awaiting_profile') { renderProfile(challengeId, state); return; }
+        if (state.status === 'pending_owner') { renderWaiting({ challenge_id: challengeId }, state); return; }
         if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) renderStart('Вход отклонён. Обратитесь к владельцу.');
       } catch (error) {
         if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
@@ -1446,9 +1783,14 @@
     const renderMiniAppRegister = (message) => {
       stopPolling();
       const tg = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация через Telegram</h1><p>Ваша личность уже подтверждена Telegram. Заполните данные и примите условия — доступ откроется сразу в ознакомительном режиме.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я принимаю <button type="button" class="linklike" id="mini-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Войти в ознакомительный режим</button></form>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация</h1><p>Telegram уже подтвердил личность. Заполните профиль — доступ откроется после личного подтверждения владельцем.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я принимаю <button type="button" class="linklike" id="mini-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться и ждать подтверждения</button></form><button class="btn ghost" id="auth-back-welcome" style="margin-top:10px">Назад</button>`);
       const form = qs('#auth-mini-form', content);
       const link = qs('#mini-terms-link', form); if (link) link.onclick = () => showTermsModal();
+      const back = qs('#auth-back-welcome', content);
+      if (back) back.onclick = () => {
+        try { sessionStorage.removeItem('stratforge.welcome.dismissed'); } catch (e) { /* ignore */ }
+        location.href = 'index.html';
+      };
       form.onsubmit = async (event) => {
         event.preventDefault();
         if (!(qs('#mini-accept', form) || {}).checked) { toast('Примите условия использования'); return; }
@@ -1460,12 +1802,19 @@
             email: qs('#mini-email', form).value,
             accept_terms: true,
           });
-          if (out && out.ok) { toast('Доступ открыт'); location.reload(); }
+          if (out && out.authenticated) { toast('Доступ открыт'); location.reload(); return; }
+          if (out && out.status === 'pending_owner' && out.challenge_id) {
+            renderWaiting({ challenge_id: out.challenge_id }, { status: 'pending_owner' });
+            return;
+          }
+          toast('Заявка отправлена владельцу');
+          renderWaiting({ challenge_id: out && out.challenge_id }, { status: 'pending_owner' });
         } catch (error) { submit.disabled = false; renderMiniAppRegister(error.message || String(error)); }
       };
     };
-    // In the Telegram Mini App the initData already proves the Telegram identity,
-    // so register directly (no fragile bot round-trip). Desktop uses the bot flow.
+    // Mini App: Telegram identity is already proven — show profile form.
+    // Desktop: start with Telegram bot confirmation, then profile.
+    // The welcome/promo screen is shown BEFORE this function is called.
     if (window.API && API.config && API.config.miniApp) {
       renderMiniAppRegister(initialError && initialError.status && initialError.status !== 401 && initialError.status !== 403 ? initialError.message : '');
     } else {
@@ -1486,6 +1835,13 @@
   // Centralised UI error surface (used by pages' loading/error states too).
   function reportError(err) {
     console.error('[UI]', err);
+    // A stale/missing session used to be swallowed here, making every button
+    // look frozen.  Tell the user what happened and expose the sign-in action.
+    if (isGuest() && err && (err.status === 401 || err.status === 403)) {
+      toast('Нужно войти через Telegram. Ваши чаты и данные сохранены.');
+      renderWelcomeAccess({ asOverlay: true });
+      return;
+    }
     const msg = (err && err.message) ? err.message : String(err);
     toast('Ошибка: ' + msg.slice(0, 120));
   }
@@ -2098,6 +2454,29 @@
     return stop;
   }
 
+  // A chart command can be issued from the global chat on any Aurora page.
+  // When a canvas operation needs Desktop, acknowledge the navigation command
+  // first and switch pages automatically; desktop.js then consumes the queued
+  // draw/open/clear/snapshot operation. Headless snapshots never enqueue this.
+  function startDesktopCommandBridge() {
+    if (!window.API || (API.config && API.config.offline) || document.body.dataset.page === 'desktop') return;
+    let busy = false;
+    poll(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const out = await API.http.chartCommands({ status: 'pending' });
+        const command = ((out && out.commands) || []).find(row => row && row.type === 'open_desktop_tab');
+        if (!command) return;
+        await API.http.ackChartCommand(command.id, 'done', { ok: true, navigation: 'desktop.html' });
+        try { sessionStorage.setItem('stratforge.desktop.auto-open', command.id || '1'); } catch (e) { /* ignore */ }
+        window.location.href = withMiniAppContext('desktop.html');
+      } finally {
+        busy = false;
+      }
+    }, 1500);
+  }
+
   // ---- standard async states (loading / empty / error+retry) -----------------
   function renderLoading(node, label) {
     if (node) node.innerHTML = `<div class="state-loading"><span class="spinner"></span>${esc(label || 'Загрузка…')}</div>`;
@@ -2107,6 +2486,11 @@
   }
   function renderError(node, err, retry) {
     if (!node) return;
+    if (isGuest() && err && (err.status === 401 || err.status === 403
+        || /whitelist|не входит/i.test(String(err && err.message || '')))) {
+      node.innerHTML = `<div class="empty-state">Ознакомительный просмотр · данные появятся после входа и подтверждения доступа.</div>`;
+      return;
+    }
     const msg = (err && err.message) ? err.message : String(err);
     node.innerHTML = `<div class="state-error">${icon('close')}<div><div class="se-title">Не удалось загрузить данные</div><div class="se-msg">${esc(msg).slice(0, 160)}</div></div><button class="btn sm" data-retry>${icon('refresh')}Повторить</button></div>`;
     const btn = node.querySelector('[data-retry]');
@@ -2209,35 +2593,22 @@
   }
 
   // ---- global orchestrator chat widget ---------------------------------------
-  // Floating launcher (bottom-right) that opens a full StratForge Orchestrator
+  // Floating launcher (bottom-right) for Vitek, the owner's chief of staff.
   // chat with a conversation list, per-dialogue context, timestamps and titles.
   // Non-blocking: sending shows the message + a typing indicator immediately and
   // only awaits the reply; it never freezes the page.
   const ORCH = {
     built: false, open: false, sending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
-    agent: 'auto', messagesSignature: '', feedbackVoice: null,
+    mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
   };
   const ORCH_KEY = 'orch.currentConversationId';
-  const ORCH_AGENT_KEY = 'orch.agent';
-  // Selectable "who answers" roles. Management tiers force a model strength;
-  // specialists are named domain experts. `auto` keeps automatic routing.
-  const ORCH_ROLES = {
-    manager:   { label: 'Управляющий', emoji: '🤵', role: 'Управляющий',         icon: 'target',     sub: 'важные решения · сильная модель',          cardTitle: 'Управляющий', cardSub: 'сильная модель',  ph: 'Обсудим и запустим — важное решение…' },
-    deputy:    { label: 'Зам.',         emoji: '👔',  role: 'Заместитель',       icon: 'layers',     sub: 'средние задачи · стандартная модель',   cardTitle: 'Заместитель',   cardSub: 'стандарт',          ph: 'Средняя по сложности задача…' },
-    secretary: { label: 'Секретарь', emoji: '🧑‍💼', role: 'Секретарь',          icon: 'bolt',       sub: 'быстрые задачи · лёгкая модель',          cardTitle: 'Секретарь',    cardSub: 'лёгкая',              ph: 'Быстрая команда или простой вопрос…' },
-    auto:      { label: 'Авто',         emoji: '🤖',  role: 'Автоподбор',        icon: 'spark',      sub: 'выбирает модель · работает вместо вас',   cardTitle: 'Авторежим',    cardSub: 'AI-подбор',          ph: 'Напишите задачу обычным текстом…' },
-    nikita:    { label: 'Никита',       emoji: '👨‍💼', role: 'Новостной аналитик', icon: 'news',    sub: 'разбор новостей и рыночных событий',   cardTitle: 'Аналитик',      cardSub: 'Никита · новости',   ph: 'Разобрать новость или рыночное событие…' },
-    tolik:     { label: 'Толик',        emoji: '🧑‍💻', role: 'Разработчик стратегий', icon: 'strategies', sub: 'стратегии, параметры, тесты',              cardTitle: 'Стратег',       cardSub: 'Толик · стратегии', ph: 'Вопрос по стратегиям, параметрам, тестам…' },
-    marina:    { label: 'Марина',       emoji: '👩‍💼', role: 'Бухгалтер',         icon: 'wallet',     sub: 'расчёты, финансы, отчёты',            cardTitle: 'Бухгалтер',    cardSub: 'Марина · финансы',  ph: 'Финансы, расчёты, отчёты…' },
-    ivan:      { label: 'Иван',         emoji: '🧑‍🎨', role: 'Оператор графиков',  icon: 'trading',    sub: 'графики, линии, уровни, снимки',      cardTitle: 'Графист',      cardSub: 'Иван · графики',    ph: 'Команда по графикам: «поставь линию на MNQ 21500»…' },
+  // Model selection is an internal responsibility of Vitek and the Manager.
+  const ORCH_MODES = {
+    auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите задачу обычным текстом…' },
   };
-  const ORCH_ROLE_GROUPS = [
-    { cap: 'Руководство', ids: ['manager', 'deputy', 'secretary', 'auto'] },
-    { cap: 'Специалисты', ids: ['nikita', 'tolik', 'marina', 'ivan'] },
-  ];
-  function orchLoadAgent() {
-    try { const v = localStorage.getItem(ORCH_AGENT_KEY); return (v && ORCH_ROLES[v]) ? v : 'auto'; } catch (e) { return 'auto'; }
+  function orchLoadMode() {
+    return 'auto';
   }
   function orchLoadLastId() {
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
@@ -2259,11 +2630,11 @@
     if (ORCH.built || qs('.orch-fab')) return;
     ORCH.built = true;
     const offline = !window.API || API.config.offline;
-    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="StratForge Orchestrator — чат с ассистентом" aria-label="Открыть чат оркестратора">${icon('chat')}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
-    const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="Чат StratForge Orchestrator">
+    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="StratForge Orchestrator · Витёк" aria-label="Открыть StratForge Orchestrator">${icon('chat')}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
+    const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="StratForge Orchestrator · чат с Витьком">
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
-        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">выбирает модель · работает вместо вас</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
+        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">Витёк · ваша правая рука</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
         <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
         <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
@@ -2272,25 +2643,15 @@
         <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
         <div class="orch-main">
           <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
-          <form class="orch-input" id="orch-form" autocomplete="off">
-            <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
-            <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
-            <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
-          </form>
+          <div class="orch-compose">
+            <div class="orch-model-picker" id="orch-model-picker" hidden aria-hidden="true"></div>
+            <form class="orch-input" id="orch-form" autocomplete="off">
+              <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
+              <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
+              <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
+            </form>
+          </div>
         </div>
-        <nav class="orch-agent-rail" id="orch-agent-rail" role="radiogroup" aria-label="Выбор агента">
-          ${ORCH_ROLE_GROUPS.map((group, gi) =>
-            (gi ? '<div class="oac-sep" aria-hidden="true"></div>' : '') +
-            group.ids.map(id =>
-              `<button type="button" class="orch-agent-card" role="radio" aria-checked="false" data-orch-role="${id}"
-                title="${ORCH_ROLES[id].role} — ${ORCH_ROLES[id].sub}">
-                <span class="oac-emoji">${ORCH_ROLES[id].emoji}</span>
-                <span class="oac-title">${ORCH_ROLES[id].cardTitle}</span>
-                <span class="oac-sub">${ORCH_ROLES[id].cardSub}</span>
-              </button>`
-            ).join('')
-          ).join('')}
-        </nav>
       </div>
     </section>`);
     document.body.appendChild(fab);
@@ -2302,27 +2663,20 @@
     qs('#orch-new', panel).addEventListener('click', orchNewConversation);
     qs('#orch-thread-state', panel).addEventListener('click', orchToggleConversationState);
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
-    qsa('[data-orch-role]', panel).forEach(button => button.addEventListener('click', () => orchSelectRole(button.dataset.orchRole)));
     const ta = qs('#orch-text', panel);
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ORCH.open) closeOrchestrator(); });
     wireOrchestratorVoice(panel);
-    orchSelectRole(orchLoadAgent(), { silent: true });
+    orchSelectMode(orchLoadMode(), { silent: true });
   }
-  // Persistent role selection: the chosen chip routes every message until the
-  // owner switches. `auto` restores automatic model routing.
-  function orchSelectRole(role, opts) {
-    const meta = ORCH_ROLES[role] ? role : 'auto';
-    ORCH.agent = meta;
-    try { localStorage.setItem(ORCH_AGENT_KEY, meta); } catch (e) { /* ignore */ }
-    qsa('[data-orch-role]').forEach(btn => {
-      const on = btn.dataset.orchRole === meta;
-      btn.classList.toggle('active', on);
-      btn.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-    const info = ORCH_ROLES[meta];
-    const sub = qs('#orch-head-sub'); if (sub) sub.textContent = `${info.emoji} ` + (meta === 'auto' ? info.sub : `${info.role} · ${info.sub}`);
+  // Persistent model selection: the chosen chip sets the model strength for
+  // every message until the owner switches. `auto` restores automatic routing.
+  function orchSelectMode(mode, opts) {
+    const meta = ORCH_MODES[mode] ? mode : 'auto';
+    ORCH.mode = meta;
+    const info = ORCH_MODES[meta];
+    const sub = qs('#orch-head-sub'); if (sub) sub.textContent = 'Витёк · ваша правая рука';
     const ta = qs('#orch-text'); if (ta) ta.placeholder = info.ph;
     if (!(opts && opts.silent) && ta && !ta.disabled) ta.focus();
   }
@@ -2334,7 +2688,21 @@
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR || (!window.API || API.config.offline)) { mic.hidden = true; return; }
     mic.hidden = false;
-    let rec = null, listening = false, baseText = '';
+    let rec = null, listening = false;
+    // Idempotent transcript assembly (fixes the mobile duplication bug). Some
+    // phones re-deliver already-final results (resultIndex resets to 0) and the
+    // recognizer auto-restarts on `onend`; appending deltas duplicated the text.
+    // Instead we rebuild the value from *all* results of the current session on
+    // every event, and only carry finalized text forward when a session ends.
+    let sessionBase = '';   // textarea text captured before recording started
+    let committed = '';     // finalized text from earlier (ended) sessions
+    let liveFinal = '';     // finalized text of the current session
+    let interimText = '';   // in-flight (not yet final) text of the current session
+    function render() {
+      const combined = (sessionBase + committed + ' ' + liveFinal + ' ' + interimText).replace(/\s{2,}/g, ' ').replace(/^\s+/, '');
+      ta.value = combined.slice(0, 6000);
+      ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+    }
     function stop() { listening = false; mic.classList.remove('listening'); mic.title = 'Голосовой ввод'; try { if (rec) rec.stop(); } catch (e) { /* ignore */ } }
     mic.addEventListener('click', () => {
       if (listening) { stop(); return; }
@@ -2343,19 +2711,23 @@
         rec.lang = 'ru-RU';
         rec.interimResults = true;
         rec.continuous = true;
-        baseText = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
+        sessionBase = ta.value ? ta.value.replace(/\s+$/, '') + ' ' : '';
+        committed = ''; liveFinal = ''; interimText = '';
         rec.onresult = (event) => {
           let finalText = '', interim = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
+          for (let i = 0; i < event.results.length; i++) {
             const t = event.results[i][0].transcript;
-            if (event.results[i].isFinal) finalText += t; else interim += t;
+            if (event.results[i].isFinal) finalText += t + ' '; else interim += t;
           }
-          if (finalText) baseText = (baseText + finalText).replace(/\s+/g, ' ') + ' ';
-          ta.value = (baseText + interim).slice(0, 6000);
-          ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+          liveFinal = finalText; interimText = interim;
+          render();
         };
         rec.onerror = (event) => { if (event && event.error === 'not-allowed') toast('Нет доступа к микрофону — разрешите его в браузере'); stop(); };
-        rec.onend = () => { if (listening) { try { rec.start(); } catch (e) { stop(); } } };
+        rec.onend = () => {
+          committed = (committed + ' ' + liveFinal).replace(/\s{2,}/g, ' ').trim();
+          liveFinal = ''; interimText = '';
+          if (listening) { try { rec.start(); } catch (e) { stop(); } }
+        };
         rec.start();
         listening = true;
         mic.classList.add('listening');
@@ -2377,9 +2749,14 @@
       qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Чат оркестратора доступен только в работающем приложении (не в офлайн-превью).</div>';
       return;
     }
+    if (isGuest()) {
+      orchRenderAuthRequired(panel);
+      return;
+    }
     // Restore the last opened conversation so a reload lands where you left off.
     ORCH.currentId = orchLoadLastId();
-    await orchLoadConversations();
+    const loaded = await orchLoadConversations();
+    if (!loaded) return;
     await orchLoadMessages(ORCH.currentId);
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,
@@ -2395,6 +2772,21 @@
     }, 1500);
     ORCH.pollStop = () => { stopped = true; clearInterval(id); };
   }
+  function orchRenderAuthRequired(panel) {
+    const root = panel || qs('#orch-panel');
+    if (!root) return;
+    ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
+    const wrap = qs('#orch-convos', root);
+    const box = qs('#orch-msgs', root);
+    if (wrap) wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
+    if (box) box.innerHTML = '<div class="empty-state"><strong>Войдите через Telegram</strong><br>После входа вернутся прежние чаты и станут доступны поручения.<div style="margin-top:12px"><button class="btn primary" id="orch-auth-login" type="button">Войти через Telegram</button></div></div>';
+    const login = qs('#orch-auth-login', root);
+    if (login) login.onclick = () => { closeOrchestrator(); renderTelegramLogin(''); };
+    const ta = qs('#orch-text', root); const send = qs('#orch-send', root); const mic = qs('#orch-mic', root);
+    if (ta) { ta.disabled = true; ta.placeholder = 'Сначала войдите через Telegram'; }
+    if (send) send.disabled = true;
+    if (mic) mic.hidden = true;
+  }
   function closeOrchestrator() {
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     ORCH.open = false;
@@ -2408,12 +2800,21 @@
     try {
       const data = await API.http.aiOrchestratorConversations();
       ORCH.conversations = data.conversations || [];
-    } catch (e) { ORCH.conversations = []; }
+      ORCH.loadError = null;
+    } catch (e) {
+      // Never replace a previously loaded list with an empty one because of a
+      // session/network error.  That made intact history look deleted.
+      ORCH.loadError = e || new Error('Не удалось загрузить диалоги');
+      if (e && (e.status === 401 || e.status === 403)) orchRenderAuthRequired(qs('#orch-panel'));
+      else orchRenderConversations();
+      return false;
+    }
     if (!ORCH.conversations.some(c => c.conversation_id === ORCH.currentId)) {
       orchSaveCurrentId((ORCH.conversations[0] && ORCH.conversations[0].conversation_id) || 'default');
     }
     orchRenderConversations();
     orchRenderWorkState();
+    return true;
   }
   const ORCH_WORK_STATES = {
     open: ['Тема открыта', 'open'], awaiting_owner: ['Ожидается ваше решение', 'waiting'],
@@ -2427,24 +2828,37 @@
   }
   function orchRenderWorkState() {
     const c = orchCurrentConversation();
-    const meta = ORCH_WORK_STATES[(c && c.work_state) || 'open'] || ORCH_WORK_STATES.open;
+    const workState = (c && c.work_state) || 'open';
+    const meta = ORCH_WORK_STATES[workState] || ORCH_WORK_STATES.open;
+    const isDefault = !!(c && c.is_default);
     const badge = qs('#orch-task-state');
-    if (badge) { badge.textContent = c && c.closed ? 'Тема закрыта' : meta[0]; badge.className = 'orch-task-state ' + (c && c.closed ? 'closed' : meta[1]); }
+    if (badge) {
+      if (c && c.closed) {
+        badge.textContent = 'Тема закрыта'; badge.className = 'orch-task-state closed'; badge.hidden = false;
+      } else if (isDefault && workState === 'open') {
+        // For the always-open system chat hide the "Тема открыта" label — it adds no information.
+        badge.hidden = true;
+      } else {
+        badge.textContent = meta[0]; badge.className = 'orch-task-state ' + meta[1]; badge.hidden = false;
+      }
+    }
     const toggle = qs('#orch-thread-state');
     if (toggle) {
+      // The main/system chat can never be closed — hide the close/reopen button.
+      toggle.hidden = isDefault;
       toggle.innerHTML = icon(c && c.closed ? 'refresh' : 'check');
       toggle.title = c && c.closed ? 'Переоткрыть тему' : 'Закрыть тему';
       toggle.setAttribute('aria-label', toggle.title);
     }
     const ta = qs('#orch-text'); const send = qs('#orch-send'); const mic = qs('#orch-mic');
     const closed = !!(c && c.closed);
-    if (ta) { ta.disabled = closed || (!window.API || API.config.offline); ta.placeholder = closed ? 'Тема закрыта. Переоткройте её, чтобы продолжить.' : (ORCH_ROLES[ORCH.agent] || ORCH_ROLES.auto).ph; }
+    if (ta) { ta.disabled = closed || (!window.API || API.config.offline); ta.placeholder = closed ? 'Тема закрыта. Переоткройте её, чтобы продолжить.' : (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).ph; }
     if (send) send.disabled = closed || (!window.API || API.config.offline);
     if (mic) mic.hidden = closed || !(window.SpeechRecognition || window.webkitSpeechRecognition) || (!window.API || API.config.offline);
   }
   function orchRenderConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
-    wrap.innerHTML = ORCH.conversations.map(c => {
+    const rows = ORCH.conversations.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const canEdit = !c.is_default;
       const pinned = !!c.pinned;
@@ -2454,11 +2868,15 @@
           <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ. <span class="orch-convo-state ${(c.closed ? 'closed' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1])}">${c.closed ? 'закрыта' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0]}</span></div>
         </div>
         <div class="orch-convo-acts">
-          <button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>
+          ${c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">служебный</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`}
           ${canEdit ? `<button class="orch-icon-btn sm" data-rename="${esc(c.conversation_id)}" title="Переименовать" aria-label="Переименовать">${icon('edit')}</button><button class="orch-icon-btn sm" data-del="${esc(c.conversation_id)}" title="Удалить" aria-label="Удалить">${icon('trash')}</button>` : ''}
         </div>
       </div>`;
-    }).join('') || '<div class="empty-state">Диалогов нет.</div>';
+    }).join('');
+    const error = ORCH.loadError
+      ? '<div class="empty-state">Не удалось обновить список. Показана сохранённая история; повторите после восстановления соединения.</div>'
+      : '';
+    wrap.innerHTML = error + (rows || (ORCH.loadError ? '' : '<div class="empty-state">Создайте первый диалог.</div>'));
     qsa('.orch-convo', wrap).forEach(node => {
       node.addEventListener('click', (e) => {
         if (e.target.closest('[data-rename]') || e.target.closest('[data-del]') || e.target.closest('[data-pin]')) return;
@@ -2548,10 +2966,12 @@
   }
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
+    const actor = isUser
+      ? (row.actor_is_owner ? 'Owner' : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
+      : '';
     const meta = [
-      row.agent_name && !isUser ? esc(row.agent_name) : '',
+      isUser ? esc(actor) : (row.agent_name ? esc(row.agent_name) : ''),
       orchFmtTime(row.timestamp_utc),
-      !isUser && row.model ? esc(row.model) : '',
     ].filter(Boolean).join(' · ');
     const think = (!isUser && row.thinking) ? orchThinkBlock(row.thinking, false) : '';
     const rating = orchRatingHtml(row, isUser);
@@ -2591,25 +3011,36 @@
     rec.lang = 'ru-RU';
     rec.interimResults = true;
     rec.continuous = true;
-    const voice = { rec, btn, ta, listening: true, base: ta.value.trim() ? ta.value.trim() + ' ' : '' };
+    // Idempotent assembly — same mobile-duplication fix as the composer mic.
+    const voice = {
+      rec, btn, ta, listening: true,
+      sessionBase: ta.value.trim() ? ta.value.trim() + ' ' : '',
+      committed: '', liveFinal: '', interim: '',
+    };
     ORCH.feedbackVoice = voice;
     btn.classList.add('listening');
     btn.title = 'Остановить запись';
+    const renderFeedback = () => {
+      const combined = (voice.sessionBase + voice.committed + ' ' + voice.liveFinal + ' ' + voice.interim).replace(/\s{2,}/g, ' ').replace(/^\s+/, '');
+      ta.value = combined.slice(0, 2000);
+      ta.dataset.dirty = '1';
+    };
     rec.onresult = (ev) => {
       let finalText = '', interim = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      for (let i = 0; i < ev.results.length; i++) {
         const text = ev.results[i][0].transcript;
-        if (ev.results[i].isFinal) finalText += text; else interim += text;
+        if (ev.results[i].isFinal) finalText += text + ' '; else interim += text;
       }
-      if (finalText) voice.base = (voice.base + finalText).replace(/\s+/g, ' ') + ' ';
-      ta.value = (voice.base + interim).trimStart().slice(0, 2000);
-      ta.dataset.dirty = '1';
+      voice.liveFinal = finalText; voice.interim = interim;
+      renderFeedback();
     };
     rec.onerror = (event) => {
       if (event && event.error === 'not-allowed') toast('Нет доступа к микрофону — разрешите его в браузере');
       if (event && ['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) orchStopFeedbackVoice();
     };
     rec.onend = () => {
+      voice.committed = (voice.committed + ' ' + voice.liveFinal).replace(/\s{2,}/g, ' ').trim();
+      voice.liveFinal = ''; voice.interim = '';
       if (ORCH.feedbackVoice === voice && voice.listening && btn.isConnected) {
         try { rec.start(); } catch (e) { orchStopFeedbackVoice(); }
       }
@@ -2649,6 +3080,15 @@
         const ta = qs('.orch-feedback-text', node);
         const archive = qs('.orch-feedback-archive', node);
         const archived = qs('.orch-feedback-archive-text', node);
+        if (rating === 1) {
+          node.dataset.rating = '1';
+          qsa('[data-orch-rate]', node).forEach(star => star.classList.toggle('active', Number(star.dataset.orchRate) <= 1));
+          const area = qs('.orch-feedback-area', node); if (area) area.hidden = false;
+          if (archive) archive.hidden = true;
+          if (ta) { ta.value = archived ? archived.textContent : ta.value; ta.dataset.dirty = '1'; ta.focus(); }
+          const saved = qs('.orch-feedback-saved', node); if (saved) { saved.hidden = false; saved.textContent = 'добавьте комментарий'; }
+          return;
+        }
         const comment = archive && !archive.hidden && archived ? archived.textContent : (ta ? ta.value : '');
         orchSaveRating(node, rating, comment);
       }));
@@ -2715,6 +3155,7 @@
     if (!ta || !box) return;
     const text = ta.value.trim();
     if (!text) return;
+    if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
     ORCH.sending = true;
     if (sendBtn) sendBtn.disabled = true;
@@ -2744,7 +3185,7 @@
     const keepBottom = () => { if (nearBottom()) box.scrollTop = box.scrollHeight; };
     const setThink = (t) => { if (thinkBody) thinkBody.textContent = t; keepBottom(); };
     const removeThink = () => { if (thinkWrap) thinkWrap.remove(); };
-    const agent = ORCH.agent === 'auto' ? '' : ORCH.agent;
+    const agent = (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).agent;
     try {
       await API.http.aiOrchestratorMessageStream(text, cid, agent, {
         onThinkingDelta: (delta) => { sawThinking = true; thinking += delta; setThink(thinking); },
@@ -2782,6 +3223,6 @@
     }
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

@@ -3,6 +3,121 @@ UI.ready(renderLive);
 
 function ovYmd(date) { return date.toISOString().slice(0, 10); }
 
+function ovGuestDemoPack() {
+  // Realistic free-preview fixture so the frosted overview looks populated
+  // (as in the earlier test build), without calling authenticated APIs.
+  const today = new Date();
+  const daily = [];
+  let equity = 0;
+  for (let i = 59; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const pnl = Math.round((Math.sin(i / 4) * 180 + Math.cos(i / 7) * 90 + (i % 5 === 0 ? -120 : 40)) * 100) / 100;
+    equity += pnl;
+    daily.push({ date: ovYmd(d), pnl });
+  }
+  const strategies = [
+    { strategy: 'ORB Reversion', instrument: 'MNQ', pnl: 1840.5, trades: 42, win_rate: 0.57, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.45 * 100) / 100 })) },
+    { strategy: 'VWAP Fade', instrument: 'MES', pnl: 960.25, trades: 31, win_rate: 0.52, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.3 * 100) / 100 })) },
+    { strategy: 'London Break', instrument: 'MGC', pnl: -210.0, trades: 18, win_rate: 0.44, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.15 * 100) / 100 })) },
+    { strategy: 'Session Drift', instrument: 'MYM', pnl: 640.75, trades: 27, win_rate: 0.55, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.1 * 100) / 100 })) },
+  ];
+  const monthPnl = strategies.reduce((s, row) => s + row.pnl, 0);
+  const monthTrades = strategies.reduce((s, row) => s + row.trades, 0);
+  const summary = {
+    pnl: Math.round(monthPnl * 100) / 100,
+    trades: monthTrades,
+    win_rate: 0.54,
+    profit_factor: 1.62,
+    commission: 312.4,
+  };
+  const yearStrategies = strategies.map(row => ({
+    ...row,
+    pnl: Math.round(row.pnl * 4.2 * 100) / 100,
+    trades: row.trades * 4,
+    daily: daily.concat(daily.map((d, i) => {
+      const older = new Date(today.getTime() - (120 - i) * 86400000);
+      return { date: ovYmd(older), pnl: Math.round(d.pnl * 0.85 * 100) / 100 };
+    })),
+  }));
+  const yearSummary = {
+    pnl: Math.round(summary.pnl * 4.2 * 100) / 100,
+    trades: summary.trades * 4,
+    win_rate: 0.53,
+    profit_factor: 1.48,
+    commission: 1288.2,
+  };
+  const account = {
+    account_name: 'Sim101',
+    display_name: 'Demo Sim',
+    net_liquidation: 52480,
+    cash_value: 50120,
+    realized_pnl: yearSummary.pnl,
+    connection_status: 'connected',
+    is_live: false,
+    account_mode: 'sim',
+  };
+  const snapshots = daily.filter((_, i) => i % 2 === 0).map((d, i) => ({
+    at_utc: d.date + 'T21:00:00Z',
+    net_liquidation: 48000 + i * 75 + d.pnl,
+    cash_value: 46000 + i * 60,
+    source: 'demo',
+  }));
+  const month = { strategy_summary: summary, summary, strategies, has_trades: true };
+  const year = {
+    strategy_summary: yearSummary, summary: yearSummary, strategies: yearStrategies, has_trades: true,
+    strategy_breakdowns: {
+      daily: daily.map(d => ({ key: d.date, label: d.date, pnl: d.pnl })),
+      weekly: daily.filter((_, i) => i % 7 === 0).map(d => ({ key: d.date, label: 'с ' + d.date, pnl: Math.round(d.pnl * 4.5 * 100) / 100 })),
+      monthly: [
+        { key: '2026-04', label: '2026-04', pnl: 820 },
+        { key: '2026-05', label: '2026-05', pnl: 1140 },
+        { key: '2026-06', label: '2026-06', pnl: -260 },
+        { key: '2026-07', label: '2026-07', pnl: summary.pnl },
+      ],
+    },
+  };
+  const todayDoc = {
+    has_trades: true,
+    strategy_summary: { pnl: 186.5, trades: 4, win_rate: 0.75, profit_factor: 2.1, commission: 8.4 },
+    summary: { pnl: 186.5, trades: 4, win_rate: 0.75, profit_factor: 2.1, commission: 8.4 },
+  };
+  return {
+    account,
+    accounts: [account],
+    month,
+    year,
+    today: todayDoc,
+    history: { accounts: [{ account_name: account.account_name, snapshots, events: [
+      { kind: 'deposit', amount: 5000, classification_status: 'classified' },
+      { kind: 'fee', amount: 12.5, classification_status: 'classified' },
+    ] }] },
+    reports: { jobs: [
+      { job_id: 'demo-1', label: 'ORB MNQ · 90д', strategy: 'ORB Reversion', status: 'done', metrics: { net_profit_after_commission: 1240 } },
+      { job_id: 'demo-2', label: 'VWAP MES · walk-forward', strategy: 'VWAP Fade', status: 'done', origin: { type: 'ai_lab' }, metrics: { net_profit_after_commission: 680 } },
+      { job_id: 'demo-3', label: 'London MGC', strategy: 'London Break', status: 'done', metrics: { net_profit_after_commission: -145 } },
+    ] },
+    coverage: {
+      summary: { ready: 6, total_micros: 12 },
+      instruments: [
+        { root: 'MNQ', strategy_count: 3, best_status: 'ready' },
+        { root: 'MES', strategy_count: 2, best_status: 'ready' },
+        { root: 'MGC', strategy_count: 1, best_status: 'pending' },
+        { root: 'MYM', strategy_count: 2, best_status: 'ready' },
+      ],
+    },
+    ai: { totals: { experiments: 18, running_jobs: 0, champions: 3, candidates: 7 } },
+    health: { ninjatrader_running: true },
+    news: {
+      configured: true, total: 3,
+      items: [
+        { title: 'FOMC decision preview', impact: 'high', source: 'Calendar', published_at_utc: new Date().toISOString(), instruments: ['MNQ', 'MES'] },
+        { title: 'Crude inventory', impact: 'medium', source: 'EIA', published_at_utc: new Date(Date.now() - 3600000).toISOString(), instruments: ['MCL'] },
+        { title: 'Equity futures overnight', impact: 'low', source: 'Desk', published_at_utc: new Date(Date.now() - 7200000).toISOString(), instruments: ['MYM'] },
+      ],
+    },
+  };
+}
+
 function ovRangeParams(range, accountName) {
   const today = new Date();
   const params = { account: accountName };
@@ -79,7 +194,24 @@ async function renderLive() {
   const ai = value(6);
   const health = value(7);
   const news = value(8);
+  const guest = !!(window.UI && UI.isGuest && UI.isGuest());
+  const firstFail = settled.find(row => row.status === 'rejected');
+  const authBlocked = firstFail && firstFail.reason && (firstFail.reason.status === 401 || firstFail.reason.status === 403
+    || /whitelist|не входит/i.test(String(firstFail.reason.message || '')));
   if (!month && !year && !accountDoc && !coverage && !ai && !health) {
+    if (guest || authBlocked) {
+      const demo = ovGuestDemoPack();
+      renderKpis(kpiBox, demo.account, demo.month, demo.year, demo.coverage, demo.ai);
+      wireEquity(demo.month, demo.year, demo.account.account_name, true);
+      renderToday(demo.today);
+      renderAccountOverview(demo.accounts, demo.account, demo.history);
+      wireRhythm(demo.year);
+      renderTopStrategies(demo.month);
+      renderReports(demo.reports);
+      renderNews(demo.news);
+      renderSystems(demo.account, demo.month, demo.coverage, demo.ai, demo.health);
+      return;
+    }
     UI.renderError(kpiBox, settled[0].reason || new Error('backend недоступен'), renderLive);
     return;
   }
@@ -147,7 +279,7 @@ function renderKpis(box, account, month, year, coverage, ai) {
   box.innerHTML = kpis.map(kpi => `<div class="kpi ${kpi.cls}"><div class="kpi-top"><span class="kpi-label">${kpi.label}</span><span class="kpi-ic">${UI.icon(kpi.icon)}</span></div><div class="kpi-val sm">${kpi.val}</div><div class="kpi-foot">${kpi.foot}</div></div>`).join('');
 }
 
-function wireEquity(month, year, accountName) {
+function wireEquity(month, year, accountName, previewOnly) {
   const box = UI.qs('#eq-chart-box');
   const sub = UI.qs('#eq-sub');
   function draw(data) {
@@ -162,6 +294,7 @@ function wireEquity(month, year, accountName) {
     UI.qsa('#eq-range button').forEach(item => item.classList.toggle('active', item === button));
     if (range === 'month') { draw(month); return; }
     if (range === 'year') { draw(year); return; }
+    if (previewOnly) { draw(year || month); return; }
     UI.renderLoading(box, 'Загрузка диапазона...');
     try { draw(await API.http.performance(ovRangeParams(range, accountName), { signal: UI.signal() })); }
     catch (error) { if (error.name !== 'AbortError') UI.renderError(box, error, () => select(range, button)); }

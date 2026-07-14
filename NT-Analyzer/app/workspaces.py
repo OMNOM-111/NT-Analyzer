@@ -370,6 +370,40 @@ def context_for_user(user_id: Any, *, is_owner: bool = False, owner_id: Any = 0)
     }
 
 
+def runtime_monitor_scopes() -> list[Dict[str, Any]]:
+    """Return one service-event scope per active NinjaTrader workspace."""
+    with _LOCK:
+        doc = _read_doc()
+        scopes: list[Dict[str, Any]] = []
+        for workspace in doc.get("workspaces") or []:
+            if not isinstance(workspace, dict) or workspace.get("status") != "active":
+                continue
+            workspace_id = str(workspace.get("workspace_id") or "")
+            members = [
+                row for row in (doc.get("memberships") or [])
+                if isinstance(row, dict) and not row.get("revoked_at_utc")
+                and str(row.get("workspace_id") or "") == workspace_id
+            ]
+            if not members:
+                continue
+            owner_id = int(workspace.get("owner_user_id") or 0)
+            representative = next(
+                (row for row in members if int(row.get("user_id") or 0) == owner_id),
+                members[0],
+            )
+            kind = str(workspace.get("kind") or "")
+            scopes.append({
+                "user_id": int(representative.get("user_id") or owner_id),
+                "workspace_id": workspace_id,
+                "workspace_kind": kind,
+                "uses_owner_runtime": bool(kind == "owner_training"),
+                "membership_role": str(representative.get("role") or "viewer"),
+                "is_owner": int(representative.get("user_id") or 0) == owner_id,
+                "display_name": "System",
+            })
+        return scopes
+
+
 def select_workspace(user_id: Any, workspace_id: Any) -> Dict[str, Any]:
     user = int(user_id or 0)
     workspace = _safe_workspace_id(workspace_id)
@@ -727,6 +761,27 @@ def runtime_dir_for_context(context: Dict[str, Any]) -> str:
         return str(runtime_dir)
     except WorkspaceError:
         return ""
+
+
+def runtime_storage_dir_for_context(context: Dict[str, Any]) -> str:
+    """Return the isolated runtime store even while a personal bridge is offline.
+
+    ``runtime_dir_for_context`` intentionally reports only an online bridge and
+    is used by read endpoints to decide whether to show the pairing stub. Writes
+    and background AI work need a different invariant: a personal workspace
+    must never fall back to the owner's global ``data/runtime`` directory just
+    because its bridge is temporarily offline.
+    """
+    active = (context or {}).get("active_workspace") if isinstance(context, dict) else {}
+    if not isinstance(active, dict) or not active or active.get("uses_owner_runtime"):
+        return ""
+    try:
+        workspace_id = _safe_workspace_id(active.get("workspace_id"))
+    except WorkspaceError:
+        return ""
+    runtime_dir = _tenant_root(workspace_id) / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return str(runtime_dir)
 
 
 def runtime_stub(path: str, query: Dict[str, list[str]], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:

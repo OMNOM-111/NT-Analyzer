@@ -637,7 +637,22 @@
       this._schedule();
       return this;
     }
-    setIndicators(list) { this.indicators = parseIndicators(list); this._schedule(); return this; }
+    setIndicators(list) {
+      this.indicators = parseIndicators(list);
+      // Drop stale pane-height overrides for panes that no longer exist so a
+      // newly added MACD/RSI pane always gets the default visible height.
+      const n = (this.indicators.panes || []).length;
+      if (this.paneHeights) {
+        Object.keys(this.paneHeights).forEach((k) => {
+          if (Number(k) >= n) delete this.paneHeights[k];
+        });
+      }
+      // Force an immediate redraw (not just a coalesced rAF) so apply-to-all
+      // updates every window in the same turn, not only the first few.
+      if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
+      try { this._draw(); } catch (e) { this._schedule(); }
+      return this;
+    }
     setStyle(style) {
       this.style = Object.assign({}, this.style, style || {});
       this.host.style.background = this.style.background || '';

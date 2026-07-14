@@ -41,6 +41,22 @@ def _json_request(base: str, path: str, *, method: str = "GET", body: dict | Non
         return json.loads(response.read().decode("utf-8"))
 
 
+def test_personal_runtime_storage_never_falls_back_to_owner_when_offline(workspace_store) -> None:
+    context = {
+        "active_workspace": {
+            "workspace_id": "ws_personal_TEST1234",
+            "kind": "personal",
+            "uses_owner_runtime": False,
+            "default_runtime_connection_id": "",
+        }
+    }
+
+    assert workspaces.runtime_dir_for_context(context) == ""  # pairing/read stub remains active
+    storage = workspaces.runtime_storage_dir_for_context(context)
+    assert storage == str(workspace_store / "data" / "tenants" / "ws_personal_TEST1234" / "runtime")
+    assert "data\\runtime" not in storage
+
+
 def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: str) -> None:
     account_auth._write_doc({
         "version": 1,

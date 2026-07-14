@@ -1,7 +1,7 @@
 # Aurora UI API map
 
 Актуально на 2026-07-01 после добавления безопасного реестра AI Agents и
-StratForge Orchestrator. Единственный HTTP-адаптер интерфейса находится в
+Витёк является пользовательским лицом, StratForge Orchestrator — его внутренним шлюзом. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
 Планируемый multi-user слой не должен расширять текущую роль auth до подписки
@@ -30,7 +30,7 @@ StratForge Orchestrator. Единственный HTTP-адаптер интер
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram | `/api/telegram/status` | token validation, one-time private-chat pairing, notification settings, test send, disconnect; токен и chat id не возвращаются |
-| StratForge Orchestrator | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | natural-language chat, auto complexity routing, historical mission, notes/tasks/calendar, backtest audit, budget/cache telemetry, bounded app allowlist, paper/demo approval queue for strategy enable/disable, and bounded paper/demo/playback connection self-heal |
+| Витёк | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | единый естественный диалог; внутреннее распределение через Управляющего и агентов, безопасные действия и краткие решения без показа технического маршрута |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты

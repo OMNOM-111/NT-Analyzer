@@ -60,6 +60,58 @@ def test_complexity_classifier_keeps_critical_decision_deterministic() -> None:
     assert chief_agent.classify_complexity("analyze ordinary metrics", "backtest_analyst") == "standard"
 
 
+def test_one_star_comment_becomes_user_scoped_memory(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 11, "workspace_id": "ws-shared", "membership_role": "owner",
+        "is_owner": True, "display_name": "Test Owner", "uses_owner_runtime": True,
+    }
+    path = chief_agent._conversation_file("C-FEEDBACK", scope=scope)
+    user = chief_agent._append_conversation("user", "покажи график", source="app", path=path, scope=scope)
+    assistant = chief_agent._append_conversation("assistant", "не могу", source="app", path=path, scope=scope)
+
+    chief_agent.rate_message("C-FEEDBACK", assistant["message_id"], 1, "Сначала запроси бары", scope=scope)
+
+    memories = chief_agent._user_memories(scope)
+    assert memories[-1]["kind"] == "negative_feedback"
+    assert memories[-1]["text"] == "Сначала запроси бары"
+    assert "покажи график" in memories[-1]["context"]
+
+
+def test_default_system_chat_is_shared_only_inside_workspace(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    a = {"user_id": 1, "workspace_id": "ws-one", "membership_role": "owner", "is_owner": True}
+    b = {"user_id": 2, "workspace_id": "ws-one", "membership_role": "viewer", "is_owner": False}
+    other = {"user_id": 3, "workspace_id": "ws-two", "membership_role": "owner", "is_owner": True}
+
+    assert chief_agent._conversation_file("default", scope=a) == chief_agent._conversation_file("default", scope=b)
+    assert chief_agent._conversation_file("default", scope=a) != chief_agent._conversation_file("default", scope=other)
+
+
+def test_runtime_heartbeat_transitions_emit_workspace_service_events(tmp_path, monkeypatch) -> None:
+    from app import runtime
+
+    _isolate(tmp_path, monkeypatch)
+    scope = {"user_id": 7, "workspace_id": "ws-heartbeat", "membership_role": "owner", "is_owner": True}
+    states = iter([
+        {"present": True, "fresh": True, "age_sec": 1},
+        {"present": True, "fresh": False, "age_sec": 40},
+        {"present": True, "fresh": True, "age_sec": 1},
+    ])
+    events = []
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: next(states))
+    monkeypatch.setattr(runtime, "read_strategies_raw", lambda: [])
+    monkeypatch.setattr(runtime, "read_accounts", lambda: [])
+    monkeypatch.setattr(chief_agent, "analyze_event", lambda event_type, payload, **kwargs: events.append((event_type, kwargs.get("scope"))))
+
+    chief_agent._runtime_monitor_tick(scope)
+    chief_agent._runtime_monitor_tick(scope)
+    chief_agent._runtime_monitor_tick(scope)
+
+    assert [row[0] for row in events] == ["connection_lost", "connection_restored"]
+    assert all(row[1]["workspace_id"] == "ws-heartbeat" for row in events)
+
+
 def test_daily_audit_flags_missing_oos_and_attributes_model(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc).isoformat()
@@ -285,6 +337,214 @@ def test_explicit_specialist_agent_routes_persona_without_name(tmp_path, monkeyp
     assert result["domain_agent"] == "nikita"
 
 
+def test_chart_command_routes_to_ivan_even_with_management_tier(tmp_path, monkeypatch) -> None:
+    """Regression: a chart command (снимок/линия) must reach the chart operator
+    Иван even when a model-strength tier (Секретарь/Заместитель/Управляющий) is
+    selected. Previously picking a tier set ``requested_agent`` and suppressed
+    the chart handoff, so the orchestrator wrongly refused with "нет функции"."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    from app.ai_lab import domain_agents
+    from app import market_data
+    captured = {}
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {"ready": True})
+    monkeypatch.setattr(market_data, "render_chart_snapshot", lambda *a, **k: (_ for _ in ()).throw(
+        market_data.MarketDataError("canvas fallback")))
+    monkeypatch.setattr(market_data, "enqueue_chart_command",
+                            lambda cmd: captured.update({"cmd": cmd}) or {"command": cmd})
+    # The orchestrator LLM must never be consulted for a chart command.
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("chart command must not reach the orchestrator LLM")))
+
+    for tier in ("secretary", "deputy", "manager"):
+        captured.clear()
+        result = chief_agent.handle_message(
+            "сделай скриншот золота", agent=tier, conversation_id="default", mirror_to_telegram=False,
+        )
+        assert result["domain_agent"] == "ivan", f"tier={tier} must route to Иван"
+        assert captured["cmd"]["type"] == "snapshot"
+        assert captured["cmd"]["instrument"] == "MGC"
+
+
+def test_chart_command_routes_to_ivan_in_auto_mode(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    from app import market_data
+    captured = {}
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {"ready": True})
+    monkeypatch.setattr(market_data, "render_chart_snapshot", lambda *a, **k: (_ for _ in ()).throw(
+        market_data.MarketDataError("canvas fallback")))
+    monkeypatch.setattr(market_data, "enqueue_chart_command",
+                        lambda cmd: captured.update({"cmd": cmd}) or {"command": cmd})
+    result = chief_agent.handle_message("сделай снимок MNQ", mirror_to_telegram=False)
+    assert result["domain_agent"] == "ivan"
+    assert captured["cmd"]["type"] == "snapshot" and captured["cmd"]["instrument"] == "MNQ"
+
+
+def test_auto_mode_routes_reports_news_and_backtest_by_capability(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    from app.ai_lab import capability_map, domain_agents
+
+    expected = {
+        "пришли финансовый отчёт за месяц": ("accounting_report", "marina"),
+        "покажи статус стратегий": ("strategy_report", "tolik"),
+        "последние новости": ("news_report", "nikita"),
+        "запусти бэктест MNQ": ("start_backtest", "tolik"),
+    }
+    called = []
+
+    def fake_execute(name, message, **kwargs):
+        called.append(name)
+        agent_id = expected[message][1]
+        profile = domain_agents.PERSONAS[agent_id]
+        return {
+            "ok": True, "reply": f"Выполнено: {name}",
+            "model": "capability dispatcher", "provider": "local", "complexity": "light",
+            "agent": {key: profile[key] for key in ("id", "name", "title", "page")},
+            "actions": [{"name": name, "status": "completed"}],
+        }
+
+    monkeypatch.setattr(capability_map, "execute", fake_execute)
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("known capability must not reach the orchestrator LLM")))
+
+    for message, (capability, agent_id) in expected.items():
+        result = chief_agent.handle_message(message, mirror_to_telegram=False)
+        assert result["domain_agent"] == agent_id
+        assert result["actions"][0]["status"] == "completed"
+        assert "нет полномочий" not in result["reply"].lower()
+        assert called[-1] == capability
+
+    # Even a deliberately misaddressed operational request is handed to the
+    # capability owner instead of being refused by the selected persona.
+    result = chief_agent.handle_message(
+        "запусти бэктест MNQ", agent="marina", mirror_to_telegram=False,
+    )
+    assert result["domain_agent"] == "tolik"
+    assert called[-1] == "start_backtest"
+
+
+def test_chart_show_rule_is_saved_deterministically(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    saved = []
+    monkeypatch.setattr(chief_agent, "add_note",
+                        lambda text, priority="normal": saved.append((text, priority)) or {"ts_utc": "now"})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("explicit permanent rule must not depend on an LLM")))
+
+    result = chief_agent.handle_message(
+        "запомни: всегда, когда я говорю покажи график, делай снимок и пришли в чат",
+        mirror_to_telegram=False,
+    )
+
+    assert result["actions"][0]["name"] == "save_rule"
+    assert result["actions"][0]["status"] == "completed"
+    assert saved and saved[0][1] == "high"
+    assert "всегда означает реальный снимок" in result["reply"]
+
+
+def test_legacy_telegram_transcript_migrates_into_scoped_chat(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {"user_id": 42, "workspace_id": "ws_owner", "membership_role": "owner", "is_owner": True}
+    cid = "C-SCOPE-MERGE"
+    chief_agent._append_conversation(
+        "user", "из Telegram", source="telegram",
+        path=chief_agent._conversation_file(cid),
+    )
+    chief_agent._append_conversation(
+        "user", "из приложения", source="app",
+        path=chief_agent._conversation_file(cid, scope=scope), scope=scope,
+    )
+
+    first = chief_agent.migrate_legacy_conversation_to_scope(cid, scope)
+    second = chief_agent.migrate_legacy_conversation_to_scope(cid, scope)
+    rows = chief_agent._read_conversation(10, path=chief_agent._conversation_file(cid, scope=scope))
+
+    assert first["migrated"] == 1
+    assert second["migrated"] == 0
+    assert {row["content"] for row in rows} == {"из Telegram", "из приложения"}
+    assert all(row.get("conversation_scope_id") == "u42__ws_owner" for row in rows)
+
+
+def test_owner_workspace_restores_complete_legacy_chat_list_once(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 42, "workspace_id": "ws_owner", "membership_role": "owner",
+        "is_owner": True, "uses_owner_runtime": True,
+    }
+    chief_agent._append_conversation(
+        "assistant", "старый основной отчёт", source="app",
+        path=chief_agent._conversation_file(chief_agent.DEFAULT_CONVERSATION_ID),
+    )
+    legacy = chief_agent.create_conversation(
+        "Старый диалог", conversation_id="C-LEGACY-OWNER",
+    )
+    chief_agent._append_conversation(
+        "user", "старое поручение", source="app",
+        path=chief_agent._conversation_file(legacy["conversation_id"]),
+    )
+    current = chief_agent.create_conversation(
+        "Новый scoped диалог", conversation_id="C-SCOPED-OWNER", scope=scope,
+    )
+    chief_agent._append_conversation(
+        "user", "новое поручение", source="app",
+        path=chief_agent._conversation_file(current["conversation_id"], scope=scope),
+        scope=scope,
+    )
+
+    first = chief_agent.list_conversations(scope=scope)
+    second = chief_agent.list_conversations(scope=scope)
+    ids = {row["conversation_id"] for row in first}
+    default_messages = chief_agent.conversation_messages(
+        chief_agent.DEFAULT_CONVERSATION_ID, scope=scope,
+    )
+    legacy_messages = chief_agent.conversation_messages("C-LEGACY-OWNER", scope=scope)
+
+    assert ids == {chief_agent.DEFAULT_CONVERSATION_ID, "C-LEGACY-OWNER", "C-SCOPED-OWNER"}
+    assert next(row for row in first if row["conversation_id"] == "C-LEGACY-OWNER")["title"] == "Старый диалог"
+    assert [row["content"] for row in default_messages] == ["старый основной отчёт"]
+    assert [row["content"] for row in legacy_messages] == ["старое поручение"]
+    assert len(second) == len(first)
+    assert len(chief_agent.conversation_messages("C-LEGACY-OWNER", scope=scope)) == 1
+    marker = chief_agent._read_index(scope)[chief_agent._OWNER_LEGACY_MIGRATION_KEY]
+    assert marker["completed"] is True
+
+
+def test_non_owner_workspace_never_inherits_owner_legacy_chats(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chief_agent.create_conversation("Личный чат владельца", conversation_id="C-OWNER-ONLY")
+    scope = {
+        "user_id": 77, "workspace_id": "ws_tenant", "membership_role": "member",
+        "is_owner": False, "uses_owner_runtime": False,
+    }
+
+    rows = chief_agent.list_conversations(scope=scope)
+
+    assert {row["conversation_id"] for row in rows} == {chief_agent.DEFAULT_CONVERSATION_ID}
+    assert chief_agent._OWNER_LEGACY_MIGRATION_KEY not in chief_agent._read_index(scope)
+
+
+def test_system_chat_cannot_be_closed_and_is_always_pinned(tmp_path, monkeypatch) -> None:
+    """The main/system chat holds service reports: it can never be closed and is
+    always pinned at the top so it stays reachable."""
+    _isolate(tmp_path, monkeypatch)
+    # Closing the default chat is refused.
+    try:
+        chief_agent.set_conversation_closed(chief_agent.DEFAULT_CONVERSATION_ID, True)
+    except chief_agent.ChiefAgentError as exc:
+        assert "нельзя закрыть" in str(exc)
+    else:
+        raise AssertionError("the system chat must not be closable")
+    # It never reports itself as closed and stays usable.
+    assert chief_agent._conversation_is_closed(chief_agent.DEFAULT_CONVERSATION_ID) is False
+    # Unpinning is a no-op: it remains pinned.
+    chief_agent.pin_conversation(chief_agent.DEFAULT_CONVERSATION_ID, False)
+    rows = chief_agent.list_conversations()
+    default_row = next(r for r in rows if r.get("is_default"))
+    assert default_row["pinned"] is True and default_row["closed"] is False
+    assert rows[0].get("is_default"), "the system chat must float to the top"
+
+
 def test_orchestrator_blocks_unknown_model_action(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
@@ -297,6 +557,28 @@ def test_orchestrator_blocks_unknown_model_action(tmp_path, monkeypatch) -> None
 
     assert result["actions"][0]["status"] == "blocked"
     assert result["actions"][0]["reason"] == "capability_not_allowed"
+
+
+def test_unknown_model_label_routes_supported_owner_capability(tmp_path, monkeypatch) -> None:
+    """An invented model label must not block an operation the app supports."""
+    _isolate(tmp_path, monkeypatch)
+    from app.ai_lab import capability_map
+
+    monkeypatch.setattr(capability_map, "execute", lambda name, message, **kwargs: {
+        "ok": True,
+        "reply": "Финансовый отчёт подготовлен.",
+        "actions": [{"name": name, "status": "completed"}],
+    })
+
+    result = chief_agent._execute_action(
+        {"name": "make_finance_packet", "arguments": {}},
+        "пришли финансовый отчёт",
+    )
+
+    assert result["name"] == "accounting_report"
+    assert result["requested_action"] == "make_finance_packet"
+    assert result["status"] == "completed"
+    assert "Финансовый отчёт подготовлен" in result["summary"]
 
 
 def test_orchestrator_redacts_accidentally_pasted_secret(tmp_path, monkeypatch) -> None:
@@ -1399,7 +1681,10 @@ def test_pin_conversation_floats_to_top(tmp_path, monkeypatch) -> None:
     chief_agent.pin_conversation(cid_a, True)
 
     order = [row["conversation_id"] for row in chief_agent.list_conversations()]
-    assert order[0] == cid_a
+    # The system chat is always pinned at the very top; a pinned user chat floats
+    # above other user chats but below the system chat.
+    assert order[0] == chief_agent.DEFAULT_CONVERSATION_ID
+    assert order[1] == cid_a
     assert order.index(cid_a) < order.index(cid_b)
 
 
@@ -1436,6 +1721,56 @@ def test_scoped_default_conversations_do_not_share_history(tmp_path, monkeypatch
     assert [row["user_id"] for row in history_b] == [202, 202]
     assert [row["workspace_id"] for row in history_b] == ["ws_personal_BBBBBBBB"] * 2
     assert legacy == []
+
+
+def test_non_owner_prompt_snapshot_hides_owner_control_plane_data() -> None:
+    snapshot = {
+        "recent_experiments": [
+            {"experiment_id": "OWNER", "workspace_id": "ws_owner_training_12345678"},
+            {"experiment_id": "MINE", "workspace_id": "ws_personal_AAAAAAAA"},
+        ],
+        "research_mission": {"mission_id": "OWNER-MISSION", "conversation_scope": {"workspace_id": "ws_owner_training_12345678"}},
+        "agents": [{"agent_id": "paid", "remaining_monthly_budget_usd": 50}],
+        "owner_rules": [{"text": "private"}],
+        "north_star": {"configured": True, "target": "private"},
+        "open_tasks": [{"task_id": "A", "workspace_id": "ws_owner_training_12345678"}],
+        "pending_proposals": [{"proposal_id": "P", "workspace_id": "ws_owner_training_12345678"}],
+    }
+    scope = {"user_id": 101, "workspace_id": "ws_personal_AAAAAAAA", "is_owner": False}
+
+    scoped = chief_agent._scope_application_snapshot(snapshot, scope)
+
+    assert [row["experiment_id"] for row in scoped["recent_experiments"]] == ["MINE"]
+    assert scoped["research_mission"] is None
+    assert scoped["agents"] == [] and scoped["owner_rules"] == []
+    assert scoped["open_tasks"] == [] and scoped["pending_proposals"] == []
+
+
+def test_viewer_cannot_mutate_owner_training_workspace(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    from app.ai_lab import capability_map
+
+    monkeypatch.setattr(capability_map, "execute", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("read-only workspace must be denied before dispatch")
+    ))
+    scope = {
+        "user_id": 202,
+        "workspace_id": "ws_owner_training_12345678",
+        "workspace_kind": "owner_training",
+        "uses_owner_runtime": True,
+        "membership_role": "viewer",
+        "is_owner": False,
+    }
+
+    result = chief_agent.handle_message(
+        "поставь линию на MNQ 21500", mirror_to_telegram=False, scope=scope,
+    )
+
+    assert result["ok"] is False
+    assert result["actions"] == [{
+        "name": "chart_draw", "status": "blocked", "reason": "workspace_role_read_only",
+    }]
+    assert "только для просмотра" in result["reply"]
 
 
 def test_native_thinking_is_not_mirrored_to_telegram(tmp_path, monkeypatch) -> None:
@@ -1495,3 +1830,86 @@ def test_handle_message_streams_thinking_to_callback(tmp_path, monkeypatch) -> N
 
     assert deltas == ["думаю… ", "почти готово"]
     assert result["thinking"] == "думаю… почти готово"
+
+
+def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, monkeypatch) -> None:
+    from app import vitek
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
+    monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "vitek-background.json")
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="financial_classification", key="open", severity="warning",
+            title="Открытая проверка", details="x", recommendation="решить",
+            context={"needs_review": 1},
+        )
+        vitek._write(doc)
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Vitek status must not call an LLM")
+    ))
+
+    for source, phrase in (
+        ("app", "Витя перечисли список задач, которые у тебя не решенные"),
+        ("telegram", "Витёк, что осталось?"),
+    ):
+        result = chief_agent.handle_message(
+            phrase, source=source, mirror_to_telegram=False,
+            conversation_id=f"C-VITEK-{source}",
+        )
+        assert result["domain_agent"] == "vitek"
+        assert result["agent"] == "vitek"
+        assert result["gateway"] == {
+            "ingress": "stratforge_orchestrator", "source": source,
+            "target": "vitek", "outcome": "awaiting_owner", "single_response": True,
+        }
+        assert "активных поручений сейчас нет" in result["reply"]
+        assert "финансов" in result["reply"].lower()
+        assert incident["incident_id"] not in result["reply"]
+        assert result["message"]["agent_name"] == "Витёк"
+
+
+def test_orchestrator_gateway_blocks_vitek_owner_state_for_non_owner(tmp_path, monkeypatch) -> None:
+    from app import vitek
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
+    monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "vitek-background.json")
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="private", key="owner", severity="critical",
+            title="Секрет владельца", details="x", recommendation="x",
+        )
+        vitek._write(doc)
+    scope = {
+        "user_id": 22, "workspace_id": "ws-shared", "membership_role": "viewer",
+        "is_owner": False, "display_name": "Viewer", "uses_owner_runtime": True,
+    }
+
+    result = chief_agent.handle_message(
+        "Витя, покажи нерешённые задачи", mirror_to_telegram=False,
+        conversation_id="C-VITEK-NONOWNER", scope=scope,
+    )
+
+    assert result["domain_agent"] == "vitek"
+    assert result["gateway"]["outcome"] == "blocked"
+    assert "не могу показывать вам личные задачи" in result["reply"]
+    assert incident["incident_id"] not in result["reply"]
+
+
+def test_every_orchestrator_turn_has_auditable_gateway_metadata(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"reply":"Понял вопрос.","confidence":0.9,"doubts":[],"actions":[]}',
+        "provider": "test", "actual_model": "test-model",
+    })
+
+    result = chief_agent.handle_message("Обычный вопрос без имени агента", mirror_to_telegram=False)
+
+    assert result["gateway"]["ingress"] == "stratforge_orchestrator"
+    assert result["gateway"]["target"] == "orchestrator"
+    assert result["gateway"]["outcome"] == "answered"
+    assert result["gateway"]["single_response"] is True

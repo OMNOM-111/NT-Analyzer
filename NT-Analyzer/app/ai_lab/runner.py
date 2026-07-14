@@ -316,6 +316,9 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
         _RUN_STATE = {
             "run_id": run_id,
             "started_utc": _now(),
+            "research_id": str(args.get("research_id") or ""),
+            "research_title": str(args.get("research_title") or ""),
+            "research_family": str(args.get("research_family_key") or ""),
             "strategy_count": strategy_count,
             "iterations_per_strategy": iterations_per_strategy,
             "iterations_unlimited": iterations_unlimited,
@@ -344,7 +347,15 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
         _persist_run_state_locked()
 
         def _worker():
-            _run_pipeline_worker(experiment_id, args, run_id)
+            from . import universal_llm
+            with universal_llm.usage_scope({
+                "user_id": args.get("user_id"),
+                "user_name": args.get("user_name"),
+                "workspace_id": args.get("workspace_id"),
+                "conversation_id": args.get("conversation_id"),
+                "request_source": "research_runner",
+            }):
+                _run_pipeline_worker(experiment_id, args, run_id)
 
         _THREAD = threading.Thread(
             target=_worker, name=f"ai-lab-runner-{run_id}", daemon=True
@@ -358,6 +369,8 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
         "class_name": skeleton.get("class_name"),
         "queued": True,
         "run_id": run_id,
+        "research_id": str(args.get("research_id") or ""),
+        "research_title": str(args.get("research_title") or ""),
         "strategy_count": strategy_count,
         "iterations_per_strategy": iterations_per_strategy,
         "iterations_unlimited": iterations_unlimited,

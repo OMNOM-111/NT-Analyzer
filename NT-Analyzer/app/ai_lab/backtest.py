@@ -92,6 +92,8 @@ def submit(
     bars_period_value: int = 5,
     model_chain: Optional[List[str]] = None,
     stage: str = "full",
+    workspace_id: str = "",
+    user_id: int = 0,
 ) -> Dict[str, Any]:
     """Submit a historical backtest job; returns dict with job_id + meta.
 
@@ -124,6 +126,8 @@ def submit(
         "model_chain": model_chain or [],
         "submitted_at_utc": _now(),
         "stage": stage,
+        "workspace_id": str(workspace_id or "")[:96],
+        "user_id": int(user_id or 0),
     }
 
     req = jobqueue.CreateJobRequest(

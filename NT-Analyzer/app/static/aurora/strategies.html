@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Стратегии — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260708-access5">
+<link rel="stylesheet" href="assets/theme.css?v=20260711-chatmodel3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="strategies" data-title="Портфель стратегий" data-kicker="StratForge AI · Жизненный цикл и покрытие">
@@ -16,6 +16,26 @@
   <section class="panel">
     <div class="panel-h"><h2>Толик · контроль качества стратегий</h2><span class="sub">автоматическая аналитика · без расхода токенов</span></div>
     <div class="panel-b"><div id="tolik-summary" class="finance-note">Загрузка контроля качества…</div></div>
+  </section>
+
+  <section class="panel" id="vitek-panel">
+    <div class="panel-h">
+      <h2>Витёк · правая рука руководителя</h2><span class="sub" id="vitek-mode">загрузка состояния…</span>
+      <div class="spacer"></div>
+      <button class="btn sm primary" id="vitek-scan">Проверить сейчас</button>
+      <button class="btn sm" id="vitek-rest">Дать отдых</button>
+      <button class="btn sm" id="vitek-resume" hidden>Вернуть к работе</button>
+    </div>
+    <div class="panel-b col gap-lg">
+      <div class="grid cols-5" id="vitek-kpis"></div>
+      <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm" id="vitek-agents"></div></div>
+      <div class="finance-note" id="vitek-message">Витёк подключается к операционному журналу…</div>
+      <div class="grid cols-2" id="vitek-plans"></div>
+      <div class="split">
+        <div><h4 style="margin:0 0 8px">Нужно ваше решение</h4><div class="list" id="vitek-incidents"></div></div>
+        <div><h4 style="margin:0 0 8px">Активные задачи</h4><div class="list" id="vitek-tasks"></div></div>
+      </div>
+    </div>
   </section>
 
   <!-- lifecycle kanban -->
@@ -70,11 +90,21 @@
     </section>
   </div>
 
+  <section class="panel" id="time-window-panel">
+    <div class="panel-h">
+      <h2>Временные окна стратегий</h2>
+      <span class="sub" id="time-window-sub">местное время · когда стратегии работают и где остаются пробелы</span>
+      <div class="spacer"></div>
+      <select id="time-window-root" aria-label="Инструмент"></select>
+    </div>
+    <div class="panel-b col gap-lg" id="time-window-board"><div class="empty-state">Загрузка временных окон…</div></div>
+  </section>
+
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260708-access5"></script>
+<script src="assets/api.js?v=20260713-vitek1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260708-access5"></script>
-<script src="assets/pages/strategies.js?v=20260702-domain1"></script>
+<script src="assets/ui.js?v=20260713-vitek5"></script>
+<script src="assets/pages/strategies.js?v=20260713-vitek2"></script>
 </body>
 </html>

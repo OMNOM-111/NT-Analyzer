@@ -6,6 +6,14 @@ from app import account_ledger
 from app.ai_lab import chief_agent, domain_agents
 
 
+def _chart_ready(monkeypatch) -> None:
+    from app import market_data
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {
+        "ready": True, "nt_running": True, "heartbeat_fresh": True, "data_fresh": True,
+        "instrument": "MNQ 09-26", "timeframe": "5m", "reason": "",
+    })
+
+
 def test_named_personas_require_explicit_address() -> None:
     assert domain_agents.resolve_persona("Марина, отчёт за неделю")["id"] == "marina"
     assert domain_agents.resolve_persona("Толик, что по стратегиям?")["id"] == "tolik"
@@ -37,8 +45,9 @@ def test_chart_operator_answer_enqueues_command(monkeypatch) -> None:
     from app import market_data
 
     captured = {}
+    _chart_ready(monkeypatch)
     monkeypatch.setattr(market_data, "enqueue_chart_command",
-                        lambda cmd: captured.setdefault("cmd", cmd) or {"command": cmd})
+                        lambda cmd: captured.update({"cmd": cmd}) or {"command": cmd})
     out = domain_agents.chart_operator_answer(
         "поставь линию на MNQ 21500 если дойдёт за 60 минут снимок в чат",
         conversation_id="c-42")
@@ -49,6 +58,23 @@ def test_chart_operator_answer_enqueues_command(monkeypatch) -> None:
     assert cmd["conversation_id"] == "c-42"
     assert cmd["payload"]["drawing"]["price"] == 21500.0
     assert cmd["payload"]["drawing"]["snapshot"] is True
+
+
+def test_chart_canvas_command_also_requests_automatic_desktop_open(monkeypatch) -> None:
+    from app import market_data
+
+    commands = []
+    _chart_ready(monkeypatch)
+    monkeypatch.setattr(
+        market_data, "enqueue_chart_command",
+        lambda cmd: commands.append(dict(cmd)) or {"command": {**cmd, "id": f"cmd-{len(commands)}"}},
+    )
+
+    out = domain_agents.chart_operator_answer("поставь линию на MNQ 21500", conversation_id="c-auto")
+
+    assert out["ok"] is True
+    assert [row["type"] for row in commands] == ["open_desktop_tab", "draw"]
+    assert "open_desktop_tab" in out["actions"]
 
 
 def test_chart_operator_delayed_snapshot_and_active_chart(monkeypatch) -> None:
@@ -65,8 +91,9 @@ def test_chart_operator_delayed_snapshot_and_active_chart(monkeypatch) -> None:
     assert domain_agents.parse_chart_intent("открой график золото")["action"] == "open"
 
     captured = {}
+    _chart_ready(monkeypatch)
     monkeypatch.setattr(market_data, "enqueue_chart_command",
-                        lambda cmd: captured.setdefault("cmd", cmd) or {"command": cmd})
+                        lambda cmd: captured.update({"cmd": cmd}) or {"command": cmd})
     out = domain_agents.chart_operator_answer("Пришли снимок графика через минуту", conversation_id="cX")
     assert "snapshot" in out["actions"]
     assert captured["cmd"]["type"] == "snapshot"
@@ -108,14 +135,103 @@ def test_answer_hands_off_chart_command_to_ivan(monkeypatch) -> None:
     from app import market_data
 
     captured = {}
+    _chart_ready(monkeypatch)
     monkeypatch.setattr(market_data, "enqueue_chart_command",
-                        lambda cmd: captured.setdefault("cmd", cmd) or {"command": cmd})
+                        lambda cmd: captured.update({"cmd": cmd}) or {"command": cmd})
     out = domain_agents.answer("marina", "поставь линию на MNQ 21500 сделай снимок в чат",
                                conversation_id="cZ")
     assert out["agent"]["id"] == "ivan"
     assert out["handoff_from"] == "marina"
     assert out["reply"].startswith("Дмитрий Сергеевич, это не Марина")
     assert captured["cmd"]["instrument"] == "MNQ"
+
+
+def test_show_chart_phrases_always_mean_snapshot() -> None:
+    phrases = (
+        "покажи график нефть", "покажите мне график MCL", "выведи график золота",
+        "отобрази график MNQ", "пришли график MES", "скинь график нефти",
+        "хочу увидеть график золота", "где график?",
+    )
+    for phrase in phrases:
+        assert domain_agents.parse_chart_intent(phrase)["action"] == "snapshot", phrase
+    assert domain_agents.parse_chart_intent("открой график нефть")["action"] == "open"
+
+
+def test_mixed_keyboard_6c_is_a_snapshot_not_price_level() -> None:
+    for phrase in (
+        "покажи график 6с", "покажи график 6С", "покажи график 6C",
+        "покажи график шесть си",
+    ):
+        intent = domain_agents.parse_chart_intent(phrase)
+        assert intent["action"] == "snapshot", phrase
+        assert intent["root"] == "6C", phrase
+        assert "price" not in intent, phrase
+
+
+def test_mixed_keyboard_6c_executes_snapshot_without_creating_alert(monkeypatch) -> None:
+    from app import market_data
+
+    requested = {}
+    monkeypatch.setattr(market_data, "ensure_chart_runtime", lambda root, timeframe, **kwargs: requested.update({
+        "root": root, "timeframe": timeframe,
+    }) or {"ready": True, "instrument": "6C 09-26", "nt_running": True, "heartbeat_fresh": True})
+    monkeypatch.setattr(market_data, "render_chart_snapshot", lambda root, timeframe, **kwargs: {
+        "file": "six-c.png", "url": "/api/six-c.png", "instrument": "6C 09-26", "timeframe": timeframe,
+    })
+    monkeypatch.setattr(market_data, "create_alert", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("snapshot command must not create a price alert")
+    ))
+
+    result = domain_agents.chart_operator_answer("покажи график 6с", conversation_id="tg-6c")
+
+    assert result["ok"] is True
+    assert result["snapshot"]["instrument"] == "6C 09-26"
+    assert requested == {"root": "6C", "timeframe": "5m"}
+    assert "горизонталь" not in result["reply"].lower()
+
+
+def test_show_chart_timeframe_number_is_not_a_drawing_price() -> None:
+    intent = domain_agents.parse_chart_intent("покажи график MGC 5m")
+    assert intent == {
+        "action": "snapshot", "root": "MGC", "delay_seconds": 0, "timeframe": "5m",
+    }
+
+
+def test_chart_operator_reports_ninjatrader_offline_without_false_success(monkeypatch) -> None:
+    from app import market_data
+    queued = []
+    monkeypatch.setattr(market_data, "enqueue_chart_command", lambda cmd: queued.append(cmd))
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {
+        "ready": False, "nt_running": False, "heartbeat_fresh": False,
+        "data_fresh": False, "reason": "NinjaTrader не запущен.",
+    })
+
+    result = domain_agents.chart_operator_answer("покажи график нефть", conversation_id="C-OFFLINE")
+
+    assert result["ok"] is False
+    assert result["actions"][0]["status"] == "blocked"
+    assert "не запущен" in result["reply"]
+    assert "не считаю выполненной" in result["reply"]
+    assert queued == []
+
+
+def test_chart_operator_queues_snapshot_while_healthy_bridge_loads_bars(monkeypatch) -> None:
+    from app import market_data
+
+    queued = []
+    monkeypatch.setattr(market_data, "enqueue_chart_command", lambda cmd: queued.append(dict(cmd)) or {"command": cmd})
+    monkeypatch.setattr(market_data, "ensure_chart_runtime", lambda *a, **k: {
+        "ready": False, "nt_running": True, "heartbeat_fresh": True,
+        "data_available": False, "reason": "Bridge ещё не передал бары MCL.",
+    })
+
+    result = domain_agents.chart_operator_answer("покажи график нефть", conversation_id="C-WAIT")
+
+    assert result["ok"] is True
+    assert result["actions"][0]["status"] == "queued"
+    assert queued[0]["type"] == "snapshot"
+    assert queued[0]["payload"]["headless_backend"] is True
+    assert "автоматически появится" in result["reply"]
 
 
 def test_chart_task_acknowledgement_describes_schedule() -> None:
@@ -194,6 +310,33 @@ def test_accounting_snapshot_uses_decimal_authoritative_totals(monkeypatch) -> N
     assert report["calculation_authority"] == "deterministic_decimal_code"
     assert report["summary"]["trading_pnl"] == "0.30"
     assert report["summary"]["deposits"] == "0.30"
+
+
+def test_accounting_snapshot_uses_personal_workspace_ledger(monkeypatch) -> None:
+    from app import workspaces
+
+    monkeypatch.setattr(domain_agents.performance, "build_performance_response", lambda **kwargs: {
+        "period": {"from": "2026-07-01", "to": "2026-07-31"},
+        "strategy_summary": {}, "strategies": [],
+    })
+    monkeypatch.setattr(domain_agents.account_ledger, "account_history", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("personal report must not read the owner's ledger")
+    ))
+    monkeypatch.setattr(domain_agents.account_ledger, "audit_integrity", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("personal report must not audit the owner's ledger")
+    ))
+    captured = {}
+    monkeypatch.setattr(workspaces, "workspace_account_history", lambda workspace_id, account, limit: (
+        captured.update({"workspace_id": workspace_id}) or {"accounts": []}
+    ))
+
+    report = domain_agents.accounting_snapshot(
+        "month", workspace_id="ws_personal_TEST1234", uses_owner_runtime=False,
+    )
+
+    assert report["ok"] is True
+    assert captured["workspace_id"] == "ws_personal_TEST1234"
+    assert report["integrity"]["workspace_id"] == "ws_personal_TEST1234"
 
 
 def test_ledger_integrity_repairs_only_exact_duplicates(tmp_path, monkeypatch) -> None:

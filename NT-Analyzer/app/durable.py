@@ -372,6 +372,32 @@ def get_chat_conversation(root: Optional[Path], conversation_id: str,
     return dict(row) if row else None
 
 
+def find_chat_conversation(root: Optional[Path], conversation_id: str,
+                           *, prefer_scoped: bool = True) -> Optional[Dict[str, Any]]:
+    """Find a conversation when an external transport only knows its id.
+
+    Telegram topics predate workspace-scoped chat storage and carry only the
+    conversation id. Prefer an owner/scoped row so incoming topic messages are
+    appended to the same transcript the authenticated app is displaying,
+    instead of silently creating a legacy unscoped duplicate.
+    """
+    cid = str(conversation_id or "").strip()
+    if not cid:
+        return None
+    order = (
+        "CASE WHEN scope_id<>'' THEN 0 ELSE 1 END, "
+        "CASE WHEN membership_role='owner' THEN 0 ELSE 1 END, updated_at_utc DESC"
+        if prefer_scoped else "updated_at_utc DESC"
+    )
+    with _LOCK:
+        with connect(root) as conn:
+            row = conn.execute(
+                f"SELECT * FROM chat_conversations WHERE conversation_id=? ORDER BY {order} LIMIT 1",
+                (cid,),
+            ).fetchone()
+    return dict(row) if row else None
+
+
 def delete_chat_conversation(root: Optional[Path], conversation_id: str,
                              *, scope_id: str = "") -> None:
     with _LOCK:

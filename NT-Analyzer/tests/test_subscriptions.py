@@ -309,7 +309,50 @@ def test_clear_user_plan_revokes_active(subscription_store) -> None:
     assert subscriptions.active_entitlement(42) == {}
 
 
-def test_payment_request_lifecycle(subscription_store) -> None:
+def test_donation_access_request_grants_donation_plan(subscription_store) -> None:
+    """UI flow: user donates via PayPal.me, then asks owner to unlock a donation tier."""
+    subscriptions.set_payment_config(999, {"paypal_me": "sfOwner", "enabled": True})
+    donate = subscriptions.donation_options()
+    assert [t["price_usd"] for t in donate["tiers"]] == [1.0, 3.0, 5.0]
+    assert all(t["paypal_url"] for t in donate["tiers"])
+    five = next(t for t in donate["tiers"] if t["price_usd"] == 5.0)
+    assert five["paypal_url"].endswith("/5")
+
+    created = subscriptions.create_payment_request(
+        42, five["plan_id"], note="Донат $5 через PayPal")
+    assert created["duplicate"] is False
+    assert created["request"]["kind"] == "donation"
+    assert created["request"]["amount_usd"] == 5.0
+    assert created["request"]["note"] == "Донат $5 через PayPal"
+
+    request_id = created["request"]["request_id"]
+    resolved = subscriptions.resolve_payment_request(999, request_id, approve=True, duration_days=0)
+    assert resolved["entitlement"]["plan_id"] == five["plan_id"]
+    active = subscriptions.active_entitlement(42)
+    assert active["plan_id"] == five["plan_id"] and active["active"] is True
+
+
+def test_custom_donation_amount_maps_to_highest_affordable_tier() -> None:
+    """Mirrors ui.js donationPlanForAmount: custom $4 → donate_3, $7 → donate_5."""
+    tiers = [
+        {"plan_id": "donate_1", "price_usd": 1.0},
+        {"plan_id": "donate_3", "price_usd": 3.0},
+        {"plan_id": "donate_5", "price_usd": 5.0},
+    ]
+
+    def pick(amount: float):
+        sorted_tiers = sorted(tiers, key=lambda t: t["price_usd"])
+        chosen = sorted_tiers[0]
+        for row in sorted_tiers:
+            if amount >= row["price_usd"]:
+                chosen = row
+        return chosen["plan_id"]
+
+    assert pick(1) == "donate_1"
+    assert pick(2.5) == "donate_1"
+    assert pick(3) == "donate_3"
+    assert pick(4) == "donate_3"
+    assert pick(7) == "donate_5"
     created = subscriptions.create_payment_request(42, "pro", note="paid via PayPal")
     assert created["duplicate"] is False
     assert created["request"]["status"] == "pending"

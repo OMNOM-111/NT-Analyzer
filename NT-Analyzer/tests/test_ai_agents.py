@@ -814,3 +814,19 @@ def test_ai_agents_page_and_navigation_contract() -> None:
     assert "API.http.aiAgentCreate" in js and "API.http.aiAgentTest" in js
     assert "/api/ai-agents" in api
     assert "ai-agents.html" in ui and '"/ai-agents.html"' in server
+
+
+def test_usage_scope_attributes_model_usage_to_actor(monkeypatch) -> None:
+    rows = []
+    monkeypatch.setattr(agent_registry, "record_usage", lambda row: rows.append(dict(row)))
+
+    with universal_llm.usage_scope({
+        "user_id": 42, "user_name": "Иван", "workspace_id": "ws-42",
+        "conversation_id": "C-42", "request_source": "app",
+    }):
+        universal_llm._record_usage({"request_id": "REQ-42", "total_tokens": 12})
+
+    assert rows[0]["user_id"] == 42
+    assert rows[0]["user_name"] == "Иван"
+    assert rows[0]["workspace_id"] == "ws-42"
+    assert rows[0]["conversation_id"] == "C-42"

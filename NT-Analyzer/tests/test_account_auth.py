@@ -39,7 +39,7 @@ def _api_recorder():
     return calls, api
 
 
-def test_new_account_auto_activates_after_contact_profile_and_terms(auth_store) -> None:
+def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store) -> None:
     account_auth.ensure_owner(999)
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
     calls, api = _api_recorder()
@@ -67,10 +67,18 @@ def test_new_account_auto_activates_after_contact_profile_and_terms(auth_store) 
         "first_name": "Ada", "last_name": "Lovelace", "email": "ADA@example.com",
         "accept_terms": True,
     }, api_call=api, owner_chat_id="999")
-    # Telegram-verified users enter Free Preview immediately — no owner-approval gate.
-    assert state["status"] == "login_approved"
+    # New accounts wait for the owner's personal confirmation.
+    assert state["status"] == "pending_owner"
+    assert account_auth._user(account_auth._read_doc(), 42)["status"] == "pending"
     notice = next(payload for method, payload in calls if method == "sendMessage" and (payload.get("reply_markup") or {}).get("inline_keyboard"))
-    assert "account_revoke:42" in notice["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    allow = notice["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    assert allow.startswith("account_allow:")
+
+    assert account_auth.process_update({"callback_query": {
+        "id": "cb1", "data": allow, "from": {"id": 999},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
+    assert account_auth._user(account_auth._read_doc(), 42)["status"] == "active"
 
     result = account_auth.create_session_for_challenge(
         login["challenge_id"], ip="127.0.0.1", user_agent="pytest",
@@ -351,25 +359,38 @@ def test_auth_required_forced_on_when_remote_enabled(auth_store, monkeypatch) ->
     assert account_auth.auth_required() is False
 
 
-def test_register_via_telegram_activates_free_preview(auth_store) -> None:
+def test_register_via_telegram_waits_for_owner(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
-    user = account_auth.register_via_telegram(
+    out = account_auth.register_via_telegram(
         {"id": 42, "first_name": "Ada", "username": "ada"},
         email="ada@example.com", accept_terms=True, api_call=api, owner_chat_id="999")
-    assert user["user_id"] == 42 and user["status"] == "active" and user["is_owner"] is False
-    assert account_auth.find_active_user(42) is not None
-    # Owner notified of the new Free Preview user.
+    assert out["status"] == "pending_owner" and out["authenticated"] is False
+    assert out["user"]["user_id"] == 42 and out["user"]["status"] == "pending"
+    assert out["challenge_id"]
+    assert account_auth.find_active_user(42) is None
+    # Owner gets allow/deny buttons.
     assert any((p.get("reply_markup") or {}).get("inline_keyboard") for _m, p in calls)
+    allow = next(
+        btn["callback_data"]
+        for _m, p in calls
+        for row in (p.get("reply_markup") or {}).get("inline_keyboard") or []
+        for btn in row
+        if str(btn.get("callback_data") or "").startswith("account_allow:")
+    )
+    assert account_auth.process_update({"callback_query": {
+        "id": "cb1", "data": allow, "from": {"id": 999},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.find_active_user(42) is not None
 
     # Terms acceptance is mandatory.
     with pytest.raises(account_auth.AccountAuthError):
         account_auth.register_via_telegram({"id": 43}, email="b@e.com", accept_terms=False, owner_chat_id="999")
 
-    # The owner is recognised from initData.
+    # The owner is recognised from initData and activates immediately.
     owner = account_auth.register_via_telegram(
         {"id": 999, "first_name": "Own"}, email="o@e.com", accept_terms=True, owner_chat_id="999")
-    assert owner["is_owner"] is True
+    assert owner["authenticated"] is True and owner["user"]["is_owner"] is True
 
     # A blocked user cannot silently re-register.
     account_auth.set_user_status(999, 42, "blocked")
@@ -384,6 +405,13 @@ def test_existing_account_email_is_not_overwritten_by_second_device(auth_store, 
     account_auth.register_via_telegram(
         {"id": 42, "first_name": "Ada", "username": "ada"},
         email="pc1@example.com", accept_terms=True, owner_chat_id="999")
+    # Activate pending account so a second device can re-register as returning user.
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        row = account_auth._user(doc, 42)
+        row["status"] = "active"
+        row["approved_at_utc"] = account_auth._now_iso()
+        account_auth._write_doc(doc)
     monkeypatch.setenv("NTA_DEVICE_LABEL", "PC2")
     account_auth.register_via_telegram(
         {"id": 42, "first_name": "Ada", "username": "ada"},

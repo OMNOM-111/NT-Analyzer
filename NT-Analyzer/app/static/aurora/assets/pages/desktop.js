@@ -59,39 +59,15 @@ UI.ready(async function () {
   const MIN_W = 260, MIN_H = 180;
   const ZOOM_MIN = 0.05, ZOOM_MAX = 2;
   const LIVE_POLL_MS = 350;
-  const DEFAULT_STYLE = { upColor: '#34d399', downColor: '#ff6b81', upFill: '#34d399',
-    downFill: '#ff6b81', background: '#0b1018', bodyWidth: 0.7, wickWidth: 1,
-    borderWidth: 1, fillOpacity: 0.85, legendMode: 'compact',
-    macd: { fill: true, up: '#34d399', down: '#ff6b81', line: '#4fd1e0', signal: '#fcc55a', opacity: 0.85, area: true, fillToZero: true, vol: false } };
-
-  // ---- global chart template ("макет") ---------------------------------
-  // A single, editable standard applied to every newly created chart. It is
-  // just a saved config without an instrument (timeframe, indicators, type,
-  // range, aspect, candle/MACD style). The default is the built-in standard.
-  const TEMPLATE_KEY = 'desktop.chart-template.v1';
-  function cloneStyle(style) {
-    const s = Object.assign({}, DEFAULT_STYLE, style || {});
-    s.macd = Object.assign({}, DEFAULT_STYLE.macd, (style && style.macd) || {});
-    return s;
-  }
-  const DEFAULT_TEMPLATE = { timeframe: '5m', type: 'candles', indicators: [],
-    range: { id: '1m', days: 31, from: '', to: '' }, aspect: 'auto', style: Object.assign({}, DEFAULT_STYLE) };
-  function loadTemplate() {
-    let raw = null;
-    try { raw = JSON.parse(localStorage.getItem(TEMPLATE_KEY) || 'null'); } catch (e) { raw = null; }
-    const t = Object.assign({}, DEFAULT_TEMPLATE, raw || {});
-    t.indicators = Array.isArray(t.indicators) ? t.indicators.slice() : [];
-    t.range = Object.assign({}, DEFAULT_TEMPLATE.range, t.range || {});
-    t.style = cloneStyle(t.style);
-    return t;
-  }
-  function saveTemplate(t) { try { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(t)); } catch (e) { /* storage off */ } }
-  function makeTemplateFromConfig(cfg) {
-    return { timeframe: cfg.timeframe || '5m', type: cfg.type || 'candles',
-      indicators: Array.isArray(cfg.indicators) ? cfg.indicators.slice() : [],
-      range: Object.assign({ id: '1m', days: 31, from: '', to: '' }, cfg.range || {}),
-      aspect: cfg.aspect || 'auto', style: cloneStyle(cfg.style) };
-  }
+  // Global chart template helpers live in desktop-template.js (pure, testable).
+  const DT = window.DesktopTemplate;
+  if (!DT) { toast('Не загружен модуль макета графика'); return; }
+  const DEFAULT_STYLE = DT.DEFAULT_STYLE;
+  const cloneStyle = DT.cloneStyle;
+  const makeTemplateFromConfig = DT.makeTemplateFromConfig;
+  const applyTemplateToConfig = DT.applyTemplateToConfig;
+  function loadTemplate() { return DT.loadTemplate(); }
+  function saveTemplate(t) { return DT.saveTemplate(t); }
 
   // window-control icons (kept local so the desktop owns its chrome)
   const wIcon = (name) => {
@@ -929,11 +905,13 @@ UI.ready(async function () {
               <label>От<input type="date" id="dc-from" value="${escAttr(cfg.range.from || '')}"></label>
               <label>До<input type="date" id="dc-to" value="${escAttr(cfg.range.to || '')}"></label>
             </div>
-            <label>Индикаторы
+            <div class="dchart-field">
+              <span class="dchart-cap">Индикаторы</span>
               <div class="ind-grid" id="dc-ind">${INDICATORS.map(ind => `
                 <label class="ind-chip ${cfg.indicators.includes(ind.id) ? 'on' : ''}"><input type="checkbox" value="${ind.id}" ${cfg.indicators.includes(ind.id) ? 'checked' : ''}><span>${ind.label}</span></label>`).join('')}</div>
-            </label>
-            <label>Внешний вид свечей
+            </div>
+            <div class="dchart-field">
+              <span class="dchart-cap">Внешний вид свечей</span>
               <div class="style-grid">
                 <label>Рост<input type="color" id="dc-up" value="${escAttr(cfg.style.upColor)}"></label>
                 <label>Падение<input type="color" id="dc-down" value="${escAttr(cfg.style.downColor)}"></label>
@@ -946,8 +924,9 @@ UI.ready(async function () {
                 <label class="ind-chip ${cfg.style.fillOpacity > 0 ? 'on' : ''}"><input type="checkbox" id="dc-fill" ${cfg.style.fillOpacity > 0 ? 'checked' : ''}><span>Заливка свечей</span></label>
                 <label>Данные сверху<select id="dc-legend"><option value="compact" ${cfg.style.legendMode === 'compact' ? 'selected' : ''}>Только инструмент и ТФ</option><option value="full" ${cfg.style.legendMode === 'full' ? 'selected' : ''}>Полные OHLCV</option><option value="hidden" ${cfg.style.legendMode === 'hidden' ? 'selected' : ''}>Скрыть всё</option></select></label>
               </div>
-            </label>
-            <label class="macd-fields ${cfg.indicators.includes('macd') ? 'show' : ''}" id="dc-macd">Вид MACD
+            </div>
+            <div class="macd-fields ${cfg.indicators.includes('macd') ? 'show' : ''} dchart-field" id="dc-macd">
+              <span class="dchart-cap">Вид MACD</span>
               <div class="fgrid style-options">
                 <label class="ind-chip ${cfg.style.macd.fill ? 'on' : ''}"><input type="checkbox" id="dc-macd-fill" ${cfg.style.macd.fill ? 'checked' : ''}><span>Заливка гистограммы</span></label>
                 <label class="ind-chip ${cfg.style.macd.area ? 'on' : ''}"><input type="checkbox" id="dc-macd-area" ${cfg.style.macd.area ? 'checked' : ''}><span>Заливка между линиями</span></label>
@@ -961,18 +940,18 @@ UI.ready(async function () {
                 <label>Линия MACD<input type="color" id="dc-macd-line" value="${escAttr(cfg.style.macd.line)}"></label>
                 <label>Сигнальная<input type="color" id="dc-macd-signal" value="${escAttr(cfg.style.macd.signal)}"></label>
               </div>
-            </label>
+            </div>
           </div>
           <div class="dchart-preview-wrap">
             <div class="dchart-preview-title"><b>Живой предпросмотр</b><span>${editing ? 'Текущие данные графика' : 'Наглядный пример свечей'} · изменения видны сразу</span></div>
             <div class="dchart-preview" id="dc-preview"></div>
-            ${templateMode ? '<div class="dchart-hint">Это стандартный макет: по нему создаются все новые графики. Чтобы обновить уже открытые — отметьте галочку ниже.</div>' : ''}
+            ${templateMode ? '<div class="dchart-hint">Это стандартный макет: по нему создаются все новые графики. При сохранении он сразу применяется ко всем открытым окнам (снимите галочку ниже, если нужно только сохранить на будущее).</div>' : ''}
             ${editing ? '<button type="button" class="btn" id="dc-style-all">Применить этот стиль ко всем графикам</button>' : ''}
           </div>
         </div>
         <div class="dchart-actions">
           ${templateMode
-            ? '<label class="ind-chip" id="dc-tpl-all-wrap" style="margin-right:auto"><input type="checkbox" id="dc-tpl-all"><span>Применить ко всем открытым графикам</span></label>'
+            ? `<label class="ind-chip" id="dc-tpl-all-wrap" style="margin-right:auto"><input type="checkbox" id="dc-tpl-skip-open"><span>Только сохранить — не менять открытые (${layout.windows.length})</span></label>`
             : '<label class="ind-chip" id="dc-as-default-wrap" style="margin-right:auto" title="Сохранить эти параметры как стандарт для новых графиков"><input type="checkbox" id="dc-as-default"><span>Использовать по умолчанию</span></label>'}
           <button type="button" class="btn ghost" data-close-drawer>Отмена</button>
           <button type="submit" class="btn primary" id="dc-submit">${editing ? 'Применить' : templateMode ? 'Сохранить макет' : 'Добавить график'}</button>
@@ -1007,9 +986,14 @@ UI.ready(async function () {
     const readForm = () => {
       const rangeId = qs('#dc-range .on', d)?.dataset.v || cfg.range.id;
       const preset = RANGE_PRESETS.find(row => row.id === rangeId);
+      const indRoot = qs('#dc-ind', d);
+      // Only checkboxes inside #dc-ind — never the "apply to all" / "as default" chips.
+      const indicators = indRoot
+        ? Array.from(indRoot.querySelectorAll('input[type="checkbox"]')).filter(x => x.checked).map(x => x.value).filter(Boolean)
+        : [];
       return Object.assign({}, cfg, {
-        instrument: instSel.value || '', root: instSel.selectedOptions[0]?.dataset.root || '',
-        indicators: Array.from(qs('#dc-ind', d).querySelectorAll('input:checked')).map(x => x.value),
+        instrument: (instSel && instSel.value) || '', root: (instSel && instSel.selectedOptions[0] && instSel.selectedOptions[0].dataset.root) || '',
+        indicators,
         range: { id: rangeId, days: preset ? preset.days : null, from: qs('#dc-from', d).value, to: qs('#dc-to', d).value },
         style: Object.assign({}, cfg.style, {
           upColor: qs('#dc-up', d).value, upFill: qs('#dc-up', d).value,
@@ -1067,13 +1051,13 @@ UI.ready(async function () {
       layout.windows.forEach(model => { model.config.style = Object.assign({}, style); const rec = wins.get(model.id); if (rec) rec.chart.setStyle(style); });
       markDirty(); toast('Стиль применён ко всем графикам');
     });
-    const asDefaultWrap = qs('#dc-as-default-wrap', d);
-    if (asDefaultWrap) {
-      const asDefaultCb = qs('#dc-as-default', d);
-      asDefaultCb.addEventListener('change', () => {
-        asDefaultWrap.classList.toggle('on', asDefaultCb.checked);
-      });
-    }
+    // Keep .on visual state in sync for the action chips.
+    [['#dc-tpl-skip-open', '#dc-tpl-all-wrap'], ['#dc-as-default', '#dc-as-default-wrap']].forEach(([cbSel, wrapSel]) => {
+      const cb = qs(cbSel, d); const wrap = qs(wrapSel, d);
+      if (!cb || !wrap) return;
+      const sync = () => wrap.classList.toggle('on', !!cb.checked);
+      cb.addEventListener('change', sync); sync();
+    });
 
     const cleanup = () => preview.destroy();
     qsaLocal('[data-close-drawer]', d).forEach(btn => btn.addEventListener('click', cleanup, { once: true }));
@@ -1083,22 +1067,22 @@ UI.ready(async function () {
       const next = readForm();
       if (next.range.id === 'custom' && (!next.range.from || !next.range.to)) { toast('Укажите обе даты диапазона'); return; }
       if (templateMode) {
-        template = makeTemplateFromConfig(next);
-        saveTemplate(template);
-        const applyAll = qs('#dc-tpl-all', d);
-        const toAll = !!(applyAll && applyAll.checked);
-        if (toAll) applyTemplateToAll();
+        template = saveTemplate(makeTemplateFromConfig(next));
+        // Default: push the template onto every open chart. Opt out via checkbox.
+        const skipOpen = !!(qs('#dc-tpl-skip-open', d) && qs('#dc-tpl-skip-open', d).checked);
+        let applied = 0;
+        if (!skipOpen && layout.windows.length) applied = applyTemplateToAll(template);
         cleanup();
-        toast(toAll ? 'Макет сохранён и применён ко всем графикам' : 'Макет графика сохранён — по нему создаются новые графики');
+        const indLabel = (template.indicators || []).join(', ') || 'нет';
+        toast(skipOpen || !layout.windows.length
+          ? `Макет сохранён · индикаторы: ${indLabel} — по нему создаются новые графики`
+          : `Макет сохранён и применён к ${applied} из ${layout.windows.length} · индикаторы: ${indLabel}`);
         UI.closeDrawer();
         return;
       }
       if (!next.instrument) { toast('Выберите инструмент'); return; }
       const asDefault = !!(qs('#dc-as-default', d) && qs('#dc-as-default', d).checked);
-      if (asDefault) {
-        template = makeTemplateFromConfig(next);
-        saveTemplate(template);
-      }
+      if (asDefault) template = saveTemplate(makeTemplateFromConfig(next));
       cleanup();
       if (editing) applyChartConfig(existingRec, next);
       else addChart(next);
@@ -1119,42 +1103,58 @@ UI.ready(async function () {
   }
 
   function applyChartConfig(rec, cfg) {
-    const identityChanged = rec.model.config.instrument !== cfg.instrument || rec.model.config.timeframe !== cfg.timeframe;
+    if (!rec || !rec.chart) return;
+    const prev = rec.model.config || {};
+    const identityChanged = prev.instrument !== cfg.instrument || prev.timeframe !== cfg.timeframe;
     if (identityChanged) {
       deleteModelAlerts(rec.model);
       rec.model.drawings = [];
-      rec.chart.setDrawings([]);
+      if (rec.chart.setDrawings) rec.chart.setDrawings([]);
       rec.hasBars = false;
       resetDataTracking(rec);
     }
-    rec.model.config = Object.assign({}, rec.model.config, cfg);
+    // Always replace indicators/style with a fresh copy so apply-to-all cannot
+    // leave shared array/object references across windows.
+    rec.model.config = Object.assign({}, prev, cfg, {
+      indicators: Array.isArray(cfg.indicators) ? cfg.indicators.slice() : [],
+      style: cloneStyle(cfg.style),
+      range: Object.assign({}, cfg.range || prev.range || {}),
+    });
     renderWindowMeta(rec);
-    rec.chart.setIndicators(cfg.indicators);
-    rec.chart.setStyle(cfg.style || DEFAULT_STYLE);
+    try {
+      rec.chart.setIndicators(rec.model.config.indicators);
+      rec.chart.setStyle(rec.model.config.style);
+      if (rec.chart.setAspect) rec.chart.setAspect(rec.model.config.aspect || 'auto');
+      // Pane count changed → force a synchronous remeasure/redraw so MACD/RSI
+      // panes appear immediately on every window, not only the first few.
+      if (rec.chart.resize) rec.chart.resize();
+    } catch (e) { /* keep going — other windows must still update */ }
     renderSidePanel(rec);
-    if (rec.chart && rec.chart.setLoading) rec.chart.setLoading(true, 'Загрузка…');
-    loadWindowData(rec);
+    if (identityChanged || dataSignature(prev) !== dataSignature(rec.model.config)) {
+      if (rec.chart && rec.chart.setLoading) rec.chart.setLoading(true, 'Загрузка…');
+      rec.inFlight = false;
+      loadWindowData(rec);
+    }
     markDirty();
   }
 
-  // Push the current template onto every open chart (used by the "применить
-  // ко всем" checkbox in the template editor).
-  function applyTemplateToAll() {
-    layout.windows.forEach(model => {
-      const rec = wins.get(model.id);
-      const cfg = Object.assign({}, model.config, {
-        timeframe: template.timeframe, indicators: template.indicators.slice(),
-        type: template.type, range: Object.assign({}, template.range),
-        aspect: template.aspect, style: cloneStyle(template.style),
-      });
-      if (rec) {
-        applyChartConfig(rec, cfg);
-        if (rec.chart && rec.chart.setAspect) rec.chart.setAspect(template.aspect);
-      } else {
-        model.config = cfg;
-      }
+  // Push a template onto every open chart. Accepts an explicit template so the
+  // caller can pass the just-saved value (never a stale closure). One failed
+  // window must not abort the rest (that was leaving MNQ/M2K/MYM without MACD).
+  function applyTemplateToAll(tpl) {
+    const source = makeTemplateFromConfig(tpl || template);
+    template = source;
+    let applied = 0;
+    layout.windows.slice().forEach(model => {
+      try {
+        const cfg = applyTemplateToConfig(model.config, source);
+        const rec = wins.get(model.id);
+        if (rec && rec.chart) { applyChartConfig(rec, cfg); applied += 1; }
+        else { model.config = cfg; applied += 1; }
+      } catch (e) { /* continue with remaining windows */ }
     });
-    markDirty();
+    persistNow();
+    return applied;
   }
 
   function addChart(cfg) {
@@ -1572,7 +1572,27 @@ UI.ready(async function () {
   }
 
   function syncAlerts(rec, alerts) {
-    if (!Array.isArray(alerts) || !alerts.length || !Array.isArray(rec.model.drawings)) return;
+    if (!Array.isArray(alerts)) return;
+    rec.model.drawings = Array.isArray(rec.model.drawings) ? rec.model.drawings : [];
+    // Backend deletion is authoritative for drawings linked to a persisted
+    // alert. Preserve local-only/manual drawings, but do not leave a stale line
+    // on the canvas after its alert was removed (including repaired bad tasks).
+    const alertIds = new Set(alerts.map(alert => alert && alert.id).filter(Boolean));
+    const beforeCount = rec.model.drawings.length;
+    rec.model.drawings = rec.model.drawings.filter(drawing => !drawing.alertId || alertIds.has(drawing.alertId));
+    let removed = rec.model.drawings.length !== beforeCount;
+    alerts.forEach(alert => {
+      if (!alert.drawing_id || rec.model.drawings.some(drawing => drawing.id === alert.drawing_id)) return;
+      rec.model.drawings.push({
+        id: alert.drawing_id, type: alert.type || 'line', price: Number(alert.price),
+        label: alert.label || 'Иван', color: alert.color || '#4fd1e0', locked: false,
+        durationMinutes: 0, ruleAction: alert.action || 'none', snapshot: !!alert.snapshot,
+        reportMode: alert.report_mode || 'touch', agentId: alert.agent_id || 'ivan',
+        agentMessage: alert.agent_message || '', conversationId: alert.conversation_id || 'default',
+        createdAt: alert.created_at_utc || new Date().toISOString(),
+        alertId: alert.id, status: alert.status || 'active',
+      });
+    });
     const byDrawing = new Map(alerts.map(a => [a.drawing_id, a]));
     let changed = false;
     rec.model.drawings.forEach(drawing => {
@@ -1599,7 +1619,7 @@ UI.ready(async function () {
         reportAlertSnapshot(rec, alert, 'not_reached');
       }
     });
-    if (changed) { rec.chart.setDrawings(rec.model.drawings); markDirty(); }
+    if (changed || removed) { rec.chart.setDrawings(rec.model.drawings); markDirty(); }
   }
 
   // Иван's report loop: when a watched level is touched (or its window expires
@@ -1682,8 +1702,10 @@ UI.ready(async function () {
     const list = await NTData.instruments();
     const item = list.find(x => x.root === root && x.available && x.symbol) || list.find(x => x.root === root);
     const symbol = (item && item.symbol) || root;
-    addChart({ instrument: symbol, root: root, timeframe: timeframe || '5m', indicators: [], type: 'candles',
-      range: { id: '1m', days: 31, from: '', to: '' }, style: Object.assign({}, DEFAULT_STYLE) });
+    addChart({ instrument: symbol, root: root, timeframe: timeframe || template.timeframe,
+      indicators: template.indicators.slice(), type: template.type,
+      range: Object.assign({}, template.range), aspect: template.aspect,
+      style: cloneStyle(template.style) });
     return findRecByRoot(root);
   }
   // The currently active chart window (or the top-most one) — used when Иван is
@@ -1702,8 +1724,10 @@ UI.ready(async function () {
     const list = (await NTData.instruments()).filter(x => x.available && x.symbol);
     if (!list.length) return null;
     const item = list[0];
-    addChart({ instrument: item.symbol, root: item.root, timeframe: timeframe || '5m', indicators: [], type: 'candles',
-      range: { id: '1m', days: 31, from: '', to: '' }, style: Object.assign({}, DEFAULT_STYLE) });
+    addChart({ instrument: item.symbol, root: item.root, timeframe: timeframe || template.timeframe,
+      indicators: template.indicators.slice(), type: template.type,
+      range: Object.assign({}, template.range), aspect: template.aspect,
+      style: cloneStyle(template.style) });
     return findRecByRoot(item.root);
   }
   function waitForBars(rec, timeoutMs) {
@@ -1732,6 +1756,9 @@ UI.ready(async function () {
   }
   async function applyChartCommand(cmd) {
     const type = cmd && cmd.type;
+    if (type === 'open_desktop_tab') {
+      return { ok: true, already_open: true };
+    }
     if (type === 'clear') {
       const root = String(cmd.instrument || '').toUpperCase();
       const targets = root ? [findRecByRoot(root)].filter(Boolean) : Array.from(wins.values());
@@ -1749,7 +1776,7 @@ UI.ready(async function () {
       if (!rec) return { ok: false, error: 'нет окна для инструмента' };
       const ruleMap = { snapshot: 'snapshot', agent: 'agent', telegram: 'telegram', none: 'none' };
       const drawing = {
-        id: 'dr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        id: p.drawing_id || ('dr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
         type: p.type || 'line', price: Number(p.price), label: p.label || 'Иван',
         color: p.color || '#4fd1e0', locked: false,
         durationMinutes: Number(p.duration_minutes) || 0,
@@ -1757,14 +1784,14 @@ UI.ready(async function () {
         snapshot: !!p.snapshot, reportMode: p.report_mode || 'touch',
         agentId: 'ivan', agentMessage: cmd.note || '',
         conversationId: cmd.conversation_id || currentConversationId(),
-        createdAt: new Date().toISOString(), status: 'active',
+        createdAt: new Date().toISOString(), status: 'active', alertId: p.alert_id || '',
       };
       if (!Number.isFinite(drawing.price)) return { ok: false, error: 'нет цены' };
       rec.model.drawings = Array.isArray(rec.model.drawings) ? rec.model.drawings : [];
-      rec.model.drawings.push(drawing);
+      if (!rec.model.drawings.some(row => row.id === drawing.id)) rec.model.drawings.push(drawing);
       rec.chart.setDrawings(rec.model.drawings);
       bringToFront(rec);
-      await syncDrawingRule(rec, drawing, true);
+      if (!drawing.alertId) await syncDrawingRule(rec, drawing, true);
       markDirty();
       toast(`Иван: отметка на ${rec.model.config.instrument} по ${drawing.price}`);
       return { ok: true, drawing_id: drawing.id, window_id: rec.model.id };

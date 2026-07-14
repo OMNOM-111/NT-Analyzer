@@ -13,9 +13,11 @@ import json
 import math
 import os
 import re
+import struct
 import threading
 import time
 import uuid
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -34,6 +36,9 @@ _SNAPSHOT_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
 _ALERTS_INDEX_CACHE: Dict[str, Any] = {"signature": "", "index": {}}
 _SERIES_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _SERIES_PAYLOAD_CACHE_MAX = 256
+_CHART_WORKER_LOCK = threading.Lock()
+_CHART_WORKER: Optional[threading.Thread] = None
+_CHART_WORKER_STOP = threading.Event()
 
 
 class MarketDataError(ValueError):
@@ -45,7 +50,11 @@ def _root() -> Path:
 
 
 def _runtime_dir() -> Path:
-    path = _root() / "data" / "runtime"
+    # Follow the same thread-local workspace override as the rest of runtime
+    # telemetry. The default remains the owner's legacy data/runtime path.
+    from . import runtime
+    override = getattr(runtime._RUNTIME_CONTEXT, "runtime_dir", "")
+    path = Path(override) if override else (_root() / "data" / "runtime")
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -756,7 +765,7 @@ def get_alert(alert_id: Any) -> Optional[Dict[str, Any]]:
 # (draw a level, watch a price, snapshot on touch).  The desktop page polls this
 # queue, applies each command on the live chart and acknowledges the result.
 # ---------------------------------------------------------------------------
-_VALID_COMMAND_TYPES = {"draw", "watch", "snapshot", "focus", "clear", "open"}
+_VALID_COMMAND_TYPES = {"draw", "watch", "snapshot", "focus", "clear", "open", "open_desktop_tab"}
 
 
 def _load_commands_doc() -> Dict[str, Any]:
@@ -806,6 +815,15 @@ def enqueue_chart_command(command: Dict[str, Any]) -> Dict[str, Any]:
         "conversation_id": str(command.get("conversation_id") or "")[:120],
         "agent_id": str(command.get("agent_id") or "")[:120],
         "note": str(command.get("note") or "")[:400],
+        "scope": {
+            key: command.get("scope", {}).get(key)
+            for key in (
+                "user_id", "workspace_id", "workspace_kind", "uses_owner_runtime",
+                "membership_role", "is_owner", "display_name",
+            )
+            if isinstance(command.get("scope"), dict)
+            and command.get("scope", {}).get(key) not in (None, "")
+        },
         "created_at_utc": _iso(now),
         "due_at_utc": _iso(due_at) if due_at else None,
         "status": "pending",
@@ -920,6 +938,245 @@ def save_snapshot(data_url: Any, *, meta: Optional[Dict[str, Any]] = None) -> Di
     return {**entry, "meta": clean_meta}
 
 
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+
+
+def _render_candles_png(bars: List[Dict[str, Any]], *, width: int = 1280, height: int = 720) -> bytes:
+    """Render a dependency-free RGB candlestick PNG from normalized bars."""
+    width = max(480, min(1920, int(width)))
+    height = max(320, min(1080, int(height)))
+    canvas = bytearray((18, 24, 38) * (width * height))
+
+    def pixel(x: int, y: int, color: Tuple[int, int, int]) -> None:
+        if 0 <= x < width and 0 <= y < height:
+            pos = (y * width + x) * 3
+            canvas[pos:pos + 3] = bytes(color)
+
+    def hline(y: int, x1: int, x2: int, color: Tuple[int, int, int]) -> None:
+        for x in range(max(0, x1), min(width, x2 + 1)):
+            pixel(x, y, color)
+
+    def vline(x: int, y1: int, y2: int, color: Tuple[int, int, int]) -> None:
+        for y in range(max(0, y1), min(height, y2 + 1)):
+            pixel(x, y, color)
+
+    left, right, top, bottom = 42, width - 28, 28, height - 42
+    for idx in range(7):
+        y = top + int((bottom - top) * idx / 6)
+        hline(y, left, right, (38, 49, 68))
+    for idx in range(9):
+        x = left + int((right - left) * idx / 8)
+        vline(x, top, bottom, (33, 43, 60))
+
+    visible = [row for row in bars[-180:] if _bar_ohlc(row) is not None]
+    if not visible:
+        raise MarketDataError("Для серверного снимка нет корректных баров.")
+    lows = [_bar_ohlc(row)[2] for row in visible]  # type: ignore[index]
+    highs = [_bar_ohlc(row)[1] for row in visible]  # type: ignore[index]
+    low, high = min(lows), max(highs)
+    span = max(high - low, abs(high) * 0.0005, 0.01)
+    low -= span * 0.06
+    high += span * 0.06
+
+    def py(value: float) -> int:
+        return top + int((high - value) / (high - low) * (bottom - top))
+
+    step = (right - left) / max(1, len(visible))
+    body_half = max(1, min(5, int(step * 0.3)))
+    for idx, row in enumerate(visible):
+        o, h, l, c = _bar_ohlc(row)  # type: ignore[misc]
+        x = left + int((idx + 0.5) * step)
+        color = (50, 205, 145) if c >= o else (244, 92, 105)
+        vline(x, py(h), py(l), color)
+        y1, y2 = sorted((py(o), py(c)))
+        if y1 == y2:
+            hline(y1, x - body_half, x + body_half, color)
+        else:
+            for y in range(y1, y2 + 1):
+                hline(y, x - body_half, x + body_half, color)
+    latest = _bar_ohlc(visible[-1])[3]  # type: ignore[index]
+    hline(py(latest), left, right, (252, 197, 90))
+    hline(top, left, right, (90, 105, 128))
+    hline(bottom, left, right, (90, 105, 128))
+    vline(left, top, bottom, (90, 105, 128))
+    vline(right, top, bottom, (90, 105, 128))
+
+    raw = b"".join(b"\x00" + bytes(canvas[y * width * 3:(y + 1) * width * 3]) for y in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(raw, 7))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def chart_runtime_status(instrument: Any = "", timeframe: Any = "5m") -> Dict[str, Any]:
+    """Return whether a chart request can truthfully be fulfilled right now."""
+    from . import jobqueue, runtime
+
+    requested = " ".join(str(instrument or "").strip().upper().split())
+    root = requested.split(" ")[0] if requested else ""
+    tf = normalize_timeframe(timeframe or "5m")
+    heartbeat = runtime.read_heartbeat()
+    nt_running = bool(jobqueue.ninjatrader_running())
+    heartbeat_fresh = bool(heartbeat.get("fresh"))
+    doc = _read(_snapshot_path())
+    rows = [row for row in (doc.get("series") or []) if isinstance(row, dict) and isinstance(row.get("bars"), list)]
+    if root:
+        rows = [row for row in rows if str(row.get("instrument") or "").upper().split(" ")[0] == root]
+    rows.sort(key=lambda row: str(row.get("updated_at_utc") or ""), reverse=True)
+    row = rows[0] if rows else {}
+    updated = _parse_iso(row.get("updated_at_utc"))
+    age_sec = max(0.0, (_utcnow() - updated).total_seconds()) if updated else None
+    max_age_sec = 172800 if tf == "1D" else 300
+    data_available = bool(row and row.get("bars"))
+    data_fresh = bool(data_available and age_sec is not None and age_sec <= max_age_sec)
+    if not nt_running:
+        reason = "NinjaTrader не запущен. Не могу открыть актуальный график или прислать его снимок."
+    elif not heartbeat_fresh:
+        age = heartbeat.get("age_sec")
+        suffix = f" Последний heartbeat был {int(float(age))} сек. назад." if age is not None else ""
+        reason = "NinjaTrader Bridge не отвечает." + suffix
+    elif not row:
+        reason = f"Bridge ещё не передал бары {root or 'для графика'}."
+    elif not data_available:
+        reason = f"Bridge передал пустую серию {root or 'для графика'}."
+    else:
+        reason = ""
+    return {
+        # A chart remains valid while the market is closed: stale last-trade
+        # time is metadata, not a reason to refuse a snapshot. Fresh heartbeat
+        # proves the Bridge itself is alive; ``data_fresh`` remains available
+        # to callers that truly require live-price semantics.
+        "ready": bool(nt_running and heartbeat_fresh and data_available),
+        "nt_running": nt_running,
+        "heartbeat_fresh": heartbeat_fresh,
+        "heartbeat_age_sec": heartbeat.get("age_sec"),
+        "data_fresh": data_fresh,
+        "data_available": data_available,
+        "stale_data": bool(data_available and not data_fresh),
+        "data_age_sec": age_sec,
+        "instrument": str(row.get("instrument") or requested),
+        "timeframe": str(row.get("timeframe") or tf),
+        "reason": reason,
+    }
+
+
+def resolve_chart_instrument(instrument: Any) -> str:
+    """Resolve a root such as MCL to the current contract used by Desktop."""
+    requested = " ".join(str(instrument or "").strip().upper().split())
+    if not requested or " " in requested:
+        return requested
+    root = requested
+    # Prefer a contract already supplied by the live Bridge.
+    doc = _read(_snapshot_path())
+    live = [
+        row for row in (doc.get("series") or [])
+        if isinstance(row, dict)
+        and str(row.get("instrument") or "").upper().split(" ")[0] == root
+    ]
+    live.sort(key=lambda row: str(row.get("updated_at_utc") or ""), reverse=True)
+    if live and str(live[0].get("instrument") or "").strip():
+        return str(live[0]["instrument"]).upper()
+    try:
+        from . import jobqueue
+        catalog = jobqueue.read_instruments_catalog() or {}
+        rows = [
+            row for row in (catalog.get("instruments") or [])
+            if isinstance(row, dict)
+            and str(row.get("root") or str(row.get("instrument") or "").split(" ")[0]).upper() == root
+        ]
+        now = _utcnow()
+        def expiry_key(row: Dict[str, Any]) -> Tuple[int, int]:
+            try:
+                month, year = str(row.get("expiry") or "").split("-", 1)
+                return 2000 + int(year), int(month)
+            except (TypeError, ValueError):
+                return 9999, 99
+        future = [row for row in rows if expiry_key(row) >= (now.year, now.month)]
+        pool = future or rows
+        pool.sort(key=lambda row: (
+            -int(str(row.get("data_last") or "0000-00-00").replace("-", "") or 0),
+            expiry_key(row),
+        ))
+        if pool:
+            symbol = str(pool[0].get("instrument") or pool[0].get("symbol") or "").strip().upper()
+            if symbol:
+                return symbol
+    except Exception:
+        pass
+    return requested
+
+
+def ensure_chart_runtime(instrument: Any = "", timeframe: Any = "5m", *,
+                         wait_seconds: float = 10.0) -> Dict[str, Any]:
+    """Subscribe the Bridge and wait briefly instead of refusing immediately."""
+    symbol = resolve_chart_instrument(instrument)
+    tf = normalize_timeframe(timeframe or "5m")
+    initial = chart_runtime_status(symbol, tf)
+    if initial.get("ready"):
+        return initial
+    if not initial.get("nt_running") or not initial.get("heartbeat_fresh"):
+        return initial
+    try:
+        register_request(symbol, tf, 600, range_days=5)
+    except MarketDataError:
+        return initial
+    deadline = time.monotonic() + max(0.0, min(float(wait_seconds or 0), 30.0))
+    status = initial
+    while time.monotonic() < deadline:
+        time.sleep(0.35)
+        status = chart_runtime_status(symbol, tf)
+        if status.get("ready"):
+            status["subscription_requested"] = True
+            return status
+    status["subscription_requested"] = True
+    status["resolved_instrument"] = symbol
+    return status
+
+
+def render_chart_snapshot(instrument: Any = "", timeframe: Any = "5m", *,
+                          meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Create and persist a chart image entirely on the backend.
+
+    The newest bridge series matching the requested root/contract is used.  No
+    browser tab, canvas, or third-party image package is required.
+    """
+    requested = " ".join(str(instrument or "").strip().upper().split())
+    root = requested.split(" ")[0] if requested else ""
+    tf = normalize_timeframe(timeframe or "5m")
+    availability = chart_runtime_status(requested, tf)
+    if not availability.get("ready"):
+        raise MarketDataError(str(availability.get("reason") or "График сейчас недоступен."))
+    doc = _read(_snapshot_path())
+    rows = [row for row in (doc.get("series") or []) if isinstance(row, dict) and isinstance(row.get("bars"), list)]
+    if root:
+        rows = [row for row in rows if str(row.get("instrument") or "").upper().split(" ")[0] == root]
+    if not rows:
+        if requested:
+            register_request(requested, tf, 600, range_days=5)
+        raise MarketDataError("Живые бары для серверного снимка пока не поступили от bridge.")
+    rows.sort(key=lambda row: (
+        1 if normalize_timeframe(row.get("timeframe") or "") == tf else 0,
+        str(row.get("updated_at_utc") or ""),
+    ), reverse=True)
+    row = rows[0]
+    symbol = str(row.get("instrument") or requested or "")
+    matched_tf = normalize_timeframe(row.get("timeframe") or tf)
+    payload = _series_from_row(row, symbol, matched_tf, 180)
+    bars = list((payload or {}).get("bars") or [])
+    png = _render_candles_png(bars)
+    clean_meta = {
+        **dict(meta or {}), "instrument": symbol, "timeframe": matched_tf,
+        "outcome": str((meta or {}).get("outcome") or "headless"),
+    }
+    encoded = base64.b64encode(png).decode("ascii")
+    saved = save_snapshot("data:image/png;base64," + encoded, meta=clean_meta)
+    saved["bars_rendered"] = len(bars)
+    return saved
+
+
 def read_snapshot(name: Any) -> Optional[Tuple[bytes, str]]:
     safe = str(name or "").strip()
     if not re.match(r"^cs_[0-9a-f]{32}\.(jpg|png|webp)$", safe):
@@ -941,6 +1198,101 @@ def snapshot_path(name: Any) -> Optional[Path]:
         return None
     path = _snapshot_dir() / safe
     return path if path.is_file() else None
+
+
+def process_due_chart_snapshots() -> Dict[str, Any]:
+    """Execute due headless snapshots without requiring an open browser tab."""
+    now = _utcnow()
+    pending = [
+        row for row in (_load_commands_doc().get("commands") or [])
+        if isinstance(row, dict)
+        and row.get("status") == "pending"
+        and row.get("type") == "snapshot"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("headless_backend")
+        and (_parse_iso(row.get("due_at_utc")) or now) <= now
+    ]
+    completed = 0
+    failed = 0
+    for command in pending:
+        try:
+            saved = render_chart_snapshot(
+                command.get("instrument") or "", command.get("timeframe") or "5m",
+                meta={
+                    "conversation_id": command.get("conversation_id") or "",
+                    "outcome": "scheduled_headless",
+                },
+            )
+            target = str(saved.get("instrument") or command.get("instrument") or "графика")
+            scope = command.get("scope") if isinstance(command.get("scope"), dict) else None
+            from .ai_lab import chief_agent
+            chief_agent.report_chart_snapshot(
+                conversation_id=str(command.get("conversation_id") or "default"),
+                text=f"Готово — отложенный снимок {target} сформирован автоматически.",
+                image_url=str(saved.get("url") or ""), image_file=str(saved.get("file") or ""),
+                caption=f"{target} · {saved.get('timeframe') or '5m'}",
+                scope=scope,
+            )
+            ack_chart_command(command.get("id"), status="done", result={
+                "ok": True, "snapshot_id": saved.get("id"), "file": saved.get("file"),
+            })
+            completed += 1
+        except Exception as exc:
+            failed += 1
+            created = _parse_iso(command.get("created_at_utc"))
+            terminal = bool(created and (now - created).total_seconds() >= _COMMAND_TTL_SEC)
+            with _LOCK:
+                doc = _load_commands_doc()
+                for row in doc.get("commands") or []:
+                    if isinstance(row, dict) and row.get("id") == command.get("id"):
+                        row["attempts"] = int(row.get("attempts") or 0) + 1
+                        row["last_error"] = str(exc)[:500]
+                        row["last_attempt_at_utc"] = _iso(now)
+                        if terminal:
+                            row["status"] = "failed"
+                            row["acked_at_utc"] = _iso(now)
+                        break
+                doc["updated_at_utc"] = _iso(now)
+                _write(_commands_path(), doc)
+    return {"ok": True, "pending": len(pending), "completed": completed, "failed": failed}
+
+
+def _chart_worker_runtime_dirs() -> List[Path]:
+    roots = [_root() / "data" / "runtime"]
+    tenants = _root() / "data" / "tenants"
+    if tenants.is_dir():
+        roots.extend(path for path in tenants.glob("*/runtime") if path.is_dir())
+    return roots
+
+
+def _chart_worker_loop(interval_sec: float) -> None:
+    from . import runtime
+    while not _CHART_WORKER_STOP.is_set():
+        for directory in _chart_worker_runtime_dirs():
+            try:
+                with runtime.runtime_dir_override(directory):
+                    process_due_chart_snapshots()
+            except Exception:
+                pass
+        _CHART_WORKER_STOP.wait(max(0.5, float(interval_sec or 1.0)))
+
+
+def start_chart_worker(interval_sec: float = 1.0) -> bool:
+    global _CHART_WORKER
+    with _CHART_WORKER_LOCK:
+        if _CHART_WORKER is not None and _CHART_WORKER.is_alive():
+            return False
+        _CHART_WORKER_STOP.clear()
+        _CHART_WORKER = threading.Thread(
+            target=_chart_worker_loop, args=(interval_sec,),
+            name="nta-chart-snapshot-worker", daemon=True,
+        )
+        _CHART_WORKER.start()
+        return True
+
+
+def stop_chart_worker() -> None:
+    _CHART_WORKER_STOP.set()
 
 
 def _prune_snapshots() -> None:

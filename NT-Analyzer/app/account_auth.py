@@ -29,6 +29,7 @@ from . import legal, secure_store
 SESSION_COOKIE = "sf_session"
 SESSION_TTL_SEC = 30 * 24 * 60 * 60
 CHALLENGE_TTL_SEC = 15 * 60
+OWNER_APPROVAL_TTL_SEC = 7 * 24 * 60 * 60
 ROLES = {"read_only", "full_control", "owner"}
 # Owner-toggleable capabilities. The ids match the Aurora navigation ids so the
 # client can gate the left rail directly. ``personal_nt`` gates the "connect my
@@ -975,21 +976,30 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
             # Owner explicitly removed access — completing the profile again does
             # not restore it.
             challenge["status"] = "account_blocked"
-        else:
-            # Telegram-verified users enter immediately in Free Preview. Higher
-            # access (paid plan / promo / owner grant) is a separate step.
+        elif user.get("is_owner") or str(user.get("user_id") or "") == str(owner_chat_id or ""):
             user["status"] = "active"
             if not user.get("approved_at_utc"):
                 user["approved_at_utc"] = _now_iso()
             challenge["status"] = "login_approved"
+        else:
+            # New accounts wait for the owner's personal confirmation after
+            # Telegram + profile. Free Preview opens only after allow.
+            user["status"] = "pending"
+            challenge["status"] = "pending_owner"
+            challenge["expires_at"] = time.time() + OWNER_APPROVAL_TTL_SEC
         _write_doc(doc)
         activated = challenge["status"] == "login_approved"
+        awaiting_owner = challenge["status"] == "pending_owner"
         newly = activated and prior_status != "active"
         snapshot = dict(user)
+        cid = str(challenge.get("challenge_id") or "")
     if activated:
         if newly and not snapshot.get("is_owner"):
             _notify_owner_new_user(api_call, owner_chat_id, snapshot)
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Открыт ознакомительный доступ — вернитесь в приложение."})
+    elif awaiting_owner:
+        _send_owner_approval(api_call, owner_chat_id, snapshot, cid)
+        api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Ожидайте личного подтверждения владельца — мы сообщим, когда доступ откроется."})
     else:
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Доступ к StratForge AI ограничен владельцем."})
     return login_state(challenge_id)
@@ -1018,10 +1028,11 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
                           accept_terms: bool = False,
                           api_call: Optional[Callable[..., Any]] = None,
                           owner_chat_id: str = "") -> Dict[str, Any]:
-    """Register/activate a user straight from a verified Telegram Mini App
-    identity (initData). The initData HMAC already proves the Telegram account,
-    so no bot round-trip is needed: the user enters Free Preview immediately.
-    The caller MUST have validated the initData signature first."""
+    """Register from a verified Telegram Mini App identity (initData).
+
+    New non-owner accounts stay ``pending`` until the owner confirms. Returning
+    active users keep their access. The caller MUST have validated initData.
+    """
     try:
         uid = int(tg_user.get("id") or 0)
     except (TypeError, ValueError):
@@ -1036,6 +1047,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
     ln = _clean_name(last_name or tg_user.get("last_name") or "—", "Фамилия")
     em = _valid_email(email)
     now = _now_iso()
+    challenge_id = ""
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
@@ -1048,8 +1060,10 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
                 "first_name": fn, "last_name": ln, "email": em,
                 "phone": "", "phone_hash": "",
                 "role": "owner" if is_owner else "read_only",
-                "status": "active", "is_owner": is_owner,
-                "created_at_utc": now, "approved_at_utc": now, "revoked_at_utc": "",
+                "status": "active" if is_owner else "pending", "is_owner": is_owner,
+                "created_at_utc": now,
+                "approved_at_utc": now if is_owner else "",
+                "revoked_at_utc": "",
             }
             doc["users"].append(user)
         else:
@@ -1057,28 +1071,52 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             user.update({
                 "username": str(tg_user.get("username") or user.get("username") or ""),
                 "first_name": fn, "last_name": ln, "email": previous_email or em,
-                "status": "active", "updated_at_utc": now,
+                "updated_at_utc": now,
             })
             if previous_email and previous_email != em:
                 user["last_submitted_email"] = em
                 user["last_submitted_email_at_utc"] = now
-            if not user.get("approved_at_utc"):
-                user["approved_at_utc"] = now
             if is_owner:
-                user.update({"role": "owner", "is_owner": True})
+                user.update({"role": "owner", "is_owner": True, "status": "active",
+                             "approved_at_utc": user.get("approved_at_utc") or now})
+            elif user.get("status") == "active":
+                pass  # returning active user — keep access
+            else:
+                user["status"] = "pending"
         user["terms_accepted_at_utc"] = now
         user["terms_version"] = legal.TERMS_VERSION
         user["identity_verified_via"] = "mini_app_initdata"
         _append_login(user, source="telegram_mini_app", user_agent="Telegram Mini App", email=em)
+
+        status_out = "active" if user.get("status") == "active" else "pending_owner"
+        if status_out == "pending_owner":
+            challenge_id = secrets.token_urlsafe(24)
+            doc["challenges"].append({
+                "challenge_id": challenge_id, "code": "", "status": "pending_owner",
+                "user_id": uid, "created_at_utc": now,
+                "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
+                "source": "mini_app_register",
+            })
         _write_doc(doc)
         snapshot = dict(user)
-    if prior_status != "active" and not is_owner and api_call is not None:
+    if status_out == "pending_owner" and api_call is not None:
         try:
-            _notify_owner_new_user(api_call, owner_env, snapshot)
+            _send_owner_approval(api_call, owner_env, snapshot, challenge_id)
         except Exception:  # noqa: BLE001 — notification is best-effort
             pass
+    elif prior_status != "active" and snapshot.get("status") == "active" and not is_owner and api_call is not None:
+        try:
+            _notify_owner_new_user(api_call, owner_env, snapshot)
+        except Exception:  # noqa: BLE001
+            pass
     _audit("miniapp_registered", user_id=uid)
-    return _public_user(snapshot, include_contact=True, include_avatar=True)
+    return {
+        "ok": True,
+        "authenticated": status_out == "active",
+        "status": status_out,
+        "challenge_id": challenge_id,
+        "user": _public_user(snapshot, include_contact=True, include_avatar=True),
+    }
 
 
 def _send_owner_approval(api_call: Callable[..., Any], owner_chat_id: str,

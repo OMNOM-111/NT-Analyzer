@@ -42,6 +42,7 @@
 /NT-Analyzer/data/research/
 /NT-Analyzer/data/runtime/
 /NT-Analyzer/data/ops/
+/NT-Analyzer/data/operations/
 /NT-Analyzer/data/last_job.txt
 /NT-Analyzer/data/integrations/news.json
 /NT-Analyzer/data/integrations/live_news.json
@@ -49,6 +50,7 @@
 /NT-Analyzer/data/integrations/telegram.state.json
 /NT-Analyzer/data/integrations/telegram.topics.json
 /NT-Analyzer/data/integrations/telegram.remote-access.json
+/NT-Analyzer/data/integrations/*.lock
 /NT-Analyzer/data/integrations/cloudflared-tunnel.state.json
 /NT-Analyzer/data/integrations/accounts.dpapi
 /NT-Analyzer/data/integrations/*.dpapi

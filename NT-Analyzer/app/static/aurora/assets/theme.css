@@ -1336,34 +1336,48 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 }
 @keyframes orchThinkPulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
 
-/* Agent selection rail — narrow vertical sidebar to the right of the messages area.
-   Each card shows a suit-emoji avatar, job title (prominent), name+specialty (small).
-   Replaces the old bottom role picker strip so messages get more vertical room. */
-.orch-agent-rail {
-  flex: 0 0 90px; display: flex; flex-direction: column;
-  gap: 3px; padding: 6px 5px;
-  border-left: 1px solid var(--line-2); background: var(--bg-3);
-  overflow-y: auto; scrollbar-width: none;
-}
-.orch-agent-rail::-webkit-scrollbar { display: none; }
-.orch-agent-card {
-  width: 100%; display: flex; flex-direction: column; align-items: center;
-  gap: 2px; padding: 7px 4px 6px;
-  border: 1px solid transparent; border-radius: 10px;
-  background: transparent; color: var(--tx-2); font: inherit;
-  cursor: pointer; text-align: center;
+/* Model version picker — a Cursor-style dropdown at the composer. One
+   StratForge Orchestrator answers every message; the menu only chooses the
+   model strength (or Auto). Management tiers and named specialists still run
+   automatically in the backend and are no longer shown as menu items. */
+.orch-compose { border-top: 1px solid var(--line-2); background: var(--bg-3); }
+.orch-model-picker { position: relative; padding: 8px 10px 0; }
+.orch-model-trigger {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+  border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-1);
+  color: var(--tx-2); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
   transition: background .12s, border-color .12s, color .12s;
-  white-space: normal;
 }
-.orch-agent-card:hover { background: var(--bg-2); border-color: var(--line-2); color: var(--tx); }
-.orch-agent-card.active { background: var(--brand-soft); border-color: var(--brand-line); box-shadow: inset 0 0 0 1px var(--brand-line); }
-.oac-emoji { font-size: 21px; line-height: 1.2; display: block; }
-.oac-title { font-size: 9px; font-weight: 800; color: inherit; line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
-.oac-sub { font-size: 8px; color: var(--tx-3); line-height: 1.2; overflow-wrap: break-word; word-break: break-word; }
-.orch-agent-card.active .oac-sub { color: var(--tx-2); }
-.oac-sep { height: 1px; background: var(--line-2); margin: 3px 4px; }
+.orch-model-trigger:hover { background: var(--bg-2); color: var(--tx); border-color: var(--line-3); }
+.orch-model-trigger svg { width: 13px; height: 13px; color: var(--brand); }
+.orch-model-trigger-label { line-height: 1; }
+.orch-model-caret { font-size: 9px; color: var(--tx-3); }
+.orch-model-menu {
+  position: absolute; left: 10px; bottom: calc(100% + 6px); z-index: 6;
+  min-width: 244px; max-width: calc(100% - 20px); padding: 6px;
+  background: var(--bg-2); border: 1px solid var(--line-3); border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.orch-model-menu[hidden] { display: none; }
+.orch-model-menu-head { padding: 4px 8px 6px; font-size: 10px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--tx-3); }
+.orch-model-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 9px; border-radius: 9px; border: 1px solid transparent;
+  background: transparent; color: var(--tx-2); font: inherit; cursor: pointer; text-align: left;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.orch-model-item:hover { background: var(--bg-3); color: var(--tx); }
+.orch-model-item.active { background: var(--brand-soft); border-color: var(--brand-line); color: var(--tx); }
+.orch-model-item-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.orch-model-item-label { font-size: 12.5px; font-weight: 700; }
+.orch-model-item-sub { font-size: 10.5px; color: var(--tx-3); }
+.orch-model-item-check { flex: 0 0 auto; color: var(--brand); visibility: hidden; }
+.orch-model-item-check svg { width: 15px; height: 15px; }
+.orch-model-item.active .orch-model-item-check { visibility: visible; }
+.orch-convo-sys { font-size: 9px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; color: var(--tx-3); padding: 2px 6px; border-radius: 999px; background: var(--bg-1); border: 1px solid var(--line-2); }
 
-.orch-input { display: flex; align-items: flex-end; gap: 8px; padding: 10px; border-top: 1px solid var(--line-2); background: var(--bg-3); }
+.orch-input { display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px 10px; background: transparent; }
 .orch-input textarea {
   flex: 1; resize: none; min-height: 40px; max-height: 120px; padding: 10px 12px;
   background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 11px;
@@ -1503,6 +1517,63 @@ html.has-lock-gate .content { position: relative; }
 .lock-gate-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
 .lock-gate-hint { margin-top: 14px; font-size: 11.5px; color: var(--tx-3); }
 .plan-soon { font-size: 12px; font-weight: 600; color: var(--tx-3); }
+.plan-card.soon { opacity: 0.72; }
+.access-primary h4 { margin-bottom: 6px; }
+.access-primary .access-promo,
+.access-primary .access-donate { margin-top: 4px; }
+.access-request { font-size: 13px; color: var(--tx-2); line-height: 1.45; }
+.welcome-access-overlay {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: end center;
+  padding: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  background: rgba(6, 10, 18, 0.55); backdrop-filter: blur(5px);
+}
+.welcome-access-card {
+  width: min(440px, 100%); max-height: min(88vh, 720px); overflow: auto;
+  border: 1px solid var(--line-2); border-radius: 18px 18px 14px 14px; padding: 16px 16px 18px;
+  background: var(--bg-1); box-shadow: 0 18px 50px rgba(0,0,0,.4);
+}
+.welcome-access-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px;
+}
+.welcome-access-head .auth-brand { margin: 0; }
+.welcome-access-x { flex: 0 0 auto; width: 36px; height: 36px; font-size: 16px; }
+.welcome-access-lead {
+  margin: 0 0 14px; color: var(--tx-2); font-size: 13.5px; line-height: 1.45;
+}
+.welcome-access-card .access-promo,
+.welcome-access-card .access-donate { margin-top: 12px; }
+.wa-tiers { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.wa-tier { min-width: 64px; }
+.wa-custom { margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.wa-custom input { width: 140px; }
+.welcome-access-card .access-request {
+  display: flex; gap: 8px; align-items: flex-start; margin-top: 12px;
+  cursor: pointer; font-size: 13px; color: var(--tx-2); line-height: 1.4;
+}
+.welcome-access-card .access-request input { margin-top: 3px; }
+.welcome-access-actions {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
+}
+@media (min-width: 720px) {
+  .welcome-access-overlay { place-items: center; }
+  .welcome-access-card { border-radius: 18px; }
+}
+html.guest-browse .rail-item.rail-locked { opacity: 0.55; }
+html.guest-browse .content { filter: saturate(0.92); }
+html.guest-browse .content .panel,
+html.guest-browse .content .kpi { opacity: 0.9; }
+html.guest-browse .content .panel-b,
+html.guest-browse .content .chart-box,
+html.guest-browse .content .list {
+  filter: blur(1.15px);
+  opacity: 0.78;
+}
+.guest-preview-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--brand-line); background: var(--brand-soft);
+  font-size: 12.5px; color: var(--tx-2); font-weight: 600;
+}
 
 /* Admin user detail panel. */
 .user-detail-panel { padding: 12px 14px; display: block; }

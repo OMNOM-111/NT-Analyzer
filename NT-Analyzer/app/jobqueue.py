@@ -1683,6 +1683,25 @@ def read_instrument_coverage() -> Dict[str, Any]:
             x for x in profiles_doc.get("profiles", [])
             if isinstance(x, dict)
         ]
+        # Coverage source files describe the best *individual* strategy and can
+        # legitimately say ``ready`` while most portfolio cells are still empty.
+        # The UI goal, however, is complete only when every active registry slot
+        # has an approved profile.  Read the append-only cell registry directly
+        # through project_root() so isolated tests and portable installations use
+        # the same source of truth.
+        registry_targets: Dict[str, int] = {}
+        registry_path = project_root() / "data" / "portfolio" / "cells.json"
+        if registry_path.is_file():
+            try:
+                registry_doc = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+                for cell in registry_doc.get("cells") or []:
+                    if not isinstance(cell, dict) or str(cell.get("status") or "active") != "active":
+                        continue
+                    cell_root = str(cell.get("root") or "").strip().upper()
+                    if cell_root:
+                        registry_targets[cell_root] = registry_targets.get(cell_root, 0) + 1
+            except (OSError, json.JSONDecodeError):
+                registry_targets = {}
         catalog_doc = read_strategies_catalog() or {}
         catalog_classes = {
             str(x.get("class_name") or "")
@@ -1802,11 +1821,28 @@ def read_instrument_coverage() -> Dict[str, Any]:
                 profs[0] if profs else None,
             )
             counts = _status_counts(profs)
+            ready_count = int(counts.get("ready") or 0)
+            target_slots = int(
+                registry_targets.get(str(root).upper())
+                or entry.get("target_slots")
+                or portfolio_cells.TARGET_PORTFOLIO_SLOTS
+            )
+            goal_ready = bool(target_slots > 0 and ready_count >= target_slots)
             return {
                 "root":           root,
                 "group":          ", ".join(groups) if groups else "—",
                 "strategy_count": counts["total"] if profs else int(entry.get("strategy_count") or 0),
-                "best_status":    _coverage_status(entry.get("status") or "missing"),
+                "ready_count":    ready_count,
+                "target_slots":   target_slots,
+                "remaining_slots": max(0, target_slots - ready_count),
+                "progress_pct":   round(ready_count / target_slots * 100.0, 2) if target_slots else 0.0,
+                "best_status":    "ready" if goal_ready else "in_progress",
+                "status_label":   "Готово" if goal_ready else "В работе",
+                "status_reason":  (
+                    f"Все {target_slots} активных слотов имеют одобренный профиль."
+                    if goal_ready else
+                    f"Одобрено {ready_count} из {target_slots} активных слотов."
+                ),
                 "profile_name":   (best or {}).get("name") or entry.get("strategy_class") or "",
                 "profile_id":     best_id,
                 "instrument":     entry.get("current_contract") or "",
@@ -1828,10 +1864,24 @@ def read_instrument_coverage() -> Dict[str, Any]:
         order = {"ready": 0, "in_progress": 1}
         rows.sort(key=lambda r: (order.get(r["best_status"], 9), r["root"]))
 
+        derived_summary = dict(data.get("summary") or {})
+        micro_roots = {
+            str(entry.get("root") or "").upper()
+            for entry in (data.get("micros") or []) if isinstance(entry, dict)
+        }
+        micro_rows = [row for row in rows if str(row.get("root") or "").upper() in micro_roots]
+        derived_summary.update({
+            "ready": sum(1 for row in micro_rows if row.get("best_status") == "ready"),
+            "in_progress": sum(1 for row in micro_rows if row.get("best_status") != "ready"),
+            "total_micros": len(micro_rows),
+            "approved_slots": sum(int(row.get("ready_count") or 0) for row in rows),
+            "target_slots": sum(int(row.get("target_slots") or 0) for row in rows),
+            "calculation": "approved_profiles_vs_active_portfolio_slots",
+        })
         return {
             "schema_version":   data.get("schema_version", "1.0"),
             "generated_at_utc": data.get("generated_at_utc", ""),
-            "summary":          data.get("summary") or {},
+            "summary":          derived_summary,
             "instruments":      rows,
         }
     except (OSError, json.JSONDecodeError):

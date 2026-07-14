@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Рабочий стол — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260708-access5">
+<link rel="stylesheet" href="assets/theme.css?v=20260711-chatmodel3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
   /* ===================== Рабочий стол (desktop) ===================== */
@@ -212,6 +212,9 @@
   .dchart-preview{position:relative;height:280px;overflow:hidden;border:1px solid var(--line);border-radius:9px}
   .dchart-form .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .dchart-form label{display:flex;flex-direction:column;gap:3px;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx-2)}
+  .dchart-form .dchart-field{display:flex;flex-direction:column;gap:6px}
+  .dchart-form .dchart-cap{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx-2)}
+  .dchart-form .ind-chip{text-transform:none;letter-spacing:0;flex-direction:row;font-size:11.5px}
   .dchart-form select,.dchart-form input{font:inherit;font-size:12px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:7px;color:var(--tx);text-transform:none;letter-spacing:0}
   .dchart-form input[type="color"]{padding:2px;height:28px;width:100%}
   .style-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
@@ -299,11 +302,12 @@
     <button class="dsk-focus-exit" id="dsk-focus-exit" title="Вернуться в обычный режим" aria-label="Выйти из полноэкранного режима">×</button>
   </div>
 
-<script src="assets/api.js?v=20260708-access5"></script>
+<script src="assets/api.js?v=20260711-chatmodel3"></script>
 <script src="assets/domain.js?v=20260630-news6"></script>
 <script src="assets/ambient.js?v=20260707-gpu1"></script>
-<script src="assets/ui.js?v=20260708-access5"></script>
-<script src="assets/chart-engine.js?v=20260707-gpu1"></script>
-<script src="assets/pages/desktop.js?v=20260708-charts2"></script>
+<script src="assets/ui.js?v=20260713-vitek5"></script>
+<script src="assets/chart-engine.js?v=20260710-tpl2"></script>
+<script src="assets/desktop-template.js?v=20260710-tpl2"></script>
+<script src="assets/pages/desktop.js?v=20260710-tpl2"></script>
 </body>
 </html>

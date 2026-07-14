@@ -279,7 +279,7 @@ def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
         server.server_close()
 
 
-def test_miniapp_register_activates_free_preview(cabinet_store, monkeypatch) -> None:
+def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456"
     monkeypatch.setenv(telegram_service.TOKEN_ENV, token)
@@ -310,11 +310,12 @@ def test_miniapp_register_activates_free_preview(cabinet_store, monkeypatch) -> 
             _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
         assert exc.value.code == 403
 
-        # Direct Mini App registration (initData + terms) activates Free Preview.
+        # Direct Mini App registration waits for owner confirmation.
         out = _request(base, "/api/auth/miniapp/register", method="POST",
-                       body={"email": "s@e.com", "accept_terms": True},
+                       body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
                        extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert out["ok"] is True and out["authenticated"] is True
+        assert out["ok"] is True and out["authenticated"] is False
+        assert out["status"] == "pending_owner" and out["challenge_id"]
 
         # Registration without accepting the terms is rejected.
         other = _init_data(778, token=token)
@@ -324,7 +325,21 @@ def test_miniapp_register_activates_free_preview(cabinet_store, monkeypatch) -> 
                      extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: other})
         assert exc.value.code == 400
 
-        # Now the registered stranger is an active Free Preview user.
+        # Pending user still cannot use the app until the owner allows.
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
+        assert exc.value.code == 403
+
+        # Public access options are readable without auth (welcome screen).
+        access = _request(base, "/api/billing/access-options", extra_headers=tunnel)
+        assert "tiers" in access
+
+        # Owner activates the pending account via the challenge allow callback path.
+        allow = "account_allow:" + out["challenge_id"]
+        assert account_auth.process_update({"callback_query": {
+            "id": "cb1", "data": allow, "from": {"id": 999},
+        }}, api_call=lambda *a, **k: {}, owner_chat_id="999")
+
         me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
         assert me["is_owner"] is False and me["free_preview"] is True
         assert me["features"]["news"] is True

@@ -11,6 +11,7 @@ UI.ready(async function () {
     { key: 'approved_live', title: 'Реальная торговля', accent: 'var(--pos)' },
   ];
   let profiles = [], aiCards = [], coverage = null, archive = [], registry = null, runtimeRoots = [], curOrigin = 'all', curFrequency = 'all';
+  let vitekDoc = null, timeWindows = null, selectedWindowRoot = '', vitekLoading = false;
 
   async function loadTolik() {
     const box = UI.qs('#tolik-summary');
@@ -19,8 +20,95 @@ UI.ready(async function () {
       const doc = await API.http.strategyAnalysis({ period: 'month' });
       const s = doc.summary || {}; const counts = s.status_counts || {};
       const topFlags = (doc.findings || []).slice(0, 4).map(row => `${row.class_name || row.experiment_id}: ${(row.flags || []).join(', ')}`);
-      box.innerHTML = `<strong>Контроль качества без токенов</strong><div style="margin-top:7px">Экспериментов: <b>${s.experiments || 0}</b> · активных runtime: <b>${s.enabled_runtime || 0}</b> · замечаний: <b class="${s.findings ? 'neg' : 'pos'}">${s.findings || 0}</b></div><div class="muted" style="margin-top:6px">Готово: ${counts.complete || 0}; no-edge: ${counts.no_edge || 0}; технические сбои: ${(counts.pipeline_failed || 0) + (counts.compile_failed || 0)}</div>${topFlags.length ? `<ul style="margin:8px 0 0 17px">${topFlags.map(text => `<li>${UI.esc(text)}</li>`).join('')}</ul>` : ''}`;
+      const technical = Number(s.technical_failures || 0);
+      const warnings = Number(s.quality_warnings || 0);
+      box.innerHTML = `<strong>Контроль качества без токенов</strong><div style="margin-top:7px">Экспериментов: <b>${s.experiments || 0}</b> · активных runtime: <b>${s.enabled_runtime || 0}</b> · записей с замечаниями: <b class="${technical ? 'neg' : warnings ? 'warn' : 'pos'}">${s.findings || 0}</b></div><div class="muted" style="margin-top:6px">Готово: ${counts.complete || 0}; no-edge: ${counts.no_edge || 0}; <span class="${technical ? 'neg' : ''}">технические ошибки: ${technical}</span>; <span class="${warnings ? 'warn' : ''}">предупреждения качества: ${warnings}</span></div>${topFlags.length ? `<ul style="margin:8px 0 0 17px">${topFlags.map(text => `<li>${UI.esc(text)}</li>`).join('')}</ul>` : ''}`;
     } catch (e) { box.textContent = 'Аналитическая сводка временно недоступна: ' + (e.message || e); }
+  }
+
+  const ACTIVE_TASKS = new Set(['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked']);
+  const OPEN_INCIDENTS = new Set(['awaiting_decision', 'acknowledged', 'in_progress']);
+  const MODE_LABELS = { free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', resting: 'отдыхает' };
+  const SEVERITY_LABELS = { critical: 'критично', error: 'ошибка', warning: 'предупреждение', task: 'задача', info: 'информация' };
+
+  function renderVitek() {
+    if (!vitekDoc) return;
+    const mode = vitekDoc.mode || 'free';
+    const incidents = (vitekDoc.incidents || []).filter(row => OPEN_INCIDENTS.has(row.status) && row.owner_decision_required);
+    const tasks = (vitekDoc.tasks || []).filter(row => ACTIVE_TASKS.has(row.status));
+    const agents = Array.isArray(vitekDoc.agent_activity) ? vitekDoc.agent_activity : [];
+    const background = vitekDoc.background || {};
+    const plans = vitekDoc.plans || {};
+    const eventEngine = vitekDoc.event_engine || {};
+    UI.qs('#vitek-mode').textContent = `${MODE_LABELS[mode] || mode} · ${vitekDoc.timezone || 'America/Los_Angeles'}`;
+    UI.qs('#vitek-message').innerHTML = `<strong>${UI.esc(vitekDoc.message || '')}</strong><div class="muted" style="margin-top:5px">Витёк получает события автоматически и сообщает только результат или необходимое решение.</div>`;
+    UI.qs('#vitek-agents').innerHTML = agents.map(agent => `<span class="badge ${agent.working ? 'live' : 'archived'}" title="${UI.esc(agent.working ? (agent.work || 'Работает') : 'Свободен')}"><span class="dot"></span>${UI.esc(agent.name || '')} · ${agent.working ? 'работает' : 'свободен'}</span>`).join('') || '<span class="muted">Состояние команды загружается…</span>';
+    UI.qs('#vitek-kpis').innerHTML = [
+      { label: 'Режим', val: MODE_LABELS[mode] || mode, cls: mode === 'awaiting_decision' ? 'warn' : mode === 'free' ? 'pos' : 'info', icon: 'ai', foot: 'дежурный контроль' },
+      { label: 'Нужен ваш ответ', val: incidents.length, cls: incidents.length ? 'warn' : 'pos', icon: 'alert', foot: 'только важные решения' },
+      { label: 'Задачи', val: tasks.length, cls: tasks.length ? 'info' : 'pos', icon: 'check', foot: 'активные' },
+      { label: 'Фоновый запуск', val: background.installed ? 'установлен' : 'не установлен', cls: background.installed ? 'pos' : 'warn', icon: 'status', foot: background.current_process_background ? 'сейчас работает фоном' : 'watchdog при входе в Windows' },
+      { label: 'Агенты работают', val: agents.filter(row => row.working).length, cls: agents.some(row => row.working) ? 'info' : 'pos', icon: 'telegram', foot: `параллельно до ${Number(eventEngine.parallel_limit || 6)}` },
+    ].map(k => `<div class="kpi ${k.cls}"><div class="kpi-top"><span class="kpi-label">${k.label}</span><span class="kpi-ic">${UI.icon(k.icon)}</span></div><div class="kpi-val sm">${UI.esc(String(k.val))}</div><div class="kpi-foot">${UI.esc(k.foot)}</div></div>`).join('');
+    UI.qs('#vitek-plans').innerHTML = ['day', 'week'].map(scope => {
+      const plan = plans[scope]; const active = plan && plan.status === 'active'; const label = scope === 'day' ? 'сегодня' : 'неделю';
+      const goals = active && Array.isArray(plan.goals) ? plan.goals : [];
+      return `<div class="kpi ${active ? 'info' : ''}"><div class="kpi-top"><span class="kpi-label">План на ${label}</span><button class="btn sm ghost vitek-plan" data-scope="${scope}">${active ? 'Изменить' : 'Задать'}</button></div><div class="kpi-val sm">${UI.esc(active && plan.focus ? plan.focus : 'не задан')}</div><div class="kpi-foot">${goals.length ? UI.esc(goals.join(' · ')) : 'Витёк создаст задачи по каждой цели'}</div></div>`;
+    }).join('');
+    UI.qs('#vitek-incidents').innerHTML = incidents.length ? incidents.slice(0, 12).map(row => { const brief = row.owner_brief || {}; return `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(brief.fact || 'Нужно ваше решение.')}</div><div class="row-sub">${UI.esc(brief.recommendation || '')}</div><div style="margin-top:7px"><strong>${UI.esc(brief.question || 'Продолжать?')}</strong></div><div class="flex wrap gap-sm" style="margin-top:7px"><button class="btn sm primary vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="create_task">Да</button><button class="btn sm ghost vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="ignore">Нет</button></div></div></div>`; }).join('') : '<div class="empty-state">Вопросов, требующих вашего решения, нет.</div>';
+    UI.qs('#vitek-tasks').innerHTML = tasks.length ? tasks.slice(0, 12).map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.title || 'Задача без названия')}</div><div class="row-sub">${row.assigned_agent ? `В работе у: ${UI.esc(({tolik:'Толик',marina:'Марина',nikita:'Никита',ivan:'Иван',orchestrator:'Управляющий'})[row.assigned_agent] || row.assigned_agent)}` : 'Управляющий назначает исполнителя'}${row.due_at_utc ? ` · срок ${new Date(row.due_at_utc).toLocaleString('ru-RU')}` : ''}</div></div><button class="btn sm vitek-task-complete" data-id="${UI.esc(row.task_id)}">Готово</button></div>`).join('') : '<div class="empty-state">Активных задач нет.</div>';
+    UI.qs('#vitek-rest').hidden = mode === 'resting';
+    UI.qs('#vitek-resume').hidden = mode !== 'resting';
+    UI.qsa('.vitek-decision').forEach(button => { button.onclick = async () => {
+      try { await API.http.vitekIncidentDecision(button.dataset.id, button.dataset.decision, 'Решение принято в приложении'); UI.toast('Решение передано Витьку'); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+    }; });
+    UI.qsa('.vitek-task-complete').forEach(button => { button.onclick = async () => {
+      try { await API.http.vitekUpdateTask(button.dataset.id, { status: 'completed', result: 'Отмечено выполненным владельцем в приложении' }); UI.toast('Задача завершена'); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+    }; });
+    UI.qsa('.vitek-plan').forEach(button => { button.onclick = async () => {
+      const scope = button.dataset.scope; const label = scope === 'day' ? 'сегодня' : 'неделю';
+      const value = window.prompt(`Цели на ${label}. Разделите их точкой с запятой:`);
+      if (!value || !value.trim()) return;
+      const goals = value.split(';').map(x => x.trim()).filter(Boolean);
+      try { await API.http.vitekPlan({ scope, focus: goals[0], goals, create_tasks: true, source: 'app' }); UI.toast(`План на ${label} сохранён`); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+    }; });
+  }
+
+  function renderTimeWindows() {
+    const board = UI.qs('#time-window-board'); const select = UI.qs('#time-window-root');
+    if (!timeWindows || !(timeWindows.roots || []).length) { board.innerHTML = '<div class="empty-state">Данных о временных окнах нет.</div>'; return; }
+    const roots = [...timeWindows.roots].sort((a, b) => Number(b.has_strategies) - Number(a.has_strategies) || String(a.root).localeCompare(String(b.root)));
+    if (!selectedWindowRoot || !roots.some(row => row.root === selectedWindowRoot)) selectedWindowRoot = (roots.find(row => row.root === 'MGC') || roots.find(row => row.has_strategies) || roots[0]).root;
+    select.innerHTML = roots.map(row => `<option value="${UI.esc(row.root)}"${row.root === selectedWindowRoot ? ' selected' : ''}>${UI.esc(row.root)} · ${row.strategy_count || 0} стратегий</option>`).join('');
+    const root = roots.find(row => row.root === selectedWindowRoot) || roots[0]; const strategies = root.strategies || [];
+    const gapRows = (root.gaps_by_day || []).filter(row => (row.gaps || []).length);
+    UI.qs('#time-window-sub').textContent = `${timeWindows.timezone_label || timeWindows.timezone} · сессия ${root.session.start}–${root.session.end}`;
+    board.innerHTML = `<div class="grid cols-3"><div class="kpi"><div class="kpi-label">Инструмент</div><div class="kpi-val sm">${UI.esc(root.root)}</div><div class="kpi-foot">${UI.esc(root.session.label || '')}</div></div><div class="kpi info"><div class="kpi-label">Готовые стратегии</div><div class="kpi-val sm">${root.strategy_count || 0}</div><div class="kpi-foot">ready + paper-ready</div></div><div class="kpi ${gapRows.length ? 'warn' : 'pos'}"><div class="kpi-label">Дни с пробелами</div><div class="kpi-val sm">${gapRows.length}</div><div class="kpi-foot">в пределах биржевой сессии</div></div></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Стратегия</th><th>Дни</th><th>Временное окно</th><th>Статус</th></tr></thead><tbody>${strategies.length ? strategies.map(row => `<tr><td><strong>${UI.esc(row.strategy || '')}</strong><div class="muted mono">${UI.esc(row.cell_id || row.profile_id || '')} · ${UI.esc(row.timeframe || '')}</div></td><td>${UI.esc(row.days_label || 'все дни')}</td><td class="mono"><strong>${UI.esc(row.start)}–${UI.esc(row.end)}</strong></td><td><span class="badge ${row.status === 'ready' ? 'live' : 'demo'}">${UI.esc(row.status)}</span></td></tr>`).join('') : '<tr><td colspan="4"><div class="empty-state">Для инструмента нет готовых стратегий с указанным временем.</div></td></tr>'}</tbody></table></div>
+      <div><h4 style="margin:0 0 8px">Пустые временные окна</h4><div class="list">${gapRows.length ? gapRows.map(day => `<div class="row"><strong class="mono" style="width:28px">${UI.esc(day.day_label)}</strong><div class="row-main"><div class="flex wrap gap-sm">${(day.gaps || []).map(gap => `<span class="badge trial">${UI.esc(gap.start)}–${UI.esc(gap.end)} · ${Math.round(Number(gap.duration_minutes || 0) / 60 * 10) / 10} ч</span>`).join('')}</div></div></div>`).join('') : '<div class="empty-state">Вся сессия покрыта готовыми стратегиями.</div>'}</div></div>`;
+  }
+
+  async function loadVitek() {
+    if (vitekLoading) return;
+    vitekLoading = true;
+    try {
+      [vitekDoc, timeWindows] = await Promise.all([API.http.vitekStatus(), API.http.vitekTimeWindows()]);
+      renderVitek(); renderTimeWindows();
+    } catch (error) {
+      UI.qs('#vitek-message').textContent = 'Состояние Витька недоступно: ' + (error.message || error);
+      UI.qs('#time-window-board').innerHTML = '<div class="empty-state">Временные окна временно недоступны.</div>';
+    } finally { vitekLoading = false; }
+  }
+
+  async function refreshVitekStatus() {
+    if (vitekLoading || document.hidden) return;
+    vitekLoading = true;
+    try { vitekDoc = await API.http.vitekStatus(); renderVitek(); }
+    catch (error) { /* initial loader shows connectivity errors; background refresh stays quiet */ }
+    finally { vitekLoading = false; }
   }
 
   function fmtDate(iso) { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: '2-digit' }); } catch (e) { return iso || ''; } }
@@ -67,7 +155,8 @@ UI.ready(async function () {
   async function reload() { await fetchAll(); renderKpis(); renderKanban(); renderMatrix(); renderGoals(); }
 
   if (!(await fetchAll())) { UI.renderError(kpiBox, new Error('backend недоступен'), () => location.reload()); return; }
-  renderKpis(); renderKanban(); renderMatrix(); renderGoals(); wireControls(); loadTolik();
+  renderKpis(); renderKanban(); renderMatrix(); renderGoals(); wireControls(); loadTolik(); loadVitek();
+  window.setInterval(refreshVitekStatus, 3000);
   const wanted = new URLSearchParams(location.search).get('strategy');
   if (wanted) { const c = [...profiles, ...aiCards].find(x => x.name === wanted); if (c) openCard(c); }
 
@@ -134,8 +223,8 @@ UI.ready(async function () {
     const coverageByRoot = {}; ((coverage && coverage.instruments) || []).forEach(row => { coverageByRoot[row.root] = row; });
     const insts = (registry && registry.roots) || [];
     UI.qs('#goal-body').innerHTML = insts.length ? insts.map(c => {
-      const cov = coverageByRoot[c.root] || {}; const cnt = cov.strategy_count || 0; const target = c.active_count || c.cell_count || 1; const ready = cov.best_status === 'ready';
-      return `<tr><td class="mono"><strong>${UI.esc(c.root)}</strong><div class="muted" style="font-size:10px">${c.legacy ? 'базовый root' : 'добавлен вручную'}</div></td><td class="num">${cnt}/${target}</td><td><span class="minibar" style="width:120px"><span style="width:${Math.min(100, cnt / target * 100)}%;background:${ready ? 'var(--pos)' : 'var(--warn)'}"></span></span></td><td>${UI.esc(cov.best_status || 'нет профиля')}</td></tr>`;
+      const cov = coverageByRoot[c.root] || {}; const cnt = Number(cov.ready_count || 0); const target = Number(cov.target_slots || c.active_count || c.cell_count || 1); const ready = cov.best_status === 'ready';
+      return `<tr><td class="mono"><strong>${UI.esc(c.root)}</strong><div class="muted" style="font-size:10px">${c.legacy ? 'базовый root' : 'добавлен вручную'}</div></td><td class="num"><strong>${cnt}/${target}</strong><div class="muted" style="font-size:10px">одобрено</div></td><td><span class="minibar" style="width:120px"><span style="width:${Math.min(100, cnt / target * 100)}%;background:${ready ? 'var(--pos)' : 'var(--warn)'}"></span></span></td><td><span class="badge ${ready ? 'live' : 'trial'}">${UI.esc(cov.status_label || (ready ? 'Готово' : 'В работе'))}</span></td></tr>`;
     }).join('') : '<tr><td colspan="4" class="muted">Нет данных покрытия.</td></tr>';
   }
 
@@ -347,6 +436,24 @@ UI.ready(async function () {
     UI.qs('#rejected-btn').onclick = openArchiveDrawer;
     UI.qs('#add-root-btn').onclick = openAddRoot;
     UI.qs('#add-cell-btn').onclick = openAddCell;
+    UI.qs('#vitek-scan').onclick = async () => {
+      const button = UI.qs('#vitek-scan'); button.disabled = true;
+      try { await API.http.vitekScan(false); UI.toast('Витёк завершил проверку'); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+      finally { button.disabled = false; }
+    };
+    UI.qs('#vitek-rest').onclick = async () => {
+      const raw = prompt('На сколько часов дать Витьку отдых? Критические события всё равно будут сообщаться.', '2');
+      if (raw == null) return; const hours = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(hours) || hours <= 0) { UI.toast('Укажите положительное количество часов'); return; }
+      try { await API.http.vitekRest({ duration_minutes: Math.round(hours * 60), reason: 'Отдых задан владельцем в приложении' }); UI.toast('Витёк перешёл в режим отдыха'); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+    };
+    UI.qs('#vitek-resume').onclick = async () => {
+      try { await API.http.vitekResume(); UI.toast('Витёк вернулся к работе'); await loadVitek(); }
+      catch (error) { UI.reportError(error); }
+    };
+    UI.qs('#time-window-root').onchange = event => { selectedWindowRoot = event.target.value; renderTimeWindows(); };
     UI.pageActions(`<button class="btn sm" id="pa-cleanup">${UI.icon('eraser')}Очистить NinjaTrader</button>`);
     const cb = UI.qs('#pa-cleanup'); if (cb) cb.onclick = ntCleanup;
   }

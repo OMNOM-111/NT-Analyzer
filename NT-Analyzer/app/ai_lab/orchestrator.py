@@ -213,6 +213,7 @@ def choose_hypothesis(
     allow_local_models: bool = True,
 ) -> Dict[str, Any]:
     constraints = intake.get("goal_constraints") or {}
+    research_family = str(constraints.get("strategy_family") or "").strip()
     avoided_families = {
         str(value).strip().lower()
         for value in (intake.get("avoid_families") or constraints.get("avoid_families") or [])
@@ -226,7 +227,14 @@ def choose_hypothesis(
             if str(row.get("family") or "").strip().lower() not in avoided_families
         ]
     preferred_ref = shortlist[0] if shortlist else {}
-    if requested_pattern:
+    if research_family:
+        fallback_family = research_family
+        fallback_hypothesis = (
+            f"Проверить следующую самостоятельную торговую гипотезу семьи {research_family} "
+            f"на {target_root}, сохраняя цели активного исследования, явный рыночный режим, "
+            "подтверждение входа и экономику после комиссии."
+        )
+    elif requested_pattern:
         fallback_family = str(requested_pattern)
         fallback_hypothesis = (
             f"Внутридневная схема {requested_pattern} на {target_root}: строгая проверка сигналов, "
@@ -329,7 +337,9 @@ def choose_hypothesis(
                 level="info", supplied_reference=supplied_ref[:120],
                 selected_reference=parsed["reference_id"],
             )
-        family_text = str(parsed.get("family") or "")
+        family_text = research_family or str(parsed.get("family") or "")
+        if research_family:
+            parsed["family"] = research_family
         if family_text.strip().lower() in avoided_families:
             activity.log(
                 experiment_id, "generate", "hypothesis_family_rejected", level="warn",
@@ -601,6 +611,10 @@ def start_skeleton(args: Dict[str, Any]) -> Dict[str, Any]:
     """Synchronous: allocate ids and persist a draft experiment record."""
     user_goal = str(args.get("user_goal") or args.get("goal") or "").strip()
     goal_constraints = goal_parser.parse_user_goal(user_goal, args)
+    if args.get("research_family_key"):
+        goal_constraints["strategy_family"] = str(args.get("research_family_key"))[:80]
+    if args.get("research_id"):
+        goal_constraints["research_id"] = str(args.get("research_id"))[:80]
     user_pref_root = (
         args.get("user_pref_root") or args.get("target_root")
         or goal_constraints.get("target_root")
@@ -623,7 +637,19 @@ def start_skeleton(args: Dict[str, Any]) -> Dict[str, Any]:
     skeleton["user_goal"] = user_goal
     skeleton["allow_paid_agents"] = bool(args.get("allow_paid_agents", True))
     skeleton["allow_local_models"] = args.get("allow_local_models") is not False
+    # Multi-user provenance is part of every experiment created from chat.
+    # Legacy/local-owner runs keep these fields empty and remain compatible.
+    skeleton["workspace_id"] = str(args.get("workspace_id") or "")[:96]
+    try:
+        skeleton["requested_by_user_id"] = int(args.get("user_id") or 0)
+    except (TypeError, ValueError):
+        skeleton["requested_by_user_id"] = 0
     skeleton["goal_constraints"] = goal_constraints
+    skeleton["research_id"] = str(args.get("research_id") or "")[:80]
+    skeleton["research_title"] = str(args.get("research_title") or "")[:180]
+    skeleton["research_family_name"] = str(args.get("research_family_name") or "")[:180]
+    skeleton["research_family_key"] = str(args.get("research_family_key") or "")[:80]
+    skeleton["research_knowledge_ref"] = str(args.get("research_knowledge_ref") or "")[:260]
     skeleton["research_loop"] = {
         "mode": args.get("research_mode") or "single_cell",
         "run_id": args.get("research_run_id") or skeleton["experiment_id"],
@@ -663,6 +689,10 @@ def prepare_strategy_draft(args: Dict[str, Any]) -> Dict[str, Any]:
         )
         user_goal = str(args.get("user_goal") or args.get("goal") or "")
         constraints = goal_parser.parse_user_goal(user_goal, args)
+        if args.get("research_family_key"):
+            constraints["strategy_family"] = str(args.get("research_family_key"))[:80]
+        if args.get("research_id"):
+            constraints["research_id"] = str(args.get("research_id"))[:80]
         constraints["avoid_families"] = [
             str(value).strip() for value in (args.get("avoid_families") or [])
             if str(value).strip()

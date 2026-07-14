@@ -1,6 +1,7 @@
 /* AI Strategy Lab — реальная интеграция (/api/ai-lab/*). CSP-safe (external). */
 UI.ready(async function () {
   let lmHealth = null, runStatus = null, summary = null, scoreMap = {}, activityExp = null, activitySince = 0, activityRows = [];
+  let researches = [], activeResearchId = '', activeResearch = null, researchDefaults = {};
   const STATUS_BADGE = { rejected: 'failed', candidate: 'trial', champion: 'live', portfolio_contributor: 'live', running: 'running', in_progress: 'running' };
   const PTZ = (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
   const fmtDate = (iso) => {
@@ -27,6 +28,269 @@ UI.ready(async function () {
     if (String(st).includes('compile')) return 'compileFail';
     return 'rejected';
   };
+
+  const RESEARCH_STATUS = {
+    new: ['Новое', 'archived'], active: ['В работе', 'running'], at_risk: ['Под риском', 'trial'],
+    promising: ['Перспективно', 'trial'], validated: ['Подтверждено', 'live'], exhausted: ['Неактуально', 'failed'],
+    paused: ['На паузе', 'archived'], archived: ['Архив', 'archived'],
+  };
+  const RESEARCH_TYPES = { research: 'Исследования', collection: 'Сборники исследований', personal_idea: 'Личные идеи' };
+  const researchStatus = research => (research && research.evaluation && research.evaluation.status) || 'new';
+  const researchBadge = research => {
+    const row = RESEARCH_STATUS[researchStatus(research)] || [researchStatus(research), 'archived'];
+    return `<span class="badge ${row[1]}">${UI.esc(row[0])}</span>`;
+  };
+  const fmtMetric = (value, digits) => value == null ? '—' : Number(value).toFixed(digits == null ? 1 : digits);
+  const fmtWindow = windowInfo => {
+    if (!windowInfo) return '—';
+    const date = value => value ? String(value).slice(0, 10) : '—';
+    return `${UI.esc(windowInfo.instrument || '—')} · ${UI.esc(windowInfo.timeframe || '—')} · ${date(windowInfo.from_utc)} → ${date(windowInfo.to_utc)}`;
+  };
+
+  function populateResearchSelect() {
+    const select = UI.qs('#ai-research');
+    if (!select) return;
+    const current = select.value || activeResearchId;
+    select.innerHTML = '<option value="">Без исследования (разовая задача)</option>' + researches.map(research => {
+      const status = (RESEARCH_STATUS[researchStatus(research)] || [researchStatus(research)])[0];
+      return `<option value="${UI.esc(research.research_id)}">${UI.esc(research.title)} · ${UI.esc(status)}</option>`;
+    }).join('');
+    if (researches.some(research => research.research_id === current)) select.value = current;
+    updateResearchRunHint();
+  }
+
+  function updateResearchRunHint() {
+    const select = UI.qs('#ai-research');
+    const hint = UI.qs('#ai-research-hint');
+    if (!select || !hint) return;
+    const research = researches.find(item => item.research_id === select.value);
+    if (!research) {
+      hint.textContent = 'Выберите сохранённый контекст — цикл будет привязан к его семье и критериям.';
+      return;
+    }
+    const evaluation = research.evaluation || {};
+    const policy = research.evaluation_policy || {};
+    hint.textContent = `${research.family_name} · оценено ${evaluation.evaluated_strategies || 0}/${policy.target_strategies || 0} · ${evaluation.automatic_conclusion || ''}`;
+    const remaining = Math.max(1, Math.min(10, Number(evaluation.remaining_to_target || policy.target_strategies || 3)));
+    const count = UI.qs('#ai-count');
+    if (count) {
+      if (!Array.from(count.options).some(option => Number(option.value || option.textContent) === remaining)) {
+        count.appendChild(new Option(String(remaining), String(remaining)));
+      }
+      count.value = String(remaining);
+    }
+  }
+
+  function renderResearchList() {
+    const box = UI.qs('#research-list');
+    if (!box) return;
+    const q = String(UI.qs('#research-search')?.value || '').trim().toLowerCase();
+    const statusFilter = String(UI.qs('#research-status-filter')?.value || '');
+    const filtered = researches.filter(research => {
+      const haystack = [research.title, research.summary, research.family_name, research.family_key, research.research_id].join(' ').toLowerCase();
+      return (!q || haystack.includes(q)) && (!statusFilter || researchStatus(research) === statusFilter);
+    });
+    if (!filtered.length) {
+      box.innerHTML = '<div class="empty-state" style="padding:20px">По этому фильтру исследований нет.</div>';
+      return;
+    }
+    box.innerHTML = Object.keys(RESEARCH_TYPES).map(type => {
+      const rows = filtered.filter(research => research.source_type === type);
+      if (!rows.length) return '';
+      return `<div class="research-group-label">${UI.esc(RESEARCH_TYPES[type])}</div>${rows.map(research => {
+        const evaluation = research.evaluation || {};
+        return `<div class="research-row ${research.research_id === activeResearchId ? 'active' : ''}" data-research-id="${UI.esc(research.research_id)}" tabindex="0" role="button">
+          <div class="research-row-head"><div class="research-row-title">${UI.esc(research.title)}</div>${researchBadge(research)}</div>
+          <div class="row-sub">${UI.esc(research.family_name || research.family_key || '')} · ${Number(evaluation.evaluated_strategies || 0)}/${Number((research.evaluation_policy || {}).target_strategies || 0)} стратегий</div>
+          <div class="research-mini-progress"><span style="width:${Math.min(100, Number(evaluation.progress_pct || 0))}%"></span></div>
+        </div>`;
+      }).join('')}`;
+    }).join('');
+    UI.qsa('#research-list [data-research-id]').forEach(node => {
+      node.onclick = () => selectResearch(node.dataset.researchId);
+      node.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); node.click(); } };
+    });
+  }
+
+  function researchTreeHtml(tree) {
+    if (!(tree || []).length) return '<div class="empty-state" style="padding:14px">Стратегий ещё нет. Запустите первый цикл в рамках этого исследования.</div>';
+    return `<div class="research-tree">${tree.map(family => `<details open><summary>Семья: ${UI.esc(family.family_name || family.family_key)} · ${Number((family.strategies || []).length)} стратегий</summary>
+      ${(family.strategies || []).map(strategy => `<div class="research-strategy"><div class="flex between gap-sm"><strong>${UI.esc(strategy.class_name || strategy.experiment_id)}</strong><span class="badge ${strategy.qualifies ? 'live' : strategy.archived ? 'failed' : 'archived'}">${strategy.qualifies ? 'прошла пороги' : strategy.archived ? 'архив' : UI.esc(strategy.status || '—')}</span></div>
+        <div class="row-sub">${strategy.inventory_source === 'legacy_profile' ? 'сохранённый профиль' : 'AI-эксперимент'} · ${Number(strategy.variant_count || 0)} вариантов · PF ${fmtMetric(strategy.profit_factor, 2)} · P&amp;L ${fmtMetric(strategy.net_profit, 0)}</div>
+        <div class="row-sub">лучшее окно: ${fmtWindow(strategy.best_window)}</div>
+        ${strategy.archive_reason ? `<div class="row-sub neg">Причина архива: ${UI.esc(strategy.archive_reason)}</div>` : ''}
+        <div class="flex gap-sm" style="margin-top:7px"><a class="btn sm ghost" href="strategies.html?strategy=${encodeURIComponent(strategy.profile_id || strategy.class_name || '')}">Открыть стратегию</a>${strategy.experiment_id ? `<span class="tag mono">${UI.esc(strategy.experiment_id)}</span>` : strategy.profile_id ? `<span class="tag mono">${UI.esc(strategy.profile_id)}</span>` : ''}</div></div>`).join('')}
+    </details>`).join('')}</div>`;
+  }
+
+  function renderResearchDetail(research) {
+    const box = UI.qs('#research-detail');
+    if (!box || !research) return;
+    const evaluation = research.evaluation || {};
+    const policy = research.evaluation_policy || {};
+    const best = evaluation.best_variant;
+    const bestParameters = best && best.best_parameter_variant;
+    const bestParameterText = bestParameters && Object.keys(bestParameters.parameters || {}).length
+      ? Object.entries(bestParameters.parameters).slice(0, 8).map(([key, value]) => `${key}=${value}`).join(' · ')
+      : 'параметры будут показаны после завершённой итерации';
+    const linkedRows = (research.linked_research_ids || []).map(id => {
+      const linked = researches.find(item => item.research_id === id);
+      return { id, title: linked ? linked.title : id };
+    });
+    const list = items => (items || []).length ? `<ul>${items.map(item => `<li>${UI.esc(item)}</li>`).join('')}</ul>` : '<div class="row-sub">Будет сформировано AI в первом цикле.</div>';
+    box.innerHTML = `
+      <div class="flex between gap-sm" style="align-items:flex-start"><div><div class="kick">${UI.esc(RESEARCH_TYPES[research.source_type] || research.source_type)} · ${UI.esc(research.research_id)}</div><h2 style="margin:4px 0 8px">${UI.esc(research.title)}</h2><div class="flex wrap gap-sm">${researchBadge(research)}<span class="tag">семья ${UI.esc(research.family_name)}</span><span class="tag mono">${UI.esc(research.family_key)}</span></div></div><div class="flex gap-sm"><button class="btn sm" id="research-edit">Редактировать</button><button class="btn sm primary" id="research-use">Работать в этом исследовании</button></div></div>
+      <p class="research-summary">${UI.esc(research.summary || '')}</p>
+      <div class="notice ${researchStatus(research) === 'exhausted' ? 'danger' : researchStatus(research) === 'at_risk' ? 'warning' : 'info'}"><strong>Автоматический вывод:</strong> ${UI.esc(evaluation.automatic_conclusion || '')}${research.owner_conclusion ? `<br><strong>Вывод владельца:</strong> ${UI.esc(research.owner_conclusion)}` : ''}</div>
+      <div class="grid cols-5" style="margin-top:14px">
+        <div class="kpi"><div class="kpi-label">Оценено стратегий</div><div class="kpi-val sm">${Number(evaluation.evaluated_strategies || 0)} / ${Number(policy.target_strategies || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Прошли пороги</div><div class="kpi-val sm ${evaluation.profitable_strategies ? 'pos' : ''}">${Number(evaluation.profitable_strategies || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Варианты параметров</div><div class="kpi-val sm">${Number(evaluation.parameter_variants || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Технические сбои</div><div class="kpi-val sm ${evaluation.technical_failures ? 'warn' : ''}">${Number(evaluation.technical_failures || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Сейчас в работе</div><div class="kpi-val sm info">${Number(evaluation.running_strategies || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Рабочие профили</div><div class="kpi-val sm pos">${Number(evaluation.working_strategies || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Архивные профили</div><div class="kpi-val sm">${Number(evaluation.archived_strategies || 0)}</div></div>
+      </div>
+      ${best ? `<section class="panel" style="margin-top:14px"><div class="panel-h"><h2>Лучший найденный вариант</h2><span class="sub">${best.qualifies ? 'прошёл пороги' : 'лучший из доступных, пороги не пройдены'}</span></div><div class="panel-b"><div class="flex wrap gap-sm"><strong>${UI.esc(best.class_name || best.experiment_id)}</strong><span class="tag">PF ${fmtMetric(best.profit_factor, 2)}</span><span class="tag">P&amp;L ${fmtMetric(best.net_profit, 0)}</span><span class="tag">${Number(best.variant_count || 0)} вариантов</span></div><div class="finance-note" style="margin-top:10px">Набор параметров №${Number((bestParameters || {}).iteration || 1)}: ${UI.esc(bestParameterText)}<br>Инструмент · ТФ · временное окно: ${fmtWindow(best.best_window)}</div></div></section>` : ''}
+      <div class="grid cols-2" style="margin-top:14px"><div><h4>Цели</h4>${list(research.objectives)}</div><div><h4>Гипотезы</h4>${list(research.hypotheses)}</div></div>
+      ${linkedRows.length ? `<div class="finance-note"><strong>Связанные исследования и семьи:</strong><div class="flex wrap gap-sm" style="margin-top:8px">${linkedRows.map(linked => `<button class="btn sm ghost research-linked-btn" data-linked-research="${UI.esc(linked.id)}">${UI.esc(linked.title)}</button>`).join('')}</div></div>` : ''}
+      <h4 style="margin:18px 0 8px">Критерии достаточности</h4><div class="research-policy">
+        <div><span class="row-sub">Минимум до решения</span><b>${Number(policy.min_strategies_to_decide || 0)} стратегий</b></div><div><span class="row-sub">Цель / максимум</span><b>${Number(policy.target_strategies || 0)} / ${Number(policy.max_strategies || 0)}</b></div>
+        <div><span class="row-sub">Вариантов на стратегию</span><b>≥ ${Number(policy.min_variants_per_strategy || 0)}</b></div><div><span class="row-sub">Нужно прибыльных</span><b>≥ ${Number(policy.required_profitable_strategies || 0)}</b></div>
+        <div><span class="row-sub">PF после комиссии</span><b>≥ ${fmtMetric(policy.min_profit_factor, 2)}</b></div><div><span class="row-sub">Минимум сделок</span><b>≥ ${Number(policy.min_trades || 0)}</b></div>
+        <div><span class="row-sub">История</span><b>≥ ${fmtMetric(policy.min_years_tested, 1)} лет</b></div><div><span class="row-sub">До цели осталось</span><b>${Number(evaluation.remaining_to_target || 0)}</b></div>
+      </div>
+      <h4 style="margin:18px 0 8px">Исследование → семья → стратегии → варианты</h4>${researchTreeHtml(evaluation.tree)}
+      <div class="row-sub" style="margin-top:14px">AI-контекст: ${UI.esc(research.knowledge_rel_path || '—')} · источник: ${UI.esc(research.source_name || 'ручной ввод')} · обновлено ${fmtDate(research.updated_at_utc)}</div>`;
+    UI.qs('#research-use').onclick = () => {
+      const select = UI.qs('#ai-research');
+      select.value = research.research_id;
+      updateResearchRunHint();
+      UI.qs('#ai-goal').focus();
+      UI.qs('#ai-research').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      UI.toast(`Цикл привязан к «${research.title}»`);
+    };
+    UI.qs('#research-edit').onclick = () => openResearchForm(research);
+    UI.qsa('.research-linked-btn', box).forEach(button => {
+      button.onclick = () => selectResearch(button.dataset.linkedResearch);
+    });
+  }
+
+  async function selectResearch(researchId) {
+    if (!researchId) return;
+    activeResearchId = researchId;
+    renderResearchList();
+    const box = UI.qs('#research-detail');
+    UI.renderLoading(box, 'Загрузка исследования…');
+    try {
+      activeResearch = await API.http.aiResearch(researchId, { signal: UI.signal() });
+      renderResearchDetail(activeResearch);
+      const url = new URL(location.href); url.searchParams.set('research', researchId); history.replaceState(null, '', url);
+    } catch (error) {
+      if (error.name !== 'AbortError') UI.renderError(box, error, () => selectResearch(researchId));
+    }
+  }
+
+  function researchFormHtml(research) {
+    const editing = !!research;
+    const policy = { ...(researchDefaults || {}), ...((research && research.evaluation_policy) || {}) };
+    const selectedLinks = new Set((research && research.linked_research_ids) || []);
+    const links = researches.filter(item => !research || item.research_id !== research.research_id);
+    const value = (key, fallback) => UI.esc(research && research[key] != null ? research[key] : (fallback || ''));
+    return `<form id="research-form" class="col gap-lg">
+      <div class="grid cols-2"><div class="field"><label for="research-form-type">Тип</label><select id="research-form-type"><option value="research" ${(research?.source_type || 'research') === 'research' ? 'selected' : ''}>Исследование</option><option value="collection" ${research?.source_type === 'collection' ? 'selected' : ''}>Сборник исследований</option><option value="personal_idea" ${research?.source_type === 'personal_idea' ? 'selected' : ''}>Личная идея</option></select></div><div class="field"><label for="research-form-status">Ручной статус</label><select id="research-form-status"><option value="">Автоматически</option><option value="active" ${research?.manual_status === 'active' ? 'selected' : ''}>В работе</option><option value="paused" ${research?.manual_status === 'paused' ? 'selected' : ''}>На паузе</option><option value="archived" ${research?.manual_status === 'archived' ? 'selected' : ''}>Архив</option></select></div></div>
+      <div class="field"><label for="research-form-title">Название *</label><input id="research-form-title" maxlength="120" value="${value('title')}" placeholder="Например: Возврат к VWAP после утреннего импульса"></div>
+      <div class="field"><label for="research-form-family">Название семьи стратегий</label><input id="research-form-family" maxlength="120" value="${value('family_name')}" placeholder="По умолчанию совпадает с названием исследования"><span class="row-sub">Одинаковое название объединяет несколько исследований в общее направление.</span></div>
+      <div class="field"><label for="research-form-file">Материал из файла</label><input type="file" id="research-form-file" accept=".txt,.md,.markdown,.csv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.rtf"><span class="row-sub">Текст, Markdown, CSV, JSON, YAML, XML, HTML, RTF. Содержимое будет приведено к единому AI-ready Markdown.</span></div>
+      <div class="field"><label for="research-form-summary">Краткий вывод</label><textarea id="research-form-summary" placeholder="Можно оставить пустым — система сформирует краткий вывод из материала.">${value('summary')}</textarea></div>
+      <div class="grid cols-2"><div class="field"><label for="research-form-objectives">Цели (по одной на строку)</label><textarea id="research-form-objectives" placeholder="Проверить устойчивость после комиссии">${UI.esc(((research && research.objectives) || []).join('\n'))}</textarea></div><div class="field"><label for="research-form-hypotheses">Гипотезы (по одной на строку)</label><textarea id="research-form-hypotheses" placeholder="Импульс выше 2σ возвращается к VWAP">${UI.esc(((research && research.hypotheses) || []).join('\n'))}</textarea></div></div>
+      <div class="field"><label for="research-form-content">Исходный материал ${editing ? '' : '*'}</label><textarea id="research-form-content" style="min-height:190px" placeholder="Вставьте статью, заметки, таблицу, описание закономерности или личную идею…">${value('source_content')}</textarea></div>
+      ${links.length ? `<div class="field"><label for="research-form-links">Связанные исследования / общий сборник</label><select id="research-form-links" multiple size="${Math.min(6, Math.max(3, links.length))}">${links.map(item => `<option value="${UI.esc(item.research_id)}" ${selectedLinks.has(item.research_id) ? 'selected' : ''}>${UI.esc(item.title)} · ${UI.esc(item.family_name || '')}</option>`).join('')}</select><span class="row-sub">Ctrl/Cmd + клик — выбрать несколько.</span></div>` : ''}
+      <div><h4 style="margin:0 0 8px">Когда считать исследование доказанным или неактуальным</h4><div class="grid cols-4">
+        <div class="field"><label for="research-p-min">Мин. стратегий</label><input type="number" id="research-p-min" min="1" max="50" value="${Number(policy.min_strategies_to_decide || 5)}"></div><div class="field"><label for="research-p-target">Цель</label><input type="number" id="research-p-target" min="1" max="50" value="${Number(policy.target_strategies || 8)}"></div><div class="field"><label for="research-p-max">Максимум</label><input type="number" id="research-p-max" min="1" max="50" value="${Number(policy.max_strategies || 10)}"></div><div class="field"><label for="research-p-variants">Вариантов / стратегию</label><input type="number" id="research-p-variants" min="1" max="50" value="${Number(policy.min_variants_per_strategy || 3)}"></div>
+        <div class="field"><label for="research-p-winners">Нужно прибыльных</label><input type="number" id="research-p-winners" min="1" max="20" value="${Number(policy.required_profitable_strategies || 1)}"></div><div class="field"><label for="research-p-pf">Мин. PF</label><input type="number" step="0.05" id="research-p-pf" min="0.1" max="10" value="${Number(policy.min_profit_factor || 1.15)}"></div><div class="field"><label for="research-p-trades">Мин. сделок</label><input type="number" id="research-p-trades" min="1" max="100000" value="${Number(policy.min_trades || 100)}"></div><div class="field"><label for="research-p-years">Мин. лет</label><input type="number" step="0.5" id="research-p-years" min="0" max="50" value="${Number(policy.min_years_tested || 2)}"></div>
+      </div></div>
+      <div class="field"><label for="research-form-conclusion">Вывод владельца</label><textarea id="research-form-conclusion" placeholder="Ручной вывод или причина паузы/архива">${value('owner_conclusion')}</textarea></div>
+      <div class="flex gap-sm"><button type="submit" class="btn primary" id="research-form-submit">${editing ? 'Сохранить исследование' : 'Добавить исследование'}</button><button type="button" class="btn ghost" data-close-drawer>Отмена</button><span class="sub" id="research-form-state"></span></div>
+    </form>`;
+  }
+
+  function openResearchForm(research) {
+    const editing = !!research;
+    UI.drawer(`<h3>${editing ? 'Редактировать исследование' : 'Добавить исследование'}</h3>`, researchFormHtml(research));
+    const file = UI.qs('#research-form-file');
+    file.onchange = () => {
+      const picked = file.files && file.files[0];
+      if (!picked) return;
+      if (picked.size > 700000) { UI.toast('Файл слишком большой: максимум 700 КБ'); file.value = ''; return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || '').replace(/\u0000/g, '');
+        if (!text.trim()) { UI.toast('Не удалось извлечь текст из файла'); return; }
+        UI.qs('#research-form-content').value = text;
+        if (!UI.qs('#research-form-title').value.trim()) UI.qs('#research-form-title').value = picked.name.replace(/\.[^.]+$/, '');
+        UI.qs('#research-form-state').textContent = `Загружен ${picked.name}`;
+      };
+      reader.onerror = () => UI.toast('Не удалось прочитать файл');
+      reader.readAsText(picked, 'utf-8');
+    };
+    UI.qs('#research-form').onsubmit = async event => {
+      event.preventDefault();
+      const title = UI.qs('#research-form-title').value.trim();
+      const content = UI.qs('#research-form-content').value.trim();
+      if (!title && !content) { UI.toast('Укажите название или исходный материал'); return; }
+      const links = UI.qs('#research-form-links');
+      const body = {
+        source_type: UI.qs('#research-form-type').value,
+        manual_status: UI.qs('#research-form-status').value,
+        title,
+        family_name: UI.qs('#research-form-family').value.trim(),
+        summary: UI.qs('#research-form-summary').value.trim(),
+        objectives: UI.qs('#research-form-objectives').value,
+        hypotheses: UI.qs('#research-form-hypotheses').value,
+        content,
+        source_content: content,
+        source_name: file.files && file.files[0] ? file.files[0].name : (research?.source_name || 'ручной ввод'),
+        source_format: file.files && file.files[0] ? (file.files[0].name.split('.').pop() || 'text') : (research?.source_format || 'plain_text'),
+        linked_research_ids: links ? Array.from(links.selectedOptions).map(option => option.value) : [],
+        owner_conclusion: UI.qs('#research-form-conclusion').value.trim(),
+        evaluation_policy: {
+          min_strategies_to_decide: Number(UI.qs('#research-p-min').value), target_strategies: Number(UI.qs('#research-p-target').value), max_strategies: Number(UI.qs('#research-p-max').value),
+          min_variants_per_strategy: Number(UI.qs('#research-p-variants').value), required_profitable_strategies: Number(UI.qs('#research-p-winners').value), min_profit_factor: Number(UI.qs('#research-p-pf').value),
+          min_trades: Number(UI.qs('#research-p-trades').value), min_years_tested: Number(UI.qs('#research-p-years').value),
+        },
+      };
+      const submit = UI.qs('#research-form-submit'); submit.disabled = true;
+      UI.qs('#research-form-state').textContent = editing ? 'Сохранение…' : 'Преобразование в AI-ready формат…';
+      try {
+        const response = editing ? await API.http.aiResearchUpdate(research.research_id, body) : await API.http.aiResearchCreate(body);
+        const saved = response.research;
+        UI.closeDrawer();
+        UI.toast(response.message || 'Исследование сохранено');
+        await loadResearches(saved && saved.research_id);
+      } catch (error) { UI.reportError(error); submit.disabled = false; UI.qs('#research-form-state').textContent = ''; }
+    };
+  }
+
+  async function loadResearches(selectId) {
+    try {
+      const payload = await API.http.aiResearches({ signal: UI.signal() });
+      researches = payload.researches || [];
+      researchDefaults = payload.default_policy || {};
+      UI.qs('#research-total').textContent = `${researches.length} исследований · накопительный контекст`;
+      if (selectId) activeResearchId = selectId;
+      if (!activeResearchId) {
+        const requested = new URLSearchParams(location.search).get('research');
+        activeResearchId = researches.some(item => item.research_id === requested) ? requested : (researches[0]?.research_id || '');
+      }
+      populateResearchSelect();
+      renderResearchList();
+      if (activeResearchId) await selectResearch(activeResearchId);
+      else UI.qs('#research-detail').innerHTML = '<div class="empty-state">Исследований пока нет. Нажмите «Добавить исследование», чтобы создать первое направление разработки.</div>';
+    } catch (error) {
+      if (error.name !== 'AbortError') UI.renderError(UI.qs('#research-list'), error, () => loadResearches());
+    }
+  }
 
   const kpiBox = UI.qs('#ai-kpis');
   UI.renderLoading(kpiBox, 'Загрузка AI Lab…');
@@ -178,6 +442,7 @@ UI.ready(async function () {
       ['Прогресс', `${strategyIndex}/${strategyTotal} · ${iterationIndex}/${iterationTotal}`, ''],
       ['Время / heartbeat', `${elapsed == null ? '—' : elapsed + ' мин'}${staleSec == null ? '' : ' · ' + staleSec + ' сек назад'}`, staleSec != null && staleSec > 90 ? 'warn' : ''],
     ];
+    if (runStatus.research_id) rows.splice(2, 0, ['Исследование', runStatus.research_title || runStatus.research_id, 'info']);
     const staged = runStatus && runStatus.staged_pipeline || {};
     if (staged.state) rows.push([
       'Следующая стратегия',
@@ -197,6 +462,7 @@ UI.ready(async function () {
     if (!(lmHealth && lmHealth.run_allowed)) { UI.toast('LM Studio не готова — сначала запустите окружение'); return; }
     const iterVal = UI.qs('#ai-iter').value;
     const body = {
+      research_id: UI.qs('#ai-research').value || undefined,
       target_root: UI.qs('#ai-root').value || undefined,
       capital: parseFloat(UI.qs('#ai-capital').value) || undefined,
       goal: UI.qs('#ai-goal').value.trim() || undefined,
@@ -204,7 +470,8 @@ UI.ready(async function () {
       iterations_per_strategy: iterVal ? parseInt(iterVal, 10) : undefined,
       iterations_unlimited: iterVal === '',
     };
-    if (!confirm(`Запустить цикл AI Lab? Инструмент: ${body.target_root || 'авто'}, стратегий: ${body.strategy_count}.`)) return;
+    const selectedResearch = researches.find(item => item.research_id === body.research_id);
+    if (!confirm(`Запустить цикл AI Lab?${selectedResearch ? ` Исследование: «${selectedResearch.title}».` : ''} Инструмент: ${body.target_root || 'авто'}, стратегий: ${body.strategy_count}.`)) return;
     UI.qs('#ai-launch').disabled = true;
     try { await API.http.aiRun(body); UI.toast('Цикл запущен'); }
     catch (e) { if (e.status === 409) UI.toast('Запуск заблокирован: ' + (e.message || 'LM Studio / занятость')); else UI.reportError(e); }
@@ -455,13 +722,17 @@ UI.ready(async function () {
   // API.http.aiOrchestratorMessage inside UI.openOrchestrator.
   const orchestratorOpen = UI.qs('#orchestrator-open');
   if (orchestratorOpen) orchestratorOpen.onclick = () => { if (UI.openOrchestrator) UI.openOrchestrator(); };
+  UI.qs('#research-add').onclick = () => openResearchForm(null);
+  UI.qs('#research-search').oninput = renderResearchList;
+  UI.qs('#research-status-filter').onchange = renderResearchList;
+  UI.qs('#ai-research').onchange = updateResearchRunHint;
   UI.pageActions(`<button class="btn sm" id="ai-research-scan">${UI.icon('search')}Сканировать исследования</button><button class="btn sm" id="ai-unload">${UI.icon('eraser')}Освободить память</button><button class="btn sm" id="ai-sweep">${UI.icon('refresh')}Очистить зависшие</button>`);
   UI.qs('#ai-research-scan').onclick = () => { if (!confirm('Просканировать пользовательские исследования и обновить входной контекст AI Lab?')) return; UI.action('Сканирование исследований', () => API.http.aiUserResearchScan({}), 'Исследования просканированы').then(loadResearchAnalytics).catch(() => {}); };
   UI.qs('#ai-unload').onclick = () => { if (!confirm('Выгрузить модели LM Studio и остановить локальный model server?')) return; UI.action('Выгрузка моделей', () => API.http.aiBootstrapUnload({ stop_server: true }), 'Модели выгружены').then(refreshLm).catch(() => {}); };
   UI.qs('#ai-sweep').onclick = () => { if (!confirm('Пометить эксперименты без heartbeat более 6 часов как cancelled?')) return; UI.action('Проверка зависших экспериментов', () => API.http.aiSweepStale({ stale_after_hours: 6 }), 'Проверка завершена').then(() => { loadSummary(); loadExperiments(); }).catch(() => {}); };
 
   if (!(await loadSummary())) return;
-  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearchAnalytics(), loadModelPerformance(), loadAgentRuntime(), loadChief()]);
+  await Promise.all([refreshLm(), refreshRun(), loadExperiments(), loadErrors(), loadResearches(), loadResearchAnalytics(), loadModelPerformance(), loadAgentRuntime(), loadChief()]);
   if (!activityRows.length) renderRoleTimeline([]);
   UI.poll(refreshRun, 5000);
   UI.poll(async () => { await loadSummary(); }, 20000);

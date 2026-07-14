@@ -202,8 +202,17 @@ def t05():
 def main() -> int:
     tests = [t01, t02, t03, t04, t05]
     print(f"Running {len(tests)} server/tz regression tests:")
-    for t in tests:
-        t()
+    # These tests exercise downstream 500/409 handling on isolated ephemeral
+    # servers. Production now requires Telegram authentication, so disable the
+    # outer auth gate only inside this legacy standalone harness; dedicated
+    # account-auth tests continue to verify the real 401/CSRF behavior.
+    saved_auth_required = server_mod.account_auth.auth_required
+    server_mod.account_auth.auth_required = lambda: False  # type: ignore[assignment]
+    try:
+        for t in tests:
+            t()
+    finally:
+        server_mod.account_auth.auth_required = saved_auth_required  # type: ignore[assignment]
     print()
     print(f"PASSED: {len(PASSED)}   FAILED: {len(FAILED)}")
     if FAILED:

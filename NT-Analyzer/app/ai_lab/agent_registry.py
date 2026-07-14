@@ -902,6 +902,7 @@ def record_usage(row: Dict[str, Any]) -> None:
             "application_cache_hit", "application_cache_saved_input_tokens", "application_cache_saved_output_tokens",
             "total_tokens", "cost_usd", "cost_known", "cost_estimated", "pricing_basis",
             "request_role", "purpose", "status", "elapsed_sec", "error",
+            "user_id", "user_name", "workspace_id", "conversation_id", "request_source",
         )
     }
     append_jsonl(usage_path(), safe)
@@ -943,6 +944,8 @@ def summary() -> Dict[str, Any]:
     provider_totals: Dict[str, Dict[str, Any]] = {}
     model_totals: Dict[str, Dict[str, Any]] = {}
     account_totals: Dict[str, Dict[str, Any]] = {}
+    user_totals: Dict[str, Dict[str, Any]] = {}
+    workspace_totals: Dict[str, Dict[str, Any]] = {}
     agents_by_id = {str(agent.get("id") or ""): agent for agent in agents}
     for row in usage_rows(limit=100_000):
         cost = float(row.get("cost_usd") or 0)
@@ -954,8 +957,12 @@ def summary() -> Dict[str, Any]:
             (provider_totals, str(row.get("provider") or "unknown")),
             (model_totals, str(row.get("model") or "unknown")),
             (account_totals, str(row.get("account_name") or agents_by_id.get(str(row.get("agent_id") or ""), {}).get("account_name") or "unknown")),
+            (user_totals, str(row.get("user_id") or "system")),
+            (workspace_totals, str(row.get("workspace_id") or "system")),
         ):
             item = bucket.setdefault(key, {"id": key, "requests": 0, "tokens": 0, "input_tokens": 0, "cached_input_tokens": 0, "application_cache_saved_input_tokens": 0, "cost_usd": 0.0, "unpriced_requests": 0})
+            if bucket is user_totals and row.get("user_name"):
+                item["name"] = str(row.get("user_name"))[:120]
             item["requests"] += 1
             item["tokens"] += tokens
             item["input_tokens"] += input_tokens
@@ -1007,5 +1014,7 @@ def summary() -> Dict[str, Any]:
         "by_provider": sorted(provider_totals.values(), key=lambda row: row["cost_usd"], reverse=True),
         "by_model": sorted(model_totals.values(), key=lambda row: row["cost_usd"], reverse=True),
         "by_account": sorted(account_totals.values(), key=lambda row: row["cost_usd"], reverse=True),
+        "by_user": sorted(user_totals.values(), key=lambda row: row["cost_usd"], reverse=True),
+        "by_workspace": sorted(workspace_totals.values(), key=lambda row: row["cost_usd"], reverse=True),
         "security_note": "Ключи зашифрованы Windows DPAPI для текущего пользователя и никогда не возвращаются API.",
     }

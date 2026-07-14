@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app import (account_auth, market_data, secure_store, server as server_mod,
+from app import (account_auth, market_data, runtime, secure_store, server as server_mod,
                  telegram_remote, telegram_service, workspaces)
 
 
@@ -60,6 +60,90 @@ def test_runtime_request_and_snapshot(tmp_path: Path, monkeypatch) -> None:
     series = market_data.read_runtime_series("MNQ 09-26", "5m", 10)
     assert series and series["live"] is True
     assert series["bars"][0]["c"] == 100
+
+
+def test_chart_queues_follow_runtime_workspace_override(tmp_path: Path) -> None:
+    tenant_a = tmp_path / "tenant-a" / "runtime"
+    tenant_b = tmp_path / "tenant-b" / "runtime"
+
+    with runtime.runtime_dir_override(tenant_a):
+        market_data.enqueue_chart_command({"type": "open", "instrument": "MNQ"})
+        assert market_data.list_chart_commands()["total"] == 1
+    with runtime.runtime_dir_override(tenant_b):
+        assert market_data.list_chart_commands()["commands"] == []
+        market_data.enqueue_chart_command({"type": "open", "instrument": "MGC"})
+    with runtime.runtime_dir_override(tenant_a):
+        commands = market_data.list_chart_commands()["commands"]
+        assert [row["instrument"] for row in commands] == ["MNQ"]
+    with runtime.runtime_dir_override(tenant_b):
+        commands = market_data.list_chart_commands()["commands"]
+        assert [row["instrument"] for row in commands] == ["MGC"]
+
+
+def test_headless_chart_snapshot_renders_png_without_desktop(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {"ready": True})
+    _write_snapshot(tmp_path, close=100, high=101, low=99)
+
+    saved = market_data.render_chart_snapshot("MNQ", "5m", meta={"conversation_id": "C-HEADLESS"})
+    found = market_data.read_snapshot(saved["file"])
+
+    assert saved["instrument"] == "MNQ 09-26"
+    assert saved["timeframe"] == "5m"
+    assert saved["bars_rendered"] == 1
+    assert found and found[1] == "image/png"
+    assert found[0].startswith(b"\x89PNG\r\n\x1a\n")
+    assert saved["url"].startswith("/api/ops/runtime/snapshots/")
+
+
+def test_headless_chart_snapshot_http_endpoint_returns_png(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *a, **k: {"ready": True})
+    _write_snapshot(tmp_path, close=100, high=101, low=99)
+    server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    try:
+        with urllib.request.urlopen(base + "/api/chart/snapshot?root=MNQ&timeframe=5m", timeout=5) as response:
+            blob = response.read()
+            assert response.status == 200
+            assert response.headers.get_content_type() == "image/png"
+            assert blob.startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chart_runtime_allows_closed_market_bars_when_bridge_is_alive(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    monkeypatch.setattr("app.jobqueue.ninjatrader_running", lambda: True)
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True, "age_sec": 1})
+    _write_snapshot(tmp_path, close=100, high=101, low=99)
+
+    status = market_data.chart_runtime_status("MNQ", "5m")
+
+    assert status["ready"] is True
+    assert status["data_available"] is True
+    assert status["stale_data"] is True
+
+
+def test_ensure_chart_runtime_subscribes_before_reporting_unavailable(monkeypatch) -> None:
+    states = iter([
+        {"ready": False, "nt_running": True, "heartbeat_fresh": True, "reason": "no bars"},
+        {"ready": True, "nt_running": True, "heartbeat_fresh": True, "instrument": "MCL 08-26"},
+    ])
+    requested = []
+    monkeypatch.setattr(market_data, "resolve_chart_instrument", lambda _value: "MCL 08-26")
+    monkeypatch.setattr(market_data, "chart_runtime_status", lambda *_a, **_k: next(states))
+    monkeypatch.setattr(market_data, "register_request", lambda *args, **kwargs: requested.append((args, kwargs)))
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    status = market_data.ensure_chart_runtime("MCL", "5m", wait_seconds=1)
+
+    assert status["ready"] is True
+    assert status["subscription_requested"] is True
+    assert requested[0][0][:2] == ("MCL 08-26", "5m")
 
 
 def test_register_requests_does_not_downgrade_existing_subscription(tmp_path: Path, monkeypatch) -> None:

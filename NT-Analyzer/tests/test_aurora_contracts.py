@@ -273,10 +273,15 @@ def test_aurora_trading_exposes_reconnect_modeling_control():
     assert "#ctrl-reconnect" in trading
 
 
-def test_orchestrator_chat_shows_model_beside_message_time():
+def test_vitek_chat_hides_internal_model_beside_message_time():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     assert "orchFmtTime(row.timestamp_utc)" in ui
-    assert "!isUser && row.model ? esc(row.model)" in ui
+    assert "!isUser && row.model ? esc(row.model)" not in ui
+    assert "StratForge Orchestrator · Витёк" in ui
+    assert '<span class="orch-head-name">StratForge Orchestrator</span>' in ui
+    assert "Витёк · ваша правая рука" in ui
+    assert "Ваши чаты и данные сохранены" in ui
+    assert "ORCH.conversations = []" not in ui
 
 
 def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
@@ -284,7 +289,7 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
     # AI Lab keeps only a compact status card + a launcher for the global chat.
-    assert "StratForge Orchestrator" in html
+    assert "Витёк · правая рука руководителя" in html
     assert 'id="orchestrator-open"' in html
     assert 'id="chief-hours"' not in html
     assert 'id="chief-task"' not in html
@@ -323,12 +328,14 @@ def test_named_domain_agents_and_unified_finance_page_contract():
     assert "messagesSignature" in ui and "ta.dataset.dirty" in ui
     assert "orch-task-state" in ui and "orchToggleConversationState" in ui
     assert "Текущая тема ещё не завершена" in ui
-    # Agent rail sidebar: management tiers in hierarchy order, then named specialists.
-    assert "data-orch-role=" in ui and "ORCH_ROLES" in ui
-    assert "['nikita', 'tolik', 'marina', 'ivan']" in ui
-    assert "['manager', 'deputy', 'secretary', 'auto']" in ui
-    for role_id in ("nikita:", "tolik:", "marina:", "ivan:", "secretary:", "deputy:", "manager:"):
-        assert role_id in ui
+    # Vitek chooses the model internally; the owner never sees a model menu.
+    assert "data-orch-mode=" not in ui and "ORCH_MODES" in ui
+    assert 'id="orch-model-picker" hidden' in ui
+    assert "orch-model-trigger" not in ui and "orch-model-item" not in ui
+    assert "fast:" not in ui and "standard:" not in ui and "max:" not in ui
+    assert "agent: 'secretary'" not in ui and "agent: 'manager'" not in ui
+    # The old role rail is fully removed from the menu.
+    assert "data-orch-role" not in ui and "ORCH_ROLES" not in ui and "orch-agent-rail" not in ui
     assert "accounting.html" not in ui and "label: 'Финансы'" in ui
 
 
@@ -524,3 +531,20 @@ def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
     assert "API.http.governanceHistory" in js
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
+def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    assert "!drawing.alertId || alertIds.has(drawing.alertId)" in js
+    assert "if (changed || removed)" in js
+
+
+def test_command_language_covers_every_desktop_instrument():
+    import re
+    from app.ai_lab import command_language
+
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    start = js.index("const DESKTOP_INSTRUMENTS")
+    block = js[start:js.index("];", start) + 2]
+    desktop_roots = set(re.findall(r"\['([A-Z0-9]+)'", block))
+    assert desktop_roots <= set(command_language.INSTRUMENT_ROOTS)

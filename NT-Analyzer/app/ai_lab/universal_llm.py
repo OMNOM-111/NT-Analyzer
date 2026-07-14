@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import contextvars
 import re
 import threading
 import time
@@ -21,6 +22,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import agent_registry, llm_timeouts, response_cache
@@ -28,6 +30,28 @@ from . import agent_registry, llm_timeouts, response_cache
 
 _BUDGET_LOCK = threading.RLock()
 _RESERVATIONS: Dict[str, Dict[str, Any]] = {}
+_USAGE_CONTEXT: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
+    "stratforge_llm_usage_context", default={}
+)
+
+
+@contextmanager
+def usage_scope(context: Optional[Dict[str, Any]] = None):
+    """Attribute nested model calls to the current user and workspace."""
+    clean = {
+        key: (context or {}).get(key)
+        for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source")
+        if (context or {}).get(key) not in (None, "")
+    }
+    token = _USAGE_CONTEXT.set(clean)
+    try:
+        yield
+    finally:
+        _USAGE_CONTEXT.reset(token)
+
+
+def _record_usage(row: Dict[str, Any]) -> None:
+    agent_registry.record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
 
 
 class UniversalLLMError(RuntimeError):
@@ -661,7 +685,7 @@ def invoke_agent(
                 "pricing_basis": "Process-local exact response cache",
                 "status": "success", "elapsed_sec": round(time.time() - started, 3), "error": None,
             }
-            agent_registry.record_usage(row)
+            _record_usage(row)
             return {
                 "ok": True, "status": "success", "request_id": request_id,
                 "agent_id": agent_id, "agent_name": agent["name"],
@@ -749,7 +773,7 @@ def invoke_agent(
             "status": "success",
             "elapsed_sec": round(time.time() - started, 3), "error": None,
         }
-        agent_registry.record_usage(row)
+        _record_usage(row)
         if cache_key:
             response_cache.set(cache_key, {
                 "response": response_text, "actual_model": actual_model,
@@ -801,7 +825,7 @@ def invoke_agent(
             "pricing_basis": agent.get("pricing_basis"), "status": "error",
             "elapsed_sec": round(time.time() - started, 3), "error": error,
         }
-        agent_registry.record_usage(row)
+        _record_usage(row)
         raise UniversalLLMError(error) from None
     finally:
         _release(reservation_id)

@@ -28,7 +28,9 @@ ROLE_PROVIDER_ORDER: Dict[str, List[str]] = {
     "optimizer": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
     "overfit_detector": ["azure_foundry", "openrouter", "gemini", "zai", "github_models"],
     "final_judge": ["deepseek", "azure_foundry", "openrouter", "gemini", "zai", "github_models"],
-    "telegram_assistant": ["gemini", "zai", "openrouter", "azure_foundry", "github_models"],
+    # A dedicated compact instruction model is configured on GitHub Models;
+    # prefer it for low-token intent repair before borrowing unrelated roles.
+    "telegram_assistant": ["github_models", "gemini", "zai", "openrouter", "azure_foundry"],
     "embedding": ["azure_foundry", "openai", "gemini", "github_models"],
     "general": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
 }

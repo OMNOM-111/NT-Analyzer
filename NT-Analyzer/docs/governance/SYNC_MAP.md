@@ -1,6 +1,6 @@
 # SYNC_MAP
 
-Дата актуализации: 2026-07-10
+Дата актуализации: 2026-07-14
 
 Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.
 
@@ -170,4 +170,16 @@
 
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/chief_agent.py, app/runtime.py, bridge/src/Runtime/RuntimeCommandProcessor.cs
+- Нужно проверить вручную: —
+
+## GOV-AI-019 — Оркестратор не вправе отказать в выполнимой задаче
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/intent_classifier.py, app/ai_lab/capability_map.py, app/ai_lab/chief_agent.py
+- Нужно проверить вручную: —
+
+## GOV-AI-020 — Команды понимаются по смыслу, а подтверждение следует факту
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/command_language.py, app/ai_lab/intent_classifier.py, app/ai_lab/capability_map.py, app/telegram_service.py
 - Нужно проверить вручную: —

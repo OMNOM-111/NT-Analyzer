@@ -531,6 +531,41 @@
         "bridge/src/Runtime/RuntimeCommandProcessor.cs"
       ],
       "review_targets": []
+    },
+    {
+      "id": "GOV-AI-019",
+      "key": "orchestrator_no_false_refusal",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Оркестратор не вправе отказать в выполнимой задаче",
+      "summary": "До ответа «не могу» Orchestrator обязан проверить детерминированный intent и все штатные обработчики capability_map. Если действие доступно внутри приложения, оно передаётся профильному исполнителю независимо от выбранной версии модели и без требования назвать персону. Отказ допустим только вне карты возможностей либо при фактической ошибке инфраструктуры; причина и доступный следующий шаг указываются явно.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [],
+      "dynamic_targets": [
+        "app/ai_lab/intent_classifier.py",
+        "app/ai_lab/capability_map.py",
+        "app/ai_lab/chief_agent.py"
+      ],
+      "review_targets": []
+    },
+    {
+      "id": "GOV-AI-020",
+      "key": "orchestrator_semantic_command_resolution",
+      "group": "local_ai",
+      "audience": "local_ai",
+      "title": "Команды понимаются по смыслу, а подтверждение следует факту",
+      "summary": "Перед маршрутизацией Orchestrator нормализует речь, раскладку и однозначные тикеры; уверенные команды исполняются детерминированно, неоднозначные короткие команды проверяет быстрая модель только в пределах capability allowlist. Контекст не подменяет явно введённый инструмент, а Telegram не теряет ответ и не подтверждает невыполненное действие.",
+      "kind": "boolean",
+      "value": true,
+      "source_refs": [],
+      "dynamic_targets": [
+        "app/ai_lab/command_language.py",
+        "app/ai_lab/intent_classifier.py",
+        "app/ai_lab/capability_map.py",
+        "app/telegram_service.py"
+      ],
+      "review_targets": []
     }
   ]
 }

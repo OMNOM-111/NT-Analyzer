@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from app import local_secrets, telegram_service
+from app import durable, local_secrets, telegram_service
+from app.ai_lab import chief_agent
 
 
 def _isolate(monkeypatch, tmp_path) -> None:
@@ -16,6 +17,7 @@ def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv(telegram_service.TOKEN_ENV, raising=False)
     monkeypatch.delenv(telegram_service.CHAT_ENV, raising=False)
     monkeypatch.delenv(telegram_service.GROUP_ENV, raising=False)
+    monkeypatch.delenv(telegram_service.WEBHOOK_SECRET_ENV, raising=False)
     with telegram_service._PAIR_LOCK:
         telegram_service._PAIRING.clear()
 
@@ -127,6 +129,17 @@ def test_aurora_menu_exposes_only_telegram_label() -> None:
     assert "telegramSaveToken" in api and "/api/telegram/test" in api
 
 
+def test_send_test_validates_bot_and_delivers(monkeypatch) -> None:
+    sent = []
+    monkeypatch.setattr(telegram_service, "_bot_identity", lambda token=None: {"username": "StratForgeAI_bot"})
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda text, **kwargs: sent.append(text))
+
+    result = telegram_service.send_test()
+
+    assert result == {"ok": True, "bot_username": "StratForgeAI_bot"}
+    assert sent and "Тест StratForge AI" in sent[0]
+
+
 def test_paired_chat_routes_free_text_to_orchestrator(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
@@ -146,6 +159,27 @@ def test_paired_chat_routes_free_text_to_orchestrator(monkeypatch, tmp_path) -> 
     assert state["chief_update_id"] == 10
     assert state["last_command_update_id"] == 10
     assert state["last_command_handler"] == "chief_private"
+
+
+def test_first_pending_batch_is_processed_instead_of_discarded(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    state = {}
+    monkeypatch.setattr(telegram_service, "_api_call", lambda *_a, **_k: [{
+        "update_id": 10,
+        "message": {"text": "покажи график 6С", "from": {"is_bot": False},
+                    "chat": {"id": 987654, "type": "private"}},
+    }])
+    received = []
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text: received.append(text))
+
+    telegram_service._poll_chief_commands(state)
+
+    assert received == ["покажи график 6С"]
+    assert state["chief_commands_initialized"] is True
+    assert state["chief_update_id"] == 10
+    assert state["last_command_transport"] == "poll"
 
 
 def test_command_dispatcher_persists_offset_and_audit_per_update(monkeypatch, tmp_path) -> None:
@@ -179,6 +213,61 @@ def test_command_dispatcher_persists_offset_and_audit_per_update(monkeypatch, tm
     assert [row["update_id"] for row in rows] == [10, 11]
     assert all(row["consumed"] for row in rows)
     assert telegram_service.status()["telegram_update_offset"] == 11
+
+
+def test_notifier_save_preserves_concurrent_webhook_offset(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    telegram_service._write_json(telegram_service._state_path(), {
+        "initialized": True, "chief_update_id": 77,
+        "chief_commands_initialized": True, "last_command_handler": "chief_group",
+    })
+    stale_notifier = {
+        "initialized": True, "monitoring": True,
+        "webhook_error": "stale tunnel error",
+    }
+
+    telegram_service._save_notifier_state(stale_notifier)
+
+    saved = telegram_service._load_state()
+    assert saved["chief_update_id"] == 77
+    assert saved["chief_commands_initialized"] is True
+    assert saved["last_command_handler"] == "chief_group"
+    assert "webhook_error" not in saved
+
+
+def test_failed_command_reply_is_queued_and_retried(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    attempts = []
+
+    def failing_send(text, **kwargs):
+        attempts.append((text, kwargs))
+        raise telegram_service.TelegramServiceError("temporary send failure")
+
+    monkeypatch.setattr(telegram_service, "_send_raw", failing_send)
+    assert telegram_service._chief_command_reply("готово", thread_id=42) is False
+    queued = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert len(queued) == 1 and queued[0]["thread_id"] == 42
+
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda text, **kwargs: attempts.append((text, kwargs)) or {})
+    flushed = telegram_service._flush_reply_outbox()
+    assert flushed == {"sent": 1, "pending": 0}
+    assert telegram_service._read_json(telegram_service._reply_outbox_path())["items"] == []
+
+
+def test_webhook_duplicate_update_is_not_executed_twice(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.WEBHOOK_SECRET_ENV, "webhook-secret")
+    telegram_service._write_json(telegram_service._state_path(), {
+        "chief_update_id": 101, "chief_commands_initialized": True,
+    })
+    calls = []
+    monkeypatch.setattr(telegram_service, "_dispatch_command_update", lambda *args, **kwargs: calls.append(1))
+
+    result = telegram_service.process_webhook_update({"update_id": 101}, "webhook-secret")
+
+    assert result["handler"] == "duplicate_update"
+    assert result["consumed"] is True
+    assert calls == []
 
 
 def test_command_dispatcher_retries_then_drops_poison_update(monkeypatch, tmp_path) -> None:
@@ -315,6 +404,142 @@ def test_owner_app_message_mirror_respects_master_switch(monkeypatch, tmp_path) 
     assert sent == []
 
 
+def test_incoming_topic_message_uses_scoped_app_conversation(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    durable.record_chat_conversation(tmp_path, {
+        "scope_id": "", "conversation_id": "C-SYNC", "title": "legacy",
+        "updated_at_utc": "2026-07-11T01:00:00Z",
+    })
+    durable.record_chat_conversation(tmp_path, {
+        "scope_id": "u42__ws_owner", "conversation_id": "C-SYNC",
+        "user_id": "42", "workspace_id": "ws_owner", "membership_role": "owner",
+        "title": "scoped", "updated_at_utc": "2026-07-11T02:00:00Z",
+    })
+    captured = {}
+    monkeypatch.setattr(chief_agent, "migrate_legacy_conversation_to_scope",
+                        lambda cid, scope: captured.update({"migrated": (cid, scope)}) or {"migrated": 0})
+    monkeypatch.setattr(chief_agent, "handle_message", lambda text, **kwargs: captured.update({
+        "text": text, **kwargs,
+    }) or {"reply": "готово"})
+    replies = []
+    monkeypatch.setattr(telegram_service, "_chief_command_reply",
+                        lambda text, **kwargs: replies.append((text, kwargs)))
+
+    telegram_service._handle_chief_command(
+        "ответ из Telegram", conversation_id="C-SYNC", thread_id=77,
+    )
+
+    assert captured["conversation_id"] == "C-SYNC"
+    assert captured["scope"]["user_id"] == 42
+    assert captured["scope"]["workspace_id"] == "ws_owner"
+    assert captured["scope"]["is_owner"] is True
+    assert captured["migrated"][0] == "C-SYNC"
+    assert replies and replies[0][1]["thread_id"] == 77
+
+
+def test_getupdates_process_lease_rejects_second_local_owner(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(telegram_service, "_updates_lease_path", lambda: tmp_path / "updates.lock")
+    original = telegram_service._UPDATES_LEASE
+    telegram_service._UPDATES_LEASE = None
+    first = None
+    try:
+        assert telegram_service._acquire_updates_lease() is True
+        first = telegram_service._UPDATES_LEASE
+        telegram_service._UPDATES_LEASE = None
+        assert telegram_service._acquire_updates_lease() is False
+    finally:
+        if telegram_service._UPDATES_LEASE is not None and telegram_service._UPDATES_LEASE is not first:
+            telegram_service._UPDATES_LEASE.close()
+        if first is not None:
+            first.close()
+        telegram_service._UPDATES_LEASE = original
+
+
+def test_webhook_configuration_uses_secret_and_public_tunnel(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456")
+    monkeypatch.setattr(telegram_service.telegram_remote, "admin_status", lambda: {
+        "remote_enabled": True, "public_url": "https://app.example.test",
+    })
+    monkeypatch.setattr(telegram_service, "_webhook_reachable", lambda _url: True)
+    saved = {}
+    monkeypatch.setattr(local_secrets, "update", lambda values: saved.update(values) or True)
+    calls = []
+    monkeypatch.setattr(telegram_service, "_api_call",
+                        lambda method, payload=None, **kwargs: calls.append((method, payload)) or True)
+
+    out = telegram_service.ensure_webhook()
+
+    assert out == {
+        "ok": True, "configured": True,
+        "url": "https://app.example.test/api/telegram/webhook",
+    }
+    assert saved[telegram_service.WEBHOOK_SECRET_ENV]
+    method, payload = calls[0]
+    assert method == "setWebhook"
+    assert payload["secret_token"] == saved[telegram_service.WEBHOOK_SECRET_ENV]
+    assert "secret" not in out
+
+
+def test_dead_webhook_is_removed_without_dropping_pending_updates(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setattr(telegram_service.telegram_remote, "admin_status", lambda: {
+        "remote_enabled": True, "public_url": "https://dead.example.test",
+    })
+    monkeypatch.setattr(telegram_service, "_webhook_reachable", lambda _url: False)
+    calls = []
+    monkeypatch.setattr(telegram_service, "_api_call",
+                        lambda method, payload=None, **kwargs: calls.append((method, payload)) or True)
+
+    out = telegram_service.ensure_webhook()
+
+    assert out["reason"] == "public_tunnel_unreachable"
+    assert calls == [("deleteWebhook", {"drop_pending_updates": False})]
+    state = telegram_service._load_state()
+    assert state["webhook_configured"] is False
+    assert "long polling" in state["webhook_error"]
+
+
+def test_webhook_probe_self_heals_configured_tunnel(monkeypatch) -> None:
+    from app import tunnel_manager
+
+    monkeypatch.setattr(tunnel_manager, "status", lambda **kwargs: {
+        "public": {"reachable": False}, "remote_enabled": True,
+        "cloudflared": {"config_exists": True},
+    })
+    starts = []
+    monkeypatch.setattr(tunnel_manager, "start", lambda **kwargs: starts.append(kwargs) or {
+        "ready": True, "public": {"reachable": True},
+    })
+
+    assert telegram_service._webhook_reachable("https://app.example.test") is True
+    assert starts == [{"port": 8765, "wait_sec": 6}]
+
+
+def test_webhook_rejects_bad_secret_and_dispatches_valid_update(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.WEBHOOK_SECRET_ENV, "expected-secret")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "42")
+    monkeypatch.setattr(telegram_service, "_dispatch_command_update", lambda update, **kwargs: {
+        "update_id": update["update_id"], "handler": "chief_private", "consumed": True, "error": "",
+    })
+    update = {"update_id": 9001, "message": {"text": "привет"}}
+
+    try:
+        telegram_service.process_webhook_update(update, "wrong")
+    except telegram_service.TelegramServiceError as exc:
+        assert "подпись" in str(exc)
+    else:
+        raise AssertionError("bad webhook secret must be rejected")
+
+    result = telegram_service.process_webhook_update(update, "expected-secret")
+    assert result["handler"] == "chief_private"
+    state = telegram_service._load_state()
+    assert state["chief_update_id"] == 9001
+    assert state["last_command_transport"] == "webhook"
+
+
 def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
@@ -328,6 +553,40 @@ def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None
     assert first is True
     assert second is False
     assert len(sent) == 1
+
+
+def test_send_document_uses_telegram_document_endpoint(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    report = tmp_path / "report.txt"
+    report.write_text("verified report", encoding="utf-8")
+    captured = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = request.data
+        return Response()
+
+    monkeypatch.setattr(telegram_service.urllib.request, "urlopen", fake_urlopen)
+
+    assert telegram_service.send_document(report, "Отчёт") is True
+    assert captured["url"].endswith("/sendDocument")
+    assert b'name="document"' in captured["body"]
+    assert b"verified report" in captured["body"]
 
 
 def test_interactive_reply_with_dedupe_key_is_always_sent(monkeypatch, tmp_path) -> None:
@@ -377,6 +636,37 @@ def test_group_topic_message_routes_to_bound_conversation(monkeypatch, tmp_path)
     assert captured["conversation_id"] == "C-XYZ"
     assert captured["thread_id"] == 55
     assert state["chief_update_id"] == 100
+
+
+def test_telegram_vitek_message_uses_orchestrator_once(monkeypatch, tmp_path) -> None:
+    from app import vitek
+
+    _isolate(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(chief_agent, "handle_message", lambda text, **kwargs: calls.append((text, kwargs)) or {
+        "reply": "Витёк: активных задач нет; открытых ситуаций: 2.",
+        "domain_agent": "vitek",
+        "gateway": {"ingress": "stratforge_orchestrator", "target": "vitek", "single_response": True},
+    })
+    # Telegram must never call Vitek around the gateway and create a second
+    # reply. The only Vitek call belongs inside chief_agent.handle_message.
+    monkeypatch.setattr(vitek, "handle_text_command", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Telegram bypassed the Orchestrator gateway")
+    ))
+    replies = []
+    monkeypatch.setattr(telegram_service, "_chief_command_reply", lambda text, **kwargs: replies.append(text) or True)
+
+    result = telegram_service._handle_chief_command(
+        "Витя перечисли список нерешённых задач", conversation_id="default", thread_id=88,
+    )
+
+    assert result["ok"] is True
+    assert len(calls) == 1
+    assert calls[0][0].startswith("Витя")
+    assert calls[0][1]["source"] == "telegram"
+    assert calls[0][1]["mirror_to_telegram"] is False
+    assert len(replies) == 1
+    assert "активных задач нет" in replies[0]
 
 
 def test_configure_group_requires_forum_topics(monkeypatch, tmp_path) -> None:
