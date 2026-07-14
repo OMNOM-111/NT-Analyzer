@@ -49,6 +49,8 @@
 /NT-Analyzer/data/integrations/telegram.settings.json
 /NT-Analyzer/data/integrations/telegram.state.json
 /NT-Analyzer/data/integrations/telegram.topics.json
+/NT-Analyzer/data/integrations/telegram.reply-outbox.json
+/NT-Analyzer/data/integrations/telegram.update-inbox.json
 /NT-Analyzer/data/integrations/telegram.remote-access.json
 /NT-Analyzer/data/integrations/*.lock
 /NT-Analyzer/data/integrations/cloudflared-tunnel.state.json

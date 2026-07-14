@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime, timezone
 
 from app import durable, local_secrets, telegram_service
@@ -20,6 +22,8 @@ def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv(telegram_service.WEBHOOK_SECRET_ENV, raising=False)
     with telegram_service._PAIR_LOCK:
         telegram_service._PAIRING.clear()
+    with telegram_service._WEBHOOK_RUN_LOCK:
+        telegram_service._WEBHOOK_ACTIVE.clear()
 
 
 def test_token_is_validated_and_never_returned(monkeypatch, tmp_path) -> None:
@@ -86,7 +90,7 @@ def test_settings_are_persisted_without_secrets(monkeypatch, tmp_path) -> None:
     assert "987654" not in json.dumps(result)
 
 
-def test_connection_transition_produces_urgent_notification(monkeypatch, tmp_path) -> None:
+def test_connection_transition_does_not_duplicate_vitek_notification(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
     monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
@@ -116,7 +120,7 @@ def test_connection_transition_produces_urgent_notification(monkeypatch, tmp_pat
     )
 
     assert result["connected"] is False
-    assert any(item[0] == "nt_connection" and "Потеряна связь" in item[1] for item in notifications)
+    assert not any(item[0] == "nt_connection" for item in notifications)
 
 
 def test_aurora_menu_exposes_only_telegram_label() -> None:
@@ -151,14 +155,20 @@ def test_paired_chat_routes_free_text_to_orchestrator(monkeypatch, tmp_path) -> 
                     "chat": {"id": 987654, "type": "private"}},
     }])
     received = []
-    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text: received.append(text))
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text, **kwargs: received.append(text))
 
     telegram_service._poll_chief_commands(state)
 
+    deadline = time.time() + 2
+    while not received and time.time() < deadline:
+        time.sleep(0.01)
     assert received == ["Проверь сегодняшние бэктесты"]
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
     assert state["chief_update_id"] == 10
     assert state["last_command_update_id"] == 10
-    assert state["last_command_handler"] == "chief_private"
+    assert state["last_command_handler"] == "queued"
 
 
 def test_first_pending_batch_is_processed_instead_of_discarded(monkeypatch, tmp_path) -> None:
@@ -172,11 +182,17 @@ def test_first_pending_batch_is_processed_instead_of_discarded(monkeypatch, tmp_
                     "chat": {"id": 987654, "type": "private"}},
     }])
     received = []
-    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text: received.append(text))
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text, **kwargs: received.append(text))
 
     telegram_service._poll_chief_commands(state)
 
+    deadline = time.time() + 2
+    while not received and time.time() < deadline:
+        time.sleep(0.01)
     assert received == ["покажи график 6С"]
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
     assert state["chief_commands_initialized"] is True
     assert state["chief_update_id"] == 10
     assert state["last_command_transport"] == "poll"
@@ -200,17 +216,27 @@ def test_command_dispatcher_persists_offset_and_audit_per_update(monkeypatch, tm
     ]
     monkeypatch.setattr(telegram_service, "_api_call", lambda *_a, **_k: updates)
     received = []
-    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text: received.append(text))
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text, **kwargs: received.append(text))
     state = {"chief_commands_initialized": True, "chief_update_id": 9}
 
     telegram_service._poll_chief_commands(state)
 
+    deadline = time.time() + 3
+    while len(received) < 2 and time.time() < deadline:
+        telegram_service._dispatch_update_inbox()
+        time.sleep(0.01)
     assert received == ["Первое", "Второе"]
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
     assert state["chief_update_id"] == 11
     assert int(state.get("chief_update_inflight") or 0) == 0
     audit_path = tmp_path / "data" / "audit" / "telegram-updates.jsonl"
     rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
-    assert [row["update_id"] for row in rows] == [10, 11]
+    accepted = [row for row in rows if row["phase"] == "accepted"]
+    completed = [row for row in rows if row["phase"] == "completed"]
+    assert [row["update_id"] for row in accepted] == [10, 11]
+    assert [row["update_id"] for row in completed] == [10, 11]
     assert all(row["consumed"] for row in rows)
     assert telegram_service.status()["telegram_update_offset"] == 11
 
@@ -283,18 +309,25 @@ def test_command_dispatcher_retries_then_drops_poison_update(monkeypatch, tmp_pa
     monkeypatch.setattr(
         telegram_service,
         "_handle_chief_command",
-        lambda text: (_ for _ in ()).throw(RuntimeError("boom")),
+        lambda text, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     state = {"chief_commands_initialized": True, "chief_update_id": 11}
 
     telegram_service._poll_chief_commands(state)
-    assert state["chief_update_id"] == 11
-    assert state["chief_update_retries"]["12"] == 1
-
-    telegram_service._poll_chief_commands(state)
-    telegram_service._poll_chief_commands(state)
     assert state["chief_update_id"] == 12
-    assert "12" not in state.get("chief_update_retries", {})
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
+    for _attempt in range(2):
+        doc = telegram_service._read_json(telegram_service._update_inbox_path())
+        doc["items"][0]["available_at_utc"] = "2000-01-01T00:00:00Z"
+        telegram_service._write_json(telegram_service._update_inbox_path(), doc)
+        assert telegram_service._dispatch_update_inbox() == 1
+        deadline = time.time() + 2
+        while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+            time.sleep(0.01)
+    queued = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert queued[0]["status"] == "dead_letter"
     rows = [
         json.loads(line)
         for line in (tmp_path / "data" / "audit" / "telegram-updates.jsonl").read_text(encoding="utf-8").splitlines()
@@ -404,6 +437,41 @@ def test_owner_app_message_mirror_respects_master_switch(monkeypatch, tmp_path) 
     assert sent == []
 
 
+def test_failed_owner_mirrors_queue_identical_text_by_message_id(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    monkeypatch.setattr(
+        telegram_service, "_send_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            telegram_service.TelegramServiceError("network down")
+        ),
+    )
+
+    first = telegram_service.mirror_owner_message("одинаковый текст", dedupe_key="MSG-1")
+    second = telegram_service.mirror_owner_message("одинаковый текст", dedupe_key="MSG-2")
+    duplicate = telegram_service.mirror_owner_message("одинаковый текст", dedupe_key="MSG-2")
+
+    queued = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert first is False and second is False and duplicate is False
+    assert len(queued) == 2
+
+
+def test_successful_owner_mirror_is_deduplicated_by_message_id(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    sent = []
+    monkeypatch.setattr(
+        telegram_service, "_send_raw",
+        lambda text, **kwargs: sent.append((text, kwargs)) or {},
+    )
+
+    assert telegram_service.mirror_owner_message("одинаковый текст", dedupe_key="MSG-SAME") is True
+    assert telegram_service.mirror_owner_message("одинаковый текст", dedupe_key="MSG-SAME") is False
+    assert len(sent) == 1
+
+
 def test_incoming_topic_message_uses_scoped_app_conversation(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     durable.record_chat_conversation(tmp_path, {
@@ -420,7 +488,10 @@ def test_incoming_topic_message_uses_scoped_app_conversation(monkeypatch, tmp_pa
                         lambda cid, scope: captured.update({"migrated": (cid, scope)}) or {"migrated": 0})
     monkeypatch.setattr(chief_agent, "handle_message", lambda text, **kwargs: captured.update({
         "text": text, **kwargs,
-    }) or {"reply": "готово"})
+    }) or {
+        "reply": "готово",
+        "message": {"message_id": "MSG-SYNC", "conversation_scope_id": "u42__ws_owner"},
+    })
     replies = []
     monkeypatch.setattr(telegram_service, "_chief_command_reply",
                         lambda text, **kwargs: replies.append((text, kwargs)))
@@ -435,6 +506,96 @@ def test_incoming_topic_message_uses_scoped_app_conversation(monkeypatch, tmp_pa
     assert captured["scope"]["is_owner"] is True
     assert captured["migrated"][0] == "C-SYNC"
     assert replies and replies[0][1]["thread_id"] == 77
+
+
+def test_default_topic_resolves_sender_workspace_without_durable_chat(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "42")
+    monkeypatch.setattr(telegram_service.account_auth, "find_active_user", lambda uid: {
+        "user_id": uid, "first_name": "Дмитрий", "last_name": "Червенко",
+        "role": "owner", "is_owner": True,
+    })
+    monkeypatch.setattr(telegram_service.workspaces, "context_for_user", lambda *args, **kwargs: {
+        "active_workspace": {
+            "workspace_id": "ws_owner_training", "kind": "owner_training",
+            "uses_owner_runtime": True,
+        },
+        "active_membership": {"role": "owner"},
+        "uses_owner_runtime": True,
+    })
+
+    scope = telegram_service._conversation_scope_for_topic(
+        "default", sender_user_id=42, sender_name="Telegram Name",
+    )
+
+    assert scope == {
+        "user_id": 42,
+        "workspace_id": "ws_owner_training",
+        "workspace_kind": "owner_training",
+        "uses_owner_runtime": True,
+        "membership_role": "owner",
+        "is_owner": True,
+        "display_name": "Дмитрий Червенко",
+    }
+
+
+def test_named_topic_prefers_exact_sender_scope_over_newer_other_user(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(telegram_service.account_auth, "find_active_user", lambda uid: {
+        "user_id": uid, "first_name": "Owner", "role": "owner", "is_owner": True,
+    })
+    monkeypatch.setattr(telegram_service.workspaces, "context_for_user", lambda *args, **kwargs: {
+        "active_workspace": {"workspace_id": "ws-one", "kind": "owner_training"},
+        "active_membership": {"role": "owner"}, "uses_owner_runtime": True,
+    })
+    durable.record_chat_conversation(tmp_path, {
+        "scope_id": "u42__ws-one", "conversation_id": "C-SHARED",
+        "user_id": "42", "workspace_id": "ws-one", "membership_role": "owner",
+        "updated_at_utc": "2026-07-13T01:00:00Z",
+    })
+    durable.record_chat_conversation(tmp_path, {
+        "scope_id": "u99__ws-other", "conversation_id": "C-SHARED",
+        "user_id": "99", "workspace_id": "ws-other", "membership_role": "owner",
+        "updated_at_utc": "2026-07-13T02:00:00Z",
+    })
+
+    scope = telegram_service._conversation_scope_for_topic("C-SHARED", sender_user_id=42)
+
+    assert scope["user_id"] == 42
+    assert scope["workspace_id"] == "ws-one"
+
+
+def test_group_dispatch_audits_the_exact_scoped_reply(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001")
+    monkeypatch.setattr(telegram_service, "_conversation_for_thread", lambda gid, tid: "default")
+    captured = {}
+    monkeypatch.setattr(telegram_service, "_handle_chief_command", lambda text, **kwargs: captured.update({
+        "text": text, **kwargs,
+    }) or {
+        "ok": True, "delivered": True, "conversation_id": "default",
+        "assistant_message_id": "MSG-ANSWER",
+    })
+    update = {
+        "update_id": 101,
+        "message": {
+            "message_id": 501, "message_thread_id": 13,
+            "text": "Витя, какие на сегодня задания у тебя остались?",
+            "from": {"id": 42, "first_name": "Дмитрий", "is_bot": False},
+            "chat": {"id": -1001, "type": "supergroup"},
+        },
+    }
+
+    result = telegram_service._dispatch_command_update(
+        update, private_id="42", gid="-1001", handle_owner_commands=True,
+    )
+
+    assert captured["sender_user_id"] == 42
+    assert captured["conversation_id"] == "default"
+    assert result["conversation_id"] == "default"
+    assert result["telegram_message_id"] == 501
+    assert result["assistant_message_id"] == "MSG-ANSWER"
+    assert result["delivered"] is True
 
 
 def test_getupdates_process_lease_rejects_second_local_owner(monkeypatch, tmp_path) -> None:
@@ -524,6 +685,7 @@ def test_webhook_rejects_bad_secret_and_dispatches_valid_update(monkeypatch, tmp
     monkeypatch.setattr(telegram_service, "_dispatch_command_update", lambda update, **kwargs: {
         "update_id": update["update_id"], "handler": "chief_private", "consumed": True, "error": "",
     })
+    monkeypatch.setattr(telegram_service, "_dispatch_update_inbox", lambda: 0)
     update = {"update_id": 9001, "message": {"text": "привет"}}
 
     try:
@@ -534,10 +696,174 @@ def test_webhook_rejects_bad_secret_and_dispatches_valid_update(monkeypatch, tmp
         raise AssertionError("bad webhook secret must be rejected")
 
     result = telegram_service.process_webhook_update(update, "expected-secret")
-    assert result["handler"] == "chief_private"
+    assert result["handler"] == "queued"
+    assert result["queued"] is True
+    queued = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert len(queued) == 1
+    telegram_service._run_queued_update(dict(queued[0]))
     state = telegram_service._load_state()
-    assert state["chief_update_id"] == 9001
+    assert 9001 in state["chief_seen_update_ids"]
+    assert state["chief_received_update_id"] == 9001
     assert state["last_command_transport"] == "webhook"
+
+
+def test_webhook_queue_runs_different_topics_in_parallel_and_orders_each_topic(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    release = threading.Event()
+    started = []
+
+    def blocked_dispatch(update, **kwargs):
+        started.append(update["update_id"])
+        release.wait(2)
+        return {"update_id": update["update_id"], "handler": "chief_group", "consumed": True, "error": ""}
+
+    monkeypatch.setattr(telegram_service, "_dispatch_command_update", blocked_dispatch)
+    for update_id, thread_id in ((1, 10), (2, 10), (3, 20)):
+        telegram_service._enqueue_update({
+            "update_id": update_id,
+            "message": {"message_thread_id": thread_id, "chat": {"id": -1001}, "text": "test"},
+        }, transport="webhook")
+    doc = telegram_service._read_json(telegram_service._update_inbox_path())
+    for row in doc["items"]:
+        row["available_at_utc"] = "2000-01-01T00:00:00Z"
+    telegram_service._write_json(telegram_service._update_inbox_path(), doc)
+
+    assert telegram_service._dispatch_update_inbox() == 2
+    deadline = time.time() + 1
+    while len(started) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert set(started) == {1, 3}
+    assert 2 not in started
+
+    release.set()
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
+    assert telegram_service._dispatch_update_inbox() == 1
+    deadline = time.time() + 1
+    while 2 not in started and time.time() < deadline:
+        time.sleep(0.01)
+    assert 2 in started
+    deadline = time.time() + 1
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
+    assert telegram_service._WEBHOOK_ACTIVE == {}
+
+
+def test_webhook_queue_recovers_running_message_after_restart(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    telegram_service._write_json(telegram_service._update_inbox_path(), {"items": [{
+        "id": "tgu-interrupted", "update_id": 77, "conversation_key": "42:default",
+        "transport": "webhook", "status": "running", "attempts": 1,
+        "started_at_utc": "2026-07-13T01:00:00Z", "update": {"update_id": 77},
+    }]})
+
+    assert telegram_service.recover_interrupted_updates() == 1
+    row = telegram_service._read_json(telegram_service._update_inbox_path())["items"][0]
+    assert row["status"] == "queued"
+    assert "started_at_utc" not in row
+
+
+def test_webhook_accepts_out_of_order_ids_and_deduplicates_exact_id(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.WEBHOOK_SECRET_ENV, "secret")
+    monkeypatch.setattr(telegram_service, "_dispatch_update_inbox", lambda: 0)
+
+    first = telegram_service.process_webhook_update({"update_id": 102}, "secret")
+    second = telegram_service.process_webhook_update({"update_id": 101}, "secret")
+    duplicate = telegram_service.process_webhook_update({"update_id": 102}, "secret")
+
+    rows = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert first["queued"] is True and second["queued"] is True
+    assert duplicate["handler"] == "duplicate_update"
+    assert [row["update_id"] for row in rows] == [102, 101]
+
+
+def test_webhook_lane_processes_buffered_updates_in_telegram_id_order(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    for update_id in (102, 101):
+        telegram_service._enqueue_update({
+            "update_id": update_id,
+            "message": {"chat": {"id": 42}, "text": str(update_id)},
+        }, transport="webhook", handle_owner_commands=True)
+    doc = telegram_service._read_json(telegram_service._update_inbox_path())
+    for row in doc["items"]:
+        row["available_at_utc"] = "2000-01-01T00:00:00Z"
+    telegram_service._write_json(telegram_service._update_inbox_path(), doc)
+    processed = []
+    monkeypatch.setattr(telegram_service, "_dispatch_command_update", lambda update, **kwargs: {
+        "update_id": processed.append(update["update_id"]) or update["update_id"],
+        "handler": "test", "consumed": True, "error": "",
+    })
+
+    for expected in (101, 102):
+        assert telegram_service._dispatch_update_inbox() == 1
+        deadline = time.time() + 2
+        while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+            time.sleep(0.01)
+        assert processed[-1] == expected
+
+
+def test_webhook_inbox_never_truncates_unfinished_items(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    for update_id in range(1, 502):
+        assert telegram_service._enqueue_update({"update_id": update_id}, transport="webhook") is True
+
+    rows = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert len(rows) == 501
+    assert rows[0]["update_id"] == 1 and rows[-1]["update_id"] == 501
+
+
+def test_poison_update_moves_to_dead_letter_and_no_longer_blocks_topic(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    notices = []
+    monkeypatch.setattr(
+        telegram_service, "_chief_command_reply",
+        lambda text, **kwargs: notices.append((text, kwargs)) or True,
+    )
+    for update_id in (1, 2):
+        telegram_service._enqueue_update({
+            "update_id": update_id,
+            "message": {"chat": {"id": 42}, "text": "test"},
+        }, transport="webhook")
+    doc = telegram_service._read_json(telegram_service._update_inbox_path())
+    first = doc["items"][0]
+    first["attempts"] = 3
+    telegram_service._write_json(telegram_service._update_inbox_path(), doc)
+
+    telegram_service._finish_queued_update(dict(first), error="poison")
+    doc = telegram_service._read_json(telegram_service._update_inbox_path())
+    doc["items"][1]["available_at_utc"] = "2000-01-01T00:00:00Z"
+    telegram_service._write_json(telegram_service._update_inbox_path(), doc)
+    claimed = []
+    monkeypatch.setattr(telegram_service, "_run_queued_update", lambda item: claimed.append(item["update_id"]))
+
+    assert telegram_service._dispatch_update_inbox() == 1
+    deadline = time.time() + 1
+    while not claimed and time.time() < deadline:
+        time.sleep(0.01)
+    rows = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert rows[0]["status"] == "dead_letter"
+    assert claimed == [2]
+    assert notices and "повторите просьбу" in notices[0][0].lower()
+
+
+def test_long_poll_uses_the_same_durable_inbox(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "42")
+    monkeypatch.setattr(telegram_service, "group_id", lambda: "")
+    monkeypatch.setattr(telegram_service, "_api_call", lambda *args, **kwargs: [{
+        "update_id": 77, "message": {"chat": {"id": 42}, "text": "статус"},
+    }])
+    monkeypatch.setattr(telegram_service, "_dispatch_update_inbox", lambda: 0)
+    state = {}
+
+    telegram_service._poll_chief_commands(state)
+
+    rows = telegram_service._read_json(telegram_service._update_inbox_path())["items"]
+    assert len(rows) == 1 and rows[0]["transport"] == "poll"
+    assert state["chief_update_id"] == 77
+    assert 77 in state["chief_seen_update_ids"]
 
 
 def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None:
@@ -632,7 +958,13 @@ def test_group_topic_message_routes_to_bound_conversation(monkeypatch, tmp_path)
     state = {"chief_commands_initialized": True, "chief_update_id": 99}
     telegram_service._poll_chief_commands(state)
 
+    deadline = time.time() + 2
+    while "text" not in captured and time.time() < deadline:
+        time.sleep(0.01)
     assert captured["text"] == "проверь статус"
+    deadline = time.time() + 2
+    while telegram_service._WEBHOOK_ACTIVE and time.time() < deadline:
+        time.sleep(0.01)
     assert captured["conversation_id"] == "C-XYZ"
     assert captured["thread_id"] == 55
     assert state["chief_update_id"] == 100

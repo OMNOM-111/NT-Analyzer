@@ -31,6 +31,7 @@ from . import runtime
 from . import market_data
 from . import telegram_remote
 from . import account_auth
+from . import workspaces
 
 
 TOKEN_ENV = "NTA_TELEGRAM_BOT_TOKEN"
@@ -65,10 +66,15 @@ _COMMAND_WORKER: Optional[threading.Thread] = None
 _STOP = threading.Event()
 _UPDATES_LOCK = threading.Lock()
 _UPDATES_LEASE: Any = None
+_WEBHOOK_RUN_LOCK = threading.RLock()
+_WEBHOOK_ACTIVE: Dict[str, str] = {}
+WEBHOOK_MAX_PARALLEL = 6
+WEBHOOK_REORDER_GRACE_SEC = 0.75
 
 _COMMAND_STATE_KEYS = (
     "chief_update_id", "chief_commands_initialized", "chief_command_error",
-    "chief_update_inflight", "chief_update_retries",
+    "chief_update_inflight", "chief_update_retries", "chief_received_update_id",
+    "chief_seen_update_ids",
     "last_command_poll_at_utc", "last_command_update_at_utc",
     "last_command_update_id", "last_command_handler", "last_command_transport",
     "webhook_configured", "webhook_url", "webhook_configured_at_utc", "webhook_error",
@@ -106,6 +112,243 @@ def _updates_lease_path() -> Path:
 
 def _reply_outbox_path() -> Path:
     return _root() / "data" / "integrations" / "telegram.reply-outbox.json"
+
+
+def _update_inbox_path() -> Path:
+    return _root() / "data" / "integrations" / "telegram.update-inbox.json"
+
+
+def _update_conversation_key(update: Dict[str, Any]) -> str:
+    message = update.get("message") if isinstance(update.get("message"), dict) else {}
+    if not message:
+        callback = update.get("callback_query") if isinstance(update.get("callback_query"), dict) else {}
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    chat_id = str(chat.get("id") or "unknown")
+    thread_id = str(message.get("message_thread_id") or "default")
+    return f"{chat_id}:{thread_id}"
+
+
+def _seen_update_ids(state: Dict[str, Any]) -> set[int]:
+    return {
+        int(value) for value in (state.get("chief_seen_update_ids") or [])
+        if str(value).lstrip("-").isdigit()
+    }
+
+
+def _remember_update_id(state: Dict[str, Any], update_id: int) -> None:
+    if not update_id:
+        return
+    ordered = [
+        int(value) for value in (state.get("chief_seen_update_ids") or [])
+        if str(value).lstrip("-").isdigit() and int(value) != update_id
+    ]
+    # Telegram IDs are used only for exact recent dedupe. Never interpret this
+    # list as a high-water mark: parallel webhook deliveries may arrive 102,101.
+    state["chief_seen_update_ids"] = [*ordered, update_id][-4096:]
+
+
+def _enqueue_update(update: Dict[str, Any], *, transport: str,
+                    handle_owner_commands: Optional[bool] = None) -> bool:
+    update_id = int(update.get("update_id") or 0)
+    with _IO_LOCK:
+        doc = _read_json(_update_inbox_path())
+        rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
+        if any(int(row.get("update_id") or 0) == update_id for row in rows):
+            return False
+        now_iso = _now_iso()
+        available_iso = now_iso
+        if str(transport or "webhook") == "webhook":
+            available_iso = datetime.fromtimestamp(
+                time.time() + WEBHOOK_REORDER_GRACE_SEC, timezone.utc,
+            ).isoformat().replace("+00:00", "Z")
+        rows.append({
+            "id": "tgu_" + secrets.token_hex(8),
+            "update_id": update_id,
+            "conversation_key": _update_conversation_key(update),
+            "transport": str(transport or "webhook"),
+            "handle_owner_commands": handle_owner_commands,
+            "status": "queued",
+            "received_at_utc": now_iso,
+            "available_at_utc": available_iso,
+            "attempts": 0,
+            "last_error": "",
+            "update": update,
+        })
+        # Never truncate unfinished work after acknowledging Telegram. Successful
+        # items are removed on completion, so this file only grows while there is
+        # real queued/running/dead-letter evidence that must not be lost.
+        _write_json(_update_inbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
+    return True
+
+
+def recover_interrupted_updates() -> int:
+    recovered = 0
+    with _IO_LOCK:
+        doc = _read_json(_update_inbox_path())
+        rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
+        for row in rows:
+            if row.get("status") == "running":
+                row["status"] = "queued"
+                row["available_at_utc"] = _now_iso()
+                row["last_error"] = "Обработка была прервана перезапуском; сообщение возвращено в очередь."
+                row.pop("started_at_utc", None)
+                recovered += 1
+        if recovered:
+            _write_json(_update_inbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
+    return recovered
+
+
+def _finish_queued_update(item: Dict[str, Any], *, dispatch: Optional[Dict[str, Any]] = None,
+                          error: str = "") -> None:
+    item_id = str(item.get("id") or "")
+    update_id = int(item.get("update_id") or 0)
+    if error:
+        attempts = int(item.get("attempts") or 1)
+        exhausted = attempts >= 3
+        with _IO_LOCK:
+            doc = _read_json(_update_inbox_path())
+            rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
+            current = next((row for row in rows if str(row.get("id") or "") == item_id), None)
+            if current:
+                attempts = int(current.get("attempts") or 1)
+                exhausted = attempts >= 3
+                current["status"] = "dead_letter" if exhausted else "queued"
+                current["last_error"] = str(error)[:1000]
+                if exhausted:
+                    current["finished_at_utc"] = _now_iso()
+                    current.pop("available_at_utc", None)
+                else:
+                    current["available_at_utc"] = datetime.fromtimestamp(
+                        time.time() + min(300, 15 * max(1, attempts)), timezone.utc,
+                    ).isoformat().replace("+00:00", "Z")
+                current.pop("started_at_utc", None)
+                _write_json(_update_inbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
+        state = _load_state()
+        state["chief_command_error"] = str(error)[:500]
+        state["last_command_update_id"] = update_id
+        state["last_command_handler"] = "exception"
+        _save_command_poll_state(state)
+        _append_update_audit({
+            "update_id": update_id, "handler": "exception", "consumed": False,
+            "error": str(error)[:1000], "transport": item.get("transport") or "webhook",
+            "phase": "completed", "retry_scheduled": not exhausted,
+            "retry_count": attempts, "dropped": exhausted,
+        })
+        if exhausted:
+            update = item.get("update") if isinstance(item.get("update"), dict) else {}
+            message = update.get("message") if isinstance(update.get("message"), dict) else {}
+            thread_id = message.get("message_thread_id")
+            _chief_command_reply(
+                "Дмитрий Сергеевич, последнее сообщение не удалось обработать после нескольких попыток. "
+                "Я сохранил его для диагностики и продолжил работу темы. Пожалуйста, повторите просьбу.",
+                thread_id=int(thread_id) if str(thread_id or "").isdigit() else None,
+                dedupe_key=f"dead-letter:{update_id}",
+            )
+        return
+
+    result = dict(dispatch or {})
+    with _IO_LOCK:
+        doc = _read_json(_update_inbox_path())
+        rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
+        rows = [row for row in rows if str(row.get("id") or "") != item_id]
+        _write_json(_update_inbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
+    state = _load_state()
+    _remember_update_id(state, update_id)
+    # chief_update_id is the long-poll offset, not a webhook high-water mark.
+    # Keeping transports separate lets failover request every still-pending Bot
+    # API update; exact seen IDs suppress anything already handled by webhook.
+    if str(item.get("transport") or "webhook") == "poll":
+        state["chief_update_id"] = max(int(state.get("chief_update_id") or 0), update_id)
+    state["chief_commands_initialized"] = True
+    state["last_command_update_at_utc"] = _now_iso()
+    state["last_command_update_id"] = update_id
+    state["last_command_handler"] = str(result.get("handler") or "")
+    state["last_command_transport"] = str(item.get("transport") or "webhook")
+    if result.get("error"):
+        state["chief_command_error"] = str(result.get("error") or "")[:500]
+    else:
+        state.pop("chief_command_error", None)
+    _save_command_poll_state(state)
+    _append_update_audit({
+        **result, "transport": item.get("transport") or "webhook", "phase": "completed",
+    })
+
+
+def _run_queued_update(item: Dict[str, Any]) -> None:
+    key = str(item.get("conversation_key") or "unknown")
+    try:
+        update = item.get("update") if isinstance(item.get("update"), dict) else {}
+        try:
+            _auto_discover_group([update])
+        except Exception:
+            pass
+        dispatch = _dispatch_command_update(
+            update,
+            private_id=str(os.environ.get(CHAT_ENV) or "").strip(),
+            gid=group_id(),
+            handle_owner_commands=(
+                bool(load_settings().get("enabled"))
+                if item.get("handle_owner_commands") is None
+                else bool(item.get("handle_owner_commands"))
+            ),
+        )
+        _finish_queued_update(item, dispatch=dispatch)
+    except Exception as exc:
+        _finish_queued_update(item, error=_safe_error(exc))
+    finally:
+        with _WEBHOOK_RUN_LOCK:
+            if _WEBHOOK_ACTIVE.get(key) == str(item.get("id") or ""):
+                _WEBHOOK_ACTIVE.pop(key, None)
+
+
+def _dispatch_update_inbox() -> int:
+    claimed: List[Dict[str, Any]] = []
+    with _WEBHOOK_RUN_LOCK:
+        capacity = max(0, WEBHOOK_MAX_PARALLEL - len(_WEBHOOK_ACTIVE))
+        if not capacity:
+            return 0
+        with _IO_LOCK:
+            doc = _read_json(_update_inbox_path())
+            rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
+            blocked = set(_WEBHOOK_ACTIVE)
+            now_ts = time.time()
+            lanes: Dict[str, List[Dict[str, Any]]] = {}
+            for row in rows:
+                if row.get("status") in {"queued", "running"}:
+                    lanes.setdefault(str(row.get("conversation_key") or "unknown"), []).append(row)
+            for key, lane in lanes.items():
+                # The first unfinished row owns the lane, even during backoff;
+                # later messages in the same topic may never overtake it.
+                if key in blocked:
+                    continue
+                blocked.add(key)
+                row = min(
+                    lane,
+                    key=lambda candidate: (
+                        int(candidate.get("update_id") or 2**63 - 1),
+                        _iso_timestamp(candidate.get("received_at_utc")),
+                    ),
+                )
+                if row.get("status") != "queued":
+                    continue
+                if _iso_timestamp(row.get("available_at_utc")) > now_ts:
+                    continue
+                row["status"] = "running"
+                row["started_at_utc"] = _now_iso()
+                row["attempts"] = int(row.get("attempts") or 0) + 1
+                _WEBHOOK_ACTIVE[key] = str(row.get("id") or "")
+                claimed.append(dict(row))
+                if len(claimed) >= capacity:
+                    break
+            if claimed:
+                _write_json(_update_inbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
+    for item in claimed:
+        threading.Thread(
+            target=_run_queued_update, args=(item,),
+            name=f"telegram-update-{item.get('update_id')}", daemon=True,
+        ).start()
+    return len(claimed)
 
 
 def _webhook_public_url() -> str:
@@ -182,46 +425,50 @@ def ensure_webhook() -> Dict[str, Any]:
 
 
 def process_webhook_update(update: Dict[str, Any], supplied_secret: str) -> Dict[str, Any]:
-    """Validate and dispatch one Bot API webhook update."""
+    """Validate, durably enqueue and immediately acknowledge one update."""
     expected = str(os.environ.get(WEBHOOK_SECRET_ENV) or "").strip()
     supplied = str(supplied_secret or "").strip()
     if not expected or not supplied or not secrets.compare_digest(expected, supplied):
         raise TelegramServiceError("Некорректная подпись Telegram webhook.")
+    update_id = int(update.get("update_id") or 0)
     with _UPDATES_LOCK:
         state = _load_state()
-        update_id = int(update.get("update_id") or 0)
-        if update_id and update_id <= int(state.get("chief_update_id") or 0):
+        if update_id and (
+            update_id in _seen_update_ids(state)
+            or update_id == int(state.get("chief_update_id") or 0)
+        ):
             duplicate = {
                 "update_id": update_id, "handler": "duplicate_update",
                 "consumed": True, "error": "",
             }
             _append_update_audit({**duplicate, "transport": "webhook"})
             return duplicate
-        private_id = str(os.environ.get(CHAT_ENV) or "").strip()
-        gid = group_id()
-        settings = load_settings()
-        try:
-            _auto_discover_group([update])
-        except Exception:
-            pass
-        dispatch = _dispatch_command_update(
-            update, private_id=private_id, gid=gid,
-            handle_owner_commands=bool(settings.get("enabled")),
-        )
-        _append_update_audit({**dispatch, "transport": "webhook"})
+        queued = _enqueue_update(update, transport="webhook")
+        if not queued:
+            duplicate = {
+                "update_id": update_id, "handler": "duplicate_update",
+                "consumed": True, "error": "",
+            }
+            _append_update_audit({**duplicate, "transport": "webhook"})
+            return duplicate
         state = _load_state()
-        state["chief_update_id"] = max(int(state.get("chief_update_id") or 0), update_id)
+        _remember_update_id(state, update_id)
+        state["chief_received_update_id"] = max(
+            int(state.get("chief_received_update_id") or 0), update_id,
+        )
         state["chief_commands_initialized"] = True
         state["last_command_update_at_utc"] = _now_iso()
         state["last_command_update_id"] = update_id
-        state["last_command_handler"] = str(dispatch.get("handler") or "")
+        state["last_command_handler"] = "queued"
         state["last_command_transport"] = "webhook"
-        if dispatch.get("error"):
-            state["chief_command_error"] = str(dispatch.get("error") or "")[:500]
-        else:
-            state.pop("chief_command_error", None)
         _save_command_poll_state(state)
-        return dispatch
+    accepted = {
+        "update_id": update_id, "handler": "queued", "consumed": True,
+        "queued": True, "error": "", "transport": "webhook", "phase": "accepted",
+    }
+    _append_update_audit(accepted)
+    _dispatch_update_inbox()
+    return accepted
 
 
 def _acquire_updates_lease() -> bool:
@@ -685,7 +932,14 @@ def _append_update_audit(row: Dict[str, Any]) -> None:
         "error": str(row.get("error") or "")[:500],
         "retry_count": int(row.get("retry_count") or 0),
         "dropped": bool(row.get("dropped")),
+        "phase": str(row.get("phase") or "")[:20],
+        "retry_scheduled": bool(row.get("retry_scheduled")),
         "transport": str(row.get("transport") or "poll")[:20],
+        "conversation_id": str(row.get("conversation_id") or "")[:64],
+        "sender_user_id": int(row.get("sender_user_id") or 0),
+        "telegram_message_id": int(row.get("telegram_message_id") or 0),
+        "assistant_message_id": str(row.get("assistant_message_id") or "")[:80],
+        "delivered": bool(row.get("delivered")),
     }
     path = _updates_audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1011,6 +1265,10 @@ def status() -> Dict[str, Any]:
     with _PAIR_LOCK:
         pairing_active = bool(_PAIRING and time.time() <= float(_PAIRING.get("expires_at") or 0))
     topics_doc = _load_topics()
+    inbox_rows = [
+        row for row in (_read_json(_update_inbox_path()).get("items") or [])
+        if isinstance(row, dict)
+    ]
     return {
         "configured": configured or (token_configured and group_ready),
         "status": "connected" if (configured or (token_configured and group_ready)) else ("token_ready" if token_configured else "not_configured"),
@@ -1040,16 +1298,24 @@ def status() -> Dict[str, Any]:
         "last_command_handler": str(state.get("last_command_handler") or ""),
         "last_command_error": str(state.get("chief_command_error") or ""),
         "telegram_update_offset": int(state.get("chief_update_id") or 0),
+        "telegram_update_received": int(state.get("chief_received_update_id") or state.get("chief_update_id") or 0),
         "telegram_update_inflight": int(state.get("chief_update_inflight") or 0),
+        "telegram_update_queue": {
+            "queued": sum(1 for row in inbox_rows if row.get("status") == "queued"),
+            "running": sum(1 for row in inbox_rows if row.get("status") == "running"),
+            "dead_letter": sum(1 for row in inbox_rows if row.get("status") == "dead_letter"),
+            "parallel_limit": WEBHOOK_MAX_PARALLEL,
+        },
         "note": (
-            "Витёк понимает обычный текст только из привязанного личного чата. "
+            "Витёк понимает обычный текст из привязанного личного чата и тем рабочей группы. "
             "Исполняются лишь allowlisted функции; paper/demo требует approve, live заблокирован backend."
         ),
     }
 
 
 def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
-            thread_id: Optional[int] = None, dedupe_key: str = "") -> bool:
+            thread_id: Optional[int] = None, dedupe_key: str = "",
+            queue_on_failure: bool = False) -> bool:
     settings = load_settings()
     if not settings.get("enabled") or not settings.get(setting):
         return False
@@ -1078,13 +1344,18 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
         _send_raw("\n".join(body), silent=not urgent, thread_id=thread_id)
         return True
     except TelegramServiceError as exc:
-        with _IO_LOCK:
-            state = _load_state()
-            recent = dict(state.get("recent_delivery_signatures") or {})
-            recent.pop(signature, None)
-            state["recent_delivery_signatures"] = recent
-            _write_json(_state_path(), state)
+        if not queue_on_failure:
+            with _IO_LOCK:
+                state = _load_state()
+                recent = dict(state.get("recent_delivery_signatures") or {})
+                recent.pop(signature, None)
+                state["recent_delivery_signatures"] = recent
+                _write_json(_state_path(), state)
         _record_delivery(success=False, error=str(exc))
+        if queue_on_failure:
+            _enqueue_reply_outbox(
+                "\n".join(body), thread_id=thread_id, dedupe_key=dedupe_key,
+            )
         return False
 
 
@@ -1111,11 +1382,13 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     return _notify(
         "chief_agent_reports", title, lines,
         urgent=urgent, thread_id=thread_id, dedupe_key=dedupe_key,
+        queue_on_failure=True,
     )
 
 
 def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
-                         conversation_title: str = "") -> bool:
+                         conversation_title: str = "",
+                         dedupe_key: str = "") -> bool:
     """Mirror a message the owner typed inside the app into its bound Telegram
     topic, so the Telegram thread shows the full two-way conversation and not
     only the assistant's replies.
@@ -1134,14 +1407,33 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
         _thread_for_conversation(conversation_id, conversation_title)
         if conversation_id else None
     )
+    rendered = "🧑 <b>Вы:</b> " + html.escape(body[:3500])
+    signature = ""
+    if dedupe_key:
+        signature = hashlib.sha256(
+            f"owner-mirror|{int(thread_id or 0)}|{dedupe_key}".encode("utf-8")
+        ).hexdigest()
+        with _IO_LOCK:
+            state = _load_state()
+            recent = dict(state.get("recent_delivery_signatures") or {})
+            cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600
+            recent = {key: value for key, value in recent.items() if _iso_timestamp(value) >= cutoff}
+            if signature in recent:
+                return False
+            recent[signature] = _now_iso()
+            state["recent_delivery_signatures"] = recent
+            _write_json(_state_path(), state)
     try:
         _send_raw(
-            "🧑 <b>Вы:</b> " + html.escape(body[:3500]),
+            rendered,
             silent=True, thread_id=thread_id,
         )
         return True
     except TelegramServiceError as exc:
         _record_delivery(success=False, error=str(exc))
+        _enqueue_reply_outbox(
+            rendered, thread_id=thread_id, dedupe_key=dedupe_key,
+        )
         return False
 
 
@@ -1154,14 +1446,16 @@ def send_news_alert(title: str, lines: List[str], *,
     )
 
 
-def _enqueue_reply_outbox(text: str, *, thread_id: Optional[int] = None) -> None:
+def _enqueue_reply_outbox(text: str, *, thread_id: Optional[int] = None,
+                          dedupe_key: str = "") -> None:
     clean = str(text or "")[:4000]
     if not clean:
         return
     with _IO_LOCK:
         doc = _read_json(_reply_outbox_path())
         rows = doc.get("items") if isinstance(doc.get("items"), list) else []
-        signature = hashlib.sha256(f"{thread_id}|{clean}".encode("utf-8")).hexdigest()
+        identity = str(dedupe_key or clean)
+        signature = hashlib.sha256(f"{thread_id}|{identity}".encode("utf-8")).hexdigest()
         if any(str(row.get("signature") or "") == signature for row in rows if isinstance(row, dict)):
             return
         rows.append({
@@ -1207,16 +1501,86 @@ def _flush_reply_outbox(limit: int = 10) -> Dict[str, int]:
     return {"sent": len(sent_ids), "pending": len(remaining)}
 
 
-def _chief_command_reply(text: str, *, thread_id: Optional[int] = None) -> bool:
+def _chief_command_reply(text: str, *, thread_id: Optional[int] = None,
+                         dedupe_key: str = "") -> bool:
     try:
         _send_raw(str(text or "")[:4000], thread_id=thread_id)
         return True
     except TelegramServiceError:
-        _enqueue_reply_outbox(str(text or "")[:4000], thread_id=thread_id)
+        _enqueue_reply_outbox(
+            str(text or "")[:4000], thread_id=thread_id,
+            dedupe_key=dedupe_key,
+        )
         return False
 
 
-def _conversation_scope_for_topic(conversation_id: str) -> Optional[Dict[str, Any]]:
+def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int = 0,
+                                  sender_name: str = "") -> Optional[Dict[str, Any]]:
+    """Resolve Telegram ingress to the authenticated app workspace.
+
+    A Telegram topic only carries a conversation id.  The sender identity is
+    therefore authoritative for the workspace, while durable chat metadata is
+    a useful fallback for legacy/test callers.  Production ingress with a
+    sender must never silently write into the old unscoped transcript.
+    """
+    try:
+        sender_id = int(sender_user_id or 0)
+    except (TypeError, ValueError):
+        sender_id = 0
+    if sender_id > 0:
+        user = account_auth.find_active_user(sender_id)
+        if not user:
+            raise TelegramServiceError(
+                "Не удалось связать ваш Telegram с активным аккаунтом StratForge. "
+                "Войдите в приложение через Telegram и повторите сообщение."
+            )
+        try:
+            owner_id = int(str(os.environ.get(CHAT_ENV) or "0").strip() or 0)
+        except (TypeError, ValueError):
+            owner_id = 0
+        context = workspaces.context_for_user(
+            sender_id, is_owner=bool(user.get("is_owner")), owner_id=owner_id,
+        )
+        active = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        membership = context.get("active_membership") if isinstance(context.get("active_membership"), dict) else {}
+        workspace_id = str(active.get("workspace_id") or "").strip()
+        if not workspace_id:
+            raise TelegramServiceError(
+                "У вашего аккаунта не выбрана активная рабочая область. "
+                "Откройте StratForge, выберите рабочую область и повторите сообщение."
+            )
+        display_name = " ".join(filter(None, (
+            str(user.get("first_name") or "").strip(),
+            str(user.get("last_name") or "").strip(),
+        ))) or " ".join(str(sender_name or "").split())
+        scope = {
+            "user_id": sender_id,
+            "workspace_id": workspace_id,
+            "workspace_kind": str(active.get("kind") or ""),
+            "uses_owner_runtime": bool(context.get("uses_owner_runtime")),
+            "membership_role": str(membership.get("role") or user.get("role") or ""),
+            "is_owner": bool(user.get("is_owner")),
+            "display_name": display_name,
+        }
+        # A named topic belongs to one user's private app dialogue.  The default
+        # topic is workspace-shared by design, but a named owner dialogue must
+        # never be exposed to another member of the same Telegram group.
+        expected_scope_id = f"u{sender_id}__{workspace_id}"
+        own_row = durable.get_chat_conversation(
+            _root(), conversation_id, scope_id=expected_scope_id,
+        )
+        row = None if own_row else durable.find_chat_conversation(
+            _root(), conversation_id, prefer_scoped=True,
+        )
+        if (row and str(conversation_id or "") != DEFAULT_CONVERSATION_ID
+                and str(row.get("scope_id") or "")
+                and int(row.get("user_id") or 0) not in {0, sender_id}):
+            raise TelegramServiceError(
+                "Эта тема привязана к другому пользователю. "
+                "Откройте свой чат в StratForge и повторите сообщение там."
+            )
+        return scope
+
     row = durable.find_chat_conversation(_root(), conversation_id, prefer_scoped=True)
     if not row or not str(row.get("scope_id") or ""):
         return None
@@ -1237,7 +1601,9 @@ def _conversation_scope_for_topic(conversation_id: str) -> Optional[Dict[str, An
 
 
 def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
-                          thread_id: Optional[int] = None) -> Dict[str, Any]:
+                          thread_id: Optional[int] = None,
+                          sender_user_id: int = 0,
+                          sender_name: str = "") -> Dict[str, Any]:
     """Handle natural owner text through the allowlisted Orchestrator executor.
 
     ``conversation_id`` binds the incoming Telegram topic to an app chat so the
@@ -1262,13 +1628,24 @@ def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
             return {"ok": True, "delivered": True, "ignored": True}
         else:
             target_conversation = conversation_id or chief_agent.DEFAULT_CONVERSATION_ID
-            scope = _conversation_scope_for_topic(target_conversation)
+            scope = _conversation_scope_for_topic(
+                target_conversation, sender_user_id=sender_user_id,
+                sender_name=sender_name,
+            )
             if scope:
                 chief_agent.migrate_legacy_conversation_to_scope(target_conversation, scope)
             result = chief_agent.handle_message(
                 clean, source="telegram", mirror_to_telegram=False,
                 conversation_id=target_conversation, scope=scope,
             )
+            assistant = result.get("message") if isinstance(result.get("message"), dict) else {}
+            if scope:
+                expected_scope = f"u{int(scope['user_id'])}__{scope['workspace_id']}"
+                if str(assistant.get("conversation_scope_id") or "") != expected_scope:
+                    raise TelegramServiceError(
+                        "Ответ не был сохранён в единой истории. Сообщение оставлено в очереди диагностики; "
+                        "повторите запрос после восстановления синхронизации."
+                    )
             snapshot = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
             image_path = market_data.snapshot_path(snapshot.get("file")) if snapshot.get("file") else None
             topic_row = (_load_topics().get("conversations") or {}).get(target_conversation) or {}
@@ -1282,8 +1659,13 @@ def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
                 delivered = _chief_command_reply(
                     html.escape(str(result.get("reply") or "")),
                     thread_id=thread_id,
+                    dedupe_key=str(assistant.get("message_id") or ""),
                 )
-            return {"ok": True, "delivered": bool(delivered), "result": result}
+            return {
+                "ok": True, "delivered": bool(delivered), "result": result,
+                "conversation_id": target_conversation,
+                "assistant_message_id": str(assistant.get("message_id") or ""),
+            }
     except Exception as exc:
         delivered = _chief_command_reply(f"⚠️ {html.escape(str(exc)[:500])}", thread_id=thread_id)
         return {"ok": False, "delivered": delivered, "error": _safe_error(exc)}
@@ -1371,21 +1753,44 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
         return result
     chat_id_str = str(chat.get("id") or "")
     chat_type = str(chat.get("type") or "")
+    try:
+        sender_user_id = int(sender.get("id") or 0)
+    except (TypeError, ValueError):
+        sender_user_id = 0
+    sender_name = " ".join(filter(None, (
+        str(sender.get("first_name") or "").strip(),
+        str(sender.get("last_name") or "").strip(),
+    ))) or str(sender.get("username") or "").strip()
+    result.update({
+        "sender_user_id": sender_user_id,
+        "telegram_message_id": int(message.get("message_id") or 0),
+    })
     if gid and chat_id_str == gid:
         raw_thread = message.get("message_thread_id")
         thread_id = int(raw_thread) if raw_thread else None
         conversation_id = _conversation_for_thread(gid, thread_id)
-        handled = _handle_chief_command(text, conversation_id=conversation_id, thread_id=thread_id) or {}
+        handled = _handle_chief_command(
+            text, conversation_id=conversation_id, thread_id=thread_id,
+            sender_user_id=sender_user_id, sender_name=sender_name,
+        ) or {}
         result.update({
             "handler": "chief_group", "consumed": True,
             "error": str(handled.get("error") or ("reply_queued" if not handled.get("delivered", True) else "")),
+            "conversation_id": str(handled.get("conversation_id") or conversation_id),
+            "assistant_message_id": str(handled.get("assistant_message_id") or ""),
+            "delivered": bool(handled.get("delivered")),
         })
         return result
     if private_id and chat_id_str == private_id and chat_type == "private":
-        handled = _handle_chief_command(text) or {}
+        handled = _handle_chief_command(
+            text, sender_user_id=sender_user_id, sender_name=sender_name,
+        ) or {}
         result.update({
             "handler": "chief_private", "consumed": True,
             "error": str(handled.get("error") or ("reply_queued" if not handled.get("delivered", True) else "")),
+            "conversation_id": str(handled.get("conversation_id") or DEFAULT_CONVERSATION_ID),
+            "assistant_message_id": str(handled.get("assistant_message_id") or ""),
+            "delivered": bool(handled.get("delivered")),
         })
         return result
     result["handler"] = "unmatched_chat"
@@ -1415,69 +1820,45 @@ def _poll_chief_commands(state: Dict[str, Any], *, long_poll_timeout: int = 0,
     if not isinstance(updates, list) or not updates:
         state["chief_commands_initialized"] = True
         return
-    newest = max(int(row.get("update_id") or 0) for row in updates if isinstance(row, dict))
-    # Auto-discover a new group even before initialization completes.
-    try:
-        _auto_discover_group(updates)
-    except Exception:
-        pass
-    if not state.get("chief_commands_initialized"):
-        # Do not discard the first available batch. A missing state flag can be
-        # caused by recovery from an older notifier-state race or by webhook ->
-        # long-poll failover; those queued owner messages are current work, not
-        # disposable history.
-        state["chief_commands_initialized"] = True
-    retry_map = state.get("chief_update_retries") if isinstance(state.get("chief_update_retries"), dict) else {}
-    for update in updates:
-        if not isinstance(update, dict):
-            continue
-        update_id = int(update.get("update_id") or 0)
-        if update_id <= int(state.get("chief_update_id") or 0):
-            continue
-        state["chief_update_inflight"] = update_id
-        state["last_command_update_at_utc"] = _now_iso()
-        _save_command_poll_state(state)
-        try:
-            dispatch = _dispatch_command_update(
-                update, private_id=private_id, gid=gid,
-                handle_owner_commands=handle_owner_commands,
+    # Webhook and long-poll are two transports into one durable inbox. Advancing
+    # the Bot API offset after the local write is safe: a restart can recover the
+    # queued item instead of asking Telegram to redeliver it synchronously.
+    with _UPDATES_LOCK:
+        latest = _load_state()
+        for key in _COMMAND_STATE_KEYS:
+            if key in latest:
+                state[key] = latest[key]
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            update_id = int(update.get("update_id") or 0)
+            already_seen = update_id and update_id in _seen_update_ids(state)
+            queued = False if already_seen else _enqueue_update(
+                update, transport="poll", handle_owner_commands=handle_owner_commands,
             )
-        except Exception as exc:
-            key = str(update_id)
-            retry_count = int(retry_map.get(key) or 0) + 1
-            retry_map[key] = retry_count
-            safe = _safe_error(exc)
-            state["chief_command_error"] = safe
-            state["chief_update_retries"] = retry_map
-            state["last_command_handler"] = "exception"
+            if queued:
+                _remember_update_id(state, update_id)
+                state["chief_received_update_id"] = max(
+                    int(state.get("chief_received_update_id") or 0), update_id,
+                )
+                _append_update_audit({
+                    "update_id": update_id, "handler": "queued", "consumed": True,
+                    "transport": "poll", "phase": "accepted",
+                })
+            elif not already_seen:
+                # The same update is already durable in the inbox (for example
+                # webhook -> polling failover between the two local writes).
+                _remember_update_id(state, update_id)
+            state["chief_update_id"] = max(int(state.get("chief_update_id") or 0), update_id)
             state["last_command_update_id"] = update_id
-            dropped = retry_count >= 3
-            if dropped:
-                state["chief_update_id"] = update_id
-                state.pop("chief_update_inflight", None)
-                retry_map.pop(key, None)
-            _append_update_audit({
-                "update_id": update_id, "handler": "exception",
-                "consumed": False, "error": safe, "retry_count": retry_count,
-                "dropped": dropped,
-            })
-            _save_command_poll_state(state)
-            if not dropped:
-                break
-            continue
-        state["chief_update_id"] = update_id
-        state.pop("chief_update_inflight", None)
-        retry_map.pop(str(update_id), None)
-        state["chief_update_retries"] = retry_map
-        state["last_command_update_id"] = update_id
-        state["last_command_handler"] = str(dispatch.get("handler") or "")
+        state["chief_commands_initialized"] = True
+        state["last_command_update_at_utc"] = _now_iso()
+        state["last_command_handler"] = "queued"
         state["last_command_transport"] = "poll"
-        if dispatch.get("error"):
-            state["chief_command_error"] = str(dispatch.get("error") or "")
-        else:
-            state.pop("chief_command_error", None)
-        _append_update_audit(dispatch)
+        state.pop("chief_update_inflight", None)
+        state.pop("chief_update_retries", None)
         _save_command_poll_state(state)
+    _dispatch_update_inbox()
 
 
 def _strategy_snapshot() -> Dict[str, Dict[str, Any]]:
@@ -1613,32 +1994,9 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     heartbeat = runtime.read_heartbeat()
     connected = bool(heartbeat.get("fresh"))
     previous_connection = state.get("nt_connected")
-    if initialized and previous_connection is not None and connected != bool(previous_connection):
-        if connected:
-            _notify("nt_connection", "🟢 Связь с NinjaTrader восстановлена", [
-                f"Heartbeat: {heartbeat.get('timestamp_utc') or 'получен'}",
-            ], urgent=True)
-            try:
-                from .ai_lab import chief_agent
-                chief_agent.enqueue_event("connection_restored", {
-                    "enabled_strategies": enabled_count, "owner_already_notified": True,
-                })
-            except Exception:
-                pass
-        else:
-            age = heartbeat.get("age_sec")
-            _notify("nt_connection", "🔴 Потеряна связь с NinjaTrader", [
-                f"Heartbeat: {'нет данных' if age is None else f'{age} сек.'} · активных стратегий: {enabled_count}",
-                "Проверьте NinjaTrader / Bridge.",
-            ], urgent=True)
-            try:
-                from .ai_lab import chief_agent
-                chief_agent.enqueue_event("connection_lost", {
-                    "heartbeat_age_sec": age, "enabled_strategies": enabled_count,
-                    "owner_already_notified": True,
-                })
-            except Exception:
-                pass
+    # Heartbeat transitions are produced once by chief_agent._runtime_monitor_tick
+    # and then travel through Vitek's durable event bus. Telegram is only a
+    # delivery surface here; it must not create a second incident/notification.
     state["nt_connected"] = connected
 
     previous_strategies = state.get("strategies") if isinstance(state.get("strategies"), dict) else {}
@@ -1646,37 +2004,28 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
         for key, row in current_strategies.items():
             old = previous_strategies.get(key)
             if old is None and row.get("enabled"):
-                _notify("strategy_state", "▶️ Стратегия включена", [
-                    str(row.get("name") or key),
-                    " · ".join(v for v in (row.get("account"), row.get("instrument")) if v),
-                ], urgent=True)
                 try:
                     from .ai_lab import chief_agent
                     chief_agent.enqueue_event("strategy_started", {
-                        **row, "strategy_key": key, "owner_already_notified": True,
+                        **row, "strategy_key": key,
                     })
                 except Exception:
                     pass
             elif isinstance(old, dict) and bool(old.get("enabled")) != bool(row.get("enabled")):
                 active = bool(row.get("enabled"))
-                _notify("strategy_state", "▶️ Стратегия включена" if active else "⏹️ Стратегия остановлена", [
-                    str(row.get("name") or key),
-                    f"Состояние: {row.get('state') or ('enabled' if active else 'disabled')}",
-                ], urgent=not active)
                 try:
                     from .ai_lab import chief_agent
                     chief_agent.enqueue_event("strategy_started" if active else "strategy_stopped", {
-                        **row, "strategy_key": key, "owner_already_notified": True,
+                        **row, "strategy_key": key,
                     })
                 except Exception:
                     pass
         for key, old in previous_strategies.items():
             if key not in current_strategies and isinstance(old, dict) and old.get("enabled"):
-                _notify("strategy_state", "⏹️ Стратегия исчезла из runtime", [str(old.get("name") or key)], urgent=True)
                 try:
                     from .ai_lab import chief_agent
                     chief_agent.enqueue_event("strategy_disappeared", {
-                        **old, "strategy_key": key, "owner_already_notified": True,
+                        **old, "strategy_key": key,
                     })
                 except Exception:
                     pass
@@ -1686,14 +2035,10 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     latest_error = errors[-1] if errors else None
     latest_signature = _error_signature(latest_error) if isinstance(latest_error, dict) else ""
     if initialized and latest_signature and latest_signature != str(state.get("last_error_signature") or ""):
-        _notify("application_errors", "⚠️ Ошибка NinjaTrader Bridge", [
-            str(latest_error.get("where") or latest_error.get("type") or "runtime"),
-            str(latest_error.get("message") or "Неизвестная ошибка")[:900],
-        ], urgent=True)
         try:
             from .ai_lab import chief_agent
             chief_agent.enqueue_event("runtime_error", {
-                **latest_error, "error_signature": latest_signature, "owner_already_notified": True,
+                **latest_error, "error_signature": latest_signature,
             })
         except Exception:
             pass
@@ -1784,9 +2129,16 @@ def _save_command_poll_state(state: Dict[str, Any]) -> None:
 
 def _command_worker_loop() -> None:
     """Receive Telegram owner messages continuously via Bot API long polling."""
+    recover_interrupted_updates()
     next_webhook_check = 0.0
     webhook_active = False
     while not _STOP.is_set():
+        try:
+            _dispatch_update_inbox()
+        except Exception as exc:
+            state = _load_state()
+            state["chief_command_error"] = _safe_error(exc)
+            _save_command_poll_state(state)
         try:
             _flush_reply_outbox()
         except Exception:

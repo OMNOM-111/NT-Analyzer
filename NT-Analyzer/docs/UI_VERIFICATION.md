@@ -6,7 +6,7 @@ Status: Aurora, Vitek and Orchestrator production integration re-audited on
 
 ## Automated gates
 
-- `python -m pytest -q`: **424 passed**.
+- `python -m pytest -q`: **447 passed**.
 - `python -m tests`: **13/13 suites passed**.
 - `node --check`: every JS file under `app/static/aurora/assets` passed.
 - `python -m compileall -q app tests`: passed.
@@ -20,10 +20,23 @@ Status: Aurora, Vitek and Orchestrator production integration re-audited on
 
 ## Live acceptance
 
-Встроенный браузер Codex не запускался из-за зафиксированного crash/hang риска.
-Финальный текущий визуальный smoke выполняется владельцем в обычном браузере по
-`http://127.0.0.1:8765/ui/`; безопасный сценарий приведён в
-`PRODUCTION_READINESS_2026-07-13.md`.
+После подтверждённого обновления Codex и прямого разрешения владельца выполнена
+попытка подключить встроенный браузер. Два запуска остановились внутри модуля
+Codex до создания вкладки с ошибкой `Cannot redefine property: process`;
+приложение и backend не закрылись. Повторный рискованный цикл не выполнялся.
+Поэтому субъективный визуальный click-through остаётся проверкой владельца в
+обычном браузере по `http://127.0.0.1:8765/ui/`.
+
+На заново запущенном backend PID 11020 выполнен безопасный live smoke:
+
+- все 11 Aurora HTML-страниц и актуальные `api.js`, `ui.js`, `theme.css`
+  вернули HTTP 200 и cache-version `20260713-vitek7`;
+- неавторизованный `/api/auth/status` вернул 401 с требованием Telegram-входа;
+- webhook с неверным secret вернул 403 и не изменил очередь;
+- реальный owner-запрос «Витя, какие на сегодня задания у тебя остались?» прошёл
+  через HTTP webhook → durable inbox → `chief_private` → общий scoped transcript
+  → Telegram: `consumed=true`, `delivered=true`, assistant message id сохранён;
+- после smoke `queued=0`, `running=0`, `dead_letter=0`.
 
 Verified against the running backend at `127.0.0.1:8765`:
 

@@ -315,6 +315,28 @@ def test_telegram_style_commands_control_rest_and_latest_incident(tmp_path, monk
     assert "Вернулся к работе" in resumed["reply"]
 
 
+def test_pending_question_does_not_swallow_a_new_owner_command(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="financial_classification", key="pending", severity="warning",
+            title="Нужна классификация", details="x", recommendation="уточнить",
+            context={"needs_review": 1},
+        )
+        vitek._write(doc)
+    vitek._remember_owner_question(incident, "default")
+
+    for command in (
+        "Включи моделирование на DEMO3369390",
+        "Управляющий, как дела?",
+        "Марина, покажи финансовый отчёт",
+    ):
+        result = vitek.handle_text_command(command)
+        assert result["handled"] is False, command
+        assert result.get("kind") != "incident_decision", command
+
+
 def test_vitek_name_variants_all_return_the_same_operational_status(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch, tmp_path)
     with vitek._LOCK:
@@ -340,6 +362,8 @@ def test_vitek_name_variants_all_return_the_same_operational_status(tmp_path, mo
         "Vitek, unfinished tasks",
         "Дежурный контролёр, список задач",
         "витя какие задания отсались у тебя на сеголня?",
+        "Витя какие на сегодня задания у тебя остались?",
+        "Витёк, какие сегодня задания у тебя остались?",
     )
     for phrase in phrases:
         result = vitek.handle_text_command(phrase, source="test")
@@ -475,6 +499,38 @@ def test_task_is_not_claimed_complete_without_executed_action(tmp_path, monkeypa
     assert current["incident_counts"]["open"] == 1
 
 
+def test_connection_restore_retires_linked_task_and_queued_event(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    doc = vitek._read()
+    doc["incidents"] = [{
+        "incident_id": "VI-CONNECTION", "category": "runtime_connection",
+        "status": "in_progress", "task_id": "VT-RESTORE",
+    }]
+    doc["tasks"] = [{
+        "task_id": "VT-RESTORE", "incident_id": "VI-CONNECTION",
+        "status": "planned", "title": "Восстановить связь",
+    }]
+    doc["events"] = [{
+        "event_id": "VE-TASK", "event_type": "task_created", "status": "queued",
+        "payload": {"task_id": "VT-RESTORE"},
+    }]
+    vitek._write(doc)
+
+    assert vitek._resolve_connection_incidents() == {"VI-CONNECTION"}
+    current = vitek._read()
+    assert current["incidents"][0]["status"] == "resolved"
+    assert current["tasks"][0]["status"] == "completed"
+    assert current["events"] == []
+    assert current["event_history"][-1]["result"]["already_restored"] is True
+
+    late = vitek._set_task_execution(
+        "VT-RESTORE", status="waiting_review", execution_event_id="VE-TASK",
+        result="late worker result",
+    )
+    assert late["status"] == "completed"
+    assert late["result"] != "late worker result"
+
+
 def test_poll_once_consumes_events_without_legacy_full_scan(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(vitek, "_bridge_event_path", lambda: tmp_path / "missing.jsonl")
@@ -567,3 +623,47 @@ def test_agent_lanes_run_independently_in_parallel(tmp_path, monkeypatch) -> Non
         time.sleep(0.02)
     with vitek._AGENT_RUN_LOCK:
         assert vitek._ACTIVE_AGENT_RUNS == {}
+
+
+def test_running_events_are_requeued_after_backend_restart(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["events"] = [{
+            "event_id": "VE-INTERRUPTED", "event_type": "task_created",
+            "payload": {"task_id": "VT-1"}, "status": "running",
+            "attempts": 1, "started_at_utc": "2026-07-13T01:00:00Z",
+        }]
+        vitek._write(doc)
+
+    assert vitek.recover_interrupted_events() == 1
+    recovered = vitek._read()["events"][0]
+    assert recovered["status"] == "queued"
+    assert "started_at_utc" not in recovered
+    assert recovered["recovered_at_utc"]
+
+
+def test_startup_audit_resolves_stale_connection_question_when_heartbeat_is_fresh(tmp_path, monkeypatch) -> None:
+    from app import runtime
+
+    _isolate(monkeypatch, tmp_path)
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="vitek_execution", key="lost", severity="critical",
+            title="connection_lost", details="lost", recommendation="repair",
+            context={"event_type": "connection_lost"},
+        )
+        doc.setdefault("dialogue", {}).setdefault("awaiting_by_conversation", {})["default"] = {
+            "incident_id": incident["incident_id"],
+        }
+        vitek._write(doc)
+    monkeypatch.setattr(vitek, "scan", lambda **kwargs: {"findings": 0})
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True})
+
+    result = vitek._analyze_system_event({"event_type": "startup_audit", "payload": {}})
+
+    assert result["resolved_connection_incidents"] == 1
+    current = next(row for row in vitek._read()["incidents"] if row["incident_id"] == incident["incident_id"])
+    assert current["status"] == "resolved"
+    assert vitek._read()["dialogue"]["awaiting_by_conversation"] == {}

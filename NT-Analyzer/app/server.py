@@ -601,7 +601,8 @@ class Handler(BaseHTTPRequestHandler):
             return [self._json_safe(v) for v in value]
         return value
 
-    def _json(self, status: int, body: Dict[str, Any]) -> None:
+    def _json(self, status: int, body: Dict[str, Any], *,
+              headers: Optional[Dict[str, str]] = None) -> None:
         data = json.dumps(
             self._json_safe(body),
             ensure_ascii=False,
@@ -614,6 +615,8 @@ class Handler(BaseHTTPRequestHandler):
             # CSP-ish hardening for a local UI
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cache-Control", "no-store")
+            for name, value in (headers or {}).items():
+                self.send_header(str(name), str(value))
             self.end_headers()
             self.wfile.write(data)
         except OSError as e:
@@ -621,8 +624,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             raise
 
-    def _err(self, status: int, msg: str) -> None:
-        self._json(status, {"error": msg})
+    def _err(self, status: int, msg: str, *,
+             headers: Optional[Dict[str, str]] = None) -> None:
+        self._json(status, {"error": msg}, headers=headers)
 
     def _bytes(self, status: int, data: bytes, content_type: str,
                download_name: Optional[str] = None) -> None:
@@ -772,7 +776,12 @@ class Handler(BaseHTTPRequestHandler):
             while q and q[0] <= now - 60:
                 q.popleft()
             if len(q) >= limit:
-                self._err(HTTPStatus.TOO_MANY_REQUESTS, "Слишком много запросов. Повторите позже.")
+                retry_after = max(1, int(math.ceil(q[0] + 60 - now)))
+                self._err(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "Слишком много запросов. Повторите позже.",
+                    headers={"Retry-After": str(retry_after)},
+                )
                 return False
             q.append(now)
         return True

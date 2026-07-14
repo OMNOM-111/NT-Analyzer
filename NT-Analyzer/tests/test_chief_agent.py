@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from app import durable
+from app import durable, vitek
 from app.ai_lab import chief_agent
 
 
@@ -17,6 +17,11 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(chief_agent, "_conversations_dir", lambda: (convs.mkdir(parents=True, exist_ok=True) or convs))
     monkeypatch.setattr(chief_agent, "_user_memory_path", lambda scope: tmp_path / "memory.jsonl")
     monkeypatch.setattr(chief_agent, "_conversation_memory_archive_path", lambda scope: tmp_path / "memory_archive.jsonl")
+    # Chief-agent dialogue tests must never consume or mutate the workstation's
+    # real pending Vitek question/task state.
+    monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
+    monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "vitek-background.json")
+    monkeypatch.setattr(vitek, "_bridge_event_path", lambda: tmp_path / "vitek-events.jsonl")
     monkeypatch.setattr(chief_agent, "_usage_stats", lambda agent_id="": {
         "requests": 0, "successful_requests": 0, "input_tokens": 0,
         "cached_input_tokens": 0, "cache_hit_pct": 0, "output_tokens": 0, "cost_usd": 0,
@@ -127,7 +132,7 @@ def test_runtime_heartbeat_transitions_emit_workspace_service_events(tmp_path, m
     monkeypatch.setattr(runtime, "read_heartbeat", lambda: next(states))
     monkeypatch.setattr(runtime, "read_strategies_raw", lambda: [])
     monkeypatch.setattr(runtime, "read_accounts", lambda: [])
-    monkeypatch.setattr(chief_agent, "analyze_event", lambda event_type, payload, **kwargs: events.append((event_type, kwargs.get("scope"))))
+    monkeypatch.setattr(chief_agent, "enqueue_event", lambda event_type, payload: events.append((event_type, payload)))
 
     chief_agent._runtime_monitor_tick(scope)
     chief_agent._runtime_monitor_tick(scope)
@@ -135,6 +140,29 @@ def test_runtime_heartbeat_transitions_emit_workspace_service_events(tmp_path, m
 
     assert [row[0] for row in events] == ["connection_lost", "connection_restored"]
     assert all(row[1]["workspace_id"] == "ws-heartbeat" for row in events)
+
+
+def test_shared_owner_runtime_emits_one_transition_for_multiple_members(tmp_path, monkeypatch) -> None:
+    from app import runtime
+
+    _isolate(tmp_path, monkeypatch)
+    heartbeat = {"present": True, "fresh": True, "age_sec": 1}
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: dict(heartbeat))
+    monkeypatch.setattr(runtime, "read_strategies_raw", lambda: [])
+    monkeypatch.setattr(runtime, "read_accounts", lambda: [])
+    events = []
+    monkeypatch.setattr(chief_agent, "enqueue_event", lambda kind, payload: events.append((kind, payload)))
+    first = {"user_id": 1, "workspace_id": "ws-owner", "uses_owner_runtime": True}
+    second = {"user_id": 2, "workspace_id": "ws-member", "uses_owner_runtime": True}
+
+    chief_agent._runtime_monitor_tick(first)
+    chief_agent._runtime_monitor_tick(second)
+    heartbeat.update({"fresh": False, "age_sec": 40})
+    chief_agent._runtime_monitor_tick(first)
+    chief_agent._runtime_monitor_tick(second)
+
+    assert [row[0] for row in events] == ["connection_lost"]
+    assert events[0][1]["workspace_id"] == "owner_runtime"
 
 
 def test_daily_audit_flags_missing_oos_and_attributes_model(tmp_path, monkeypatch) -> None:
@@ -1912,8 +1940,8 @@ def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, m
     ))
 
     for source, phrase in (
-        ("app", "витя какие задания отсались у тебя на сеголня?"),
-        ("telegram", "Витёк, что осталось?"),
+        ("app", "Витя какие на сегодня задания у тебя остались?"),
+        ("telegram", "Витёк, какие сегодня задания у тебя остались?"),
     ):
         result = chief_agent.handle_message(
             phrase, source=source, mirror_to_telegram=False,
@@ -1929,6 +1957,30 @@ def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, m
         assert "финансов" in result["reply"].lower()
         assert incident["incident_id"] not in result["reply"]
         assert result["message"]["agent_name"] == "Витёк"
+
+
+def test_scoped_default_chat_is_recorded_for_telegram_routing(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 42, "workspace_id": "ws_owner", "membership_role": "owner",
+        "is_owner": True, "workspace_kind": "owner_training", "uses_owner_runtime": True,
+    }
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": "Всё под контролем.", "model": "test", "provider": "local",
+        "actions": [], "doubts": [],
+    })
+
+    chief_agent.handle_message(
+        "Как дела?", mirror_to_telegram=False,
+        conversation_id=chief_agent.DEFAULT_CONVERSATION_ID, scope=scope,
+    )
+
+    row = durable.get_chat_conversation(
+        None, chief_agent.DEFAULT_CONVERSATION_ID, scope_id="u42__ws_owner",
+    )
+    assert row is not None
+    assert row["workspace_id"] == "ws_owner"
+    assert row["message_count"] == 2
 
 
 def test_orchestrator_gateway_blocks_vitek_owner_state_for_non_owner(tmp_path, monkeypatch) -> None:

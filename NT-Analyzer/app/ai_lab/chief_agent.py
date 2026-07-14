@@ -965,6 +965,30 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
     """Update metadata and permanently derive the title from the first request."""
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
+        # The default dialogue stays implicit in the UI index, but Telegram
+        # still needs durable scope metadata to route the next inbound message
+        # into the exact transcript displayed by the authenticated app.
+        scope_info = _normalize_conversation_scope(scope)
+        if scope_info:
+            existing = durable.get_chat_conversation(
+                paths.PROJECT_ROOT, cid, scope_id=scope_info["scope_id"],
+            ) or {}
+            count = message_count
+            if count is None:
+                count = len(_read_conversation(500, path=_conversation_file(cid, scope=scope)))
+            _record_conversation_durable_best_effort({
+                "conversation_id": cid,
+                "conversation_scope_id": scope_info["scope_id"],
+                "user_id": scope_info["user_id"],
+                "workspace_id": scope_info["workspace_id"],
+                "membership_role": scope_info["membership_role"],
+                "title": "Основной чат",
+                "message_count": int(count or 0),
+                "work_state": "open",
+                "closed": False,
+                "created_at_utc": existing.get("created_at_utc") or _now(),
+                "updated_at_utc": _now(),
+            }, scope)
         return  # implicit conversation; no index entry (keeps test isolation)
     scope_info = _normalize_conversation_scope(scope)
     first_request = ""
@@ -1321,7 +1345,10 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
         try:
             from .. import telegram_service
             title = _conversation_title(cid, scope=scope)
-            telegram_service.mirror_owner_message(text, conversation_id=cid, conversation_title=title)
+            telegram_service.mirror_owner_message(
+                text, conversation_id=cid, conversation_title=title,
+                dedupe_key=str(user_msg.get("message_id") or ""),
+            )
             telegram_service.send_chief_report(
                 "Витёк · правая рука руководителя", [ack[:1500]], model_name="chart operator",
                 conversation_id=cid, conversation_title=title,
@@ -3659,7 +3686,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     if _conversation_is_closed(cid, scope=scope):
         raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
     conv_path = _conversation_file(cid, scope=scope)
-    _append_conversation("user", clean, source=source, path=conv_path, scope=scope)
+    user_message = _append_conversation(
+        "user", clean, source=source, path=conv_path, scope=scope,
+    )
     _touch_conversation(cid, title_hint=clean, scope=scope)
     # Mirror the owner's own app-typed message into the bound Telegram topic so
     # the Telegram thread shows the full conversation, not only replies. Never
@@ -3669,6 +3698,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             from .. import telegram_service
             telegram_service.mirror_owner_message(
                 clean, conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
+                dedupe_key=str(user_message.get("message_id") or ""),
             )
         except Exception:
             pass
@@ -4967,7 +4997,9 @@ def _scheduled_reports_tick() -> None:
 def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
     from .. import runtime
 
-    scope_key = re.sub(r"[^A-Za-z0-9_]", "_", str((scope or {}).get("workspace_id") or "global"))[:96]
+    owner_runtime = bool((scope or {}).get("uses_owner_runtime"))
+    runtime_identity = "owner_runtime" if owner_runtime else str((scope or {}).get("workspace_id") or "global")
+    scope_key = re.sub(r"[^A-Za-z0-9_]", "_", runtime_identity)[:96]
     heartbeat = runtime.read_heartbeat()
     heartbeat_fresh = bool(heartbeat.get("present") and heartbeat.get("fresh"))
     heartbeat_state_key = f"runtime_heartbeat_fresh__{scope_key}"
@@ -4982,15 +5014,12 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
             _save(doc)
     if heartbeat_transition:
         payload = {
-            "workspace_id": str((scope or {}).get("workspace_id") or "global"),
+            "workspace_id": runtime_identity,
             "bridge_heartbeat": "fresh" if heartbeat_fresh else "lost",
             "heartbeat_age_sec": heartbeat.get("age_sec"),
             "enabled_strategies": 0,
         }
-        analyze_event(
-            heartbeat_transition, payload,
-            send_telegram=bool(not scope or (scope or {}).get("uses_owner_runtime")), scope=scope,
-        )
+        enqueue_event(heartbeat_transition, payload)
     if not heartbeat_fresh:
         return
     strategies = runtime.read_strategies_raw()
@@ -5052,10 +5081,10 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
     if run_runtime_issue_analysis:
         primary = str(issues[0].get("kind") or "runtime_issue")
         try:
-            analyze_event(
-                primary, {"issues": issues, "enabled_strategies": len(enabled)},
-                send_telegram=bool(not scope or (scope or {}).get("uses_owner_runtime")), scope=scope,
-            )
+            enqueue_event(primary, {
+                "issues": issues, "enabled_strategies": len(enabled),
+                "workspace_id": runtime_identity,
+            })
         except Exception as exc:
             with _LOCK:
                 doc = _load(); doc["last_runtime_analysis_error"] = str(exc)[:500]; _save(doc)
@@ -5066,10 +5095,10 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
     }
     if run_connection_analysis:
         try:
-            analyze_event(
-                "connection_lost", connection_payload,
-                send_telegram=bool(not scope or (scope or {}).get("uses_owner_runtime")), scope=scope,
-            )
+            enqueue_event("connection_lost", {
+                **connection_payload,
+                "workspace_id": runtime_identity,
+            })
         except Exception as exc:
             with _LOCK:
                 doc = _load(); doc["last_runtime_analysis_error"] = str(exc)[:500]; _save(doc)
@@ -5088,7 +5117,10 @@ def _event_queue_tick() -> None:
             return
         event = dict(queue[0])
     try:
-        analyze_event(str(event.get("event_type") or "system_event"), dict(event.get("payload") or {}), send_telegram=True)
+        enqueue_event(
+            str(event.get("event_type") or "system_event"),
+            dict(event.get("payload") or {}),
+        )
     except Exception as exc:
         event["attempts"] = int(event.get("attempts") or 0) + 1
         event["last_error"] = str(exc)[:500]

@@ -78,7 +78,10 @@
 
   // ---- real async HTTP layer over the actual endpoints --------------------
   class HttpError extends Error {
-    constructor(status, message, path) { super(message); this.name = 'HttpError'; this.status = status; this.path = path; }
+    constructor(status, message, path, retryAfterMs) {
+      super(message); this.name = 'HttpError'; this.status = status; this.path = path;
+      this.retryAfterMs = Number(retryAfterMs || 0);
+    }
   }
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const qs = (obj) => {
@@ -95,12 +98,19 @@
         if (!res.ok) {
           let detail = '';
           try { detail = (await res.json()).error || ''; } catch (e) { /* non-json */ }
-          throw new HttpError(res.status, detail || res.statusText, path);
+          const retryHeader = Number(res.headers.get('Retry-After') || 0);
+          throw new HttpError(
+            res.status, detail || res.statusText, path,
+            retryHeader > 0 ? retryHeader * 1000 : 0,
+          );
         }
         return await res.json();
       } catch (e) {
         lastErr = e;
         if (e.name === 'AbortError') throw e;
+        // Retrying client/auth/rate-limit responses cannot heal them and, for
+        // 429, actively makes the overload worse. Retry only transport/5xx.
+        if (e instanceof HttpError && e.status >= 400 && e.status < 500) throw e;
         if (attempt < retries) await sleep(250 * (attempt + 1));
       }
     }
@@ -144,14 +154,24 @@
       try { detail = (await res.json()).error || ''; } catch (e) { /* non-json */ }
       throw new HttpError(res.status || 0, detail || res.statusText || 'stream unavailable', path);
     }
+    let sawFinal = false;
+    let sawDone = false;
+    let streamError = '';
     const dispatch = (evt, data) => {
       if (evt === 'thinking_start') { h.onThinkingStart && h.onThinkingStart(data); }
       else if (evt === 'thinking_delta') { h.onThinkingDelta && h.onThinkingDelta(String(data.text || '')); }
       else if (evt === 'status') { h.onStatus && h.onStatus(String(data.text || '')); }
       else if (evt === 'thinking_done') { h.onThinkingDone && h.onThinkingDone(String(data.text || '')); }
-      else if (evt === 'final') { h.onFinal && h.onFinal(data); }
-      else if (evt === 'error') { h.onError && h.onError(String(data.error || 'error')); }
-      else if (evt === 'done') { h.onDone && h.onDone(data); }
+      else if (evt === 'final') { sawFinal = true; h.onFinal && h.onFinal(data); }
+      else if (evt === 'error') {
+        streamError = String(data.error || 'Не удалось получить ответ');
+        h.onError && h.onError(streamError);
+      }
+      else if (evt === 'done') {
+        sawDone = true;
+        if (data && data.ok === false && !streamError) streamError = String(data.error || 'Ответ не был завершён');
+        h.onDone && h.onDone(data);
+      }
     };
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -177,6 +197,11 @@
         dispatch(evt, data);
       }
     }
+    if (streamError) return { ok: false, error: streamError, terminal: 'error' };
+    if (!sawFinal || !sawDone) {
+      return { ok: false, error: 'Соединение прервалось до получения ответа.', terminal: 'eof' };
+    }
+    return { ok: true, final: sawFinal, done: sawDone };
   }
 
   // Endpoint map mirrors app/server.py exactly.
@@ -424,16 +449,23 @@
     aiResearchUpdate: (id, body) => send('/api/ai-lab/researches/' + encodeURIComponent(id), 'POST', body || {}),
   };
 
-  const authReady = isFile ? Promise.resolve({ auth: null }) : http.authStatus({ retries: 0 }).then(auth => {
-    csrfToken = String(auth.csrf_token || '');
-    document.documentElement.dataset.remoteRole = auth.role || 'read_only';
-    document.documentElement.classList.add('authenticated');
-    return { auth };
-  }).catch(error => ({ error }));
+  async function refreshAuth() {
+    if (isFile) return { auth: null };
+    try {
+      const auth = await http.authStatus({ retries: 0 });
+      csrfToken = String(auth.csrf_token || '');
+      document.documentElement.dataset.remoteRole = auth.role || 'read_only';
+      document.documentElement.classList.add('authenticated');
+      return { auth };
+    } catch (error) {
+      return { error };
+    }
+  }
+  const authReady = refreshAuth();
   const config = { legacyUrl, offline: isFile };
   Object.defineProperties(config, {
     miniApp: { enumerable: true, get: () => !!refreshTelegramInitData() },
     telegramInitData: { enumerable: true, get: () => refreshTelegramInitData() },
   });
-  window.API = { config, http, HttpError, authReady, getTelegramInitData: refreshTelegramInitData, withTelegramContext };
+  window.API = { config, http, HttpError, authReady, refreshAuth, getTelegramInitData: refreshTelegramInitData, withTelegramContext };
 })();

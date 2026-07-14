@@ -136,7 +136,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260713-vitek5"}, versions
+    assert set(versions.values()) == {"20260713-vitek7"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
@@ -292,6 +292,28 @@ def test_vitek_chat_hides_internal_model_beside_message_time():
     assert "Витёк · ваша правая рука" in ui
     assert "Ваши чаты и данные сохранены" in ui
     assert "ORCH.conversations = []" not in ui
+
+
+def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "let stopped = false, running = false;" in ui
+    assert "if (stopped || running) return;" in ui
+    assert "let stopped = false, refreshing = false;" in ui
+    assert "Date.now() < Number(ORCH.retryAfter || 0)" in ui
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "Number(e.retryAfterMs || 0)" in ui
+    assert "e instanceof HttpError && e.status >= 400 && e.status < 500" in api
+    assert 'headers={"Retry-After": str(retry_after)}' in server
+    assert "streamResult.ok !== true" in ui
+    assert "if (!sawFinal || !sawDone)" in api
+    assert "API.http.aiOrchestratorMessage(text, cid, agent)" not in ui
+    assert "row.actor_is_owner ? 'Owner'" not in ui
+    assert "async function refreshAuth()" in api and "authReady, refreshAuth" in api
+    assert "authenticateAndStart(newsStrip, true)" in ui
+    assert "if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }" in ui
+    assert "}, 3000);" in ui
+    assert "}, 5000);" in ui
 
 
 def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():

@@ -636,9 +636,23 @@
     const content = qs('.content'); if (content) obs.observe(content, { childList: true, subtree: true });
   }
 
-  async function authenticateAndStart(newsStrip) {
-    const result = window.API ? await API.authReady : { auth: null };
+  async function authenticateAndStart(newsStrip, refresh = false) {
+    const result = window.API
+      ? await (refresh && API.refreshAuth ? API.refreshAuth() : API.authReady)
+      : { auth: null };
     if (result.error) {
+      if (!result.error.status || ![401, 403].includes(Number(result.error.status))) {
+        document.documentElement.classList.remove('auth-locked');
+        let banner = qs('#auth-reconnect');
+        if (!banner) {
+          banner = el('<div id="auth-reconnect" class="connection-banner">Связь с сервером временно недоступна. Восстанавливаю… <button class="btn sm" type="button">Повторить</button></div>');
+          document.body.appendChild(banner);
+          const retry = qs('button', banner);
+          if (retry) retry.onclick = () => { banner.remove(); authenticateAndStart(newsStrip, true); };
+        }
+        setTimeout(() => { if (document.body.contains(banner)) { banner.remove(); authenticateAndStart(newsStrip, true); } }, 5000);
+        return;
+      }
       // Always mount the real first page as a guest, then optionally show the
       // access sheet on top. Never replace .content with the promo screen —
       // that destroyed the overview and made "close" feel broken.
@@ -2445,8 +2459,14 @@
   function signal() { const c = new AbortController(); onLeave(() => c.abort()); return c.signal; }
   // Interval poll that is automatically cleared on navigation away. Returns stop().
   function poll(fn, ms) {
-    let stopped = false;
-    const tick = async () => { if (stopped) return; try { await fn(); } catch (e) { if (!(e && e.name === 'AbortError')) reportError(e); } };
+    let stopped = false, running = false;
+    const tick = async () => {
+      if (stopped || running) return;
+      running = true;
+      try { await fn(); }
+      catch (e) { if (!(e && e.name === 'AbortError')) reportError(e); }
+      finally { running = false; }
+    };
     const id = setInterval(tick, ms);
     const stop = () => { stopped = true; clearInterval(id); };
     onLeave(stop);
@@ -2474,7 +2494,7 @@
       } finally {
         busy = false;
       }
-    }, 1500);
+    }, 5000);
   }
 
   // ---- standard async states (loading / empty / error+retry) -----------------
@@ -2601,6 +2621,7 @@
     built: false, open: false, sending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
+    retryAfter: 0, transientError: null,
   };
   const ORCH_KEY = 'orch.currentConversationId';
   // Model selection is an internal responsibility of Vitek and the Manager.
@@ -2762,14 +2783,19 @@
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,
     // so new messages and a first-request title become visible here almost at once.
     if (ORCH.pollStop) ORCH.pollStop();
-    let stopped = false;
-    const id = setInterval(() => {
-      if (stopped || !ORCH.open || ORCH.sending) return;
-      Promise.all([
-        orchLoadMessages(ORCH.currentId, true),
-        orchLoadConversations(),
-      ]).catch(() => {});
-    }, 1500);
+    let stopped = false, refreshing = false;
+    const id = setInterval(async () => {
+      if (stopped || refreshing || !ORCH.open || ORCH.sending
+          || Date.now() < Number(ORCH.retryAfter || 0)) return;
+      refreshing = true;
+      try {
+        const refreshed = await Promise.all([
+          orchLoadMessages(ORCH.currentId, true),
+          orchLoadConversations(),
+        ]);
+        if (refreshed.every(Boolean)) ORCH.retryAfter = 0;
+      } finally { refreshing = false; }
+    }, 3000);
     ORCH.pollStop = () => { stopped = true; clearInterval(id); };
   }
   function orchRenderAuthRequired(panel) {
@@ -2805,6 +2831,7 @@
       // Never replace a previously loaded list with an empty one because of a
       // session/network error.  That made intact history look deleted.
       ORCH.loadError = e || new Error('Не удалось загрузить диалоги');
+      if (e && e.status === 429) ORCH.retryAfter = Date.now() + Math.max(15000, Number(e.retryAfterMs || 0));
       if (e && (e.status === 401 || e.status === 403)) orchRenderAuthRequired(qs('#orch-panel'));
       else orchRenderConversations();
       return false;
@@ -2888,10 +2915,12 @@
     qsa('[data-del]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchDelete(b.dataset.del); }));
   }
   async function orchPin(cid, pinned) {
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     try { await API.http.aiOrchestratorPinConversation(cid, pinned); await orchLoadConversations(); }
     catch (e) { reportError(e); }
   }
   async function orchSelectConversation(cid) {
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     if (!cid || cid === ORCH.currentId) { qs('#orch-panel').classList.remove('show-convos'); return; }
     if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Перейти в другой диалог?')) return;
     orchSaveCurrentId(cid);
@@ -2904,6 +2933,7 @@
     const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
   }
   async function orchNewConversation() {
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     if (!window.API || API.config.offline) return;
     if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
     try {
@@ -2916,6 +2946,7 @@
     } catch (e) { reportError(e); }
   }
   async function orchRename(cid) {
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     const current = ORCH.conversations.find(c => c.conversation_id === cid);
     const title = prompt('Название диалога:', (current && current.title) || '');
     if (title == null) return;
@@ -2925,6 +2956,7 @@
     catch (e) { reportError(e); }
   }
   async function orchDelete(cid) {
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     if (!confirm('Удалить этот диалог вместе с его историей?')) return;
     try {
       await API.http.aiOrchestratorDeleteConversation(cid);
@@ -2967,7 +2999,7 @@
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
     const actor = isUser
-      ? (row.actor_is_owner ? 'Owner' : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
+      ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
     const meta = [
       isUser ? esc(actor) : (row.agent_name ? esc(row.agent_name) : ''),
@@ -3134,7 +3166,13 @@
     try {
       const data = await API.http.aiOrchestratorConversation(cid, { limit: 200 });
       messages = data.messages || [];
-    } catch (e) { if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return; } return; }
+    } catch (e) {
+      if (e && e.status === 429) {
+        ORCH.retryAfter = Math.max(Number(ORCH.retryAfter || 0), Date.now() + Number(e.retryAfterMs || 15000));
+      }
+      if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
+      return false;
+    }
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
@@ -3145,9 +3183,13 @@
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
     box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>';
+    if (ORCH.transientError && ORCH.transientError.cid === cid) {
+      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><span class="orch-err">${esc(ORCH.transientError.text)}</span></div>`);
+    }
     ORCH.messagesSignature = signature;
     wireOrchFeedback(box);
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
+    return true;
   }
   async function orchSend() {
     if (ORCH.sending) return;
@@ -3158,6 +3200,7 @@
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
     ORCH.sending = true;
+    ORCH.transientError = null;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
     // optimistic render: show the owner message immediately
@@ -3187,11 +3230,11 @@
     const removeThink = () => { if (thinkWrap) thinkWrap.remove(); };
     const agent = (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).agent;
     try {
-      await API.http.aiOrchestratorMessageStream(text, cid, agent, {
+      const streamResult = await API.http.aiOrchestratorMessageStream(text, cid, agent, {
         onThinkingDelta: (delta) => { sawThinking = true; thinking += delta; setThink(thinking); },
         onStatus: (s) => { if (!sawThinking) setThink(s); },
         onFinal: (data) => {
-          if (data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
+          if (ORCH.currentId === cid && data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
           removeThink();
           if (liveBody) liveBody.textContent = String((data && data.reply) || '');
           keepBottom();
@@ -3202,22 +3245,25 @@
           keepBottom();
         },
       });
-    } catch (e) {
-      // Streaming unavailable (older server / network) → synchronous fallback.
-      try {
-        const res = await API.http.aiOrchestratorMessage(text, cid, agent);
-        if (res && res.conversation_id) orchSaveCurrentId(res.conversation_id);
+      if (!streamResult || streamResult.ok !== true) {
+        const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
+        ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
         removeThink();
-      } catch (e2) {
-        removeThink();
-        if (liveBody) liveBody.innerHTML = `<span class="orch-err">Не удалось получить ответ: ${esc((e2 && e2.message) || String(e2))}</span>`;
+        if (liveBody) liveBody.innerHTML = `<span class="orch-err">${esc(ORCH.transientError.text)}</span>`;
       }
+    } catch (e) {
+      // A failed streaming POST may already have been committed by the server.
+      // Never repeat the same mutating message through a second transport.
+      const message = String((e && e.message) || e || 'Соединение прервалось');
+      ORCH.transientError = { cid, text: `Не удалось подтвердить получение ответа: ${message}. Обновите историю перед повторной отправкой.` };
+      removeThink();
+      if (liveBody) liveBody.innerHTML = `<span class="orch-err">${esc(ORCH.transientError.text)}</span>`;
     } finally {
       ORCH.sending = false;
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the persisted thinking + reply render canonically
       // (collapsed thinking in history), replacing the transient live block.
-      await orchLoadMessages(ORCH.currentId);
+      if (!ORCH.transientError && ORCH.currentId === cid) await orchLoadMessages(cid);
       await orchLoadConversations();
       if (ta && !ta.disabled) ta.focus();
     }
