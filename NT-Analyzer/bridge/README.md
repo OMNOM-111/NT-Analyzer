@@ -14,6 +14,8 @@ Bridge выполняет четыре рабочие задачи:
 
 Bridge не принимает произвольный C# код из job. Исполняются только стратегии,
 которые уже скомпилированы в `NinjaTrader.Custom.dll` и найдены через whitelist.
+Production всегда подключает `StrategyAnalyzerRunner`; незавершённого
+fallback-runner в сборке нет.
 
 ## Сборка
 
@@ -97,6 +99,9 @@ Bridge пишет локальные runtime-файлы в:
 - `strategy_history.jsonl`.
 
 Эти файлы являются локальным состоянием и не предназначены для Git.
+Изменения heartbeat, strategies, errors и завершения jobs преобразуются backend
+в долговечные события Витька. Bridge не вызывает AI и не принимает решения
+самостоятельно.
 
 ## Queue contract
 

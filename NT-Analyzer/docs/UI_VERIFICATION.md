@@ -1,18 +1,29 @@
 # UI verification
 
-Status: Aurora production integration completed and re-audited on 2026-06-28.
+Status: Aurora, Vitek and Orchestrator production integration re-audited on
+2026-07-13. Историческая визуальная приёмка ниже сохранена как evidence июня;
+текущие автоматические release-gates выполнены заново.
 
 ## Automated gates
 
-- `C:\Python312\python.exe -m pytest -q`: **38 passed**.
-- `C:\Python312\python.exe -m tests.test_performance`: **13 passed**.
+- `python -m pytest -q`: **424 passed**.
+- `python -m tests`: **13/13 suites passed**.
 - `node --check`: every JS file under `app/static/aurora/assets` passed.
+- `python -m compileall -q app tests`: passed.
+- `dotnet build bridge\NTAnalyzerBridge.csproj -c Debug`: 0 warnings,
+  0 errors.
 - CSP scan: no inline `<script>` and no HTML `onclick=` in Aurora pages.
 - HTTP contract tests cover `/ui/`, `/ui/legacy/`, CSP, GET trade pagination,
   nested job details, runtime adapters, PT market phases, immutable cells,
-  account-ledger accounting rules and AI model telemetry.
+  account-ledger accounting rules, AI model telemetry, Telegram auth, workspace
+  isolation, scoped chat migration, Vitek events and real yes/no decisions.
 
 ## Live acceptance
+
+Встроенный браузер Codex не запускался из-за зафиксированного crash/hang риска.
+Финальный текущий визуальный smoke выполняется владельцем в обычном браузере по
+`http://127.0.0.1:8765/ui/`; безопасный сценарий приведён в
+`PRODUCTION_READINESS_2026-07-13.md`.
 
 Verified against the running backend at `127.0.0.1:8765`:
 
@@ -74,7 +85,9 @@ intentionally. Runtime commands remain paper-only at the backend.
 ```powershell
 Set-Location 'C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\NT-Analyzer'
 C:\Python312\python.exe -m pytest -q
-C:\Python312\python.exe -m tests.test_performance
+C:\Python312\python.exe -m tests
 Get-ChildItem app\static\aurora\assets -Recurse -Filter *.js |
   ForEach-Object { node --check $_.FullName }
+python -m compileall -q app tests
+dotnet build bridge\NTAnalyzerBridge.csproj -c Debug
 ```

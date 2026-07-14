@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-13
+
+- Added Vitek as the owner-facing right hand above the internal manager and
+  specialist agents, with concise human dialogue and one-response routing from
+  both Aurora and Telegram.
+- Replaced periodic full polling with durable event-driven wakeups, explicit
+  rest/resume, plans, incidents, tasks, strategy time-window coverage and
+  parallel agent activity.
+- Restored StratForge Orchestrator UI compatibility, protected chat history from
+  transient auth/API failures and added explicit Telegram login recovery.
+- Scoped Orchestrator conversations by user and workspace and migrated the
+  owner's legacy chats idempotently without exposing them to other users.
+- Added Vitek background watchdog startup, safe no-browser operating rules,
+  end-to-end decision tests and production-readiness documentation.
+
 ## 2026-07-02
 
 - Added StratForge Orchestrator as the owner-facing manager with isolated app/

@@ -1457,7 +1457,7 @@ def test_scheduled_stop_keeps_active_mission_running_until_owner_time(tmp_path, 
     assert "11:00" in result["reply"]
 
 
-def test_announce_chart_task_opens_conversation_with_owner_and_ivan(tmp_path, monkeypatch) -> None:
+def test_announce_chart_task_opens_conversation_with_owner_and_vitek(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     conv = chief_agent.create_conversation("Иван · MNQ · цель")
     cid = conv["conversation_id"]
@@ -1472,7 +1472,7 @@ def test_announce_chart_task_opens_conversation_with_owner_and_ivan(tmp_path, mo
     rows = chief_agent._read_conversation(50, path=chief_agent._conversation_file(cid))
     assert [r["role"] for r in rows] == ["user", "assistant"]
     assert rows[0]["content"].startswith("Ваня")
-    assert rows[1]["agent_name"] == "Иван"
+    assert rows[1]["agent_name"] == "Витёк"
     assert "MNQ" in rows[1]["content"] and "снимок" in rows[1]["content"].lower()
 
 
@@ -1489,6 +1489,19 @@ def test_announce_chart_task_generates_instruction_when_note_blank(tmp_path, mon
     rows = chief_agent._read_conversation(50, path=chief_agent._conversation_file(cid))
     assert rows[0]["role"] == "user" and "MES" in rows[0]["content"]
     assert "через" in rows[1]["content"].lower()
+
+
+def test_all_new_assistant_messages_are_owner_facing_vitek(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    path = chief_agent._conversation_file("C-PUBLIC-ACTOR")
+
+    row = chief_agent._append_conversation(
+        "assistant", "Отчёт профильного агента", source="agent",
+        agent_name="Марина", path=path,
+    )
+
+    assert row["agent_name"] == "Витёк"
+    assert "Марина" not in row.values()
 
 
 def test_model_cannot_turn_ambiguous_future_stop_into_immediate_stop(tmp_path, monkeypatch) -> None:

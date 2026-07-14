@@ -1,5 +1,7 @@
 # Aurora UI architecture
 
+Актуально на 2026-07-13.
+
 ## Layout
 
 `/ui/` обслуживает `app/static/aurora/`. Classic UI физически остаётся в
@@ -52,6 +54,13 @@ app/static/
 - `UI.ready`, abort signals and polling cleanup prevent work after page unload.
 - Async blocks have loading/empty/error states. Independent requests are loaded
   concurrently where one failure must not blank unrelated data.
+- Общий chat widget сохраняет прежнее имя `StratForge Orchestrator`, но
+  пользователь разговаривает с Витьком. Ошибка API или истёкшая сессия не
+  очищает список диалогов: UI показывает вход через Telegram и сохраняет
+  последнюю успешно загруженную историю.
+- Все Aurora-страницы используют одинаковую cache-version для общего
+  `api.js`, поэтому после обновления нельзя получить смесь старого адаптера и
+  нового backend-контракта.
 
 ## Data semantics
 

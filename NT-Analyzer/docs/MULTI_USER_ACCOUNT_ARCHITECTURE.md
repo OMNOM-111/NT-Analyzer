@@ -10,12 +10,17 @@
 - `app/account_auth.py` уже даёт identity layer: Telegram user id, профиль,
   сессии, роли `read_only`, `full_control`, `owner`, подтверждение владельцем и
   DPAPI-хранилище `data/integrations/accounts.dpapi`.
-- `/api/auth/users` и экран `Пользователи` управляют доступом к одному backend,
-  а не к независимым рабочим областям.
-- Runtime endpoints вроде `/api/ops/runtime/accounts` читают один локальный
-  NinjaTrader bridge и один набор файлов `data/runtime/*`.
+- `/api/auth/users` и экран `Пользователи` управляют identity и доступом;
+  workspace, membership, subscription и bridge connection существуют как
+  отдельные сущности.
+- Runtime endpoints получают активный workspace из сессии. Owner-training
+  читает `data/runtime/*`; personal workspace читает только
+  `data/tenants/<workspace_id>/runtime` после pairing.
 - Mini App намеренно запрещает live-действия. Paper/demo действия проходят через
   отдельные backend gates.
+- AI-диалоги изолированы по `user_id + workspace_id + conversation_id`.
+  Старые неразмеченные диалоги владельца мигрируются идемпотентно при первом
+  чтении; для non-owner такая миграция запрещена.
 
 Из этого следует главный архитектурный запрет: нельзя расширять поле `role` до
 "подписки", "владельца счета" или "подключения NinjaTrader". Эти понятия
@@ -261,6 +266,10 @@ data/
 - Promo code plaintext не сохраняется; хранится только hash.
 
 ## Implementation phases
+
+Фазы 1–5 имеют локальный MVP/vertical slice. Фазы hosted payment/control plane,
+полный перенос тяжёлых задач в worker и расширенный security audit остаются
+дальнейшим развитием, а не скрытыми частями текущего release.
 
 1. **Contract and terminology**: добавить этот документ, UI/API ссылки и
    переименовать в коде понятия так, чтобы `role` не означала подписку.

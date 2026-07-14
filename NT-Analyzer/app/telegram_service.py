@@ -1,8 +1,10 @@
-"""Telegram notifications for the local StratForge AI backend.
+"""Telegram transport for the local StratForge AI backend.
 
 The bot token and paired chat id live only in ``secrets.local.json``. Public
 status responses expose configuration flags and delivery health, never secret
-values. Incoming trading commands are intentionally not implemented.
+values. Incoming messages share one dispatcher for authentication, Vitek and
+the allowlisted Orchestrator capabilities. Live trading remains unavailable;
+paper/demo actions keep their explicit backend approval gates.
 """
 from __future__ import annotations
 

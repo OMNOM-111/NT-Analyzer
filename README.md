@@ -12,6 +12,9 @@ The product is intentionally local-first:
   telemetry views, and AI-assisted research workflows.
 - AI-generated strategy code is sandboxed and gated before any promotion to a
   portfolio or paper workflow.
+- Vitek is the owner-facing control layer: application and Telegram messages
+  enter through one StratForge Orchestrator gateway, while the manager and
+  specialist agents work independently behind it.
 
 ## Repository Layout
 
@@ -65,6 +68,17 @@ Then open:
 ```text
 http://127.0.0.1:8765/ui/
 ```
+
+For unattended local operation, install the event-driven Vitek watchdog once:
+
+```powershell
+cd NT-Analyzer
+.\00_INSTALL_VITEK_BACKGROUND.cmd
+```
+
+The watchdog does not open a browser. See
+`NT-Analyzer/docs/VITEK.md` and
+`NT-Analyzer/docs/PRODUCTION_READINESS_2026-07-13.md`.
 
 External model connections are configured locally at
 `http://127.0.0.1:8765/ui/ai-agents.html`. API keys are encrypted with Windows

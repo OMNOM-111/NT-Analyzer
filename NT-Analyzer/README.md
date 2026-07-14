@@ -89,6 +89,8 @@ backup и создаёт новый локальный store после повт
 `docs/MULTI_USER_ACCOUNT_ARCHITECTURE.md`.
 Текущий технический backlog по отказоустойчивости, безопасности и
 производительности: `docs/RESILIENCE_SECURITY_BACKLOG_2026-07-10.md`.
+Фактический статус последнего полного аудита, команды проверки и оставшиеся
+неблокирующие ограничения: `docs/PRODUCTION_READINESS_2026-07-13.md`.
 
 ## Облачный fallback AI Lab
 
@@ -111,12 +113,13 @@ benchmark, стоимость и результаты historical-only цикло
 ## Проверки
 
 ```powershell
+python -m pytest -q
 python -m tests
 dotnet build bridge\NTAnalyzerBridge.csproj -c Debug
 ```
 
-Тесты можно запускать единым runner'ом `python -m tests`. Отдельные модули
-также остаются запускаемыми напрямую.
+`pytest` является полным регрессионным комплектом, а `python -m tests` —
+коротким release-runner из 13 крупных наборов. Перед выпуском запускаются оба.
 
 ## Основные папки
 

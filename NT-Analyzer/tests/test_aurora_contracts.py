@@ -129,6 +129,16 @@ def test_every_aurora_page_loads_domain_adapter_before_ui():
         assert html.index('src="assets/domain.js') < html.index('src="assets/ui.js'), page.name
 
 
+def test_every_aurora_page_uses_one_api_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'src="assets/api.js?v='
+        assert marker in html, page.name
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert set(versions.values()) == {"20260713-vitek5"}, versions
+
+
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")

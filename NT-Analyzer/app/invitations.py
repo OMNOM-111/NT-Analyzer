@@ -286,9 +286,12 @@ def _svg_provider(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _ai_image_provider(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Placeholder for an external AI image generator. Returns None until one is
-    configured, so rendering always falls back to the local card. Wire a real
-    generator with ``register_image_provider`` (front=True)."""
+    """Optional extension hook for an external image generator.
+
+    The production default deliberately returns None so invitation rendering
+    stays local and deterministic. Integrations can register an explicit provider
+    with ``register_image_provider`` (front=True).
+    """
     return None
 
 

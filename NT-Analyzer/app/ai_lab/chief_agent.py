@@ -1193,8 +1193,9 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
 
     A task drawn on the desktop (a watched level or a scheduled snapshot) starts
     a dedicated dialogue: the owner's поручение becomes the first user message and
-    Иван immediately confirms it, so the same thread already exists in the app and
-    (in group mode) in Telegram before the scheduled snapshot/report arrives.
+    the chart operator immediately prepares the confirmation through Vitek, so
+    the same thread already exists in the app and (in group mode) in Telegram
+    before the scheduled snapshot/report arrives.
     """
     from . import domain_agents
     scope_info = _normalize_conversation_scope(scope)
@@ -1202,7 +1203,6 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     path = _conversation_file(cid, scope=scope)
     profile = domain_agents.PERSONAS.get(str(agent_id or "ivan").lower()) or domain_agents.PERSONAS["ivan"]
     agent_name = str(profile.get("name") or "Иван")
-    agent_title = str(profile.get("title") or "AI-оператор графиков")
     ack = domain_agents.chart_task_acknowledgement(
         instrument=instrument, price=price, drawing_type=drawing_type, label=label,
         delay_seconds=delay_seconds, duration_minutes=duration_minutes,
@@ -1237,7 +1237,7 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     _touch_conversation(cid, title_hint=text, scope=scope)
     assistant = _append_conversation(
         "assistant", ack, source="chart_task", model="chart operator", provider="local",
-        agent_name=agent_name, actions=[], doubts=[], path=path, scope=scope,
+        agent_name="Витёк", actions=[], doubts=[], path=path, scope=scope,
     )
     _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
@@ -1247,7 +1247,7 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
             title = _conversation_title(cid, scope=scope)
             telegram_service.mirror_owner_message(text, conversation_id=cid, conversation_title=title)
             telegram_service.send_chief_report(
-                f"{agent_name} · {agent_title}", [ack[:1500]], model_name="chart operator",
+                "Витёк · правая рука руководителя", [ack[:1500]], model_name="chart operator",
                 conversation_id=cid, conversation_title=title,
                 dedupe_key=str(assistant.get("message_id") or ""),
             )
@@ -1265,8 +1265,8 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
 
     Used by the desktop when a price level is touched or a watch window expires:
     the browser captures the chart canvas, the server stores it and this call
-    posts the result as a message from Иван into the originating conversation and
-    (in group mode) uploads the image into that conversation's Telegram topic.
+    posts the result through Vitek into the originating conversation and (in
+    group mode) uploads the image into that conversation's Telegram topic.
     """
     scope_info = _normalize_conversation_scope(scope)
     cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
@@ -1276,7 +1276,7 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
         attachments = [{"type": "image", "url": image_url, "caption": caption}]
     message = _append_conversation(
         "assistant", str(text or "Снимок графика").strip(), source="chart_snapshot",
-        model="chart operator", provider="local", agent_name=agent_name,
+        model="chart operator", provider="local", agent_name="Витёк",
         actions=[], doubts=[], attachments=attachments, path=path, scope=scope,
     )
     title = _conversation_title(cid, scope=scope)
@@ -1298,7 +1298,7 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
             if not sent_photo:
                 lines = [str(text or "")[:1500]]
                 telegram_service.send_chief_report(
-                    f"{agent_name} · снимок графика", lines, model_name="chart operator",
+                    "Витёк · снимок графика", lines, model_name="chart operator",
                     conversation_id=cid, conversation_title=title,
                     dedupe_key=str(message.get("message_id") or ""),
                 )
@@ -1407,7 +1407,9 @@ def _append_conversation(role: str, content: str, *, source: str,
         "source": str(source or "app")[:40],
         "model": str(model or "")[:180],
         "provider": str(provider or "")[:80],
-        "agent_name": str(agent_name or "")[:80],
+        # The user-facing actor is always Vitek. The actual specialist remains
+        # in action/audit metadata and never becomes a second interlocutor.
+        "agent_name": ("Витёк" if role == "assistant" else str(agent_name or "")[:80]),
         "actions": list(actions or [])[:10],
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
     }

@@ -9,7 +9,7 @@ growth percentages required by the AI performance board and arbitration:
 - years_tested
 - pf, dd (after commission - inherited from backtest result)
 - profitable months/quarters/years %
-- stress_pass_flag (placeholder until stress runs land)
+- stress_pass_flag (conservative None until a separate stress result is attached)
 """
 
 from __future__ import annotations

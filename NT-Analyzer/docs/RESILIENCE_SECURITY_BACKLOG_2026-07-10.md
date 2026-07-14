@@ -1,5 +1,10 @@
 # Resilience, Security and Multi-user Backlog — 2026-07-10
 
+Статус перепроверен 2026-07-13. Это roadmap дальнейшего hosted/scale
+укрепления, а не список скрытых ошибок текущего local-first owner release.
+Фактические release-gates и ограничения:
+`PRODUCTION_READINESS_2026-07-13.md`.
+
 Цель следующей сессии: убрать системные причины, из-за которых второй ПК,
 Telegram Mini App, графики, AI-чат и пользовательские данные могут смешиваться,
 тормозить или ломаться при 2-10 пользователях.
@@ -77,6 +82,10 @@ Acceptance:
 - Пользователь A не видит performance/trading/account-history пользователя B.
 - Все write endpoints падают с 403/400, если workspace context отсутствует или
   membership не подходит.
+
+Текущий статус: scoped conversations, owner-only legacy migration, non-owner
+prompt normalization и focused isolation tests готовы. Полная миграция каждого
+исторического runtime/report хранилища остаётся поэтапной.
 
 ## P0: Durable Storage Contract
 

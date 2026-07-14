@@ -1,5 +1,7 @@
 # Aurora operator guide
 
+Актуально на 2026-07-13.
+
 ## Start and navigation
 
 Run `start.ps1`. The launcher opens `/ui/`, which is Aurora. The classic UI is
@@ -14,6 +16,19 @@ The top bar is shared by every page:
   accounts. Live remains read-only.
 - The three-dot menu contains environment start/status, diagnostics, backend
   restart, LM memory release, catalog/margin refresh and classic UI.
+
+## Вход и общий чат
+
+Каждый desktop-браузер имеет собственную Telegram-сессию. Если вместо чатов
+виден экран входа, нажмите `Авторизоваться через Telegram` и отправьте боту
+показанную команду `/login КОД`; открытие ссылки без параметра не является
+успешным входом. После авторизации обновите страницу. Ошибка 401 больше не
+стирает уже показанную историю.
+
+Общий виджет называется `StratForge Orchestrator`; его пользовательский
+собеседник — Витёк. Ответ `да` или `нет` относится к последнему активному
+вопросу в этом же диалоге. Состояние Витька, временные окна и одновременно
+работающие агенты видны на странице стратегий.
 
 ## Overview
 
@@ -109,6 +124,13 @@ Documents use the governance API. Editing requires actor and reason, has a dirty
 guard and preserves history. Runtime defaults are read alongside governance text.
 
 ## Recovery
+
+Фоновый watchdog устанавливается командой
+`00_INSTALL_VITEK_BACKGROUND.cmd`. Он поддерживает backend, Telegram и
+событийный worker без браузера. Лог: `logs/vitek-background.log`.
+Для этого workspace запрещён встроенный браузер Codex; ручной визуальный smoke
+выполняется пользователем в обычном браузере по
+`http://127.0.0.1:8765/ui/`.
 
 The pre-completion, final and prototype-cleanup backups are documented in
 `UI_ROUTES_AND_ROLLBACK.md`. Do not use `git reset

@@ -1,7 +1,7 @@
 # Aurora UI API map
 
-Актуально на 2026-07-01 после добавления безопасного реестра AI Agents и
-Витёк является пользовательским лицом, StratForge Orchestrator — его внутренним шлюзом. Единственный HTTP-адаптер интерфейса находится в
+Актуально на 2026-07-13. Витёк является пользовательским лицом, а StratForge
+Orchestrator — единым внутренним шлюзом. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
 Планируемый multi-user слой не должен расширять текущую роль auth до подписки
@@ -29,11 +29,22 @@
 | AI Agents / API Keys | `/api/ai-agents`, usage, account/provider/role catalogs, DPAPI status, shared grant/budget totals | Add/Edit/Delete model, Test Connection, Enable/Disable, supported balance sync; transport/auth определяются автоматически, ключ возвращается только маской |
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
-| Telegram | `/api/telegram/status` | token validation, one-time private-chat pairing, notification settings, test send, disconnect; токен и chat id не возвращаются |
-| Витёк | `/api/ai-lab/orchestrator`, `/api/ai-lab/orchestrator/message` | единый естественный диалог; внутреннее распределение через Управляющего и агентов, безопасные действия и краткие решения без показа технического маршрута |
+| Telegram и вход | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/telegram/status` | одноразовый Telegram-вход, ручная команда `/login КОД`, профиль, pairing, уведомления и отзыв сессий; секреты не возвращаются |
+| Витёк | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; внутреннее распределение без показа технического маршрута |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
+
+- `GET /api/vitek/status` и `GET /api/vitek/time-windows` возвращают
+  безопасную owner-only проекцию состояния, активности агентов и рабочих окон.
+  `POST /api/vitek/scan|events|rest|resume|plans|tasks` и
+  `POST /api/vitek/incidents/<id>/decision` изменяют только контур Витька.
+  События долговечны и дедуплицируются; полный scan не выполняется каждые пять
+  минут.
+- `GET/POST /api/ai-lab/orchestrator/conversations*` адресует историю ключом
+  `user_id + workspace_id + conversation_id`. Для владельца прежние
+  неразмеченные диалоги мигрируются один раз и идемпотентно; обычный пользователь
+  их не видит.
 
 - `GET/POST /api/portfolio/*` использует `app/portfolio_registry.py`. ID ячейки
   неизменяем, архивный ID не переиспользуется. Базовая схема `CELL-001..180`
