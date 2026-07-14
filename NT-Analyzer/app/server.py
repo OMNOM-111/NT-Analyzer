@@ -3047,7 +3047,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # Fallback wait statuses for models that expose no native reasoning.
-        wait_statuses = ["Выбираю модель…", "Формирую план…", "Выполняю действие…", "Собираю ответ…"]
+        wait_statuses = ["Определяю исполнителя…", "Работаю над запросом…"]
         saw_thinking = False
         status_idx = 0
         started_at = time.time()
@@ -3062,7 +3062,7 @@ class Handler(BaseHTTPRequestHandler):
                 kind, payload = events.get(timeout=1.0)
             except queue.Empty:
                 now = time.time()
-                if not saw_thinking and now - last_status >= 1.5:
+                if not saw_thinking and now - last_status >= 8.0:
                     last_status = now
                     if not self._sse_write("status", {"text": wait_statuses[status_idx % len(wait_statuses)]}):
                         return

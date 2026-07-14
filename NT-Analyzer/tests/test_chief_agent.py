@@ -15,6 +15,8 @@ def _isolate(tmp_path, monkeypatch):
     convs = tmp_path / "convs"
     monkeypatch.setattr(chief_agent, "_conversations_index_path", lambda: tmp_path / "conv_index.json")
     monkeypatch.setattr(chief_agent, "_conversations_dir", lambda: (convs.mkdir(parents=True, exist_ok=True) or convs))
+    monkeypatch.setattr(chief_agent, "_user_memory_path", lambda scope: tmp_path / "memory.jsonl")
+    monkeypatch.setattr(chief_agent, "_conversation_memory_archive_path", lambda scope: tmp_path / "memory_archive.jsonl")
     monkeypatch.setattr(chief_agent, "_usage_stats", lambda agent_id="": {
         "requests": 0, "successful_requests": 0, "input_tokens": 0,
         "cached_input_tokens": 0, "cache_hit_pct": 0, "output_tokens": 0, "cost_usd": 0,
@@ -76,6 +78,29 @@ def test_one_star_comment_becomes_user_scoped_memory(tmp_path, monkeypatch) -> N
     assert memories[-1]["kind"] == "negative_feedback"
     assert memories[-1]["text"] == "Сначала запроси бары"
     assert "покажи график" in memories[-1]["context"]
+
+
+def test_closed_dialogue_is_archived_into_one_shared_memory_bundle(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 11, "workspace_id": "ws-memory", "membership_role": "owner",
+        "is_owner": True, "display_name": "Test Owner", "uses_owner_runtime": True,
+    }
+    chief_agent.create_conversation("Проверка стратегии", conversation_id="C-MEMORY", scope=scope)
+    path = chief_agent._conversation_file("C-MEMORY", scope=scope)
+    chief_agent._append_conversation("user", "Не менять торговые параметры", source="app", path=path, scope=scope)
+    chief_agent._append_conversation(
+        "assistant", "Принял правило", source="app", agent_name="Толик", path=path, scope=scope,
+    )
+
+    chief_agent.set_conversation_closed("C-MEMORY", True, scope=scope)
+    bundle = chief_agent._shared_memory_bundle(scope)
+
+    assert bundle["loaded_at_once"] is True
+    archived = [row for row in bundle["entries"] if row.get("kind") == "conversation_archive"]
+    assert len(archived) == 1
+    assert archived[0]["conversation_id"] == "C-MEMORY"
+    assert any("Не менять торговые параметры" in row["content"] for row in archived[0]["dialogue"])
 
 
 def test_default_system_chat_is_shared_only_inside_workspace(tmp_path, monkeypatch) -> None:
@@ -263,6 +288,25 @@ def test_manager_tier_forces_strong_model_complexity(tmp_path, monkeypatch) -> N
     assert result["actions"] == []
 
 
+def test_management_role_can_be_addressed_by_name_in_message(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    complete_reply = (
+        "Дмитрий Сергеевич, вот мой полный разбор ситуации и рекомендация. "
+        "Сначала проверим исходные факты и риски, затем согласуем безопасное действие. "
+        "Пока ничего не запускаю: скажите, если поручаете приступить к выполнению. "
+        "Так решение останется управляемым, проверяемым и обратимым."
+    )
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": complete_reply, "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+    })
+
+    result = chief_agent.handle_message("Управляющий, как дела?", mirror_to_telegram=False)
+
+    assert result["agent"] == "manager"
+    assert result["message"]["agent_name"] == "Управляющий"
+
+
 def test_manager_tier_plan_request_does_not_auto_execute(tmp_path, monkeypatch) -> None:
     """Regression: asking the Управляющий to *form a plan* must only present the
     plan and never launch research, even if the model proposes start_research."""
@@ -335,6 +379,7 @@ def test_explicit_specialist_agent_routes_persona_without_name(tmp_path, monkeyp
 
     assert called["agent_id"] == "nikita"
     assert result["domain_agent"] == "nikita"
+    assert result["message"]["agent_name"] == "Никита"
 
 
 def test_chart_command_routes_to_ivan_even_with_management_tier(tmp_path, monkeypatch) -> None:
@@ -1457,7 +1502,7 @@ def test_scheduled_stop_keeps_active_mission_running_until_owner_time(tmp_path, 
     assert "11:00" in result["reply"]
 
 
-def test_announce_chart_task_opens_conversation_with_owner_and_vitek(tmp_path, monkeypatch) -> None:
+def test_announce_chart_task_opens_conversation_with_owner_and_ivan(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     conv = chief_agent.create_conversation("Иван · MNQ · цель")
     cid = conv["conversation_id"]
@@ -1472,7 +1517,7 @@ def test_announce_chart_task_opens_conversation_with_owner_and_vitek(tmp_path, m
     rows = chief_agent._read_conversation(50, path=chief_agent._conversation_file(cid))
     assert [r["role"] for r in rows] == ["user", "assistant"]
     assert rows[0]["content"].startswith("Ваня")
-    assert rows[1]["agent_name"] == "Витёк"
+    assert rows[1]["agent_name"] == "Иван"
     assert "MNQ" in rows[1]["content"] and "снимок" in rows[1]["content"].lower()
 
 
@@ -1491,7 +1536,7 @@ def test_announce_chart_task_generates_instruction_when_note_blank(tmp_path, mon
     assert "через" in rows[1]["content"].lower()
 
 
-def test_all_new_assistant_messages_are_owner_facing_vitek(tmp_path, monkeypatch) -> None:
+def test_explicit_agent_name_is_preserved_and_generic_reply_defaults_to_vitek(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     path = chief_agent._conversation_file("C-PUBLIC-ACTOR")
 
@@ -1500,8 +1545,11 @@ def test_all_new_assistant_messages_are_owner_facing_vitek(tmp_path, monkeypatch
         agent_name="Марина", path=path,
     )
 
-    assert row["agent_name"] == "Витёк"
-    assert "Марина" not in row.values()
+    assert row["agent_name"] == "Марина"
+    generic = chief_agent._append_conversation(
+        "assistant", "Общий управленческий ответ", source="agent", path=path,
+    )
+    assert generic["agent_name"] == "Витёк"
 
 
 def test_model_cannot_turn_ambiguous_future_stop_into_immediate_stop(tmp_path, monkeypatch) -> None:
@@ -1864,7 +1912,7 @@ def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, m
     ))
 
     for source, phrase in (
-        ("app", "Витя перечисли список задач, которые у тебя не решенные"),
+        ("app", "витя какие задания отсались у тебя на сеголня?"),
         ("telegram", "Витёк, что осталось?"),
     ):
         result = chief_agent.handle_message(

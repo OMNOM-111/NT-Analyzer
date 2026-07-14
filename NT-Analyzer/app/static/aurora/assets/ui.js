@@ -3168,7 +3168,7 @@
     // fading out at the top — it stays inside the current chat view.
     const live = el(`<div class="orch-live" id="orch-live">
       <div class="orch-think-live" id="orch-live-think">
-        <div class="orch-think-live-label">${icon('spark')}<span>Думаю…</span></div>
+        <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
       <div class="orch-msg assistant orch-live-answer" id="orch-live-body"><span class="orch-dots"><i></i><i></i><i></i></span></div>

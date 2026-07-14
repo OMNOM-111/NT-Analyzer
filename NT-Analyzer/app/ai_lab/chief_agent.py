@@ -153,13 +153,14 @@ def _scope_allows_capability(name: str, scope_info: Dict[str, Any]) -> bool:
 
 ORCHESTRATOR_SYSTEM_PROMPT = """
 You are the internal reasoning and execution engine behind Vitek, the owner's
-personal chief of staff, inside a local
-NinjaTrader research application. You act ON THE OWNER'S BEHALF: everything the
-owner used to do by hand in this application — pressing buttons, launching
-processes, checking reports, running research — you now do for them by emitting
-the matching application action. You are the single text interface between the
-owner, the application and specialized AI agents. You are not a generic chatbot,
-but within the application's allowlist you are a doer, not a commentator.
+personal chief of staff, inside a local NinjaTrader research application. You act
+ON THE OWNER'S BEHALF: everything the owner used to do by hand in this
+application — pressing buttons, launching processes, checking reports, running
+research — you now do for them by emitting the matching application action.
+Vitek answers general or serious requests by default. If the owner explicitly
+addresses a manager or specialist, that participant answers under their own name
+through the same auditable gateway. You are not a generic chatbot, but within the
+application's allowlist you are a doer, not a commentator.
 
 CORE BEHAVIOR
 1. Understand natural Russian or English instructions and EXECUTE them. When the
@@ -592,6 +593,13 @@ def _user_memory_path(scope: Optional[Dict[str, Any]]) -> Path:
     return paths.REGISTRY_DIR / "orchestrator_memory.jsonl"
 
 
+def _conversation_memory_archive_path(scope: Optional[Dict[str, Any]]) -> Path:
+    root = _scoped_conversation_root(scope)
+    if root is not None:
+        return root / "orchestrator_memory_archive.jsonl"
+    return paths.REGISTRY_DIR / "orchestrator_memory_archive.jsonl"
+
+
 def _remember_user_memory(text: str, *, kind: str, scope: Optional[Dict[str, Any]],
                           source_message_id: str = "", context: str = "") -> Dict[str, Any]:
     clean = _redact_sensitive(str(text or "").strip())[:4000]
@@ -613,6 +621,72 @@ def _remember_user_memory(text: str, *, kind: str, scope: Optional[Dict[str, Any
 def _user_memories(scope: Optional[Dict[str, Any]], limit: int = 30) -> List[Dict[str, Any]]:
     path = _user_memory_path(scope)
     return read_jsonl(path)[-max(1, min(int(limit or 30), 100)):] if path.is_file() else []
+
+
+def _archive_conversation_memory(conversation_id: str,
+                                 scope: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Save a compact, idempotent transcript summary when a topic is closed."""
+    cid = _safe_conversation_id(conversation_id)
+    rows = _read_conversation(500, path=_conversation_file(cid, scope=scope))
+    dialogue = [row for row in rows if row.get("role") in {"user", "assistant"}]
+    if not dialogue:
+        return None
+    compact = []
+    for row in dialogue[-12:]:
+        compact.append({
+            "role": str(row.get("role") or ""),
+            "content": _redact_sensitive(str(row.get("content") or ""))[:1000],
+            "agent_name": str(row.get("agent_name") or "")[:80],
+        })
+    info = _normalize_conversation_scope(scope)
+    record = {
+        "memory_id": "ARC-" + cid[:24],
+        "kind": "conversation_archive",
+        "conversation_id": cid,
+        "created_at_utc": _now(),
+        "title": _conversation_title(cid, scope=scope)[:160],
+        "dialogue": compact,
+        "user_id": info.get("user_id") if info else "",
+        "workspace_id": info.get("workspace_id") if info else "",
+    }
+    archive_path = _conversation_memory_archive_path(scope)
+    with _LOCK:
+        existing = read_jsonl(archive_path) if archive_path.is_file() else []
+        existing = [row for row in existing if str(row.get("conversation_id") or "") != cid]
+        write_jsonl_atomic(archive_path, [*existing[-199:], record])
+    return record
+
+
+def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, limit: int = 30,
+                          char_budget: int = 8000) -> Dict[str, Any]:
+    """Build one workspace-private memory packet shared by every model in a turn."""
+    explicit = _user_memories(scope, limit)
+    archive_path = _conversation_memory_archive_path(scope)
+    archived = read_jsonl(archive_path)[-10:] if archive_path.is_file() else []
+    candidates = [*explicit, *archived]
+    entries: List[Dict[str, Any]] = []
+    used, seen = 0, set()
+    for row in reversed(candidates):
+        key = (
+            str(row.get("kind") or ""),
+            str(row.get("conversation_id") or row.get("text") or row.get("memory_id") or ""),
+        )
+        if key in seen:
+            continue
+        serialized = json.dumps(row, ensure_ascii=False, default=str)
+        if entries and used + len(serialized) > max(1000, int(char_budget)):
+            continue
+        seen.add(key)
+        used += len(serialized)
+        entries.append(dict(row))
+    entries.reverse()
+    return {
+        "loaded_at_once": True,
+        "scope": "current_user_workspace",
+        "entries": entries,
+        "explicit_count": len(explicit),
+        "archive_count": len(archived),
+    }
 
 
 def _preferred_address(scope: Optional[Dict[str, Any]]) -> str:
@@ -1008,6 +1082,8 @@ def set_conversation_closed(conversation_id: str, closed: bool,
         _write_index(index, scope=scope)
     if cid != DEFAULT_CONVERSATION_ID:
         _record_conversation_durable_best_effort(result, scope)
+        if closed:
+            _archive_conversation_memory(cid, scope)
     return result
 
 
@@ -1237,7 +1313,7 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     _touch_conversation(cid, title_hint=text, scope=scope)
     assistant = _append_conversation(
         "assistant", ack, source="chart_task", model="chart operator", provider="local",
-        agent_name="Витёк", actions=[], doubts=[], path=path, scope=scope,
+        agent_name="Иван", actions=[], doubts=[], path=path, scope=scope,
     )
     _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
@@ -1276,7 +1352,7 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
         attachments = [{"type": "image", "url": image_url, "caption": caption}]
     message = _append_conversation(
         "assistant", str(text or "Снимок графика").strip(), source="chart_snapshot",
-        model="chart operator", provider="local", agent_name="Витёк",
+        model="chart operator", provider="local", agent_name="Иван",
         actions=[], doubts=[], attachments=attachments, path=path, scope=scope,
     )
     title = _conversation_title(cid, scope=scope)
@@ -1407,9 +1483,9 @@ def _append_conversation(role: str, content: str, *, source: str,
         "source": str(source or "app")[:40],
         "model": str(model or "")[:180],
         "provider": str(provider or "")[:80],
-        # The user-facing actor is always Vitek. The actual specialist remains
-        # in action/audit metadata and never becomes a second interlocutor.
-        "agent_name": ("Витёк" if role == "assistant" else str(agent_name or "")[:80]),
+        # Vitek is the default chief of staff, while an explicitly addressed or
+        # capability-owning specialist answers under their own visible name.
+        "agent_name": (str(agent_name or "Витёк")[:80] if role == "assistant" else str(agent_name or "")[:80]),
         "actions": list(actions or [])[:10],
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
     }
@@ -2372,10 +2448,12 @@ def _general_manager_reply_complete(text: str) -> bool:
 
 def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
                                snapshot: Dict[str, Any],
-                               on_thinking: Optional[Callable[[str], None]] = None) -> tuple[Dict[str, Any], str]:
+                               on_thinking: Optional[Callable[[str], None]] = None,
+                               *, shared_memory: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], str]:
     research = _manager_strategy_context(message)
     packet = {
         "owner_message": message,
+        "shared_memory": dict(shared_memory or {}),
         "recent_dialogue": history,
         "research_packet": research,
         "current_application_state": {
@@ -2416,9 +2494,11 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
 
 def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]],
                                      snapshot: Dict[str, Any],
-                                     on_thinking: Optional[Callable[[str], None]] = None) -> tuple[Dict[str, Any], str]:
+                                     on_thinking: Optional[Callable[[str], None]] = None,
+                                     *, shared_memory: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], str]:
     packet = {
         "owner_message": message,
+        "shared_memory": dict(shared_memory or {}),
         "recent_dialogue": history[-12:],
         "application_facts": {
             "north_star": snapshot.get("north_star"),
@@ -3570,9 +3650,11 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     if len(clean) > 6000:
         raise ChiefAgentError("Сообщение должно быть короче 6000 символов.")
     scope_info = _normalize_conversation_scope(scope)
+    shared_memory = _shared_memory_bundle(scope)
     if scope_info:
         scope_info["preferred_address"] = _preferred_address(scope)
-        scope_info["user_memory"] = _user_memories(scope, 30)
+        scope_info["shared_memory"] = shared_memory
+        scope_info["user_memory"] = list(shared_memory.get("entries") or [])
     cid = _safe_conversation_id(conversation_id)
     if _conversation_is_closed(cid, scope=scope):
         raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
@@ -3624,7 +3706,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     # Model-strength selection never suppresses capability routing.  The owner
     # asks for an operation; the map selects the handler, while the persona is
     # merely how the responsible specialist is presented in the conversation.
-    management_selected = domain_agents.resolve_management(requested_agent) is not None
+    management_selected = domain_agents.resolve_management(requested_agent, clean) is not None
     domain: Optional[Dict[str, Any]] = None
     if capability_map.supports(capability) and not _scope_allows_capability(capability, scope_info):
         spec = capability_map.CAPABILITY_MAP.get(capability) or {}
@@ -3696,7 +3778,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         reply = _reply_for_actor(reply, scope_info)
         assistant = _append_conversation(
             "assistant", reply, source=source, model=model, provider=provider,
-            agent_name="Витёк", actions=domain_actions, doubts=[],
+            agent_name=responder_name or "Витёк", actions=domain_actions, doubts=[],
             attachments=attachments, path=conv_path, scope=scope,
         )
         _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
@@ -3719,7 +3801,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 ))
                 if not sent_photo:
                     telegram_service.send_chief_report(
-                        "Витёк · правая рука руководителя", [reply[:3200]], model_name=model,
+                        f"{responder_name or 'Витёк'} · ответ", [reply[:3200]], model_name=model,
                         conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                         dedupe_key=str(assistant.get("message_id") or ""),
                     )
@@ -3736,7 +3818,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     # discussion guard and is always treated as a manager dialogue unless the
     # owner gives an explicit execution command. Секретарь/Заместитель are the
     # fast "just do it" tiers that force the model and skip the deliberation lane.
-    management = domain_agents.resolve_management(requested_agent)
+    management = domain_agents.resolve_management(requested_agent, clean)
     forced_complexity = str(management.get("forced_complexity") or "") if management else ""
     management_id = str(management.get("id") or "") if management else ""
     manager_tier = management_id == "manager"
@@ -3768,7 +3850,10 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         complexity = "critical"
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
         try:
-            result, strategic_reply = _invoke_strategic_dialogue(clean, history, snapshot, on_thinking)
+            result, strategic_reply = _invoke_strategic_dialogue(
+                clean, history, snapshot, on_thinking,
+                shared_memory=scope_info.get("shared_memory") or {},
+            )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
             plan = {
@@ -3787,7 +3872,10 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         complexity = "critical"
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
         try:
-            result, manager_reply = _invoke_general_manager_dialogue(clean, history, snapshot, on_thinking)
+            result, manager_reply = _invoke_general_manager_dialogue(
+                clean, history, snapshot, on_thinking,
+                shared_memory=scope_info.get("shared_memory") or {},
+            )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
             plan = {
@@ -3811,9 +3899,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
         dynamic = {
             "owner_message": clean,
+            "shared_memory": scope_info.get("shared_memory") or _shared_memory_bundle(scope),
             "recent_dialogue": history,
             "application_snapshot": snapshot,
-            "user_memory": _user_memories(scope, 30),
         }
         if scope_info:
             dynamic["request_context"] = {
@@ -3920,9 +4008,10 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         reply += "\n\nНе выполнено: " + "; ".join(readable) + "."
     doubts = [str(item)[:500] for item in (plan.get("doubts") or [])[:10]]
     thinking = str(result.get("reasoning") or "")
+    response_actor = recovery_agent_name or str((management or {}).get("name") or "") or "Витёк"
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
-        agent_name="Витёк", actions=action_results, doubts=doubts,
+        agent_name=response_actor, actions=action_results, doubts=doubts,
         thinking=thinking, attachments=recovery_attachments, path=conv_path, scope=scope,
     )
     work_state, work_detail = _conversation_work_state(action_results, reply)
@@ -3943,7 +4032,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             if doubts:
                 lines.append("Сомнения: " + "; ".join(doubts[:3]))
             telegram_service.send_chief_report(
-                "Витёк · правая рука руководителя", lines, model_name=model,
+                f"{response_actor} · ответ", lines, model_name=model,
                 conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                 dedupe_key=str(assistant.get("message_id") or ""),
             )

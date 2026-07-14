@@ -288,7 +288,8 @@ def test_management_tiers_force_model_complexity() -> None:
     assert domain_agents.resolve_management("") is None
     listing = domain_agents.list_personas()
     assert {row["id"] for row in listing["management"]} == {"secretary", "deputy", "manager"}
-    assert all(row["name"] == "" for row in listing["management"])
+    assert {row["name"] for row in listing["management"]} == {"Секретарь", "Заместитель", "Управляющий"}
+    assert domain_agents.resolve_management("", "Управляющий, покажи план")["id"] == "manager"
 
 
 def test_accounting_snapshot_uses_decimal_authoritative_totals(monkeypatch) -> None:
@@ -374,11 +375,26 @@ def test_domain_answer_reports_selected_model_and_keeps_fact_block(monkeypatch) 
         "content": "Результат сверки устойчив.", "actual_model": "gemini-test", "provider": "gemini", "cost_usd": 0,
     })
 
-    out = domain_agents.answer("marina", "Марина, отчёт за неделю")
+    out = domain_agents.answer("marina", "Марина, проведи сверку и объясни риск")
 
     assert "P&L после комиссий $12.34" in out["reply"]
     assert out["model"] == "gemini-test"
     assert out["agent"]["name"] == "Марина"
+
+
+def test_light_domain_fact_does_not_call_model(monkeypatch) -> None:
+    monkeypatch.setattr(domain_agents, "accounting_snapshot", lambda *args, **kwargs: {
+        "summary": {"trading_pnl": "12.34", "commission": "0.56", "trades": 4, "needs_review": 0, "integrity_issues": 0},
+    })
+    monkeypatch.setattr(
+        domain_agents.agent_router, "invoke_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("light lookup must not use an LLM")),
+    )
+
+    out = domain_agents.answer("marina", "Марина, покажи отчёт за неделю")
+
+    assert out["model"] == "deterministic report"
+    assert "P&L после комиссий $12.34" in out["reply"]
 
 
 def test_orchestrator_dispatches_addressed_domain_agent(tmp_path, monkeypatch) -> None:

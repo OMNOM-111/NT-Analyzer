@@ -75,15 +75,12 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Management tiers of the orchestrator itself. Unlike the named specialists,
-# these have no personal name — each one is a fixed *seniority* of the same
-# manager and deliberately forces a model-complexity tier so the owner can
-# consciously choose "quick & cheap" versus "strongest reasoning" instead of
-# relying on automatic classification.
+# Management tiers are also directly addressable participants.  Their names are
+# roles rather than invented people, so the owner always knows who answered.
 MANAGEMENT: Dict[str, Dict[str, Any]] = {
     "secretary": {
         "id": "secretary",
-        "name": "",
+        "name": "Секретарь",
         "title": "Секретарь управляющего",
         "role": "management",
         "level": 1,
@@ -93,7 +90,7 @@ MANAGEMENT: Dict[str, Dict[str, Any]] = {
     },
     "deputy": {
         "id": "deputy",
-        "name": "",
+        "name": "Заместитель",
         "title": "Заместитель управляющего",
         "role": "management",
         "level": 2,
@@ -103,7 +100,7 @@ MANAGEMENT: Dict[str, Dict[str, Any]] = {
     },
     "manager": {
         "id": "manager",
-        "name": "",
+        "name": "Управляющий",
         "title": "Управляющий",
         "role": "management",
         "level": 4,
@@ -158,13 +155,17 @@ def list_personas() -> Dict[str, Any]:
     }
 
 
-def resolve_management(agent: str) -> Optional[Dict[str, Any]]:
-    """Return the management tier for an explicit selector id, else ``None``."""
+def resolve_management(agent: str, message: str = "") -> Optional[Dict[str, Any]]:
+    """Resolve a management tier selected in UI or addressed at message start."""
     key = str(agent or "").strip().lower()
     if key in MANAGEMENT:
         return MANAGEMENT[key]
     for profile in MANAGEMENT.values():
         if key and key in profile["aliases"]:
+            return profile
+    head = re.sub(r"^[\s@,.:;!-]+", "", str(message or "").strip().lower())[:80]
+    for profile in MANAGEMENT.values():
+        if any(head.startswith(alias) for alias in profile["aliases"]):
             return profile
     return None
 
@@ -1175,23 +1176,28 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
     )
     packet = {
         "owner_message": str(message)[:6000],
+        "SHARED_MEMORY": dict((scope or {}).get("shared_memory") or {}),
         "DATA": _llm_view(profile["id"], snapshot),
         "USER_MEMORY": list((scope or {}).get("user_memory") or [])[-30:],
     }
     result: Dict[str, Any] = {}
-    try:
-        result = agent_router.invoke_role(
-            str(profile["role"]), json.dumps(packet, ensure_ascii=False, default=str)[:19000],
-            system_prompt=system_prompt, max_output_tokens=900 if complexity == "critical" else 500,
-            timeout=llm_timeouts.ANALYSIS, purpose=f"domain_agent_{profile['id']}", complexity=complexity,
-            cache_mode="auto",
-        )
-        narrative = _non_numeric_narrative(str(result.get("content") or ""))
-        model = str(result.get("actual_model") or result.get("model") or "unknown")
-        provider = str(result.get("provider") or "")
-    except agent_router.AgentRouterError as exc:
-        narrative = f"Модель для пояснения сейчас недоступна: {str(exc)[:300]}"
-        model, provider = "deterministic report", "local"
+    narrative = ""
+    model, provider = "deterministic report", "local"
+    # A factual lookup from a named specialist must be immediate.  The exact
+    # figures are already calculated by code, so an LLM can only add latency.
+    if complexity != "light":
+        try:
+            result = agent_router.invoke_role(
+                str(profile["role"]), json.dumps(packet, ensure_ascii=False, default=str)[:19000],
+                system_prompt=system_prompt, max_output_tokens=900 if complexity == "critical" else 500,
+                timeout=llm_timeouts.ANALYSIS, purpose=f"domain_agent_{profile['id']}", complexity=complexity,
+                cache_mode="auto",
+            )
+            narrative = _non_numeric_narrative(str(result.get("content") or ""))
+            model = str(result.get("actual_model") or result.get("model") or "unknown")
+            provider = str(result.get("provider") or "")
+        except agent_router.AgentRouterError as exc:
+            narrative = f"Модель для пояснения сейчас недоступна: {str(exc)[:300]}"
     reply = _fact_block(profile["id"], snapshot)
     if narrative:
         reply += "\n\n" + narrative[:7000]

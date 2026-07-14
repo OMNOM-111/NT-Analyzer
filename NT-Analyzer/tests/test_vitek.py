@@ -339,6 +339,7 @@ def test_vitek_name_variants_all_return_the_same_operational_status(tmp_path, mo
         "/vitek status",
         "Vitek, unfinished tasks",
         "Дежурный контролёр, список задач",
+        "витя какие задания отсались у тебя на сеголня?",
     )
     for phrase in phrases:
         result = vitek.handle_text_command(phrase, source="test")
@@ -385,6 +386,23 @@ def test_event_queue_is_durable_deduplicated_and_wakes_worker(tmp_path, monkeypa
     current = vitek.status()
     assert current["event_engine"]["mode"] == "event_driven"
     assert current["event_engine"]["queued"] == 1
+
+
+def test_connection_outage_stays_single_and_uses_no_model(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_notify_event_result", lambda *args, **kwargs: False)
+    event = {
+        "event_id": "VE-OUTAGE", "event_type": "connection_lost",
+        "payload": {"enabled_strategies": 2}, "source": "test",
+    }
+
+    analyzed = vitek._analyze_system_event(event)
+    repeated = vitek.emit_event("connection_lost", {"enabled_strategies": 2})
+
+    assert analyzed["model"] == "deterministic controller"
+    assert "связь с NinjaTrader потеряна" in analyzed["content"]
+    assert repeated["queued"] is False
+    assert repeated["reason"] == "open_incident"
 
 
 def test_bridge_spool_is_ingested_once_by_cursor(tmp_path, monkeypatch) -> None:

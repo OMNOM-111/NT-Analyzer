@@ -384,6 +384,21 @@ def emit_event(event_type: str, payload: Optional[Dict[str, Any]] = None, *,
     with _LOCK:
         doc = _read()
         live = list(doc.get("events") or [])
+        if kind == "connection_lost":
+            outage_open = any(
+                row.get("status") in OPEN_INCIDENT_STATUSES
+                and (
+                    row.get("category") == "runtime_connection"
+                    or (
+                        row.get("category") == "vitek_execution"
+                        and isinstance(row.get("context"), dict)
+                        and row["context"].get("event_type") == "connection_lost"
+                    )
+                )
+                for row in doc.get("incidents") or []
+            )
+            if outage_open:
+                return {"ok": True, "queued": False, "event_id": event_id, "reason": "open_incident"}
         if any(row.get("signature") == signature and row.get("status") in {"queued", "running"} for row in live):
             return {"ok": True, "queued": False, "event_id": event_id, "reason": "duplicate"}
         for row in reversed(list(doc.get("event_history") or [])):
@@ -1586,6 +1601,10 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
     addressed = is_addressed(raw)
     command = _without_address(raw)
     command_low = command.lower().replace("ё", "е")
+    # Frequent mobile-keyboard transpositions must not send a simple status
+    # request into the slow free-form model lane.
+    command_low = re.sub(r"\bотсал", "остал", command_low)
+    command_low = re.sub(r"\bсеголн", "сегод", command_low)
     latest = _latest_prompted_incident(conversation_id)
     short_decision = latest and low in {
         "да", "делай", "выполняй", "подтверждаю", "нет", "не надо", "отмена",
@@ -1655,7 +1674,8 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
                 "kind": "scan", "action": {"name": "vitek_scan", "status": "completed"}}
     status_requested = not command_low or any(token in command_low for token in (
         "статус", "что осталось", "что у тебя осталось", "какие задачи", "список задач",
-        "нерешенн", "не решенн", "незаверш", "что делаешь", "чем занят",
+        "какие задания", "задания остал", "задачи остал", "нерешенн", "не решенн",
+        "незаверш", "что делаешь", "чем занят",
         "как дела", "свободен", "занят", "что там вообще",
         "status", "tasks", "unfinished", "what remains",
     )) or (
@@ -1828,11 +1848,17 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
         result["notified"] = _notify_event_result(event, result)
         return result
     if kind == "connection_lost":
-        from .ai_lab import chief_agent
-        analyzed = chief_agent.analyze_event(kind, payload, send_telegram=False)
+        enabled = int(payload.get("enabled_strategies") or 0)
+        impact = (
+            f" В этот момент работало стратегий: {enabled}; до восстановления они могут остаться без контроля."
+            if enabled else " Активных стратегий сейчас нет, поэтому немедленного торгового риска не вижу."
+        )
         result = {
-            "ok": True, "route": route, "model": analyzed.get("model"),
-            "content": analyzed.get("content"), "cost_usd": analyzed.get("cost_usd"),
+            "ok": True, "route": route, "model": "deterministic controller", "provider": "local",
+            "content": (
+                "Дмитрий Сергеевич, связь с NinjaTrader потеряна." + impact
+                + " Могу безопасно проверить Bridge и восстановить соединение, не меняя торговые параметры."
+            ),
         }
     else:
         from .ai_lab import agent_router
