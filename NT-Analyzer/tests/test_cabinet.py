@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, secure_store, server as server_mod, subscriptions, telegram_remote, telegram_service, workspaces
+from app import account_auth, invitations, secure_store, server as server_mod, subscriptions, telegram_remote, telegram_service, workspaces
 
 
 FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"stratforge-avatar-bytes" * 4
@@ -352,6 +352,7 @@ def test_invite_lifecycle_and_send_endpoints(cabinet_store, monkeypatch) -> None
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")
     monkeypatch.setattr(telegram_remote, "_root", lambda: cabinet_store)
+    monkeypatch.setattr(invitations, "_pillow_provider", lambda context: None)
     account_auth.set_auth_required(True)
 
     owner_token, owner_csrf = "o" * 64, "p" * 48
@@ -361,6 +362,14 @@ def test_invite_lifecycle_and_send_endpoints(cabinet_store, monkeypatch) -> None
     sent: dict = {}
     monkeypatch.setattr(telegram_service, "send_photo_bytes",
                         lambda chat, blob, **kw: sent.update({"chat": chat, "len": len(blob)}) or True)
+    # Pillow is optional. A clean CI runner can render the dependency-free SVG
+    # fallback, in which case the endpoint intentionally sends the invitation
+    # text instead of a Telegram photo. Keep both delivery branches isolated
+    # from the real Bot API and assert the same owner destination.
+    monkeypatch.setattr(
+        telegram_service, "_send_raw",
+        lambda text, **kw: sent.update({"chat": str(kw.get("chat_id") or ""), "text": text}) or {},
+    )
 
     server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
