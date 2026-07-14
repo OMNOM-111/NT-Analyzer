@@ -690,11 +690,19 @@ UI.ready(async function () {
       <h4 style="margin:14px 0 6px">Этапы и роли</h4><div class="role-timeline" id="ed-roles"></div>
       <h4 style="margin:14px 0 6px">Журнал работы</h4><pre class="logbox" id="ed-log">загрузка…</pre>
       <details style="margin-top:12px"><summary>Технические данные эксперимента</summary><pre class="logbox">${UI.esc(JSON.stringify({ memory_intake: e.memory_intake, backtests: e.backtests, backtest_result_integrity: e.backtest_result_integrity, backtest_infrastructure_attempts: e.backtest_infrastructure_attempts, analysis: e.analysis, decision: e.decision, portfolio: e.portfolio, lineage: e.lineage }, null, 2))}</pre></details>
-      <div class="flex gap-sm" style="margin-top:12px">${e.class_name ? `<a class="btn" href="strategies.html?strategy=${encodeURIComponent(e.class_name)}">${UI.icon('strategies')}В портфеле стратегий</a>` : ''}${e.status === 'running' ? '<button class="btn danger" id="ed-cancel">Отменить</button>' : ''}</div>`;
+      <div class="flex wrap gap-sm" style="margin-top:12px">${e.class_name ? `<a class="btn" href="strategies.html?strategy=${encodeURIComponent(e.class_name)}">${UI.icon('strategies')}В портфеле стратегий</a>` : ''}<button class="btn" id="ed-assign-victor">Поручить Виктору разобраться</button>${e.status === 'running' ? '<button class="btn danger" id="ed-cancel">Отменить</button>' : ''}</div>`;
     try { const a = await API.http.aiExperimentActivity(id, { since: 0, limit: 500 }); const lines = a.entries || a.lines || a.events || a.activity || []; UI.qs('#ed-log').textContent = lines.length ? lines.map(fmtLogLine).join('\n') : 'нет записей в журнале'; renderRoleTimeline(lines, UI.qs('#ed-roles')); }
     catch (err) { UI.qs('#ed-log').textContent = 'журнал недоступен'; }
     const cancel = UI.qs('#ed-cancel');
     if (cancel) cancel.onclick = async () => { if (!confirm('Отменить эксперимент ' + id + '?')) return; try { await API.http.aiCancel({ experiment_id: id }); UI.toast('Отмена запрошена'); UI.closeDrawer(); refreshRun(); } catch (er) { UI.reportError(er); } };
+    const victor = UI.qs('#ed-assign-victor');
+    if (victor) victor.onclick = () => Victor.openAssignment({
+      page: 'ai-lab', entity_type: 'research', entity_id: id,
+      entity_label: e.class_name || id, url: location.pathname + location.search,
+    }, {
+      title: `Разобраться с исследованием «${e.class_name || id}»`,
+      description: e.hypothesis || '', priority: e.status === 'failed' ? 'high' : 'normal',
+    });
   }
 
   // ---- error memory + lessons ----

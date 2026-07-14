@@ -21,7 +21,9 @@ from zoneinfo import ZoneInfo
 
 
 NAME = "Витёк"
+FORMAL_NAME = "Виктор"
 ROLE = "правая рука руководителя"
+FORMAL_ROLE = "личный помощник и правая рука руководителя"
 INTERNAL_ROLE = "руководитель аппарата и дежурный контролёр"
 LOCAL_TIMEZONE = "America/Los_Angeles"
 SESSION_START_MINUTE = 15 * 60
@@ -80,7 +82,7 @@ EVENT_AGENT_ROUTES: Dict[str, Dict[str, Any]] = {
 
 VITEK_ADDRESS_RE = re.compile(
     r"^\s*(?:(?:эй|привет)\s*[,!:;—-]?\s*)?"
-    r"(?:вит[её]к|витя|витенька|витюша|витька|витечек|vitek|vitya|"
+    r"(?:виктор|вит[её]к|витя|витенька|витюша|витька|витечек|vitek|vitya|"
     r"дежурн(?:ый|ого)\s+контрол[её]р)(?:\W|$)",
     re.IGNORECASE,
 )
@@ -253,6 +255,15 @@ def _background_status() -> Dict[str, Any]:
 
 
 def status() -> Dict[str, Any]:
+    # A status read is also the last guard against a stale owner question.  It
+    # does not wake Vitek or start a full scan: it only checks the already
+    # persisted Bridge heartbeat and retires an outage that no longer exists.
+    try:
+        from . import runtime
+        if runtime.read_heartbeat().get("fresh"):
+            _resolve_connection_incidents()
+    except Exception:
+        pass
     with _LOCK:
         doc = _read()
         rest = _rest_state(doc)
@@ -306,8 +317,9 @@ def status() -> Dict[str, Any]:
             })
         return {
             "ok": True,
-            "name": NAME,
-            "role": ROLE,
+            "name": FORMAL_NAME,
+            "alias": NAME,
+            "role": FORMAL_ROLE,
             "mode": mode,
             "message": message,
             "timezone": LOCAL_TIMEZONE,
@@ -465,6 +477,7 @@ def _task_needs_real_action(task: Dict[str, Any]) -> bool:
     return any(token in text for token in (
         "исправ", "сделай", "выполни", "запусти", "создай", "удал", "включ", "отключ",
         "останов", "перенеси", "замени", "обнови", "настрой", "добав",
+        "контрол", "следи", "наблюд",
     ))
 
 
@@ -554,6 +567,12 @@ def set_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
         monday = (local_now - timedelta(days=local_now.weekday())).date()
         period_label = f"{monday.isoformat()} — {(local_end.date() - timedelta(days=1)).isoformat()}"
     end_at = local_end.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    requested_end = _parse_time(payload.get("ends_at_utc") or payload.get("due_at_utc"))
+    if requested_end and requested_end > _now_dt():
+        end_at = requested_end.isoformat(timespec="seconds").replace("+00:00", "Z")
+    context = _clean_task_context(payload.get("context"))
+    budget = _clean_task_budget(payload.get("budget"), payload)
+    control = _clean_task_control(payload.get("control"), payload, default_end=end_at)
     plan = {
         "plan_id": "VP-" + uuid.uuid4().hex[:10].upper(),
         "scope": scope,
@@ -565,6 +584,10 @@ def set_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
         "created_at_utc": _now(),
         "ends_at_utc": end_at,
         "source": str(payload.get("source") or "app")[:40],
+        "notes": str(payload.get("notes") or "")[:4000],
+        "context": context,
+        "budget": budget,
+        "control": control,
         "task_ids": [],
     }
     with _LOCK:
@@ -581,7 +604,12 @@ def set_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
     for goal in goals if create_tasks else []:
         task = add_task({
             "title": goal,
-            "description": f"Цель из плана на {plan['scope_label']}. Фокус: {focus or '—'}",
+            "description": "\n".join(filter(None, [
+                f"Цель из плана на {plan['scope_label']}. Фокус: {focus or '—'}",
+                f"Комментарий владельца: {plan['notes']}" if plan.get("notes") else "",
+                f"Контроль: {control.get('condition')}" if control.get("condition") else "",
+                f"Отчётность: {control.get('report_frequency')}" if control.get("report_frequency") else "",
+            ])),
             "category": "daily_plan" if scope == "day" else "weekly_plan",
             "priority": "high" if scope == "day" else "normal",
             "status": "planned",
@@ -589,6 +617,9 @@ def set_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
             "assignee": str(payload.get("assignee") or NAME),
             "source": "vitek_plan",
             "plan_id": plan["plan_id"],
+            "context": context,
+            "budget": budget,
+            "control": control,
         })
         plan["task_ids"].append(task["task_id"])
     if plan["task_ids"]:
@@ -599,6 +630,70 @@ def set_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
                 stored["task_ids"] = list(plan["task_ids"])
                 _write(doc)
     return plan
+
+
+def _clean_task_context(value: Any) -> Dict[str, str]:
+    source = value if isinstance(value, dict) else {}
+    limits = {
+        "page": 80, "entity_type": 80, "entity_id": 180,
+        "entity_label": 500, "url": 1000,
+    }
+    return {
+        key: str(source.get(key) or "").strip()[:limit]
+        for key, limit in limits.items() if str(source.get(key) or "").strip()
+    }
+
+
+def _clean_task_budget(value: Any, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    fallback = payload or {}
+    raw_amount = source.get("amount", fallback.get("budget_amount"))
+    try:
+        amount = max(0.0, float(raw_amount or 0))
+    except (TypeError, ValueError):
+        amount = 0.0
+    if not amount:
+        return {}
+    currency = re.sub(r"[^A-Za-zА-Яа-я0-9$€₽_-]", "", str(
+        source.get("currency") or fallback.get("budget_currency") or "USD"
+    ))[:12] or "USD"
+    return {"amount": round(amount, 2), "currency": currency.upper()}
+
+
+def _clean_task_control(value: Any, payload: Optional[Dict[str, Any]] = None, *,
+                        default_end: str = "") -> Dict[str, str]:
+    source = value if isinstance(value, dict) else {}
+    fallback = payload or {}
+    condition = str(source.get("condition") or fallback.get("control_condition") or "").strip()[:2000]
+    frequency = str(source.get("report_frequency") or fallback.get("report_frequency") or "").strip()[:120]
+    starts = _parse_time(source.get("starts_at_utc") or fallback.get("starts_at_utc"))
+    ends = _parse_time(source.get("ends_at_utc") or fallback.get("control_until_utc") or default_end)
+    result: Dict[str, str] = {}
+    if condition:
+        result["condition"] = condition
+    if frequency:
+        result["report_frequency"] = frequency
+    if starts:
+        result["starts_at_utc"] = starts.isoformat(timespec="seconds").replace("+00:00", "Z")
+    if ends:
+        result["ends_at_utc"] = ends.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return result
+
+
+def _clean_conversation_scope(value: Any) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    result: Dict[str, Any] = {}
+    for key in ("user_id", "workspace_id", "workspace_kind", "runtime_dir",
+                "membership_role", "display_name"):
+        text = str(source.get(key) or "").strip()
+        if text:
+            result[key] = text[:1000 if key == "runtime_dir" else 200]
+    for key in ("uses_owner_runtime", "is_owner"):
+        if key in source:
+            result[key] = bool(source.get(key))
+    if isinstance(source.get("capabilities"), dict):
+        result["capabilities"] = dict(source["capabilities"])
+    return result
 
 
 def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -623,6 +718,11 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "source": str(payload.get("source") or "app")[:40],
         "incident_id": str(payload.get("incident_id") or "")[:80],
         "plan_id": str(payload.get("plan_id") or "")[:80],
+        "conversation_id": re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("conversation_id") or ""))[:64],
+        "conversation_scope": _clean_conversation_scope(payload.get("conversation_scope")),
+        "context": _clean_task_context(payload.get("context")),
+        "budget": _clean_task_budget(payload.get("budget"), payload),
+        "control": _clean_task_control(payload.get("control"), payload),
         "auto_execute": payload.get("auto_execute", True) not in {False, 0, "0", "false", "no"},
         "result": "",
     }
@@ -640,6 +740,46 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             dedupe_key=f"task:{task['task_id']}", dedupe_seconds=0,
         )
     return task
+
+
+def _activate_prepared_conversation_task(conversation_id: str,
+                                         scope: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Attach request scope and start the prepared task without duplicating it."""
+    cid = re.sub(r"[^A-Za-z0-9_-]", "", str(conversation_id or ""))[:64]
+    if not cid:
+        return None
+    with _LOCK:
+        doc = _read()
+        task = next((row for row in reversed(doc.get("tasks") or [])
+                     if str(row.get("conversation_id") or "") == cid
+                     and str(row.get("source") or "") in {"victor_ui", "victor_incident"}
+                     and row.get("status") == "planned"
+                     and not bool(row.get("auto_execute"))), None)
+        if task is None:
+            return None
+        task["conversation_scope"] = _clean_conversation_scope(scope)
+        task["auto_execute"] = True
+        task["status"] = "new"
+        task["updated_at_utc"] = _now()
+        incident_id = str(task.get("incident_id") or "")
+        if incident_id:
+            incident = next((row for row in doc.get("incidents") or []
+                             if str(row.get("incident_id") or "") == incident_id), None)
+            if incident is not None:
+                incident["task_id"] = task.get("task_id")
+                incident["decision"] = "create_task"
+                incident["decided_at_utc"] = _now()
+                incident["status"] = "in_progress"
+                incident["owner_decision_required"] = False
+        _append_history(doc, "task_activated", task_id=task.get("task_id"), conversation_id=cid)
+        _write(doc)
+        result = dict(task)
+    emit_event(
+        "task_created", {"task_id": result["task_id"]}, source=str(result.get("source") or "victor_ui"),
+        severity="critical" if str(result.get("priority") or "").lower() in {"critical", "urgent"} else "task",
+        dedupe_key=f"task:{result['task_id']}", dedupe_seconds=0,
+    )
+    return result
 
 
 def update_task(task_id: str, changes: Dict[str, Any], *, notify: bool = True) -> Dict[str, Any]:
@@ -1626,7 +1766,8 @@ def _status_reply(current: Dict[str, Any], *, conversation_id: str = "default") 
 
 
 def handle_text_command(text: str, *, source: str = "orchestrator",
-                        conversation_id: str = "default") -> Dict[str, Any]:
+                        conversation_id: str = "default",
+                        scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Handle deterministic Vitek commands before free-form Orchestrator chat."""
     raw = str(text or "").strip()
     low = raw.lower().replace("ё", "е")
@@ -1661,6 +1802,21 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
     )
     if not addressed and not short_decision and not contextual_answer:
         return {"handled": False}
+    prepared_request = any(token in command_low for token in (
+        "приступай к поручению", "возьми поручение в работу", "начинай поручение",
+    ))
+    if addressed and prepared_request:
+        task = _activate_prepared_conversation_task(conversation_id, scope)
+        if task is not None:
+            return {
+                "handled": True, "kind": "task", "task": task,
+                "action": {"name": "vitek_activate_task", "status": "queued", "task_id": task["task_id"]},
+                "reply": (
+                    "Хорошо, Дмитрий Сергеевич. Сейчас разберусь, подключу нужных специалистов "
+                    "и отчитаюсь в этом диалоге. Если без вашего решения продолжить будет нельзя, "
+                    "задам один короткий и конкретный вопрос."
+                ),
+            }
     incident_id = _extract_incident_id(raw) or str((latest or {}).get("incident_id") or "")
     plan_match = re.search(r"план\s+на\s+(сегодня|день|недел[юя])\s*[:\-]?\s*(.*)", low, re.DOTALL)
     if plan_match:
@@ -1752,12 +1908,13 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
             "title": command or raw, "description": f"Поручение владельца через {source}.",
             "priority": "critical" if any(token in command_low for token in ("срочно", "критич", "ошиб", "не работает")) else "normal",
             "source": source, "status": "new", "auto_execute": True,
+            "conversation_id": conversation_id, "conversation_scope": scope,
         })
         route = _task_route(task)
         return {
             "handled": True, "kind": "task", "task": task,
             "action": {"name": "vitek_add_task", "status": "queued", "task_id": task["task_id"]},
-            "reply": "Принял. Передал задачу Управляющему; он подключит нужных специалистов. Я отвечаю за итог и вернусь с результатом или одним конкретным вопросом, если без вас действительно нельзя продолжить.",
+            "reply": "Хорошо, Дмитрий Сергеевич. Поручение принял и передал Управляющему. Он подключит нужных специалистов, а я отвечаю за итог и вернусь с результатом или одним конкретным вопросом, если без вас действительно нельзя продолжить.",
         }
     return {"handled": False, "addressed": True, "delegate": True, "clean_message": command or raw}
 
@@ -1793,6 +1950,7 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if claimed.get("status") != "in_progress" or claimed.get("execution_event_id") != event.get("event_id"):
         return {"ok": True, "skipped": True, "reason": "task_retired"}
     from .ai_lab import chief_agent
+    conversation_scope = task.get("conversation_scope") if isinstance(task.get("conversation_scope"), dict) else None
     prompt = (
         "Выполни эту задачу владельца через разрешённые инструменты приложения. "
         "Не утверждай, что действие сделано, если исполнитель не вернул фактический результат. "
@@ -1801,7 +1959,7 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     )
     response = chief_agent.handle_message(
         prompt[:6000], source="vitek", mirror_to_telegram=False,
-        conversation_id="vitek-operations", agent=selector,
+        conversation_id="vitek-operations", agent=selector, scope=conversation_scope,
     )
     actions = [row for row in (response.get("actions") or []) if isinstance(row, dict)]
     statuses = {str(row.get("status") or "") for row in actions}
@@ -1854,6 +2012,30 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
             recommendation="Уточните ожидаемый результат или разрешите предложенное действие.",
             context={"task_id": task_id, "route": route, "model": model},
         )
+    conversation_id = str(task.get("conversation_id") or "")
+    if conversation_id:
+        owner_title = _executive_task_title(updated)
+        state = str(updated.get("status") or "")
+        if state == "completed":
+            report = f"Дмитрий Сергеевич, готово: {owner_title}."
+        elif state == "blocked":
+            report = f"Дмитрий Сергеевич, пока не смог завершить поручение «{owner_title}». Нужен другой безопасный способ или ваше уточнение."
+        elif state == "waiting_review":
+            report = f"Дмитрий Сергеевич, по поручению «{owner_title}» нужно ваше короткое решение, прежде чем продолжить."
+        else:
+            report = f"Дмитрий Сергеевич, поручение «{owner_title}» остаётся в работе. Следующий отчёт пришлю сюда."
+        concise = " ".join(reply.split())[:1200]
+        if concise and concise.lower() not in report.lower():
+            report = f"{report}\n\n{concise}"
+        try:
+            chief_agent.report_chart_snapshot(
+                conversation_id=conversation_id, text=report, agent_name=FORMAL_NAME,
+                mirror_to_telegram=True, scope=conversation_scope,
+            )
+            if state == "completed":
+                chief_agent.set_conversation_closed(conversation_id, True, scope=conversation_scope)
+        except Exception:
+            pass
     return {
         "ok": True, "task": updated, "route": route, "model": model,
         "provider": response.get("provider"), "actions": actions,

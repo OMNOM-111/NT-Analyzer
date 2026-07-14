@@ -357,6 +357,7 @@ def test_vitek_name_variants_all_return_the_same_operational_status(tmp_path, mo
         "Витёк, что у тебя осталось?",
         "Витек статус",
         "Витька, какие задачи?",
+        "Виктор, какие задачи остались?",
         "Эй, Витенька, чем занят?",
         "/vitek status",
         "Vitek, unfinished tasks",
@@ -480,6 +481,66 @@ def test_task_event_selects_strong_model_and_records_real_completion(tmp_path, m
     assert stored["execution_model"] == "deepseek-v4-pro"
 
 
+def test_context_assignment_activates_once_and_reports_to_same_conversation(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    reports = []
+    closed = []
+    monkeypatch.setattr(vitek, "_maybe_notify_idle", lambda: False)
+    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+        "ok": True, "reply": "Проверка исследования завершена.",
+        "model": "test-strong-model", "provider": "test",
+        "actions": [{"name": "audit_recent_backtests", "status": "completed"}],
+    })
+    monkeypatch.setattr(chief_agent, "report_chart_snapshot", lambda **kwargs: reports.append(kwargs) or {"ok": True})
+    monkeypatch.setattr(chief_agent, "set_conversation_closed", lambda cid, closed_state, **kwargs: closed.append((cid, closed_state, kwargs)) or {"ok": True})
+    doc = vitek._read()
+    doc["incidents"] = [{
+        "incident_id": "VI-RESEARCH", "category": "strategy_lifecycle",
+        "status": "awaiting_decision", "owner_decision_required": True,
+        "title": "Нужно разобрать исследование",
+    }]
+    vitek._write(doc)
+    task = vitek.add_task({
+        "title": "Разобраться с исследованием MGC Morning",
+        "description": "Проверить гипотезы и бэктест.",
+        "source": "victor_ui", "status": "planned", "auto_execute": False,
+        "incident_id": "VI-RESEARCH",
+        "conversation_id": "victor-mgc",
+        "context": {"entity_type": "research", "entity_id": "EXP-1", "entity_label": "MGC Morning"},
+        "budget": {"amount": 25, "currency": "usd"},
+        "control": {"condition": "следить до завершения бэктеста", "report_frequency": "по событию"},
+    })
+    assert vitek._read()["events"] == []
+
+    accepted = vitek.handle_text_command(
+        "Виктор, приступай к поручению: разобраться с исследованием MGC Morning.",
+        conversation_id="victor-mgc", source="app",
+        scope={"user_id": "owner", "workspace_id": "owner-ws", "runtime_dir": str(tmp_path), "is_owner": True},
+    )
+    current = vitek._read()
+    stored = next(row for row in current["tasks"] if row["task_id"] == task["task_id"])
+
+    assert accepted["handled"] is True and accepted["kind"] == "task"
+    assert "Сейчас разберусь" in accepted["reply"]
+    assert len(current["tasks"]) == 1
+    assert stored["auto_execute"] is True and stored["status"] == "new"
+    assert stored["conversation_scope"]["workspace_id"] == "owner-ws"
+    assert stored["budget"] == {"amount": 25.0, "currency": "USD"}
+    assert current["events"][0]["event_type"] == "task_created"
+    incident = next(row for row in current["incidents"] if row["incident_id"] == "VI-RESEARCH")
+    assert incident["status"] == "in_progress" and incident["owner_decision_required"] is False
+
+    processed = vitek.process_next_event()
+    stored = next(row for row in vitek.status()["tasks"] if row["task_id"] == task["task_id"])
+    assert processed and stored["status"] == "completed"
+    assert reports and reports[0]["conversation_id"] == "victor-mgc"
+    assert reports[0]["agent_name"] == "Виктор"
+    assert reports[0]["scope"]["workspace_id"] == "owner-ws"
+    assert closed and closed[0][0:2] == ("victor-mgc", True)
+
+
 def test_task_is_not_claimed_complete_without_executed_action(tmp_path, monkeypatch) -> None:
     from app.ai_lab import chief_agent
 
@@ -531,6 +592,25 @@ def test_connection_restore_retires_linked_task_and_queued_event(tmp_path, monke
     assert late["result"] != "late worker result"
 
 
+def test_status_auto_retires_stale_connection_question_when_heartbeat_is_fresh(tmp_path, monkeypatch) -> None:
+    from app import runtime
+
+    _isolate(monkeypatch, tmp_path)
+    doc = vitek._read()
+    doc["incidents"] = [{
+        "incident_id": "VI-STALE", "category": "runtime_connection",
+        "status": "awaiting_decision", "owner_decision_required": True,
+        "title": "Связь потеряна", "details": "old", "recommendation": "restore",
+    }]
+    vitek._write(doc)
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True})
+
+    current = vitek.status()
+
+    assert current["incident_counts"]["awaiting_owner"] == 0
+    assert next(row for row in current["incidents"] if row["incident_id"] == "VI-STALE")["status"] == "resolved"
+
+
 def test_poll_once_consumes_events_without_legacy_full_scan(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(vitek, "_bridge_event_path", lambda: tmp_path / "missing.jsonl")
@@ -546,12 +626,24 @@ def test_vitek_ui_and_background_install_contracts() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    html = (root / "app" / "static" / "aurora" / "strategies.html").read_text(encoding="utf-8")
+    aurora = root / "app" / "static" / "aurora"
+    html = (aurora / "strategies.html").read_text(encoding="utf-8")
+    overview = (aurora / "index.html").read_text(encoding="utf-8")
+    ai_lab = (aurora / "assets" / "pages" / "ai-lab.js").read_text(encoding="utf-8")
+    victor = (aurora / "assets" / "victor.js").read_text(encoding="utf-8")
     js = (root / "app" / "static" / "aurora" / "assets" / "pages" / "strategies.js").read_text(encoding="utf-8")
     server = (root / "app" / "server.py").read_text(encoding="utf-8")
     installer = (root / "tools" / "install-vitek-background.ps1").read_text(encoding="utf-8")
 
-    assert "Витёк · правая рука руководителя" in html
+    assert "Виктор · правая рука руководителя" in html
+    assert "Виктор · ваша правая рука" in overview
+    assert 'data-victor-center' in overview
+    assert "Создать отдельный чат и поручить Виктору" in victor
+    assert "aiOrchestratorCreateConversation" in victor
+    assert "aiOrchestratorMessage" in victor
+    assert "Поручить Виктору разобраться" in js and "Поручить Виктору разобраться" in ai_lab
+    for page in aurora.glob("*.html"):
+        assert "assets/victor.js" in page.read_text(encoding="utf-8"), page.name
     assert 'id="vitek-agents"' in html
     assert "Временные окна стратегий" in html
     assert "vitekIncidentDecision" in js

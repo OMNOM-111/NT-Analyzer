@@ -1,12 +1,12 @@
 # UI verification
 
-Status: Aurora, Vitek and Orchestrator production integration re-audited on
-2026-07-13. Историческая визуальная приёмка ниже сохранена как evidence июня;
+Status: Aurora, Victor/Vitek and Orchestrator production integration re-audited on
+2026-07-14. Историческая визуальная приёмка ниже сохранена как evidence июня;
 текущие автоматические release-gates выполнены заново.
 
 ## Automated gates
 
-- `python -m pytest -q`: **447 passed**.
+- `python -m pytest -q`: **453 passed**.
 - `python -m tests`: **13/13 suites passed**.
 - `node --check`: every JS file under `app/static/aurora/assets` passed.
 - `python -m compileall -q app tests`: passed.
@@ -17,6 +17,10 @@ Status: Aurora, Vitek and Orchestrator production integration re-audited on
   nested job details, runtime adapters, PT market phases, immutable cells,
   account-ledger accounting rules, AI model telemetry, Telegram auth, workspace
   isolation, scoped chat migration, Vitek events and real yes/no decisions.
+- Контракты Виктора дополнительно проверяют официальный центр на Overview,
+  подключение общего `victor.js` ко всем 11 страницам, контекст стратегии и
+  исследования, одноразовую активацию поручения, scoped-отчёт в исходный чат и
+  автоматическое снятие устаревшего вопроса о соединении.
 
 ## Live acceptance
 
@@ -27,10 +31,14 @@ Codex до создания вкладки с ошибкой `Cannot redefine pr
 Поэтому субъективный визуальный click-through остаётся проверкой владельца в
 обычном браузере по `http://127.0.0.1:8765/ui/`.
 
-На заново запущенном backend PID 11020 выполнен безопасный live smoke:
+На работающем backend выполнен безопасный HTTP smoke без GUI:
 
-- все 11 Aurora HTML-страниц и актуальные `api.js`, `ui.js`, `theme.css`
-  вернули HTTP 200 и cache-version `20260713-vitek7`;
+- все 11 Aurora HTML-страниц вернули HTTP 200 и подключили
+  `assets/victor.js?v=20260714-victor1`; сам модуль вернул HTTP 200 и содержит
+  центр, контекстные поручения и conversation-first workflow;
+- неавторизованный `/api/vitek/status` вернул 401, то есть личные задачи Виктора
+  не раскрываются без пользовательской сессии; авторизованный маршрут проверен
+  изолированным HTTP integration-тестом;
 - неавторизованный `/api/auth/status` вернул 401 с требованием Telegram-входа;
 - webhook с неверным secret вернул 403 и не изменил очередь;
 - реальный owner-запрос «Витя, какие на сегодня задания у тебя остались?» прошёл

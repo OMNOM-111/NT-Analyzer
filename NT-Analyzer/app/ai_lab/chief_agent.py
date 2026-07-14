@@ -3579,8 +3579,8 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
     """
     from .. import vitek
 
-    explicit_vitek = requested_agent in {"vitek", "витек", "витёк", "витя"} or vitek.is_addressed(clean)
-    if requested_agent and requested_agent not in {"auto", "vitek", "витек", "витёк", "витя"} and not explicit_vitek:
+    explicit_vitek = requested_agent in {"vitek", "виктор", "витек", "витёк", "витя"} or vitek.is_addressed(clean)
+    if requested_agent and requested_agent not in {"auto", "vitek", "виктор", "витек", "витёк", "витя"} and not explicit_vitek:
         return None
     # Probe all unaddressed short replies too: Vitek owns a recent explicit
     # incident confirmation such as "да" or "решено".
@@ -3593,7 +3593,9 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
             ),
         }
     else:
-        vitek_result = vitek.handle_text_command(clean, source=source, conversation_id=cid)
+        vitek_result = vitek.handle_text_command(
+            clean, source=source, conversation_id=cid, scope=scope,
+        )
     if not vitek_result.get("handled"):
         return None
     reply = _reply_for_actor(str(vitek_result.get("reply") or "")[:8000], scope_info)
@@ -3602,7 +3604,7 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
     model = "internal"
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider="local",
-        agent_name=vitek.NAME, actions=actions, doubts=[], path=conv_path, scope=scope,
+        agent_name=vitek.FORMAL_NAME, actions=actions, doubts=[], path=conv_path, scope=scope,
     )
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
     kind = str(vitek_result.get("kind") or "status")
@@ -3628,7 +3630,7 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
         try:
             from .. import telegram_service
             telegram_service.send_chief_report(
-                f"{vitek.NAME} · {vitek.ROLE}", [reply[:3200]], model_name=model,
+                f"{vitek.FORMAL_NAME} · {vitek.FORMAL_ROLE}", [reply[:3200]], model_name=model,
                 conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                 dedupe_key=str(assistant.get("message_id") or ""),
             )

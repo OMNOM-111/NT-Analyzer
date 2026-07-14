@@ -1956,7 +1956,7 @@ def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, m
         assert "активных поручений сейчас нет" in result["reply"]
         assert "финансов" in result["reply"].lower()
         assert incident["incident_id"] not in result["reply"]
-        assert result["message"]["agent_name"] == "Витёк"
+        assert result["message"]["agent_name"] == "Виктор"
 
 
 def test_scoped_default_chat_is_recorded_for_telegram_routing(tmp_path, monkeypatch) -> None:

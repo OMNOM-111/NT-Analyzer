@@ -282,7 +282,7 @@ UI.ready(async function () {
        <section class="panel" style="margin-top:14px"><div class="panel-h"><h2>Фактическая торговля и готовность</h2><span class="sub">runtime NinjaTrader · отдельно от бэктеста</span></div><div class="panel-b" id="sd-live"><div class="state-loading"><span class="spinner"></span>Сопоставление runtime и сделок...</div></div></section>
        <section class="panel" style="margin-top:14px"><div class="panel-h"><h2>Операторские заметки</h2><span class="sub">сохраняются в профиле</span></div><div class="panel-b"><label class="field"><span>Комментарий, наблюдения, причины остановки</span><textarea id="sd-notes" rows="6">${UI.esc(c.raw && c.raw.notes || '')}</textarea></label><div class="flex gap-sm"><button class="btn" id="sd-notes-save">Сохранить заметки</button></div></div></section>
        <div class="field" style="margin-top:14px"><label for="sd-status">Изменить статус</label><div class="flex gap-sm"><select class="field" id="sd-status">${Object.keys(STATUS_LABEL).map(s => `<option value="${s}" ${s === c.status ? 'selected' : ''}>${STATUS_LABEL[s]}</option>`).join('')}</select><button class="btn" id="sd-save">Применить</button></div></div>
-       <div class="flex wrap gap-sm" style="margin-top:14px"><a class="btn primary" href="${url}">${UI.icon('chart')}Открыть бэктест</a>${c.raw && c.raw.strategy_class ? `<button class="btn" id="sd-hide-runtime">Скрыть класс в runtime-матрице</button>` : ''}<button class="btn danger" id="sd-delete">${UI.icon('trash')}Удалить профиль</button></div>`
+       <div class="flex wrap gap-sm" style="margin-top:14px"><a class="btn primary" href="${url}">${UI.icon('chart')}Открыть бэктест</a><button class="btn" id="sd-assign-victor">Поручить Виктору разобраться</button>${c.raw && c.raw.strategy_class ? `<button class="btn" id="sd-hide-runtime">Скрыть класс в runtime-матрице</button>` : ''}<button class="btn danger" id="sd-delete">${UI.icon('trash')}Удалить профиль</button></div>`
     );
     loadStrategyOperationalDetail(c);
     requestAnimationFrame(() => {
@@ -319,6 +319,11 @@ UI.ready(async function () {
         } catch (e) { UI.reportError(e); }
         finally { notesBtn.disabled = false; }
       };
+      const victorBtn = UI.qs('#sd-assign-victor');
+      if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+        page: 'strategies', entity_type: 'strategy', entity_id: c.id,
+        entity_label: c.name, url: location.pathname + location.search,
+      }, { title: `Разобраться со стратегией «${c.name}»`, description: dec.reason || '' });
     });
   }
 
@@ -367,9 +372,14 @@ UI.ready(async function () {
       `<div class="tb-title"><span class="tb-kicker">${UI.esc([c.cell, c.instrument, c.originLabel].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(c.name)}</span></div>`,
       `<div class="flex wrap gap-sm"><span class="badge ai-origin-badge">${UI.icon('ai')}AI</span>${statusBadge(c)}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="tag">попыток: ${c.attempts || 1}</span></div>
        ${c.archiveReason ? `<p class="muted" style="margin-top:12px;font-size:12.5px"><strong>Причина архива:</strong> ${UI.esc(c.archiveReason)}</p>` : ''}
-       <div class="flex gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-lab.html?exp=${encodeURIComponent(c.experimentId || '')}">${UI.icon('ai')}Открыть в AI Lab</a></div>
+       <div class="flex wrap gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-lab.html?exp=${encodeURIComponent(c.experimentId || '')}">${UI.icon('ai')}Открыть в AI Lab</a><button class="btn" id="ai-card-assign-victor">Поручить Виктору разобраться</button></div>
        <h4 style="margin:16px 0 8px">История попыток по ячейке ${UI.esc(c.cell || '')}</h4><div id="ai-cell-hist"><div class="state-loading"><span class="spinner"></span>Загрузка…</div></div>`
     );
+    const victorBtn = UI.qs('#ai-card-assign-victor');
+    if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+      page: 'strategies', entity_type: 'research', entity_id: c.experimentId || c.id,
+      entity_label: c.name, url: location.pathname + location.search,
+    }, { title: `Разобраться с исследованием «${c.name}»`, description: c.archiveReason || '' });
     const box = UI.qs('#ai-cell-hist');
     try {
       const h = await API.http.aiCellHistory(c.cell);

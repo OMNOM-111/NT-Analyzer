@@ -321,7 +321,7 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
     # AI Lab keeps only a compact status card + a launcher for the global chat.
-    assert "Витёк · правая рука руководителя" in html
+    assert "Виктор · правая рука руководителя" in html
     assert 'id="orchestrator-open"' in html
     assert 'id="chief-hours"' not in html
     assert 'id="chief-task"' not in html
