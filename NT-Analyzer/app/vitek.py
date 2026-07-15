@@ -264,6 +264,12 @@ def status() -> Dict[str, Any]:
             _resolve_connection_incidents()
     except Exception:
         pass
+    # Never acquire _AGENT_RUN_LOCK while holding _LOCK.  The dispatcher uses
+    # the opposite order while it claims work, so nesting both locks here can
+    # deadlock the HTTP status/health endpoints exactly when an agent starts.
+    # A slightly earlier activity snapshot is preferable to freezing the UI.
+    with _AGENT_RUN_LOCK:
+        active_runs = {key: dict(value) for key, value in _ACTIVE_AGENT_RUNS.items()}
     with _LOCK:
         doc = _read()
         rest = _rest_state(doc)
@@ -304,8 +310,6 @@ def status() -> Dict[str, Any]:
         if doc.get("rest") != rest or plans_changed:
             doc["rest"] = rest
             _write(doc)
-        with _AGENT_RUN_LOCK:
-            active_runs = {key: dict(value) for key, value in _ACTIVE_AGENT_RUNS.items()}
         agent_rows = []
         for agent_id, label in AGENT_LABELS.items():
             run = active_runs.get(agent_id) or {}

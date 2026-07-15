@@ -717,6 +717,43 @@ def test_agent_lanes_run_independently_in_parallel(tmp_path, monkeypatch) -> Non
         assert vitek._ACTIVE_AGENT_RUNS == {}
 
 
+def test_status_does_not_invert_dispatcher_lock_order(tmp_path, monkeypatch) -> None:
+    """The owner status endpoint must not deadlock against agent dispatch."""
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr("app.runtime.read_heartbeat", lambda: {"fresh": False})
+    original_read = vitek._read
+    read_started = threading.Event()
+    allow_read = threading.Event()
+    finished = threading.Event()
+
+    def coordinated_read():
+        if threading.current_thread().name == "status-lock-order-test":
+            read_started.set()
+            assert allow_read.wait(2)
+        return original_read()
+
+    monkeypatch.setattr(vitek, "_read", coordinated_read)
+
+    thread = threading.Thread(
+        target=lambda: (vitek.status(), finished.set()),
+        name="status-lock-order-test",
+        daemon=True,
+    )
+    thread.start()
+    assert read_started.wait(2)
+
+    # Simulate the dispatcher holding its activity lock while it needs the
+    # persistent-state lock.  status() must release _LOCK independently.
+    with vitek._AGENT_RUN_LOCK:
+        allow_read.set()
+        acquired = vitek._LOCK.acquire(timeout=1)
+        assert acquired, "status() deadlocked with the dispatcher lock order"
+        vitek._LOCK.release()
+
+    thread.join(2)
+    assert finished.is_set()
+
+
 def test_running_events_are_requeued_after_backend_restart(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch, tmp_path)
     with vitek._LOCK:
