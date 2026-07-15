@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.ai_lab import capability_map, chief_agent, domain_agents, intent_classifier
+from app.ai_lab import capability_map, chief_agent, command_language, domain_agents, intent_classifier
 
 
 def test_intent_classifier_covers_owner_operations() -> None:
@@ -20,7 +20,8 @@ def test_capability_map_contains_every_first_class_operation() -> None:
     expected = {
         "chart_snapshot", "chart_draw", "chart_open", "chart_clear",
         "accounting_report", "strategy_report", "news_report",
-        "deliver_report", "start_backtest",
+        "deliver_report", "start_backtest", "user_screenshot_request",
+        "user_session_reload", "user_session_end", "reconnect_runtime_connection",
     }
     assert expected <= set(capability_map.CAPABILITY_MAP)
     assert all(capability_map.CAPABILITY_MAP[name]["safe"] for name in expected)
@@ -88,6 +89,55 @@ def test_classifier_normalizes_mixed_keyboard_futures_symbol() -> None:
     assert intent["capability"] == "chart_snapshot"
     assert intent["target_root"] == "6C"
     assert intent["normalized_message"].endswith("6c")
+
+
+def test_russian_not_is_never_reinterpreted_as_lean_hogs() -> None:
+    message = (
+        "Виктор, приступай к поручению: финансовые операции не подписаны, "
+        "поручи Марине разобраться и не открывай график."
+    )
+
+    assert command_language.normalize_command("не") == "не"
+    assert command_language.resolve_instrument(message) == ""
+    assert intent_classifier.classify(message)["capability"] != "chart_snapshot"
+
+
+def test_connection_loss_is_not_misrouted_to_monthly_report() -> None:
+    intent = intent_classifier.classify(
+        "Связь с NinjaTrader потеряна. Сначала безопасно проверь Bridge и восстанови соединение."
+    )
+
+    assert intent["category"] == "runtime_connection"
+    assert intent["capability"] == "reconnect_runtime_connection"
+    assert intent["target_root"] == ""
+
+
+def test_connection_question_and_explicit_prohibition_never_reconnect() -> None:
+    assert intent_classifier.classify(
+        "Почему связь с NinjaTrader потеряна?"
+    )["capability"] == ""
+    assert intent_classifier.classify(
+        "Связь с NinjaTrader потеряна, ничего не восстанавливай."
+    )["capability"] == ""
+    assert intent_classifier.classify(
+        "Bridge offline; do not reconnect."
+    )["capability"] == ""
+    for message in (
+        "Витя, связь с NinjaTrader потеряна — не запускай восстановление.",
+        "Связь потеряна, ничего не запускай.",
+        "Не надо запускать восстановление связи NinjaTrader.",
+        "Не пытайся восстановить связь с NinjaTrader.",
+        "Не перезапускай NinjaTrader, просто объясни причину.",
+    ):
+        assert intent_classifier.classify(message)["capability"] == "", message
+
+
+def test_service_word_result_does_not_turn_task_into_report() -> None:
+    intent = intent_classifier.classify(
+        "Не утверждай, что действие сделано, пока не получен фактический результат."
+    )
+
+    assert intent["capability"] == ""
 
 
 def test_chart_dispatch_does_not_borrow_stale_instrument_from_history(monkeypatch) -> None:

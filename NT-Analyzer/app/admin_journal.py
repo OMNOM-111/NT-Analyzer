@@ -18,6 +18,7 @@ CATEGORIES: Dict[str, Dict[str, str]] = {
     "mini_app":      {"file": "telegram-mini-app.jsonl", "label": "Mini App / API"},
     "subscriptions": {"file": "subscriptions.jsonl",     "label": "Подписки"},
     "paypal":        {"file": "paypal-webhook.jsonl",    "label": "PayPal"},
+    "support":       {"file": "user-support.jsonl",     "label": "Поддержка пользователей"},
 }
 
 MAX_LIMIT = 1000
@@ -72,6 +73,12 @@ def _summary(category: str, row: Dict[str, Any]) -> str:
         if isinstance(row.get("result"), dict) and row["result"].get("action"):
             parts.append(str(row["result"]["action"]))
         return " · ".join(p for p in parts if p)
+    if category == "support":
+        parts = []
+        for key in ("owner_id", "user_id", "request_id", "count"):
+            if row.get(key) not in (None, ""):
+                parts.append(f"{key}={row[key]}")
+        return " · ".join(parts)
     return json.dumps(row, ensure_ascii=False)[:200]
 
 
@@ -87,6 +94,8 @@ def _is_suspicious(category: str, row: Dict[str, Any]) -> bool:
             "account_denied", "phone_mismatch", "identity_mismatch", "user_blocked", "user_deleted"}
     if category == "paypal":
         return row.get("verified") is False
+    if category == "support":
+        return str(row.get("event") or "") in {"screenshot_error"}
     return False
 
 

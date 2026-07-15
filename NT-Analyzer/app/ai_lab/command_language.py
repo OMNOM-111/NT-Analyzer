@@ -68,8 +68,15 @@ _SYMBOL_HOMOGLYPHS = str.maketrans({
 
 
 def _canonical_symbol_token(token: str) -> str:
-    candidate = str(token or "").translate(_SYMBOL_HOMOGLYPHS).upper()
-    return candidate if candidate in INSTRUMENT_ROOTS else str(token or "")
+    raw = str(token or "")
+    # Normal Cyrillic words are language, not futures symbols.  In particular,
+    # Russian ``не`` used to become Latin ``HE`` and route unrelated work to
+    # the lean-hogs chart. Mixed-keyboard tokens (``6с``) remain eligible, as
+    # do deliberately typed all-uppercase symbol lookalikes.
+    if re.fullmatch(r"[А-Яа-я]{2,4}", raw) and raw != raw.upper():
+        return raw
+    candidate = raw.translate(_SYMBOL_HOMOGLYPHS).upper()
+    return candidate if candidate in INSTRUMENT_ROOTS else raw
 
 
 def normalize_command(value: Any) -> str:
@@ -106,7 +113,17 @@ def resolve_instrument(value: Any) -> str:
         return explicit[0]
     matches = []
     for root, aliases in INSTRUMENT_ALIASES.items():
-        best = max((len(alias) for alias in aliases if alias in low), default=0)
+        matched = []
+        for alias in aliases:
+            # Short Latin aliases such as ``he``/``le`` must be complete
+            # tokens, never substrings of ordinary prose.
+            if re.fullmatch(r"[a-z0-9]{1,3}", alias):
+                found = re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", low)
+            else:
+                found = alias in low
+            if found:
+                matched.append(len(alias))
+        best = max(matched, default=0)
         if best:
             matches.append((best, root))
     matches.sort(reverse=True)

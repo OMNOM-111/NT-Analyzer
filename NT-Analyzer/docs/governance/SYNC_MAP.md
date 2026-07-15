@@ -183,3 +183,27 @@
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/command_language.py, app/ai_lab/intent_classifier.py, app/ai_lab/capability_map.py, app/telegram_service.py
 - Нужно проверить вручную: —
+
+## GOV-AI-021 — Владелец видит исполнителя и ход работы, но не скрытые рассуждения
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/chief_agent.py, app/server.py, app/static/aurora/assets/ui.js, app/telegram_service.py
+- Нужно проверить вручную: —
+
+## GOV-AI-022 — Capability закрепляет исполнителя, а завершение подтверждает целевая система
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/vitek.py, app/ai_lab/capability_map.py, app/ai_lab/chief_agent.py
+- Нужно проверить вручную: —
+
+## GOV-AI-023 — Один диалог Aurora соответствует одной теме Telegram
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/telegram_service.py, app/ai_lab/chief_agent.py, app/durable.py
+- Нужно проверить вручную: —
+
+## GOV-AI-024 — Отрицание запрещает действие, а пояснение возвращается тому же исполнителю
+
+- Текущее значение: `Да`
+- Автоматически обновляется: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
+- Нужно проверить вручную: —

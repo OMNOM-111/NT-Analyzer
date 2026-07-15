@@ -62,9 +62,9 @@ _WORKSPACE_WRITE_ROLES = {"owner", "admin", "operator", "developer"}
 # with no vocative at all (the sentence just starts normally).
 _OWNER_ADDRESSES = (
     "Дмитрий Сергеевич",
-    "Начальник",
-    "Мой господин",
-    "Шеф",
+    "",
+    "Господин Черевко",
+    "",
     "",  # plain "вы"-form, no vocative
 )
 
@@ -1337,7 +1337,8 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     _touch_conversation(cid, title_hint=text, scope=scope)
     assistant = _append_conversation(
         "assistant", ack, source="chart_task", model="chart operator", provider="local",
-        agent_name="Иван", actions=[], doubts=[], path=path, scope=scope,
+        agent_name="Иван", actions=[{"name": "chart_watch", "status": "running"}],
+        doubts=[], path=path, scope=scope,
     )
     _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
@@ -1351,6 +1352,7 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
             )
             telegram_service.send_chief_report(
                 "Витёк · правая рука руководителя", [ack[:1500]], model_name="chart operator",
+                provider_name="local", action_status="running",
                 conversation_id=cid, conversation_title=title,
                 dedupe_key=str(assistant.get("message_id") or ""),
             )
@@ -1379,8 +1381,9 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
         attachments = [{"type": "image", "url": image_url, "caption": caption}]
     message = _append_conversation(
         "assistant", str(text or "Снимок графика").strip(), source="chart_snapshot",
-        model="chart operator", provider="local", agent_name="Иван",
-        actions=[], doubts=[], attachments=attachments, path=path, scope=scope,
+        model="chart operator", provider="local", agent_name=str(agent_name or "Иван"),
+        actions=[{"name": "chart_snapshot", "status": "completed"}],
+        doubts=[], attachments=attachments, path=path, scope=scope,
     )
     title = _conversation_title(cid, scope=scope)
     try:
@@ -1395,18 +1398,94 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
                 photo_path = market_data.snapshot_path(image_file)
                 if photo_path:
                     sent_photo = telegram_service.send_photo(
-                        photo_path, caption=(str(text or "")[:900]),
+                        photo_path, caption=(
+                            str(text or "")[:780]
+                            + "\n\nМодель: chart operator (local) · Ход работы: Выполнено"
+                        ),
                         conversation_id=cid, conversation_title=title,
                     )
             if not sent_photo:
                 lines = [str(text or "")[:1500]]
                 telegram_service.send_chief_report(
                     "Витёк · снимок графика", lines, model_name="chart operator",
+                    provider_name="local", action_status="completed",
                     conversation_id=cid, conversation_title=title,
                     dedupe_key=str(message.get("message_id") or ""),
                 )
         except Exception:
             pass
+    return {"ok": True, "conversation_id": cid, "message": message}
+
+
+def report_task_update(*, conversation_id: str, text: str,
+                       agent_name: str = "Виктор", model: str = "internal",
+                       provider: str = "local", action_name: str = "vitek_task",
+                       action_status: str = "running", close: bool = False,
+                       mirror_to_telegram: bool = True,
+                       scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Publish a non-chart task update in its originating app/Telegram chat.
+
+    Victor used to send every result through ``report_chart_snapshot``. That
+    hard-coded Ivan and ``chart operator``, contaminating unrelated financial
+    and NinjaTrader tasks. This generic path preserves the actual specialist,
+    model and task state.
+    """
+    scope_info = _normalize_conversation_scope(scope)
+    cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
+    path = _conversation_file(cid, scope=scope)
+    message = _append_conversation(
+        "assistant", str(text or "Обновление по поручению.").strip(),
+        source="vitek_task", model=str(model or "internal"),
+        provider=str(provider or "local"), agent_name=str(agent_name or "Виктор"),
+        actions=[{"name": str(action_name or "vitek_task"),
+                  "status": str(action_status or "running")}],
+        doubts=[], path=path, scope=scope,
+    )
+    _touch_conversation(
+        cid, message_count=len(_read_conversation(500, path=path)), scope=scope,
+    )
+    state = "completed" if close else (
+        "awaiting_owner" if action_status in {"needs_input", "waiting_review"}
+        else "blocked" if action_status in {"blocked", "error"}
+        else "in_progress"
+    )
+    _set_conversation_work_state(cid, state, str(text or "")[:300], scope=scope)
+    if close:
+        set_conversation_closed(cid, True, scope=scope)
+    if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
+        try:
+            from .. import telegram_service
+            telegram_service.send_chief_report(
+                f"{agent_name or 'Виктор'} · поручение", [str(text or "")[:3200]],
+                model_name=str(model or "internal"), provider_name=str(provider or "local"),
+                action_status=str(action_status or "running"), conversation_id=cid,
+                conversation_title=_conversation_title(cid, scope=scope),
+                dedupe_key=str(message.get("message_id") or ""),
+            )
+        except Exception:
+            pass
+    return {"ok": True, "conversation_id": cid, "message": message}
+
+
+def report_user_screenshot(*, conversation_id: str, text: str,
+                           image_url: str, caption: str = "",
+                           scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Deliver a consented user screenshot into the originating owner chat."""
+    scope_info = _normalize_conversation_scope(scope)
+    if not scope_info.get("is_owner"):
+        raise ChiefAgentError("Снимок пользователя можно доставить только в чат владельца.")
+    cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
+    path = _conversation_file(cid, scope=scope)
+    message = _append_conversation(
+        "assistant", str(text or "Пользователь прислал снимок экрана.").strip(),
+        source="user_support", model="consent gateway", provider="local",
+        agent_name="Витёк",
+        actions=[{"name": "user_screenshot_request", "status": "completed"}],
+        doubts=[], attachments=[{"type": "image", "url": image_url, "caption": caption}],
+        path=path, scope=scope,
+    )
+    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
+    _set_conversation_work_state(cid, "open", "Снимок пользователя получен", scope=scope)
     return {"ok": True, "conversation_id": cid, "message": message}
 
 
@@ -1541,11 +1620,9 @@ def _append_conversation(role: str, content: str, *, source: str,
         })
     if clean_attachments:
         rec["attachments"] = clean_attachments
-    # Native reasoning ("thinking") is stored for the app chat history only and
-    # is never mirrored to Telegram. Redacted like content and length-bounded.
-    clean_thinking = _redact_sensitive(str(thinking or "").strip())[:8000]
-    if clean_thinking:
-        rec["thinking"] = clean_thinking
+    # Provider chain-of-thought is deliberately neither persisted nor exposed.
+    # The owner sees only auditable action/progress states; internal reasoning
+    # may contain unstable or sensitive implementation details.
     append_jsonl(path or _conversation_file(DEFAULT_CONVERSATION_ID, scope=scope), rec)
     return rec
 
@@ -2016,9 +2093,10 @@ def _queue_runtime_reconnect(account_name: str = "", *,
     # terminal automatically: that could interrupt an authenticated session or
     # active positions. The bridge command then reconnects the configured feed.
     try:
+        heartbeat = runtime.read_heartbeat()
         boot = bootstrap.status(probe=False)
         nt = ((boot.get("components") or {}).get("ninjatrader") or {})
-        if nt.get("running") is False:
+        if not heartbeat.get("fresh") and nt.get("running") is not True:
             bootstrap.start(
                 timeout_sec=60, start_ninjatrader=True,
                 start_lm_studio=False, start_lm_server=False,
@@ -2319,17 +2397,33 @@ def _is_plan_request(message: str) -> bool:
 
 def _is_research_start_command(message: str) -> bool:
     text = str(message or "").strip().lower()
-    if not text or _is_strategy_discussion_request(text):
+    # A safety qualifier such as "ничего не запускай" describes the exact
+    # opposite of an execution command.  Remove only negated action phrases
+    # before looking for positive start verbs; this still permits a mixed but
+    # explicit instruction such as "не запускай старое, создай новый тест".
+    command_text = re.sub(
+        r"\b(?:ничего\s+)?не\s+(?:надо\s+|нужно\s+)?"
+        r"(?:запуст\w*|запуска\w*|начн\w*|начина\w*|приступ\w*|"
+        r"разработ\w*|созда\w*|сдела\w*|продолжа\w*)\b",
+        "",
+        text,
+    )
+    command_text = re.sub(
+        r"\b(?:do\s+not|don't)\s+(?:start|run|develop|build|continue)\b",
+        "",
+        command_text,
+    )
+    if not command_text or _is_strategy_discussion_request(command_text):
         return False
-    if text in {
+    if command_text.strip(" ,.!?") in {
         "начинай", "начинайте", "запускай", "запускайте", "приступай",
         "приступайте", "start", "go ahead", "да, начинай", "да, запускай",
     }:
         return True
-    has_subject = any(token in text for token in (
+    has_subject = any(token in command_text for token in (
         "стратег", "strategy", "исследован", "research", "бэктест", "backtest",
     ))
-    return has_subject and any(verb in text for verb in _RESEARCH_START_VERBS)
+    return has_subject and any(verb in command_text for verb in _RESEARCH_START_VERBS)
 
 
 def _owner_explicitly_disables_local_models(message: str) -> bool:
@@ -2679,7 +2773,7 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
         title = "Результат по стратегии" if action_name == "strategy_result" else "Важное сообщение"
         telegram_service.send_chief_report(
             title, [text[:3200]],
-            model_name=actual_model,
+            model_name=actual_model, provider_name="local", action_status=action_status,
             conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
         )
     except Exception:
@@ -2924,7 +3018,7 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
             )
             return {
                 "name": name,
-                "status": "completed",
+                "status": "queued",
                 "account_name": reconnect.get("account_name"),
                 "command_id": reconnect.get("command_id"),
                 "summary": (
@@ -3578,6 +3672,12 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
     create a second Telegram response.
     """
     from .. import vitek
+    # Session support commands already have a concrete owner-only capability
+    # and consent gateway.  Even an explicitly addressed "Витёк, ..." must use
+    # that path instead of becoming a generic background task.
+    from . import intent_classifier
+    if str(intent_classifier.classify(clean).get("capability") or "").startswith("user_"):
+        return None
 
     explicit_vitek = requested_agent in {"vitek", "виктор", "витек", "витёк", "витя"} or vitek.is_addressed(clean)
     if requested_agent and requested_agent not in {"auto", "vitek", "виктор", "витек", "витёк", "витя"} and not explicit_vitek:
@@ -3631,6 +3731,8 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
             from .. import telegram_service
             telegram_service.send_chief_report(
                 f"{vitek.FORMAL_NAME} · {vitek.FORMAL_ROLE}", [reply[:3200]], model_name=model,
+                provider_name="local",
+                action_status=str((actions[-1] if actions else {}).get("status") or ""),
                 conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                 dedupe_key=str(assistant.get("message_id") or ""),
             )
@@ -3678,6 +3780,16 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         raise ChiefAgentError("Сообщение не может быть пустым.")
     if len(clean) > 6000:
         raise ChiefAgentError("Сообщение должно быть короче 6000 символов.")
+    progress_callback = None
+    if on_thinking is not None:
+        progress_emitted = False
+
+        def progress_callback(_delta: str) -> None:
+            nonlocal progress_emitted
+            if progress_emitted:
+                return
+            progress_emitted = True
+            on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
     shared_memory = _shared_memory_bundle(scope)
     if scope_info:
@@ -3834,6 +3946,8 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 if not sent_photo:
                     telegram_service.send_chief_report(
                         f"{responder_name or 'Витёк'} · ответ", [reply[:3200]], model_name=model,
+                        provider_name=provider,
+                        action_status=str((domain_actions[-1] if domain_actions else {}).get("status") or ""),
                         conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                         dedupe_key=str(assistant.get("message_id") or ""),
                     )
@@ -3883,7 +3997,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
         try:
             result, strategic_reply = _invoke_strategic_dialogue(
-                clean, history, snapshot, on_thinking,
+                clean, history, snapshot, progress_callback,
                 shared_memory=scope_info.get("shared_memory") or {},
             )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
@@ -3905,7 +4019,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
         try:
             result, manager_reply = _invoke_general_manager_dialogue(
-                clean, history, snapshot, on_thinking,
+                clean, history, snapshot, progress_callback,
                 shared_memory=scope_info.get("shared_memory") or {},
             )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
@@ -3958,7 +4072,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 purpose="orchestrator_chat_plan",
                 complexity=complexity,
                 cache_mode="off",
-                on_reasoning=on_thinking,
+                on_reasoning=progress_callback,
             )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
@@ -4039,7 +4153,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             readable.append(reason)
         reply += "\n\nНе выполнено: " + "; ".join(readable) + "."
     doubts = [str(item)[:500] for item in (plan.get("doubts") or [])[:10]]
-    thinking = str(result.get("reasoning") or "")
+    thinking = ""
     response_actor = recovery_agent_name or str((management or {}).get("name") or "") or "Витёк"
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
@@ -4065,6 +4179,8 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 lines.append("Сомнения: " + "; ".join(doubts[:3]))
             telegram_service.send_chief_report(
                 f"{response_actor} · ответ", lines, model_name=model,
+                provider_name=provider,
+                action_status=str((action_results[-1] if action_results else {}).get("status") or ""),
                 conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
                 dedupe_key=str(assistant.get("message_id") or ""),
             )
@@ -4076,7 +4192,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         "model": model, "provider": provider, "complexity": complexity,
         "agent": management["id"] if management else "auto",
         "doubts": doubts, "actions": action_results,
-        "thinking": thinking,
+        "thinking": "",
         "input_tokens": result.get("input_tokens"),
         "cached_input_tokens": result.get("cached_input_tokens"),
         "output_tokens": result.get("output_tokens"),
@@ -4929,7 +5045,7 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
     cid = mission.get("conversation_id") or DEFAULT_CONVERSATION_ID
     _append_conversation(
         "assistant", content, source="mission_report", model=model,
-        provider="", actions=[{"name": "mission_completed", "status": "completed"}], doubts=[],
+        provider="local", actions=[{"name": "mission_completed", "status": "completed"}], doubts=[],
         path=_conversation_file(cid, scope=scope), scope=scope,
     )
     _touch_conversation(cid, scope=scope)
@@ -4942,6 +5058,7 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
         from .. import telegram_service
         telegram_service.send_chief_report(
             "Автономная работа завершена", [content[:3500]], model_name=model,
+            provider_name="local", action_status="completed",
             conversation_id=cid, conversation_title=_conversation_title(cid, scope=scope),
         )
     except Exception:

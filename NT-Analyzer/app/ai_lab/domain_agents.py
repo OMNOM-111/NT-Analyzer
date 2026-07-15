@@ -454,12 +454,22 @@ def strategy_snapshot(period: str = "month", *, workspace_id: str = "",
 def _fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
     summary = snapshot.get("summary") or {}
     if agent_id == "marina":
+        period = snapshot.get("period") if isinstance(snapshot.get("period"), dict) else {}
+        period_label = str(period.get("label") or "").strip()
+        period_from = str(period.get("from") or "").strip()
+        period_to = str(period.get("to") or "").strip()
+        if period_from and period_to:
+            period_text = f"Период: {period_label or 'выбранный'}, {period_from} — {period_to}. "
+        elif period_label:
+            period_text = f"Период: {period_label}. "
+        else:
+            period_text = ""
         win_rate = summary.get("win_rate")
         win_rate_text = "—" if win_rate in (None, "") else f"{float(win_rate):.2f}%"
         profit_factor = summary.get("profit_factor")
         pf_text = "—" if profit_factor in (None, "") else f"{float(profit_factor):.3f}"
         return (
-            f"Точные данные системы: P&L после комиссий {_usd(summary.get('trading_pnl', '0.00'))}; "
+            f"{period_text}Точные данные системы: P&L после комиссий {_usd(summary.get('trading_pnl', '0.00'))}; "
             f"валовый P&L {_usd(summary.get('gross_pnl', '0.00'))}; "
             f"комиссии {_usd(summary.get('commission', '0.00'))}. "
             f"Денежные потоки: пополнения {_usd(summary.get('deposits', '0.00'))}; "

@@ -5,6 +5,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import pytest
+
 from app import durable, local_secrets, telegram_service
 from app.ai_lab import chief_agent
 
@@ -879,6 +881,54 @@ def test_identical_chief_report_is_sent_only_once(monkeypatch, tmp_path) -> None
     assert first is True
     assert second is False
     assert len(sent) == 1
+
+
+def test_chief_report_exposes_model_provider_and_action_status(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda text, **kwargs: sent.append(text) or {})
+
+    assert telegram_service.send_chief_report(
+        "Марина · поручение", ["Проверяю журнал."],
+        model_name="gpt-5-mini", provider_name="azure_foundry",
+        action_status="needs_input",
+    ) is True
+
+    assert "Модель: gpt-5-mini (azure_foundry)" in sent[0]
+    assert "Ход работы: Жду ваш ответ" in sent[0]
+
+
+def test_scoped_report_never_falls_back_to_general_when_topic_sync_fails(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    monkeypatch.setattr(telegram_service, "group_configured", lambda: True)
+    monkeypatch.setattr(
+        telegram_service, "sync_topic_title",
+        lambda *args, **kwargs: (_ for _ in ()).throw(telegram_service.TelegramServiceError("topic unavailable")),
+    )
+    sent = []
+    monkeypatch.setattr(telegram_service, "_send_raw", lambda *args, **kwargs: sent.append(kwargs) or {})
+
+    delivered = telegram_service.send_chief_report(
+        "Виктор · ответ", ["Готово"], conversation_id="C-42", conversation_title="Поручение",
+    )
+
+    assert delivered is False
+    assert sent == []
+    queued = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert queued[0]["conversation_id"] == "C-42"
+    assert queued[0]["conversation_title"] == "Поручение"
+    assert queued[0]["thread_id"] is None
+
+
+def test_unknown_group_thread_is_not_mapped_to_default(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(telegram_service, "_load_topics", lambda: {"conversations": {}, "group": {}})
+
+    with pytest.raises(telegram_service.TelegramServiceError):
+        telegram_service._conversation_for_thread("-100123", 999)
 
 
 def test_send_document_uses_telegram_document_endpoint(monkeypatch, tmp_path) -> None:

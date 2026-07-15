@@ -369,6 +369,7 @@ def test_ledger_integrity_repairs_only_exact_duplicates(tmp_path, monkeypatch) -
 
 def test_domain_answer_reports_selected_model_and_keeps_fact_block(monkeypatch) -> None:
     monkeypatch.setattr(domain_agents, "accounting_snapshot", lambda *args, **kwargs: {
+        "period": {"label": "Месяц", "from": "2026-07-01", "to": "2026-07-14"},
         "summary": {"trading_pnl": "12.34", "commission": "0.56", "trades": 4, "needs_review": 0, "integrity_issues": 0},
     })
     monkeypatch.setattr(domain_agents.agent_router, "invoke_role", lambda *args, **kwargs: {
@@ -378,6 +379,7 @@ def test_domain_answer_reports_selected_model_and_keeps_fact_block(monkeypatch) 
     out = domain_agents.answer("marina", "Марина, проведи сверку и объясни риск")
 
     assert "P&L после комиссий $12.34" in out["reply"]
+    assert "Период: Месяц, 2026-07-01 — 2026-07-14" in out["reply"]
     assert out["model"] == "gemini-test"
     assert out["agent"]["name"] == "Марина"
 
@@ -412,3 +414,33 @@ def test_orchestrator_dispatches_addressed_domain_agent(tmp_path, monkeypatch) -
     assert out["domain_agent"] == "tolik"
     assert out["model"] == "deepseek-test"
     assert out["reply"] == "Проверил стратегии."
+
+
+def test_addressed_specialist_keeps_public_identity_with_no_action_qualifier(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(chief_agent, "_state_path", lambda: tmp_path / "state.json")
+    monkeypatch.setattr(chief_agent, "_conversation_path", lambda: tmp_path / "conversation.jsonl")
+    monkeypatch.setattr(chief_agent, "_conversations_index_path", lambda: tmp_path / "index.json")
+    monkeypatch.setattr(chief_agent, "_conversations_dir", lambda: tmp_path)
+    monkeypatch.setattr(domain_agents, "answer", lambda *args, **kwargs: {
+        "ok": True,
+        "agent": {"id": "tolik", "name": "Толик", "title": "AI-аналитик стратегий", "page": "strategies.html"},
+        "reply": "Статус стратегий проверен без запуска.",
+        "model": "deterministic report",
+        "provider": "local",
+        "complexity": "light",
+    })
+    monkeypatch.setattr(
+        chief_agent.agent_router,
+        "invoke_role",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("direct specialist lookup must not use a chief LLM")),
+    )
+
+    out = chief_agent.handle_message(
+        "Толик, кратко покажи статус стратегий, ничего не запускай и не изменяй.",
+        mirror_to_telegram=False,
+    )
+
+    assert out["domain_agent"] == "tolik"
+    assert out["message"]["agent_name"] == "Толик"
+    assert out["model"] == "deterministic report"
+    assert out["reply"] == "Статус стратегий проверен без запуска."

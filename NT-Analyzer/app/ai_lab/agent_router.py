@@ -31,6 +31,10 @@ ROLE_PROVIDER_ORDER: Dict[str, List[str]] = {
     # A dedicated compact instruction model is configured on GitHub Models;
     # prefer it for low-token intent repair before borrowing unrelated roles.
     "telegram_assistant": ["github_models", "gemini", "zai", "openrouter", "azure_foundry"],
+    # Victor's probabilistic step is limited to understanding the owner's
+    # meaning. The configured GPT-5 mini won the project's instruction-routing
+    # benchmark; deterministic application handlers still own execution.
+    "vitek_dispatcher": ["azure_foundry", "github_models", "gemini", "zai", "openrouter", "deepseek"],
     "embedding": ["azure_foundry", "openai", "gemini", "github_models"],
     "general": ["gemini", "zai", "openrouter", "azure_foundry", "deepseek", "github_models"],
 }

@@ -216,7 +216,7 @@ def test_orchestrator_can_directly_reconnect_modeling(tmp_path, monkeypatch) -> 
     result = chief_agent.handle_message("Включи моделирование на DEMO3369390", mirror_to_telegram=False)
 
     assert result["actions"][0]["name"] == "reconnect_runtime_connection"
-    assert result["actions"][0]["status"] == "completed"
+    assert result["actions"][0]["status"] == "queued"
     assert queued[0]["account_name"] == "DEMO3369390"
 
 
@@ -1500,6 +1500,21 @@ def test_stop_intent_requires_an_immediate_command_not_a_keyword() -> None:
     assert chief_agent._stop_requested("Почему ты остановился?") is False
 
 
+def test_negated_research_verbs_never_become_start_commands() -> None:
+    assert chief_agent._is_research_start_command(
+        "Толик, покажи статус стратегий, ничего не запускай и не изменяй."
+    ) is False
+    assert chief_agent._is_research_start_command(
+        "Покажи статус бэктестов и не запускай новые."
+    ) is False
+    assert chief_agent._is_research_start_command(
+        "Do not start research; show strategy status."
+    ) is False
+    assert chief_agent._is_research_start_command(
+        "Не запускай старое, создай новый бэктест MNQ."
+    ) is True
+
+
 def test_scheduled_stop_keeps_active_mission_running_until_owner_time(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     fixed_utc = datetime(2026, 7, 3, 17, 45, tzinfo=timezone.utc)
@@ -1862,9 +1877,8 @@ def test_viewer_cannot_mutate_owner_training_workspace(tmp_path, monkeypatch) ->
     assert "только для просмотра" in result["reply"]
 
 
-def test_native_thinking_is_not_mirrored_to_telegram(tmp_path, monkeypatch) -> None:
-    """Native reasoning is shown in the app chat + stored in history, but only
-    the final reply is mirrored to Telegram — the thinking channel never is."""
+def test_native_thinking_is_not_exposed_or_persisted(tmp_path, monkeypatch) -> None:
+    """Provider reasoning stays private; only final text and public progress leave the router."""
     from app import telegram_service
 
     _isolate(tmp_path, monkeypatch)
@@ -1881,20 +1895,103 @@ def test_native_thinking_is_not_mirrored_to_telegram(tmp_path, monkeypatch) -> N
 
     result = chief_agent.handle_message("Как дела?", agent="manager", mirror_to_telegram=True)
 
-    # The reasoning is returned to the app and persisted for the chat history…
-    assert result["thinking"] == secret_thinking
+    assert result["thinking"] == ""
     stored = chief_agent._conversation_path().read_text(encoding="utf-8")
-    assert secret_thinking in stored
-    # …but Telegram received only the final reply, never the thinking.
+    assert secret_thinking not in stored
     assert sent, "Telegram mirror should have been called"
     telegram_payload = repr(sent)
     assert secret_thinking not in telegram_payload
     assert "Итоговый ответ владельцу." in telegram_payload
 
 
-def test_handle_message_streams_thinking_to_callback(tmp_path, monkeypatch) -> None:
-    """handle_message forwards its on_thinking callback down to the model layer
-    so the SSE endpoint receives live reasoning deltas."""
+def test_report_task_update_persists_and_mirrors_public_execution_metadata(tmp_path, monkeypatch) -> None:
+    from app import telegram_service
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_can_mirror_to_telegram", lambda scope: True)
+    sent = []
+    monkeypatch.setattr(
+        telegram_service, "send_chief_report",
+        lambda *args, **kwargs: sent.append((args, kwargs)) or True,
+    )
+
+    out = chief_agent.report_task_update(
+        conversation_id="C-TASK", text="Проверяю финансовые операции.",
+        agent_name="Марина", model="gpt-5-mini", provider="azure_foundry",
+        action_name="review_financial_records", action_status="needs_input",
+        mirror_to_telegram=True,
+    )
+
+    message = out["message"]
+    assert message["agent_name"] == "Марина"
+    assert message["model"] == "gpt-5-mini"
+    assert message["provider"] == "azure_foundry"
+    assert message["actions"] == [{
+        "name": "review_financial_records", "status": "needs_input",
+    }]
+    assert sent
+    assert sent[0][1]["provider_name"] == "azure_foundry"
+    assert sent[0][1]["action_status"] == "needs_input"
+    assert sent[0][1]["conversation_id"] == "C-TASK"
+
+
+def test_chart_task_and_snapshot_expose_execution_status_in_both_channels(tmp_path, monkeypatch) -> None:
+    from app import telegram_service
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_can_mirror_to_telegram", lambda scope: True)
+    sent = []
+    monkeypatch.setattr(telegram_service, "mirror_owner_message", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        telegram_service, "send_chief_report",
+        lambda *args, **kwargs: sent.append((args, kwargs)) or True,
+    )
+
+    accepted = chief_agent.announce_chart_task(
+        conversation_id="C-CHART", instruction="Иван, наблюдай MNQ.",
+        instrument="MNQ", mirror_to_telegram=True,
+    )
+    finished = chief_agent.report_chart_snapshot(
+        conversation_id="C-CHART", text="Снимок MNQ готов.",
+        mirror_to_telegram=True,
+    )
+
+    assert accepted["message"]["actions"] == [{"name": "chart_watch", "status": "running"}]
+    assert finished["message"]["actions"] == [{"name": "chart_snapshot", "status": "completed"}]
+    assert sent[0][1]["provider_name"] == "local"
+    assert sent[0][1]["action_status"] == "running"
+    assert sent[1][1]["provider_name"] == "local"
+    assert sent[1][1]["action_status"] == "completed"
+
+
+def test_mission_update_exposes_model_and_action_status_in_both_channels(tmp_path, monkeypatch) -> None:
+    from app import telegram_service
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_can_mirror_to_telegram", lambda scope: True)
+    sent = []
+    monkeypatch.setattr(
+        telegram_service, "send_chief_report",
+        lambda *args, **kwargs: sent.append((args, kwargs)) or True,
+    )
+
+    chief_agent._post_mission_update(
+        {"mission_id": "M-STATUS", "conversation_id": "C-MISSION"},
+        "Проверяю гипотезу на OOS.", action_name="oos_backtest",
+        action_status="running", model_name="gpt-5-mini", notify_telegram=True,
+    )
+
+    message = chief_agent.conversation_messages("C-MISSION")[-1]
+    assert message["model"] == "gpt-5-mini"
+    assert message["provider"] == "local"
+    assert message["actions"] == [{"name": "oos_backtest", "status": "running"}]
+    assert sent[0][1]["model_name"] == "gpt-5-mini"
+    assert sent[0][1]["provider_name"] == "local"
+    assert sent[0][1]["action_status"] == "running"
+
+
+def test_handle_message_streams_only_public_progress_to_callback(tmp_path, monkeypatch) -> None:
+    """The SSE callback gets one safe progress label, never provider reasoning."""
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
 
@@ -1917,8 +2014,8 @@ def test_handle_message_streams_thinking_to_callback(tmp_path, monkeypatch) -> N
         on_thinking=deltas.append,
     )
 
-    assert deltas == ["думаю… ", "почти готово"]
-    assert result["thinking"] == "думаю… почти готово"
+    assert deltas == ["Анализирую задачу…"]
+    assert result["thinking"] == ""
 
 
 def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, monkeypatch) -> None:

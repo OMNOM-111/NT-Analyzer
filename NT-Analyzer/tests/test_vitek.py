@@ -486,15 +486,13 @@ def test_context_assignment_activates_once_and_reports_to_same_conversation(tmp_
 
     _isolate(monkeypatch, tmp_path)
     reports = []
-    closed = []
     monkeypatch.setattr(vitek, "_maybe_notify_idle", lambda: False)
     monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
         "ok": True, "reply": "Проверка исследования завершена.",
         "model": "test-strong-model", "provider": "test",
         "actions": [{"name": "audit_recent_backtests", "status": "completed"}],
     })
-    monkeypatch.setattr(chief_agent, "report_chart_snapshot", lambda **kwargs: reports.append(kwargs) or {"ok": True})
-    monkeypatch.setattr(chief_agent, "set_conversation_closed", lambda cid, closed_state, **kwargs: closed.append((cid, closed_state, kwargs)) or {"ok": True})
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
     doc = vitek._read()
     doc["incidents"] = [{
         "incident_id": "VI-RESEARCH", "category": "strategy_lifecycle",
@@ -536,9 +534,359 @@ def test_context_assignment_activates_once_and_reports_to_same_conversation(tmp_
     stored = next(row for row in vitek.status()["tasks"] if row["task_id"] == task["task_id"])
     assert processed and stored["status"] == "completed"
     assert reports and reports[0]["conversation_id"] == "victor-mgc"
-    assert reports[0]["agent_name"] == "Виктор"
+    assert reports[0]["agent_name"] == "Толик"
     assert reports[0]["scope"]["workspace_id"] == "owner-ws"
-    assert closed and closed[0][0:2] == ("victor-mgc", True)
+    assert reports[0]["close"] is True
+
+
+def test_scan_update_does_not_reopen_incident_with_active_linked_task(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    doc = vitek._read()
+    incident, _ = vitek._record_incident(
+        doc, category="financial_classification", key="ledger", severity="warning",
+        title="94 записи", details="old", recommendation="ask",
+        context={"needs_review": 94},
+    )
+    incident.update({
+        "status": "resolved", "task_id": "VT-FINANCE",
+        "owner_decision_required": False,
+    })
+    doc["tasks"] = [{
+        "task_id": "VT-FINANCE", "status": "waiting_review",
+        "title": "Проверить финансовые записи",
+    }]
+
+    updated, created = vitek._record_incident(
+        doc, category="financial_classification", key="ledger", severity="warning",
+        title="96 записей", details="changed", recommendation="ask",
+        context={"needs_review": 96},
+    )
+
+    assert created is False
+    assert updated["status"] == "in_progress"
+    assert updated["owner_decision_required"] is False
+
+
+def test_victor_dispatcher_cannot_override_known_specialist_routes(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import agent_router
+
+    _isolate(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(agent_router, "invoke_role", lambda role, prompt, **kwargs: calls.append(role) or {
+        "content": '{"capability":"chart_operation","agent":"ivan","role":"chart_operator","complexity":"light"}',
+        "actual_model": "gpt-5-mini", "provider": "azure_foundry",
+    })
+    scope = {"is_owner": True, "user_id": "owner", "workspace_id": "ws"}
+
+    finance = vitek._task_intent({
+        "category": "financial_classification", "title": "Разобрать неподписанные операции",
+        "conversation_scope": scope,
+    }, {"agent": "ivan", "role": "chart_operator", "complexity": "light"})
+    connection = vitek._task_intent({
+        "category": "runtime_connection", "title": "Связь с NinjaTrader потеряна",
+        "conversation_scope": scope,
+    }, {"agent": "tolik", "role": "strategy_analyst", "complexity": "standard"})
+
+    assert calls == ["vitek_dispatcher", "vitek_dispatcher"]
+    assert (finance["capability"], finance["agent"], finance["role"]) == (
+        "review_financial_records", "marina", "accountant",
+    )
+    assert (connection["capability"], connection["agent"], connection["role"]) == (
+        "reconnect_runtime_connection", "vitek", "runtime_controller",
+    )
+    assert finance["routing_model"] == "gpt-5-mini"
+
+    monkeypatch.setattr(agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": '{"capability":"review_financial_records","agent":"ivan","role":"chart_operator","complexity":"light"}',
+        "actual_model": "gpt-5-mini", "provider": "azure_foundry",
+    })
+    generic_finance = vitek._task_intent({
+        "category": "general", "title": "Разберись с операциями",
+        "conversation_scope": scope,
+    }, {"agent": "orchestrator", "role": "orchestrator", "complexity": "light"})
+    assert (generic_finance["capability"], generic_finance["agent"], generic_finance["role"]) == (
+        "review_financial_records", "marina", "accountant",
+    )
+
+
+def test_generic_task_without_verified_action_never_completes(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+        "ok": True, "reply": "Начинаю разбираться.",
+        "model": "test", "provider": "local", "actions": [],
+    })
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: {"ok": True})
+
+    for title in (
+        "Проверь почему чат не отвечает", "Разберись с ошибкой",
+        "Подготовь отчёт", "Проанализируй сбой", "Fix backend issue",
+    ):
+        task = vitek.add_task({"title": title})
+        result = vitek.process_next_event()
+        stored = vitek._task_by_id(task["task_id"])
+        assert result and stored["status"] == "waiting_review", title
+
+
+def test_generic_owner_clarification_returns_to_same_agent_and_prompt(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_handle(message, **kwargs):
+        calls.append(message)
+        if len(calls) == 1:
+            return {
+                "ok": True, "reply": "Нужно уточнить OOS-период.",
+                "model": "test", "provider": "local",
+                "actions": [{"name": "strategy_review", "status": "needs_input"}],
+            }
+        return {
+            "ok": True, "reply": "Проверка выполнена по уточнению.",
+            "model": "test", "provider": "local",
+            "actions": [{"name": "strategy_review", "status": "completed"}],
+        }
+
+    monkeypatch.setattr(chief_agent, "handle_message", fake_handle)
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: {"ok": True})
+    task = vitek.add_task({
+        "title": "Проверь стратегию", "conversation_id": "strategy-clarification",
+    })
+    vitek.process_next_event()
+
+    accepted = vitek.handle_text_command(
+        "Используйте только OOS за 2025 год",
+        conversation_id="strategy-clarification",
+    )
+    vitek.process_next_event()
+
+    assert accepted["kind"] == "task_reply"
+    assert "Толик продолжил" in accepted["reply"]
+    assert "Используйте только OOS за 2025 год" in calls[1]
+    assert "ДИАЛОГ: strategy-clarification" in calls[1]
+    assert vitek._task_by_id(task["task_id"])["status"] == "completed"
+
+
+def test_connection_event_and_scan_share_one_owner_incident(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_notify_incidents", lambda *args, **kwargs: False)
+
+    vitek.emit_event("connection_lost", {"enabled_strategies": 1})
+    vitek.process_next_event()
+    with vitek._LOCK:
+        doc = vitek._read()
+        existing = next(row for row in doc["incidents"] if row["category"] == "runtime_connection")
+        repeated, created = vitek._record_incident(
+            doc, category="runtime_connection", key="ninjatrader_bridge_lost",
+            severity="critical", title="Потеряна связь с NinjaTrader",
+            details="scan", recommendation="restore", context={"enabled_strategies": 1},
+        )
+        vitek._write(doc)
+
+    owner_rows = [
+        row for row in vitek._read()["incidents"]
+        if row.get("owner_decision_required") and row.get("status") in vitek.OPEN_INCIDENT_STATUSES
+    ]
+    assert created is False
+    assert repeated["incident_id"] == existing["incident_id"]
+    assert len(owner_rows) == 1
+    assert owner_rows[0]["category"] == "runtime_connection"
+
+
+def test_finance_assignment_stays_with_marina_and_never_opens_chart(tmp_path, monkeypatch) -> None:
+    from app import account_ledger
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(account_ledger, "account_history", lambda account="", limit=5000: {
+        "accounts": [{"account_name": "DEMO", "events": [
+            {"classification_status": "needs_review", "amount": -7.90},
+            {"classification_status": "needs_review", "amount": -7.90},
+        ]}],
+    })
+    monkeypatch.setattr(
+        chief_agent, "handle_message",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("finance must not enter generic agent")),
+    )
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
+    task = vitek.add_task({
+        "title": "Разобраться с неподписанными финансовыми записями",
+        "description": "Марина проверит операции.", "category": "financial_classification",
+        "conversation_id": "finance-chat",
+    })
+
+    result = vitek.process_next_event()
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert result and stored["status"] == "waiting_review"
+    assert stored["assigned_agent"] == "marina"
+    assert stored["execution_actions"][0]["name"] == "review_financial_records"
+    assert stored["execution_actions"][0]["status"] == "needs_input"
+    assert stored["execution_actions"][0]["amount_total"] == -15.8
+    assert reports and reports[0]["conversation_id"] == "finance-chat"
+    assert reports[0]["agent_name"] == "Марина"
+    assert "график" not in reports[0]["text"].lower()
+
+
+def test_finance_owner_answer_resumes_same_task_and_classifies_reconciliation(tmp_path, monkeypatch) -> None:
+    from app import account_ledger
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    events = [
+        {"event_id": "E1", "classification_status": "needs_review", "amount": -100},
+        {"event_id": "E2", "classification_status": "needs_review", "amount": 100},
+    ]
+    monkeypatch.setattr(account_ledger, "account_history", lambda account="", limit=5000: {
+        "accounts": [{"account_name": "DEMO", "events": events}],
+    })
+    classified = []
+    monkeypatch.setattr(
+        account_ledger, "classify_event",
+        lambda account, event_id, kind, actor, note="": classified.append(
+            (account, event_id, kind, actor, note)
+        ) or {"ok": True},
+    )
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
+    task = vitek.add_task({
+        "title": "Разобраться с финансовыми операциями",
+        "category": "financial_classification", "status": "waiting_review",
+        "auto_execute": False, "conversation_id": "finance-answer-chat",
+    })
+    vitek._remember_task_question(task, "finance-answer-chat")
+
+    accepted = vitek.handle_text_command(
+        "Это технические изменения после переподключения, реальных операций не было.",
+        conversation_id="finance-answer-chat",
+    )
+    processed = vitek.process_next_event()
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert accepted["kind"] == "task_reply"
+    assert processed and stored["status"] == "completed"
+    assert [row[1] for row in classified] == ["E1", "E2"]
+    assert all(row[2] == "reconciliation" for row in classified)
+    assert stored["execution_actions"][0]["classification"] == "reconciliation"
+    assert reports[-1]["close"] is True
+
+
+def test_waiting_task_does_not_swallow_status_question(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Разобраться с финансовыми операциями",
+        "category": "financial_classification", "status": "waiting_review",
+        "auto_execute": False, "conversation_id": "finance-status-chat",
+    })
+    vitek._remember_task_question(task, "finance-status-chat")
+
+    result = vitek.handle_text_command("Витя, как дела?", conversation_id="finance-status-chat")
+
+    assert result["kind"] == "status"
+    assert vitek._task_by_id(task["task_id"])["status"] == "waiting_review"
+
+
+def test_connection_assignment_waits_for_bridge_confirmation(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import capability_map, chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(capability_map, "execute", lambda *args, **kwargs: {
+        "ok": True, "reply": "Команда восстановления поставлена в очередь.",
+        "model": "deterministic runtime controller", "provider": "local",
+        "agent": {"id": "vitek", "name": "Виктор"},
+        "actions": [{
+            "name": "reconnect_runtime_connection", "status": "queued",
+            "command_id": "CMD-RESTORE",
+        }],
+    })
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
+    task = vitek.add_task({
+        "title": "Связь с NinjaTrader потеряна",
+        "description": "Безопасно проверить Bridge и восстановить соединение.",
+        "category": "runtime_connection", "priority": "critical",
+        "conversation_id": "connection-chat",
+    })
+
+    vitek.process_next_event()
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert stored["status"] == "in_progress"
+    assert stored["assigned_agent"] == "vitek"
+    assert stored["execution_command_id"] == "CMD-RESTORE"
+    assert reports[0]["close"] is False
+    assert reports[0]["action_status"] == "running"
+
+
+def test_started_research_mission_is_not_marked_complete_at_launch(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+        "ok": True, "reply": "Исследование запущено.",
+        "model": "gpt-5-mini", "provider": "azure_foundry",
+        "actions": [{"name": "start_research", "status": "completed", "mission_id": "MISSION-1"}],
+    })
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: {"ok": True})
+    task = vitek.add_task({
+        "title": "Разработать новую стратегию MGC",
+        "description": "Запустить исследование.", "conversation_id": "mission-chat",
+    })
+
+    vitek.process_next_event()
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert stored["status"] == "in_progress"
+    assert stored["execution_mission_id"] == "MISSION-1"
+
+
+def test_quarantined_strategy_is_reported_blocked_not_falsely_started(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_root", lambda: tmp_path)
+    profile_dir = tmp_path / "data" / "profiles"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "strategies.json").write_text(json.dumps({"profiles": [{
+        "profile_id": "P-C014", "name": "ORB Retest C014",
+        "deploy_strategy_class": "QuarantinedC014",
+        "confidence_score": {"score": 76},
+        "metrics": {"oos_2025": {"adj_pf": 1.31}},
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(jobqueue, "whitelisted_strategies", lambda: [])
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="strategy_lifecycle", key="c014", severity="warning",
+            title="Проваленная стратегия", details="review", recommendation="retest",
+            context={"profile_ids": ["P-C014"]},
+        )
+        vitek._write(doc)
+    task = vitek.add_task({
+        "title": "Проверить проваленную стратегию",
+        "category": "strategy_lifecycle", "incident_id": incident["incident_id"],
+        "conversation_id": "strategy-chat",
+    })
+
+    vitek.process_next_event()
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert stored["status"] == "blocked"
+    assert stored["assigned_agent"] == "tolik"
+    assert stored["execution_actions"][0]["reason"] == "strategy_source_quarantined"
+    assert "не запущен" in stored["result"].lower()
+    assert reports[0]["agent_name"] == "Толик"
+    execution_incidents = [
+        row for row in vitek.status()["incidents"]
+        if row.get("category") == "vitek_execution"
+    ]
+    assert execution_incidents
+    assert all(not row.get("owner_decision_required") for row in execution_incidents)
 
 
 def test_task_is_not_claimed_complete_without_executed_action(tmp_path, monkeypatch) -> None:
@@ -558,10 +906,21 @@ def test_task_is_not_claimed_complete_without_executed_action(tmp_path, monkeypa
 
     assert stored["status"] == "waiting_review"
     assert current["incident_counts"]["open"] == 1
+    assert current["incident_counts"]["awaiting_owner"] == 0
 
 
 def test_connection_restore_retires_linked_task_and_queued_event(tmp_path, monkeypatch) -> None:
+    from app import runtime
+    from app.ai_lab import chief_agent
+
     _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True})
+    monkeypatch.setattr(runtime, "read_accounts", lambda: [{
+        "account_name": "DEMO", "is_live": False, "control_allowed": True,
+        "connection_status": "Connected",
+    }])
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
     doc = vitek._read()
     doc["incidents"] = [{
         "incident_id": "VI-CONNECTION", "category": "runtime_connection",
@@ -569,7 +928,7 @@ def test_connection_restore_retires_linked_task_and_queued_event(tmp_path, monke
     }]
     doc["tasks"] = [{
         "task_id": "VT-RESTORE", "incident_id": "VI-CONNECTION",
-        "status": "planned", "title": "Восстановить связь",
+        "status": "planned", "title": "Восстановить связь", "conversation_id": "restore-chat",
     }]
     doc["events"] = [{
         "event_id": "VE-TASK", "event_type": "task_created", "status": "queued",
@@ -583,6 +942,7 @@ def test_connection_restore_retires_linked_task_and_queued_event(tmp_path, monke
     assert current["tasks"][0]["status"] == "completed"
     assert current["events"] == []
     assert current["event_history"][-1]["result"]["already_restored"] is True
+    assert reports and reports[0]["conversation_id"] == "restore-chat"
 
     late = vitek._set_task_execution(
         "VT-RESTORE", status="waiting_review", execution_event_id="VE-TASK",
@@ -604,6 +964,10 @@ def test_status_auto_retires_stale_connection_question_when_heartbeat_is_fresh(t
     }]
     vitek._write(doc)
     monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True})
+    monkeypatch.setattr(runtime, "read_accounts", lambda: [{
+        "account_name": "DEMO", "is_live": False, "control_allowed": True,
+        "connection_status": "Connected",
+    }])
 
     current = vitek.status()
 
@@ -789,6 +1153,10 @@ def test_startup_audit_resolves_stale_connection_question_when_heartbeat_is_fres
         vitek._write(doc)
     monkeypatch.setattr(vitek, "scan", lambda **kwargs: {"findings": 0})
     monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": True})
+    monkeypatch.setattr(runtime, "read_accounts", lambda: [{
+        "account_name": "DEMO", "is_live": False, "control_allowed": True,
+        "connection_status": "Connected",
+    }])
 
     result = vitek._analyze_system_event({"event_type": "startup_audit", "payload": {}})
 

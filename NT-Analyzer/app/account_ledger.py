@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional
 
 LEDGER_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime" / "account_ledger.json"
 _LOCK = threading.RLock()
-_KINDS = {"deposit", "withdrawal", "transfer", "fee", "unclassified_adjustment"}
+_KINDS = {
+    "deposit", "withdrawal", "transfer", "fee", "reconciliation",
+    "unclassified_adjustment",
+}
 
 
 def _now() -> str:
@@ -327,7 +330,7 @@ def audit_integrity(account_name: str = "", *, repair_safe: bool = False) -> Dic
 def classify_event(account_name: str, event_id: str, kind: str, actor: str, note: str = "") -> Dict[str, Any]:
     kind = str(kind or "").strip().lower()
     if kind not in _KINDS - {"unclassified_adjustment"}:
-        raise ValueError("kind must be deposit, withdrawal, transfer, or fee")
+        raise ValueError("kind must be deposit, withdrawal, transfer, fee, or reconciliation")
     with _LOCK:
         doc = _read()
         account = doc["accounts"].get(str(account_name or "").strip())
@@ -354,7 +357,7 @@ def add_event(account_name: str, kind: str, amount: Any, actor: str, note: str =
               at_utc: Any = None, source: str = "manual", source_id: str = "") -> Dict[str, Any]:
     kind = str(kind or "").strip().lower()
     if kind not in _KINDS - {"unclassified_adjustment"}:
-        raise ValueError("kind must be deposit, withdrawal, transfer, or fee")
+        raise ValueError("kind must be deposit, withdrawal, transfer, fee, or reconciliation")
     account_name = str(account_name or "").strip()
     if not account_name:
         raise ValueError("account_name is required")

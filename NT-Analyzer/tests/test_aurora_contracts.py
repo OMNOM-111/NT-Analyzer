@@ -136,7 +136,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260713-vitek7"}, versions
+    assert set(versions.values()) == {"20260714-victor2"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
@@ -245,6 +245,34 @@ def test_account_ledger_never_labels_unexplained_balance_as_profit_or_deposit(tm
     assert classified["event"]["classification_status"] == "classified"
 
 
+def test_account_ledger_reconciliation_is_classified_but_not_cash_flow(tmp_path, monkeypatch):
+    monkeypatch.setattr(account_ledger, "LEDGER_PATH", tmp_path / "account_ledger.json")
+    account_ledger.record_accounts({
+        "source": "test", "accounts_generated_at_utc": "2026-07-01T00:00:00Z",
+        "online_accounts": [{
+            "account_name": "DEMO", "net_liquidation": 100, "cash_value": 100,
+            "realized_pnl": 0, "unrealized_pnl": 0,
+        }],
+    })
+    account_ledger.record_accounts({
+        "source": "test", "accounts_generated_at_utc": "2026-07-01T00:01:00Z",
+        "online_accounts": [{
+            "account_name": "DEMO", "net_liquidation": 200, "cash_value": 200,
+            "realized_pnl": 0, "unrealized_pnl": 0,
+        }],
+    })
+    event = account_ledger.account_history("DEMO")["accounts"][0]["events"][0]
+
+    account_ledger.classify_event(
+        "DEMO", event["event_id"], "reconciliation", "owner", "after reconnect",
+    )
+    history = account_ledger.account_history("DEMO")["accounts"][0]
+
+    assert history["events"][0]["kind"] == "reconciliation"
+    assert history["events"][0]["classification_status"] == "classified"
+    assert history["summary"]["classified_cash_flow"] == 0
+
+
 def test_account_ledger_explains_equity_change_from_runtime_pnl(tmp_path, monkeypatch):
     monkeypatch.setattr(account_ledger, "LEDGER_PATH", tmp_path / "account_ledger.json")
     account_ledger.record_accounts({"online_accounts": [{"account_name": "Sim101", "net_liquidation": 10000, "cash_value": 10000, "realized_pnl": 0, "unrealized_pnl": 0}]})
@@ -292,6 +320,12 @@ def test_vitek_chat_hides_internal_model_beside_message_time():
     assert "Витёк · ваша правая рука" in ui
     assert "Ваши чаты и данные сохранены" in ui
     assert "ORCH.conversations = []" not in ui
+    assert "modelMeta" in ui and "модель:" in ui
+    assert "orchActionsHtml" in ui and "Ход выполнения" in ui
+    assert "ORCH_ACTION_LABELS" in ui and "ORCH_ACTION_STATES" in ui
+    assert "row.thinking" not in ui
+    assert "orchThinkBlock" not in ui
+    assert "Анализирую задачу…" in ui
 
 
 def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():

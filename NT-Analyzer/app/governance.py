@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from zoneinfo import ZoneInfo
 
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
@@ -23,6 +24,11 @@ PROJECT_OWNER = "Черевко Дмитро"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _project_local_date() -> str:
+    """Return the owner's calendar date used by operator-facing documents."""
+    return datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
 
 
 def project_root() -> Path:
@@ -595,6 +601,42 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         ],
         "review_targets": [],
     },
+    {
+        "id": "GOV-AI-021", "key": "owner_visible_execution_metadata_only",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Владелец видит исполнителя и ход работы, но не скрытые рассуждения",
+        "summary": "Aurora и Telegram показывают фактического агента, модель/provider и проверяемый статус действия. Provider chain-of-thought не сохраняется и не выводится; вместо него используются короткие публичные стадии работы.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/server.py", "app/static/aurora/assets/ui.js", "app/telegram_service.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-022", "key": "capability_agent_and_completion_invariants",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Capability закрепляет исполнителя, а завершение подтверждает целевая система",
+        "summary": "Финансовая capability всегда принадлежит Марине, lifecycle стратегии — Толику, графики — Ивану, runtime connection — Виктору. Модель не может разорвать эту связь. Поручение не становится completed по обещанию или пустому actions: требуется verified completed action либо подтверждение целевой подсистемы.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/vitek.py", "app/ai_lab/capability_map.py", "app/ai_lab/chief_agent.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-023", "key": "aurora_telegram_conversation_strict_sync",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Один диалог Aurora соответствует одной теме Telegram",
+        "summary": "Исходная реплика, уточнение, действие и итог сохраняют один conversation_id. При ошибке topic mapping сообщение остаётся в долговечной очереди и не отправляется в General; неизвестная входящая тема не подменяется default-диалогом.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/telegram_service.py", "app/ai_lab/chief_agent.py", "app/durable.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-024", "key": "negation_and_clarification_are_authoritative",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Отрицание запрещает действие, а пояснение возвращается тому же исполнителю",
+        "summary": "Фразы «не запускай», «ничего не восстанавливай» и вопросы о причине не превращаются в команды. Ответ владельца на needs_input передаётся в том же диалоге и тому же профильному агенту; подтверждение не подписывается именем другого специалиста.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/intent_classifier.py", "app/ai_lab/chief_agent.py", "app/vitek.py"],
+        "review_targets": [],
+    },
 ]
 
 
@@ -1101,7 +1143,7 @@ def _render_laws_markdown(audience: str) -> str:
         if audience == "project"
         else "Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox."
     )
-    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_now_iso()[:10]}", "", subtitle]
+    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_project_local_date()}", "", subtitle]
     current_group = None
     for law in selected:
         group = str(law.get("group") or "")
@@ -1139,7 +1181,7 @@ def _render_sync_map_markdown() -> str:
     parts = [
         "# SYNC_MAP",
         "",
-        f"Дата актуализации: {_now_iso()[:10]}",
+        f"Дата актуализации: {_project_local_date()}",
         "",
         "Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.",
         "",

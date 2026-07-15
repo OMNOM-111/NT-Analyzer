@@ -16,7 +16,8 @@ from . import command_language
 MODEL_CAPABILITIES = frozenset({
     "chart_snapshot", "chart_draw", "chart_open", "chart_clear",
     "accounting_report", "strategy_report", "news_report",
-    "deliver_report", "start_backtest",
+    "deliver_report", "start_backtest", "user_screenshot_request",
+    "user_session_reload", "user_session_end", "reconnect_runtime_connection",
 })
 
 
@@ -58,6 +59,48 @@ def classify(message: Any) -> Dict[str, Any]:
     if not text:
         return base
 
+    connection_context = any(word in text for word in (
+        "ninjatrader", "ninja trader", "bridge", "соединен", "связь",
+        "подключен", "переподключ",
+    ))
+    connection_problem = any(word in text for word in (
+        "потерян", "потеряна", "пропал", "отключ", "не работает", "не отвечает",
+        "восстанов", "переподключ", "reconnect", "connection lost", "offline",
+    ))
+    reconnect_forbidden = bool(re.search(
+        r"\b(?:ничего\s+)?не\s+(?:надо\s+|нужно\s+)?"
+        r"(?:восстанавл\w*|восстанов\w*|переподключ\w*|подключ\w*|чин\w*|"
+        r"запуст\w*|запуска\w*|перезапуст\w*|перезапуска\w*|"
+        r"пытай\w*(?:\s+\w+)?\s+(?:восстанов\w*|переподключ\w*|подключ\w*))\b"
+        r"|\b(?:do\s+not|don't)\s+(?:reconnect|restore|connect|fix)\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
+    connection_question = bool(
+        "?" in text
+        and any(word in text for word in ("почему", "отчего", "как так", "why", "what happened"))
+        and not any(word in text for word in (
+            "восстанови", "восстанавливай", "переподключи", "подключи", "почини",
+            "reconnect", "restore connection",
+        ))
+    )
+    if connection_context and connection_problem and not reconnect_forbidden and not connection_question:
+        return {
+            **base, "category": "runtime_connection",
+            "capability": "reconnect_runtime_connection", "confidence": 1.0,
+        }
+
+    user_context = any(word in text for word in (
+        "пользовател", "аккаунт", "его сесси", "её сесси", "user id", " user ",
+    ))
+    screen_context = any(word in text for word in ("экран", "рабочий стол пользовател", "дисплей"))
+    if user_context and any(word in text for word in ("скрин", "снимок", "screenshot")) and (screen_context or "пользовател" in text):
+        return {**base, "category": "user_support", "capability": "user_screenshot_request", "confidence": 1.0}
+    if user_context and any(word in text for word in ("перезагруз", "обнови сесси", "reload")):
+        return {**base, "category": "user_support", "capability": "user_session_reload", "confidence": 1.0}
+    if user_context and (("заверш" in text and "сесси" in text) or any(word in text for word in ("закрой сесси", "выкинь из", "разлогин", "force logout"))):
+        return {**base, "category": "user_support", "capability": "user_session_end", "confidence": 1.0}
+
     if (
         any(word in text for word in ("запомни", "всегда", "по умолчанию", "правило"))
         and "покаж" in text
@@ -90,7 +133,7 @@ def classify(message: Any) -> Dict[str, Any]:
     if backtest_word and start_word:
         return {**base, "category": "backtest_action", "capability": "start_backtest", "confidence": 1.0}
 
-    report_word = any(word in text for word in ("отчет", "отчёт", "сводк", "результат", "report"))
+    report_word = any(word in text for word in ("отчет", "отчёт", "сводк", "report"))
     finance_word = any(word in text for word in (
         "финанс", "бухгалт", "p&l", "пнл", "п&л", "комисси", "баланс", "доход", "расход", "прибыл", "убыт",
     ))

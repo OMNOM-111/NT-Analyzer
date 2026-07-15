@@ -54,6 +54,7 @@ if __package__ is None or __package__ == "":
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
+    from app import user_support  # type: ignore[no-redef]
     from app import invitations  # type: ignore[no-redef]
     from app import legal  # type: ignore[no-redef]
     from app import paypal  # type: ignore[no-redef]
@@ -103,6 +104,7 @@ else:
     from . import subscriptions
     from . import permissions
     from . import admin_journal
+    from . import user_support
     from . import invitations
     from . import legal
     from . import paypal
@@ -175,6 +177,13 @@ _SELF_SERVICE_POSTS = {
     # Telegram Mini App exactly like the local UI.
     "/api/ops/runtime/bars/batch",
 }
+
+
+def _is_self_service_post(path: str) -> bool:
+    """POSTs a read-only account may perform on its own behalf."""
+    return path in _SELF_SERVICE_POSTS or path.startswith("/api/support/")
+
+
 _BILLING_PROMO_POSTS = {
     "/api/billing/promo/preview",
     "/api/billing/promo/redeem",
@@ -824,7 +833,7 @@ class Handler(BaseHTTPRequestHandler):
                 role = str(self._remote_context.get("role") or "read_only")
                 workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
                 personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
-                if (method not in {"GET", "HEAD"} and role == "read_only" and path not in _SELF_SERVICE_POSTS
+                if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
                 if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")
@@ -856,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
         role = str(context.get("role") or "read_only")
         workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
         personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
-        if (method not in {"GET", "HEAD"} and role == "read_only" and path not in _SELF_SERVICE_POSTS
+        if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
@@ -1938,6 +1947,44 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, telegram_service.status())
             return
 
+        if path == "/api/owner/support/monitoring":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                self._json(HTTPStatus.OK, user_support.owner_overview(actor))
+            except user_support.UserSupportError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/owner/support/users/"):
+            parts_support = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(parts_support) == 5:
+                try:
+                    context = getattr(self, "_remote_context", None) or {}
+                    actor = context.get("user_id")
+                    out = user_support.owner_status(actor, parts_support[4])
+                    out["is_self"] = str(actor or "") == str(parts_support[4])
+                    if out["is_self"]:
+                        out["current_session_id"] = str(context.get("session_id") or "")
+                    self._json(HTTPStatus.OK, out)
+                except user_support.UserSupportError as exc:
+                    self._err(exc.status, str(exc))
+                return
+            self._err(HTTPStatus.NOT_FOUND, f"no support route: {path}")
+            return
+
+        if path.startswith("/api/owner/support/screenshots/"):
+            parts_support = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            if len(parts_support) == 5:
+                try:
+                    actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                    blob, content_type = user_support.screenshot_bytes(actor, parts_support[4])
+                    self._bytes(HTTPStatus.OK, blob, content_type)
+                except user_support.UserSupportError as exc:
+                    self._err(exc.status, str(exc))
+                return
+            self._err(HTTPStatus.NOT_FOUND, f"no support route: {path}")
+            return
+
         if path == "/api/auth/users":
             try:
                 out = account_auth.list_users(
@@ -3007,13 +3054,12 @@ class Handler(BaseHTTPRequestHandler):
     def _ai_lab_orchestrator_stream(self, body: Dict[str, Any], *, scope: Dict[str, Any]) -> None:
         """Stream the orchestrator reply as Server-Sent Events.
 
-        A live "thinking" channel (the provider's native reasoning) is streamed
-        first, then the final answer. The heavy work — including allowlisted
+        A live progress channel is streamed first, then the final answer. The
+        provider's private chain-of-thought is never exposed. The heavy work — including allowlisted
         actions — runs in a worker thread through the SAME handle_message path as
         the synchronous endpoint, so behaviour and safety are identical; only the
-        transport differs. Telegram still receives only the final reply (the
-        thinking channel is never mirrored). No extra model call is made: the
-        reasoning shown is the one the provider already generated for this turn.
+        transport differs. Telegram receives the final reply and its auditable
+        model/action metadata; no extra model call is made for progress text.
         """
         message = str(body.get("message") or body.get("text") or "")
         conversation_id = str(body.get("conversation_id") or "default")
@@ -3021,8 +3067,8 @@ class Handler(BaseHTTPRequestHandler):
 
         events: "queue.Queue[tuple]" = queue.Queue()
 
-        def on_thinking(delta: str) -> None:
-            events.put(("thinking", str(delta or "")))
+        def on_thinking(_delta: str) -> None:
+            events.put(("progress", "Анализирую задачу…"))
 
         def worker() -> None:
             try:
@@ -3079,14 +3125,14 @@ class Handler(BaseHTTPRequestHandler):
                 elif not self._sse_keepalive():
                     return
                 continue
-            if kind == "thinking":
+            if kind == "progress":
                 saw_thinking = True
-                if not self._sse_write("thinking_delta", {"text": payload}):
+                if not self._sse_write("status", {"text": str(payload or "Анализирую задачу…")}):
                     return
             elif kind == "result":
                 out = payload if isinstance(payload, dict) else {}
                 msg = out.get("message") if isinstance(out.get("message"), dict) else {}
-                self._sse_write("thinking_done", {"text": str(out.get("thinking") or "")})
+                self._sse_write("thinking_done", {"text": ""})
                 self._sse_write("final", {
                     "reply": str(out.get("reply") or ""),
                     "conversation_id": str(out.get("conversation_id") or conversation_id),
@@ -4073,6 +4119,93 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"ok": True})
             return
 
+        if path.startswith("/api/support/"):
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                if path == "/api/support/telemetry":
+                    out = user_support.record_telemetry(
+                        context.get("user_id"), str(context.get("session_id") or ""), body,
+                    )
+                elif path == "/api/support/poll":
+                    out = user_support.poll(
+                        context.get("user_id"), str(context.get("session_id") or ""),
+                        body.get("client_id"),
+                    )
+                elif path == "/api/support/commands/ack":
+                    out = user_support.ack_command(
+                        context.get("user_id"), body.get("client_id"), body.get("command_id"),
+                        status=str(body.get("status") or "done"), error=str(body.get("error") or ""),
+                    )
+                elif path == "/api/support/screenshots/respond":
+                    out = user_support.respond_screenshot(
+                        context.get("user_id"), body.get("client_id"), body.get("request_id"),
+                        decision=str(body.get("decision") or ""), data_url=str(body.get("data_url") or ""),
+                        width=body.get("width"), height=body.get("height"), error=str(body.get("error") or ""),
+                    )
+                    private = out.pop("private_request", {})
+                    if private.get("status") == "completed" and private.get("conversation_id"):
+                        try:
+                            ai_chief_agent.report_user_screenshot(
+                                conversation_id=str(private.get("conversation_id") or "default"),
+                                text=f"Пользователь ID {private.get('user_id')} одобрил запрос и прислал снимок экрана.",
+                                image_url=f"/api/owner/support/screenshots/{private.get('request_id')}",
+                                caption="Снимок экрана пользователя — получен после явного согласия",
+                                scope=private.get("owner_scope") if isinstance(private.get("owner_scope"), dict) else None,
+                            )
+                        except Exception:
+                            pass
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no support route: {path}")
+                    return
+                self._json(HTTPStatus.OK, out)
+            except user_support.UserSupportError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/owner/support/"):
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            actor = context.get("user_id")
+            parts_support = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            try:
+                if len(parts_support) == 6 and parts_support[:4] == ["api", "owner", "support", "users"]:
+                    if parts_support[5] == "screenshot":
+                        out = user_support.request_screenshot(
+                            actor, parts_support[4], note=str(body.get("note") or ""),
+                            target_client_id=str(body.get("target_client_id") or ""),
+                        )
+                    elif parts_support[5] == "reload":
+                        out = user_support.queue_reload(
+                            actor, parts_support[4], session_id=str(body.get("session_id") or ""),
+                            client_id=str(body.get("client_id") or ""),
+                            all_sessions=bool(body.get("all_sessions")),
+                        )
+                    elif parts_support[5] == "device-name":
+                        out = user_support.rename_device(
+                            actor, parts_support[4], body.get("device_id"), body.get("name"),
+                        )
+                    else:
+                        self._err(HTTPStatus.NOT_FOUND, f"no support route: {path}")
+                        return
+                elif len(parts_support) == 6 and parts_support[:4] == ["api", "owner", "support", "screenshots"] and parts_support[5] == "delete":
+                    out = user_support.delete_screenshot(actor, parts_support[4])
+                else:
+                    self._err(HTTPStatus.NOT_FOUND, f"no support route: {path}")
+                    return
+                self._json(HTTPStatus.OK, out)
+            except user_support.UserSupportError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path == "/api/worker/jobs" or (
             path.startswith("/api/worker/jobs/") and path.endswith("/cancel")
         ):
@@ -4141,11 +4274,14 @@ class Handler(BaseHTTPRequestHandler):
                         all_sessions=bool(body.get("all_sessions")),
                     )
                 elif parts_auth[4] == "delete":
+                    user_support.purge_user(actor, parts_auth[3])
                     out = account_auth.delete_user(actor, parts_auth[3])
                 else:
                     self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
                 self._json(HTTPStatus.OK, out)
             except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            except user_support.UserSupportError as exc:
                 self._err(exc.status, str(exc))
             return
 

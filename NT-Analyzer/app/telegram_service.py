@@ -1050,11 +1050,11 @@ def sync_topic_title(conversation_id: str, title: str = "") -> Dict[str, Any]:
     return updated
 
 
-def _thread_for_conversation(conversation_id: str, title: str = "") -> Optional[int]:
+def _thread_for_conversation(conversation_id: str, title: str = "", *, strict: bool = False) -> Optional[int]:
     """Resolve (and lazily create) the topic thread id for a conversation.
 
-    Returns None on any failure so sending falls back to the General topic
-    instead of dropping the message."""
+    In strict mode a mapping failure is propagated so a scoped message can be
+    queued and retried instead of being silently delivered to General."""
     if not group_configured():
         return None
     try:
@@ -1064,13 +1064,17 @@ def _thread_for_conversation(conversation_id: str, title: str = "") -> Optional[
         return int(sync_topic_title(conversation_id, title).get("message_thread_id") or 0) or None
     except TelegramServiceError as exc:
         _record_delivery(success=False, error=str(exc))
+        if strict:
+            raise
         return None
 
 
 def _conversation_for_thread(chat_id: str, thread_id: Optional[int]) -> str:
     """Reverse map a (chat_id, message_thread_id) back to the app conversation.
 
-    General-topic / unbound messages (no thread) route to the default chat.
+    General-topic messages (no thread) route to the default chat. A non-empty
+    but unknown thread is rejected: guessing ``default`` would permanently
+    attach the message to the wrong Aurora conversation.
     """
     if not thread_id:
         return DEFAULT_CONVERSATION_ID
@@ -1078,7 +1082,9 @@ def _conversation_for_thread(chat_id: str, thread_id: Optional[int]) -> str:
     for cid, row in (doc.get("conversations") or {}).items():
         if str(row.get("chat_id")) == str(chat_id) and int(row.get("message_thread_id") or 0) == int(thread_id):
             return str(cid)
-    return DEFAULT_CONVERSATION_ID
+    raise TelegramServiceError(
+        f"Тема Telegram {thread_id} не привязана к диалогу StratForge. Синхронизируйте темы и повторите сообщение."
+    )
 
 
 def list_topics() -> List[Dict[str, Any]]:
@@ -1158,7 +1164,10 @@ def send_photo(image_path: Any, caption: str = "", *, conversation_id: Optional[
         return False
     if not blob:
         return False
-    thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
+    try:
+        thread_id = _thread_for_conversation(conversation_id, conversation_title, strict=True) if conversation_id else None
+    except TelegramServiceError:
+        return False
     boundary = "----stratforge" + secrets.token_hex(16)
     fields: Dict[str, str] = {
         "chat_id": chat,
@@ -1212,7 +1221,10 @@ def send_document(document_path: Any, caption: str = "", *, conversation_id: Opt
         return False
     if not blob or len(blob) > 50 * 1024 * 1024:
         return False
-    thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
+    try:
+        thread_id = _thread_for_conversation(conversation_id, conversation_title, strict=True) if conversation_id else None
+    except TelegramServiceError:
+        return False
     boundary = "----stratforge" + secrets.token_hex(16)
     fields: Dict[str, str] = {
         "chat_id": chat,
@@ -1314,13 +1326,28 @@ def status() -> Dict[str, Any]:
 
 
 def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
-            thread_id: Optional[int] = None, dedupe_key: str = "",
+            thread_id: Optional[int] = None, conversation_id: str = "",
+            conversation_title: str = "", dedupe_key: str = "",
             queue_on_failure: bool = False) -> bool:
     settings = load_settings()
     if not settings.get("enabled") or not settings.get(setting):
         return False
     body = [f"<b>{html.escape(title)}</b>"]
     body.extend(html.escape(str(line)) for line in lines if str(line).strip())
+    if conversation_id and group_configured():
+        try:
+            thread_id = _thread_for_conversation(
+                conversation_id, conversation_title, strict=True,
+            )
+        except TelegramServiceError as exc:
+            _record_delivery(success=False, error=str(exc))
+            if queue_on_failure:
+                _enqueue_reply_outbox(
+                    "\n".join(body), dedupe_key=dedupe_key,
+                    conversation_id=conversation_id,
+                    conversation_title=conversation_title,
+                )
+            return False
     signature = hashlib.sha256(
         (dedupe_key or json.dumps(
             [setting, title, lines, int(thread_id or 0)], ensure_ascii=False, sort_keys=True,
@@ -1355,12 +1382,15 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
         if queue_on_failure:
             _enqueue_reply_outbox(
                 "\n".join(body), thread_id=thread_id, dedupe_key=dedupe_key,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
             )
         return False
 
 
 def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
                       model_name: str = "Chief agent / deterministic",
+                      provider_name: str = "", action_status: str = "",
                       conversation_id: Optional[str] = None,
                       conversation_title: str = "",
                       dedupe_key: str = "") -> bool:
@@ -1375,13 +1405,28 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     replies to "Как дела?") are both delivered instead of the second being
     silently dropped.
     """
-    thread_id = _thread_for_conversation(conversation_id, conversation_title) if conversation_id else None
-    # Model/provider attribution belongs in diagnostics, not in every message
-    # to the owner. The parameter remains for API compatibility with older
-    # callers, but executive reports intentionally contain only useful facts.
+    status_labels = {
+        "queued": "Поставлено в очередь", "running": "Выполняется",
+        "in_progress": "Выполняется", "needs_input": "Жду ваш ответ",
+        "waiting_review": "Жду ваш ответ", "approval_required": "Нужно ваше решение",
+        "blocked": "Нужно внимание", "error": "Ошибка",
+        "completed": "Выполнено", "confirmed_connected": "Связь подтверждена",
+    }
+    visible_lines = list(lines)
+    metadata = []
+    if str(model_name or "").strip():
+        model_label = str(model_name).strip()
+        if str(provider_name or "").strip():
+            model_label += f" ({str(provider_name).strip()})"
+        metadata.append("Модель: " + model_label)
+    if str(action_status or "").strip():
+        metadata.append("Ход работы: " + status_labels.get(str(action_status), str(action_status)))
+    if metadata:
+        visible_lines.append(" · ".join(metadata))
     return _notify(
-        "chief_agent_reports", title, lines,
-        urgent=urgent, thread_id=thread_id, dedupe_key=dedupe_key,
+        "chief_agent_reports", title, visible_lines,
+        urgent=urgent, conversation_id=str(conversation_id or ""),
+        conversation_title=conversation_title, dedupe_key=dedupe_key,
         queue_on_failure=True,
     )
 
@@ -1403,10 +1448,19 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
     body = str(text or "").strip()
     if not body:
         return False
-    thread_id = (
-        _thread_for_conversation(conversation_id, conversation_title)
-        if conversation_id else None
-    )
+    try:
+        thread_id = (
+            _thread_for_conversation(conversation_id, conversation_title, strict=True)
+            if conversation_id else None
+        )
+    except TelegramServiceError as exc:
+        _record_delivery(success=False, error=str(exc))
+        _enqueue_reply_outbox(
+            "🧑 <b>Вы:</b> " + html.escape(body[:3500]),
+            dedupe_key=dedupe_key, conversation_id=str(conversation_id or ""),
+            conversation_title=conversation_title,
+        )
+        return False
     rendered = "🧑 <b>Вы:</b> " + html.escape(body[:3500])
     signature = ""
     if dedupe_key:
@@ -1433,6 +1487,8 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
         _record_delivery(success=False, error=str(exc))
         _enqueue_reply_outbox(
             rendered, thread_id=thread_id, dedupe_key=dedupe_key,
+            conversation_id=str(conversation_id or ""),
+            conversation_title=conversation_title,
         )
         return False
 
@@ -1447,7 +1503,8 @@ def send_news_alert(title: str, lines: List[str], *,
 
 
 def _enqueue_reply_outbox(text: str, *, thread_id: Optional[int] = None,
-                          dedupe_key: str = "") -> None:
+                          dedupe_key: str = "", conversation_id: str = "",
+                          conversation_title: str = "") -> None:
     clean = str(text or "")[:4000]
     if not clean:
         return
@@ -1455,12 +1512,16 @@ def _enqueue_reply_outbox(text: str, *, thread_id: Optional[int] = None,
         doc = _read_json(_reply_outbox_path())
         rows = doc.get("items") if isinstance(doc.get("items"), list) else []
         identity = str(dedupe_key or clean)
-        signature = hashlib.sha256(f"{thread_id}|{identity}".encode("utf-8")).hexdigest()
+        signature = hashlib.sha256(
+            f"{conversation_id}|{thread_id}|{identity}".encode("utf-8")
+        ).hexdigest()
         if any(str(row.get("signature") or "") == signature for row in rows if isinstance(row, dict)):
             return
         rows.append({
             "id": "tgr_" + secrets.token_hex(8), "signature": signature,
             "text": clean, "thread_id": int(thread_id) if thread_id else None,
+            "conversation_id": str(conversation_id or "")[:120],
+            "conversation_title": str(conversation_title or "")[:120],
             "created_at_utc": _now_iso(), "attempts": 0, "last_error": "",
         })
         _write_json(_reply_outbox_path(), {"items": rows[-200:], "updated_at_utc": _now_iso()})
@@ -1476,7 +1537,14 @@ def _flush_reply_outbox(limit: int = 10) -> Dict[str, int]:
     sent_ids = set()
     for row in rows[:max(1, int(limit or 10))]:
         try:
-            _send_raw(str(row.get("text") or "")[:4000], thread_id=row.get("thread_id"))
+            thread_id = row.get("thread_id")
+            conversation_id = str(row.get("conversation_id") or "")
+            if conversation_id and group_configured():
+                thread_id = _thread_for_conversation(
+                    conversation_id, str(row.get("conversation_title") or ""), strict=True,
+                )
+                row["thread_id"] = thread_id
+            _send_raw(str(row.get("text") or "")[:4000], thread_id=thread_id)
             sent_ids.add(str(row.get("id") or ""))
         except TelegramServiceError as exc:
             row["attempts"] = int(row.get("attempts") or 0) + 1

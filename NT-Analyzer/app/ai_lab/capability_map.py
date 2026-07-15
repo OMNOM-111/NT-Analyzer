@@ -21,6 +21,10 @@ CAPABILITY_MAP: Dict[str, Dict[str, Any]] = {
     "news_report": {"handler": "domain_report", "agent": "nikita", "safe": True},
     "deliver_report": {"handler": "combined_report", "agent": "orchestrator", "safe": True},
     "start_backtest": {"handler": "start_backtest", "agent": "tolik", "safe": True},
+    "reconnect_runtime_connection": {"handler": "runtime_reconnect", "agent": "vitek", "safe": True},
+    "user_screenshot_request": {"handler": "user_support", "agent": "vitek", "safe": True},
+    "user_session_reload": {"handler": "user_support", "agent": "vitek", "safe": True},
+    "user_session_end": {"handler": "user_support", "agent": "vitek", "safe": True},
 }
 
 
@@ -146,7 +150,24 @@ def execute(name: str, message: str, *, conversation_id: str = "", intent: Optio
     from . import domain_agents
 
     handler = str(spec["handler"])
-    if handler == "chart_operator":
+    if handler == "user_support":
+        from .. import user_support
+        if not bool((scope or {}).get("is_owner")):
+            result = {
+                "ok": False,
+                "reply": "Управление чужими пользовательскими сессиями доступно только владельцу.",
+                "actions": [{"name": capability, "status": "blocked", "reason": "owner_only"}],
+            }
+        else:
+            result = user_support.chat_command(
+                capability, (scope or {}).get("user_id"), message,
+                conversation_id=conversation_id, owner_scope=scope,
+            )
+        result.setdefault("model", "capability dispatcher")
+        result.setdefault("provider", "local")
+        result.setdefault("complexity", "light")
+        result.setdefault("agent", {"id": "vitek", "name": "Витёк", "title": "поддержка пользователей", "page": "index.html"})
+    elif handler == "chart_operator":
         # Route the shared canonical form (mixed keyboard symbols such as 6с
         # are already repaired), while conversation/audit storage retains the
         # owner's original wording.
@@ -191,6 +212,51 @@ def execute(name: str, message: str, *, conversation_id: str = "", intent: Optio
         result.setdefault("provider", "local")
         result.setdefault("complexity", "light")
         result.setdefault("agent", dict(domain_agents.PERSONAS["tolik"]))
+    elif handler == "runtime_reconnect":
+        from .. import runtime
+        from . import chief_agent
+
+        rows = [
+            row for row in runtime.read_accounts()
+            if not row.get("is_live") and bool(row.get("control_allowed"))
+        ]
+        connected = next((
+            row for row in rows
+            if str(row.get("connection_status") or "").strip().lower() == "connected"
+        ), None)
+        heartbeat = runtime.read_heartbeat()
+        if heartbeat.get("fresh") and connected:
+            result = {
+                "ok": True,
+                "reply": "Связь с NinjaTrader уже подтверждена Bridge и подключённым демо-счётом.",
+                "actions": [{
+                    "name": capability, "status": "completed",
+                    "account_name": connected.get("account_name"),
+                    "confirmation": "heartbeat_and_connected_account",
+                }],
+            }
+        else:
+            requested = str((intent or {}).get("account_name") or "").strip()
+            queued = chief_agent._queue_runtime_reconnect(  # noqa: SLF001 - shared capability boundary
+                requested, operator="vitek",
+                reason="Owner approved safe NinjaTrader connection recovery",
+            )
+            result = {
+                "ok": True,
+                "reply": (
+                    "NinjaTrader и Bridge проверены; команда безопасного переподключения "
+                    "поставлена в очередь. Итог сообщу после подтверждения счёта."
+                ),
+                "actions": [{
+                    "name": capability, "status": "queued",
+                    "account_name": queued.get("account_name"),
+                    "command_id": queued.get("command_id"),
+                }],
+            }
+        result.setdefault("model", "deterministic runtime controller")
+        result.setdefault("provider", "local")
+        result.setdefault("complexity", "light")
+        result.setdefault("agent", {"id": "vitek", "name": "Виктор", "title": "правая рука руководителя", "page": "index.html"})
     else:  # pragma: no cover - map and executor must evolve together
         raise ValueError(f"missing handler: {handler}")
     result["capability"] = capability

@@ -1384,6 +1384,8 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
             "source": "desktop_session", "user_id": int(user["user_id"]),
             "role": str(user.get("role") or "read_only"), "is_owner": bool(user.get("is_owner")),
             "username": str(user.get("username") or ""),
+            "session_id": _session_id(session),
+            "device_id": str(session.get("device_id") or ""),
             "csrf_hash": str(session.get("csrf_hash") or ""),
             "csrf_token": str(session.get("csrf_token") or ""),
             "user": _public_user(user, include_contact=True, include_avatar=True),

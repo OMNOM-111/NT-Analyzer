@@ -1,6 +1,6 @@
 # Aurora UI API map
 
-Актуально на 2026-07-13. Витёк является пользовательским лицом, а StratForge
+Актуально на 2026-07-14. Виктор является собеседником по умолчанию, а StratForge
 Orchestrator — единым внутренним шлюзом. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
@@ -30,7 +30,7 @@ Orchestrator — единым внутренним шлюзом. Единств�
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram и вход | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/telegram/status` | одноразовый Telegram-вход, ручная команда `/login КОД`, профиль, pairing, уведомления и отзыв сессий; секреты не возвращаются |
-| Витёк | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; внутреннее распределение без показа технического маршрута |
+| Виктор | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; в сообщении видны фактический агент, модель/provider и проверяемые action-status без скрытых рассуждений |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
@@ -45,6 +45,10 @@ Orchestrator — единым внутренним шлюзом. Единств�
   `user_id + workspace_id + conversation_id`. Для владельца прежние
   неразмеченные диалоги мигрируются один раз и идемпотентно; обычный пользователь
   их не видит.
+- Сохранённая категория поручения определяет профильный handler: runtime остаётся
+  у Виктора, финансы у Марины, lifecycle стратегии у Толика. GPT-5 mini может
+  понять свободную речь, но не может перевести финансовое поручение в график.
+  Статус `completed` записывается только после подтверждения целевой системой.
 
 - `GET/POST /api/portfolio/*` использует `app/portfolio_registry.py`. ID ячейки
   неизменяем, архивный ID не переиспользуется. Базовая схема `CELL-001..180`
@@ -71,6 +75,19 @@ Orchestrator — единым внутренним шлюзом. Единств�
   API (`getUserProfilePhotos`) в `data/integrations/avatars/` и в inline
   `avatar_data_url`. `POST /api/auth/users/<id>/features` (owner-only) включает
   или выключает пользователю раздел из каталога возможностей.
+- `GET /api/owner/support/monitoring` и `/api/owner/support/users/<id>` дают
+  владельцу разбивку живой телеметрии вкладок по пользователям. Команды
+  `POST .../reload` адресуются браузерной/Mini App-сессии; точечное завершение
+  использует `POST /api/auth/users/<id>/sessions` и не удаляет аккаунт.
+  Клиентские `/api/support/{telemetry,poll,commands/ack}` работают только от
+  имени текущего пользователя, включая владельца. `POST
+  /api/owner/support/users/<id>/device-name` сохраняет понятное имя для
+  стабильного browser-device ID; переподключение аккаунта не требуется.
+- Снимок экрана создаётся только после отдельного диалога согласия и нативного
+  `getDisplayMedia`-выбора экрана/окна пользователем. JPEG/PNG шифруется Windows
+  DPAPI, доступен только через owner endpoint и автоматически удаляется через
+  24 часа. Браузер передаёт показатели своей вкладки, а не скрытую системную
+  телеметрию остальных программ компьютера.
 - `GET /api/ops/runtime/account-history` использует `app/account_ledger.py`.
   Необъяснённый delta NetLiq записывается только как
   `unclassified_adjustment`; он не становится прибылью или пополнением без

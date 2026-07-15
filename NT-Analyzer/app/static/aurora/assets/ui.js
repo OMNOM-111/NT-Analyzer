@@ -690,6 +690,7 @@
     wireGlobalNewsStrip(newsStrip);
     buildOrchestratorWidget();
     startDesktopCommandBridge();
+    startUserSupportBridge();
     runReady();
     maybeRedeemStoredPromo();
   }
@@ -1103,12 +1104,12 @@
     } catch (e) { renderError(node, e, () => renderNinjaInto(node, me)); }
   }
 
-  function userRowHtml(u, catalog, planOptions) {
+  function userRowHtml(u, catalog, planOptions, monitoring) {
     const roleSel = u.is_owner ? '<span class="badge live">owner</span>' : `<select data-user-role="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}><option value="read_only" ${u.role === 'read_only' ? 'selected' : ''}>Только чтение</option><option value="full_control" ${u.role === 'full_control' ? 'selected' : ''}>Полное управление</option></select>`;
     const revoke = u.is_owner ? '' : `<button class="btn sm danger" data-user-revoke="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}>Отозвать</button>`;
     const featBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-feat="${esc(u.user_id)}">Параметры</button>`;
     const planBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-plan="${esc(u.user_id)}">Тариф</button>`;
-    const detailBtn = u.is_owner ? '' : `<button class="btn sm ghost" data-user-detail="${esc(u.user_id)}">Детали</button>`;
+    const detailBtn = `<button class="btn sm ghost" data-user-detail="${esc(u.user_id)}">Детали</button>`;
     const blockBtn = u.is_owner ? '' : (u.status === 'blocked'
       ? `<button class="btn sm ghost" data-user-unblock="${esc(u.user_id)}">Разблокировать</button>`
       : `<button class="btn sm ghost" data-user-block="${esc(u.user_id)}" ${u.status === 'active' ? '' : 'disabled'}>Блокировать</button>`);
@@ -1117,11 +1118,109 @@
     const featPanel = u.is_owner ? '' : `<div class="feat-panel" data-feat-panel="${esc(u.user_id)}" hidden>${(catalog || []).map(f => `<div class="feat-row"><span>${esc(f.label)}</span><label class="switch"><input type="checkbox" data-feat-toggle="${esc(u.user_id)}" data-feat-id="${esc(f.id)}" ${feats[f.id] !== false ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
     const planLabel = u.subscription && u.subscription.plan && u.subscription.plan.label ? u.subscription.plan.label : '';
     const planPanel = u.is_owner ? '' : `<div class="feat-panel" data-plan-panel="${esc(u.user_id)}" hidden><div class="finance-note">Текущий тариф: <strong>${esc(planLabel || 'Free Preview')}</strong>. Назначьте тариф после проверки оплаты в PayPal.</div><div class="flex gap-sm" style="align-items:flex-end;flex-wrap:wrap"><label style="flex:1;min-width:160px">Тариф<select data-grant-plan="${esc(u.user_id)}">${planOptions || ''}</select></label><label>Срок дней (0=бессрочно)<input type="number" data-grant-days="${esc(u.user_id)}" min="0" max="3650" value="30" style="width:90px"></label><button class="btn sm primary" data-grant-apply="${esc(u.user_id)}">Назначить</button><button class="btn sm ghost" data-grant-clear="${esc(u.user_id)}">Сбросить</button></div></div>`;
-    const detailPanel = u.is_owner ? '' : `<div class="feat-panel user-detail-panel" data-detail-panel="${esc(u.user_id)}" hidden></div>`;
+    const detailPanel = `<div class="feat-panel user-detail-panel" data-detail-panel="${esc(u.user_id)}" hidden></div>`;
     const statusCls = u.status === 'active' ? 'live' : u.status === 'pending' ? 'pending' : u.status === 'blocked' ? 'pending' : 'archived';
-    return `<div class="row user-row"><div class="row-main u-main">${avatarHtml(u, '')}<div class="u-txt"><div class="row-title">${esc(userLabel(u))}${u.is_owner ? ' · владелец' : ''}</div><div class="row-sub">ID ${esc(u.user_id)} · ${esc(u.email || 'e-mail не указан')}${u.phone_mask ? ' · ' + esc(u.phone_mask) : ''}${planLabel ? ' · ' + esc(planLabel) : ''}</div></div></div><span class="badge ${statusCls}">${esc(u.status || '—')}</span>${roleSel}${detailBtn}${featBtn}${planBtn}${blockBtn}${revoke}${delBtn}</div>${featPanel}${planPanel}${detailPanel}`;
+    const mon = monitoring || {};
+    const monitorLine = mon.online
+      ? `<div class="row-sub user-monitor-line"><span class="support-online-dot"></span>${esc(mon.session_count || 1)} онлайн · CPU ${Number(mon.cpu_main_thread_percent || 0).toFixed(0)}% · память ${Number(mon.js_heap_used_mb || 0).toFixed(0)} МБ · сеть ${Number(mon.network_mb_per_min || 0).toFixed(1)} МБ/мин${mon.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(mon.alert_count)}</span>` : ''}</div>`
+      : '<div class="row-sub user-monitor-line">Не в сети · телеметрия вкладки недоступна</div>';
+    return `<div class="row user-row"><div class="row-main u-main">${avatarHtml(u, '')}<div class="u-txt"><div class="row-title">${esc(userLabel(u))}${u.is_owner ? ' · владелец' : ''}</div><div class="row-sub">ID ${esc(u.user_id)} · ${esc(u.email || 'e-mail не указан')}${u.phone_mask ? ' · ' + esc(u.phone_mask) : ''}${planLabel ? ' · ' + esc(planLabel) : ''}</div>${monitorLine}</div></div><span class="badge ${statusCls}">${esc(u.status || '—')}</span>${roleSel}${detailBtn}${featBtn}${planBtn}${blockBtn}${revoke}${delBtn}</div>${featPanel}${planPanel}${detailPanel}`;
   }
   function shortDt(value) { return value ? String(value).replace('T', ' ').replace('Z', '').slice(0, 16) : ''; }
+  const SUPPORT_DETAIL_TIMERS = new Map();
+  function stopUserSupportPoll(uid) {
+    const timer = SUPPORT_DETAIL_TIMERS.get(String(uid));
+    if (timer) clearInterval(timer);
+    SUPPORT_DETAIL_TIMERS.delete(String(uid));
+  }
+  function supportStatusLabel(status) {
+    return ({ pending: 'ожидает пользователя', claimed: 'открыт пользователем', completed: 'получен', denied: 'отказано', error: 'ошибка', expired: 'истёк', deleted: 'удалён' })[status] || status || '—';
+  }
+  function userSupportHtml(data, uid) {
+    const telemetry = data.sessions || [];
+    const authSessions = data.auth_sessions || [];
+    const alerts = data.alerts || [];
+    const shots = data.screenshot_requests || [];
+    const activeShots = shots.slice(0, 8);
+    const currentSessionId = String(data.current_session_id || '');
+    const selfNote = data.is_self
+      ? '<div class="finance-note support-self-note"><strong>Это ваш один аккаунт владельца.</strong> ID относится к аккаунту Telegram, а не к компьютеру. Ниже показаны его отдельные устройства и сессии. Удалять аккаунт или подключаться заново не нужно — устройство можно переименовать. Если старая сессия ещё без имени, просто обновите приложение на том устройстве: оно появится в живой телеметрии.</div>'
+      : '';
+    const liveCards = telemetry.map(session => {
+      const cpu = session.cpu_available ? `${Number(session.cpu_main_thread_percent || 0).toFixed(1)}% (${Number(session.cpu_core_equivalent || 0).toFixed(2)} ядра)` : 'недоступно';
+      const memory = session.memory_available ? `${Number(session.js_heap_used_mb || 0).toFixed(0)} / ${Number(session.js_heap_limit_mb || 0).toFixed(0)} МБ` : 'недоступно';
+      const target = session.session_id ? `data-support-reload-session="${esc(session.session_id)}"` : `data-support-reload-client="${esc(session.client_id)}"`;
+      const isCurrent = !!currentSessionId && String(session.session_id || '') === currentSessionId;
+      const rename = session.device_id ? `<button class="btn sm ghost" data-support-rename-device="${esc(session.device_id)}" data-support-device-name="${esc(session.device_name || 'Устройство')}">Переименовать</button>` : '';
+      return `<div class="support-session ${session.online ? 'online' : ''}"><div class="flex between gap-sm"><div><strong>${esc(session.device_name || 'Устройство')}${isCurrent ? ' · <span class="badge live">текущее устройство</span>' : ''}</strong><div class="cab-sub">${esc(session.client || 'Браузер')}${session.platform ? ' · ' + esc(session.platform) : ''} · ${session.online ? 'в сети' : 'нет связи'} · ${esc(session.page || 'страница не указана')}</div><div class="cab-sub">Последний отчёт ${esc(shortDt(session.reported_at_utc) || '—')} · ${session.visible ? 'вкладка видима' : 'в фоне'} · ${esc(session.effective_type || 'сеть —')}</div></div><div class="flex gap-sm support-session-actions">${rename}${session.online ? `<button class="btn sm ghost" data-support-client-shot="${esc(session.client_id)}">Снимок</button><button class="btn sm ghost" ${target}>Перезагрузить</button>` : ''}</div></div><div class="support-metrics"><span>CPU вкладки <strong>${cpu}</strong></span><span>JS-память <strong>${memory}</strong></span><span>Сеть <strong>${Number(session.network_mb_per_min || 0).toFixed(2)} МБ/мин</strong></span><span>Канал <strong>${Number(session.downlink_mbps || 0).toFixed(1)} Мбит/с · ${Number(session.rtt_ms || 0).toFixed(0)} мс</strong></span><span>Логических ядер устройства <strong>${esc(session.logical_cores || '—')}</strong></span></div></div>`;
+    }).join('');
+    const authCards = authSessions.map(session => {
+      const isCurrent = !!currentSessionId && String(session.session_id || '') === currentSessionId;
+      return `<div class="row support-auth-session"><div class="row-main"><div class="row-title">${esc(session.device_name || session.machine || 'Устройство')} · ${esc(session.client || 'Браузер')}${isCurrent ? ' · <span class="badge live">текущая сессия</span>' : ''}</div><div class="row-sub">Создана ${esc(shortDt(session.created_at_utc) || '—')}${session.ip ? ' · ' + esc(session.ip) : ''}</div></div><button class="btn sm ghost" data-support-reload-session="${esc(session.session_id)}">Перезагрузить</button><button class="btn sm danger" data-support-end-session="${esc(session.session_id)}" data-support-current="${isCurrent ? '1' : ''}">Завершить</button></div>`;
+    }).join('');
+    const shotCards = activeShots.map(shot => `<div class="support-shot"><div class="flex between gap-sm"><div><strong>${esc(supportStatusLabel(shot.status))}</strong><div class="cab-sub">${esc(shortDt(shot.created_at_utc) || '—')}${shot.retained_until_utc ? ' · хранится до ' + esc(shortDt(shot.retained_until_utc)) : ''}</div></div>${shot.status === 'completed' ? `<button class="btn sm danger" data-support-delete-shot="${esc(shot.request_id)}">Удалить</button>` : ''}</div>${shot.error ? `<div class="support-error">${esc(shot.error)}</div>` : ''}${shot.image_url ? `<a href="${esc(shot.image_url)}" target="_blank" rel="noopener"><img src="${esc(shot.image_url)}" loading="lazy" alt="Снимок экрана пользователя"></a>` : ''}</div>`).join('');
+    return `${selfNote}<div class="support-toolbar"><button class="btn primary" data-support-request-shot>Запросить снимок экрана</button><button class="btn ghost" data-support-reload-all ${authSessions.length || telemetry.some(row => row.online) ? '' : 'disabled'}>Перезагрузить все</button><button class="btn danger" data-support-end-all ${authSessions.length ? '' : 'disabled'} data-support-self="${data.is_self ? '1' : ''}">Завершить все браузерные сессии</button><button class="btn ghost" data-support-refresh>Обновить</button></div>
+      <div class="finance-note support-privacy-note">${esc(data.telemetry_note || '')} Снимок возможен только после согласия пользователя и системного выбора экрана; хранится зашифрованным не более ${esc(data.screenshot_retention_hours || 24)} часов.</div>
+      ${alerts.length ? `<div class="support-alerts">${alerts.map(alert => `<div class="support-alert ${alert.severity === 'critical' ? 'critical' : ''}">⚠ ${esc(alert.message)}</div>`).join('')}</div>` : '<div class="support-ok">Критических превышений сейчас нет.</div>'}
+      <div class="section-title">Живая телеметрия вкладок</div>${liveCards || '<div class="empty-state">Пользователь не передаёт телеметрию: приложение закрыто или ещё не обновлено.</div>'}
+      <div class="section-title">Активные браузерные сессии</div><div class="list">${authCards || '<div class="empty-state">Активных cookie-сессий нет. Mini App можно остановить блокировкой аккаунта.</div>'}</div>
+      <div class="section-title">Запросы снимков</div><div class="support-shots">${shotCards || '<div class="empty-state">Снимки ещё не запрашивались.</div>'}</div>`;
+  }
+  async function refreshUserSupport(container, uid) {
+    if (!container || container.dataset.supportBusy === '1') return;
+    container.dataset.supportBusy = '1';
+    try {
+      const data = await API.http.ownerSupportUser(uid);
+      container.innerHTML = userSupportHtml(data, uid);
+      const run = async (button, task, success) => { button.disabled = true; try { await task(); toast(success); await refreshUserSupport(container, uid); } catch (e) { reportError(e); button.disabled = false; } };
+      const shot = qs('[data-support-request-shot]', container);
+      if (shot) shot.onclick = () => {
+        if (!confirm('Отправить пользователю одноразовый запрос снимка? Без его явного согласия и выбора экрана снимок не создастся.')) return;
+        run(shot, () => API.http.ownerSupportScreenshotRequest(uid, 'Помощь с диагностикой приложения'), 'Запрос отправлен пользователю');
+      };
+      const reloadAll = qs('[data-support-reload-all]', container);
+      if (reloadAll) reloadAll.onclick = () => run(reloadAll, () => API.http.ownerSupportReload(uid, { all_sessions: true }), 'Команда перезагрузки отправлена');
+      const endAll = qs('[data-support-end-all]', container);
+      if (endAll) endAll.onclick = () => {
+        const warning = endAll.dataset.supportSelf === '1'
+          ? 'Это ваш аккаунт. Завершить все браузерные сессии, включая текущую? Вы сразу выйдете из приложения на этих устройствах.'
+          : 'Принудительно завершить все браузерные сессии пользователя?';
+        if (confirm(warning)) run(endAll, () => API.http.authUserSessions(uid, { all_sessions: true }), 'Сессии завершены');
+      };
+      const refresh = qs('[data-support-refresh]', container); if (refresh) refresh.onclick = () => refreshUserSupport(container, uid);
+      qsa('[data-support-reload-session]', container).forEach(button => button.onclick = () => run(button, () => API.http.ownerSupportReload(uid, { session_id: button.dataset.supportReloadSession }), 'Команда перезагрузки отправлена'));
+      qsa('[data-support-reload-client]', container).forEach(button => button.onclick = () => run(button, () => API.http.ownerSupportReload(uid, { client_id: button.dataset.supportReloadClient }), 'Команда перезагрузки отправлена'));
+      qsa('[data-support-client-shot]', container).forEach(button => button.onclick = () => {
+        if (!confirm('Запросить снимок именно у этого устройства? На нём появится подтверждение и системный выбор экрана.')) return;
+        run(button, () => API.http.ownerSupportScreenshotRequest(uid, 'Помощь с диагностикой приложения', button.dataset.supportClientShot), 'Запрос отправлен выбранному устройству');
+      });
+      qsa('[data-support-rename-device]', container).forEach(button => button.onclick = () => {
+        const current = button.dataset.supportDeviceName || 'Устройство';
+        const name = window.prompt('Введите понятное имя, например «Основной компьютер» или «Ноутбук»:', current);
+        if (name == null || !String(name).trim() || String(name).trim() === current) return;
+        run(button, () => API.http.ownerSupportDeviceName(uid, button.dataset.supportRenameDevice, String(name).trim()), 'Имя устройства сохранено');
+      });
+      qsa('[data-support-end-session]', container).forEach(button => button.onclick = () => {
+        const warning = button.dataset.supportCurrent === '1'
+          ? 'Это текущая сессия. Завершить её? Вы сразу выйдете из приложения на этом устройстве.'
+          : 'Завершить выбранную сессию?';
+        if (confirm(warning)) run(button, () => API.http.authUserSessions(uid, { session_id: button.dataset.supportEndSession }), 'Сессия завершена');
+      });
+      qsa('[data-support-delete-shot]', container).forEach(button => button.onclick = () => { if (confirm('Удалить зашифрованный снимок сейчас?')) run(button, () => API.http.ownerSupportScreenshotDelete(button.dataset.supportDeleteShot), 'Снимок удалён'); });
+    } catch (e) { renderError(container, e, () => refreshUserSupport(container, uid)); }
+    finally { container.dataset.supportBusy = ''; }
+  }
+  function startUserSupportPoll(container, uid) {
+    stopUserSupportPoll(uid);
+    refreshUserSupport(container, uid);
+    const timer = setInterval(() => {
+      const detail = container && container.closest('[data-detail-panel]');
+      if (!container || !container.isConnected || (detail && detail.hidden)) return;
+      refreshUserSupport(container, uid);
+    }, 5000);
+    SUPPORT_DETAIL_TIMERS.set(String(uid), timer);
+    onLeave(() => stopUserSupportPoll(uid));
+  }
   async function renderUserDetail(panel, uid, listNode) {
     panel.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
     try {
@@ -1135,6 +1234,9 @@
       const sub = d.subscription || {};
       const planLabel = (sub.plan && sub.plan.label) || 'Free Preview';
       const ntMode = nt.mode === 'own_ninjatrader' ? 'Свой NinjaTrader' : 'Наблюдение за владельцем';
+      const permissionsHtml = u.is_owner
+        ? '<div class="finance-note">У владельца всегда полный доступ. Индивидуальные переключатели разрешений для него не требуются.</div>'
+        : `<div class="section-title">Разрешения (тариф + индивидуально)</div><div class="finance-note">Переключатель включает/выключает привилегию именно для этого пользователя поверх его тарифа.</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)}${c.hint ? ` <span class="cab-sub">(${esc(c.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-cap-toggle="${esc(uid)}" data-cap-id="${esc(c.id)}" ${caps[c.id] ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
       panel.innerHTML = `
         <div class="udetail-grid">
           <div class="cab-kv"><span class="k">Статус</span><span class="v">${esc(u.status || '—')}${u.blocked_at_utc ? ' · заблокирован ' + esc(shortDt(u.blocked_at_utc)) : ''}</span></div>
@@ -1147,31 +1249,35 @@
           <div class="cab-kv"><span class="k">Последний вход</span><span class="v">${esc(shortDt(u.last_login_at_utc) || '—')}${u.last_login_device ? ' · ' + esc(u.last_login_device) : ''}${u.last_login_machine ? ' · ' + esc(u.last_login_machine) : ''}</span></div>
           <div class="cab-kv"><span class="k">NinjaTrader</span><span class="v">${esc(ntMode)}${nt.workspace ? ' · ' + esc(nt.workspace) : ''} ${nt.connected ? '<span class="badge live">подключён</span>' : '<span class="badge pending">нет</span>'}</span></div>
         </div>
-        <div class="section-title">Устройства</div>
+        <div class="section-title">История способов входа</div>
+        <div class="finance-note">Это техническая история авторизаций. Актуальные устройства, их понятные имена и активные сессии находятся ниже в блоке поддержки.</div>
         <div class="list">${devices.length ? devices.map(device => `<div class="row"><div class="row-main"><div class="row-title">${esc(device.label || 'Этот компьютер')} · ${esc(device.client || 'Браузер')}</div><div class="row-sub">${esc(shortDt(device.last_seen_at_utc) || '—')}${device.email ? ' · ' + esc(device.email) : ''}${device.last_ip ? ' · ' + esc(device.last_ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Устройств пока нет.</div>'}</div>
         <div class="section-title">История входов</div>
         <div class="list">${hist.length ? hist.map(h => `<div class="row"><div class="row-main"><div class="row-title">${esc(h.machine || 'Этот компьютер')} · ${esc(h.device || '—')}</div><div class="row-sub">${esc(shortDt(h.at))} · ${esc(h.source === 'telegram_mini_app' ? 'Telegram Mini App' : 'Браузер')}${h.ip ? ' · ' + esc(h.ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Входов пока нет.</div>'}</div>
-        <div class="section-title">Разрешения (тариф + индивидуально)</div>
-        <div class="finance-note">Переключатель включает/выключает привилегию именно для этого пользователя поверх его тарифа.</div>
-        <div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)}${c.hint ? ` <span class="cab-sub">(${esc(c.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-cap-toggle="${esc(uid)}" data-cap-id="${esc(c.id)}" ${caps[c.id] ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
+        <div class="section-title">Поддержка, сессии и ресурсы</div>
+        <div class="user-support-live" data-user-support-live="${esc(uid)}"><div class="state-loading"><span class="spinner"></span>Загрузка мониторинга…</div></div>
+        ${permissionsHtml}`;
       qsa('[data-cap-toggle]', panel).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.authUserPermission(t.dataset.capToggle, t.dataset.capId, t.checked); toast('Разрешение обновлено'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+      startUserSupportPoll(qs('[data-user-support-live]', panel), uid);
     } catch (e) { renderError(panel, e, () => renderUserDetail(panel, uid, listNode)); }
   }
   async function renderUsersInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
     try {
-      const [data, plansData] = await Promise.all([API.http.authUsers(), API.http.ownerPlans().catch(() => ({ plans: [] }))]);
+      const [data, plansData, monitorData] = await Promise.all([API.http.authUsers(), API.http.ownerPlans().catch(() => ({ plans: [] })), API.http.ownerSupportMonitoring().catch(() => ({ users: [], online_count: 0, alert_count: 0 }))]);
       const users = data.users || [];
       const catalog = data.feature_catalog || [];
       const planOptions = buildPlanOptions(plansData.plans || []);
+      const monitoring = new Map((monitorData.users || []).map(row => [String(row.user_id), row]));
       node.innerHTML = `<div class="dchart-actions" style="justify-content:flex-start"><button class="btn primary" id="users-invite">＋ Пригласить (ссылка + промокод)</button></div>
         <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. Новый аккаунт активируется только вашим подтверждением в боте.</div>
-        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions)).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
+        <div class="finance-note"><strong>Мониторинг:</strong> ${esc(monitorData.online_count || 0)} пользователей онлайн${monitorData.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(monitorData.alert_count)} предупреждений</span>` : ' · превышений нет'}. Показатели относятся к вкладкам StratForge AI.</div>
+        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
       const invite = qs('#users-invite', node);
       if (invite) invite.onclick = () => { const tab = document.querySelector('[data-cab-tab="invites"]'); if (tab) tab.click(); };
       qsa('[data-user-role]', node).forEach(s => s.onchange = async () => { s.disabled = true; try { await API.http.authUserRole(s.dataset.userRole, s.value); toast('Роль обновлена'); } catch (e) { reportError(e); } finally { s.disabled = false; } });
       qsa('[data-user-revoke]', node).forEach(b => b.onclick = async () => { if (!confirm('Отозвать аккаунт? Все его сессии завершатся.')) return; b.disabled = true; try { await API.http.authUserRevoke(b.dataset.userRevoke); toast('Аккаунт отозван'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
-      qsa('[data-user-detail]', node).forEach(b => b.onclick = async () => { const uid = b.dataset.userDetail; const p = qs(`[data-detail-panel="${uid}"]`, node); if (!p) return; if (!p.hidden) { p.hidden = true; return; } p.hidden = false; await renderUserDetail(p, uid, node); });
+      qsa('[data-user-detail]', node).forEach(b => b.onclick = async () => { const uid = b.dataset.userDetail; const p = qs(`[data-detail-panel="${uid}"]`, node); if (!p) return; if (!p.hidden) { p.hidden = true; stopUserSupportPoll(uid); return; } p.hidden = false; await renderUserDetail(p, uid, node); });
       qsa('[data-user-block]', node).forEach(b => b.onclick = async () => { if (!confirm('Заблокировать пользователя? Доступ и сессии будут приостановлены.')) return; b.disabled = true; try { await API.http.authUserStatus(b.dataset.userBlock, 'blocked'); toast('Пользователь заблокирован'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
       qsa('[data-user-unblock]', node).forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.authUserStatus(b.dataset.userUnblock, 'active'); toast('Пользователь разблокирован'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
       qsa('[data-user-delete]', node).forEach(b => b.onclick = async () => { if (!confirm('Удалить пользователя навсегда? Это действие необратимо.')) return; b.disabled = true; try { await API.http.authUserDelete(b.dataset.userDelete); toast('Пользователь удалён'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
@@ -2474,6 +2580,177 @@
     return stop;
   }
 
+  // ---- consent-based support bridge + per-tab telemetry ----------------------
+  let SUPPORT_BRIDGE_STARTED = false;
+  function supportClientId() {
+    const key = 'stratforge.support.client-id';
+    try {
+      let value = sessionStorage.getItem(key) || '';
+      if (!value) {
+        value = (window.crypto && typeof window.crypto.randomUUID === 'function')
+          ? window.crypto.randomUUID()
+          : 'client-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+        sessionStorage.setItem(key, value);
+      }
+      return value;
+    } catch (e) { return 'client-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2); }
+  }
+  function supportDeviceIdentity(clientId) {
+    const key = 'stratforge.support.device-id';
+    let id = '';
+    try {
+      id = localStorage.getItem(key) || '';
+      if (!id) {
+        id = (window.crypto && typeof window.crypto.randomUUID === 'function')
+          ? window.crypto.randomUUID()
+          : 'device-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+        localStorage.setItem(key, id);
+      }
+    } catch (e) { id = clientId; }
+    const ua = String(navigator.userAgent || '').toLowerCase();
+    const browser = ua.includes('edg/') ? 'Edge' : ua.includes('firefox') ? 'Firefox' : ua.includes('chrome') ? 'Chrome' : ua.includes('safari') ? 'Safari' : 'Браузер';
+    const platform = String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '').slice(0, 60);
+    return { id, name: [browser, platform].filter(Boolean).join(' · ') || 'Это устройство', browser, platform };
+  }
+  function blobFromCanvas(canvas, quality) {
+    return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Не удалось сформировать изображение.')), 'image/jpeg', quality));
+  }
+  function dataUrlFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Не удалось прочитать снимок.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function captureSharedScreen() {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+      throw new Error('Этот браузер не поддерживает безопасный выбор экрана.');
+    }
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false });
+    try {
+      const video = document.createElement('video');
+      video.muted = true; video.playsInline = true; video.srcObject = stream;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Экран не успел подготовиться.')), 8000);
+        video.onloadedmetadata = () => { clearTimeout(timer); video.play().then(resolve).catch(reject); };
+      });
+      const sourceW = Math.max(1, Number(video.videoWidth || 1));
+      const sourceH = Math.max(1, Number(video.videoHeight || 1));
+      let scale = Math.min(1, 1600 / sourceW, 1000 / sourceH);
+      const canvas = document.createElement('canvas');
+      let blob = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        canvas.width = Math.max(320, Math.round(sourceW * scale));
+        canvas.height = Math.max(180, Math.round(sourceH * scale));
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        blob = await blobFromCanvas(canvas, Math.max(.48, .82 - attempt * .09));
+        if (blob.size <= 650 * 1024) break;
+        scale *= .82;
+      }
+      if (!blob || blob.size > 700 * 1024) throw new Error('Снимок слишком большой для защищённой отправки.');
+      return { data_url: await dataUrlFromBlob(blob), width: canvas.width, height: canvas.height };
+    } finally {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  }
+  function showScreenshotConsent(request, clientId) {
+    if (!request || qs('[data-support-consent]')) return;
+    const overlay = el(`<div class="terms-modal support-consent" data-support-consent role="dialog" aria-modal="true" aria-label="Запрос снимка экрана">
+      <div class="terms-modal-card"><div class="terms-modal-head"><strong>Запрос помощи: снимок экрана</strong></div>
+      <div class="terms-modal-body"><p>Владелец StratForge AI просит одноразовый снимок, чтобы разобраться с проблемой.${request.note ? '<br><br><strong>Комментарий:</strong> ' + esc(request.note) : ''}</p>
+        <div class="support-privacy-note">Снимок не делается скрытно. После согласия браузер отдельно предложит выбрать экран, окно или вкладку. Вы сами решаете, чем поделиться.</div>
+        <div class="flex gap-sm support-consent-actions"><button class="btn primary" data-support-allow type="button">Выбрать экран и разрешить</button><button class="btn ghost" data-support-deny type="button">Отказать</button></div>
+      </div></div></div>`);
+    document.body.appendChild(overlay);
+    const finish = () => overlay.remove();
+    qs('[data-support-deny]', overlay).onclick = async () => {
+      qsa('button', overlay).forEach(button => { button.disabled = true; });
+      try { await API.http.supportScreenshotRespond({ client_id: clientId, request_id: request.request_id, decision: 'denied' }); }
+      catch (e) { reportError(e); }
+      finally { finish(); }
+    };
+    qs('[data-support-allow]', overlay).onclick = async () => {
+      qsa('button', overlay).forEach(button => { button.disabled = true; });
+      try {
+        const shot = await captureSharedScreen();
+        await API.http.supportScreenshotRespond({ client_id: clientId, request_id: request.request_id, decision: 'approved', data_url: shot.data_url, width: shot.width, height: shot.height });
+        toast('Снимок защищённо отправлен владельцу');
+      } catch (e) {
+        const denied = e && (e.name === 'NotAllowedError' || e.name === 'AbortError');
+        try { await API.http.supportScreenshotRespond({ client_id: clientId, request_id: request.request_id, decision: denied ? 'denied' : 'error', error: String((e && e.message) || e || '').slice(0, 240) }); }
+        catch (sendError) { reportError(sendError); }
+        if (!denied) reportError(e);
+      } finally { finish(); }
+    };
+  }
+  function startUserSupportBridge() {
+    if (SUPPORT_BRIDGE_STARTED || !window.API || API.config.offline || !CURRENT_AUTH || CURRENT_AUTH.guest) return;
+    SUPPORT_BRIDGE_STARTED = true;
+    const clientId = supportClientId();
+    const device = supportDeviceIdentity(clientId);
+    let stopped = false, polling = false, reporting = false, lastBytes = 0, lastReportAt = performance.now(), busyMs = 0;
+    let cpuAvailable = false, observer = null;
+    try {
+      observer = new PerformanceObserver(list => { list.getEntries().forEach(entry => { busyMs += Number(entry.duration || 0); }); });
+      observer.observe({ type: 'longtask', buffered: true });
+      cpuAvailable = true;
+    } catch (e) { observer = null; }
+    const resourceBytes = () => {
+      try { return performance.getEntriesByType('resource').reduce((sum, entry) => sum + Number(entry.transferSize || entry.encodedBodySize || 0), 0); }
+      catch (e) { return 0; }
+    };
+    const report = async () => {
+      if (stopped || reporting) return;
+      reporting = true;
+      const now = performance.now();
+      const elapsed = Math.max(1000, now - lastReportAt);
+      const bytes = resourceBytes();
+      const delta = Math.max(0, bytes - lastBytes);
+      const memory = performance.memory || null;
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+      const cpu = cpuAvailable ? Math.min(100, busyMs / elapsed * 100) : 0;
+      try {
+        await API.http.supportTelemetry({
+          client_id: clientId, device_id: device.id, device_name: device.name,
+          client: device.browser, platform: device.platform,
+          page: location.pathname + location.search, visible: document.visibilityState === 'visible',
+          logical_cores: Number(navigator.hardwareConcurrency || 0), device_memory_gb: Number(navigator.deviceMemory || 0),
+          cpu_main_thread_percent: cpu, cpu_core_equivalent: cpu / 100, cpu_available: cpuAvailable,
+          js_heap_used_mb: memory ? Number(memory.usedJSHeapSize || 0) / 1048576 : 0,
+          js_heap_limit_mb: memory ? Number(memory.jsHeapSizeLimit || 0) / 1048576 : 0,
+          memory_available: !!memory, network_mb_per_min: delta / 1048576 * 60000 / elapsed,
+          network_total_mb: bytes / 1048576, downlink_mbps: Number(connection.downlink || 0),
+          rtt_ms: Number(connection.rtt || 0), effective_type: String(connection.effectiveType || ''),
+        });
+        lastBytes = bytes; lastReportAt = now; busyMs = 0;
+      } catch (e) {
+        if (e && e.status === 401) { stopped = true; location.reload(); }
+      } finally { reporting = false; }
+    };
+    const check = async () => {
+      if (stopped || polling) return;
+      polling = true;
+      try {
+        const out = await API.http.supportPoll(clientId);
+        const command = ((out && out.commands) || [])[0];
+        if (command && command.type === 'reload') {
+          await API.http.supportCommandAck(clientId, command.command_id, 'done', '');
+          setTimeout(() => location.reload(), 120);
+          return;
+        }
+        if (out && out.screenshot_request) showScreenshotConsent(out.screenshot_request, clientId);
+      } catch (e) {
+        if (e && e.status === 401) { stopped = true; location.reload(); }
+      } finally { polling = false; }
+    };
+    const pollId = setInterval(check, 4000);
+    const reportId = setInterval(report, 10000);
+    onLeave(() => { stopped = true; clearInterval(pollId); clearInterval(reportId); if (observer) observer.disconnect(); });
+    report(); check();
+  }
+
   // A chart command can be issued from the global chat on any Aurora page.
   // When a canvas operation needs Desktop, acknowledge the navigation command
   // first and switch pages automatically; desktop.js then consumes the queued
@@ -2965,13 +3242,6 @@
       await orchLoadMessages(ORCH.currentId);
     } catch (e) { reportError(e); }
   }
-  // Collapsible "thinking" block (native model reasoning). Cursor-like: muted,
-  // smaller, secondary text. Collapsed by default in history; expanded live.
-  function orchThinkBlock(text, open) {
-    const t = String(text || '').trim();
-    if (!t) return '';
-    return `<details class="orch-think"${open ? ' open' : ''}><summary class="orch-think-head">${icon('spark')}<span class="orch-think-label">Размышление</span><span class="orch-think-chevron" aria-hidden="true">▾</span></summary><div class="orch-think-body">${esc(t)}</div></details>`;
-  }
   function orchRatingHtml(row, isUser) {
     if (isUser || !row.message_id) return '';
     const rating = Number(row.rating || 0);
@@ -2996,22 +3266,69 @@
       </div>
     </div>`;
   }
+  const ORCH_ACTION_LABELS = {
+    reconnect_runtime_connection: 'Проверка связи с NinjaTrader',
+    runtime_reconnect: 'Восстановление связи с NinjaTrader',
+    review_financial_records: 'Проверка финансовых операций',
+    review_failed_strategies: 'Проверка проваленных стратегий',
+    start_research: 'Исследование стратегии',
+    research_progress: 'Исследование стратегии',
+    mission_completed: 'Исследование завершено',
+    request_performance_report: 'Подготовка финансового отчёта',
+    request_accounting_report: 'Проверка бухгалтерского журнала',
+    request_strategy_report: 'Подготовка отчёта по стратегиям',
+    chart_open: 'Открытие графика',
+    chart_watch: 'Наблюдение за графиком',
+    chart_clear: 'Очистка графика',
+    deliver_report: 'Доставка отчёта',
+    vitek_task: 'Поручение Виктора',
+    vitek_activate_task: 'Виктор принял поручение',
+    vitek_add_task: 'Поручение передано Управляющему',
+    vitek_create_incident_task: 'Поручение создано',
+    vitek_set_plan: 'План сохранён',
+    vitek_scan: 'Проверка системы',
+    vitek_resume_task: 'Ответ передан исполнителю',
+  };
+  const ORCH_ACTION_STATES = {
+    queued: ['Поставлено в очередь', 'running'], running: ['Выполняется', 'running'],
+    in_progress: ['Выполняется', 'running'], approval_required: ['Нужно ваше решение', 'waiting'],
+    needs_input: ['Жду ваш ответ', 'waiting'], waiting_review: ['Жду ваш ответ', 'waiting'],
+    blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
+    completed: ['Выполнено', 'done'], confirmed_connected: ['Связь подтверждена', 'done'],
+  };
+  function orchActionsHtml(row, isUser) {
+    if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
+    const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
+      const name = String(action.name || action.action || 'vitek_task');
+      const status = String(action.status || 'running');
+      const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];
+      const label = String(action.owner_label || action.summary || ORCH_ACTION_LABELS[name] || 'Работа по поручению');
+      return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span><span class="orch-action-state">${esc(state[0])}</span></div>`;
+    }).join('');
+    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}</div>` : '';
+  }
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
     const actor = isUser
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
+    const model = String(row.model || '').trim();
+    const provider = String(row.provider || '').trim();
+    const modelMeta = !isUser && model
+      ? `модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}`
+      : '';
     const meta = [
       isUser ? esc(actor) : (row.agent_name ? esc(row.agent_name) : ''),
+      modelMeta,
       orchFmtTime(row.timestamp_utc),
     ].filter(Boolean).join(' · ');
-    const think = (!isUser && row.thinking) ? orchThinkBlock(row.thinking, false) : '';
+    const actions = orchActionsHtml(row, isUser);
     const rating = orchRatingHtml(row, isUser);
     const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
     const media = attachments.map(a =>
       `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
     ).join('');
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${think}<div class="orch-msg-body">${esc(row.content || '')}</div>${media}<div class="orch-msg-meta">${meta}</div>${rating}</div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}<div class="orch-msg-meta">${meta}</div>${rating}</div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -3176,7 +3493,8 @@
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
-      row.feedback_comment, row.feedback_timestamp_utc,
+      row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
+      row.agent_name, row.actions,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
@@ -3206,9 +3524,8 @@
     // optimistic render: show the owner message immediately
     if (box.querySelector('.empty-state')) box.innerHTML = '';
     box.insertAdjacentHTML('beforeend', orchMessageHtml({ role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' }));
-    // live block: Cursor-style faded "thoughts" above a pending answer bubble.
-    // The reasoning shows only the last couple of lines, muted and frameless,
-    // fading out at the top — it stays inside the current chat view.
+    // Live block contains only public progress labels. Provider chain-of-thought
+    // is never rendered or persisted in the owner-facing conversation.
     const live = el(`<div class="orch-live" id="orch-live">
       <div class="orch-think-live" id="orch-live-think">
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
@@ -3222,7 +3539,6 @@
     const thinkWrap = qs('#orch-live-think', live);
     const thinkBody = qs('#orch-live-think-body', live);
     const liveBody = qs('#orch-live-body', live);
-    let thinking = '';
     let sawThinking = false;
     const nearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 160;
     const keepBottom = () => { if (nearBottom()) box.scrollTop = box.scrollHeight; };
@@ -3231,7 +3547,7 @@
     const agent = (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).agent;
     try {
       const streamResult = await API.http.aiOrchestratorMessageStream(text, cid, agent, {
-        onThinkingDelta: (delta) => { sawThinking = true; thinking += delta; setThink(thinking); },
+        onThinkingDelta: () => { sawThinking = true; setThink('Анализирую задачу…'); },
         onStatus: (s) => { if (!sawThinking) setThink(s); },
         onFinal: (data) => {
           if (ORCH.currentId === cid && data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
@@ -3261,8 +3577,8 @@
     } finally {
       ORCH.sending = false;
       if (sendBtn) sendBtn.disabled = false;
-      // Reload from storage so the persisted thinking + reply render canonically
-      // (collapsed thinking in history), replacing the transient live block.
+      // Reload from storage so the final reply and auditable action states
+      // replace the transient public progress block.
       if (!ORCH.transientError && ORCH.currentId === cid) await orchLoadMessages(cid);
       await orchLoadConversations();
       if (ta && !ta.disabled) ta.focus();

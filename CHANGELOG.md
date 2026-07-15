@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-07-14
+
+- Moved Viktor, the owner's right hand, to Overview with daily/weekly plans,
+  concurrent specialist state, context assignments and event-driven control.
+- Added GPT-5 mini semantic dispatch for free-form Viktor requests while keeping
+  execution and completion checks deterministic and domain-bound.
+- Kept assignment progress in its originating Aurora/Telegram conversation,
+  exposed the actual routing/execution model, and rendered real action status
+  under assistant messages without exposing hidden reasoning.
+- Fixed cross-domain routing regressions where financial review could become an
+  Ivan chart alert, runtime reconnect could return an unrelated report, or a
+  mission launch could be reported as completed work.
+- Added reconciliation classification for technical account-balance changes and
+  prevented linked incidents from reopening duplicate owner decision cards.
+- Expanded the owner cabinet with per-session reload/termination, per-user live
+  browser-tab CPU/memory/network telemetry and threshold warnings.
+- Made those controls and telemetry available for the owner's own account,
+  separated Telegram account identity from its devices, and added persistent
+  owner-defined device names with current-session warnings.
+- Added one-time user screen capture requests with an in-app explanation,
+  mandatory browser screen selection, owner-only access, DPAPI encryption and
+  automatic 24-hour deletion.
+- Added deterministic Orchestrator commands for requesting a user screenshot,
+  reloading sessions and ending sessions by user name or ID; approved images
+  are delivered back into the originating owner chat.
+
 ## 2026-07-13
 
 - Added Vitek as the owner-facing right hand above the internal manager and

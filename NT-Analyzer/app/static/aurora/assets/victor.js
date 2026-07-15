@@ -236,8 +236,13 @@
   function taskHtml(task) {
     const agent = AGENT_LABELS[task.assigned_agent] || task.assigned_agent || 'Управляющий назначает исполнителя';
     const context = task.context || {};
-    const model = String(task.execution_model || '');
-    const modelLine = model && !['unknown', 'internal'].includes(model.toLowerCase()) ? ` · модель: ${esc(model)}` : '';
+    const executionModel = String(task.execution_model || '');
+    const routingModel = String(task.routing_model || '');
+    const modelParts = [];
+    if (routingModel && !['unknown', 'internal', 'deterministic task guard'].includes(routingModel.toLowerCase())) modelParts.push(`понимание: ${routingModel}`);
+    if (executionModel && !['unknown', 'internal'].includes(executionModel.toLowerCase())) modelParts.push(`исполнение: ${executionModel}`);
+    const provider = String(task.execution_provider || task.routing_provider || '');
+    const modelLine = modelParts.length ? ` · ${esc(modelParts.join(' → '))}${provider ? ` (${esc(provider)})` : ''}` : '';
     const control = task.control && task.control.condition ? `<div class="row-sub">Контроль: ${esc(task.control.condition)}</div>` : '';
     return `<div class="row"><div class="row-main"><div class="row-title">${esc(task.owner_title || task.title || 'Поручение')}</div>
       <div class="row-sub">${esc(agent)}${modelLine}${task.due_at_utc ? ` · срок ${esc(fmtDate(task.due_at_utc))}` : ''}</div>
@@ -262,7 +267,11 @@
         <div class="kpi ${doc.background && doc.background.installed ? 'pos' : 'warn'}"><div class="kpi-label">Фоновый контроль</div><div class="kpi-val sm">${doc.background && doc.background.installed ? 'включён' : 'не установлен'}</div><div class="kpi-foot">событийный режим</div></div>
       </div>
       <div class="finance-note"><strong>Виктор:</strong> ${esc(doc.message || 'Готов принять поручение.')}</div>
-      <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm">${agents.map(row => `<span class="badge ${row.working ? 'live' : 'archived'}" title="${esc(row.work || '')}"><span class="dot"></span>${esc(row.name)} · ${row.working ? 'работает' : 'свободен'}</span>`).join('')}</div></div>
+      <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm">${agents.map(row => {
+        const stateLabel = row.working ? 'работает' : row.state === 'waiting_owner' ? 'ждёт ответа' : row.state === 'blocked' ? 'есть препятствие' : 'свободен';
+        const model = row.model ? ` · ${row.model}${row.provider ? ` (${row.provider})` : ''}` : '';
+        return `<span class="badge ${row.working ? 'live' : row.state === 'waiting_owner' || row.state === 'blocked' ? 'pending' : 'archived'}" title="${esc((row.work || '') + model)}"><span class="dot"></span>${esc(row.name)} · ${esc(stateLabel)}${model ? `<small>${esc(model)}</small>` : ''}</span>`;
+      }).join('')}</div></div>
       <div class="grid cols-2">${['day', 'week'].map(scope => {
         const plan = plans[scope]; const active = plan && plan.status === 'active'; const label = scope === 'day' ? 'сегодня' : 'неделю';
         return `<div class="kpi ${active ? 'info' : ''}"><div class="kpi-top"><span class="kpi-label">План на ${label}</span><button class="btn sm ghost" data-victor-plan="${scope}">${active ? 'Изменить' : 'Задать'}</button></div><div class="kpi-val sm">${esc(active && plan.focus || 'не задан')}</div><div class="kpi-foot">${active && plan.context && plan.context.entity_label ? `Связан с: ${esc(plan.context.entity_label)}` : active && (plan.goals || []).length ? esc(plan.goals.join(' · ')) : 'Цели, привязки, бюджет и контроль'}</div></div>`;

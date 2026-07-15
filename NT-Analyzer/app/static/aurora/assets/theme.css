@@ -1266,6 +1266,19 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 .orch-msg-shot img { display: block; width: 100%; height: auto; max-height: 340px; object-fit: cover; }
 .orch-msg-shot:hover { border-color: var(--brand-line); }
 .orch-msg-meta { margin-top: 4px; font-size: 10px; color: var(--tx-3); }
+.orch-actions { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line-2); display: flex; flex-direction: column; gap: 5px; white-space: normal; }
+.orch-action { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; color: var(--tx-3); font-size: 10.5px; line-height: 1.3; }
+.orch-action-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--tx-3); box-shadow: 0 0 0 3px rgba(142, 166, 198, .08); }
+.orch-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orch-action-state { font-weight: 750; white-space: nowrap; }
+.orch-action.running .orch-action-mark { background: var(--brand); animation: orchThinkPulse 1.3s ease-in-out infinite; }
+.orch-action.running .orch-action-state { color: var(--brand); }
+.orch-action.waiting .orch-action-mark { background: var(--warn); }
+.orch-action.waiting .orch-action-state { color: var(--warn); }
+.orch-action.blocked .orch-action-mark { background: var(--neg); }
+.orch-action.blocked .orch-action-state { color: var(--neg); }
+.orch-action.done .orch-action-mark { background: var(--pos); }
+.orch-action.done .orch-action-state { color: var(--pos); }
 /* white-space:normal resets the parent bubble's pre-wrap so the template's
    indentation between the row and the hidden feedback area does not render as
    blank lines (which otherwise inflated the block by ~100px). */
@@ -1299,9 +1312,8 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 .orch-dots i:nth-child(2) { animation-delay: .16s; } .orch-dots i:nth-child(3) { animation-delay: .32s; }
 @keyframes orchDot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
 
-/* Thinking ("reasoning") — Cursor-style. LIVE: a few faded, frameless lines
-   that surface at the top and fade out; stays inside the current chat view.
-   HISTORY: a tiny, unobtrusive collapsible line above the message. */
+/* Public progress labels for the current request. Hidden model reasoning is
+   never rendered; completed work is represented by auditable action rows. */
 .orch-live { align-self: stretch; max-width: 100%; display: flex; flex-direction: column; }
 .orch-live .orch-live-answer { align-self: flex-start; margin: 0; }
 .orch-think-live { margin: 0 4px 7px; }
@@ -1317,24 +1329,6 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 }
 .orch-think-live-text span { display: block; }
 
-.orch-think { margin: 0 0 5px; }
-.orch-think > .orch-think-head {
-  display: inline-flex; align-items: center; gap: 5px; padding: 2px 5px; cursor: pointer;
-  list-style: none; color: var(--tx-3); font-size: 10.5px; font-weight: 600; opacity: .72;
-  border-radius: 6px; user-select: none;
-}
-.orch-think > .orch-think-head:hover { opacity: 1; background: var(--bg-1); }
-.orch-think > .orch-think-head::-webkit-details-marker { display: none; }
-.orch-think > .orch-think-head::marker { content: ''; }
-.orch-think-head svg { width: 11px; height: 11px; opacity: .8; flex: 0 0 auto; }
-.orch-think-label { min-width: 0; }
-.orch-think-chevron { color: var(--tx-3); font-size: 9px; transition: transform .15s; }
-.orch-think[open] .orch-think-chevron { transform: rotate(180deg); }
-.orch-think-body {
-  margin-top: 4px; padding: 7px 10px; color: var(--tx-3); font-size: 11px; line-height: 1.5;
-  white-space: pre-wrap; word-break: break-word; max-height: 210px; overflow-y: auto;
-  background: var(--bg-1); border-radius: 8px; opacity: .92; font-style: italic; font-family: inherit;
-}
 @keyframes orchThinkPulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
 
 /* Model version picker — a Cursor-style dropdown at the composer. One
@@ -1582,6 +1576,34 @@ html.guest-browse .content .list {
 .udetail-grid .cab-kv { padding: 3px 0; }
 .cap-panel { display: grid; gap: 2px; }
 @media (max-width: 560px) { .udetail-grid { grid-template-columns: 1fr; } }
+
+/* Consent-based user support and per-tab resource monitoring. */
+.user-monitor-line { margin-top: 3px; }
+.support-online-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--ok, #38d996); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #38d996) 18%, transparent); }
+.support-alert-inline { color: var(--warn, #e0a33a); font-weight: 700; }
+.user-support-live { display: grid; gap: 10px; }
+.support-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.support-privacy-note { line-height: 1.55; }
+.support-session { padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--bg-3) 78%, transparent); }
+.support-session.online { border-color: color-mix(in srgb, var(--ok, #38d996) 38%, var(--line)); }
+.support-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 7px 16px; margin-top: 9px; color: var(--tx-2); font-size: 12px; }
+.support-metrics strong { color: var(--tx); font-weight: 650; }
+.support-alerts { display: grid; gap: 6px; }
+.support-alert { padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warn, #e0a33a) 45%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--warn, #e0a33a) 10%, transparent); color: var(--warn, #e0a33a); font-size: 12.5px; font-weight: 650; }
+.support-alert.critical { border-color: color-mix(in srgb, var(--danger, #ff5c78) 55%, var(--line)); background: color-mix(in srgb, var(--danger, #ff5c78) 10%, transparent); color: var(--danger, #ff5c78); }
+.support-ok { padding: 8px 10px; border-radius: 9px; background: color-mix(in srgb, var(--ok, #38d996) 9%, transparent); color: var(--ok, #38d996); font-size: 12.5px; }
+.support-auth-session { flex-wrap: wrap; }
+.support-shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.support-shot { padding: 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--bg-3); }
+.support-shot img { display: block; width: 100%; max-height: 340px; margin-top: 9px; object-fit: contain; border: 1px solid var(--line-2); border-radius: 8px; background: #05070a; }
+.support-error { margin-top: 7px; color: var(--danger, #ff5c78); font-size: 12px; }
+.support-consent { z-index: 180; }
+.support-consent .terms-modal-card { width: min(100%, 620px); }
+.support-consent-actions { margin-top: 18px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .support-toolbar .btn, .support-consent-actions .btn { width: 100%; }
+  .support-metrics { grid-template-columns: 1fr; }
+}
 
 /* Admin journal: highlight suspicious rows. */
 .jrow-warn { border-left: 3px solid var(--warn, #e0a33a); padding-left: 9px; }

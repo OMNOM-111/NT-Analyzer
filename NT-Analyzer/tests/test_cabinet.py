@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import base64
 import json
 import threading
 import time
@@ -12,7 +13,8 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, invitations, secure_store, server as server_mod, subscriptions, telegram_remote, telegram_service, workspaces
+from app import account_auth, invitations, secure_store, server as server_mod, subscriptions, telegram_remote, telegram_service, user_support, workspaces
+from app.ai_lab import intent_classifier
 
 
 FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"stratforge-avatar-bytes" * 4
@@ -37,6 +39,7 @@ def cabinet_store(monkeypatch, tmp_path):
     monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
+    monkeypatch.setattr(user_support, "_root", lambda: tmp_path)
     monkeypatch.setattr(secure_store, "available", lambda: True)
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test DPAPI")
     monkeypatch.setattr(secure_store, "_protect", lambda value: value[::-1])
@@ -277,6 +280,186 @@ def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_consent_support_session_commands_and_monitoring(cabinet_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")
+    account_auth.set_auth_required(True)
+
+    owner_token, owner_csrf = "o" * 64, "p" * 48
+    user_token, user_csrf = "u" * 64, "v" * 48
+    _seed_two_accounts(owner_token, owner_csrf, user_token, user_csrf)
+
+    server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    client_id = "client-test-0001"
+    delivered: dict = {}
+    monkeypatch.setattr(server_mod.ai_chief_agent, "report_user_screenshot", lambda **kwargs: delivered.update(kwargs) or {"ok": True})
+    try:
+        # A read-only user can report only their own browser-tab telemetry.
+        _request(base, "/api/support/telemetry", method="POST", token=user_token, csrf=user_csrf, body={
+            "client_id": client_id, "page": "/ui/index.html", "visible": True,
+            "logical_cores": 8, "cpu_available": True, "cpu_main_thread_percent": 88,
+            "cpu_core_equivalent": .88, "memory_available": True,
+            "js_heap_used_mb": 1300, "js_heap_limit_mb": 1400,
+            "network_mb_per_min": 55, "network_total_mb": 12,
+        })
+        overview = _request(base, "/api/owner/support/monitoring", token=owner_token)
+        monitored = next(row for row in overview["users"] if row["user_id"] == 42)
+        assert monitored["online"] is True and monitored["alert_count"] == 3
+
+        detail = _request(base, "/api/auth/users/42", token=owner_token)
+        session_id = detail["user"]["active_sessions"][0]["session_id"]
+        queued = _request(base, "/api/owner/support/users/42/reload", method="POST",
+                          token=owner_token, csrf=owner_csrf, body={"session_id": session_id})
+        assert queued["queued"] == 1
+        polled = _request(base, "/api/support/poll", method="POST", token=user_token,
+                          csrf=user_csrf, body={"client_id": client_id})
+        command = polled["commands"][0]
+        assert command["type"] == "reload" and command["target_session_id"] == session_id
+        _request(base, "/api/support/commands/ack", method="POST", token=user_token,
+                 csrf=user_csrf, body={"client_id": client_id, "command_id": command["command_id"], "status": "done"})
+
+        # The first consent request is explicitly denied; no image is created.
+        requested = _request(base, "/api/owner/support/users/42/screenshot", method="POST",
+                             token=owner_token, csrf=owner_csrf, body={"note": "Диагностика"})
+        request_id = requested["request"]["request_id"]
+        consent = _request(base, "/api/support/poll", method="POST", token=user_token,
+                           csrf=user_csrf, body={"client_id": client_id})["screenshot_request"]
+        assert consent["request_id"] == request_id and consent["status"] == "claimed"
+        denied = _request(base, "/api/support/screenshots/respond", method="POST",
+                          token=user_token, csrf=user_csrf, body={
+                              "client_id": client_id, "request_id": request_id, "decision": "denied",
+                          })
+        assert denied["request"]["status"] == "denied"
+
+        # A later, separately approved request stores an encrypted image that is
+        # readable by the owner only.
+        approved_req = user_support.request_screenshot(
+            999, 42, conversation_id="support-chat",
+            owner_scope={"user_id": 999, "workspace_id": "owner_training", "is_owner": True, "uses_owner_runtime": True},
+        )["request"]
+        _request(base, "/api/support/poll", method="POST", token=user_token,
+                 csrf=user_csrf, body={"client_id": client_id})
+        completed = _request(base, "/api/support/screenshots/respond", method="POST",
+                             token=user_token, csrf=user_csrf, body={
+                                 "client_id": client_id, "request_id": approved_req["request_id"],
+                                 "decision": "approved",
+                                 "data_url": "data:image/png;base64," + base64.b64encode(FAKE_PNG).decode(),
+                                 "width": 1200, "height": 700,
+                             })
+        assert completed["request"]["status"] == "completed"
+        assert delivered["conversation_id"] == "support-chat"
+        assert delivered["image_url"] == completed["request"]["image_url"]
+        encrypted_file = cabinet_store / "data" / "runtime" / "support-screenshots" / f"{approved_req['request_id']}.dpapi"
+        assert encrypted_file.is_file() and FAKE_PNG not in encrypted_file.read_bytes()
+        image = _request(base, completed["request"]["image_url"], token=owner_token, raw=True)
+        assert image == FAKE_PNG
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(base, completed["request"]["image_url"], token=user_token, raw=True)
+        assert exc.value.code == 403
+
+        support = _request(base, "/api/owner/support/users/42", token=owner_token)
+        assert support["alerts"] and support["auth_sessions"]
+        _request(base, f"/api/owner/support/screenshots/{approved_req['request_id']}/delete",
+                 method="POST", token=owner_token, csrf=owner_csrf, body={})
+
+        # Ending the selected session invalidates it without deleting the user.
+        ended = _request(base, "/api/auth/users/42/sessions", method="POST",
+                         token=owner_token, csrf=owner_csrf, body={"session_id": session_id})
+        assert ended["revoked"] == 1
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(base, "/api/auth/me", token=user_token)
+        assert exc.value.code == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_intent_distinguishes_user_screen_from_chart_snapshot(cabinet_store) -> None:
+    account_auth._write_doc({
+        "version": 1,
+        "users": [
+            {"user_id": 999, "first_name": "Owner", "role": "owner", "status": "active", "is_owner": True},
+            {"user_id": 42, "first_name": "Dev", "role": "read_only", "status": "active", "is_owner": False},
+        ],
+        "challenges": [], "sessions": [],
+    })
+    intent = intent_classifier.classify("Сделай скрин экрана пользователю Dev")
+    assert intent["capability"] == "user_screenshot_request"
+    out = user_support.chat_command("user_screenshot_request", 999, "Сделай скрин экрана пользователю Dev")
+    assert out["actions"][0]["status"] == "waiting_for_user_consent"
+    assert user_support.owner_status(999, 42)["screenshot_requests"][0]["status"] == "pending"
+
+
+def test_owner_account_has_monitoring_controls_and_renameable_device(cabinet_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")
+    account_auth.set_auth_required(True)
+
+    owner_token, owner_csrf = "o" * 64, "p" * 48
+    user_token, user_csrf = "u" * 64, "v" * 48
+    _seed_two_accounts(owner_token, owner_csrf, user_token, user_csrf)
+
+    server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    client_id = "owner-client-0001"
+    device_id = "owner-device-0001"
+    try:
+        _request(base, "/api/support/telemetry", method="POST", token=owner_token, csrf=owner_csrf, body={
+            "client_id": client_id, "device_id": device_id,
+            "device_name": "Chrome · Windows", "client": "Chrome", "platform": "Windows",
+            "page": "/ui/index.html", "visible": True, "logical_cores": 16,
+            "cpu_available": True, "cpu_main_thread_percent": 12,
+            "memory_available": True, "js_heap_used_mb": 220, "js_heap_limit_mb": 4096,
+            "network_mb_per_min": 1.5,
+        })
+        overview = _request(base, "/api/owner/support/monitoring", token=owner_token)
+        owner_monitor = next(row for row in overview["users"] if row["user_id"] == 999)
+        assert owner_monitor["online"] is True
+
+        status = _request(base, "/api/owner/support/users/999", token=owner_token)
+        assert status["is_self"] is True and status["current_session_id"]
+        assert status["sessions"][0]["device_name"] == "Chrome · Windows"
+
+        renamed = _request(base, "/api/owner/support/users/999/device-name", method="POST",
+                           token=owner_token, csrf=owner_csrf,
+                           body={"device_id": device_id, "name": "Основной компьютер"})
+        assert renamed["device_name"] == "Основной компьютер"
+        status2 = _request(base, "/api/owner/support/users/999", token=owner_token)
+        assert status2["sessions"][0]["device_name"] == "Основной компьютер"
+        assert status2["auth_sessions"][0]["device_name"] == "Основной компьютер"
+
+        # A screenshot request can be targeted to the owner's selected device;
+        # another client cannot claim it.
+        shot = _request(base, "/api/owner/support/users/999/screenshot", method="POST",
+                        token=owner_token, csrf=owner_csrf,
+                        body={"target_client_id": client_id})["request"]
+        wrong = user_support.poll(999, status["current_session_id"], "other-client-0002")
+        assert wrong["screenshot_request"] is None
+        consent = _request(base, "/api/support/poll", method="POST", token=owner_token,
+                           csrf=owner_csrf, body={"client_id": client_id})["screenshot_request"]
+        assert consent["request_id"] == shot["request_id"]
+        _request(base, "/api/support/screenshots/respond", method="POST", token=owner_token,
+                 csrf=owner_csrf, body={
+                     "client_id": client_id, "request_id": shot["request_id"], "decision": "denied",
+                 })
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_owner_row_exposes_details_and_support_bridge() -> None:
+    ui = (server_mod.STATIC_DIR / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "const detailBtn = `<button" in ui
+    assert "CURRENT_AUTH.is_owner) return" not in ui
+    assert "Это ваш один аккаунт владельца" in ui
+    assert "ownerSupportDeviceName" in ui
 
 
 def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatch) -> None:

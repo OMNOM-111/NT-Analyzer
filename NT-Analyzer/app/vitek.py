@@ -147,7 +147,10 @@ def _default_state() -> Dict[str, Any]:
         "rest": {"active": False, "until_utc": "", "reason": ""},
         "last_activity_state": "unknown",
         "last_prompted_incident_id": "",
-        "dialogue": {"awaiting_by_conversation": {}},
+        "dialogue": {
+            "awaiting_by_conversation": {},
+            "awaiting_task_by_conversation": {},
+        },
         "last_scan_at_utc": "",
         "last_scan_error": "",
     }
@@ -184,6 +187,8 @@ def _read() -> Dict[str, Any]:
         doc["dialogue"] = {"awaiting_by_conversation": {}}
     if not isinstance(doc["dialogue"].get("awaiting_by_conversation"), dict):
         doc["dialogue"]["awaiting_by_conversation"] = {}
+    if not isinstance(doc["dialogue"].get("awaiting_task_by_conversation"), dict):
+        doc["dialogue"]["awaiting_task_by_conversation"] = {}
     for scope in ("day", "week"):
         if not isinstance(doc["plans"].get(scope), dict):
             doc["plans"][scope] = None
@@ -259,8 +264,12 @@ def status() -> Dict[str, Any]:
     # does not wake Vitek or start a full scan: it only checks the already
     # persisted Bridge heartbeat and retires an outage that no longer exists.
     try:
+        _reconcile_task_executions()
+    except Exception:
+        pass
+    try:
         from . import runtime
-        if runtime.read_heartbeat().get("fresh"):
+        if _runtime_connection_confirmed(runtime):
             _resolve_connection_incidents()
     except Exception:
         pass
@@ -289,6 +298,28 @@ def status() -> Dict[str, Any]:
         tasks = [dict(row) for row in doc.get("tasks") or [] if isinstance(row, dict)]
         for task in tasks:
             task["owner_title"] = _executive_task_title(task)
+        local_now = _now_dt().astimezone(ZoneInfo(LOCAL_TIMEZONE))
+        explicit_day = plans.get("day") if isinstance(plans.get("day"), dict) else {}
+        if explicit_day.get("status") != "active":
+            today_tasks = []
+            for task in tasks:
+                created = _parse_time(task.get("created_at_utc"))
+                if created and created.astimezone(ZoneInfo(LOCAL_TIMEZONE)).date() == local_now.date():
+                    today_tasks.append(task)
+            if today_tasks:
+                active_today = [row for row in today_tasks if str(row.get("status") or "") in ACTIVE_TASK_STATUSES]
+                plans["day"] = {
+                    "plan_id": "auto-day-" + local_now.date().isoformat(),
+                    "scope": "day", "scope_label": "сегодня", "status": "active",
+                    "auto_generated": True,
+                    "focus": (
+                        f"Выполнить поручения на сегодня: {len(active_today)} в работе"
+                        if active_today else f"Поручения на сегодня завершены: {len(today_tasks)}"
+                    ),
+                    "goals": [_executive_task_title(row) for row in today_tasks[:12]],
+                    "task_ids": [str(row.get("task_id") or "") for row in today_tasks],
+                    "created_at_utc": min(str(row.get("created_at_utc") or "") for row in today_tasks),
+                }
         incidents = [dict(row) for row in doc.get("incidents") or [] if isinstance(row, dict)]
         for incident in incidents:
             if incident.get("owner_decision_required"):
@@ -310,14 +341,32 @@ def status() -> Dict[str, Any]:
         if doc.get("rest") != rest or plans_changed:
             doc["rest"] = rest
             _write(doc)
+        active_task_rows = [row for row in tasks if str(row.get("status") or "") in ACTIVE_TASK_STATUSES]
+        task_by_agent: Dict[str, Dict[str, Any]] = {}
+        for row in active_task_rows:
+            agent_id = str(row.get("assigned_agent") or "")
+            if agent_id and agent_id not in task_by_agent:
+                task_by_agent[agent_id] = row
+        if active_task_rows:
+            task_by_agent.setdefault("vitek", active_task_rows[0])
         agent_rows = []
         for agent_id, label in AGENT_LABELS.items():
             run = active_runs.get(agent_id) or {}
+            task = task_by_agent.get(agent_id) or {}
+            task_state = str(task.get("status") or "")
+            working = bool(run) or task_state in {"new", "planned", "in_progress"}
+            activity_state = (
+                "working" if working else
+                "waiting_owner" if task_state == "waiting_review" else
+                "blocked" if task_state == "blocked" else "free"
+            )
             agent_rows.append({
                 "agent_id": agent_id, "name": label,
-                "working": bool(run),
-                "work": str(run.get("title") or "")[:240],
-                "started_at_utc": str(run.get("started_at_utc") or ""),
+                "working": working, "state": activity_state,
+                "work": str(run.get("title") or task.get("owner_title") or task.get("title") or "")[:240],
+                "started_at_utc": str(run.get("started_at_utc") or task.get("execution_started_at_utc") or ""),
+                "model": str(task.get("execution_model") or task.get("routing_model") or ""),
+                "provider": str(task.get("execution_provider") or task.get("routing_provider") or ""),
             })
         return {
             "ok": True,
@@ -339,7 +388,7 @@ def status() -> Dict[str, Any]:
                 "bridge_spool": str(_root() / "data" / "runtime" / "vitek_events.jsonl"),
                 "full_scan_schedule": "manual_or_startup_only",
                 "parallel_limit": MAX_PARALLEL_AGENTS,
-                "active_agents": len(active_runs),
+                "active_agents": sum(1 for row in agent_rows if row.get("working")),
             },
             "agent_activity": agent_rows,
             "background": _background_status(),
@@ -476,12 +525,275 @@ def _task_route(task: Dict[str, Any]) -> Dict[str, str]:
     return {"agent": agent, "role": role, "complexity": complexity}
 
 
+_TASK_CAPABILITIES = {
+    "reconnect_runtime_connection", "review_financial_records",
+    "review_failed_strategies", "chart_operation", "application_report",
+    "generic_application_task",
+}
+
+_FORCED_TASK_ROUTES: Dict[str, Dict[str, str]] = {
+    "reconnect_runtime_connection": {
+        "agent": "vitek", "role": "runtime_controller", "complexity": "critical",
+    },
+    "review_financial_records": {
+        "agent": "marina", "role": "accountant", "complexity": "standard",
+    },
+    "review_failed_strategies": {
+        "agent": "tolik", "role": "strategy_analyst", "complexity": "standard",
+    },
+    "chart_operation": {
+        "agent": "ivan", "role": "chart_operator", "complexity": "standard",
+    },
+    "application_report": {
+        "agent": "orchestrator", "role": "orchestrator", "complexity": "standard",
+    },
+}
+
+
+def _task_intent(task: Dict[str, Any], fallback_route: Dict[str, str]) -> Dict[str, Any]:
+    """Use one compact model to understand Victor's task, never to execute it.
+
+    Persisted incident categories are authoritative safety context. The model
+    may improve an open-ended task, but it cannot reinterpret a known finance
+    incident as a chart command or a connection outage as a report request.
+    """
+    category = str(task.get("category") or "").strip().lower()
+    title = str(task.get("title") or "")
+    low = title.lower().replace("ё", "е")
+    forced = ""
+    if category in {"runtime_connection"} or (
+        category == "vitek_execution" and "ninjatrader" in low and "связ" in low
+    ):
+        forced = "reconnect_runtime_connection"
+    elif category in {"financial_classification", "financial_integrity"}:
+        forced = "review_financial_records"
+    elif category == "strategy_lifecycle":
+        forced = "review_failed_strategies"
+
+    forced_route = _FORCED_TASK_ROUTES.get(forced) or {}
+    base = {
+        "capability": forced or "generic_application_task",
+        "agent": forced_route.get("agent", fallback_route["agent"]),
+        "role": forced_route.get("role", fallback_route["role"]),
+        "complexity": forced_route.get("complexity", fallback_route["complexity"]),
+        "routing_model": "deterministic task guard",
+        "routing_provider": "local",
+    }
+    scope = task.get("conversation_scope") if isinstance(task.get("conversation_scope"), dict) else {}
+    if not scope.get("is_owner"):
+        return base
+    try:
+        from .ai_lab import agent_router
+        packet = {
+            "task": {
+                "title": title,
+                "description": str(task.get("description") or ""),
+                "persisted_category": category,
+                "page_context": task.get("context") or {},
+            },
+            "known_capability": forced,
+            "allowed_capabilities": sorted(_TASK_CAPABILITIES),
+            "allowed_agents": ["vitek", "orchestrator", "marina", "tolik", "nikita", "ivan"],
+        }
+        routed = agent_router.invoke_role(
+            "vitek_dispatcher", json.dumps(packet, ensure_ascii=False, default=str)[:8000],
+            system_prompt=(
+                "You are Victor's fast intent dispatcher in a trading research application. "
+                "Understand the owner's Russian wording and return JSON only: "
+                "{capability,agent,role,complexity}. Never execute, never invent a result. "
+                "If known_capability is non-empty, repeat it exactly. Finance records are "
+                "never chart prices; connection recovery is never a report."
+            ),
+            max_output_tokens=260, timeout=18, purpose="vitek_task_understanding",
+            complexity="auto", cache_mode="off", allow_paid=True, max_attempts=4,
+        )
+        raw = str(routed.get("content") or "").strip()
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        parsed = json.loads(match.group(0)) if match else {}
+        proposed = str(parsed.get("capability") or "")
+        capability = forced or (proposed if proposed in _TASK_CAPABILITIES else base["capability"])
+        capability_route = _FORCED_TASK_ROUTES.get(capability) or {}
+        agent = str(capability_route.get("agent") or parsed.get("agent") or base["agent"]).lower()
+        if agent not in AGENT_LABELS and agent != "orchestrator":
+            agent = base["agent"]
+        complexity = str(capability_route.get("complexity") or parsed.get("complexity") or base["complexity"]).lower()
+        if complexity not in {"light", "standard", "critical"}:
+            complexity = base["complexity"]
+        return {
+            **base, "capability": capability, "agent": agent,
+            "role": str(capability_route.get("role") or parsed.get("role") or base["role"])[:80],
+            "complexity": complexity,
+            "routing_model": str(routed.get("actual_model") or routed.get("model") or "unknown"),
+            "routing_provider": str(routed.get("provider") or ""),
+        }
+    except Exception as exc:
+        return {**base, "routing_error": str(exc)[:300]}
+
+
+def _financial_review_result(task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from . import account_ledger
+
+    ledger = account_ledger.account_history("", limit=5000)
+    records = []
+    for account in ledger.get("accounts") or []:
+        for event in account.get("events") or []:
+            if event.get("classification_status") != "needs_review":
+                continue
+            records.append({**event, "account_name": account.get("account_name")})
+    accounts = sorted({str(row.get("account_name") or "") for row in records if row.get("account_name")})
+    total = round(sum(float(row.get("amount") or 0) for row in records), 2)
+    account_text = ", ".join(accounts[:4]) or "не указан"
+    owner_answer = str((task or {}).get("owner_answer") or "").strip()
+    answer_low = owner_answer.lower().replace("ё", "е")
+    reconnect_confirmed = bool(owner_answer and any(marker in answer_low for marker in (
+        "после переподключ", "из-за переподключ", "после подключения",
+        "техническая сверка", "сверка после", "не реальные операции",
+        "не было пополн", "не было вывод",
+    )))
+    if reconnect_confirmed:
+        classified = 0
+        failures: List[str] = []
+        for row in records:
+            try:
+                account_ledger.classify_event(
+                    str(row.get("account_name") or ""), str(row.get("event_id") or ""),
+                    "reconciliation", "vitek_owner_confirmation",
+                    f"Подтверждение владельца: {owner_answer}"[:1000],
+                )
+                classified += 1
+            except Exception as exc:
+                failures.append(str(exc)[:160])
+        if not failures:
+            return {
+                "ok": True,
+                "reply": (
+                    f"Марина зафиксировала ваше пояснение и пометила {classified} операций "
+                    "как техническую сверку после переподключения. Они не считаются "
+                    "пополнениями, выводами, комиссиями или торговой прибылью."
+                ),
+                "model": "deterministic ledger review", "provider": "local",
+                "agent": {"id": "marina", "name": "Марина"},
+                "actions": [{
+                    "name": "review_financial_records", "status": "completed",
+                    "record_count": classified, "classification": "reconciliation",
+                }],
+            }
+        return {
+            "ok": False,
+            "reply": (
+                f"Марина сохранила ваше пояснение, но обработала только {classified} из "
+                f"{len(records)} операций. Оставшиеся записи не меняю до исправления журнала."
+            ),
+            "model": "deterministic ledger review", "provider": "local",
+            "agent": {"id": "marina", "name": "Марина"},
+            "actions": [{
+                "name": "review_financial_records", "status": "blocked",
+                "record_count": len(records), "classified_count": classified,
+                "reason": failures[0] if failures else "partial_classification",
+            }],
+        }
+    reply = (
+        f"Марина проверила журнал: неподтверждённых операций — {len(records)}, "
+        f"их арифметическая сумма {_money_label(total)}; счета: {account_text}. "
+        "Это изменения баланса, рассчитанные системой, а не подтверждённые "
+        "пополнения, выводы или комиссии. Чтобы не придумывать источник денег, "
+        "нужно одно уточнение: были ли в эти даты реальные пополнения/выводы, "
+        "или это изменения после переподключения счёта? После ответа Марина "
+        "разнесёт записи по операциям и вернёт итог в этот диалог."
+    )
+    return {
+        "ok": True, "reply": reply,
+        "model": "deterministic ledger review", "provider": "local",
+        "agent": {"id": "marina", "name": "Марина"},
+        "actions": [{
+            "name": "review_financial_records", "status": "needs_input",
+            "record_count": len(records), "amount_total": total, "accounts": accounts,
+            "owner_answer_received": bool(owner_answer),
+        }],
+    }
+
+
+def _strategy_lifecycle_review_result(task: Dict[str, Any]) -> Dict[str, Any]:
+    from . import jobqueue
+
+    profile_ids: List[str] = []
+    with _LOCK:
+        doc = _read()
+        incident = next((
+            row for row in doc.get("incidents") or []
+            if str(row.get("incident_id") or "") == str(task.get("incident_id") or "")
+        ), {})
+        context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
+        profile_ids = [str(value) for value in context.get("profile_ids") or [] if value]
+    try:
+        profiles_doc = json.loads(
+            (_root() / "data" / "profiles" / "strategies.json").read_text(encoding="utf-8-sig")
+        )
+    except (OSError, json.JSONDecodeError):
+        profiles_doc = {}
+    profiles = [
+        row for row in profiles_doc.get("profiles") or []
+        if isinstance(row, dict) and (not profile_ids or str(row.get("profile_id") or "") in profile_ids)
+    ]
+    candidate = next((
+        row for row in profiles
+        if float((row.get("confidence_score") or {}).get("score") or 0) > 50
+    ), profiles[0] if profiles else None)
+    if not candidate:
+        return {
+            "ok": False, "reply": "Толик не нашёл исходный профиль стратегии; запускать неизвестный тест небезопасно.",
+            "model": "deterministic lifecycle review", "provider": "local",
+            "agent": {"id": "tolik", "name": "Толик"},
+            "actions": [{"name": "review_failed_strategies", "status": "blocked", "reason": "profile_not_found"}],
+        }
+    cls = str(candidate.get("deploy_strategy_class") or candidate.get("strategy_class") or "")
+    score = float((candidate.get("confidence_score") or {}).get("score") or 0)
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    old_oos = metrics.get("oos_2025") if isinstance(metrics.get("oos_2025"), dict) else {}
+    if cls not in set(jobqueue.whitelisted_strategies()):
+        reply = (
+            f"Толик проверил {candidate.get('name') or cls}: прежний OOS дал PF "
+            f"{float(old_oos.get('adj_pf') or 0):.2f}, сохранённая оценка — {score:.0f}%. "
+            "Новый тест честно не запущен: исходник этой версии находится в "
+            "обратимом карантине и сейчас отсутствует в каталоге NinjaTrader. "
+            "Поручение оставляю открытым; сначала нужно безопасно восстановить и "
+            "скомпилировать именно эту версию, иначе результат относился бы к другой стратегии."
+        )
+        return {
+            "ok": True, "reply": reply,
+            "model": "deterministic lifecycle review", "provider": "local",
+            "agent": {"id": "tolik", "name": "Толик"},
+            "actions": [{
+                "name": "review_failed_strategies", "status": "blocked",
+                "reason": "strategy_source_quarantined", "profile_id": candidate.get("profile_id"),
+                "strategy_class": cls,
+            }],
+        }
+    return {
+        "ok": True,
+        "reply": (
+            f"Толик подтвердил профиль {candidate.get('name') or cls}, но точный "
+            "исполнитель повторного OOS/stress-теста для этой сохранённой версии "
+            "ещё не настроен. Новый тест не запускал и поручение выполненным не "
+            "отмечаю: сначала нужно связать профиль с воспроизводимой конфигурацией "
+            "NinjaTrader."
+        ),
+        "model": "deterministic lifecycle review", "provider": "local",
+        "agent": {"id": "tolik", "name": "Толик"},
+        "actions": [{
+            "name": "review_failed_strategies", "status": "blocked",
+            "reason": "exact_retest_executor_not_configured", "strategy_class": cls,
+        }],
+    }
+
+
 def _task_needs_real_action(task: Dict[str, Any]) -> bool:
     text = " ".join(str(task.get(key) or "") for key in ("title", "description")).lower()
     return any(token in text for token in (
         "исправ", "сделай", "выполни", "запусти", "создай", "удал", "включ", "отключ",
         "останов", "перенеси", "замени", "обнови", "настрой", "добав",
-        "контрол", "следи", "наблюд",
+        "контрол", "следи", "наблюд", "проверь", "разбер", "подготов",
+        "проанализ", "расслед", "почини", "fix", "repair", "investigate",
     ))
 
 
@@ -922,6 +1234,13 @@ def _record_incident(doc: Dict[str, Any], *, category: str, key: str, severity: 
         incidents.append(incident)
         created = True
     else:
+        linked_task_id = str(incident.get("task_id") or "")
+        linked_task_active = bool(linked_task_id) and any(
+            str(row.get("task_id") or "") == linked_task_id
+            and str(row.get("status") or "") in ACTIVE_TASK_STATUSES
+            for row in doc.get("tasks") or []
+            if isinstance(row, dict)
+        )
         previous_material = json.dumps(
             [incident.get("severity"), incident.get("title"), incident.get("details"), incident.get("context")],
             ensure_ascii=False, sort_keys=True, default=str,
@@ -930,14 +1249,21 @@ def _record_incident(doc: Dict[str, Any], *, category: str, key: str, severity: 
             "severity": severity if severity in SEVERITY_ORDER else "warning",
             "title": str(title)[:500], "details": str(details)[:5000],
             "recommendation": str(recommendation)[:2000], "context": dict(context or {}),
-            "owner_decision_required": _requires_owner_decision(category, context),
+            "owner_decision_required": (
+                False if linked_task_active else _requires_owner_decision(category, context)
+            ),
             "last_seen_at_utc": now, "occurrences": int(incident.get("occurrences") or 0) + 1,
         })
         current_material = json.dumps(
             [incident.get("severity"), incident.get("title"), incident.get("details"), incident.get("context")],
             ensure_ascii=False, sort_keys=True, default=str,
         )
-        if incident.get("status") == "resolved" and previous_material != current_material:
+        if linked_task_active:
+            # The owner has already delegated this incident.  New telemetry
+            # updates the existing task instead of reopening a duplicate
+            # global yes/no card.
+            incident["status"] = "in_progress"
+        elif incident.get("status") == "resolved" and previous_material != current_material:
             incident.update({"status": "awaiting_decision", "decision": "", "reopened_at_utc": now})
             created = True
     doc["incidents"] = incidents[-1000:]
@@ -1703,6 +2029,68 @@ def _latest_prompted_incident(conversation_id: str = "default") -> Optional[Dict
                      and row.get("status") in OPEN_INCIDENT_STATUSES), None)
 
 
+def _remember_task_question(task: Dict[str, Any], conversation_id: str,
+                            incident: Optional[Dict[str, Any]] = None) -> None:
+    with _LOCK:
+        doc = _read()
+        awaiting = doc["dialogue"]["awaiting_task_by_conversation"]
+        awaiting[str(conversation_id or "default")[:120]] = {
+            "task_id": str(task.get("task_id") or ""),
+            "incident_id": str((incident or {}).get("incident_id") or ""),
+            "asked_at_utc": _now(),
+        }
+        _write(doc)
+
+
+def _latest_waiting_task(conversation_id: str = "default") -> Optional[Dict[str, Any]]:
+    with _LOCK:
+        doc = _read()
+        pending = doc["dialogue"].get("awaiting_task_by_conversation") or {}
+        turn = pending.get(str(conversation_id or "default")[:120]) or {}
+        asked_at = _parse_time(turn.get("asked_at_utc"))
+        if not asked_at or (_now_dt() - asked_at).total_seconds() > 7 * 24 * 3600:
+            return None
+        task_id = str(turn.get("task_id") or "")
+        return next((dict(row) for row in doc.get("tasks") or []
+                     if str(row.get("task_id") or "") == task_id
+                     and str(row.get("status") or "") == "waiting_review"), None)
+
+
+def _apply_waiting_task_answer(task: Dict[str, Any], answer: str,
+                               conversation_id: str) -> Dict[str, Any]:
+    task_id = str(task.get("task_id") or "")
+    with _LOCK:
+        doc = _read()
+        stored = next((row for row in doc.get("tasks") or []
+                       if str(row.get("task_id") or "") == task_id), None)
+        if stored is None or stored.get("status") != "waiting_review":
+            raise VitekError("Поручение уже продолжено или закрыто.")
+        stored["owner_answer"] = str(answer or "").strip()[:2000]
+        stored["owner_answer_at_utc"] = _now()
+        stored["status"] = "new"
+        stored["updated_at_utc"] = _now()
+        pending = doc["dialogue"].get("awaiting_task_by_conversation") or {}
+        pending.pop(str(conversation_id or "default")[:120], None)
+        for incident in doc.get("incidents") or []:
+            context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
+            if (str(context.get("task_id") or "") == task_id
+                    and incident.get("status") in OPEN_INCIDENT_STATUSES):
+                incident.update({
+                    "status": "resolved", "decision": "owner_answer",
+                    "decision_note": str(answer or "")[:2000],
+                    "decided_at_utc": _now(), "owner_decision_required": False,
+                })
+        _append_history(doc, "task_owner_answer_received", task_id=task_id)
+        _write(doc)
+        result = dict(stored)
+    emit_event(
+        "task_created", {"task_id": task_id}, source="owner_answer",
+        severity="task", dedupe_key=f"task-answer:{task_id}:{result['owner_answer_at_utc']}",
+        dedupe_seconds=0,
+    )
+    return result
+
+
 def _extract_incident_id(text: str) -> str:
     match = re.search(r"\bVI-[A-F0-9]{8,20}\b", str(text or "").upper())
     return match.group(0) if match else ""
@@ -1783,6 +2171,7 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
     command_low = re.sub(r"\bотсал", "остал", command_low)
     command_low = re.sub(r"\bсеголн", "сегод", command_low)
     latest = _latest_prompted_incident(conversation_id)
+    waiting_task = _latest_waiting_task(conversation_id)
     short_decision = latest and low in {
         "да", "делай", "выполняй", "подтверждаю", "нет", "не надо", "отмена",
         "решено", "исправлено",
@@ -1797,6 +2186,31 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
         r"марин[а-я]*|толик[а-я]*|никит[а-я]*|иван[а-я]*)\b",
         low,
     ))
+    looks_like_status = any(marker in command_low for marker in (
+        "как дела", "что осталось", "какие задачи", "какие задания",
+        "список задач", "статус", "чем занят", "что делаешь",
+    ))
+    task_answer = bool(
+        waiting_task and not addressed_other and len(raw) <= 2000
+        and not new_request and not looks_like_status
+    )
+    if task_answer:
+        resumed = _apply_waiting_task_answer(waiting_task, command or raw, conversation_id)
+        assigned_agent = str(
+            resumed.get("assigned_agent") or _task_route(resumed).get("agent") or "orchestrator"
+        )
+        assigned_name = AGENT_LABELS.get(assigned_agent, "Управляющий")
+        return {
+            "handled": True, "kind": "task_reply", "task": resumed,
+            "action": {
+                "name": "vitek_resume_task", "status": "queued",
+                "task_id": resumed.get("task_id"),
+            },
+            "reply": (
+                f"Понял ваше пояснение. {assigned_name} продолжил работу; итог вернётся "
+                "в этот же диалог после фактического обновления журнала."
+            ),
+        }
     # A pending Vitek question owns a short conversational answer, not every
     # subsequent owner command.  An explicit new request must be routed on its
     # own merits instead of being attached as a note to the old incident.
@@ -1816,7 +2230,7 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
                 "handled": True, "kind": "task", "task": task,
                 "action": {"name": "vitek_activate_task", "status": "queued", "task_id": task["task_id"]},
                 "reply": (
-                    "Хорошо, Дмитрий Сергеевич. Сейчас разберусь, подключу нужных специалистов "
+                    "Хорошо. Сейчас разберусь, подключу нужных специалистов "
                     "и отчитаюсь в этом диалоге. Если без вашего решения продолжить будет нельзя, "
                     "задам один короткий и конкретный вопрос."
                 ),
@@ -1918,7 +2332,7 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
         return {
             "handled": True, "kind": "task", "task": task,
             "action": {"name": "vitek_add_task", "status": "queued", "task_id": task["task_id"]},
-            "reply": "Хорошо, Дмитрий Сергеевич. Поручение принял и передал Управляющему. Он подключит нужных специалистов, а я отвечаю за итог и вернусь с результатом или одним конкретным вопросом, если без вас действительно нельзя продолжить.",
+            "reply": "Поручение принял и передал Управляющему. Он подключит нужных специалистов, а я отвечаю за итог и вернусь с результатом или одним конкретным вопросом, если без вас действительно нельзя продолжить.",
         }
     return {"handled": False, "addressed": True, "delegate": True, "clean_message": command or raw}
 
@@ -1945,26 +2359,53 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if str(task.get("status") or "") not in ACTIVE_TASK_STATUSES:
         return {"ok": True, "skipped": True, "reason": "task_not_active"}
     route = _task_route(task)
+    intent = _task_intent(task, route)
+    route = {
+        "agent": str(intent.get("agent") or route["agent"]),
+        "role": str(intent.get("role") or route["role"]),
+        "complexity": str(intent.get("complexity") or route["complexity"]),
+    }
     selector = {"light": "secretary", "standard": "deputy", "critical": "manager"}[route["complexity"]]
     claimed = _set_task_execution(
         task_id, status="in_progress", assigned_agent=route["agent"], assigned_role=route["role"],
         complexity=route["complexity"], execution_started_at_utc=_now(),
         execution_event_id=event.get("event_id"),
+        routing_model=intent.get("routing_model"),
+        routing_provider=intent.get("routing_provider"),
+        routing_capability=intent.get("capability"),
     )
     if claimed.get("status") != "in_progress" or claimed.get("execution_event_id") != event.get("event_id"):
         return {"ok": True, "skipped": True, "reason": "task_retired"}
     from .ai_lab import chief_agent
     conversation_scope = task.get("conversation_scope") if isinstance(task.get("conversation_scope"), dict) else None
-    prompt = (
-        "Выполни эту задачу владельца через разрешённые инструменты приложения. "
-        "Не утверждай, что действие сделано, если исполнитель не вернул фактический результат. "
-        f"Профильный исполнитель: {route['agent']} ({route['role']}).\n"
-        f"ЗАДАЧА: {task.get('title')}\nОПИСАНИЕ: {task.get('description') or '—'}"
-    )
-    response = chief_agent.handle_message(
-        prompt[:6000], source="vitek", mirror_to_telegram=False,
-        conversation_id="vitek-operations", agent=selector, scope=conversation_scope,
-    )
+    capability = str(intent.get("capability") or "generic_application_task")
+    conversation_id = str(task.get("conversation_id") or f"vitek-task-{task_id}")
+    if capability == "reconnect_runtime_connection":
+        from .ai_lab import capability_map
+        response = capability_map.execute(
+            capability, f"{task.get('title')}\n{task.get('description') or ''}",
+            conversation_id=conversation_id,
+            intent={"capability": capability, "category": "runtime_connection"},
+            scope=conversation_scope,
+        )
+    elif capability == "review_financial_records":
+        response = _financial_review_result(task)
+    elif capability == "review_failed_strategies":
+        response = _strategy_lifecycle_review_result(task)
+    else:
+        owner_answer = str(task.get("owner_answer") or "").strip()
+        prompt = (
+            "Выполни эту задачу владельца через разрешённые инструменты приложения. "
+            "Не утверждай, что действие сделано, если исполнитель не вернул фактический результат. "
+            f"Профильный исполнитель: {route['agent']} ({route['role']}).\n"
+            f"ЗАДАЧА: {task.get('title')}\nОПИСАНИЕ: {task.get('description') or '—'}\n"
+            f"ПОЯСНЕНИЕ ВЛАДЕЛЬЦА: {owner_answer or '—'}\n"
+            f"ДИАЛОГ: {conversation_id}"
+        )
+        response = chief_agent.handle_message(
+            prompt[:6000], source="vitek", mirror_to_telegram=False,
+            conversation_id=conversation_id, agent=selector, scope=conversation_scope,
+        )
     actions = [row for row in (response.get("actions") or []) if isinstance(row, dict)]
     statuses = {str(row.get("status") or "") for row in actions}
     model = str(response.get("model") or "unknown")
@@ -1983,6 +2424,8 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         "execution_actions": actions[:10],
         "result": reply,
     }
+    mission_ids = [str(row.get("mission_id") or "") for row in actions if row.get("mission_id")]
+    command_ids = [str(row.get("command_id") or "") for row in actions if row.get("command_id")]
     incident: Optional[Dict[str, Any]] = None
     if statuses & {"error", "blocked"} or execution_unavailable:
         failed = [row for row in actions if row.get("status") in {"error", "blocked"}]
@@ -1991,19 +2434,38 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
             event=event, severity="error", title=f"Не удалось выполнить задачу {task_id}",
             details=json.dumps(failed, ensure_ascii=False, default=str)[:4000] or reply,
             recommendation="Выберите способ исправления или уточните задачу.",
-            context={"task_id": task_id, "route": route, "model": model},
+            context={
+                "task_id": task_id, "route": route, "model": model,
+                # The task conversation already contains the exact blocked
+                # result.  A second generic yes/no incident card would create
+                # a duplicate task and detach the owner's answer from it.
+                "owner_decision_required": False,
+            },
+            notify_owner=False,
         )
-    elif statuses & {"approval_required"}:
+    elif statuses & {"approval_required", "needs_input", "waiting_review"}:
         updated = _set_task_execution(task_id, status="waiting_review", **common)
         incident = _create_execution_incident(
             event=event, severity="warning", title=f"Нужно решение по задаче {task_id}",
             details=reply, recommendation="Подтвердите предложенное действие либо отмените его.",
-            context={"task_id": task_id, "route": route, "model": model},
+            context={
+                "task_id": task_id, "route": route, "model": model,
+                # The owner replies in the same task conversation.  Keep this
+                # incident for audit, not as another global decision card.
+                "owner_decision_required": False,
+            },
+            notify_owner=False,
+        )
+    elif mission_ids:
+        updated = _set_task_execution(
+            task_id, status="in_progress", execution_mission_id=mission_ids[0],
+            execution_job_ids=mission_ids, **common,
         )
     elif statuses & {"queued", "running"}:
         job_ids = [str(row.get("job_id") or row.get("run_id") or "") for row in actions]
         updated = _set_task_execution(
-            task_id, status="in_progress", execution_job_ids=[value for value in job_ids if value], **common,
+            task_id, status="in_progress", execution_job_ids=[value for value in job_ids if value],
+            execution_command_id=command_ids[0] if command_ids else "", **common,
         )
     elif "completed" in statuses or (not actions and not _task_needs_real_action(task)):
         updated = _set_task_execution(task_id, status="completed", **common)
@@ -2014,30 +2476,49 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
             event=event, severity="warning", title=f"Задача {task_id} требует уточнения",
             details=reply or "Исполнитель не подтвердил фактическое действие.",
             recommendation="Уточните ожидаемый результат или разрешите предложенное действие.",
-            context={"task_id": task_id, "route": route, "model": model},
+            context={
+                "task_id": task_id, "route": route, "model": model,
+                "owner_decision_required": False,
+            },
+            notify_owner=False,
         )
-    conversation_id = str(task.get("conversation_id") or "")
     if conversation_id:
         owner_title = _executive_task_title(updated)
         state = str(updated.get("status") or "")
         if state == "completed":
-            report = f"Дмитрий Сергеевич, готово: {owner_title}."
+            report = f"Готово: {owner_title}."
         elif state == "blocked":
-            report = f"Дмитрий Сергеевич, пока не смог завершить поручение «{owner_title}». Нужен другой безопасный способ или ваше уточнение."
+            report = f"Пока не смог завершить поручение «{owner_title}»: нужен другой безопасный способ или ваше уточнение."
         elif state == "waiting_review":
-            report = f"Дмитрий Сергеевич, по поручению «{owner_title}» нужно ваше короткое решение, прежде чем продолжить."
+            report = f"По поручению «{owner_title}» нужен ваш короткий ответ, прежде чем продолжить."
         else:
-            report = f"Дмитрий Сергеевич, поручение «{owner_title}» остаётся в работе. Следующий отчёт пришлю сюда."
+            report = f"Поручение «{owner_title}» остаётся в работе. Следующий отчёт пришлю сюда."
+        if task.get("execution_correction"):
+            report = "Исправляю предыдущий ответ: он относился не к этому поручению.\n\n" + report
         concise = " ".join(reply.split())[:1200]
         if concise and concise.lower() not in report.lower():
             report = f"{report}\n\n{concise}"
         try:
-            chief_agent.report_chart_snapshot(
-                conversation_id=conversation_id, text=report, agent_name=FORMAL_NAME,
-                mirror_to_telegram=True, scope=conversation_scope,
+            agent_info = response.get("agent") if isinstance(response.get("agent"), dict) else {}
+            report_agent = str(agent_info.get("name") or AGENT_LABELS.get(route["agent"]) or FORMAL_NAME)
+            route_model = str(intent.get("routing_model") or "")
+            visible_model = model if not route_model or route_model == model else f"{route_model} → {model}"
+            route_provider = str(intent.get("routing_provider") or "")
+            visible_provider = str(response.get("provider") or "")
+            if route_provider and visible_provider and route_provider != visible_provider:
+                visible_provider = f"{route_provider} + {visible_provider}"
+            chief_agent.report_task_update(
+                conversation_id=conversation_id, text=report, agent_name=report_agent,
+                model=visible_model, provider=visible_provider or "local",
+                action_name=capability, action_status=(
+                    "completed" if state == "completed" else
+                    "blocked" if state == "blocked" else
+                    "needs_input" if state == "waiting_review" else "running"
+                ), close=state == "completed", mirror_to_telegram=True,
+                scope=conversation_scope,
             )
-            if state == "completed":
-                chief_agent.set_conversation_closed(conversation_id, True, scope=conversation_scope)
+            if state == "waiting_review":
+                _remember_task_question(updated, conversation_id, incident)
         except Exception:
             pass
     return {
@@ -2047,7 +2528,119 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _runtime_connection_confirmed(runtime_module: Any = None) -> bool:
+    if runtime_module is None:
+        from . import runtime as runtime_module
+    if not runtime_module.read_heartbeat().get("fresh"):
+        return False
+    return any(
+        not row.get("is_live")
+        and bool(row.get("control_allowed"))
+        and str(row.get("connection_status") or "").strip().lower() == "connected"
+        for row in runtime_module.read_accounts()
+    )
+
+
+def _report_reconciled_task(task: Dict[str, Any], *, state: str, text: str,
+                            model: str, provider: str = "local") -> None:
+    signature = f"{state}:{hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]}"
+    if str(task.get("execution_reported_state") or "") == signature:
+        return
+    conversation_id = str(task.get("conversation_id") or "")
+    scope = task.get("conversation_scope") if isinstance(task.get("conversation_scope"), dict) else None
+    if conversation_id:
+        try:
+            from .ai_lab import chief_agent
+            agent_id = str(task.get("assigned_agent") or "vitek")
+            chief_agent.report_task_update(
+                conversation_id=conversation_id, text=text,
+                agent_name=AGENT_LABELS.get(agent_id, FORMAL_NAME),
+                model=model, provider=provider,
+                action_name=str(task.get("routing_capability") or "vitek_task"),
+                action_status="completed" if state == "completed" else "blocked",
+                close=state == "completed", mirror_to_telegram=True, scope=scope,
+            )
+        except Exception:
+            return
+    _set_task_execution(str(task.get("task_id") or ""), execution_reported_state=signature)
+
+
+def _reconcile_task_executions() -> None:
+    """Advance long-running work only after its real subsystem confirms it."""
+    with _LOCK:
+        tasks = [
+            dict(row) for row in _read().get("tasks") or []
+            if isinstance(row, dict) and str(row.get("status") or "") in ACTIVE_TASK_STATUSES
+        ]
+    if not tasks:
+        return
+    from . import runtime
+
+    for task in tasks:
+        task_id = str(task.get("task_id") or "")
+        command_id = str(task.get("execution_command_id") or "")
+        if command_id:
+            command = runtime.get_command_status(command_id, timeout_sec=120)
+            command_state = str(command.get("state") or "")
+            if command_state == "confirmed_connected":
+                text = "Связь с NinjaTrader восстановлена и подтверждена Bridge и подключённым демо-счётом."
+                updated = _set_task_execution(
+                    task_id, status="completed", result=text,
+                    execution_confirmation=command, execution_model="runtime confirmation",
+                    execution_provider="local",
+                )
+                _report_reconciled_task(updated, state="completed", text=text,
+                                        model="runtime confirmation")
+            elif command_state.startswith("failed_"):
+                text = (
+                    "Переподключение не подтверждено. "
+                    + str(command.get("reason") or "Bridge не вернул надёжный результат.")
+                )[:1800]
+                updated = _set_task_execution(
+                    task_id, status="blocked", result=text,
+                    execution_confirmation=command,
+                )
+                _report_reconciled_task(updated, state="blocked", text=text,
+                                        model="runtime confirmation")
+            continue
+
+        mission_id = str(task.get("execution_mission_id") or "")
+        if not mission_id:
+            continue
+        try:
+            from .ai_lab import chief_agent
+            mission = dict(chief_agent.status().get("mission") or {})
+        except Exception:
+            continue
+        if str(mission.get("mission_id") or "") != mission_id:
+            continue
+        mission_state = str(mission.get("status") or "")
+        if mission_state == "completed":
+            text = str(mission.get("completion_report") or "Исследование завершено.")
+            updated = _set_task_execution(
+                task_id, status="completed", result=text,
+                execution_model=str(mission.get("completion_report_model") or "mission controller"),
+                execution_provider="local", execution_mission_status=mission_state,
+            )
+            _report_reconciled_task(
+                updated, state="completed", text=text,
+                model=str(mission.get("completion_report_model") or "mission controller"),
+            )
+        elif mission_state in {"stopped", "deadline_reached", "failed", "blocked"}:
+            text = str(mission.get("completion_report") or mission.get("last_error") or "Исследование остановлено без подтверждённого результата.")
+            updated = _set_task_execution(
+                task_id, status="blocked", result=text,
+                execution_mission_status=mission_state,
+            )
+            _report_reconciled_task(updated, state="blocked", text=text,
+                                    model="mission controller")
+
+
 def _resolve_connection_incidents() -> set[str]:
+    from . import runtime
+    if not _runtime_connection_confirmed(runtime):
+        return set()
+    completed_tasks: List[Dict[str, Any]] = []
     with _LOCK:
         doc = _read()
         resolved_ids: set[str] = set()
@@ -2075,6 +2668,7 @@ def _resolve_connection_incidents() -> set[str]:
                     "completed_at_utc": _now(),
                     "updated_at_utc": _now(),
                 })
+                completed_tasks.append(dict(task))
         retained_events = []
         retired_events = []
         for queued in doc.get("events") or []:
@@ -2108,7 +2702,13 @@ def _resolve_connection_incidents() -> set[str]:
                 task_count=len(linked_task_ids), event_count=len(retired_events),
             )
             _write(doc)
-        return resolved_ids
+    for task in completed_tasks:
+        _report_reconciled_task(
+            task, state="completed",
+            text="Связь с NinjaTrader восстановлена и подтверждена Bridge и подключённым демо-счётом.",
+            model="runtime confirmation",
+        )
+    return resolved_ids
 
 
 def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -2181,7 +2781,36 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "ok": False, "route": route, "model": "deterministic fallback", "provider": "local",
                 "content": f"Профильная модель недоступна: {str(exc)[:500]}",
             }
-    if route.get("decision"):
+    if kind == "connection_lost":
+        # Event ingestion and the deterministic scan must converge on one
+        # canonical outage fingerprint.  Using ``vitek_execution|event_id``
+        # here used to create a second owner card when scan() later recorded
+        # ``runtime_connection|ninjatrader_bridge_lost``.
+        outage_context = {
+            **payload,
+            "event_type": "connection_lost",
+            "route": route,
+            "model": result.get("model"),
+        }
+        with _LOCK:
+            doc = _read()
+            incident, created = _record_incident(
+                doc,
+                category="runtime_connection",
+                key="ninjatrader_bridge_lost",
+                severity="critical",
+                title="Потеряна связь с NinjaTrader",
+                details=str(result.get("content") or "Связь с NinjaTrader потеряна.")[:4000],
+                recommendation="Витёк ждёт подтверждения безопасного восстановления связи.",
+                context=outage_context,
+            )
+            if created:
+                doc["last_activity_state"] = "busy"
+            _write(doc)
+            result["incident"] = dict(incident)
+        if created and not bool(payload.get("owner_already_notified")):
+            result["notified"] = _notify_incidents([dict(incident)], resting=False)
+    elif route.get("decision"):
         severity = "critical" if route.get("complexity") == "critical" else "warning"
         result["incident"] = _create_execution_incident(
             event=event, severity=severity,
