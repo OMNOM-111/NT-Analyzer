@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Сообщество — StratForge AI</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260715-inbox6">
+<link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
+</head>
+<body data-page="community" data-title="Сообщество" data-kicker="Чат пользователей · не Orchestrator">
+  <div class="grid cols-2">
+    <section class="panel">
+      <div class="panel-h"><h2>Общий чат</h2><span class="sub">отдельный контур от ИИ-оркестратора</span></div>
+      <div class="panel-b col gap-lg">
+        <div class="list" id="c-chat" style="max-height:420px;overflow:auto"></div>
+        <div class="flex gap-sm">
+          <input id="c-text" placeholder="Сообщение в community…" style="flex:1">
+          <button class="btn primary" id="c-send" type="button">Отправить</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>Стратегии и рейтинги</h2><span class="sub">доходность · просадка · копирования</span></div>
+      <div class="panel-b col gap-lg">
+        <div class="composer">
+          <div class="field"><label>Название</label><input id="c-title" placeholder="Моя стратегия"></div>
+          <div class="field"><label>Net profit</label><input id="c-net" type="number" value="1200"></div>
+          <div class="field"><label>Max DD</label><input id="c-dd" type="number" value="-400"></div>
+          <div class="field"><label>Заметка</label><input id="c-notes" placeholder="кратко"></div>
+        </div>
+        <button class="btn" id="c-publish" type="button">Опубликовать стратегию</button>
+        <div class="list" id="c-strategies"></div>
+        <div class="list" id="c-ratings"></div>
+      </div>
+    </section>
+  </div>
+<script src="assets/api.js?v=20260715-inbox6"></script>
+<script src="assets/domain.js?v=20260629-final4"></script>
+<script src="assets/ambient.js?v=20260703-stratforge1"></script>
+<script src="assets/ui.js?v=20260715-inbox6"></script>
+<script src="assets/victor.js?v=20260715-inbox6"></script>
+<script src="assets/pages/community.js?v=20260715-community1"></script>
+</body>
+</html>
