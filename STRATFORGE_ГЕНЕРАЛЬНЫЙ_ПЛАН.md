@@ -19,7 +19,7 @@
 | 2 | Живая демоверсия вместо blur | ✅ ~90% | `demo_backtest` capability, 1-click сценарии, watermark, quota 3/день, без NT. Остаток: ручной UI-прогон free user. |
 | 3 | Учебная торговля | ✅ ~85% | `practice_trading.py`, страница `practice-trading.html`, layouts 1/2/4, ticket, SL/TP, risk lock, отчёты. 6/8 charts — не MVP. |
 | 4 | Сообщество | ✅ ~80% | `community.py`, страница, chat/publish/copy/ratings/moderation. Telegram duplicate через `NTA_COMMUNITY_TELEGRAM_CHAT_ID` (отдельно от Orchestrator). |
-| 5 | Telegram + Google для NinjaTrader | ✅ ~95% | Вход — только Telegram. Google + Telegram step-up — только для NT. **Исправлено 15.07:** gate читал только raw `google_sub` и ломал bridge pair после привязки Google (регрессия `test_workspaces`); теперь учитывает `google_linked` из public user. |
+| 5 | Telegram + Google для NinjaTrader | ✅ ~95% | Вход — только Telegram. Google + Telegram step-up — только для NT. Gate: public `google_linked` **и** store-lookup `google_sub` по `user_id` (forged flag → 403). Ручной OAuth — ⚪ секреты владельца. |
 | 6 | Staging + «войти как» | ✅ ~90% | `runtime_env`, `test_auth`, presets, impersonation + red banner, prod lock на старте, `docs/STAGING_QA.md`. |
 | 7 | Micro Live | ✅ ~85% | MVP free trades + scale 1:100; staging stubs. |
 | 8 | Рейтинги ИИ ★ → routing | ✅ ~90% | Агрегаты + router exploration после gates. |
@@ -377,7 +377,14 @@ Staging isolation gates, virtual users, fake Google link, «Войти как» 
 
 ## ПУНКТ 9. Режимы «Новичок» и «Профессионал» (определяют весь продукт)
 
-> **Статус: ❌ 0%.** Новое требование владельца (15.07.2026). Пока в коде есть free_preview / practice / demo / pro capabilities, но **нет явного выбора режима**, который перестраивает весь UX.
+> **Статус: ❌ 0% (код не начат).** ТЗ и ответы владельца зафиксированы 15.07.2026. **Реализацию не начинать**, пока не закоммичен объём A–D и не дана отдельная команда на старт Фазы E.
+
+### 9.0. Ответы владельца (зафиксировано)
+
+1. **Новичок НЕ видит** Community / новости / документы. Только: кошелёк → инструмент → график → сделки → простой отчёт.
+2. **Новичок→Профессионал** — самостоятельно, с коротким предупреждением. **Профессионал→Новичок** — только с явным подтверждением (стратегии/ИИ/NT скроются).
+3. **Owner всегда Профессионал** (на staging impersonation может смотреть beginner-пресет).
+4. Сначала коммит объёма A–D (по фазам) + pytest; Фаза E — только по отдельной команде после аудита коммитов.
 
 ### 9.1. Что нужно сделать
 При первом входе (и с возможностью смены позже с предупреждением) пользователь выбирает один из двух режимов. **Весь функционал приложения зависит от выбора.**
@@ -434,12 +441,14 @@ Nav новичка: короткое меню (кошелёк / торговля
 ### 9.4. Обязательно перепроверить
 - [ ] После входа без режима — только экран выбора.
 - [ ] Новичок: кошелёк → инструмент → график → сделка → баланс меняется.
-- [ ] Новичок: нет пунктов Стратегии / AI Lab / Micro Live / NT connect в nav.
+- [ ] Новичок: в nav **нет** Стратегии / AI Lab / Community / новости / документы / Micro Live / NT connect.
 - [ ] Профессионал: полный nav по тарифу как сейчас.
-- [ ] API beginner не отдаёт strategy/AI write даже при прямом URL.
+- [ ] API beginner не отдаёт strategy/AI/community write даже при прямом URL.
 - [ ] Демо-суммы не пишутся в live/micro ledger.
-- [ ] Staging preset переключает режим.
-- [ ] pytest + ручной прогон mobile viewport.
+- [ ] Смена режимов по правилам §9.0.
+- [ ] Owner всегда professional.
+- [ ] Staging preset beginner / professional.
+- [ ] pytest `test_ux_mode.py` + ручной mobile viewport.
 
 ---
 
