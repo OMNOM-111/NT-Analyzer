@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Учебная торговля — StratForge AI</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260715-inbox6">
+<link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
+</head>
+<body data-page="practice" data-title="Учебная торговля" data-kicker="Виртуальные деньги · механика как в реале">
+  <div class="demo-report-banner" id="practice-badge">Учебный счёт · не реальные деньги</div>
+  <div class="grid cols-4" id="practice-kpis"></div>
+  <div class="grid cols-2" style="margin-top:18px">
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Order ticket</h2>
+        <span class="sub">market / limit · SL/TP</span>
+        <div class="spacer"></div>
+        <div class="seg" id="layout-seg">
+          <button type="button" class="active" data-layout="1">1</button>
+          <button type="button" data-layout="2">2</button>
+          <button type="button" data-layout="4">4</button>
+        </div>
+      </div>
+      <div class="panel-b col gap-lg">
+        <div id="practice-charts" class="practice-charts layout-1"></div>
+        <div class="composer">
+          <div class="field"><label>Символ</label><select id="p-symbol"><option>MNQ</option><option>MES</option><option>MGC</option></select></div>
+          <div class="field"><label>Сторона</label><select id="p-side"><option value="buy">Buy / Long</option><option value="sell">Sell / Short</option></select></div>
+          <div class="field"><label>Qty</label><input id="p-qty" type="number" min="1" max="20" value="1"></div>
+          <div class="field"><label>Тип</label><select id="p-type"><option value="market">Market</option><option value="limit">Limit</option></select></div>
+          <div class="field"><label>Limit</label><input id="p-limit" type="number" step="0.25" placeholder="цена"></div>
+          <div class="field"><label>Stop Loss</label><input id="p-sl" type="number" step="0.25" placeholder="опц."></div>
+          <div class="field"><label>Take Profit</label><input id="p-tp" type="number" step="0.25" placeholder="опц."></div>
+        </div>
+        <div class="flex gap-sm wrap">
+          <button class="btn primary" id="p-buy" type="button">Отправить ордер</button>
+          <button class="btn danger" id="p-close" type="button">Закрыть позицию</button>
+          <button class="btn ghost" id="p-create" type="button">Создать / сбросить счёт</button>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>Позиции · ордера · отчёт</h2><span class="sub" id="p-risk"></span></div>
+      <div class="panel-b col gap-lg">
+        <div class="list" id="p-positions"></div>
+        <div class="list" id="p-orders"></div>
+        <div class="list" id="p-trades"></div>
+        <div class="finance-note" id="p-report"></div>
+      </div>
+    </section>
+  </div>
+<script src="assets/api.js?v=20260715-inbox6"></script>
+<script src="assets/domain.js?v=20260629-final4"></script>
+<script src="assets/ambient.js?v=20260703-stratforge1"></script>
+<script src="assets/ui.js?v=20260715-inbox6"></script>
+<script src="assets/victor.js?v=20260715-inbox6"></script>
+<script src="assets/pages/practice.js?v=20260715-practice1"></script>
+</body>
+</html>
