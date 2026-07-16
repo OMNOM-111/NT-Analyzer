@@ -530,13 +530,28 @@ def owner_overview(owner_id: Any) -> Dict[str, Any]:
         status = owner_status(owner_id, user.get("user_id"))
         online = [row for row in status["sessions"] if row.get("online")]
         items.append({
-            "user_id": int(user["user_id"]), "online": bool(online), "session_count": len(online),
+            "user_id": int(user["user_id"]),
+            "username": str(user.get("username") or ""),
+            "first_name": str(user.get("first_name") or ""),
+            "last_name": str(user.get("last_name") or ""),
+            "is_owner": bool(user.get("is_owner")),
+            "online": bool(online),
+            "session_count": len(online),
+            "auth_session_count": len(status.get("auth_sessions") or []),
             "cpu_main_thread_percent": max((float(row.get("cpu_main_thread_percent") or 0) for row in online), default=0),
             "js_heap_used_mb": sum(float(row.get("js_heap_used_mb") or 0) for row in online),
             "network_mb_per_min": sum(float(row.get("network_mb_per_min") or 0) for row in online),
             "alert_count": len(status["alerts"]),
+            "page": str((online[0] or {}).get("page") or "") if online else "",
+            "reported_at_utc": str((online[0] or {}).get("reported_at_utc") or "") if online else "",
         })
-    return {"ok": True, "users": items, "online_count": sum(1 for row in items if row["online"]), "alert_count": sum(row["alert_count"] for row in items)}
+    return {
+        "ok": True,
+        "users": items,
+        "online_count": sum(1 for row in items if row["online"]),
+        "alert_count": sum(row["alert_count"] for row in items),
+        "telemetry_note": "Показатели относятся к вкладке приложения. Системные CPU/RAM других программ браузер не раскрывает.",
+    }
 
 
 def screenshot_bytes(owner_id: Any, request_id: Any) -> tuple[bytes, str]:
