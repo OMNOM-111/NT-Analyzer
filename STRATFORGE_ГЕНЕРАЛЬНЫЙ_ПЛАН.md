@@ -500,7 +500,7 @@ Nav новичка: короткое меню (кошелёк / торговля
 
 Владелец принимает работу только если выполнено всё ниже.
 
-> **Аудит 15.07.2026:** ни одна фаза не принята целиком. Частичные галочки — только то, что реально работает в коде.
+> **Повторный аудит 16.07.2026:** реализация и автоматические ворота фаз A–E завершены. Финальная production-приёмка остаётся заблокирована только обязательными внешними credentials/адаптерами и ручной визуальной/Strategy Analyzer матрицей.
 
 ## Фаза A
 - [x] Dual-auth для NinjaTrader: Google + Telegram step-up ✅ *(вход — только Telegram; Google не обязателен для остальных разделов)*
@@ -529,13 +529,14 @@ Nav новичка: короткое меню (кошелёк / торговля
 - [x] Professional: текущий полный контур по тарифу ✅
 - [x] Смена режима + staging presets + тесты ✅
 
-**Фазы:** A–D ~85–95% · **E MVP ✅**.
+**Фазы A–E:** код/API/автотесты ✅. Production release: **BLOCKED** до выполнения внешней и ручной матрицы ниже.
 
 **Блокеры владельца (без остановки остальной работы):**
-1. Google OAuth client id/secret — чтобы пользователи могли **привязать Google перед управлением NinjaTrader** (вход без Google уже работает).
-2. Опционально: `NTA_COMMUNITY_TELEGRAM_CHAT_ID` для живого community Telegram-mirror.
-3. Ручной UI E2E на staging (`NTA_APP_ENV=staging`, `NTA_ENABLE_TEST_AUTH=1`).
-4. Продуктовые детали Фазы E: Community/новости для новичка — **закрыты** (§9.0). Остаётся ручной staging E2E UI.
+1. Staging Google OAuth client id/secret и allowed redirect URI — для реальной привязки перед управлением NinjaTrader.
+2. Staging Telegram bot, owner chat и отдельный `NTA_COMMUNITY_TELEGRAM_CHAT_ID`.
+3. Явно разрешённый ручной UI E2E в двух браузерных профилях и mobile viewports (`NTA_APP_ENV=staging`, `NTA_ENABLE_TEST_AUTH=1`).
+4. NinjaTrader Strategy Analyzer для ручного сравнения bridge/backtest-контракта.
+5. Одобренные payment-provider и broker sandbox adapters; реальные деньги/orders требуют отдельного письменного разрешения и лимитов.
 
 ---
 
@@ -587,13 +588,15 @@ Staging → Virtual user → Войти как пользователь → пр
 
 ---
 
-## СТАТУС ПОСЛЕ РЕАЛИЗАЦИИ ФАЗ A–E (15–16.07.2026)
+## СТАТУС ПОСЛЕ ПОВТОРНОГО АУДИТА ФАЗ A–E (16.07.2026)
 
-Фазы A–D доведены до рабочего MVP. Work 5: политика NT-only подтверждена владельцем.  
-**Фаза E / Пункт 9: режимы Новичок и Профессионал — MVP в коде** (`ux_mode`, gate UI, permissions/API deny, presets, `tests/test_ux_mode.py`).
+Фазы A–E завершены в коде и автоматической проверке. Work 5: политика NT-only подтверждена владельцем.
+**Фаза E / Пункт 9: режимы Новичок и Профессионал реализованы** (`ux_mode`, gate UI, permissions/API deny, presets, `tests/test_ux_mode.py`).
 
-Остаточные риски: Micro Live staging stubs; prod Google OAuth secrets для привязки; community Telegram mirror без chat id; ручной staging E2E / visual mobile у владельца.
+Повторный независимый прогон: **618 pytest passed**, **13/13 legacy suites**, Python compile, **32/32 JavaScript syntax**, CSP/secrets/Markdown scan и NinjaTrader bridge build (**0 warnings / 0 errors**) — PASS. Staging soak: **2133/2133 HTTP 200**, 0 ошибок/5xx/SQLite locks, 10 виртуальных пользователей, production guard неизменён. Интерактивный Orchestrator/domain AI и тяжёлые chart batches переведены в durable worker; idempotency, cancel/retry/lease и реальный process-crash supervisor probe — PASS. Окончательный локальный production backend перезапущен: UI/resources HTTP 200, worker жив, stderr пуст; read-only Telegram bot/webhook/owner-chat probe — PASS.
+
+Остаточные блокеры production-приёмки: реальные Google/Telegram credentials; payment/broker sandbox adapters и отдельное разрешение на money/order tests; ручной staging E2E/visual mobile/двухпрофильная сессия; NinjaTrader Strategy Analyzer. Это внешние проверки, а не незакрытая кодовая задача.
 
 ---
 
-*Конец документа. Это единственный главный файл-задание для разработчиков. Блок «АУДИТ СТАТУСА» в начале и пометки ✅/🟡/❌ по пунктам обновлены сверкой с кодом 15.07.2026.*
+*Конец документа. Это единственный главный файл-задание для разработчиков. Статус и приёмочные пометки повторно сверены с кодом и автоматическими воротами 16.07.2026; полный release-аудит: `NT-Analyzer/docs/STRATFORGE_RELEASE_AUDIT_2026-07-15.md`.*
