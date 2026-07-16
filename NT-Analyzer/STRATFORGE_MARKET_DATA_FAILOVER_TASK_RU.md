@@ -1,9 +1,9 @@
 # STRATFORGE — независимые рыночные данные и failover
 
-Дата реализации и проверки: 16 июля 2026 (America/Los_Angeles)  
-Ветка: `codex/stratforge-release-20260716`  
-Основные коммиты: `62f8c926`, `40101aa8`  
-Статус кода: **реализовано и проверено**  
+Дата реализации и проверки: 16 июля 2026 (America/Los_Angeles)
+Ветка: `codex/stratforge-release-20260716`
+Основные коммиты: `62f8c926`, `40101aa8`
+Статус кода: **реализовано и проверено**
 Статус production release в целом: **BLOCKED внешней/ручной матрицей, см. release audit**
 
 ## 1. Фактическая цепочка до исправления
@@ -59,7 +59,7 @@ UI / API bars request
 - текущий CME futures ответ задержан примерно на 10 минут и поэтому честно получает `external_stale`;
 - source не является authority для live-order, а рассчитанные вокруг last bid/ask помечены `bid_ask_estimated=true`.
 
-Отключение public fallback: `NTA_MARKET_DATA_PUBLIC_FALLBACK=0`.  
+Отключение public fallback: `NTA_MARKET_DATA_PUBLIC_FALLBACK=0`.
 Порядок providers: `NTA_MARKET_DATA_PROVIDERS=databento,yahoo`.
 
 ## 4. Автоматическое переключение и recovery
