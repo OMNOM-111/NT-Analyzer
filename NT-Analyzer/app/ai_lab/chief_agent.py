@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .. import durable
-from . import agent_registry, agent_router, llm_timeouts, operator_notes, paths, registry, runner, universal_llm
+from . import agent_registry, agent_router, command_language, llm_timeouts, operator_notes, paths, registry, runner, universal_llm
+from . import dialogue_policy
 from .io_utils import append_jsonl, read_json, read_jsonl, write_json_atomic, write_jsonl_atomic
 
 
@@ -38,6 +39,9 @@ AUTO_RECONNECT_COOLDOWN_SEC = 300
 AUTO_RECONNECT_FAILURE_COOLDOWN_SEC = 3600
 SAFE_PROPOSAL_ACTIONS = {"enable_strategy", "disable_strategy"}
 ORCHESTRATOR_NAME = "StratForge Orchestrator"
+_PUBLIC_ORCHESTRATOR_PROFILE = {
+    "id": "vitek", "name": "Виктор", "title": "правая рука руководителя",
+}
 SAFE_PLAN_ACTIONS = {
     "respond", "status", "start_research", "pause_research", "resume_research",
     "stop_research", "schedule_research_stop", "update_research", "audit_backtests", "save_rule", "create_task",
@@ -130,7 +134,7 @@ def _actor_prompt(scope_info: Dict[str, Any]) -> str:
 
 
 def _reply_for_actor(reply: str, scope_info: Dict[str, Any]) -> str:
-    text = str(reply or "")
+    text = dialogue_policy.clean_public_reply(str(reply or ""))
     if not scope_info or scope_info.get("is_owner"):
         return text
     for prefix in ("Дмитрий Сергеевич", "Начальник", "Мой господин", "Шеф"):
@@ -412,6 +416,11 @@ ACTION ARGUMENTS
 The JSON is an advisory plan. A deterministic executor validates every action
 against this allowlist. Unknown fields and unknown actions have no authority.
 """.strip()
+
+# One owner-facing contract is appended to every model lane.  Execution and
+# authorization stay in the orchestrator; this only unifies language, hierarchy
+# and public authorship.
+ORCHESTRATOR_SYSTEM_PROMPT += "\n\n" + dialogue_policy.prompt(role="viktor", max_chars=1200)
 
 
 def _redact_sensitive(value: str) -> str:
@@ -1042,6 +1051,136 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
 
 
 _CONVERSATION_WORK_STATES = {"open", "awaiting_owner", "in_progress", "completed", "blocked"}
+_MESSAGE_FULFILLMENTS = {"unset", "done", "failed", "na"}
+_MESSAGE_KINDS = {"chat", "request", "task", "report"}
+_FULFILLMENT_AUTO_HOURS = 24
+_OPEN_ACTION_STATUSES = {
+    "queued", "running", "in_progress", "approval_required",
+    "needs_input", "waiting_review",
+}
+_FAILED_ACTION_STATUSES = {"error", "blocked"}
+_TASK_ACTION_NAMES = {
+    "reconnect_runtime_connection", "runtime_reconnect", "review_financial_records",
+    "review_failed_strategies", "start_research", "research_progress", "resume_research",
+    "stop_research", "mission_completed", "request_performance_report",
+    "request_accounting_report", "request_strategy_report", "request_news_report",
+    "chart_open", "chart_watch", "chart_clear", "chart_snapshot", "deliver_report",
+    "vitek_task", "vitek_activate_task", "vitek_add_task", "vitek_create_incident_task",
+    "vitek_set_plan", "vitek_scan", "vitek_resume_task", "user_screenshot_request",
+}
+
+
+def _agent_public_profile(agent_name: str = "", agent_id: str = "") -> Dict[str, str]:
+    """Resolve a visible job title for the message footer / participation chain."""
+    from . import domain_agents
+    key = str(agent_id or "").strip().lower()
+    if key in domain_agents.PERSONAS:
+        profile = domain_agents.PERSONAS[key]
+        return {
+            "agent_id": str(profile.get("id") or key),
+            "agent_name": str(profile.get("name") or agent_name or key),
+            "title": str(profile.get("title") or profile.get("role") or "")[:120],
+        }
+    if key in domain_agents.MANAGEMENT:
+        profile = domain_agents.MANAGEMENT[key]
+        return {
+            "agent_id": str(profile.get("id") or key),
+            "agent_name": str(profile.get("name") or agent_name or key),
+            "title": str(profile.get("title") or profile.get("role") or "")[:120],
+        }
+    name = str(agent_name or "").strip()
+    low = name.lower()
+    for profile in list(domain_agents.PERSONAS.values()) + list(domain_agents.MANAGEMENT.values()):
+        if str(profile.get("name") or "").lower() == low:
+            return {
+                "agent_id": str(profile.get("id") or ""),
+                "agent_name": str(profile.get("name") or name),
+                "title": str(profile.get("title") or profile.get("role") or "")[:120],
+            }
+    if low in {"витьёк", "витек", "виктор", "vitek", "victor"}:
+        return {"agent_id": "vitek", "agent_name": name or "Виктор", "title": "правая рука руководителя"}
+    if low in {"управляющий", "orchestrator", "manager"}:
+        return {"agent_id": "manager", "agent_name": name or "Управляющий", "title": "Управляющий"}
+    return {"agent_id": key, "agent_name": name, "title": ""}
+
+
+def _infer_message_kind(actions: Optional[List[Dict[str, Any]]]) -> str:
+    rows = [row for row in (actions or []) if isinstance(row, dict)]
+    if not rows:
+        return "chat"
+    names = {str(row.get("name") or row.get("action") or "") for row in rows}
+    statuses = {str(row.get("status") or "") for row in rows}
+    if names & {"mission_completed", "deliver_report", "request_performance_report",
+                "request_accounting_report", "request_strategy_report", "request_news_report"}:
+        return "report"
+    if statuses & {"needs_input", "approval_required", "waiting_review"}:
+        return "request"
+    if names & _TASK_ACTION_NAMES or statuses & (_OPEN_ACTION_STATUSES | {"completed", "confirmed_connected"} | _FAILED_ACTION_STATUSES):
+        return "task"
+    return "chat"
+
+
+def _infer_fulfillment(actions: Optional[List[Dict[str, Any]]], message_kind: str) -> str:
+    if message_kind == "chat":
+        return "na"
+    rows = [row for row in (actions or []) if isinstance(row, dict)]
+    if not rows:
+        return "unset"
+    statuses = {str(row.get("status") or "") for row in rows}
+    if statuses & _OPEN_ACTION_STATUSES:
+        return "unset"
+    if statuses & _FAILED_ACTION_STATUSES:
+        return "failed"
+    if statuses & {"completed", "confirmed_connected"} or not statuses:
+        return "done"
+    return "unset"
+
+
+def _normalize_participation_chain(
+    steps: Optional[List[Dict[str, Any]]],
+    *,
+    agent_name: str = "",
+    agent_id: str = "",
+    model: str = "",
+    provider: str = "",
+) -> List[Dict[str, Any]]:
+    clean: List[Dict[str, Any]] = []
+    seen = set()
+    for raw in list(steps or [])[:24]:
+        if not isinstance(raw, dict):
+            continue
+        profile = _agent_public_profile(
+            str(raw.get("agent_name") or raw.get("name") or ""),
+            str(raw.get("agent_id") or raw.get("id") or ""),
+        )
+        model_name = str(raw.get("actual_model") or raw.get("model") or "")[:180]
+        provider_name = str(raw.get("provider") or "")[:80]
+        key = (profile["agent_id"], profile["agent_name"], model_name, provider_name)
+        if key in seen or not (profile["agent_name"] or model_name):
+            continue
+        seen.add(key)
+        clean.append({
+            "agent_id": profile["agent_id"],
+            "agent_name": profile["agent_name"],
+            "title": str(raw.get("title") or raw.get("role") or profile["title"])[:120],
+            "model": model_name,
+            "provider": provider_name,
+            "purpose": str(raw.get("purpose") or "")[:120],
+        })
+    profile = _agent_public_profile(agent_name, agent_id)
+    final_model = str(model or "")[:180]
+    final_provider = str(provider or "")[:80]
+    final_key = (profile["agent_id"], profile["agent_name"], final_model, final_provider)
+    if profile["agent_name"] and final_key not in seen:
+        clean.append({
+            "agent_id": profile["agent_id"],
+            "agent_name": profile["agent_name"],
+            "title": profile["title"],
+            "model": final_model,
+            "provider": final_provider,
+            "purpose": "final_reply",
+        })
+    return clean[:24]
 
 
 def _set_conversation_work_state(conversation_id: str, state: str, detail: str = "",
@@ -1049,6 +1188,11 @@ def _set_conversation_work_state(conversation_id: str, state: str, detail: str =
     """Persist the task lifecycle separately from the chat transcript."""
     cid = _safe_conversation_id(conversation_id)
     clean_state = state if state in _CONVERSATION_WORK_STATES else "open"
+    # The main/system chat is a durable service inbox — it never reaches a
+    # terminal "completed" topic state. Map that to open so badges stay quiet.
+    if cid == DEFAULT_CONVERSATION_ID and clean_state == "completed":
+        clean_state = "open"
+        detail = ""
     with _LOCK:
         index = _read_index(scope)
         if cid == DEFAULT_CONVERSATION_ID:
@@ -1246,6 +1390,10 @@ def list_conversations(*, scope: Optional[Dict[str, Any]] = None) -> List[Dict[s
         "work_detail": str(index.get("default_work_detail") or ""),
         "is_default": True,
     }
+    # Service chat never displays a terminal topic state.
+    if default_row["work_state"] == "completed":
+        default_row["work_state"] = "open"
+        default_row["work_detail"] = ""
     conversations.insert(0, default_row)
     mission = dict(_load().get("mission") or {})
     if scope_key and mission.get("conversation_scope_id") != scope_key:
@@ -1266,7 +1414,7 @@ def list_conversations(*, scope: Optional[Dict[str, Any]] = None) -> List[Dict[s
     # last reply). Reset it to ``open`` in the returned view so the system chat
     # does not show a persistent "waiting for your decision" badge between turns.
     for row in conversations:
-        if row.get("is_default") and row.get("work_state") == "awaiting_owner":
+        if row.get("is_default") and row.get("work_state") in {"awaiting_owner", "completed"}:
             if not (mission_active and mission_cid == DEFAULT_CONVERSATION_ID):
                 row["work_state"] = "open"
                 row["work_detail"] = ""
@@ -1279,7 +1427,102 @@ def list_conversations(*, scope: Optional[Dict[str, Any]] = None) -> List[Dict[s
 
 def conversation_messages(conversation_id: str, limit: int = 200,
                           *, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    return _read_conversation(limit, path=_conversation_file(conversation_id, scope=scope))
+    path = _conversation_file(conversation_id, scope=scope)
+    _apply_auto_fulfillment(path)
+    return _read_conversation(limit, path=path)
+
+
+def _apply_fulfillment_side_effects(row: Dict[str, Any], fulfillment: str) -> None:
+    """Slightly lower the visible rating when a task auto-fails without owner marks."""
+    if fulfillment != "failed":
+        return
+    if row.get("feedback_source") == "owner" and row.get("rating") in {1, 2, 3}:
+        return
+    current = row.get("rating")
+    try:
+        score = int(current) if current not in (None, "") else 3
+    except (TypeError, ValueError):
+        score = 3
+    row["rating"] = max(1, score - 1)
+    row["feedback_source"] = str(row.get("feedback_source") or "auto_penalty")
+    row["feedback_timestamp_utc"] = _now()
+    row["auto_rating_penalty"] = 1
+
+
+def _apply_auto_fulfillment(path: Path) -> None:
+    """Resolve unset task marks after a quiet period; chat lines become na/done."""
+    if not path.is_file():
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_FULFILLMENT_AUTO_HOURS)
+    with _LOCK:
+        rows = read_jsonl(path)
+        changed = False
+        for row in rows:
+            if not isinstance(row, dict) or row.get("role") != "assistant":
+                continue
+            fulfillment = str(row.get("fulfillment") or "unset")
+            if fulfillment not in {"", "unset"}:
+                continue
+            ts = _parse_time(row.get("timestamp_utc"))
+            if ts is None or ts > cutoff:
+                continue
+            kind = str(row.get("message_kind") or "") or _infer_message_kind(row.get("actions") or [])
+            actions = [item for item in (row.get("actions") or []) if isinstance(item, dict)]
+            statuses = {str(item.get("status") or "") for item in actions}
+            if statuses & _OPEN_ACTION_STATUSES:
+                continue
+            if kind == "chat" and not actions:
+                next_state = "na"
+            elif statuses & _FAILED_ACTION_STATUSES:
+                next_state = "failed"
+            else:
+                next_state = "done"
+            row["fulfillment"] = next_state
+            row["fulfillment_source"] = "auto"
+            row["fulfillment_at_utc"] = _now()
+            row["message_kind"] = kind if kind in _MESSAGE_KINDS else "chat"
+            _apply_fulfillment_side_effects(row, next_state)
+            changed = True
+        if changed:
+            write_jsonl_atomic(path, rows)
+
+
+def set_message_fulfillment(conversation_id: str, message_id: str, fulfillment: Any,
+                            *, source: str = "owner",
+                            scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Owner (or system) mark that a reply's request/task was done or not."""
+    cid = _safe_conversation_id(conversation_id)
+    mid = str(message_id or "").strip()
+    if not mid:
+        raise ChiefAgentError("message_id обязателен.")
+    clean = str(fulfillment or "").strip().lower()
+    if clean not in _MESSAGE_FULFILLMENTS:
+        raise ChiefAgentError("fulfillment должен быть unset, done, failed или na.")
+    path = _conversation_file(cid, scope=scope)
+    if not path.is_file():
+        raise ChiefAgentError("Чат не найден.")
+    clean_source = str(source or "owner").strip()[:40] or "owner"
+    with _LOCK:
+        rows = read_jsonl(path)
+        updated: Optional[Dict[str, Any]] = None
+        for row in rows:
+            if str(row.get("message_id") or "") != mid:
+                continue
+            if row.get("role") != "assistant":
+                raise ChiefAgentError("Отмечать можно только ответы Orchestrator.")
+            row["fulfillment"] = clean
+            row["fulfillment_source"] = clean_source
+            row["fulfillment_at_utc"] = _now()
+            if not row.get("message_kind"):
+                row["message_kind"] = _infer_message_kind(row.get("actions") or [])
+            if clean_source == "owner" and clean == "failed":
+                _apply_fulfillment_side_effects(row, clean)
+            updated = dict(row)
+            break
+        if updated is None:
+            raise ChiefAgentError("Сообщение не найдено.")
+        write_jsonl_atomic(path, rows)
+    return {"ok": True, "conversation_id": cid, "message": updated}
 
 
 def announce_chart_task(*, conversation_id: str, instruction: str = "",
@@ -1337,7 +1580,8 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
     _touch_conversation(cid, title_hint=text, scope=scope)
     assistant = _append_conversation(
         "assistant", ack, source="chart_task", model="chart operator", provider="local",
-        agent_name="Иван", actions=[{"name": "chart_watch", "status": "running"}],
+        agent_name="Иван", agent_id="ivan",
+        actions=[{"name": "chart_watch", "status": "running"}],
         doubts=[], path=path, scope=scope,
     )
     _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
@@ -1540,6 +1784,17 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
                 f"Неудачный ответ: {str(updated.get('content') or '')[:2000]}"
             ),
         )
+    try:
+        from . import ai_ratings
+        role_id = str(updated.get("agent_role") or updated.get("role_id") or updated.get("agent_name") or "general")
+        model_id = str(updated.get("model") or "unknown")
+        provider = str(updated.get("provider") or "")
+        ai_ratings.record_rating(
+            role_id=role_id, model_id=model_id, provider=provider, rating=score,
+            task_category=str(updated.get("task_category") or ""),
+        )
+    except Exception:
+        pass
     return {"ok": True, "conversation_id": cid, "message": updated}
 
 
@@ -1574,13 +1829,39 @@ def _read_conversation(limit: int = 80, *, path: Optional[Path] = None) -> List[
 def _append_conversation(role: str, content: str, *, source: str,
                          model: str = "", provider: str = "",
                          agent_name: str = "",
+                         agent_id: str = "",
                          actions: Optional[List[Dict[str, Any]]] = None,
                          doubts: Optional[List[str]] = None,
                          thinking: str = "",
                          attachments: Optional[List[Dict[str, Any]]] = None,
+                         participation_chain: Optional[List[Dict[str, Any]]] = None,
+                         message_kind: str = "",
+                         fulfillment: str = "",
                          path: Optional[Path] = None,
                          scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     scope_info = _normalize_conversation_scope(scope)
+    clean_actions = list(actions or [])[:10]
+    kind = str(message_kind or "").strip().lower()
+    if kind not in _MESSAGE_KINDS:
+        kind = _infer_message_kind(clean_actions) if role == "assistant" else "chat"
+    fulfill = str(fulfillment or "").strip().lower()
+    if fulfill not in _MESSAGE_FULFILLMENTS:
+        fulfill = _infer_fulfillment(clean_actions, kind) if role == "assistant" else "na"
+    profile = _agent_public_profile(agent_name, agent_id) if role == "assistant" else {
+        "agent_id": "", "agent_name": "", "title": "",
+    }
+    if role == "assistant" and not profile["agent_name"]:
+        profile = _agent_public_profile(agent_name or "Витёк", agent_id or "vitek")
+    chain_source = participation_chain
+    if chain_source is None and role == "assistant":
+        chain_source = universal_llm.current_participation()
+    chain = _normalize_participation_chain(
+        chain_source,
+        agent_name=profile["agent_name"] or agent_name or "Витёк",
+        agent_id=profile["agent_id"] or agent_id or "vitek",
+        model=model,
+        provider=provider,
+    ) if role == "assistant" else []
     rec = {
         "message_id": f"MSG-{uuid.uuid4().hex[:12].upper()}",
         "timestamp_utc": _now(),
@@ -1591,9 +1872,16 @@ def _append_conversation(role: str, content: str, *, source: str,
         "provider": str(provider or "")[:80],
         # Vitek is the default chief of staff, while an explicitly addressed or
         # capability-owning specialist answers under their own visible name.
-        "agent_name": (str(agent_name or "Витёк")[:80] if role == "assistant" else str(agent_name or "")[:80]),
-        "actions": list(actions or [])[:10],
+        "agent_name": (str(profile["agent_name"] or agent_name or "Витёк")[:80] if role == "assistant" else str(agent_name or "")[:80]),
+        "agent_id": str(profile["agent_id"] or agent_id or "")[:80] if role == "assistant" else "",
+        "agent_title": str(profile["title"] or "")[:120] if role == "assistant" else "",
+        "actions": clean_actions,
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
+        "message_kind": kind if role == "assistant" else "chat",
+        "fulfillment": fulfill if role == "assistant" else "na",
+        "fulfillment_source": "system" if role == "assistant" and fulfill != "unset" else "",
+        "fulfillment_at_utc": _now() if role == "assistant" and fulfill != "unset" else "",
+        "participation_chain": chain,
     }
     if scope_info:
         rec.update({
@@ -2514,11 +2802,12 @@ if the owner later says "начинай". Do not merely promise that you will pr
 or analyze something. Do not start a mission. Do not end mid-thought. Mention
 the actual source filenames/reference IDs/experiment IDs you used when they are
 available. Avoid internal routing vocabulary and generic corporate filler.
-Keep the final answer between 1,600 and 2,600 Russian characters. Be selective:
+Keep the final answer between 700 and 1,400 Russian characters. Be selective:
 do not retell the whole research packet and do not spend the response on long
 quotes. Reserve enough output space to finish the recommendation and next-step
 plan with a complete sentence.
 """.strip()
+STRATEGIC_DIALOGUE_SYSTEM_PROMPT += "\n\n" + dialogue_policy.prompt(role="viktor", max_chars=1400)
 
 GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT = """
 You are the strongest configured StratForge executive manager speaking with the
@@ -2534,6 +2823,7 @@ deliver the plan and then explicitly ask whether to proceed (for example:
 «Всё готово, запускаем?»); never begin execution yourself and never claim you
 have already started. Do not expose routing or action-schema vocabulary.
 """.strip()
+GENERAL_MANAGER_DIALOGUE_SYSTEM_PROMPT += "\n\n" + dialogue_policy.prompt(role="manager", max_chars=1000)
 
 
 def _strategic_reply_complete(text: str) -> bool:
@@ -2556,7 +2846,7 @@ def _strategic_reply_complete(text: str) -> bool:
 
 def _general_manager_reply_complete(text: str) -> bool:
     clean = str(text or "").strip()
-    if len(clean) < 350 or clean.startswith("{"):
+    if len(clean) < 160 or clean.startswith("{"):
         return False
     if clean[-1] not in ".!?…)]»\"'":
         return False
@@ -2565,6 +2855,32 @@ def _general_manager_reply_complete(text: str) -> bool:
         "я подготовлю ответ", "я проанализирую и сообщу", "предложу решение позже",
     ))
     return not promise_only
+
+
+def _manager_continuation_offer(reply: str, conversation_id: str, *,
+                                scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Persist the proposed next step against Vitek's concrete blocked task.
+
+    The manager's prose remains advice, not authority.  Vitek stores a bounded
+    ``resume_existing_task`` proposal and returns its ID for the assistant
+    message.  A later short approval can therefore resume only that task in
+    that conversation, never an arbitrary action invented by a model.
+    """
+    low = str(reply or "").lower().replace("ё", "е")
+    offers_execution = any(marker in low for marker in (
+        "если соглас", "если вы соглас", "как только скажете", "скажете «запускаем",
+        "запускаем?", "начинаем?", "разрешаете", "что выбираете",
+        "ждет вашей команды", "ждёт вашей команды", "после вашего подтверждения",
+    ))
+    if not offers_execution:
+        return None
+    try:
+        from .. import vitek
+        return vitek.register_task_continuation(
+            conversation_id, reply, scope=_normalize_conversation_scope(scope),
+        )
+    except Exception:
+        return None
 
 
 def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
@@ -2594,7 +2910,7 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
     )
     reply = str(first.get("content") or "").strip()
     if _strategic_reply_complete(reply):
-        return first, reply
+        return first, dialogue_policy.compact_model_reply(reply, max_chars=1400)
     repair_prompt = (
         prompt
         + "\n\nINCOMPLETE_PREVIOUS_ANSWER:\n" + reply[:1200]
@@ -2610,7 +2926,9 @@ def _invoke_strategic_dialogue(message: str, history: List[Dict[str, str]],
         complexity="critical", cache_mode="off", allow_paid=True,
     )
     repaired = str(second.get("content") or "").strip()
-    return (second, repaired) if repaired else (first, reply)
+    if repaired:
+        return second, dialogue_policy.compact_model_reply(repaired, max_chars=1400)
+    return first, dialogue_policy.compact_model_reply(reply, max_chars=1400)
 
 
 def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]],
@@ -2642,7 +2960,7 @@ def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]]
     )
     reply = str(first.get("content") or "").strip()
     if _general_manager_reply_complete(reply):
-        return first, reply
+        return first, dialogue_policy.compact_model_reply(reply, max_chars=1000)
     repair = (
         prompt + "\n\nINCOMPLETE_PREVIOUS_ANSWER:\n" + reply[:1200]
         + "\n\nReplace it with a complete answer to the owner's actual question now."
@@ -2654,7 +2972,9 @@ def _invoke_general_manager_dialogue(message: str, history: List[Dict[str, str]]
         cache_mode="off", allow_paid=True,
     )
     repaired = str(second.get("content") or "").strip()
-    return (second, repaired) if repaired else (first, reply)
+    if repaired:
+        return second, dialogue_policy.compact_model_reply(repaired, max_chars=1000)
+    return first, dialogue_policy.compact_model_reply(reply, max_chars=1000)
 
 
 def _action_grounded_in_message(name: str, message: str) -> bool:
@@ -2881,12 +3201,15 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
             lm = _lm_status_snapshot()
             roots = ", ".join(mission.get("target_roots") or []) or "MNQ"
             summary = (
-                "Дмитрий Сергеевич, работу запустил. "
+                "Работу запустил. "
                 f"Сначала доведу одну стратегию {roots} до обоснованного итога, "
                 "проверяя и исправляя её по результатам. Отчитаюсь, когда будет фактический результат."
             )
             return {
-                "name": name, "status": "completed",
+                # Launch acknowledgement is not research completion. The
+                # mission worker emits mission_completed only after the actual
+                # experiment reaches its terminal, verified state.
+                "name": name, "status": "running",
                 "mission_id": mission["mission_id"], "ends_at_utc": mission["ends_at_utc"],
                 "summary": summary, "lm_studio": lm,
             }
@@ -3271,15 +3594,7 @@ def _stop_requested(low: str) -> bool:
 
 
 def _is_followup_approval(message: str) -> bool:
-    low = re.sub(r"\s+", " ", str(message or "").strip().lower()).strip(".! ")
-    if low in {"да", "подтверждаю", "согласен", "согласна", "start", "go ahead"}:
-        return True
-    return bool(re.fullmatch(
-        r"(?:(?:ок|окей|хорошо|да|согласен|подтверждаю)[,\s]+)?"
-        r"(?:начинай(?:те)?|запускай(?:те)?|приступай(?:те)?|делай(?:те)?|выполняй(?:те)?)"
-        r"(?:\s+(?:это|план|все|всё))?",
-        low,
-    ))
+    return command_language.continuation_decision(message) == "approve"
 
 
 def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
@@ -3661,6 +3976,142 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         return _gateway_envelope(result, source=source)
 
 
+def execute_internal_task(task: Dict[str, Any], *,
+                          conversation_id: str = DEFAULT_CONVERSATION_ID,
+                          agent: str = "manager",
+                          scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Execute one already-persisted Vitek work order without forging a user turn.
+
+    ``handle_message`` is the public ingress and therefore always appends its
+    input as an owner message.  Background workers must not feed service prompts
+    through that API: doing so polluted Aurora/Telegram history and made an
+    internal instruction look like something the owner typed.  This internal
+    boundary reuses the allowlisted planner/executor but deliberately performs
+    no conversation append or Telegram mirror.
+    """
+    payload = dict(task or {})
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise ChiefAgentError("Внутреннее поручение должно иметь название.")
+    scope_info = _normalize_conversation_scope(scope)
+    runtime_dir = str(scope_info.get("runtime_dir") or "")
+    usage_context = {
+        "user_id": scope_info.get("user_id"),
+        "user_name": scope_info.get("display_name"),
+        "workspace_id": scope_info.get("workspace_id"),
+        "conversation_id": _safe_conversation_id(conversation_id),
+        "request_source": "vitek_internal_task",
+    }
+    with universal_llm.usage_scope(usage_context):
+        if runtime_dir:
+            from .. import runtime
+            with runtime.runtime_dir_override(runtime_dir):
+                return _execute_internal_task_impl(
+                    payload, conversation_id=conversation_id, agent=agent,
+                    scope=scope_info,
+                )
+        return _execute_internal_task_impl(
+            payload, conversation_id=conversation_id, agent=agent,
+            scope=scope_info,
+        )
+
+
+def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
+                                agent: str, scope: Dict[str, Any]) -> Dict[str, Any]:
+    cid = _safe_conversation_id(conversation_id)
+    instruction = "\n".join(filter(None, (
+        str(task.get("title") or "").strip(),
+        str(task.get("description") or "").strip(),
+        ("Пояснение владельца: " + str(task.get("owner_answer") or "").strip())
+        if str(task.get("owner_answer") or "").strip() else "",
+    )))[:6000]
+    history = [
+        {
+            "role": row.get("role"), "content": row.get("content"),
+            "actions": row.get("actions") or [], "agent_name": row.get("agent_name") or "",
+        }
+        for row in _read_conversation(16, path=_conversation_file(cid, scope=scope))
+    ]
+    from . import domain_agents
+    management = domain_agents.resolve_management(str(agent or "manager"), instruction)
+    complexity = str((management or {}).get("forced_complexity") or classify_complexity(instruction, "orchestrator"))
+    direct = _direct_plan(instruction)
+    if direct is not None:
+        plan = direct
+        model, provider = "deterministic dispatcher", "local"
+    else:
+        packet = {
+            "internal_work_order": {
+                "title": str(task.get("title") or ""),
+                "description": str(task.get("description") or ""),
+                "owner_answer": str(task.get("owner_answer") or ""),
+                "assigned_agent": str(task.get("assigned_agent") or ""),
+                "assigned_role": str(task.get("assigned_role") or ""),
+            },
+            "recent_dialogue": history,
+            "application_snapshot": _scope_application_snapshot(_application_snapshot(), scope),
+            "shared_memory": scope.get("shared_memory") or _shared_memory_bundle(scope),
+        }
+        try:
+            invoked = agent_router.invoke_role(
+                "orchestrator",
+                json.dumps(packet, ensure_ascii=False, default=str)[:19_000],
+                system_prompt=(
+                    ORCHESTRATOR_SYSTEM_PROMPT
+                    + "\n\nINTERNAL WORK ORDER: The owner already created this task. "
+                      "Return the same strict JSON plan, but do not speak as if this service "
+                      "packet were a new owner message. Execute only allowlisted application "
+                      "actions grounded in the persisted title/description."
+                ),
+                max_output_tokens=6000 if complexity == "critical" else 2400,
+                timeout=llm_timeouts.ORCHESTRATOR_PLAN,
+                purpose="orchestrator_internal_task_execution",
+                complexity=complexity, cache_mode="off",
+            )
+            model = str(invoked.get("actual_model") or invoked.get("model") or "unknown")
+            provider = str(invoked.get("provider") or "")
+            plan = _json_plan(str(invoked.get("content") or "")) or {
+                "reply": "Внутренний исполнитель не вернул проверяемый план.",
+                "confidence": 0.0, "doubts": [], "actions": [],
+            }
+        except agent_router.AgentRouterError as exc:
+            model, provider = "deterministic fallback", "local"
+            plan = {
+                "reply": f"Не удалось привлечь AI-модель: {exc}",
+                "confidence": 0.0, "doubts": [], "actions": [],
+            }
+    raw_actions = [row for row in (plan.get("actions") or []) if isinstance(row, dict)]
+    if float(plan.get("confidence") or 0) < 0.45:
+        raw_actions = []
+    context_authorized = bool(
+        isinstance(task.get("approved_continuation"), dict)
+        and task["approved_continuation"].get("status") == "approved"
+    )
+    action_results = [
+        _execute_action(
+            row, instruction, cid,
+            context_authorized=context_authorized, scope=scope,
+        )
+        for row in raw_actions[:5]
+    ]
+    reply = _reply_for_actor(str(plan.get("reply") or "").strip()[:8000], scope)
+    summaries = [str(row.get("summary")) for row in action_results if row.get("summary")]
+    if summaries:
+        reply = "\n\n".join([reply, *summaries]) if reply else "\n\n".join(summaries)
+    failures = [row for row in action_results if row.get("status") in {"error", "blocked"}]
+    if failures:
+        reasons = [str(row.get("error") or row.get("reason") or "неизвестная ошибка") for row in failures]
+        reply = (reply + "\n\nНе выполнено: " + "; ".join(reasons) + ".").strip()
+    return {
+        "ok": not bool(failures), "reply": reply,
+        "model": model, "provider": provider, "complexity": complexity,
+        "actions": action_results, "doubts": [
+            str(item)[:500] for item in (plan.get("doubts") or [])[:10]
+        ],
+        "internal": True, "conversation_id": cid,
+    }
+
+
 def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
                         cid: str, conv_path: Path, requested_agent: str,
                         scope: Optional[Dict[str, Any]],
@@ -3856,8 +4307,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         spec = capability_map.CAPABILITY_MAP.get(capability) or {}
         agent_id = str(spec.get("agent") or "")
         responder = dict(domain_agents.PERSONAS.get(agent_id) or {
-            "id": "orchestrator", "name": ORCHESTRATOR_NAME,
-            "title": "координатор", "page": "index.html",
+            **_PUBLIC_ORCHESTRATOR_PROFILE, "page": "index.html",
         })
         domain = {
             "ok": False,
@@ -3886,8 +4336,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             fallback_agent = domain_agents.PERSONAS[
                 str(capability_map.CAPABILITY_MAP.get(capability, {}).get("agent") or "tolik")
             ] if str(capability_map.CAPABILITY_MAP.get(capability, {}).get("agent") or "") in domain_agents.PERSONAS else {
-                "id": "orchestrator", "name": ORCHESTRATOR_NAME,
-                "title": "координатор", "page": "index.html",
+                **_PUBLIC_ORCHESTRATOR_PROFILE, "page": "index.html",
             }
             domain = {
                 "ok": False, "agent": fallback_agent,
@@ -3897,11 +4346,13 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 "capability": capability,
             }
     if domain is None and persona:
+        from .. import vitek as vitek_service
         domain = domain_agents.answer(
             str(persona["id"]), clean, conversation_id=cid,
             workspace_id=str(scope_info.get("workspace_id") or ""),
             uses_owner_runtime=bool(scope_info.get("uses_owner_runtime", True)),
-            scope=scope_info,
+            scope=scope_info, history=routing_history,
+            task_state=vitek_service.conversation_task_state(cid, scope=scope_info),
         )
     if domain is not None:
         reply = str(domain.get("reply") or "")[:8000]
@@ -3911,7 +4362,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         # misdirected request is handed off), so attribute the reply to whoever
         # actually answered — in the app history and in the Telegram mirror.
         responder = domain.get("agent") if isinstance(domain.get("agent"), dict) else {}
-        fallback_profile = persona or {"id": "orchestrator", "name": ORCHESTRATOR_NAME, "title": "координатор"}
+        fallback_profile = persona or _PUBLIC_ORCHESTRATOR_PROFILE
         responder_id = str(responder.get("id") or fallback_profile["id"])
         responder_name = str(responder.get("name") or fallback_profile["name"])
         domain_actions = [
@@ -3920,9 +4371,22 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         ]
         attachments = [row for row in (domain.get("attachments") or []) if isinstance(row, dict)]
         reply = _reply_for_actor(reply, scope_info)
+        reply = dialogue_policy.avoid_adjacent_vocative(
+            reply,
+            (str(row.get("content") or "") for row in routing_history if row.get("role") == "assistant"),
+        )
+        universal_llm.note_participation({
+            "agent_id": responder_id,
+            "agent_name": responder_name,
+            "title": str(responder.get("title") or ""),
+            "model": model,
+            "provider": provider,
+            "purpose": "domain_reply",
+        })
         assistant = _append_conversation(
             "assistant", reply, source=source, model=model, provider=provider,
-            agent_name=responder_name or "Витёк", actions=domain_actions, doubts=[],
+            agent_name=responder_name or "Витёк", agent_id=responder_id,
+            actions=domain_actions, doubts=[],
             attachments=attachments, path=conv_path, scope=scope,
         )
         _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
@@ -3992,6 +4456,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         _followup_start_plan(clean, history) or _direct_plan(clean)
     )
     result: Dict[str, Any] = {}
+    continuation_action: Optional[Dict[str, Any]] = None
     if strategic_dialogue:
         complexity = "critical"
         snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
@@ -4008,6 +4473,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 "doubts": [],
                 "actions": [],
             }
+            continuation_action = _manager_continuation_offer(
+                strategic_reply, cid, scope=scope,
+            )
         except agent_router.AgentRouterError as exc:
             model, provider = "deterministic fallback", "local"
             plan = {
@@ -4029,6 +4497,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 "confidence": 1.0 if _general_manager_reply_complete(manager_reply) else 0.6,
                 "doubts": [], "actions": [],
             }
+            continuation_action = _manager_continuation_offer(
+                manager_reply, cid, scope=scope,
+            )
         except agent_router.AgentRouterError as exc:
             model, provider = "deterministic fallback", "local"
             plan = {
@@ -4101,7 +4572,13 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         _execute_action(row, clean, cid, context_authorized=context_authorized, scope=scope)
         for row in raw_actions[:5] if isinstance(row, dict)
     ]
+    if continuation_action:
+        action_results.append(continuation_action)
     reply = str(plan.get("reply") or "Готов продолжить после уточнения.").strip()[:8000]
+    if direct is None:
+        reply = dialogue_policy.compact_model_reply(
+            reply, max_chars=1400 if strategic_dialogue else 1000,
+        )
     recovery_attachments: List[Dict[str, Any]] = []
     recovery_agent_name = ""
     # Defence against a model-level false refusal: before returning "нет
@@ -4126,6 +4603,10 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             provider = str(recovery.get("provider") or "local")
             plan["doubts"] = []
     reply = _reply_for_actor(reply, scope_info)
+    reply = dialogue_policy.avoid_adjacent_vocative(
+        reply,
+        (str(row.get("content") or "") for row in history if row.get("role") == "assistant"),
+    )
     status_summaries = [str(row.get("summary")) for row in action_results if row.get("summary")]
     if status_summaries:
         research_summaries = [
@@ -4152,12 +4633,29 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                 )
             readable.append(reason)
         reply += "\n\nНе выполнено: " + "; ".join(readable) + "."
+    # Action summaries are appended after the model reply. Apply the same
+    # public contract once more so a legacy deterministic summary cannot add a
+    # second formal address or a private metadata footer.
+    reply = dialogue_policy.avoid_adjacent_vocative(
+        reply,
+        (str(row.get("content") or "") for row in history if row.get("role") == "assistant"),
+    )
     doubts = [str(item)[:500] for item in (plan.get("doubts") or [])[:10]]
     thinking = ""
     response_actor = recovery_agent_name or str((management or {}).get("name") or "") or "Витёк"
+    response_actor_id = str((management or {}).get("id") or ("vitek" if response_actor in {"Витёк", "Виктор"} else ""))
+    universal_llm.note_participation({
+        "agent_id": response_actor_id,
+        "agent_name": response_actor,
+        "title": str((management or {}).get("title") or ""),
+        "model": model,
+        "provider": provider,
+        "purpose": "final_reply",
+    })
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
-        agent_name=response_actor, actions=action_results, doubts=doubts,
+        agent_name=response_actor, agent_id=response_actor_id,
+        actions=action_results, doubts=doubts,
         thinking=thinking, attachments=recovery_attachments, path=conv_path, scope=scope,
     )
     work_state, work_detail = _conversation_work_state(action_results, reply)

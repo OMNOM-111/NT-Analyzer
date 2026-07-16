@@ -98,6 +98,12 @@ def candidates(
         int(agent.get("requests_today") or 0),
         str(agent.get("account_name") or ""),
     ))
+    # Star-rating re-rank + exploration on top of safe gated candidates only.
+    try:
+        from . import ai_ratings
+        rows = ai_ratings.rank_agents(role, rows, explore=True)
+    except Exception:
+        pass
     return rows
 
 
