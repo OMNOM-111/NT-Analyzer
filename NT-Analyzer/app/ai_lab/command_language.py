@@ -141,3 +141,46 @@ def has_unresolved_symbol(value: Any) -> bool:
 
 def supported_roots() -> Iterable[str]:
     return tuple(sorted(INSTRUMENT_ROOTS))
+
+
+def continuation_decision(value: Any) -> str:
+    """Resolve a *short* answer to an already persisted execution proposal.
+
+    This parser deliberately does not infer an operation.  It only returns a
+    decision which another subsystem may apply to a machine-readable proposal
+    bound to the same conversation.  Consequently words such as ``запускаем``
+    cannot authorize an arbitrary model-generated action when no proposal is
+    pending.
+    """
+    text = normalize_command(value).lower().strip()
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n.,!;:—-")
+    if not text or len(text) > 120:
+        return ""
+
+    # Negation wins even when an affirmative verb is present later in the
+    # phrase.  These are decisions about the pending proposal, not broad stop
+    # commands for unrelated work.
+    if re.fullmatch(
+        r"(?:нет|отмена|отменяем|не надо|не нужно|не запуска(?:й|йте|ем)|"
+        r"не начина(?:й|йте|ем)|не делай(?:те)?|не выполня(?:й|йте|ем)|"
+        r"отклоняю|отклоняем|cancel|reject|do not start|don't start)",
+        text,
+    ):
+        return "reject"
+
+    if text in {
+        "да", "подтверждаю", "подтверждаем", "согласен", "согласна",
+        "согласны", "одобряю", "одобряем", "поехали", "start",
+        "go ahead",
+    }:
+        return "approve"
+    if re.fullmatch(
+        r"(?:(?:да|ок|окей|хорошо|согласен|согласна|подтверждаю)\s+)?"
+        r"(?:(?:давай|давайте)\s+)?"
+        r"(?:начина(?:й|йте|ем)|запуска(?:й|йте|ем)|приступа(?:й|йте|ем)|"
+        r"дела(?:й|йте|ем)|выполня(?:й|йте|ем))"
+        r"(?:\s+(?:это|план|работу|проверку|вариант\s*(?:1|один|первый)))?",
+        text,
+    ):
+        return "approve"
+    return ""

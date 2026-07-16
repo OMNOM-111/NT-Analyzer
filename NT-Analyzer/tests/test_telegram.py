@@ -282,6 +282,73 @@ def test_failed_command_reply_is_queued_and_retried(monkeypatch, tmp_path) -> No
     assert telegram_service._read_json(telegram_service._reply_outbox_path())["items"] == []
 
 
+def test_reply_outbox_poison_topic_does_not_block_others_and_dead_letters(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    telegram_service._enqueue_reply_outbox("poison", thread_id=11, dedupe_key="POISON")
+    telegram_service._enqueue_reply_outbox("healthy", thread_id=22, dedupe_key="HEALTHY")
+    delivered = []
+
+    def selective_send(text, **kwargs):
+        if kwargs.get("thread_id") == 11:
+            raise telegram_service.TelegramServiceError("topic deleted")
+        delivered.append((text, kwargs.get("thread_id")))
+        return {}
+
+    monkeypatch.setattr(telegram_service, "_send_raw", selective_send)
+
+    first = telegram_service._flush_reply_outbox(limit=10)
+
+    assert first == {"sent": 1, "pending": 1}
+    assert delivered == [("healthy", 22)]
+    rows = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert len(rows) == 1
+    assert rows[0]["thread_id"] == 11
+    assert rows[0]["status"] == "queued"
+    assert rows[0]["attempts"] == 1
+    assert telegram_service._iso_timestamp(rows[0]["available_at_utc"]) > time.time()
+
+    rows[0]["attempts"] = telegram_service.REPLY_MAX_ATTEMPTS - 1
+    rows[0]["available_at_utc"] = "2000-01-01T00:00:00Z"
+    telegram_service._write_json(
+        telegram_service._reply_outbox_path(), {"items": rows, "updated_at_utc": "2026-07-14T00:00:00Z"},
+    )
+
+    final = telegram_service._flush_reply_outbox(limit=10)
+
+    assert final == {"sent": 0, "pending": 0}
+    dead = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert dead[0]["status"] == "dead_letter"
+    assert dead[0]["attempts"] == telegram_service.REPLY_MAX_ATTEMPTS
+    assert "available_at_utc" not in dead[0]
+    assert telegram_service.status()["telegram_reply_queue"] == {
+        "queued": 0, "dead_letter": 1,
+        "max_attempts": telegram_service.REPLY_MAX_ATTEMPTS,
+    }
+
+
+def test_reply_outbox_never_silently_truncates_accepted_replies(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    existing = [{
+        "id": f"tgr_{index}", "signature": f"signature-{index}",
+        "text": f"reply-{index}", "thread_id": index + 1,
+        "status": "queued", "created_at_utc": "2026-07-14T00:00:00Z",
+        "available_at_utc": "2026-07-14T00:00:00Z", "attempts": 0,
+        "last_error": "",
+    } for index in range(200)]
+    telegram_service._write_json(
+        telegram_service._reply_outbox_path(), {"items": existing, "updated_at_utc": "2026-07-14T00:00:00Z"},
+    )
+
+    for index in range(5):
+        telegram_service._enqueue_reply_outbox(
+            f"new-reply-{index}", thread_id=500 + index, dedupe_key=f"NEW-{index}",
+        )
+
+    rows = telegram_service._read_json(telegram_service._reply_outbox_path())["items"]
+    assert len(rows) == 205
+    assert {row["text"] for row in rows[-5:]} == {f"new-reply-{index}" for index in range(5)}
+
+
 def test_webhook_duplicate_update_is_not_executed_twice(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setenv(telegram_service.WEBHOOK_SECRET_ENV, "webhook-secret")
@@ -898,6 +965,41 @@ def test_chief_report_exposes_model_provider_and_action_status(monkeypatch, tmp_
 
     assert "Модель: gpt-5-mini (azure_foundry)" in sent[0]
     assert "Ход работы: Жду ваш ответ" in sent[0]
+
+
+def test_telegram_ingress_reply_uses_same_agent_model_and_action_envelope(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(telegram_service, "_conversation_scope_for_topic", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chief_agent, "handle_message", lambda text, **kwargs: {
+        "reply": "Проверка началась.",
+        "model": "fallback-model", "provider": "fallback-provider",
+        "agent": {"name": "Толик"},
+        "actions": [{"name": "review_strategy", "status": "running"}],
+        "message": {
+            "message_id": "MSG-PRESENTATION", "agent_name": "Толик",
+            "model": "gpt-5-mini", "provider": "azure_foundry",
+            "actions": [{"name": "review_strategy", "status": "running"}],
+        },
+    })
+    replies = []
+    monkeypatch.setattr(
+        telegram_service, "_chief_command_reply",
+        lambda text, **kwargs: replies.append((text, kwargs)) or True,
+    )
+
+    result = telegram_service._handle_chief_command(
+        "Толик, проверь стратегию", conversation_id="C-PRESENTATION", thread_id=77,
+    )
+
+    assert result["ok"] is True
+    assert len(replies) == 1
+    rendered, kwargs = replies[0]
+    assert "<b>Толик · ответ</b>" in rendered
+    assert "Проверка началась." in rendered
+    assert "Модель: gpt-5-mini (azure_foundry)" in rendered
+    assert "Ход работы: Выполняется" in rendered
+    assert kwargs["thread_id"] == 77
+    assert kwargs["dedupe_key"] == "MSG-PRESENTATION"
 
 
 def test_scoped_report_never_falls_back_to_general_when_topic_sync_fails(monkeypatch, tmp_path) -> None:

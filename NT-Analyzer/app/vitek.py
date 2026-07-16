@@ -133,7 +133,7 @@ def _parse_time(value: Any) -> Optional[datetime]:
 
 def _default_state() -> Dict[str, Any]:
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "name": NAME,
         "role": ROLE,
         "tasks": [],
@@ -150,6 +150,7 @@ def _default_state() -> Dict[str, Any]:
         "dialogue": {
             "awaiting_by_conversation": {},
             "awaiting_task_by_conversation": {},
+            "pending_continuation_by_conversation": {},
         },
         "last_scan_at_utc": "",
         "last_scan_error": "",
@@ -170,7 +171,7 @@ def _read() -> Dict[str, Any]:
     stored = _read_json(_state_path())
     doc = _default_state()
     doc.update(stored)
-    doc["schema_version"] = max(3, int(doc.get("schema_version") or 0))
+    doc["schema_version"] = max(4, int(doc.get("schema_version") or 0))
     for key in ("tasks", "incidents", "history", "events", "event_history"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
@@ -189,6 +190,8 @@ def _read() -> Dict[str, Any]:
         doc["dialogue"]["awaiting_by_conversation"] = {}
     if not isinstance(doc["dialogue"].get("awaiting_task_by_conversation"), dict):
         doc["dialogue"]["awaiting_task_by_conversation"] = {}
+    if not isinstance(doc["dialogue"].get("pending_continuation_by_conversation"), dict):
+        doc["dialogue"]["pending_continuation_by_conversation"] = {}
     for scope in ("day", "week"):
         if not isinstance(doc["plans"].get(scope), dict):
             doc["plans"][scope] = None
@@ -248,6 +251,56 @@ def _incident_counts(incidents: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+def _deduplicate_active_incident_tasks() -> int:
+    """Retire legacy double-click duplicates without deleting their audit/chat.
+
+    New writes are idempotent in :func:`add_task`; this migration handles state
+    created before that guard.  The oldest currently working task remains the
+    canonical one, while duplicates become reversible cancelled audit records.
+    """
+    with _LOCK:
+        doc = _read()
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for task in doc.get("tasks") or []:
+            incident_id = str(task.get("incident_id") or "")
+            if incident_id and str(task.get("status") or "") in ACTIVE_TASK_STATUSES:
+                groups.setdefault(incident_id, []).append(task)
+        changed = 0
+        for incident_id, rows in groups.items():
+            if len(rows) < 2:
+                continue
+            state_rank = {
+                "in_progress": 0, "waiting_review": 1, "new": 2,
+                "planned": 3, "awaiting_decision": 4, "blocked": 5,
+            }
+            rows.sort(key=lambda row: (
+                state_rank.get(str(row.get("status") or ""), 9),
+                str(row.get("created_at_utc") or ""),
+            ))
+            canonical = rows[0]
+            for duplicate in rows[1:]:
+                duplicate.update({
+                    "status": "cancelled",
+                    "cancel_reason": "duplicate_active_incident_task",
+                    "duplicate_of": str(canonical.get("task_id") or ""),
+                    "cancelled_at_utc": _now(), "updated_at_utc": _now(),
+                })
+                changed += 1
+                _append_history(
+                    doc, "duplicate_incident_task_cancelled",
+                    task_id=duplicate.get("task_id"),
+                    canonical_task_id=canonical.get("task_id"),
+                    incident_id=incident_id,
+                )
+            incident = next((row for row in doc.get("incidents") or []
+                             if str(row.get("incident_id") or "") == incident_id), None)
+            if incident is not None:
+                incident["task_id"] = canonical.get("task_id")
+        if changed:
+            _write(doc)
+        return changed
+
+
 def _background_status() -> Dict[str, Any]:
     marker = _read_json(_service_marker_path())
     return {
@@ -263,6 +316,10 @@ def status() -> Dict[str, Any]:
     # A status read is also the last guard against a stale owner question.  It
     # does not wake Vitek or start a full scan: it only checks the already
     # persisted Bridge heartbeat and retires an outage that no longer exists.
+    try:
+        _deduplicate_active_incident_tasks()
+    except Exception:
+        pass
     try:
         _reconcile_task_executions()
     except Exception:
@@ -367,6 +424,8 @@ def status() -> Dict[str, Any]:
                 "started_at_utc": str(run.get("started_at_utc") or task.get("execution_started_at_utc") or ""),
                 "model": str(task.get("execution_model") or task.get("routing_model") or ""),
                 "provider": str(task.get("execution_provider") or task.get("routing_provider") or ""),
+                "avatar_webm": f"assets/agents/{agent_id}/speaking.webm",
+                "avatar_speaking": f"assets/agents/{agent_id}/speaking.webm",
             })
         return {
             "ok": True,
@@ -713,6 +772,82 @@ def _financial_review_result(task: Optional[Dict[str, Any]] = None) -> Dict[str,
     }
 
 
+def _quarantined_source_record(class_name: str, *,
+                               profile_id: str = "") -> Optional[Dict[str, Any]]:
+    """Return an exact, still-present quarantine record for one class.
+
+    Absence from the NinjaTrader catalogue does *not* prove quarantine.  The
+    previous implementation conflated those facts and could offer restoration
+    for a source file which did not exist anywhere.
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(class_name or "")):
+        return None
+    # Production lifecycle quarantine contains whole strategy folders and is
+    # distinct from AI compile-failure quarantine.  Match both class and, when
+    # available, profile ID so a similarly named experiment cannot be restored
+    # in place of the portfolio version the owner approved.
+    production_root = (_root() / "ninjatrader" / "strategies" / "_quarantine").resolve()
+    try:
+        production_metadata = sorted(
+            production_root.rglob("_quarantine.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except (OSError, ValueError):
+        production_metadata = []
+    for metadata_path in production_metadata:
+        metadata = _read_json(metadata_path)
+        if str(metadata.get("class_name") or "") != class_name:
+            continue
+        if profile_id and str(metadata.get("profile_id") or "") not in {"", profile_id}:
+            continue
+        sources: List[str] = []
+        for raw in metadata.get("moved") or []:
+            path = Path(str(raw or ""))
+            try:
+                path.resolve().relative_to(production_root)
+            except (OSError, ValueError):
+                continue
+            if path.exists():
+                sources.append(str(path))
+        if sources:
+            return {
+                **metadata,
+                "metadata_path": str(metadata_path),
+                "quarantine_path": str(metadata_path.parent),
+                "source_paths": sources,
+                "quarantine_kind": "production_lifecycle",
+            }
+
+    try:
+        from .ai_lab import paths as ai_paths
+        metadata_files = sorted(
+            ai_paths.QUARANTINE_DIR.rglob("*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except (OSError, ValueError):
+        return None
+    for metadata_path in metadata_files:
+        metadata = _read_json(metadata_path)
+        if str(metadata.get("class_name") or "") != class_name:
+            continue
+        source_path = Path(str(metadata.get("target") or metadata_path.with_suffix(".cs")))
+        try:
+            source_path.resolve().relative_to(ai_paths.QUARANTINE_DIR.resolve())
+        except (OSError, ValueError):
+            continue
+        if source_path.is_file():
+            return {
+                **metadata,
+                "metadata_path": str(metadata_path),
+                "quarantine_path": str(source_path),
+                "source_paths": [str(source_path)],
+                "quarantine_kind": "ai_compile_failure",
+            }
+    return None
+
+
 def _strategy_lifecycle_review_result(task: Dict[str, Any]) -> Dict[str, Any]:
     from . import jobqueue
 
@@ -750,10 +885,107 @@ def _strategy_lifecycle_review_result(task: Dict[str, Any]) -> Dict[str, Any]:
     score = float((candidate.get("confidence_score") or {}).get("score") or 0)
     metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
     old_oos = metrics.get("oos_2025") if isinstance(metrics.get("oos_2025"), dict) else {}
+    # Production portfolio profiles store flattened adjusted metrics, while
+    # newer research records may use a nested OOS packet.  Treating the former
+    # as missing produced a fabricated PF 0.00 for C011 even though its saved
+    # OOS PF is 2.533.
+    oos_pf_raw = metrics.get("oos_2025_adj_pf")
+    if oos_pf_raw is None:
+        oos_pf_raw = old_oos.get("adj_pf")
+    overall_pf_raw = metrics.get("profit_factor_after_commission")
+    try:
+        oos_pf = float(oos_pf_raw) if oos_pf_raw is not None else None
+    except (TypeError, ValueError):
+        oos_pf = None
+    try:
+        overall_pf = float(overall_pf_raw) if overall_pf_raw is not None else None
+    except (TypeError, ValueError):
+        overall_pf = None
+    metric_brief = (
+        f"прежний OOS дал PF {oos_pf:.2f}"
+        if oos_pf is not None else "сохранённый OOS PF отсутствует"
+    )
+    if overall_pf is not None:
+        metric_brief += f", общий PF после комиссии {overall_pf:.2f}"
     if cls not in set(jobqueue.whitelisted_strategies()):
+        quarantine = _quarantined_source_record(
+            cls, profile_id=str(candidate.get("profile_id") or ""),
+        )
+        approved = task.get("approved_continuation") if isinstance(task.get("approved_continuation"), dict) else {}
+        if approved.get("status") == "approved":
+            if quarantine:
+                from . import strategy_recovery
+                recovery = strategy_recovery.begin(
+                    candidate, quarantine, task_id=str(task.get("task_id") or ""),
+                )
+                if recovery.get("ok"):
+                    job_ids = [str(value) for value in recovery.get("job_ids") or [] if value]
+                    return {
+                        "ok": True,
+                        "reply": (
+                            "Точную версию восстановил, а компиляцию NinjaTrader подтвердил. "
+                            "OOS и стресс-проверка поставлены в очередь; итог дам только после "
+                            "фактического завершения обоих прогонов."
+                        ),
+                        "model": "deterministic lifecycle recovery", "provider": "local",
+                        "agent": {"id": "tolik", "name": "Толик"},
+                        "actions": [{
+                            "name": "recover_quarantined_strategy", "status": "completed",
+                            "profile_id": candidate.get("profile_id"), "strategy_class": cls,
+                            "recovery_run_id": recovery.get("run_id"),
+                        }, *[{
+                            "name": "strategy_validation_job", "status": "queued",
+                            "job_id": job_id, "recovery_run_id": recovery.get("run_id"),
+                        } for job_id in job_ids]],
+                    }
+                reason = str(recovery.get("reason") or "recovery_failed")
+                blocker = (
+                    "Безопасное восстановление остановлено до запуска тестов: "
+                    + str(recovery.get("error") or "компиляция NinjaTrader не подтверждена")[:600]
+                    + ". Исходные рабочие каталоги возвращены в прежнее состояние."
+                )
+            else:
+                reason = "exact_strategy_source_not_found"
+                blocker = (
+                    "Подтверждение принято и связано с этим поручением. Повторная проверка показала, "
+                    f"что точного исходника {cls} нет ни в рабочем каталоге, ни в обратимом "
+                    "карантине. Поэтому предложенный вариант восстановления сейчас невыполним: "
+                    "нужна воспроизводимая копия именно этой версии; другую стратегию под её именем "
+                    "я запускать не буду."
+                )
+            return {
+                "ok": False, "reply": blocker,
+                "model": "deterministic lifecycle recovery guard", "provider": "local",
+                "agent": {"id": "tolik", "name": "Толик"},
+                "actions": [{
+                    "name": "recover_quarantined_strategy", "status": "blocked",
+                    "reason": reason, "profile_id": candidate.get("profile_id"),
+                    "strategy_class": cls,
+                    "recovery_run_id": (recovery.get("run_id") if quarantine else ""),
+                    "continuation_id": approved.get("continuation_id"),
+                }],
+            }
+        if not quarantine:
+            return {
+                "ok": True,
+                "reply": (
+                    f"Толик проверил {candidate.get('name') or cls}: {metric_brief}, "
+                    f"сохранённая оценка качества — {score:.0f}/100. "
+                    f"Новый тест не запущен: класс {cls} отсутствует в каталоге NinjaTrader, "
+                    "а точной копии его исходника в обратимом карантине не найдено. Нужна "
+                    "воспроизводимая копия этой версии; подменять её похожей стратегией нельзя."
+                ),
+                "model": "deterministic lifecycle review", "provider": "local",
+                "agent": {"id": "tolik", "name": "Толик"},
+                "actions": [{
+                    "name": "review_failed_strategies", "status": "blocked",
+                    "reason": "exact_strategy_source_not_found",
+                    "profile_id": candidate.get("profile_id"), "strategy_class": cls,
+                }],
+            }
         reply = (
-            f"Толик проверил {candidate.get('name') or cls}: прежний OOS дал PF "
-            f"{float(old_oos.get('adj_pf') or 0):.2f}, сохранённая оценка — {score:.0f}%. "
+            f"Толик проверил {candidate.get('name') or cls}: {metric_brief}, "
+            f"сохранённая оценка качества — {score:.0f}/100. "
             "Новый тест честно не запущен: исходник этой версии находится в "
             "обратимом карантине и сейчас отсутствует в каталоге NinjaTrader. "
             "Поручение оставляю открытым; сначала нужно безопасно восстановить и "
@@ -819,9 +1051,73 @@ def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
         task["updated_at_utc"] = _now()
         if task.get("status") == "completed" and not task.get("completed_at_utc"):
             task["completed_at_utc"] = _now()
+        if str(task.get("status") or "") in {"completed", "cancelled", "blocked"}:
+            linked_incident_id = str(task.get("incident_id") or "")
+            for incident in doc.get("incidents") or []:
+                if not isinstance(incident, dict) or str(incident.get("status") or "") not in OPEN_INCIDENT_STATUSES:
+                    continue
+                context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
+                if (
+                    str(incident.get("incident_id") or "") != linked_incident_id
+                    and str(incident.get("task_id") or "") != task_id
+                    and str(context.get("task_id") or "") != task_id
+                ):
+                    continue
+                incident.update({
+                    "status": "resolved", "owner_decision_required": False,
+                    "decision": (
+                        "task_completed" if task.get("status") == "completed"
+                        else "task_cancelled" if task.get("status") == "cancelled"
+                        else "superseded_by_task_chat"
+                    ),
+                    "decision_note": str(task.get("result") or "")[:1000],
+                    "resolved_at_utc": _now(),
+                })
         _append_history(doc, "task_execution_updated", task_id=task_id, status=task.get("status"))
         _write(doc)
         return dict(task)
+
+
+def _persisted_task_intent(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    capability = str(task.get("routing_capability") or "")
+    agent = str(task.get("assigned_agent") or "")
+    role = str(task.get("assigned_role") or "")
+    complexity = str(task.get("complexity") or "")
+    if not capability or not agent or not role or complexity not in {"light", "standard", "critical"}:
+        return None
+    return {
+        "capability": capability, "agent": agent, "role": role,
+        "complexity": complexity,
+        "routing_model": str(task.get("routing_model") or "deterministic task guard"),
+        "routing_provider": str(task.get("routing_provider") or "local"),
+    }
+
+
+def _ensure_task_intent(task_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve and persist the route once, before an event claims an agent lane."""
+    task = _task_by_id(task_id)
+    if task is None:
+        return None
+    persisted = _persisted_task_intent(task)
+    if persisted:
+        return task
+    fallback = _task_route(task)
+    intent = _task_intent(task, fallback)
+    agent = str(intent.get("agent") or fallback["agent"])
+    # ``orchestrator`` is an internal capability owner, not an employee shown
+    # in the UI.  Generic coordinated work belongs to the Manager lane.
+    if agent == "orchestrator":
+        agent = "manager"
+    return _set_task_execution(
+        task_id,
+        assigned_agent=agent,
+        assigned_role=str(intent.get("role") or fallback["role"]),
+        complexity=str(intent.get("complexity") or fallback["complexity"]),
+        routing_model=str(intent.get("routing_model") or "deterministic task guard"),
+        routing_provider=str(intent.get("routing_provider") or "local"),
+        routing_capability=str(intent.get("capability") or "generic_application_task"),
+        routing_resolved_at_utc=_now(),
+    )
 
 
 def _create_execution_incident(*, event: Dict[str, Any], severity: str, title: str,
@@ -1012,6 +1308,51 @@ def _clean_conversation_scope(value: Any) -> Dict[str, Any]:
     return result
 
 
+def conversation_task_state(conversation_id: str, *,
+                            scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return a bounded task view for one exact conversation and tenant.
+
+    Named specialists receive this packet as context.  It intentionally omits
+    task ids, routing metadata and tasks from every other scope, even when two
+    tenants happen to use the same conversation id.
+    """
+    cid = re.sub(r"[^A-Za-z0-9_-]", "", str(conversation_id or "default"))[:64] or "default"
+    requested = _clean_conversation_scope(scope)
+
+    def same_scope(row: Dict[str, Any]) -> bool:
+        stored = _clean_conversation_scope(row.get("conversation_scope"))
+        if requested:
+            if not stored:
+                # Legacy unscoped tasks belong only to the global owner; never
+                # expose them to a personal/user workspace.
+                return bool(requested.get("is_owner"))
+            for key in ("user_id", "workspace_id"):
+                if str(requested.get(key) or "") != str(stored.get(key) or ""):
+                    return False
+            return True
+        return not stored
+
+    with _LOCK:
+        rows = [
+            dict(row) for row in _read().get("tasks") or []
+            if isinstance(row, dict)
+            and str(row.get("conversation_id") or "default")[:64] == cid
+            and same_scope(row)
+        ]
+    rows = sorted(rows, key=lambda row: str(row.get("updated_at_utc") or ""))[-12:]
+    return {
+        "conversation_id": cid,
+        "tasks": [{
+            "title": _executive_task_title(row),
+            "status": str(row.get("status") or ""),
+            "category": str(row.get("category") or ""),
+            "assigned_to": AGENT_LABELS.get(str(row.get("assigned_agent") or ""), ""),
+            "result": str(row.get("result") or "")[:800],
+            "updated_at_utc": str(row.get("updated_at_utc") or ""),
+        } for row in rows],
+    }
+
+
 def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     title = str(payload.get("title") or payload.get("text") or "").strip()
     if not title:
@@ -1044,11 +1385,29 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     with _LOCK:
         doc = _read()
+        # One incident has one active task.  UI double-clicks, a repeated
+        # Telegram delivery or two concurrent workers must all converge on the
+        # same durable task instead of opening parallel conversations that race
+        # to update the incident.
+        if task["incident_id"]:
+            existing = next((
+                row for row in reversed(doc.get("tasks") or [])
+                if str(row.get("incident_id") or "") == task["incident_id"]
+                and str(row.get("status") or "") in ACTIVE_TASK_STATUSES
+            ), None)
+            if existing is not None:
+                _append_history(
+                    doc, "task_create_deduplicated",
+                    task_id=existing.get("task_id"), incident_id=task["incident_id"],
+                )
+                _write(doc)
+                return {**dict(existing), "idempotent_replay": True}
         doc["tasks"] = [*doc.get("tasks", []), task][-1000:]
         doc["last_activity_state"] = "busy"
         doc["idle_notified_at_utc"] = ""
         _append_history(doc, "task_created", task_id=task["task_id"], source=task["source"])
         _write(doc)
+    task = _ensure_task_intent(task["task_id"]) or task
     if task["auto_execute"] and task["status"] in ACTIVE_TASK_STATUSES:
         emit_event(
             "task_created", {"task_id": task["task_id"]}, source=task["source"],
@@ -1605,12 +1964,12 @@ def _owner_incident_brief(incident: Dict[str, Any]) -> Dict[str, str]:
             candidate = str(evidence.get("best_candidate") or "лучшая стратегия")
             return {
                 "fact": f"Нашёл {count} проваленных стратегий, которые ещё не убраны из рабочего списка.",
-                "recommendation": f"У {candidate} сохранённая оценка повторной проверки {confidence:.0f}%, поэтому её имеет смысл один раз перепроверить на OOS и стресс-тестах; остальные подготовлю к архиву.",
+                "recommendation": f"У {candidate} сохранённая оценка качества {confidence:.0f}/100. Это не вероятность успеха, но основание один раз перепроверить стратегию на OOS и стресс-тестах; остальные подготовлю к архиву.",
                 "question": "Запустить такую проверку и после неё окончательно решить судьбу стратегий?",
             }
         return {
             "fact": f"Нашёл {count} проваленных стратегий, которые ещё не убраны из рабочего списка.",
-            "recommendation": "Надёжных данных с вероятностью успеха выше 50% нет, поэтому реабилитацию не предлагаю — безопаснее перенести их в архив.",
+            "recommendation": "Нет стратегии с сохранённой оценкой качества выше 50/100. Это не оценка вероятности успеха, поэтому реабилитацию без новых тестов не предлагаю — безопаснее перенести их в архив.",
             "question": "Подготовить их к архивированию?",
         }
     if category == "runtime_connection":
@@ -1628,6 +1987,58 @@ def _owner_incident_brief(incident: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+def _post_owner_chat(text: str, *, action_status: str = "needs_input",
+                     action_name: str = "vitek_owner_alert") -> None:
+    """Persist the same owner-facing alert into the Orchestrator main chat.
+
+    Telegram delivery alone left the app history empty: the owner saw the message
+    in Telegram but not in StratForge. Interactive replies already go through
+    ``chief_agent``; proactive Vitek prompts must use the same conversation log.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return
+    try:
+        from .ai_lab import chief_agent
+        chief_agent.report_task_update(
+            conversation_id="default",
+            text=body[:4000],
+            agent_name=NAME,
+            model="Chief agent / deterministic",
+            provider="local",
+            action_name=str(action_name or "vitek_owner_alert")[:64],
+            action_status=str(action_status or "needs_input")[:40],
+            mirror_to_telegram=False,
+        )
+    except Exception:
+        return
+
+
+def _deliver_owner_alert(title: str, lines: List[str], *, urgent: bool = False,
+                         dedupe_key: str = "",
+                         action_status: str = "needs_input",
+                         action_name: str = "vitek_owner_alert") -> bool:
+    """Write the alert into the app chat, then Telegram (+ in-app SMS inbox)."""
+    clean_lines = [str(line).strip() for line in (lines or []) if str(line).strip()]
+    if not clean_lines:
+        return False
+    _post_owner_chat(
+        "\n".join(clean_lines),
+        action_status=action_status,
+        action_name=action_name,
+    )
+    try:
+        from . import telegram_service
+        return telegram_service.send_chief_report(
+            title, clean_lines,
+            urgent=urgent,
+            conversation_id="default", conversation_title="Основной чат",
+            dedupe_key=str(dedupe_key or ""),
+        )
+    except Exception:
+        return False
+
+
 def _remember_owner_question(incident: Dict[str, Any], conversation_id: str = "default") -> None:
     with _LOCK:
         doc = _read()
@@ -1643,7 +2054,7 @@ def _remember_owner_question(incident: Dict[str, Any], conversation_id: str = "d
 
 def _owner_question_reply(incident: Dict[str, Any], *, extra_count: int = 0) -> str:
     brief = _owner_incident_brief(incident)
-    lines = ["Дмитрий Сергеевич, " + brief["fact"], brief["recommendation"]]
+    lines = [brief["fact"], brief["recommendation"]]
     if extra_count:
         lines.append(f"После этого у меня есть ещё {extra_count} вопрос{'а' if 2 <= extra_count <= 4 else 'ов'}; принесу их по одному, без технической свалки.")
     lines.append(brief["question"] + " Можно ответить просто «да» или «нет».")
@@ -1657,20 +2068,17 @@ def _notify_incidents(incidents: List[Dict[str, Any]], *, resting: bool) -> bool
     ]
     if not material:
         return False
-    try:
-        from . import telegram_service
-        ordered = sorted(material, key=lambda item: SEVERITY_ORDER.get(str(item.get("severity") or "info"), 9))
-        primary = ordered[0]
-        reply = _owner_question_reply(primary, extra_count=len(ordered) - 1)
-        _remember_owner_question(primary, "default")
-        return telegram_service.send_chief_report(
-            f"{NAME} · нужен ваш ответ", [reply],
-            urgent=any(row.get("severity") in {"critical", "error"} for row in material),
-            conversation_id="default", conversation_title="Основной чат",
-            dedupe_key="vitek:" + str(primary.get("incident_id") or ""),
-        )
-    except Exception:
-        return False
+    ordered = sorted(material, key=lambda item: SEVERITY_ORDER.get(str(item.get("severity") or "info"), 9))
+    primary = ordered[0]
+    reply = _owner_question_reply(primary, extra_count=len(ordered) - 1)
+    _remember_owner_question(primary, "default")
+    return _deliver_owner_alert(
+        f"{NAME} · нужен ваш ответ", [reply],
+        urgent=any(row.get("severity") in {"critical", "error"} for row in material),
+        dedupe_key="vitek:" + str(primary.get("incident_id") or ""),
+        action_status="needs_input",
+        action_name="vitek_owner_question",
+    )
 
 
 def _maybe_notify_idle() -> bool:
@@ -1688,15 +2096,12 @@ def _maybe_notify_idle() -> bool:
         _write(doc)
     if not should_notify:
         return False
-    try:
-        from . import telegram_service
-        return telegram_service.send_chief_report(
-            f"{NAME} · свободен", ["Активных задач нет. Я свободен."],
-            conversation_id="default", conversation_title="Основной чат",
-            dedupe_key=f"vitek-idle:{_now_dt().date().isoformat()}",
-        )
-    except Exception:
-        return False
+    return _deliver_owner_alert(
+        f"{NAME} · свободен", ["Активных задач нет. Я свободен."],
+        dedupe_key=f"vitek-idle:{_now_dt().date().isoformat()}",
+        action_status="completed",
+        action_name="vitek_idle",
+    )
 
 
 def _maybe_notify_plan_prompt(*, resting: bool) -> bool:
@@ -1737,13 +2142,14 @@ def _maybe_notify_plan_prompt(*, resting: bool) -> bool:
         _write(doc)
     try:
         from . import telegram_service
-        sent = telegram_service.send_chief_report(
+        sent = _deliver_owner_alert(
             f"{NAME} · нужен план", [
                 *prompts,
                 "Ответьте: «Витёк, план на сегодня: цель 1; цель 2» или «Витёк, план на неделю: …».",
             ],
-            conversation_id="default", conversation_title="Основной чат",
             dedupe_key=f"vitek-plan:{day_key}:{week_key}",
+            action_status="needs_input",
+            action_name="vitek_plan_prompt",
         )
     except Exception:
         sent = False
@@ -1757,6 +2163,7 @@ def _maybe_notify_plan_prompt(*, resting: bool) -> bool:
         # Keep the claim when the integration is healthy and has no delivery
         # error; otherwise release it so a later background cycle can retry.
         try:
+            from . import telegram_service
             telegram_state = telegram_service.status()
             healthy_dedupe = bool(
                 telegram_state.get("configured")
@@ -2056,6 +2463,188 @@ def _latest_waiting_task(conversation_id: str = "default") -> Optional[Dict[str,
                      and str(row.get("status") or "") == "waiting_review"), None)
 
 
+def register_task_continuation(conversation_id: str, plan_summary: str, *,
+                               task_id: str = "",
+                               scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Bind an offered next step to one existing task in one conversation.
+
+    A model-written paragraph is not executable authority.  This record is the
+    safe bridge between the discussion turn and a later short answer: it stores
+    only the hard-coded transition ``resume_existing_task`` and the concrete
+    task ID selected from Vitek's own state.  No capability or arguments from
+    model text are accepted here.
+    """
+    cid = str(conversation_id or "default")[:120]
+    summary = " ".join(str(plan_summary or "").split())[:4000]
+    if not summary:
+        return None
+    with _LOCK:
+        doc = _read()
+        candidates = [
+            row for row in doc.get("tasks") or []
+            if isinstance(row, dict)
+            and str(row.get("conversation_id") or "default")[:120] == cid
+            and str(row.get("status") or "") in {"blocked", "waiting_review"}
+        ]
+        if scope:
+            workspace_id = str(scope.get("workspace_id") or "")
+            user_id = int(scope.get("user_id") or 0)
+            scoped = []
+            for row in candidates:
+                task_scope = row.get("conversation_scope") if isinstance(row.get("conversation_scope"), dict) else {}
+                if workspace_id and str(task_scope.get("workspace_id") or "") not in {"", workspace_id}:
+                    continue
+                if user_id and int(task_scope.get("user_id") or 0) not in {0, user_id}:
+                    continue
+                scoped.append(row)
+            candidates = scoped
+        if task_id:
+            candidates = [row for row in candidates if str(row.get("task_id") or "") == str(task_id)]
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            now = _now_dt()
+            continuation = {
+                "continuation_id": "VC-" + uuid.uuid4().hex[:12].upper(),
+                "conversation_id": cid,
+                "task_ids": [str(row.get("task_id") or "") for row in candidates],
+                "task_titles": [str(row.get("title") or "")[:300] for row in candidates],
+                "allowed_transition": "clarify_task",
+                "plan_summary": summary, "status": "pending",
+                "created_at_utc": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "expires_at_utc": (now + timedelta(hours=24)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            }
+            doc["dialogue"]["pending_continuation_by_conversation"][cid] = continuation
+            _append_history(
+                doc, "task_continuation_ambiguous",
+                continuation_id=continuation["continuation_id"],
+                task_ids=continuation["task_ids"], conversation_id=cid,
+            )
+            _write(doc)
+            return {
+                "name": "vitek_task_continuation", "status": "needs_input",
+                "reason": "multiple_blocked_tasks_in_conversation",
+                "continuation_id": continuation["continuation_id"],
+                "task_ids": continuation["task_ids"],
+                "allowed_transition": "clarify_task",
+            }
+        task = sorted(
+            candidates,
+            key=lambda row: str(row.get("updated_at_utc") or row.get("created_at_utc") or ""),
+        )[-1]
+        now = _now_dt()
+        continuation = {
+            "continuation_id": "VC-" + uuid.uuid4().hex[:12].upper(),
+            "conversation_id": cid,
+            "task_id": str(task.get("task_id") or ""),
+            "task_status_at_offer": str(task.get("status") or ""),
+            "task_category": str(task.get("category") or ""),
+            "task_capability": str(task.get("routing_capability") or ""),
+            "allowed_transition": "resume_existing_task",
+            "plan_summary": summary,
+            "status": "pending",
+            "created_at_utc": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "expires_at_utc": (now + timedelta(hours=24)).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        }
+        doc["dialogue"]["pending_continuation_by_conversation"][cid] = continuation
+        _append_history(
+            doc, "task_continuation_offered",
+            continuation_id=continuation["continuation_id"],
+            task_id=continuation["task_id"], conversation_id=cid,
+        )
+        _write(doc)
+    return {
+        "name": "vitek_task_continuation",
+        "status": "approval_required",
+        "continuation_id": continuation["continuation_id"],
+        "task_id": continuation["task_id"],
+        "allowed_transition": "resume_existing_task",
+    }
+
+
+def _latest_task_continuation(conversation_id: str = "default") -> Optional[Dict[str, Any]]:
+    cid = str(conversation_id or "default")[:120]
+    with _LOCK:
+        doc = _read()
+        continuation = dict(
+            (doc.get("dialogue") or {}).get("pending_continuation_by_conversation", {}).get(cid) or {}
+        )
+        if continuation.get("status") != "pending":
+            return None
+        expires = _parse_time(continuation.get("expires_at_utc"))
+        if not expires or expires <= _now_dt():
+            doc["dialogue"]["pending_continuation_by_conversation"].pop(cid, None)
+            _append_history(
+                doc, "task_continuation_expired",
+                continuation_id=continuation.get("continuation_id"), conversation_id=cid,
+            )
+            _write(doc)
+            return None
+        if continuation.get("allowed_transition") == "clarify_task":
+            return continuation
+        task_id = str(continuation.get("task_id") or "")
+        task = next((
+            row for row in doc.get("tasks") or []
+            if str(row.get("task_id") or "") == task_id
+            and str(row.get("conversation_id") or "default")[:120] == cid
+            and str(row.get("status") or "") in {"blocked", "waiting_review"}
+        ), None)
+        if task is None or continuation.get("allowed_transition") != "resume_existing_task":
+            return None
+        return continuation
+
+
+def _apply_task_continuation(continuation: Dict[str, Any], decision: str,
+                             owner_message: str) -> Dict[str, Any]:
+    cid = str(continuation.get("conversation_id") or "default")[:120]
+    continuation_id = str(continuation.get("continuation_id") or "")
+    task_id = str(continuation.get("task_id") or "")
+    with _LOCK:
+        doc = _read()
+        pending = doc["dialogue"]["pending_continuation_by_conversation"].get(cid) or {}
+        if str(pending.get("continuation_id") or "") != continuation_id:
+            raise VitekError("Это продолжение уже обработано или устарело.")
+        stored = next((row for row in doc.get("tasks") or []
+                       if str(row.get("task_id") or "") == task_id), None)
+        if stored is None or str(stored.get("conversation_id") or "default")[:120] != cid:
+            raise VitekError("Связанное поручение не найдено в этом диалоге.")
+        if decision == "reject":
+            pending["status"] = "rejected"
+            pending["decided_at_utc"] = _now()
+            doc["dialogue"]["pending_continuation_by_conversation"].pop(cid, None)
+            _append_history(
+                doc, "task_continuation_rejected",
+                continuation_id=continuation_id, task_id=task_id, conversation_id=cid,
+            )
+            _write(doc)
+            return {"task": dict(stored), "continuation": dict(pending), "queued": False}
+        if decision != "approve" or stored.get("status") not in {"blocked", "waiting_review"}:
+            raise VitekError("Поручение уже продолжено или закрыто.")
+        approved = {
+            **dict(pending), "status": "approved", "decided_at_utc": _now(),
+            "owner_message": str(owner_message or "")[:500],
+        }
+        stored["owner_answer"] = str(owner_message or "").strip()[:2000]
+        stored["owner_answer_at_utc"] = _now()
+        stored["approved_continuation"] = approved
+        stored["status"] = "new"
+        stored["updated_at_utc"] = _now()
+        doc["dialogue"]["pending_continuation_by_conversation"].pop(cid, None)
+        doc["dialogue"]["awaiting_task_by_conversation"].pop(cid, None)
+        _append_history(
+            doc, "task_continuation_approved",
+            continuation_id=continuation_id, task_id=task_id, conversation_id=cid,
+        )
+        _write(doc)
+        result = {"task": dict(stored), "continuation": approved, "queued": True}
+    emit_event(
+        "task_created", {"task_id": task_id}, source="owner_continuation",
+        severity="task", dedupe_key=f"task-continuation:{continuation_id}",
+        dedupe_seconds=0,
+    )
+    return result
+
+
 def _apply_waiting_task_answer(task: Dict[str, Any], answer: str,
                                conversation_id: str) -> Dict[str, Any]:
     task_id = str(task.get("task_id") or "")
@@ -2139,13 +2728,13 @@ def _status_reply(current: Dict[str, Any], *, conversation_id: str = "default") 
     internal_work = [row for row in open_incidents if not row.get("owner_decision_required")]
     lines = []
     if active_tasks:
-        lines.append(f"Дмитрий Сергеевич, сейчас у меня в работе {_task_count_phrase(len(active_tasks))}.")
+        lines.append(f"Сейчас у меня в работе {_task_count_phrase(len(active_tasks))}.")
         for row in active_tasks[:3]:
             lines.append(f"• {_executive_task_title(row)}")
         if len(active_tasks) > 3:
             lines.append(f"Остальные {len(active_tasks) - 3} контролирует Управляющий; принесу итог, когда появится результат или понадобится ваше решение.")
     else:
-        lines.append("Дмитрий Сергеевич, активных поручений сейчас нет.")
+        lines.append("Активных поручений сейчас нет.")
     if internal_work:
         lines.append(f"Ещё {len(internal_work)} внутренних проверок мы с Управляющим разбираем сами; отвлекать вас техническими деталями не нужно.")
     if owner_decisions:
@@ -2153,7 +2742,7 @@ def _status_reply(current: Dict[str, Any], *, conversation_id: str = "default") 
         _remember_owner_question(primary, conversation_id)
         lines.append(_owner_question_reply(primary, extra_count=len(owner_decisions) - 1))
     elif not active_tasks and not internal_work:
-        lines[-1] = "Дмитрий Сергеевич, активных задач нет. Я свободен."
+        lines[-1] = "Активных задач нет. Я свободен."
     return "\n".join(lines)[:4000]
 
 
@@ -2172,6 +2761,66 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
     command_low = re.sub(r"\bсеголн", "сегод", command_low)
     latest = _latest_prompted_incident(conversation_id)
     waiting_task = _latest_waiting_task(conversation_id)
+    pending_continuation = _latest_task_continuation(conversation_id)
+    continuation_decision = ""
+    if pending_continuation:
+        from .ai_lab import command_language
+        continuation_decision = command_language.continuation_decision(command or raw)
+    if pending_continuation and continuation_decision:
+        if pending_continuation.get("allowed_transition") == "clarify_task":
+            if continuation_decision == "approve":
+                titles = [str(value) for value in (pending_continuation.get("task_titles") or []) if value]
+                choices = "; ".join(f"«{value}»" for value in titles[:4])
+                return {
+                    "handled": True, "kind": "task_continuation_ambiguous",
+                    "action": {
+                        "name": "vitek_task_continuation", "status": "needs_input",
+                        "reason": "multiple_blocked_tasks_in_conversation",
+                        "continuation_id": pending_continuation.get("continuation_id"),
+                    },
+                    "reply": (
+                        "В этом диалоге открыто несколько поручений, поэтому слово «запускаем» "
+                        "не связываю с задачей наугад. Уточните, какое продолжить: " + choices + "."
+                    ),
+                }
+            with _LOCK:
+                doc = _read()
+                doc["dialogue"]["pending_continuation_by_conversation"].pop(
+                    str(conversation_id or "default")[:120], None,
+                )
+                _write(doc)
+            return {
+                "handled": True, "kind": "task_continuation_rejected",
+                "action": {"name": "vitek_task_continuation", "status": "cancelled"},
+                "reply": "Понял. Ни одно из этих поручений не запускаю.",
+            }
+        resumed = _apply_task_continuation(
+            pending_continuation, continuation_decision, command or raw,
+        )
+        if continuation_decision == "reject":
+            return {
+                "handled": True, "kind": "task_continuation_rejected",
+                "task": resumed["task"],
+                "action": {
+                    "name": "vitek_task_continuation", "status": "cancelled",
+                    "task_id": resumed["task"].get("task_id"),
+                    "continuation_id": pending_continuation.get("continuation_id"),
+                },
+                "reply": "Понял. Этот вариант не запускаю; поручение остаётся открытым для другого решения.",
+            }
+        return {
+            "handled": True, "kind": "task_continuation_approved",
+            "task": resumed["task"],
+            "action": {
+                "name": "vitek_resume_task", "status": "queued",
+                "task_id": resumed["task"].get("task_id"),
+                "continuation_id": pending_continuation.get("continuation_id"),
+            },
+            "reply": (
+                "Принял. Продолжаю именно согласованный вариант по этому поручению. "
+                "Толик вернётся сюда с фактическим результатом или одним конкретным препятствием."
+            ),
+        }
     short_decision = latest and low in {
         "да", "делай", "выполняй", "подтверждаю", "нет", "не надо", "отмена",
         "решено", "исправлено",
@@ -2338,17 +2987,14 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
 
 
 def _notify_event_result(event: Dict[str, Any], result: Dict[str, Any]) -> bool:
-    try:
-        from . import telegram_service
-        content = str(result.get("content") or result.get("reply") or "Событие обработано.")[:3200]
-        return telegram_service.send_chief_report(
-            f"{NAME} · результат", [content],
-            urgent=str(event.get("severity") or "") in {"critical", "error"},
-            conversation_id="default", conversation_title="Основной чат",
-            dedupe_key=f"vitek-event:{event.get('event_id')}",
-        )
-    except Exception:
-        return False
+    content = str(result.get("content") or result.get("reply") or "Событие обработано.")[:3200]
+    return _deliver_owner_alert(
+        f"{NAME} · результат", [content],
+        urgent=str(event.get("severity") or "") in {"critical", "error"},
+        dedupe_key=f"vitek-event:{event.get('event_id')}",
+        action_status="completed",
+        action_name="vitek_event_result",
+    )
 
 
 def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -2358,12 +3004,18 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": True, "skipped": True, "reason": "task_not_found"}
     if str(task.get("status") or "") not in ACTIVE_TASK_STATUSES:
         return {"ok": True, "skipped": True, "reason": "task_not_active"}
-    route = _task_route(task)
-    intent = _task_intent(task, route)
+    task = _ensure_task_intent(task_id) or task
+    fallback_route = _task_route(task)
+    intent = _persisted_task_intent(task) or {
+        "capability": "generic_application_task",
+        "agent": "manager" if fallback_route["agent"] == "orchestrator" else fallback_route["agent"],
+        "role": fallback_route["role"], "complexity": fallback_route["complexity"],
+        "routing_model": "deterministic task guard", "routing_provider": "local",
+    }
     route = {
-        "agent": str(intent.get("agent") or route["agent"]),
-        "role": str(intent.get("role") or route["role"]),
-        "complexity": str(intent.get("complexity") or route["complexity"]),
+        "agent": str(intent.get("agent") or fallback_route["agent"]),
+        "role": str(intent.get("role") or fallback_route["role"]),
+        "complexity": str(intent.get("complexity") or fallback_route["complexity"]),
     }
     selector = {"light": "secretary", "standard": "deputy", "critical": "manager"}[route["complexity"]]
     claimed = _set_task_execution(
@@ -2393,18 +3045,16 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     elif capability == "review_failed_strategies":
         response = _strategy_lifecycle_review_result(task)
     else:
-        owner_answer = str(task.get("owner_answer") or "").strip()
-        prompt = (
-            "Выполни эту задачу владельца через разрешённые инструменты приложения. "
-            "Не утверждай, что действие сделано, если исполнитель не вернул фактический результат. "
-            f"Профильный исполнитель: {route['agent']} ({route['role']}).\n"
-            f"ЗАДАЧА: {task.get('title')}\nОПИСАНИЕ: {task.get('description') or '—'}\n"
-            f"ПОЯСНЕНИЕ ВЛАДЕЛЬЦА: {owner_answer or '—'}\n"
-            f"ДИАЛОГ: {conversation_id}"
-        )
-        response = chief_agent.handle_message(
-            prompt[:6000], source="vitek", mirror_to_telegram=False,
-            conversation_id=conversation_id, agent=selector, scope=conversation_scope,
+        response = chief_agent.execute_internal_task(
+            {
+                "title": task.get("title"),
+                "description": task.get("description"),
+                "owner_answer": task.get("owner_answer"),
+                "approved_continuation": task.get("approved_continuation"),
+                "assigned_agent": route["agent"], "assigned_role": route["role"],
+            },
+            conversation_id=conversation_id, agent=selector,
+            scope=conversation_scope,
         )
     actions = [row for row in (response.get("actions") or []) if isinstance(row, dict)]
     statuses = {str(row.get("status") or "") for row in actions}
@@ -2546,22 +3196,24 @@ def _report_reconciled_task(task: Dict[str, Any], *, state: str, text: str,
     signature = f"{state}:{hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]}"
     if str(task.get("execution_reported_state") or "") == signature:
         return
-    conversation_id = str(task.get("conversation_id") or "")
+    # Every delegated task has an owner-visible home.  Legacy incident tasks
+    # created before conversations were persisted use the canonical default
+    # thread instead of silently losing the terminal report.
+    conversation_id = str(task.get("conversation_id") or "default")
     scope = task.get("conversation_scope") if isinstance(task.get("conversation_scope"), dict) else None
-    if conversation_id:
-        try:
-            from .ai_lab import chief_agent
-            agent_id = str(task.get("assigned_agent") or "vitek")
-            chief_agent.report_task_update(
-                conversation_id=conversation_id, text=text,
-                agent_name=AGENT_LABELS.get(agent_id, FORMAL_NAME),
-                model=model, provider=provider,
-                action_name=str(task.get("routing_capability") or "vitek_task"),
-                action_status="completed" if state == "completed" else "blocked",
-                close=state == "completed", mirror_to_telegram=True, scope=scope,
-            )
-        except Exception:
-            return
+    try:
+        from .ai_lab import chief_agent
+        agent_id = str(task.get("assigned_agent") or "vitek")
+        chief_agent.report_task_update(
+            conversation_id=conversation_id, text=text,
+            agent_name=AGENT_LABELS.get(agent_id, FORMAL_NAME),
+            model=model, provider=provider,
+            action_name=str(task.get("routing_capability") or "vitek_task"),
+            action_status="completed" if state == "completed" else "blocked",
+            close=state == "completed", mirror_to_telegram=True, scope=scope,
+        )
+    except Exception:
+        return
     _set_task_execution(str(task.get("task_id") or ""), execution_reported_state=signature)
 
 
@@ -2605,35 +3257,91 @@ def _reconcile_task_executions() -> None:
             continue
 
         mission_id = str(task.get("execution_mission_id") or "")
-        if not mission_id:
+        if mission_id:
+            try:
+                from .ai_lab import chief_agent
+                mission = dict(chief_agent.status().get("mission") or {})
+            except Exception:
+                continue
+            if str(mission.get("mission_id") or "") != mission_id:
+                continue
+            mission_state = str(mission.get("status") or "")
+            if mission_state == "completed":
+                text = str(mission.get("completion_report") or "Исследование завершено.")
+                updated = _set_task_execution(
+                    task_id, status="completed", result=text,
+                    execution_model=str(mission.get("completion_report_model") or "mission controller"),
+                    execution_provider="local", execution_mission_status=mission_state,
+                )
+                _report_reconciled_task(
+                    updated, state="completed", text=text,
+                    model=str(mission.get("completion_report_model") or "mission controller"),
+                )
+            elif mission_state in {"stopped", "deadline_reached", "failed", "blocked"}:
+                text = str(mission.get("completion_report") or mission.get("last_error") or "Исследование остановлено без подтверждённого результата.")
+                updated = _set_task_execution(
+                    task_id, status="blocked", result=text,
+                    execution_mission_status=mission_state,
+                )
+                _report_reconciled_task(updated, state="blocked", text=text,
+                                        model="mission controller")
+            continue
+
+        job_ids = [str(value) for value in task.get("execution_job_ids") or [] if value]
+        if not job_ids:
             continue
         try:
-            from .ai_lab import chief_agent
-            mission = dict(chief_agent.status().get("mission") or {})
+            from . import jobqueue
+            locations = [jobqueue.find_job_dir(job_id) for job_id in job_ids]
         except Exception:
             continue
-        if str(mission.get("mission_id") or "") != mission_id:
+        if any(location is None for location in locations):
             continue
-        mission_state = str(mission.get("status") or "")
-        if mission_state == "completed":
-            text = str(mission.get("completion_report") or "Исследование завершено.")
-            updated = _set_task_execution(
-                task_id, status="completed", result=text,
-                execution_model=str(mission.get("completion_report_model") or "mission controller"),
-                execution_provider="local", execution_mission_status=mission_state,
+        states = [str(location[0]) for location in locations if location is not None]
+        if any(state in {"failed", "cancelled"} for state in states):
+            failed = [job_id for job_id, state in zip(job_ids, states) if state in {"failed", "cancelled"}]
+            text = (
+                "Проверка стратегии остановлена: один из подтверждённых прогонов не завершился "
+                f"успешно ({', '.join(failed[:2])}). Исходные параметры не менял."
             )
-            _report_reconciled_task(
-                updated, state="completed", text=text,
-                model=str(mission.get("completion_report_model") or "mission controller"),
-            )
-        elif mission_state in {"stopped", "deadline_reached", "failed", "blocked"}:
-            text = str(mission.get("completion_report") or mission.get("last_error") or "Исследование остановлено без подтверждённого результата.")
             updated = _set_task_execution(
                 task_id, status="blocked", result=text,
-                execution_mission_status=mission_state,
+                execution_job_states=dict(zip(job_ids, states)),
+                execution_model="NinjaTrader evidence reconciliation",
+                execution_provider="local",
             )
-            _report_reconciled_task(updated, state="blocked", text=text,
-                                    model="mission controller")
+            _report_reconciled_task(
+                updated, state="blocked", text=text,
+                model="NinjaTrader evidence reconciliation",
+            )
+            continue
+        if not states or any(state != "done" for state in states):
+            continue
+        summaries = [jobqueue.read_job_summary(job_id) or {} for job_id in job_ids]
+        labels = ("OOS", "стресс")
+        parts: List[str] = []
+        for index, summary in enumerate(summaries[:2]):
+            metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+            pf = metrics.get("profit_factor_after_commission")
+            net = metrics.get("net_profit_after_commission")
+            trades = metrics.get("trade_count_adjusted", metrics.get("trade_count"))
+            try:
+                fact = f"PF {float(pf):.2f}, P&L ${float(net):.2f}, сделок {int(trades or 0)}"
+            except (TypeError, ValueError):
+                fact = "метрики сохранены в отчёте прогона"
+            parts.append(f"{labels[index]}: {fact}")
+        text = "Оба согласованных прогона завершены. " + "; ".join(parts) + "."
+        updated = _set_task_execution(
+            task_id, status="completed", result=text,
+            execution_job_states=dict(zip(job_ids, states)),
+            execution_job_summaries=summaries[:2],
+            execution_model="NinjaTrader evidence reconciliation",
+            execution_provider="local",
+        )
+        _report_reconciled_task(
+            updated, state="completed", text=text,
+            model="NinjaTrader evidence reconciliation",
+        )
 
 
 def _resolve_connection_incidents() -> set[str]:
@@ -2736,7 +3444,7 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
         resolved_ids = _resolve_connection_incidents()
         result = {
             "ok": True, "route": route, "model": "internal",
-            "content": "Дмитрий Сергеевич, связь с NinjaTrader восстановлена. Дополнительных действий от вас не требуется.",
+            "content": "Связь с NinjaTrader восстановлена. Дополнительных действий от вас не требуется.",
             "resolved_incidents": len(resolved_ids),
         }
         result["notified"] = _notify_event_result(event, result)
@@ -2750,7 +3458,7 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
         result = {
             "ok": True, "route": route, "model": "deterministic controller", "provider": "local",
             "content": (
-                "Дмитрий Сергеевич, связь с NinjaTrader потеряна." + impact
+                "Связь с NinjaTrader потеряна." + impact
                 + " Могу безопасно проверить Bridge и восстановить соединение, не меняя торговые параметры."
             ),
         }
@@ -2839,9 +3547,30 @@ def _event_agent(event: Dict[str, Any], doc: Optional[Dict[str, Any]] = None) ->
         task_id = str((event.get("payload") or {}).get("task_id") or "")
         source = doc or _read()
         task = next((row for row in source.get("tasks") or [] if str(row.get("task_id") or "") == task_id), None)
-        return str(_task_route(task or {}).get("agent") or "manager")
+        agent = str((task or {}).get("assigned_agent") or _task_route(task or {}).get("agent") or "manager")
+        return "manager" if agent == "orchestrator" else agent
     agent = str((EVENT_AGENT_ROUTES.get(kind) or {}).get("agent") or "manager")
     return "manager" if agent == "orchestrator" else agent
+
+
+def _prepare_queued_task_routes() -> None:
+    """Persist routes before lane selection; never call a model under `_LOCK`."""
+    with _LOCK:
+        doc = _read()
+        task_ids = []
+        task_by_id = {
+            str(row.get("task_id") or ""): row
+            for row in doc.get("tasks") or [] if isinstance(row, dict)
+        }
+        for event in doc.get("events") or []:
+            if event.get("status") != "queued" or event.get("event_type") != "task_created":
+                continue
+            task_id = str((event.get("payload") or {}).get("task_id") or "")
+            task = task_by_id.get(task_id) or {}
+            if task_id and not _persisted_task_intent(task):
+                task_ids.append(task_id)
+    for task_id in dict.fromkeys(task_ids):
+        _ensure_task_intent(task_id)
 
 
 def _event_title(event: Dict[str, Any], doc: Optional[Dict[str, Any]] = None) -> str:
@@ -2865,6 +3594,7 @@ def _event_title(event: Dict[str, Any], doc: Optional[Dict[str, Any]] = None) ->
 
 
 def _claim_next_event(*, excluded_agents: Optional[set[str]] = None) -> Optional[Dict[str, Any]]:
+    _prepare_queued_task_routes()
     with _LOCK:
         doc = _read()
         rest = _rest_state(doc)
@@ -2924,6 +3654,8 @@ def recover_interrupted_events() -> int:
 
 def _finish_event(event: Dict[str, Any], *, result: Optional[Dict[str, Any]] = None,
                   error: str = "") -> None:
+    terminal_task: Optional[Dict[str, Any]] = None
+    terminal_message = ""
     with _LOCK:
         doc = _read()
         current = next((row for row in doc.get("events") or [] if row.get("event_id") == event.get("event_id")), None)
@@ -2943,6 +3675,42 @@ def _finish_event(event: Dict[str, Any], *, result: Optional[Dict[str, Any]] = N
             current["result"] = dict(result or {})
             doc["event_history"] = [*list(doc.get("event_history") or []), dict(current)][-1000:]
             doc["events"] = [row for row in doc.get("events") or [] if row is not current]
+            if error and str(event.get("event_type") or "") == "task_created":
+                task_id = str((event.get("payload") or {}).get("task_id") or "")
+                task = next((row for row in doc.get("tasks") or []
+                             if str(row.get("task_id") or "") == task_id), None)
+                if task is not None and str(task.get("status") or "") in ACTIVE_TASK_STATUSES:
+                    terminal_message = (
+                        "Поручение остановлено после трёх неудачных попыток внутреннего выполнения: "
+                        + str(error or "неизвестная ошибка")[:700]
+                    )
+                    task.update({
+                        "status": "blocked", "result": terminal_message,
+                        "execution_error": str(error or "")[:1000],
+                        "execution_failed_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+                    incident_ids = {
+                        value for value in [str(task.get("incident_id") or "")] if value
+                    }
+                    for incident in doc.get("incidents") or []:
+                        if not isinstance(incident, dict):
+                            continue
+                        context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
+                        linked_to_task = (
+                            str(incident.get("incident_id") or "") in incident_ids
+                            or str(context.get("task_id") or "") == task_id
+                            or str(incident.get("task_id") or "") == task_id
+                        )
+                        if not linked_to_task or str(incident.get("status") or "") not in OPEN_INCIDENT_STATUSES:
+                            continue
+                        incident.update({
+                            "status": "resolved",
+                            "decision": "superseded_by_terminal_task_failure",
+                            "decision_note": terminal_message,
+                            "owner_decision_required": False,
+                            "resolved_at_utc": _now(),
+                        })
+                    terminal_task = dict(task)
         doc["last_event_error"] = error[:1000]
         doc["last_event_at_utc"] = _now()
         doc["last_event_type"] = str(event.get("event_type") or "")
@@ -2952,6 +3720,11 @@ def _finish_event(event: Dict[str, Any], *, result: Optional[Dict[str, Any]] = N
             event_id=event.get("event_id"), event_type=event.get("event_type"), attempts=attempts,
         )
         _write(doc)
+    if terminal_task is not None:
+        _report_reconciled_task(
+            terminal_task, state="blocked", text=terminal_message,
+            model="event retry guard", provider="local",
+        )
 
 
 def process_next_event() -> Optional[Dict[str, Any]]:
@@ -3099,6 +3872,10 @@ def _worker_loop(bridge_poll_sec: int) -> None:
     while not _STOP.is_set():
         try:
             ingest_bridge_events()
+            # Long-running runtime commands and research missions must advance
+            # even when nobody has the Overview page open.  status() remains a
+            # read-side safety net, not the scheduler for task completion.
+            _reconcile_task_executions()
             _dispatch_parallel_events()
             if (_now_dt() - last_housekeeping).total_seconds() >= 60:
                 _schedule_housekeeping_event()

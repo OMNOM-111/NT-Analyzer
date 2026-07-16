@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app import durable, vitek
-from app.ai_lab import chief_agent
+from app.ai_lab import chief_agent, dialogue_policy
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -238,7 +238,7 @@ def test_orchestrator_chat_uses_auto_model_and_executes_allowlisted_plan(tmp_pat
     )
 
     assert result["model"] == "gemini-2.5-flash"
-    assert result["actions"][0]["status"] == "completed"
+    assert result["actions"][0]["status"] == "running"
     assert started[0]["strategy_count_per_cycle"] == 1
     history = chief_agent._read_conversation(10)
     assert [row["role"] for row in history] == ["user", "assistant"]
@@ -264,6 +264,59 @@ def test_orchestrator_message_rating_updates_assistant_row(tmp_path, monkeypatch
         assert "только ответы" in str(exc)
     else:
         raise AssertionError("user message rating must fail")
+
+
+def test_message_fulfillment_and_participation_chain(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chat = chief_agent._append_conversation("assistant", "Просто ответ", source="test")
+    assert chat["message_kind"] == "chat"
+    assert chat["fulfillment"] == "na"
+    assert chat["participation_chain"]
+
+    task = chief_agent._append_conversation(
+        "assistant", "Сделано", source="test", model="gpt-test", provider="local",
+        agent_name="Марина", agent_id="marina",
+        actions=[{"name": "review_financial_records", "status": "completed"}],
+        participation_chain=[
+            {"agent_id": "vitek", "agent_name": "Виктор", "title": "правая рука", "model": "router", "provider": "local"},
+            {"agent_id": "marina", "agent_name": "Марина", "title": "AI-финансовый контролёр", "model": "gpt-test", "provider": "local"},
+        ],
+    )
+    assert task["message_kind"] == "task"
+    assert task["fulfillment"] == "done"
+    assert len(task["participation_chain"]) >= 2
+    assert task["agent_title"]
+
+    marked = chief_agent.set_message_fulfillment("default", task["message_id"], "failed", source="owner")
+    assert marked["message"]["fulfillment"] == "failed"
+    assert marked["message"]["rating"] == 2
+
+    stale = chief_agent._append_conversation(
+        "assistant", "Старое поручение", source="test",
+        actions=[{"name": "vitek_task", "status": "completed"}],
+        fulfillment="unset",
+    )
+    path = chief_agent._conversation_file("default")
+    rows = chief_agent._read_conversation(50, path=path)
+    for row in rows:
+        if row.get("message_id") == stale["message_id"]:
+            row["timestamp_utc"] = "2020-01-01T00:00:00Z"
+            row["fulfillment"] = "unset"
+    from app.ai_lab.io_utils import write_jsonl_atomic
+    write_jsonl_atomic(path, rows)
+    refreshed = chief_agent.conversation_messages("default", limit=50)
+    auto = next(row for row in refreshed if row["message_id"] == stale["message_id"])
+    assert auto["fulfillment"] == "done"
+    assert auto["fulfillment_source"] == "auto"
+
+
+def test_default_conversation_never_shows_completed_topic(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    chief_agent._set_conversation_work_state("default", "completed", "Тема завершена")
+    rows = chief_agent.list_conversations()
+    default = next(row for row in rows if row.get("is_default"))
+    assert default["work_state"] != "completed"
+    assert default["work_state"] == "open"
 
 
 def test_scoped_conversation_metadata_is_indexed_in_sqlite(tmp_path, monkeypatch) -> None:
@@ -765,7 +818,7 @@ def test_incomplete_strategy_discussion_is_replaced_by_second_strong_answer(tmp_
         ("chief_agent", "orchestrator_strategic_dialogue"),
         ("final_judge", "orchestrator_strategic_dialogue_repair"),
     ]
-    assert result["reply"] == _complete_strategy_reply()
+    assert result["reply"] == dialogue_policy.clean_public_reply(_complete_strategy_reply())
 
 
 def test_general_discussion_uses_strong_plain_dialogue_without_actions(tmp_path, monkeypatch) -> None:
@@ -796,6 +849,52 @@ def test_general_discussion_uses_strong_plain_dialogue_without_actions(tmp_path,
     assert captured["complexity"] == "critical"
     assert result["reply"] == reply
     assert result["actions"] == []
+
+
+def test_manager_plan_persists_task_bound_continuation_for_zapuskaem(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    task = vitek.add_task({
+        "title": "Восстановить и перепроверить C011",
+        "category": "strategy_lifecycle", "status": "blocked",
+        "auto_execute": False, "conversation_id": "C-C011",
+    })
+    reply = (
+        "Факт: точная версия C011 сейчас не находится в рабочем каталоге, поэтому новый тест нельзя выдавать "
+        "за результат этой стратегии. Предлагаю сначала проверить сохранённую копию, затем восстановить только "
+        "её, подтвердить компиляцию и после этого поставить отдельные OOS и стресс-прогоны. Это обратимый путь: "
+        "при ошибке компиляции рабочий каталог останется без подмены, а исходная копия сохранится. Альтернатива — "
+        "оставить профиль в архиве без новой проверки, но тогда мы не проверим сохранённые сильные метрики. "
+        "Если согласны, продолжаю именно этот вариант. Запускаем?"
+    )
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: {
+        "content": reply, "provider": "deepseek", "actual_model": "deepseek-v4-pro",
+    })
+
+    planned = chief_agent.handle_message(
+        "Как ты предлагаешь решить эту ситуацию?", conversation_id="C-C011",
+        mirror_to_telegram=False,
+    )
+    approved = chief_agent.handle_message(
+        "запускаем", conversation_id="C-C011", mirror_to_telegram=False,
+    )
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    proposal = next(row for row in planned["actions"] if row["name"] == "vitek_task_continuation")
+    assert proposal["status"] == "approval_required"
+    assert proposal["task_id"] == task["task_id"]
+    assert approved["actions"][0]["name"] == "vitek_resume_task"
+    assert approved["actions"][0]["status"] == "queued"
+    assert stored["status"] == "new"
+    assert stored["approved_continuation"]["continuation_id"] == proposal["continuation_id"]
+
+
+def test_followup_approval_understands_first_person_plural() -> None:
+    assert chief_agent._is_followup_approval("запускаем")
+    assert chief_agent._is_followup_approval("давайте начинаем")
+    assert not chief_agent._is_followup_approval("не запускаем")
+    assert not chief_agent._is_followup_approval("как запускаем?")
 
 
 def test_simple_status_question_stays_deterministic(tmp_path, monkeypatch) -> None:
@@ -836,7 +935,7 @@ def test_short_start_approval_executes_plan_from_same_conversation(tmp_path, mon
     result = chief_agent.handle_message("Начинай", mirror_to_telegram=False)
 
     assert result["model"] == "deterministic dispatcher"
-    assert result["actions"][0]["status"] == "completed"
+    assert result["actions"][0]["status"] == "running"
     assert started[0]["target_roots"] == ["MGC"]
     assert started[0]["strategy_count_per_cycle"] == 1
     assert started[0]["iterations_per_strategy"] == chief_agent.DEFAULT_STRATEGY_ITERATIONS
@@ -1201,7 +1300,7 @@ def test_quick_simple_strategy_request_is_executed_not_refused(tmp_path, monkeyp
     )
 
     assert result["actions"][0]["name"] == "start_research"
-    assert result["actions"][0]["status"] == "completed"
+    assert result["actions"][0]["status"] == "running"
     mission = chief_agent._load()["mission"]
     assert mission["strategy_count_per_cycle"] == 1
     assert mission["iterations_per_strategy"] == 1
@@ -1354,8 +1453,8 @@ def test_start_research_records_conversation_and_reports_launch(tmp_path, monkey
     )
 
     assert result["actions"][0]["name"] == "start_research"
-    assert result["actions"][0]["status"] == "completed"
-    assert "работу запустил" in result["reply"]
+    assert result["actions"][0]["status"] == "running"
+    assert "работу запустил" in result["reply"].lower()
     assert "цикл" not in result["reply"].lower()
     assert "модел" not in result["reply"].lower()
     mission = chief_agent._load()["mission"]
@@ -2050,7 +2149,8 @@ def test_orchestrator_is_single_gateway_to_vitek_in_app_and_telegram(tmp_path, m
             "ingress": "stratforge_orchestrator", "source": source,
             "target": "vitek", "outcome": "awaiting_owner", "single_response": True,
         }
-        assert "активных поручений сейчас нет" in result["reply"]
+        assert "активных поручений сейчас нет" in result["reply"].lower()
+        assert "Дмитрий Сергеевич" not in result["reply"]
         assert "финансов" in result["reply"].lower()
         assert incident["incident_id"] not in result["reply"]
         assert result["message"]["agent_name"] == "Виктор"
@@ -2123,3 +2223,23 @@ def test_every_orchestrator_turn_has_auditable_gateway_metadata(tmp_path, monkey
     assert result["gateway"]["target"] == "orchestrator"
     assert result["gateway"]["outcome"] == "answered"
     assert result["gateway"]["single_response"] is True
+
+
+def test_internal_task_execution_does_not_forge_owner_message(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    path = chief_agent._conversation_file("C-INTERNAL")
+    chief_agent._append_conversation(
+        "user", "Это настоящее сообщение владельца.", source="app", path=path,
+    )
+    before = chief_agent.conversation_messages("C-INTERNAL")
+
+    result = chief_agent.execute_internal_task(
+        {"title": "Покажи статус", "assigned_agent": "manager"},
+        conversation_id="C-INTERNAL", agent="manager",
+    )
+
+    after = chief_agent.conversation_messages("C-INTERNAL")
+    assert result["internal"] is True
+    assert result["model"] == "deterministic dispatcher"
+    assert after == before
+    assert all("Покажи статус" not in str(row.get("content") or "") for row in after)

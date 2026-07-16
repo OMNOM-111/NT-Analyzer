@@ -33,25 +33,81 @@ _RESERVATIONS: Dict[str, Dict[str, Any]] = {}
 _USAGE_CONTEXT: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
     "stratforge_llm_usage_context", default={}
 )
+_PARTICIPATION_STEPS: contextvars.ContextVar[Optional[List[Dict[str, Any]]]] = contextvars.ContextVar(
+    "stratforge_llm_participation", default=None
+)
 
 
 @contextmanager
 def usage_scope(context: Optional[Dict[str, Any]] = None):
-    """Attribute nested model calls to the current user and workspace."""
+    """Attribute nested model calls to the current user and workspace.
+
+    Yields the in-turn participation list so callers can attach the full model
+    chain to the public assistant message without reading usage logs.
+    """
     clean = {
         key: (context or {}).get(key)
         for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source")
         if (context or {}).get(key) not in (None, "")
     }
+    steps: List[Dict[str, Any]] = []
     token = _USAGE_CONTEXT.set(clean)
+    part_token = _PARTICIPATION_STEPS.set(steps)
     try:
-        yield
+        yield steps
     finally:
+        _PARTICIPATION_STEPS.reset(part_token)
         _USAGE_CONTEXT.reset(token)
+
+
+def current_participation() -> List[Dict[str, Any]]:
+    """Return the participation steps for the active usage_scope, if any."""
+    steps = _PARTICIPATION_STEPS.get()
+    return list(steps) if isinstance(steps, list) else []
+
+
+def note_participation(step: Dict[str, Any]) -> None:
+    """Append one non-LLM participant (domain agent handoff) to the turn chain."""
+    steps = _PARTICIPATION_STEPS.get()
+    if not isinstance(steps, list) or not isinstance(step, dict):
+        return
+    agent_id = str(step.get("agent_id") or step.get("id") or "")[:80]
+    agent_name = str(step.get("agent_name") or step.get("name") or "")[:80]
+    model = str(step.get("model") or step.get("actual_model") or "")[:180]
+    key = (agent_id, agent_name, model)
+    for existing in steps:
+        if (
+            str(existing.get("agent_id") or "") == key[0]
+            and str(existing.get("agent_name") or "") == key[1]
+            and str(existing.get("model") or existing.get("actual_model") or "") == key[2]
+        ):
+            return
+    steps.append({
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "role": str(step.get("role") or step.get("title") or "")[:120],
+        "title": str(step.get("title") or step.get("role") or "")[:120],
+        "model": model,
+        "actual_model": str(step.get("actual_model") or model)[:180],
+        "provider": str(step.get("provider") or "")[:80],
+        "purpose": str(step.get("purpose") or "")[:120],
+    })
 
 
 def _record_usage(row: Dict[str, Any]) -> None:
     agent_registry.record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
+    steps = _PARTICIPATION_STEPS.get()
+    if isinstance(steps, list):
+        note_participation({
+            "agent_id": row.get("agent_id"),
+            "agent_name": row.get("agent_name"),
+            "role": row.get("request_role") or row.get("role"),
+            "title": row.get("request_role") or row.get("role"),
+            "model": row.get("actual_model") or row.get("model"),
+            "actual_model": row.get("actual_model") or row.get("model"),
+            "provider": row.get("provider"),
+            "purpose": row.get("purpose"),
+        })
 
 
 class UniversalLLMError(RuntimeError):

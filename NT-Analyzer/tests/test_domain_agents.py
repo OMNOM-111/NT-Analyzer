@@ -142,7 +142,9 @@ def test_answer_hands_off_chart_command_to_ivan(monkeypatch) -> None:
                                conversation_id="cZ")
     assert out["agent"]["id"] == "ivan"
     assert out["handoff_from"] == "marina"
-    assert out["reply"].startswith("Дмитрий Сергеевич, это не Марина")
+    assert out["reply"].startswith(
+        "Марина передала вопрос Ивану — это задача по графикам. Ответ будет в этом диалоге."
+    )
     assert captured["cmd"]["instrument"] == "MNQ"
 
 
@@ -378,8 +380,8 @@ def test_domain_answer_reports_selected_model_and_keeps_fact_block(monkeypatch) 
 
     out = domain_agents.answer("marina", "Марина, проведи сверку и объясни риск")
 
-    assert "P&L после комиссий $12.34" in out["reply"]
-    assert "Период: Месяц, 2026-07-01 — 2026-07-14" in out["reply"]
+    assert "Итог после комиссий: $12.34" in out["reply"]
+    assert "Месяц: 2026-07-01 — 2026-07-14" in out["reply"]
     assert out["model"] == "gemini-test"
     assert out["agent"]["name"] == "Марина"
 
@@ -396,7 +398,63 @@ def test_light_domain_fact_does_not_call_model(monkeypatch) -> None:
     out = domain_agents.answer("marina", "Марина, покажи отчёт за неделю")
 
     assert out["model"] == "deterministic report"
+    assert "Итог после комиссий: $12.34" in out["reply"]
+
+
+def test_detailed_specialist_report_remains_available_on_explicit_request(monkeypatch) -> None:
+    monkeypatch.setattr(domain_agents, "accounting_snapshot", lambda *args, **kwargs: {
+        "period": {"label": "Месяц", "from": "2026-07-01", "to": "2026-07-14"},
+        "summary": {"trading_pnl": "12.34", "commission": "0.56", "trades": 4,
+                    "needs_review": 0, "integrity_issues": 0},
+    })
+
+    out = domain_agents.answer("marina", "Марина, пришли подробный полный отчёт")
+
     assert "P&L после комиссий $12.34" in out["reply"]
+    assert "комиссии $0.56" in out["reply"]
+
+
+def test_combined_report_is_publicly_owned_by_viktor_not_technical_gateway(monkeypatch) -> None:
+    monkeypatch.setattr(domain_agents, "accounting_snapshot", lambda *args, **kwargs: {"summary": {}})
+    monkeypatch.setattr(domain_agents, "strategy_snapshot", lambda *args, **kwargs: {"summary": {}})
+
+    out = domain_agents.deliver_report("month")
+
+    assert out["agent"]["id"] == "vitek"
+    assert out["agent"]["name"] == "Виктор"
+    assert "Orchestrator" not in out["agent"]["name"]
+
+
+def test_named_specialist_model_receives_same_conversation_and_task_context(monkeypatch) -> None:
+    monkeypatch.setattr(domain_agents, "strategy_snapshot", lambda *args, **kwargs: {
+        "summary": {"experiments": 1, "enabled_runtime": 0, "findings": 1},
+        "findings": [], "ranking": [], "recent_experiments": [], "runtime": [],
+    })
+    captured = {}
+
+    def invoke(*args, **kwargs):
+        captured["packet"] = json.loads(args[1])
+        return {
+            "content": "Рекомендую продолжить проверку этой же версии.",
+            "actual_model": "test-model", "provider": "test-provider",
+        }
+
+    monkeypatch.setattr(domain_agents.agent_router, "invoke_role", invoke)
+    domain_agents.answer(
+        "tolik", "Толик, почему проверка остановилась?",
+        history=[
+            {"role": "user", "content": "Проверяй только C011", "agent_name": ""},
+            {"role": "assistant", "content": "Принял C011.", "agent_name": "Толик"},
+        ],
+        task_state={"conversation_id": "C-C011", "tasks": [{
+            "title": "Проверить C011", "status": "blocked", "assigned_to": "Толик",
+        }]},
+    )
+
+    packet = captured["packet"]
+    assert packet["RECENT_DIALOGUE"][-1]["content"] == "Принял C011."
+    assert packet["CONVERSATION_TASK_STATE"]["conversation_id"] == "C-C011"
+    assert packet["CONVERSATION_TASK_STATE"]["tasks"][0]["status"] == "blocked"
 
 
 def test_orchestrator_dispatches_addressed_domain_agent(tmp_path, monkeypatch) -> None:
@@ -414,6 +472,47 @@ def test_orchestrator_dispatches_addressed_domain_agent(tmp_path, monkeypatch) -
     assert out["domain_agent"] == "tolik"
     assert out["model"] == "deepseek-test"
     assert out["reply"] == "Проверил стратегии."
+
+
+def test_addressed_specialist_gets_current_conversation_history_and_task_state(tmp_path, monkeypatch) -> None:
+    from app import vitek
+
+    monkeypatch.setattr(chief_agent, "_state_path", lambda: tmp_path / "state.json")
+    monkeypatch.setattr(chief_agent, "_conversation_path", lambda: tmp_path / "conversation.jsonl")
+    monkeypatch.setattr(chief_agent, "_conversations_index_path", lambda: tmp_path / "index.json")
+    monkeypatch.setattr(chief_agent, "_conversations_dir", lambda: tmp_path)
+    cid = "C-SPECIALIST-CONTEXT"
+    path = chief_agent._conversation_file(cid)
+    chief_agent._append_conversation("user", "Проверяем только C011", source="test", path=path)
+    chief_agent._append_conversation(
+        "assistant", "Принял C011.", source="test", agent_name="Толик", path=path,
+    )
+    scoped_state = {"conversation_id": cid, "tasks": [{"title": "C011", "status": "blocked"}]}
+    monkeypatch.setattr(vitek, "conversation_task_state", lambda conversation_id, scope=None: (
+        scoped_state if conversation_id == cid else {}
+    ))
+    captured = {}
+
+    def answer(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "agent": {"id": "tolik", "name": "Толик", "title": "аналитик", "page": "strategies.html"},
+            "reply": "Продолжаю C011.", "model": "test", "provider": "local",
+            "complexity": "standard",
+        }
+
+    monkeypatch.setattr(domain_agents, "answer", answer)
+
+    chief_agent.handle_message(
+        "Толик, как предлагаешь продолжить?", conversation_id=cid,
+        mirror_to_telegram=False,
+    )
+
+    assert [row["content"] for row in captured["history"]] == [
+        "Проверяем только C011", "Принял C011.",
+    ]
+    assert captured["task_state"] == scoped_state
 
 
 def test_addressed_specialist_keeps_public_identity_with_no_action_qualifier(tmp_path, monkeypatch) -> None:

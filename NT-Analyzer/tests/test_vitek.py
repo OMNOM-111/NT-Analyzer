@@ -370,7 +370,8 @@ def test_vitek_name_variants_all_return_the_same_operational_status(tmp_path, mo
         result = vitek.handle_text_command(phrase, source="test")
         assert result["handled"] is True, phrase
         assert result["kind"] == "status", phrase
-        assert "активных поручений сейчас нет" in result["reply"], phrase
+        assert "активных поручений сейчас нет" in result["reply"].lower(), phrase
+        assert "Дмитрий Сергеевич" not in result["reply"], phrase
         assert "финансов" in result["reply"].lower(), phrase
         assert first["incident_id"] not in result["reply"]
         assert second["incident_id"] not in result["reply"]
@@ -425,7 +426,7 @@ def test_connection_outage_stays_single_and_uses_no_model(tmp_path, monkeypatch)
     repeated = vitek.emit_event("connection_lost", {"enabled_strategies": 2})
 
     assert analyzed["model"] == "deterministic controller"
-    assert "связь с NinjaTrader потеряна" in analyzed["content"]
+    assert "связь с ninjatrader потеряна" in analyzed["content"].lower()
     assert repeated["queued"] is False
     assert repeated["reason"] == "open_incident"
 
@@ -457,15 +458,15 @@ def test_task_event_selects_strong_model_and_records_real_completion(tmp_path, m
     monkeypatch.setattr(vitek, "_maybe_notify_idle", lambda: False)
     calls = []
 
-    def fake_handle(message, **kwargs):
-        calls.append((message, kwargs))
+    def fake_handle(task_payload, **kwargs):
+        calls.append((task_payload, kwargs))
         return {
             "ok": True, "reply": "Фактическая проверка выполнена.",
             "model": "deepseek-v4-pro", "provider": "test", "complexity": "critical",
             "actions": [{"name": "audit_recent_backtests", "status": "completed"}],
         }
 
-    monkeypatch.setattr(chief_agent, "handle_message", fake_handle)
+    monkeypatch.setattr(chief_agent, "execute_internal_task", fake_handle)
     task = vitek.add_task({
         "title": "Исправить критическую ошибку стратегии NinjaTrader",
         "description": "Проверить и исправить сбой.", "priority": "critical",
@@ -487,7 +488,7 @@ def test_context_assignment_activates_once_and_reports_to_same_conversation(tmp_
     _isolate(monkeypatch, tmp_path)
     reports = []
     monkeypatch.setattr(vitek, "_maybe_notify_idle", lambda: False)
-    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+    monkeypatch.setattr(chief_agent, "execute_internal_task", lambda *args, **kwargs: {
         "ok": True, "reply": "Проверка исследования завершена.",
         "model": "test-strong-model", "provider": "test",
         "actions": [{"name": "audit_recent_backtests", "status": "completed"}],
@@ -613,7 +614,7 @@ def test_generic_task_without_verified_action_never_completes(tmp_path, monkeypa
     from app.ai_lab import chief_agent
 
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+    monkeypatch.setattr(chief_agent, "execute_internal_task", lambda *args, **kwargs: {
         "ok": True, "reply": "Начинаю разбираться.",
         "model": "test", "provider": "local", "actions": [],
     })
@@ -635,8 +636,8 @@ def test_generic_owner_clarification_returns_to_same_agent_and_prompt(tmp_path, 
     _isolate(monkeypatch, tmp_path)
     calls = []
 
-    def fake_handle(message, **kwargs):
-        calls.append(message)
+    def fake_handle(task_payload, **kwargs):
+        calls.append(task_payload)
         if len(calls) == 1:
             return {
                 "ok": True, "reply": "Нужно уточнить OOS-период.",
@@ -649,7 +650,7 @@ def test_generic_owner_clarification_returns_to_same_agent_and_prompt(tmp_path, 
             "actions": [{"name": "strategy_review", "status": "completed"}],
         }
 
-    monkeypatch.setattr(chief_agent, "handle_message", fake_handle)
+    monkeypatch.setattr(chief_agent, "execute_internal_task", fake_handle)
     monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: {"ok": True})
     task = vitek.add_task({
         "title": "Проверь стратегию", "conversation_id": "strategy-clarification",
@@ -664,8 +665,7 @@ def test_generic_owner_clarification_returns_to_same_agent_and_prompt(tmp_path, 
 
     assert accepted["kind"] == "task_reply"
     assert "Толик продолжил" in accepted["reply"]
-    assert "Используйте только OOS за 2025 год" in calls[1]
-    assert "ДИАЛОГ: strategy-clarification" in calls[1]
+    assert calls[1]["owner_answer"] == "Используйте только OOS за 2025 год"
     assert vitek._task_by_id(task["task_id"])["status"] == "completed"
 
 
@@ -825,10 +825,10 @@ def test_started_research_mission_is_not_marked_complete_at_launch(tmp_path, mon
     from app.ai_lab import chief_agent
 
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+    monkeypatch.setattr(chief_agent, "execute_internal_task", lambda *args, **kwargs: {
         "ok": True, "reply": "Исследование запущено.",
         "model": "gpt-5-mini", "provider": "azure_foundry",
-        "actions": [{"name": "start_research", "status": "completed", "mission_id": "MISSION-1"}],
+        "actions": [{"name": "start_research", "status": "running", "mission_id": "MISSION-1"}],
     })
     monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: {"ok": True})
     task = vitek.add_task({
@@ -856,6 +856,17 @@ def test_quarantined_strategy_is_reported_blocked_not_falsely_started(tmp_path, 
         "confidence_score": {"score": 76},
         "metrics": {"oos_2025": {"adj_pf": 1.31}},
     }]}), encoding="utf-8")
+    quarantine_dir = (
+        tmp_path / "ninjatrader" / "strategies" / "_quarantine"
+        / "CELL-014_20260714T000000Z"
+    )
+    source_dir = quarantine_dir / "QuarantinedC014"
+    source_dir.mkdir(parents=True)
+    (source_dir / "QuarantinedC014.cs").write_text("// preserved", encoding="utf-8")
+    (quarantine_dir / "_quarantine.json").write_text(json.dumps({
+        "class_name": "QuarantinedC014", "cell_id": "CELL-014",
+        "profile_id": "P-C014", "moved": [str(source_dir)],
+    }), encoding="utf-8")
     monkeypatch.setattr(jobqueue, "whitelisted_strategies", lambda: [])
     reports = []
     monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs) or {"ok": True})
@@ -889,12 +900,190 @@ def test_quarantined_strategy_is_reported_blocked_not_falsely_started(tmp_path, 
     assert all(not row.get("owner_decision_required") for row in execution_incidents)
 
 
+def test_strategy_review_reads_flattened_production_oos_metrics(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_root", lambda: tmp_path)
+    profile_dir = tmp_path / "data" / "profiles"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "strategies.json").write_text(json.dumps({"profiles": [{
+        "profile_id": "b1_shortonly_mnq_5m_high_slip1_paper_v2",
+        "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": "NTAMicroVwapRiskPilot",
+        "confidence_score": {"score": 72},
+        "metrics": {
+            "oos_2025_adj_pf": 2.533,
+            "profit_factor_after_commission": 2.490394,
+        },
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(jobqueue, "whitelisted_strategies", lambda: [])
+
+    result = vitek._strategy_lifecycle_review_result({
+        "task_id": "VT-C011", "incident_id": "", "status": "in_progress",
+    })
+
+    assert "PF 2.53" in result["reply"]
+    assert "общий PF после комиссии 2.49" in result["reply"]
+    assert "PF 0.00" not in result["reply"]
+
+
+def test_approved_recovery_does_not_rerun_same_quarantine_review(tmp_path, monkeypatch) -> None:
+    from app import strategy_recovery
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_root", lambda: tmp_path)
+    profile_dir = tmp_path / "data" / "profiles"
+    profile_dir.mkdir(parents=True)
+    profile_id = "P-C011"
+    class_name = "NTAMicroVwapRiskPilot"
+    (profile_dir / "strategies.json").write_text(json.dumps({"profiles": [{
+        "profile_id": profile_id, "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": class_name, "confidence_score": {"score": 72},
+        "metrics": {"oos_2025_adj_pf": 2.533},
+    }]}), encoding="utf-8")
+    quarantine_dir = tmp_path / "ninjatrader" / "strategies" / "_quarantine" / "CELL-011_STAMP"
+    source_dir = quarantine_dir / class_name
+    source_dir.mkdir(parents=True)
+    (source_dir / f"{class_name}.cs").write_text("// exact preserved source", encoding="utf-8")
+    (quarantine_dir / "_quarantine.json").write_text(json.dumps({
+        "class_name": class_name, "cell_id": "CELL-011",
+        "profile_id": profile_id, "moved": [str(source_dir)],
+    }), encoding="utf-8")
+    monkeypatch.setattr(jobqueue, "whitelisted_strategies", lambda: [])
+    calls = []
+    monkeypatch.setattr(strategy_recovery, "begin", lambda profile, quarantine, **kwargs: (
+        calls.append((profile, quarantine, kwargs))
+        or {"ok": True, "run_id": "REC-C011", "job_ids": ["JOB-OOS", "JOB-STRESS"]}
+    ))
+
+    result = vitek._strategy_lifecycle_review_result({
+        "task_id": "VT-C011", "incident_id": "", "status": "in_progress",
+        "approved_continuation": {
+            "continuation_id": "VC-C011", "status": "approved",
+            "allowed_transition": "resume_existing_task",
+        },
+    })
+
+    assert len(calls) == 1
+    assert calls[0][0]["profile_id"] == profile_id
+    assert calls[0][1]["class_name"] == class_name
+    assert calls[0][2]["task_id"] == "VT-C011"
+    assert result["actions"][0]["name"] == "recover_quarantined_strategy"
+    assert result["actions"][0]["status"] == "completed"
+    assert [row["job_id"] for row in result["actions"][1:]] == ["JOB-OOS", "JOB-STRESS"]
+    assert all(row["status"] == "queued" for row in result["actions"][1:])
+    assert "oos и стресс-проверка поставлены в очередь" in result["reply"].lower()
+
+
+def test_machine_bound_continuation_accepts_zapuskaem_once(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    events = []
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: events.append((args, kwargs)) or {"ok": True})
+    task = vitek.add_task({
+        "title": "Проверить C011", "category": "strategy_lifecycle",
+        "status": "blocked", "auto_execute": False,
+        "conversation_id": "strategy-c011",
+    })
+    offered = vitek.register_task_continuation(
+        "strategy-c011", "Вариант 1: восстановить точную версию и перепроверить. Запускаем?",
+    )
+
+    result = vitek.handle_text_command("запускаем", conversation_id="strategy-c011")
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+
+    assert offered and offered["status"] == "approval_required"
+    assert result["handled"] is True
+    assert result["kind"] == "task_continuation_approved"
+    assert result["action"]["status"] == "queued"
+    assert stored["status"] == "new"
+    assert stored["approved_continuation"]["continuation_id"] == offered["continuation_id"]
+    assert len(events) == 1
+    assert vitek._latest_task_continuation("strategy-c011") is None
+
+
+def test_approved_recovery_reports_safe_executor_block_without_false_completion(tmp_path, monkeypatch) -> None:
+    from app import strategy_recovery
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_root", lambda: tmp_path)
+    profile_dir = tmp_path / "data" / "profiles"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "strategies.json").write_text(json.dumps({"profiles": [{
+        "profile_id": "P-C011", "name": "VWAP Short MNQ 5m v1 c011",
+        "strategy_class": "NTAMicroVwapRiskPilot", "confidence_score": {"score": 72},
+        "metrics": {"oos_2025_adj_pf": 2.533},
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(jobqueue, "whitelisted_strategies", lambda: [])
+    monkeypatch.setattr(vitek, "_quarantined_source_record", lambda *args, **kwargs: {
+        "class_name": "NTAMicroVwapRiskPilot", "profile_id": "P-C011",
+        "source_paths": ["quarantine-only"],
+    })
+    monkeypatch.setattr(strategy_recovery, "begin", lambda *args, **kwargs: {
+        "ok": False, "run_id": "REC-FAILED", "reason": "compile_not_confirmed",
+        "error": "DLL not confirmed",
+    })
+
+    result = vitek._strategy_lifecycle_review_result({
+        "task_id": "VT-C011", "status": "in_progress",
+        "approved_continuation": {"status": "approved"},
+    })
+
+    assert result["ok"] is False
+    assert result["actions"] == [{
+        "name": "recover_quarantined_strategy", "status": "blocked",
+        "reason": "compile_not_confirmed", "profile_id": "P-C011",
+        "strategy_class": "NTAMicroVwapRiskPilot", "recovery_run_id": "REC-FAILED",
+        "continuation_id": None,
+    }]
+    assert "остановлено до запуска тестов" in result["reply"].lower()
+    assert "возвращены в прежнее состояние" in result["reply"].lower()
+
+
+def test_task_creation_is_idempotent_per_active_incident(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    first = vitek.add_task({
+        "title": "Проверить стратегию", "incident_id": "VI-ONE",
+        "status": "planned", "auto_execute": False,
+    })
+    second = vitek.add_task({
+        "title": "Повторный double-click", "incident_id": "VI-ONE",
+        "status": "planned", "auto_execute": False,
+    })
+
+    assert second["task_id"] == first["task_id"]
+    assert second["idempotent_replay"] is True
+    assert "idempotent_replay" not in vitek._read()["tasks"][0]
+    assert len(vitek._read()["tasks"]) == 1
+
+
+def test_legacy_duplicate_incident_tasks_are_retired_without_deletion(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["tasks"] = [{
+            "task_id": "VT-FIRST", "incident_id": "VI-DUP", "status": "blocked",
+            "conversation_id": "C-FIRST", "created_at_utc": "2026-07-14T20:00:00Z",
+        }, {
+            "task_id": "VT-SECOND", "incident_id": "VI-DUP", "status": "blocked",
+            "conversation_id": "C-SECOND", "created_at_utc": "2026-07-14T20:00:01Z",
+        }]
+        vitek._write(doc)
+
+    assert vitek._deduplicate_active_incident_tasks() == 1
+    tasks = {row["task_id"]: row for row in vitek._read()["tasks"]}
+
+    assert tasks["VT-FIRST"]["status"] == "blocked"
+    assert tasks["VT-SECOND"]["status"] == "cancelled"
+    assert tasks["VT-SECOND"]["duplicate_of"] == "VT-FIRST"
+    assert tasks["VT-SECOND"]["conversation_id"] == "C-SECOND"
+
+
 def test_task_is_not_claimed_complete_without_executed_action(tmp_path, monkeypatch) -> None:
     from app.ai_lab import chief_agent
 
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(vitek, "_notify_incidents", lambda rows, resting: True)
-    monkeypatch.setattr(chief_agent, "handle_message", lambda *args, **kwargs: {
+    monkeypatch.setattr(chief_agent, "execute_internal_task", lambda *args, **kwargs: {
         "ok": True, "reply": "Можно было бы изменить настройку.",
         "model": "test-model", "provider": "test", "actions": [],
     })
@@ -1012,7 +1201,8 @@ def test_vitek_ui_and_background_install_contracts() -> None:
     assert "Временные окна стратегий" in html
     assert "vitekIncidentDecision" in js
     assert "vitekPlan" in js
-    assert "setInterval(refreshVitekStatus, 3000)" in js
+    assert "setInterval(refreshVitekStatus, 10000)" in js
+    assert "setInterval(refreshVitekStatus, 3000)" not in js
     assert "получает события автоматически" in js
     assert '"/api/vitek/time-windows"' in server
     assert '"/api/vitek/events"' in server
@@ -1040,11 +1230,33 @@ def test_owner_dialogue_hides_internal_codes_and_uses_verified_strategy_threshol
 
     reply = vitek.handle_text_command("Витёк, что осталось?", conversation_id="owner-chat")["reply"]
 
-    assert "68%" in reply and "выше 50%" not in reply
+    assert "68/100" in reply and "68%" not in reply
+    assert "не вероятность успеха" in reply.lower()
     assert "OOS" in reply and "стресс" in reply
     assert incident["incident_id"] not in reply
     assert "failed_not_hidden" not in reply
     assert "Можно ответить просто «да» или «нет»" in reply
+
+
+def test_conversation_task_state_is_isolated_by_user_and_workspace(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    scope_a = {"user_id": 101, "workspace_id": "WS-A", "is_owner": False}
+    scope_b = {"user_id": 202, "workspace_id": "WS-B", "is_owner": False}
+    vitek.add_task({
+        "title": "Только задача A", "conversation_id": "SAME-CHAT",
+        "conversation_scope": scope_a,
+    })
+    vitek.add_task({
+        "title": "Только задача B", "conversation_id": "SAME-CHAT",
+        "conversation_scope": scope_b,
+    })
+
+    state_a = vitek.conversation_task_state("SAME-CHAT", scope=scope_a)
+    state_b = vitek.conversation_task_state("SAME-CHAT", scope=scope_b)
+
+    assert [row["title"] for row in state_a["tasks"]] == ["Только задача A"]
+    assert [row["title"] for row in state_b["tasks"]] == ["Только задача B"]
+    assert "task_id" not in state_a["tasks"][0]
 
 
 def test_agent_lanes_run_independently_in_parallel(tmp_path, monkeypatch) -> None:
@@ -1070,6 +1282,53 @@ def test_agent_lanes_run_independently_in_parallel(tmp_path, monkeypatch) -> Non
     working = {row["agent_id"] for row in current["agent_activity"] if row["working"]}
     assert {"tolik", "marina"}.issubset(working)
     assert current["event_engine"]["parallel_limit"] == 6
+    release.set()
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        with vitek._AGENT_RUN_LOCK:
+            if not vitek._ACTIVE_AGENT_RUNS:
+                break
+        time.sleep(0.02)
+    with vitek._AGENT_RUN_LOCK:
+        assert vitek._ACTIVE_AGENT_RUNS == {}
+
+
+def test_all_six_employee_lanes_are_visible_and_seventh_stays_queued(tmp_path, monkeypatch) -> None:
+    import time
+
+    _isolate(monkeypatch, tmp_path)
+    release = threading.Event()
+    started = []
+
+    def fake_dispatch(event):
+        started.append(event["event_id"])
+        release.wait(2)
+        return {"ok": True}
+
+    monkeypatch.setattr(vitek, "_dispatch_event", fake_dispatch)
+    with vitek._AGENT_RUN_LOCK:
+        vitek._ACTIVE_AGENT_RUNS.clear()
+    vitek.emit_event("startup_audit", {"run": 1}, dedupe_seconds=0)
+    vitek.add_task({
+        "title": "Подготовить сводку проекта", "auto_execute": True,
+        "conversation_id": "C-MANAGER",
+    })
+    vitek.emit_event("financial_event_changed", {"event_id": "F1"}, dedupe_seconds=0)
+    vitek.emit_event("job_completed", {"job_id": "J1"}, dedupe_seconds=0)
+    vitek.emit_event("important_news", {"event_id": "N1"}, dedupe_seconds=0)
+    vitek.emit_event("price_alert_agent_task", {"event_id": "P1"}, dedupe_seconds=0)
+    # A second Marina event proves same-agent serialization and the global cap.
+    vitek.emit_event("financial_event_changed", {"event_id": "F2"}, dedupe_seconds=0)
+
+    assert vitek._dispatch_parallel_events() == 6
+    current = vitek.status()
+    working = {row["agent_id"] for row in current["agent_activity"] if row["working"]}
+    assert working == {"vitek", "manager", "marina", "tolik", "nikita", "ivan"}
+    queued = [row for row in vitek._read()["events"] if row.get("status") == "queued"]
+    assert len(queued) == 1
+    assert vitek._event_agent(queued[0]) == "marina"
+    assert vitek._dispatch_parallel_events() == 0
+
     release.set()
     deadline = time.time() + 3
     while time.time() < deadline:
@@ -1164,3 +1423,275 @@ def test_startup_audit_resolves_stale_connection_question_when_heartbeat_is_fres
     current = next(row for row in vitek._read()["incidents"] if row["incident_id"] == incident["incident_id"])
     assert current["status"] == "resolved"
     assert vitek._read()["dialogue"]["awaiting_by_conversation"] == {}
+
+
+def test_task_route_is_persisted_before_event_lane_is_claimed(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Проверить неподписанные финансовые операции",
+        "category": "financial_classification", "auto_execute": True,
+        "conversation_id": "C-FINANCE",
+    })
+
+    assert task["assigned_agent"] == "marina"
+    assert task["routing_capability"] == "review_financial_records"
+    event = vitek._read()["events"][0]
+    assert vitek._event_agent(event) == "marina"
+
+    monkeypatch.setattr(vitek, "_task_intent", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("persisted route must be reused")
+    ))
+    claimed = vitek._claim_next_event()
+    assert claimed is not None
+    assert vitek._event_agent(claimed) == "marina"
+
+
+def test_generic_orchestrator_route_uses_manager_employee_lane(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Подготовить краткую сводку проекта", "auto_execute": True,
+        "conversation_id": "C-GENERIC",
+    })
+
+    assert task["assigned_agent"] == "manager"
+    assert vitek._event_agent(vitek._read()["events"][0]) == "manager"
+
+
+def test_background_worker_reconciles_long_running_tasks_without_status_page(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    calls = []
+
+    class OneTurnStop:
+        def __init__(self):
+            self.checks = 0
+
+        def is_set(self):
+            self.checks += 1
+            return self.checks > 1
+
+    class NoWaitWake:
+        def clear(self):
+            return None
+
+        def wait(self, _timeout):
+            return None
+
+    monkeypatch.setattr(vitek, "_STOP", OneTurnStop())
+    monkeypatch.setattr(vitek, "_WAKE", NoWaitWake())
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(vitek, "ingest_bridge_events", lambda: calls.append("ingest"))
+    monkeypatch.setattr(vitek, "_reconcile_task_executions", lambda: calls.append("reconcile"))
+    monkeypatch.setattr(vitek, "_dispatch_parallel_events", lambda: calls.append("dispatch"))
+    monkeypatch.setattr(vitek, "_schedule_housekeeping_event", lambda: calls.append("housekeeping"))
+
+    vitek._worker_loop(1)
+
+    assert calls[:3] == ["ingest", "reconcile", "dispatch"]
+
+
+def test_third_event_failure_blocks_task_resolves_incidents_and_reports_owner(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Исправить стратегию", "category": "strategy_lifecycle",
+        "status": "in_progress", "auto_execute": False,
+        "incident_id": "VI-ORIGINAL", "conversation_id": "",
+    })
+    event = {
+        "event_id": "VE-FAIL", "event_type": "task_created",
+        "payload": {"task_id": task["task_id"]}, "status": "running", "attempts": 3,
+    }
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["events"] = [event]
+        doc["incidents"] = [
+            {
+                "incident_id": "VI-ORIGINAL", "status": "in_progress",
+                "owner_decision_required": True, "task_id": task["task_id"],
+            },
+            {
+                "incident_id": "VI-EXECUTION", "status": "awaiting_decision",
+                "owner_decision_required": True, "context": {"task_id": task["task_id"]},
+            },
+        ]
+        vitek._write(doc)
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs))
+
+    vitek._finish_event(event, error="executor crashed")
+
+    current = vitek._read()
+    stored = next(row for row in current["tasks"] if row["task_id"] == task["task_id"])
+    assert stored["status"] == "blocked"
+    assert stored["execution_error"] == "executor crashed"
+    assert current["events"] == []
+    assert current["event_history"][-1]["status"] == "failed"
+    assert all(row["status"] == "resolved" for row in current["incidents"])
+    assert all(row["owner_decision_required"] is False for row in current["incidents"])
+    assert all(row["decision"] == "superseded_by_terminal_task_failure" for row in current["incidents"])
+    assert reports and reports[0]["conversation_id"] == "default"
+    assert reports[0]["action_status"] == "blocked"
+
+
+def test_second_event_failure_requeues_without_terminal_task_change(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Временная ошибка", "status": "in_progress", "auto_execute": False,
+    })
+    event = {
+        "event_id": "VE-RETRY", "event_type": "task_created",
+        "payload": {"task_id": task["task_id"]}, "status": "running", "attempts": 2,
+    }
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["events"] = [event]
+        vitek._write(doc)
+
+    vitek._finish_event(event, error="temporary")
+
+    current = vitek._read()
+    assert current["events"][0]["status"] == "queued"
+    assert current["events"][0]["attempts"] == 2
+    assert next(row for row in current["tasks"] if row["task_id"] == task["task_id"])["status"] == "in_progress"
+
+
+def test_reconcile_two_strategy_validation_jobs_completes_from_real_metrics(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Проверить точную версию стратегии", "status": "in_progress",
+        "auto_execute": False, "conversation_id": "C-RECOVERY",
+    })
+    vitek._set_task_execution(
+        task["task_id"], status="in_progress",
+        assigned_agent="tolik", routing_capability="review_failed_strategies",
+        execution_job_ids=["JOB-OOS", "JOB-STRESS"],
+    )
+    monkeypatch.setattr(jobqueue, "find_job_dir", lambda job_id: ("done", tmp_path / job_id))
+    summaries = {
+        "JOB-OOS": {"metrics": {
+            "profit_factor_after_commission": 1.75,
+            "net_profit_after_commission": 420.5, "trade_count_adjusted": 31,
+        }},
+        "JOB-STRESS": {"metrics": {
+            "profit_factor_after_commission": 1.21,
+            "net_profit_after_commission": 105.0, "trade_count_adjusted": 31,
+        }},
+    }
+    monkeypatch.setattr(jobqueue, "read_job_summary", lambda job_id: summaries[job_id])
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs))
+
+    vitek._reconcile_task_executions()
+
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+    assert stored["status"] == "completed"
+    assert "OOS: PF 1.75" in stored["result"]
+    assert "стресс: PF 1.21" in stored["result"]
+    assert stored["execution_job_states"] == {"JOB-OOS": "done", "JOB-STRESS": "done"}
+    assert reports and reports[0]["action_status"] == "completed"
+
+
+def test_reconcile_failed_validation_job_blocks_and_reports_in_same_chat(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Проверить точную версию стратегии", "status": "in_progress",
+        "auto_execute": False, "conversation_id": "C-RECOVERY-FAIL",
+    })
+    vitek._set_task_execution(
+        task["task_id"], status="in_progress", assigned_agent="tolik",
+        routing_capability="review_failed_strategies",
+        execution_job_ids=["JOB-OOS", "JOB-STRESS"],
+    )
+    states = {"JOB-OOS": "done", "JOB-STRESS": "failed"}
+    monkeypatch.setattr(jobqueue, "find_job_dir", lambda job_id: (states[job_id], tmp_path / job_id))
+    reports = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: reports.append(kwargs))
+
+    vitek._reconcile_task_executions()
+
+    stored = next(row for row in vitek._read()["tasks"] if row["task_id"] == task["task_id"])
+    assert stored["status"] == "blocked"
+    assert "JOB-STRESS" in stored["result"]
+    assert reports and reports[0]["conversation_id"] == "C-RECOVERY-FAIL"
+    assert reports[0]["action_status"] == "blocked"
+
+
+def test_ambiguous_short_approval_never_selects_latest_blocked_task(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    first = vitek.add_task({
+        "title": "Восстановить первую стратегию", "status": "blocked",
+        "auto_execute": False, "conversation_id": "C-SHARED",
+    })
+    second = vitek.add_task({
+        "title": "Проверить вторую стратегию", "status": "blocked",
+        "auto_execute": False, "conversation_id": "C-SHARED",
+    })
+
+    offered = vitek.register_task_continuation("C-SHARED", "Запустить согласованный вариант")
+    assert offered["status"] == "needs_input"
+    result = vitek.handle_text_command("запускаем", conversation_id="C-SHARED")
+
+    assert result["kind"] == "task_continuation_ambiguous"
+    assert "несколько поручений" in result["reply"]
+    current = vitek._read()
+    assert current["events"] == []
+    assert {row["task_id"] for row in current["tasks"] if row["status"] == "blocked"} == {
+        first["task_id"], second["task_id"],
+    }
+
+
+def test_explicit_task_continuation_approves_exactly_one_blocked_task(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    first = vitek.add_task({
+        "title": "Первая", "status": "blocked", "auto_execute": False,
+        "conversation_id": "C-SHARED",
+    })
+    second = vitek.add_task({
+        "title": "Вторая", "status": "blocked", "auto_execute": False,
+        "conversation_id": "C-SHARED",
+    })
+    offered = vitek.register_task_continuation(
+        "C-SHARED", "Продолжить вторую", task_id=second["task_id"],
+    )
+
+    assert offered["task_id"] == second["task_id"]
+    result = vitek.handle_text_command("запускаем", conversation_id="C-SHARED")
+
+    assert result["task"]["task_id"] == second["task_id"]
+    current = vitek._read()
+    assert next(row for row in current["tasks"] if row["task_id"] == first["task_id"])["status"] == "blocked"
+    assert next(row for row in current["tasks"] if row["task_id"] == second["task_id"])["status"] == "new"
+    assert [row["payload"]["task_id"] for row in current["events"]] == [second["task_id"]]
+
+
+def test_deliver_owner_alert_posts_chat_then_telegram(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    posts = []
+    telegrams = []
+
+    def fake_post(text, **kwargs):
+        posts.append({"text": text, **kwargs})
+
+    def fake_send(title, lines, **kwargs):
+        telegrams.append({"title": title, "lines": list(lines), **kwargs})
+        return True
+
+    monkeypatch.setattr(vitek, "_post_owner_chat", fake_post)
+    import app.telegram_service as telegram_service
+    monkeypatch.setattr(telegram_service, "send_chief_report", fake_send)
+
+    ok = vitek._deliver_owner_alert(
+        "Витёк · нужен ваш ответ",
+        ["Обнаружил проблему. Запустить проверку?"],
+        urgent=True,
+        dedupe_key="vitek:VI-TEST",
+    )
+    assert ok is True
+    assert posts and "Обнаружил проблему" in posts[0]["text"]
+    assert telegrams and telegrams[0]["dedupe_key"] == "vitek:VI-TEST"
+    assert telegrams[0]["conversation_id"] == "default"

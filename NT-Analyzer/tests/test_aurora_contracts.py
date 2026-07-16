@@ -348,6 +348,12 @@ def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
     assert "if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }" in ui
     assert "}, 3000);" in ui
     assert "}, 5000);" in ui
+    # In-app notices: slower poll + no auto-ack while chat is open + 429 backoff.
+    assert "poll(() => refreshInAppNotices(), 12000)" in ui
+    assert "NOTICE.retryAfter" in ui
+    assert "never auto-ack" in ui.lower() or "NEVER auto-ack" in ui
+    assert 'path == "/api/notifications"' in server
+    assert 'path == "/api/vitek/status"' in server
 
 
 def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
@@ -385,9 +391,14 @@ def test_named_domain_agents_and_unified_finance_page_contract():
     assert "tolik-message" not in strategies and "domainAgentMessage('tolik'" not in strategies_js
     assert "/api/ai-lab/accounting" in api and "/api/ai-lab/strategy-analysis" in api
     assert "aiOrchestratorRateMessage" in api and "/api/ai-lab/orchestrator/message/" in api
+    assert "aiOrchestratorFulfillMessage" in api and "/fulfillment" in api and "/fulfillment" in server
     assert "aiOrchestratorSetConversationState" in api and "/orchestrator/conversations/state" in server
     assert "rate_message" in server and "message/" in server and "/rating" in server
+    assert "set_message_fulfillment" in server
     assert "orchRatingHtml" in ui and "data-orch-rate" in ui and "orch-feedback-area" in ui
+    assert "orchFooterHtml" in ui and "orch-fulfill-marks" in ui and "orch-chain" in ui
+    assert "Тема завершена" in ui
+    assert "isDefault" in ui and "badge.hidden = true" in ui
     assert "orchStartFeedbackVoice" in ui and "orch-feedback-mic" in ui
     assert "orch-feedback-archive" in ui and "orch-feedback-edit" in ui
     assert "orchStopFeedbackVoice" in ui and "rec.continuous = true" in ui

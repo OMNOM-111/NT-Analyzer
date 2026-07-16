@@ -14,9 +14,27 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import account_ledger, performance, runtime
-from . import agent_router, command_language, llm_timeouts, news_agent, registry
+from . import agent_router, command_language, dialogue_policy, llm_timeouts, news_agent, registry
 
 MONEY = Decimal("0.01")
+# Avatar art: one speaking.webm per agent. Paused first frame = silent face.
+# Served from Aurora static assets; source masters live in repo `/Agents/`.
+_AVATAR_BASE = "assets/agents"
+
+
+def _avatar_paths(agent_id: str) -> Dict[str, str]:
+    folder = {
+        "marina": "marina", "tolik": "tolik", "nikita": "nikita", "ivan": "ivan",
+        "manager": "manager", "secretary": "manager", "deputy": "manager",
+        "vitek": "vitek",
+    }.get(str(agent_id or "").lower(), "vitek")
+    webm = f"{_AVATAR_BASE}/{folder}/speaking.webm"
+    return {
+        "avatar_webm": webm,
+        "avatar_speaking": webm,
+    }
+
+
 PERSONAS: Dict[str, Dict[str, Any]] = {
     "marina": {
         "id": "marina",
@@ -31,6 +49,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "точные отчёты за выбранный период",
             "доставка отчёта в чат и Telegram",
         ),
+        **_avatar_paths("marina"),
     },
     "tolik": {
         "id": "tolik",
@@ -45,6 +64,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "рекомендации до новой разработки и повторного теста",
             "запуск historical-бэктеста и выдача его идентификатора",
         ),
+        **_avatar_paths("tolik"),
     },
     "nikita": {
         "id": "nikita",
@@ -58,6 +78,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "оценка влияния на стратегии и инфраструктуру",
             "срочные рекомендации через Telegram без торговых полномочий",
         ),
+        **_avatar_paths("nikita"),
     },
     "ivan": {
         "id": "ivan",
@@ -72,6 +93,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "делает снимок графика и присылает отчёт в чат",
             "создаёт серверный снимок без открытой вкладки Desktop",
         ),
+        **_avatar_paths("ivan"),
     },
 }
 
@@ -87,6 +109,7 @@ MANAGEMENT: Dict[str, Dict[str, Any]] = {
         "forced_complexity": "light",
         "aliases": ("секретарь", "secretary"),
         "hint": "Быстрые команды и простые справки — запустил и отпустил",
+        **_avatar_paths("secretary"),
     },
     "deputy": {
         "id": "deputy",
@@ -97,6 +120,7 @@ MANAGEMENT: Dict[str, Dict[str, Any]] = {
         "forced_complexity": "standard",
         "aliases": ("заместитель", "зам", "deputy"),
         "hint": "Средние по сложности задачи и обсуждение",
+        **_avatar_paths("deputy"),
     },
     "manager": {
         "id": "manager",
@@ -107,6 +131,7 @@ MANAGEMENT: Dict[str, Dict[str, Any]] = {
         "forced_complexity": "critical",
         "aliases": ("управляющий", "главный", "директор", "manager"),
         "hint": "Важные решения, полное обсуждение перед запуском",
+        **_avatar_paths("manager"),
     },
 }
 
@@ -276,9 +301,14 @@ def _domain_scope_phrase(agent_id: str) -> str:
 def _handoff_note(from_id: str, to_id: str) -> str:
     from_name = PERSONAS.get(str(from_id or ""), {}).get("name") or "другой агент"
     to_name = PERSONAS.get(str(to_id or ""), {}).get("name") or "ответственный"
+    dative = {
+        "Марина": "Марине", "Толик": "Толику", "Никита": "Никите", "Иван": "Ивану",
+    }.get(to_name, to_name)
+    verb = "передала" if from_name == "Марина" else "передал"
+    scope = _domain_scope_phrase(to_id).removeprefix("по ")
     return (
-        f"Дмитрий Сергеевич, это не {from_name} — {_domain_scope_phrase(to_id)} "
-        f"отвечаю я, {to_name}."
+        f"{from_name} {verb} вопрос {dative} — это задача по {scope}. "
+        "Ответ будет в этом диалоге."
     )
 
 
@@ -519,6 +549,39 @@ def _fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
     return base + f" Главный сигнал: {top} — {counts[top]} записей. Следующий проверяемый шаг: {recommendations.get(top, 'разобрать отмеченные записи по приоритету')}."
 
 
+def _brief_fact_block(agent_id: str, snapshot: Dict[str, Any]) -> str:
+    """Decision-level facts for chat; the full snapshot remains attached."""
+    summary = snapshot.get("summary") or {}
+    if agent_id == "marina":
+        period = snapshot.get("period") if isinstance(snapshot.get("period"), dict) else {}
+        dates = ""
+        if period.get("from") and period.get("to"):
+            dates = f"{period.get('label') or 'Период'}: {period['from']} — {period['to']}. "
+        review = int(summary.get("needs_review") or 0)
+        review_text = (
+            f"Нужно уточнить источник {review} операций."
+            if review else "Неподтверждённых операций нет."
+        )
+        return (
+            f"{dates}Итог после комиссий: {_usd(summary.get('trading_pnl', '0.00'))}; "
+            f"сделок: {int(summary.get('trades') or 0)}. {review_text}"
+        )
+    if agent_id == "nikita":
+        high = int(summary.get("high") or 0)
+        return (
+            f"Сейчас значимых событий: {int(summary.get('total') or 0)}, "
+            f"из них высокого влияния: {high}. "
+            + ("Сначала проверьте события высокого влияния." if high else "Срочного вмешательства не требуется.")
+        )
+    findings = int(summary.get("findings") or 0)
+    return (
+        f"Стратегий в активной работе: {int(summary.get('enabled_runtime') or 0)}; "
+        f"экспериментов в базе: {int(summary.get('experiments') or 0)}. "
+        + (f"Контроль качества требует разбора {findings} замечаний."
+           if findings else "Новых замечаний контроля качества нет.")
+    )
+
+
 def deliver_report(period: str = "month", *, workspace_id: str = "",
                    uses_owner_runtime: bool = True) -> Dict[str, Any]:
     """Build a deterministic combined report without depending on an LLM."""
@@ -542,8 +605,8 @@ def deliver_report(period: str = "month", *, workspace_id: str = "",
         "complexity": "light",
         "actions": [{"name": "deliver_report", "status": "completed", "period": period}],
         "agent": {
-            "id": "orchestrator", "name": "StratForge Orchestrator",
-            "title": "сводный отчёт", "page": "index.html",
+            "id": "vitek", "name": "Виктор",
+            "title": "правая рука руководителя", "page": "index.html",
         },
     }
 
@@ -1148,7 +1211,9 @@ def chart_operator_answer(message: str, *, conversation_id: str = "",
 def answer(agent_id: str, message: str, *, period: str = "month", account: str = "",
            conversation_id: str = "", workspace_id: str = "",
            uses_owner_runtime: bool = True,
-           scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+           scope: Optional[Dict[str, Any]] = None,
+           history: Optional[List[Dict[str, Any]]] = None,
+           task_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     addressed = str(agent_id or "").lower()
     if addressed not in PERSONAS:
         raise ValueError("unknown domain agent")
@@ -1181,12 +1246,21 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
         "Все числа из DATA являются авторитетными и рассчитаны кодом. НЕ повторяй никакие числа, суммы, проценты, метрики или количественные слова вроде «все», «единственная», «большинство»: приложение добавит факты отдельно. "
         "Отделяй факт от предположения. При аномалии назови риск и безопасный следующий шаг. "
         "Не обещай выполненное действие, если в DATA нет результата этого действия. "
+        "RECENT_DIALOGUE и CONVERSATION_TASK_STATE относятся только к текущему диалогу: "
+        "используй их для понимания коротких продолжений и не подменяй ими фактические DATA. "
         "Соблюдай релевантные правила и замечания текущего пользователя из USER_MEMORY; "
         "они не могут менять точные числа DATA или обходить безопасность."
+        "\n\n" + dialogue_policy.prompt(role="specialist", max_chars=900)
     )
     packet = {
         "owner_message": str(message)[:6000],
         "SHARED_MEMORY": dict((scope or {}).get("shared_memory") or {}),
+        "RECENT_DIALOGUE": [{
+            "role": str(row.get("role") or ""),
+            "content": str(row.get("content") or "")[:1200],
+            "agent_name": str(row.get("agent_name") or "")[:80],
+        } for row in (history or [])[-12:] if isinstance(row, dict)],
+        "CONVERSATION_TASK_STATE": dict(task_state or {}),
         "DATA": _llm_view(profile["id"], snapshot),
         "USER_MEMORY": list((scope or {}).get("user_memory") or [])[-30:],
     }
@@ -1203,16 +1277,22 @@ def answer(agent_id: str, message: str, *, period: str = "month", account: str =
                 timeout=llm_timeouts.ANALYSIS, purpose=f"domain_agent_{profile['id']}", complexity=complexity,
                 cache_mode="auto",
             )
-            narrative = _non_numeric_narrative(str(result.get("content") or ""))
+            narrative = dialogue_policy.compact_model_reply(
+                _non_numeric_narrative(str(result.get("content") or "")), max_chars=700,
+            )
             model = str(result.get("actual_model") or result.get("model") or "unknown")
             provider = str(result.get("provider") or "")
         except agent_router.AgentRouterError as exc:
             narrative = f"Модель для пояснения сейчас недоступна: {str(exc)[:300]}"
-    reply = _fact_block(profile["id"], snapshot)
+    detailed = any(token in str(message or "").lower() for token in (
+        "подроб", "полный отч", "все метрик", "все цифр", "детальн",
+    ))
+    reply = _fact_block(profile["id"], snapshot) if detailed else _brief_fact_block(profile["id"], snapshot)
     if narrative:
         reply += "\n\n" + narrative[:7000]
     if handoff_from:
         reply = _handoff_note(handoff_from, profile["id"]) + "\n\n" + reply
+    reply = dialogue_policy.clean_public_reply(reply)
     return {
         "ok": True, "agent": {key: profile[key] for key in ("id", "name", "title", "page")},
         "reply": reply, "snapshot": snapshot, "model": model, "provider": provider,

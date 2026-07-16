@@ -1,6 +1,10 @@
 # Витёк и внутренний StratForge Orchestrator
 
-Актуально на 2026-07-13.
+Актуально на 2026-07-15.
+
+Карта сотрудников и аватары: [AGENTS.md](AGENTS.md). Поведение Витька как
+правой руки: [VITEK.md](VITEK.md). Тон ответов: [AI_DIALOGUE_CONTRACT.md](AI_DIALOGUE_CONTRACT.md).
+Ярусы Секретарь / Заместитель / Управляющий: [AI_MANAGEMENT.md](AI_MANAGEMENT.md).
 
 ## Управленческий контракт
 
@@ -105,7 +109,8 @@ outcome и `single_response=true`, но UI его не показывает. В 
 
 Имена являются стабильными персонами, а модель выбирается Auto-маршрутизатором для каждого запроса. Имя или роль должны стоять в начале сообщения, поэтому обычное упоминание финансов или стратегии не перехватывает диалог. Адресация работает и через Telegram, использующий общий обработчик Orchestrator.
 
-Подробнее: [AI_ACCOUNTANT.md](AI_ACCOUNTANT.md), [AI_STRATEGY_ANALYST.md](AI_STRATEGY_ANALYST.md) и [AI_NEWS_AGENT.md](AI_NEWS_AGENT.md).
+Подробнее: [AI_ACCOUNTANT.md](AI_ACCOUNTANT.md), [AI_STRATEGY_ANALYST.md](AI_STRATEGY_ANALYST.md),
+[AI_NEWS_AGENT.md](AI_NEWS_AGENT.md) и [AI_CHART_OPERATOR.md](AI_CHART_OPERATOR.md).
 
 ## Capability-first маршрутизация и защита от ложного отказа
 

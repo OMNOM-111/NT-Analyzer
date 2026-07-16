@@ -82,6 +82,18 @@
     }
     const task = taskDoc && taskDoc.task;
     if (!task || !task.task_id) throw new Error('Поручение не зарегистрировано.');
+    // The backend converges repeated clicks/deliveries for one incident onto
+    // one durable task. Do not keep the speculative conversation which this
+    // request created when another request already won that race.
+    const taskCid = String(task.conversation_id || cid);
+    const replayed = Boolean(task.idempotent_replay || task._idempotent_replay);
+    if (taskCid !== cid) {
+      try { await API.http.aiOrchestratorDeleteConversation(cid); } catch (_) { /* best effort */ }
+    }
+    if (replayed) {
+      saveChat(taskCid);
+      return { conversation_id: taskCid, task, acknowledgement: null, recovered: true };
+    }
     const details = [
       `Виктор, приступай к поручению: ${title}.`,
       payload.description ? `Комментарий: ${payload.description}` : '',
@@ -90,9 +102,9 @@
       budgetText(payload.budget) ? `Бюджет: ${budgetText(payload.budget)}.` : '',
     ].filter(Boolean).join('\n');
     try {
-      const acknowledgement = await API.http.aiOrchestratorMessage(details, cid, 'vitek');
-      saveChat(cid);
-      return { conversation_id: cid, task, acknowledgement };
+      const acknowledgement = await API.http.aiOrchestratorMessage(details, taskCid, 'vitek');
+      saveChat(taskCid);
+      return { conversation_id: taskCid, task, acknowledgement };
     } catch (error) {
       // A dropped HTTP response does not prove that the server missed the
       // message.  Re-read durable state before rolling anything back.
@@ -100,8 +112,8 @@
         const current = await API.http.vitekStatus();
         const stored = (current.tasks || []).find(row => row.task_id === task.task_id);
         if (stored && stored.auto_execute && stored.status !== 'planned') {
-          saveChat(cid);
-          return { conversation_id: cid, task: stored, acknowledgement: null, recovered: true };
+          saveChat(taskCid);
+          return { conversation_id: taskCid, task: stored, acknowledgement: null, recovered: true };
         }
       } catch (_) { /* preserve the original transport error */ }
       try { await API.http.vitekUpdateTask(task.task_id, { status: 'cancelled', result: 'Диалог поручения не был подтверждён.' }); } catch (_) { /* best effort */ }
@@ -250,10 +262,41 @@
       <div class="flex wrap gap-sm">${task.conversation_id ? `<button class="btn sm ghost" data-victor-open-chat="${esc(task.conversation_id)}">Чат</button>` : ''}<button class="btn sm" data-victor-complete="${esc(task.task_id)}">Готово</button></div></div>`;
   }
 
+  function centerSignature(doc) {
+    if (!doc) return '';
+    const agents = (doc.agent_activity || []).map((row) => ([
+      row.agent_id || row.name, row.state, !!row.working, row.model || '', row.work || '',
+    ]));
+    const incidents = (doc.incidents || [])
+      .filter((row) => ['awaiting_decision', 'acknowledged', 'in_progress'].includes(row.status) && row.owner_decision_required)
+      .map((row) => [row.incident_id, row.status, (row.owner_brief || {}).fact || '']);
+    const tasks = (doc.tasks || [])
+      .filter((row) => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked'].includes(row.status))
+      .map((row) => [row.task_id, row.status, row.assigned_agent || '', row.owner_title || row.title || '']);
+    const plans = doc.plans || {};
+    return JSON.stringify({
+      mode: doc.mode,
+      message: doc.message || '',
+      bg: !!(doc.background && doc.background.installed),
+      parallel: Number(doc.event_engine && doc.event_engine.parallel_limit || 0),
+      agents, incidents, tasks,
+      day: plans.day && { status: plans.day.status, focus: plans.day.focus },
+      week: plans.week && { status: plans.week.status, focus: plans.week.focus },
+    });
+  }
+
   function renderCenter(doc) {
     const center = UI.qs('[data-victor-center]');
     if (!center) return;
     const body = UI.qs('[data-victor-body]', center);
+    const sig = centerSignature(doc);
+    if (sig && sig === center.dataset.renderSig) {
+      const rest = UI.qs('[data-victor-rest]', center); const resume = UI.qs('[data-victor-resume]', center);
+      if (rest) rest.hidden = doc.mode === 'resting';
+      if (resume) resume.hidden = doc.mode !== 'resting';
+      return;
+    }
+    center.dataset.renderSig = sig;
     const tasks = (doc.tasks || []).filter(row => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked'].includes(row.status));
     const incidents = (doc.incidents || []).filter(row => ['awaiting_decision', 'acknowledged', 'in_progress'].includes(row.status) && row.owner_decision_required);
     const agents = doc.agent_activity || [];
@@ -270,7 +313,10 @@
       <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm">${agents.map(row => {
         const stateLabel = row.working ? 'работает' : row.state === 'waiting_owner' ? 'ждёт ответа' : row.state === 'blocked' ? 'есть препятствие' : 'свободен';
         const model = row.model ? ` · ${row.model}${row.provider ? ` (${row.provider})` : ''}` : '';
-        return `<span class="badge ${row.working ? 'live' : row.state === 'waiting_owner' || row.state === 'blocked' ? 'pending' : 'archived'}" title="${esc((row.work || '') + model)}"><span class="dot"></span>${esc(row.name)} · ${esc(stateLabel)}${model ? `<small>${esc(model)}</small>` : ''}</span>`;
+        const face = (UI.agentAvatarHtml || (() => ''))(row.agent_id || row.name, {
+          speaking: !!row.working, label: row.name, cls: 'sm',
+        });
+        return `<span class="badge agent-chip ${row.working ? 'live' : row.state === 'waiting_owner' || row.state === 'blocked' ? 'pending' : 'archived'}" title="${esc((row.work || '') + model)}">${face}<span>${esc(row.name)} · ${esc(stateLabel)}</span>${model ? `<small>${esc(model)}</small>` : ''}</span>`;
       }).join('')}</div></div>
       <div class="grid cols-2">${['day', 'week'].map(scope => {
         const plan = plans[scope]; const active = plan && plan.status === 'active'; const label = scope === 'day' ? 'сегодня' : 'неделю';
@@ -282,6 +328,7 @@
       }).join('') : '<div class="empty-state">Вопросов, требующих вашего решения, нет.</div>'}</div></div>
       <div><h4 style="margin:0 0 8px">Активные задачи</h4><div class="list">${tasks.length ? tasks.slice(0, 14).map(taskHtml).join('') : '<div class="empty-state">Активных задач нет.</div>'}</div></div></div>
     </div>`;
+    if (UI.wireAgentFaces) UI.wireAgentFaces(body);
     const rest = UI.qs('[data-victor-rest]', center); const resume = UI.qs('[data-victor-resume]', center);
     if (rest) rest.hidden = doc.mode === 'resting';
     if (resume) resume.hidden = doc.mode !== 'resting';
@@ -354,7 +401,7 @@
     const observer = new MutationObserver(() => { ensurePageAction(); formalizeChat(); });
     observer.observe(document.body, { childList: true, subtree: true });
     UI.onLeave(() => observer.disconnect());
-    const timer = window.setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 5000);
+    const timer = window.setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 10000);
     UI.onLeave(() => window.clearInterval(timer));
   }
 
