@@ -62,18 +62,35 @@ def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: st
         "version": 1,
         "users": [
             {"user_id": 999, "first_name": "Owner", "last_name": "One", "email": "owner@example.com", "role": "owner", "status": "active", "is_owner": True},
-            {"user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com", "role": "read_only", "status": "active", "is_owner": False},
+            {
+                "user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com",
+                "role": "read_only", "status": "active", "is_owner": False,
+                # NT control (bridge pair) requires Google + elevated Telegram confirm.
+                "google_sub": "google-dev-42", "google_email": "dev@gmail.com",
+                "google_linked_at_utc": "2026-07-15T00:00:00Z",
+            },
         ],
         "challenges": [],
         "sessions": [
             {"user_id": 999, "token_hash": hashlib.sha256(owner_token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(owner_csrf.encode()).hexdigest(), "csrf_token": owner_csrf, "expires_at": time.time() + 3600, "revoked": False},
-            {"user_id": 42, "token_hash": hashlib.sha256(user_token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(user_csrf.encode()).hexdigest(), "csrf_token": user_csrf, "expires_at": time.time() + 3600, "revoked": False},
+            {
+                "user_id": 42,
+                "session_id": "sess_user42",
+                "token_hash": hashlib.sha256(user_token.encode()).hexdigest(),
+                "csrf_hash": hashlib.sha256(user_csrf.encode()).hexdigest(),
+                "csrf_token": user_csrf,
+                "expires_at": time.time() + 3600,
+                "revoked": False,
+                "nt_elevated_until": time.time() + 3600,
+            },
         ],
     })
 
 
 def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    monkeypatch.setenv("NTA_NT_GOOGLE_REQUIRED", "1")
+    monkeypatch.setenv("NTA_NT_TELEGRAM_CONFIRM_REQUIRED", "1")
     account_auth.set_auth_required(True)
     owner_token = "o" * 64
     owner_csrf = "p" * 48
@@ -125,6 +142,32 @@ def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatc
         assert personal_accounts["accounts"] == []
         assert personal_accounts["source"] == "workspace_runtime_not_connected"
         assert "DEMO_OWNER" not in json.dumps(personal_accounts)
+
+        # Without NT elevation / Google the bridge pair must be denied.
+        bare_token = "b" * 64
+        bare_csrf = "c" * 48
+        doc = account_auth._read_doc()
+        doc["users"].append({
+            "user_id": 77, "first_name": "Bare", "last_name": "User", "email": "bare@example.com",
+            "role": "full_control", "status": "active", "is_owner": False,
+        })
+        doc["sessions"].append({
+            "user_id": 77,
+            "session_id": "sess_bare77",
+            "token_hash": hashlib.sha256(bare_token.encode()).hexdigest(),
+            "csrf_hash": hashlib.sha256(bare_csrf.encode()).hexdigest(),
+            "csrf_token": bare_csrf,
+            "expires_at": time.time() + 3600,
+            "revoked": False,
+        })
+        account_auth._write_doc(doc)
+        with pytest.raises(urllib.error.HTTPError) as blocked:
+            _json_request(base, "/api/bridge/pair/start", method="POST", token=bare_token, csrf=bare_csrf, body={
+                "machine_label": "No Google PC",
+            })
+        assert blocked.value.code == 403
+        err_body = json.loads(blocked.value.read().decode("utf-8"))
+        assert err_body.get("code") == "nt_google_required"
 
         pairing = _json_request(base, "/api/bridge/pair/start", method="POST", token=user_token, csrf=user_csrf, body={
             "machine_label": "Dev PC",

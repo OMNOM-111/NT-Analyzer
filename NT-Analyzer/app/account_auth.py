@@ -1,10 +1,18 @@
 """Telegram-backed accounts and desktop browser sessions.
 
-Identity is anchored to Telegram ``user.id``.  Personal data, login challenges
-and session-token hashes are stored in one Windows DPAPI-encrypted document.
-Only an owner callback from the configured private bot chat can activate a new
-account.  Plain session tokens exist only in the browser cookie and in the
-single response that creates them.
+Identity is anchored to Telegram ``user.id`` (login factor). Google OAuth is
+**not** required for ordinary app use (demo, practice, community, AI, etc.).
+Google + a fresh Telegram confirmation are required only before NinjaTrader
+control actions (personal bridge, live/paper commands that drive NT) — see
+``nt_action_gate`` / ``require_nt_dual_auth``.
+
+Personal data, login challenges and session-token hashes are stored in one
+Windows DPAPI-encrypted document. Only an owner callback from the configured
+private bot chat can activate a new account. Plain session tokens exist only in
+the browser cookie and in the single response that creates them.
+
+Staging-only helpers: virtual users, test-auth sessions, owner impersonation
+(see ``runtime_env`` / ``test_auth``).
 """
 from __future__ import annotations
 
@@ -23,13 +31,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-from . import legal, secure_store
+from . import legal, runtime_env, secure_store
 
 
 SESSION_COOKIE = "sf_session"
 SESSION_TTL_SEC = 30 * 24 * 60 * 60
 CHALLENGE_TTL_SEC = 15 * 60
 OWNER_APPROVAL_TTL_SEC = 7 * 24 * 60 * 60
+ADMIN_REVOKE_NOTICE_TTL_SEC = 24 * 60 * 60
+IMPERSONATION_TTL_SEC = 4 * 60 * 60
+NT_STEP_UP_TTL_SEC = 30 * 60
+NT_CONFIRM_TTL_SEC = 10 * 60
 ROLES = {"read_only", "full_control", "owner"}
 # Owner-toggleable capabilities. The ids match the Aurora navigation ids so the
 # client can gate the left rail directly. ``personal_nt`` gates the "connect my
@@ -55,9 +67,10 @@ _UNREADABLE_STORE_SUFFIX = ".unreadable"
 
 
 class AccountAuthError(RuntimeError):
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, *, code: str = ""):
         super().__init__(message)
         self.status = int(status)
+        self.code = str(code or "")
 
 
 def _root() -> Path:
@@ -220,6 +233,204 @@ def storage_status() -> Dict[str, Any]:
         "backend": secure_store.backend_name(),
         "encrypted": _store_path().is_file(),
         "auth_required": auth_required(),
+    }
+
+
+def dual_auth_enforced() -> bool:
+    """Google is required for NinjaTrader control actions (not for login).
+
+    Kept for admin migration lists. Override with ``NTA_NT_GOOGLE_REQUIRED=0``
+    to disable the Google half of the NT gate (Telegram step-up still applies
+    unless also disabled via ``NTA_NT_TELEGRAM_CONFIRM_REQUIRED=0``).
+    """
+    flag = str(os.environ.get("NTA_NT_GOOGLE_REQUIRED") or os.environ.get("NTA_DUAL_AUTH_REQUIRED") or "1").strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def telegram_nt_confirm_required() -> bool:
+    flag = str(os.environ.get("NTA_NT_TELEGRAM_CONFIRM_REQUIRED") or "1").strip().lower()
+    return flag not in {"0", "false", "no", "off"}
+
+
+def user_needs_google(user: Optional[Dict[str, Any]]) -> bool:
+    """Informational: user has no Google link and NT actions will require it.
+
+    Never blocks login or general app sections.
+    """
+    if not user or user.get("is_owner"):
+        return False
+    if str(user.get("google_sub") or "").strip():
+        return False
+    if user.get("dual_auth_exempt"):
+        return False
+    return dual_auth_enforced()
+
+
+def google_linked(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    if str(user.get("google_sub") or "").strip():
+        return True
+    # Auth context often carries ``_public_user`` (no raw google_sub).
+    return bool(user.get("google_linked"))
+
+
+def _session_nt_elevated(session: Optional[Dict[str, Any]]) -> bool:
+    if not session:
+        return False
+    try:
+        until = float(session.get("nt_elevated_until") or 0)
+    except (TypeError, ValueError):
+        until = 0.0
+    return until > time.time()
+
+
+def nt_action_gate(
+    user: Optional[Dict[str, Any]],
+    *,
+    session: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Whether the user may perform NinjaTrader control actions right now."""
+    user = user or ((context or {}).get("user") if isinstance((context or {}).get("user"), dict) else {}) or {}
+    if user.get("is_owner") or (context or {}).get("is_owner"):
+        return {
+            "ok": True, "ready": True, "google_ok": True, "telegram_ok": True,
+            "google_required": False, "telegram_confirm_required": False,
+            "code": "", "message": "",
+            "nt_elevated_until": 0,
+            "policy": "owner_exempt",
+        }
+    google_req = dual_auth_enforced()
+    tg_req = telegram_nt_confirm_required()
+    g_ok = (not google_req) or google_linked(user)
+    sess = session
+    if sess is None and context:
+        # Elevation flag may be mirrored onto auth context.
+        try:
+            until = float(context.get("nt_elevated_until") or 0)
+        except (TypeError, ValueError):
+            until = 0.0
+        tg_ok = (not tg_req) or until > time.time()
+        elevated_until = until
+    else:
+        tg_ok = (not tg_req) or _session_nt_elevated(sess)
+        try:
+            elevated_until = float((sess or {}).get("nt_elevated_until") or 0)
+        except (TypeError, ValueError):
+            elevated_until = 0.0
+    ready = g_ok and tg_ok
+    code = ""
+    message = ""
+    if not g_ok:
+        code = "nt_google_required"
+        message = (
+            "Чтобы управлять NinjaTrader (личный или рабочий контур), "
+            "подключите Google-аккаунт. Остальные разделы доступны без Google."
+        )
+    elif not tg_ok:
+        code = "nt_telegram_confirm_required"
+        message = (
+            "Подтвердите действие повторно в Telegram — "
+            "это нужно перед любыми командами в NinjaTrader."
+        )
+    return {
+        "ok": ready, "ready": ready, "google_ok": g_ok, "telegram_ok": tg_ok,
+        "google_required": google_req, "telegram_confirm_required": tg_req,
+        "google_linked": google_linked(user),
+        "code": code, "message": message,
+        "nt_elevated_until": elevated_until if tg_ok else 0,
+        "policy": "nt_actions_only",
+    }
+
+
+def require_nt_dual_auth(context: Optional[Dict[str, Any]]) -> None:
+    """Enforce Google + Telegram step-up for NinjaTrader control actions.
+
+    Defense in depth: reload the user from the encrypted store by ``user_id``
+    and ignore a forged ``google_linked`` flag on the public session payload.
+    Elevation still comes from the authenticated session / context.
+    """
+    context = dict(context or {})
+    try:
+        uid = int(context.get("user_id") or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    raw_user: Optional[Dict[str, Any]] = None
+    if uid > 0:
+        with _LOCK:
+            stored = _user(_read_doc(), uid)
+            if stored is not None:
+                raw_user = dict(stored)
+                # Never trust a client/public google_linked without google_sub in store.
+                if not str(raw_user.get("google_sub") or "").strip():
+                    raw_user["google_linked"] = False
+                context["user"] = raw_user
+    gate = nt_action_gate(raw_user, context=context)
+    if not gate.get("ok"):
+        raise AccountAuthError(
+            str(gate.get("message") or "Нужна двухфакторная проверка для NinjaTrader."),
+            403,
+            code=str(gate.get("code") or "nt_dual_auth"),
+        )
+
+
+def path_requires_nt_dual_auth(path: str, method: str = "POST") -> bool:
+    """Sensitive NT control routes (not read-only observation)."""
+    if str(method or "GET").upper() in {"GET", "HEAD"}:
+        return False
+    p = str(path or "")
+    if p in {"/api/ops/runtime/command", "/api/workspaces/personal"}:
+        return True
+    if p.startswith("/api/bridge/pair/"):
+        return True
+    if p.startswith("/api/ops/live/"):
+        return True
+    if p.startswith("/api/profiles/ninjatrader/"):
+        return True
+    if p == "/api/profiles/archive/remove-from-nt":
+        return True
+    # Paper/live strategy control against a connected NinjaTrader runtime.
+    if p.startswith("/api/ops/strategies/") and any(
+        marker in p for marker in ("/paper/", "/live/", "/arm", "/start", "/stop", "/pause", "/resume")
+    ):
+        return True
+    return False
+
+
+def google_migration_users(owner_id: Any) -> Dict[str, Any]:
+    """Owner list: who still needs Google for NT actions / who linked."""
+    with _LOCK:
+        doc = _read_doc()
+        _require_owner_in_doc(doc, owner_id)
+        rows = []
+        for user in doc.get("users") or []:
+            if user.get("is_owner"):
+                continue
+            rows.append({
+                "user_id": int(user.get("user_id") or 0),
+                "username": str(user.get("username") or ""),
+                "first_name": str(user.get("first_name") or ""),
+                "status": str(user.get("status") or ""),
+                "google_linked": bool(str(user.get("google_sub") or "").strip()),
+                "google_email": str(user.get("google_email") or ""),
+                "google_linked_at_utc": str(user.get("google_linked_at_utc") or ""),
+                "needs_google": user_needs_google(user),
+                "is_virtual": bool(user.get("is_virtual")),
+                "created_at_utc": str(user.get("created_at_utc") or ""),
+            })
+    linked = sum(1 for row in rows if row["google_linked"])
+    return {
+        "ok": True,
+        "users": rows,
+        "without_google": [row for row in rows if not row["google_linked"]],
+        "linked_count": linked,
+        "pending_count": len(rows) - linked,
+        "dual_auth_enforced": dual_auth_enforced(),
+        "policy": "nt_actions_only",
+        "note": "Google нужен только для управления NinjaTrader, не для входа в приложение.",
     }
 
 
@@ -423,8 +634,14 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         "last_login_at_utc", "phone_verified_at_utc",
         "last_login_source", "last_login_device", "last_login_machine",
         "last_login_device_id", "blocked_at_utc",
+        "google_linked_at_utc", "google_email", "is_virtual", "virtual_preset",
     )}
     out["profile_complete"] = _profile_complete(user)
+    out["google_linked"] = bool(str(user.get("google_sub") or "").strip())
+    # needs_google = informational for NT actions only; never a login blocker.
+    out["needs_google"] = user_needs_google(user)
+    out["dual_auth_complete"] = True  # login is Telegram-only
+    out["nt_google_required"] = bool(user_needs_google(user))
     out["has_avatar"] = bool(user.get("avatar_ext"))
     out["avatar_updated_at_utc"] = str(user.get("avatar_updated_at_utc") or "")
     if out["has_avatar"]:
@@ -449,6 +666,8 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         devices = user.get("devices") if isinstance(user.get("devices"), list) else []
         out["devices"] = [dict(row) for row in reversed(devices[-20:]) if isinstance(row, dict)]
         out["device_count"] = len(devices)
+        # Never expose raw google_sub to non-owner clients in lists; ok in own profile.
+        out["google_sub_suffix"] = str(user.get("google_sub") or "")[-8:]
     if include_avatar:
         out["avatar_data_url"] = _avatar_data_url(user)
     return out
@@ -848,6 +1067,10 @@ def revoke_user_sessions(owner_id: Any, user_id: Any, *, session_id: str = "",
             if matched and not session.get("revoked"):
                 session["revoked"] = True
                 session["revoked_at_utc"] = _now_iso()
+                session["revoked_reason"] = "admin"
+                session["revoked_by_owner_id"] = int(owner_id)
+                # Keep notice TTL so the client can show «Сессия завершена администратором».
+                session["revoke_notice_until"] = time.time() + ADMIN_REVOKE_NOTICE_TTL_SEC
                 revoked += 1
         _write_doc(doc)
         sessions = _public_sessions(doc, uid)
@@ -858,7 +1081,17 @@ def revoke_user_sessions(owner_id: Any, user_id: Any, *, session_id: str = "",
 def _cleanup(doc: Dict[str, Any]) -> None:
     now = time.time()
     doc["challenges"] = [row for row in doc["challenges"] if float(row.get("expires_at") or 0) > now][-100:]
-    doc["sessions"] = [row for row in doc["sessions"] if float(row.get("expires_at") or 0) > now and not row.get("revoked")][-100:]
+    kept_sessions = []
+    for row in doc.get("sessions") or []:
+        expires = float(row.get("expires_at") or 0)
+        if expires > now and not row.get("revoked"):
+            kept_sessions.append(row)
+            continue
+        # Retain admin-revoked rows briefly so /api/auth/status can return a clear code.
+        notice_until = float(row.get("revoke_notice_until") or 0)
+        if row.get("revoked") and row.get("revoked_reason") == "admin" and notice_until > now:
+            kept_sessions.append(row)
+    doc["sessions"] = kept_sessions[-200:]
 
 
 def _login_rate(ip: str) -> None:
@@ -1165,6 +1398,35 @@ def _send_contact_request(api_call: Callable[..., Any], uid: int) -> None:
 def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owner_chat_id: str) -> bool:
     callback = update.get("callback_query") if isinstance(update, dict) else None
     if isinstance(callback, dict):
+        nt_match = re.fullmatch(r"nt_(confirm|deny):([A-Za-z0-9_-]{20,})", str(callback.get("data") or ""))
+        if nt_match:
+            actor = int((callback.get("from") or {}).get("id") or 0)
+            allowed = nt_match.group(1) == "confirm"
+            with _LOCK:
+                doc = _read_doc()
+                result, uid = _apply_nt_confirm_callback(
+                    doc, challenge_id=nt_match.group(2), allowed=allowed, actor_id=actor,
+                )
+                if result in {"confirmed", "denied"}:
+                    _write_doc(doc)
+            if result == "forbidden":
+                api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Подтверждать может только владелец этого аккаунта.", "show_alert": True})
+                return True
+            if result == "expired":
+                api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Запрос истёк или уже обработан.", "show_alert": True})
+                return True
+            api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Подтверждено." if allowed else "Отклонено."})
+            if uid:
+                api_call("sendMessage", {
+                    "chat_id": uid,
+                    "text": (
+                        "✅ Управление NinjaTrader подтверждено на 30 минут. Вернитесь в приложение."
+                        if allowed else
+                        "⛔ Запрос на управление NinjaTrader отклонён."
+                    ),
+                })
+                _audit("nt_confirm_ok" if allowed else "nt_confirm_denied", user_id=uid)
+            return True
         revoke_match = re.fullmatch(r"account_revoke:(\d{1,20})", str(callback.get("data") or ""))
         if revoke_match:
             actor = int((callback.get("from") or {}).get("id") or 0)
@@ -1380,16 +1642,198 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         user = _user(doc, int(session.get("user_id") or 0))
         if not user or user.get("status") != "active":
             return None
-        return {
-            "source": "desktop_session", "user_id": int(user["user_id"]),
-            "role": str(user.get("role") or "read_only"), "is_owner": bool(user.get("is_owner")),
+        ctx = {
+            "source": str(session.get("source") or "desktop_session"),
+            "user_id": int(user["user_id"]),
+            "role": str(user.get("role") or "read_only"),
+            "is_owner": bool(user.get("is_owner")),
             "username": str(user.get("username") or ""),
             "session_id": _session_id(session),
             "device_id": str(session.get("device_id") or ""),
             "csrf_hash": str(session.get("csrf_hash") or ""),
             "csrf_token": str(session.get("csrf_token") or ""),
             "user": _public_user(user, include_contact=True, include_avatar=True),
+            "needs_google": user_needs_google(user),
+            "dual_auth_complete": True,
+            "nt_elevated_until": float(session.get("nt_elevated_until") or 0),
         }
+        ctx["nt_access"] = nt_action_gate(user, session=session, context=ctx)
+        if session.get("impersonator_owner_id"):
+            ctx["impersonating"] = True
+            ctx["impersonator_owner_id"] = int(session.get("impersonator_owner_id") or 0)
+            ctx["impersonation_started_at_utc"] = str(session.get("impersonation_started_at_utc") or "")
+            ctx["impersonation_preset"] = str(session.get("impersonation_preset") or "")
+        return ctx
+
+
+def start_nt_telegram_confirm(
+    user_id: Any,
+    *,
+    session_id: str = "",
+    api_call: Optional[Callable[..., Any]] = None,
+    purpose: str = "ninjatrader",
+) -> Dict[str, Any]:
+    """Send Telegram buttons asking the user to re-confirm NT control actions."""
+    uid = int(user_id or 0)
+    if uid <= 0:
+        raise AccountAuthError("Требуется вход.", 401)
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if not user or user.get("status") != "active":
+            raise AccountAuthError("Аккаунт не активен.", 403)
+        if dual_auth_enforced() and not google_linked(user) and not user.get("is_owner"):
+            raise AccountAuthError(
+                "Сначала подключите Google-аккаунт, затем подтвердите действие в Telegram.",
+                403, code="nt_google_required",
+            )
+        challenge_id = secrets.token_urlsafe(24)
+        doc["challenges"].append({
+            "challenge_id": challenge_id,
+            "code": "",
+            "status": "nt_confirm_pending",
+            "kind": "nt_step_up",
+            "purpose": str(purpose or "ninjatrader")[:40],
+            "user_id": uid,
+            "session_id": str(session_id or "")[:80],
+            "created_at_utc": _now_iso(),
+            "expires_at": time.time() + NT_CONFIRM_TTL_SEC,
+        })
+        _cleanup(doc)
+        _write_doc(doc)
+        public = _public_user(user)
+    if api_call is not None and not public.get("is_owner"):
+        try:
+            api_call("sendMessage", {
+                "chat_id": uid,
+                "text": (
+                    "🔐 <b>Подтверждение NinjaTrader</b>\n"
+                    "Запрошен доступ к управлению NinjaTrader в StratForge.\n"
+                    "Если это вы — подтвердите. Если нет — отклоните."
+                ),
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": [[
+                    {"text": "✅ Подтвердить", "callback_data": f"nt_confirm:{challenge_id}"},
+                    {"text": "⛔ Отклонить", "callback_data": f"nt_deny:{challenge_id}"},
+                ]]},
+            })
+        except Exception:
+            pass
+    _audit("nt_confirm_started", user_id=uid, extra={"challenge_id": challenge_id, "purpose": purpose})
+    return {
+        "ok": True,
+        "challenge_id": challenge_id,
+        "status": "nt_confirm_pending",
+        "expires_in_sec": NT_CONFIRM_TTL_SEC,
+        "message": "Подтвердите действие в Telegram.",
+    }
+
+
+def nt_confirm_status(challenge_id: str, *, user_id: Any = 0) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(doc, challenge_id=str(challenge_id or ""))
+        if challenge is None:
+            return {"ok": False, "status": "expired", "message": "Запрос истёк."}
+        if int(user_id or 0) and int(challenge.get("user_id") or 0) != int(user_id):
+            raise AccountAuthError("Чужой запрос подтверждения.", 403)
+        status = str(challenge.get("status") or "")
+        out = {
+            "ok": True,
+            "challenge_id": challenge.get("challenge_id"),
+            "status": status,
+            "purpose": challenge.get("purpose") or "ninjatrader",
+        }
+        if status == "nt_confirmed":
+            out["nt_elevated_until"] = float(challenge.get("nt_elevated_until") or 0)
+            out["ready"] = True
+        return out
+
+
+def elevate_session_for_nt(session_id: str, *, user_id: Any, ttl_sec: int = 0) -> Dict[str, Any]:
+    sid = str(session_id or "").strip()
+    uid = int(user_id or 0)
+    ttl = int(ttl_sec) if int(ttl_sec or 0) > 0 else NT_STEP_UP_TTL_SEC
+    with _LOCK:
+        doc = _read_doc()
+        session = next((row for row in doc["sessions"] if _session_id(row) == sid and not row.get("revoked")), None)
+        if session is None or int(session.get("user_id") or 0) != uid:
+            raise AccountAuthError("Сессия не найдена.", 404)
+        until = time.time() + ttl
+        session["nt_elevated_until"] = until
+        session["nt_elevated_at_utc"] = _now_iso()
+        _write_doc(doc)
+    return {"ok": True, "nt_elevated_until": until, "ttl_sec": ttl}
+
+
+def grant_nt_elevation_staging(user_id: Any, *, session_id: str = "") -> Dict[str, Any]:
+    """Staging helper: skip Telegram button and mark session elevated."""
+    runtime_env.require_test_auth()
+    uid = int(user_id or 0)
+    with _LOCK:
+        doc = _read_doc()
+        sessions = [row for row in doc["sessions"] if int(row.get("user_id") or 0) == uid and not row.get("revoked")]
+        if session_id:
+            sessions = [row for row in sessions if _session_id(row) == str(session_id)]
+        if not sessions:
+            raise AccountAuthError("Нет активной сессии для elevation.", 404)
+        until = time.time() + NT_STEP_UP_TTL_SEC
+        for row in sessions:
+            row["nt_elevated_until"] = until
+            row["nt_elevated_at_utc"] = _now_iso()
+        _write_doc(doc)
+    return {"ok": True, "nt_elevated_until": until, "staging": True}
+
+
+def _apply_nt_confirm_callback(doc: Dict[str, Any], *, challenge_id: str, allowed: bool, actor_id: int) -> Tuple[str, int]:
+    challenge = _challenge(doc, challenge_id=challenge_id, statuses=("nt_confirm_pending",))
+    if challenge is None:
+        return "expired", 0
+    uid = int(challenge.get("user_id") or 0)
+    if actor_id != uid:
+        return "forbidden", uid
+    if not allowed:
+        challenge["status"] = "nt_denied"
+        return "denied", uid
+    until = time.time() + NT_STEP_UP_TTL_SEC
+    challenge["status"] = "nt_confirmed"
+    challenge["nt_elevated_until"] = until
+    challenge["confirmed_at_utc"] = _now_iso()
+    sid = str(challenge.get("session_id") or "")
+    for row in doc["sessions"]:
+        if int(row.get("user_id") or 0) != uid or row.get("revoked"):
+            continue
+        if sid and _session_id(row) != sid:
+            continue
+        row["nt_elevated_until"] = until
+        row["nt_elevated_at_utc"] = _now_iso()
+    return "confirmed", uid
+
+
+def session_auth_failure(token: str) -> Optional[Dict[str, Any]]:
+    """Explain why a cookie no longer authenticates (admin revoke, etc.)."""
+    raw = str(token or "")
+    if len(raw) < 40:
+        return None
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    with _LOCK:
+        doc = _read_doc()
+        now = time.time()
+        for row in doc.get("sessions") or []:
+            if not hmac.compare_digest(str(row.get("token_hash") or ""), digest):
+                continue
+            if row.get("revoked") and row.get("revoked_reason") == "admin":
+                notice_until = float(row.get("revoke_notice_until") or 0)
+                if notice_until and notice_until < now:
+                    return None
+                return {
+                    "code": "session_admin_revoked",
+                    "error": "Сессия завершена администратором.",
+                    "revoked_at_utc": str(row.get("revoked_at_utc") or ""),
+                    "user_id": int(row.get("user_id") or 0),
+                }
+            return None
+    return None
 
 
 def verify_csrf(context: Dict[str, Any], csrf_token: str) -> bool:
@@ -1405,16 +1849,368 @@ def revoke_session(token: str) -> None:
         for session in doc["sessions"]:
             if hmac.compare_digest(str(session.get("token_hash") or ""), digest):
                 session["revoked"] = True
+                session["revoked_at_utc"] = _now_iso()
+                if not session.get("revoked_reason"):
+                    session["revoked_reason"] = "logout"
                 changed = True
         if changed:
             _write_doc(doc)
 
 
-def _audit(event: str, *, user_id: int = 0, owner_id: int = 0, ip: str = "") -> None:
+def _audit(event: str, *, user_id: int = 0, owner_id: int = 0, ip: str = "",
+           extra: Optional[Dict[str, Any]] = None) -> None:
     row = {"timestamp": _now_iso(), "source": "telegram_account_auth", "event": event,
            "user_id": user_id or None, "owner_id": owner_id or None, "ip": str(ip or "")}
+    if extra:
+        row.update({k: v for k, v in extra.items() if k not in row})
     path = _audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def _find_user_by_google(doc: Dict[str, Any], google_sub: str) -> Optional[Dict[str, Any]]:
+    sub = str(google_sub or "").strip()
+    if not sub:
+        return None
+    for user in doc.get("users") or []:
+        if hmac.compare_digest(str(user.get("google_sub") or ""), sub):
+            return user
+    return None
+
+
+def link_google_identity(
+    user_id: Any,
+    *,
+    google_sub: str,
+    google_email: str = "",
+    google_name: str = "",
+    source: str = "google_oauth",
+) -> Dict[str, Any]:
+    uid = int(user_id)
+    sub = str(google_sub or "").strip()
+    email = str(google_email or "").strip().lower()
+    if not sub:
+        raise AccountAuthError("google_sub обязателен.")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        if user.get("status") not in {"active", "pending"}:
+            raise AccountAuthError("Аккаунт недоступен для привязки Google.", 403)
+        other = _find_user_by_google(doc, sub)
+        if other is not None and int(other.get("user_id") or 0) != uid:
+            raise AccountAuthError("Этот Google-аккаунт уже привязан к другому профилю.", 409)
+        # One Telegram ↔ one Google: if user already linked a different sub, refuse.
+        existing_sub = str(user.get("google_sub") or "").strip()
+        if existing_sub and not hmac.compare_digest(existing_sub, sub):
+            raise AccountAuthError("К профилю уже привязан другой Google-аккаунт.", 409)
+        user["google_sub"] = sub
+        user["google_email"] = email
+        user["google_name"] = str(google_name or "")[:120]
+        user["google_linked_at_utc"] = _now_iso()
+        user["google_link_source"] = str(source or "google_oauth")[:40]
+        if email and not str(user.get("email") or "").strip():
+            user["email"] = email
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True, include_avatar=True)
+    _audit("google_linked", user_id=uid, extra={"source": source, "google_email": email})
+    return {"ok": True, "user": public}
+
+
+def unlink_google_identity(owner_id: Any, user_id: Any) -> Dict[str, Any]:
+    """Owner recovery helper: clear Google factor (user must re-link)."""
+    uid = int(user_id)
+    with _LOCK:
+        doc = _read_doc()
+        _require_owner_in_doc(doc, owner_id)
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        user["google_sub"] = ""
+        user["google_email"] = ""
+        user["google_name"] = ""
+        user["google_linked_at_utc"] = ""
+        user["google_unlinked_at_utc"] = _now_iso()
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True)
+    _audit("google_unlinked", user_id=uid, owner_id=int(owner_id))
+    return {"ok": True, "user": public}
+
+
+def create_session_for_user(
+    user_id: Any,
+    *,
+    ip: str,
+    user_agent: str = "",
+    source: str = "desktop_session",
+    require_google: bool = True,
+    skip_dual_auth_gate: bool = False,
+    impersonator_owner_id: int = 0,
+    impersonation_preset: str = "",
+    ttl_sec: int = 0,
+) -> Dict[str, Any]:
+    uid = int(user_id)
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if not user:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        if user.get("status") != "active":
+            raise AccountAuthError("Аккаунт не активен.", 403)
+        if require_google and not skip_dual_auth_gate and user_needs_google(user) and not impersonator_owner_id:
+            # Still issue a session so the client can show the Google link step.
+            pass
+        token = secrets.token_urlsafe(48)
+        csrf = secrets.token_urlsafe(32)
+        now = time.time()
+        ttl = int(ttl_sec) if int(ttl_sec or 0) > 0 else (
+            IMPERSONATION_TTL_SEC if impersonator_owner_id else SESSION_TTL_SEC
+        )
+        row = {
+            "session_id": "sess_" + secrets.token_hex(8),
+            "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+            "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
+            "csrf_token": csrf,
+            "user_id": uid,
+            "created_at_utc": _now_iso(),
+            "expires_at": now + ttl,
+            "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
+            "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
+            "revoked": False,
+            "device_id": _device_id(user_agent),
+            "client": _device_label(user_agent),
+            "machine": _machine_label(),
+            "ip": _mask_ip(ip),
+            "source": str(source or "desktop_session")[:40],
+        }
+        if impersonator_owner_id:
+            row["impersonator_owner_id"] = int(impersonator_owner_id)
+            row["impersonation_started_at_utc"] = _now_iso()
+            row["impersonation_preset"] = str(impersonation_preset or "")[:40]
+        doc["sessions"].append(row)
+        _append_login(user, source=str(source or "desktop_session"), ip=ip, user_agent=user_agent)
+        _cleanup(doc)
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True, include_avatar=True)
+    _audit(
+        "impersonation_started" if impersonator_owner_id else "login_succeeded",
+        user_id=uid,
+        owner_id=int(impersonator_owner_id or 0),
+        ip=ip,
+        extra={"source": source},
+    )
+    return {
+        "status": "authenticated",
+        "session_token": token,
+        "csrf_token": csrf,
+        "user": public,
+        "needs_google": user_needs_google(user),
+        "impersonating": bool(impersonator_owner_id),
+    }
+
+
+def create_or_update_virtual_user(
+    *,
+    user_id: int,
+    username: str,
+    first_name: str,
+    last_name: str = "",
+    email: str = "",
+    role: str = "read_only",
+    status: str = "active",
+    google_linked: bool = False,
+    google_sub: str = "",
+    google_email: str = "",
+    virtual: bool = True,
+    preset: str = "",
+    terms_accepted: bool = True,
+) -> Dict[str, Any]:
+    runtime_env.require_staging("Virtual users")
+    uid = int(user_id)
+    role_id = str(role or "read_only")
+    if role_id not in ROLES or role_id == "owner":
+        role_id = "read_only"
+    status_id = str(status or "active")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if user is None:
+            user = {
+                "user_id": uid,
+                "username": str(username or f"virtual_{uid}")[:64],
+                "first_name": str(first_name or "Virtual")[:80],
+                "last_name": str(last_name or "")[:80],
+                "email": str(email or "").strip().lower(),
+                "phone": "",
+                "phone_hash": "",
+                "role": role_id,
+                "status": status_id,
+                "is_owner": False,
+                "created_at_utc": _now_iso(),
+                "approved_at_utc": _now_iso() if status_id == "active" else "",
+                "revoked_at_utc": "",
+                "is_virtual": bool(virtual),
+                "virtual_preset": str(preset or "")[:40],
+            }
+            if terms_accepted:
+                user["terms_accepted_at_utc"] = _now_iso()
+                user["terms_version"] = str(getattr(legal, "TERMS_VERSION", "1") or "1")
+            doc["users"].append(user)
+        else:
+            user.update({
+                "username": str(username or user.get("username") or f"virtual_{uid}")[:64],
+                "first_name": str(first_name or user.get("first_name") or "Virtual")[:80],
+                "last_name": str(last_name or user.get("last_name") or "")[:80],
+                "email": str(email or user.get("email") or "").strip().lower(),
+                "role": role_id,
+                "status": status_id,
+                "is_virtual": bool(virtual),
+                "virtual_preset": str(preset or user.get("virtual_preset") or "")[:40],
+            })
+            if status_id == "active" and not user.get("approved_at_utc"):
+                user["approved_at_utc"] = _now_iso()
+        if google_linked:
+            user["google_sub"] = str(google_sub or f"test-google-{uid}")
+            user["google_email"] = str(google_email or email or f"virtual{uid}@staging.stratforge.local").lower()
+            user["google_linked_at_utc"] = user.get("google_linked_at_utc") or _now_iso()
+            user["google_link_source"] = "test_auth"
+        else:
+            user["google_sub"] = ""
+            user["google_email"] = ""
+            user["google_linked_at_utc"] = ""
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True, include_avatar=True)
+    _audit("virtual_user_upsert", user_id=uid, extra={"preset": preset})
+    return public
+
+
+def list_virtual_users() -> list[Dict[str, Any]]:
+    runtime_env.require_staging("Virtual users")
+    with _LOCK:
+        doc = _read_doc()
+        return [
+            _public_user(user, include_contact=True)
+            for user in doc.get("users") or []
+            if user.get("is_virtual")
+        ]
+
+
+def start_impersonation(
+    owner_id: Any,
+    target_user_id: Any,
+    *,
+    ip: str = "127.0.0.1",
+    user_agent: str = "owner-impersonation",
+    preset: str = "",
+) -> Dict[str, Any]:
+    runtime_env.require_impersonation()
+    oid = int(owner_id)
+    tid = int(target_user_id)
+    with _LOCK:
+        doc = _read_doc()
+        owner = _require_owner_in_doc(doc, oid)
+        target = _user(doc, tid)
+        if target is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        if target.get("is_owner"):
+            raise AccountAuthError("Нельзя войти как владелец через impersonation.", 400)
+        target_first = str(target.get("first_name") or "")
+        target_last = str(target.get("last_name") or "")
+        target_preset = str(preset or target.get("virtual_preset") or "")
+        owner_label = str(owner.get("first_name") or owner.get("username") or oid)
+    session = create_session_for_user(
+        tid,
+        ip=ip,
+        user_agent=user_agent,
+        source="impersonation",
+        skip_dual_auth_gate=True,
+        impersonator_owner_id=oid,
+        impersonation_preset=target_preset,
+    )
+    _audit(
+        "impersonation_started",
+        user_id=tid,
+        owner_id=oid,
+        ip=ip,
+        extra={"preset": target_preset},
+    )
+    return {
+        "ok": True,
+        "impersonating": True,
+        "target_user_id": tid,
+        "owner_id": oid,
+        "owner_label": owner_label,
+        "banner": (
+            f"Тестовый режим. Вы вошли как пользователь: "
+            f"{target_first} {target_last} "
+            f"(id {tid})."
+        ).strip(),
+        **session,
+    }
+
+
+def end_impersonation(token: str, *, owner_id: Any, ip: str = "", user_agent: str = "") -> Dict[str, Any]:
+    """End impersonation session and restore a fresh owner session."""
+    runtime_env.require_impersonation()
+    oid = int(owner_id)
+    digest = hashlib.sha256(str(token or "").encode()).hexdigest()
+    target_uid = 0
+    with _LOCK:
+        doc = _read_doc()
+        _require_owner_in_doc(doc, oid)
+        for session in doc.get("sessions") or []:
+            if hmac.compare_digest(str(session.get("token_hash") or ""), digest):
+                if int(session.get("impersonator_owner_id") or 0) != oid:
+                    raise AccountAuthError("Сессия impersonation не принадлежит владельцу.", 403)
+                target_uid = int(session.get("user_id") or 0)
+                session["revoked"] = True
+                session["revoked_at_utc"] = _now_iso()
+                session["revoked_reason"] = "impersonation_end"
+                _write_doc(doc)
+                break
+        else:
+            raise AccountAuthError("Сессия impersonation не найдена.", 404)
+    restored = create_session_for_user(
+        oid,
+        ip=ip or "127.0.0.1",
+        user_agent=user_agent or "owner-return",
+        source="impersonation_return",
+        skip_dual_auth_gate=True,
+    )
+    _audit("impersonation_ended", user_id=target_uid, owner_id=oid, ip=ip)
+    return {"ok": True, "impersonating": False, "restored_owner": True, **restored}
+
+
+def active_sessions_overview(owner_id: Any) -> Dict[str, Any]:
+    """Flat list of all active auth sessions across users (Monitoring tab)."""
+    with _LOCK:
+        doc = _read_doc()
+        _require_owner_in_doc(doc, owner_id)
+        now = time.time()
+        users_by_id = {int(u.get("user_id") or 0): u for u in doc.get("users") or []}
+        rows = []
+        for session in doc.get("sessions") or []:
+            if session.get("revoked") or float(session.get("expires_at") or 0) <= now:
+                continue
+            uid = int(session.get("user_id") or 0)
+            user = users_by_id.get(uid) or {}
+            rows.append({
+                "session_id": _session_id(session),
+                "user_id": uid,
+                "username": str(user.get("username") or ""),
+                "first_name": str(user.get("first_name") or ""),
+                "last_name": str(user.get("last_name") or ""),
+                "is_owner": bool(user.get("is_owner")),
+                "is_virtual": bool(user.get("is_virtual")),
+                "created_at_utc": str(session.get("created_at_utc") or ""),
+                "client": str(session.get("client") or ""),
+                "machine": str(session.get("machine") or ""),
+                "ip": str(session.get("ip") or ""),
+                "source": str(session.get("source") or "desktop_session"),
+                "impersonating": bool(session.get("impersonator_owner_id")),
+            })
+    rows.sort(key=lambda item: str(item.get("created_at_utc") or ""), reverse=True)
+    return {"ok": True, "sessions": rows, "count": len(rows)}
