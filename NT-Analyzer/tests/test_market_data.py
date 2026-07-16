@@ -160,6 +160,19 @@ def test_ensure_chart_runtime_subscribes_before_reporting_unavailable(monkeypatc
     assert requested[0][0][:2] == ("MCL 08-26", "5m")
 
 
+def test_contract_resolution_ignores_bridge_error_row_for_bare_root(monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_read", lambda _path: {"series": [{
+        "instrument": "MNQ", "timeframe": "1m", "status": "error", "bars": [],
+        "updated_at_utc": "2026-07-16T16:20:37Z",
+    }]})
+    monkeypatch.setattr("app.jobqueue.read_instruments_catalog", lambda: {"instruments": [{
+        "root": "MNQ", "instrument": "MNQ 09-26", "expiry": "09-26",
+        "data_last": "2026-07-16",
+    }]})
+
+    assert market_data.resolve_chart_instrument("MNQ") == "MNQ 09-26"
+
+
 def test_register_requests_does_not_downgrade_existing_subscription(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
     market_data.register_request("MNQ 09-26", "5m", 12000, range_days=31)

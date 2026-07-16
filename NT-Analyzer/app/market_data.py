@@ -1110,6 +1110,9 @@ def resolve_chart_instrument(instrument: Any) -> str:
         row for row in (doc.get("series") or [])
         if isinstance(row, dict)
         and str(row.get("instrument") or "").upper().split(" ")[0] == root
+        and isinstance(row.get("bars"), list)
+        and bool(row.get("bars"))
+        and str(row.get("status") or "").lower() not in {"error", "failed"}
     ]
     live.sort(key=lambda row: str(row.get("updated_at_utc") or ""), reverse=True)
     if live and str(live[0].get("instrument") or "").strip():

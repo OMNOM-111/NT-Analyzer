@@ -346,15 +346,17 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          alerts_index: Optional[Dict[str, Any]] = None,
                          max_points: int = 0,
                          workspace_id: str = "") -> Dict[str, Any]:
+    requested_instrument = " ".join(str(instrument or "").strip().upper().split())
+    resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
     if register:
-        market_data.register_request(instrument, timeframe, limit, range_days, from_date, to_date)
+        market_data.register_request(resolved_instrument, timeframe, limit, range_days, from_date, to_date)
     try:
         max_points = max(0, min(20000, int(max_points or 0)))
     except (TypeError, ValueError):
         max_points = 0
     cache_key = (
         str(workspace_id or ""),
-        " ".join(str(instrument or "").strip().upper().split()),
+        resolved_instrument,
         str(timeframe or "5m"),
         int(limit or 1500),
         int(range_days or 0),
@@ -368,19 +370,19 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
     if cached is not None:
         return cached
     if snapshot_index is not None:
-        runtime_bars = market_data.series_from_index(snapshot_index, instrument, timeframe, limit)
+        runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
     else:
-        runtime_bars = market_data.read_runtime_series(instrument, timeframe, limit)
+        runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
     heartbeat = ops_runtime.read_heartbeat()
     primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
     unified = market_data_failover.apply_failover(
-        runtime_bars, instrument, timeframe, limit,
+        runtime_bars, resolved_instrument, timeframe, limit,
         primary_healthy=primary_healthy,
     )
     if unified and unified.get("bars"):
         out = unified
     else:
-        out = jobqueue.read_instrument_bars(instrument, timeframe, limit)
+        out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
         out["status"] = "historical_fallback" if out.get("bars") else (
             (runtime_bars or {}).get("status") or "waiting")
         out["bridge"] = {
@@ -428,6 +430,8 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
             instrument=instrument, include_inactive=True)["alerts"]
     if max_points:
         out = market_data.downsample_series_payload(out, max_points) or out
+    out["requested_instrument"] = requested_instrument
+    out["resolved_instrument"] = resolved_instrument
     if out.get("bars") and (out.get("source") or {}).get("kind") == "ninjatrader_runtime":
         _market_payload_cache_put(cache_key, out)
     return out
