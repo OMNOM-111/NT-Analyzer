@@ -4,12 +4,13 @@ Timezone: America/Los_Angeles (PT)
 
 ## Conclusion
 
-The two latest interrupted runs did not end because of a Git branch switch, a project cleanup script, a context limit or disk/memory exhaustion.
+The three investigated interrupted runs did not end because of a Git branch switch, a project cleanup script, a context limit or disk/memory exhaustion.
 
 1. The 01:15 interruption is most likely a Codex Desktop race/failure during concurrent plugin installation and MCP-server refresh. Windows recorded native exception `0xc06d007f` for `ChatGPT.exe`; Codex logs show three simultaneous `plugin/install` requests, repeated skills-cache invalidation and MCP refreshes immediately before the exception.
 2. The 02:29 interruption was caused by a planned Windows Update restart. Immediately after boot Windows upgraded the Codex app package from `26.707.9981.0` to `26.707.12708.0`; the newly started app then had one additional native `0xc06d007f` startup failure.
+3. The 08:34 interruption occurred immediately after a second in-app browser-client initialization. The browser helper started, cleared the skills cache and synchronized installed plugins; the desktop process was replaced about ten seconds later. No new WER crash record or dump was written, so this is a confirmed process restart correlated with browser setup, not a provable native exception.
 
-The exact native function that threw `0xc06d007f` cannot be proven from the available evidence: WER reports the faulting module as `unknown`, and no WinDbg/`dumpchk` analyzer or matching private symbols are installed. Browser involvement is not proven for the 01:15 crash. The refresh configuration included the in-app Browser/computer-use runtime, but the direct event preceding the crash was plugin installation/MCP refresh, not a recorded page navigation.
+The exact native function that threw `0xc06d007f` cannot be proven from the available evidence: WER reports the faulting module as `unknown`, and no WinDbg/`dumpchk` analyzer or matching private symbols are installed. Browser involvement is not proven for the 01:15 crash. The refresh configuration included the in-app Browser/computer-use runtime, but the direct event preceding that crash was plugin installation/MCP refresh, not a recorded page navigation. The later 08:34 incident is stronger evidence that initializing this runtime is unsafe in the current desktop build and workspace.
 
 ## Evidence timeline
 
@@ -38,6 +39,16 @@ Assessment: **most likely Codex Desktop plugin-install/MCP-refresh race or nativ
 
 Assessment: **confirmed planned Windows Update restart** ended the prior process tree. A separate Codex startup defect occurred after the package upgrade.
 
+### Interruption 3 — browser-client initialization and desktop restart
+
+- 08:34:38: Codex records the second browser-client setup call made for the authorized visual QA retry.
+- 08:34:42: the setup starts the separate `codex-browser-use` application-server process (PID 29908).
+- During initialization the runtime clears the skills cache and performs installed-plugin synchronization.
+- 08:34:52: the currently running root `ChatGPT.exe` process starts, replacing the previous desktop process.
+- No matching Windows Application Error/WER event or new dump exists for this interruption.
+
+Assessment: **confirmed Codex desktop process restart temporally correlated with browser-client initialization**. The available logs do not expose whether the desktop restarted itself, was replaced by its updater/runtime, or was terminated by an unlogged native path. Browser, node-repl and computer-use initialization are therefore excluded from the remainder of this release run.
+
 ## Negative findings
 
 - No Resource-Exhaustion-Detector, Kernel-Power 41, unexpected-shutdown 6008, disk or NTFS failure was recorded for the relevant period.
@@ -52,6 +63,7 @@ Assessment: **confirmed planned Windows Update restart** ended the prior process
 
 - Persistent checkpoint: `docs/CODEX_RUN_STATE_2026-07-16.md`.
 - Atomic commit after each independent stage.
-- Clean commit before Browser/computer-use work; immediate checkpoint after it.
-- No plugin installation or plugin refresh will be intentionally performed during Browser QA.
+- A separate read-only watchdog records Codex PID/package, pending-reboot flags, host resources and Git HEAD every five seconds in `.artifacts/codex-watchdog.jsonl`; it displays a one-time Windows warning when a detectable risk appears.
+- No further in-app Browser, node-repl, computer-use, plugin installation or plugin refresh will be invoked in this run.
+- UI verification proceeds through HTTP/test-client/contract tests. Final human visual confirmation must use an already-open user-controlled Chrome window, after all headless work is committed.
 - Full original dirty tree remains reachable from `codex/stratforge-pre-separation-safety`.

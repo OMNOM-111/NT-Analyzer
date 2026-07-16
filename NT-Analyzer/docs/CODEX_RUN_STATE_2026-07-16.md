@@ -1,6 +1,6 @@
 # StratForge Codex run state — 2026-07-16
 
-Last checkpoint: 2026-07-16 08:34 PT
+Last checkpoint: 2026-07-16 08:50 PT
 
 ## Git
 
@@ -25,8 +25,9 @@ Last checkpoint: 2026-07-16 08:34 PT
    - `24a89735` release plan and audit documentation.
 4. Verified that `NT-Analyzer/STRATFORGE_PLAN_TEMP.md` is byte-identical to the copy in the safety commit before removing it from the release worktree. It remains recoverable from the safety branch.
 5. Started the backend from the release branch. The background supervisor currently self-heals the local listener.
-6. Started the authorized in-app Browser QA and captured the initial unauthenticated production desktop state. No full role/device matrix has been claimed.
+6. Started the authorized in-app Browser QA and captured the initial unauthenticated production desktop state. The browser-client retry then correlated with another Codex desktop restart; no full role/device matrix has been claimed.
 7. Completed the premature-exit investigation. Evidence and conclusion are recorded in `docs/CODEX_CRASH_INVESTIGATION_2026-07-16.md`.
+8. Added a standalone watchdog that preserves five-second process/package/reboot/resource/Git checkpoints and warns on detectable restart risks without controlling or terminating Codex.
 
 ## Branch preservation audit
 
@@ -58,4 +59,4 @@ The file `STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md` was not found in the works
 
 ## Exact next action
 
-Resume the existing authorized Browser session at `http://127.0.0.1:8765/ui/`. Record guest/free-preview and Practice Trading results at 1920×1080 and 390×844, collect console evidence, diagnose the empty chart, then checkpoint before any implementation change.
+Run and validate `tools/codex_watchdog.ps1`, start it as a detached background process, commit this recovery-control stage, then audit Practice Trading/Micro Live/TopStep and the market-data chain through HTTP, tests and source inspection. Do not initialize the in-app browser runtime again.
