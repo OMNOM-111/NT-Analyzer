@@ -136,7 +136,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260714-victor2"}, versions
+    assert set(versions.values()) == {"20260716-release1"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
@@ -341,6 +341,10 @@ def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
     assert 'headers={"Retry-After": str(retry_after)}' in server
     assert "streamResult.ok !== true" in ui
     assert "if (!sawFinal || !sawDone)" in api
+    assert "request_id: mutationRequestId('orchestrator')" in api
+    assert "local_worker.enqueue_ai_message" in server
+    assert "threading.Thread(target=worker, name=\"orchestrator-stream\"" not in server
+    assert "ai_chief_agent.handle_message(" not in server
     assert "API.http.aiOrchestratorMessage(text, cid, agent)" not in ui
     assert "row.actor_is_owner ? 'Owner'" not in ui
     assert "async function refreshAuth()" in api and "authReady, refreshAuth" in api
@@ -373,6 +377,15 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     assert "aiOrchestratorConversations" in ui
     assert "/api/ai-lab/orchestrator/message" in api
     assert "/api/ai-lab/orchestrator/conversations" in api
+    assert "aiOrchestratorSpeak" in api and "/api/ai-lab/orchestrator/speak" in api
+    assert "domainAgentVoices" in api and "/api/ai-lab/domain-agents/voices" in api
+    assert "domainAgentVoiceSave" in api and "domainAgentVoicePreview" in api
+    assert 'path == "/api/ai-lab/orchestrator/speak"' in (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "domain-agents/voices" in (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "agentSpeakFromFace" in ui and "AGENT_SPEAK_HOVER_MS" in ui
+    html = (AURORA / "ai-agents.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "ai-agents.js").read_text(encoding="utf-8")
+    assert "staff-voice-grid" in html and "openVoiceSettings" in page
 
 
 def test_named_domain_agents_and_unified_finance_page_contract():

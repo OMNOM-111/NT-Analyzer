@@ -25,7 +25,6 @@ import hashlib
 import json
 import math
 import os
-import queue
 import socket
 import subprocess
 import sys
@@ -90,8 +89,8 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import agent_router as ai_agent_router  # type: ignore[no-redef]
     from app.ai_lab import universal_llm as ai_universal_llm  # type: ignore[no-redef]
     from app.ai_lab import chief_agent as ai_chief_agent  # type: ignore[no-redef]
-    from app.ai_lab import agent_tts as ai_agent_tts  # type: ignore[no-redef]
     from app.ai_lab import domain_agents as ai_domain_agents  # type: ignore[no-redef]
+    from app.ai_lab import agent_tts as ai_agent_tts  # type: ignore[no-redef]
     from app.ai_lab import news_agent as ai_news_agent  # type: ignore[no-redef]
     from app.ai_lab import research_catalog as ai_research_catalog  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
@@ -150,8 +149,8 @@ else:
     from .ai_lab import agent_router as ai_agent_router
     from .ai_lab import universal_llm as ai_universal_llm
     from .ai_lab import chief_agent as ai_chief_agent
-    from .ai_lab import agent_tts as ai_agent_tts
     from .ai_lab import domain_agents as ai_domain_agents
+    from .ai_lab import agent_tts as ai_agent_tts
     from .ai_lab import news_agent as ai_news_agent
     from .ai_lab import research_catalog as ai_research_catalog
     from . import local_secrets as _local_secrets
@@ -245,6 +244,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/micro-live/")
         or path.startswith("/api/auth/nt-confirm/")
         or path == "/api/demo-backtests"
+        or path == "/api/ops/runtime/bars/batch"
     )
 
 
@@ -705,7 +705,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(status, payload, headers=headers)
 
     def _bytes(self, status: int, data: bytes, content_type: str,
-               download_name: Optional[str] = None) -> None:
+               download_name: Optional[str] = None,
+               headers: Optional[Dict[str, str]] = None) -> None:
         try:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -718,6 +719,8 @@ class Handler(BaseHTTPRequestHandler):
                     "Content-Disposition",
                     f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}",
                 )
+            for name, value in (headers or {}).items():
+                self.send_header(str(name), str(value))
             self.end_headers()
             self.wfile.write(data)
         except OSError as e:
@@ -820,7 +823,85 @@ class Handler(BaseHTTPRequestHandler):
         context["workspaces"] = workspace_context.get("workspaces") or []
         context["active_workspace"] = workspace_context.get("active_workspace") or {}
         context["active_membership"] = workspace_context.get("active_membership") or {}
+        if context.get("is_owner") and not context["active_workspace"]:
+            # Local single-user mode may run before Telegram owner bootstrap.
+            # Give it an explicit scope instead of emitting unowned writes.
+            context["active_workspace"] = {
+                "workspace_id": "ws_local_owner",
+                "kind": "local_owner",
+                "display_name": "Local owner",
+                "uses_owner_runtime": True,
+            }
+            context["active_membership"] = {
+                "workspace_id": "ws_local_owner",
+                "user_id": context.get("user_id") or 0,
+                "role": "owner",
+            }
+            context["workspace_context"] = {
+                **workspace_context,
+                "active_workspace": context["active_workspace"],
+                "active_membership": context["active_membership"],
+            }
+        active = context["active_workspace"]
+        membership = context["active_membership"]
+        context["workspace_id"] = str(active.get("workspace_id") or "")
+        context["membership_role"] = str(membership.get("role") or context.get("role") or "")
+        try:
+            resolved_user = dict(context.get("user") or {}) if isinstance(context.get("user"), dict) else {}
+            if context.get("is_owner"):
+                resolved_user["is_owner"] = True
+            resolved = permissions.resolve_for_user_id(
+                context.get("user_id"),
+                resolved_user,
+            )
+        except Exception:
+            # A damaged or temporarily unavailable entitlement store must not
+            # turn an otherwise read-only request into HTTP 500.  Keep the
+            # mandatory context shape and fail closed on every paid capability.
+            resolved = {
+                "capabilities": {
+                    capability_id: bool(context.get("is_owner"))
+                    for capability_id in permissions.CAPABILITY_IDS
+                },
+                "ux_mode": "professional" if context.get("is_owner") else str(
+                    (context.get("user") or {}).get("ux_mode") or ""
+                ),
+            }
+        context["capabilities"] = dict(resolved.get("capabilities") or {})
+        context["ux_mode"] = str(resolved.get("ux_mode") or "")
         return context
+
+    def _data_scope(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        return {
+            "workspace_id": str(context.get("workspace_id") or ""),
+            "user_id": context.get("user_id") or "",
+            # Pre-workspace queue artifacts belong to the original local owner.
+            "allow_legacy": bool(context.get("is_owner")),
+        }
+
+    def _require_data_scope(self) -> Optional[Dict[str, Any]]:
+        scope = self._data_scope()
+        if not scope["workspace_id"]:
+            self._err(
+                HTTPStatus.CONFLICT,
+                "Для записи нужна активная рабочая область.",
+                code="workspace_required",
+            )
+            return None
+        return scope
+
+    def _write_origin(self) -> Optional[Dict[str, Any]]:
+        scope = self._require_data_scope()
+        if scope is None:
+            return None
+        context = getattr(self, "_remote_context", None) or {}
+        return {
+            "workspace_id": scope["workspace_id"],
+            "user_id": str(scope["user_id"] or ""),
+            "membership_role": str(context.get("membership_role") or ""),
+            "source": str(context.get("source") or "http"),
+        }
 
     def _workspace_runtime_stubbed(self, path: str, qs: Dict[str, Any]) -> bool:
         context = getattr(self, "_remote_context", None) or {}
@@ -832,7 +913,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_action_class(self, path: str, method: str) -> str:
         if path.startswith("/api/auth/"):
-            return "auth"
+            # Session/profile reads are ordinary authenticated UI polling.
+            # Keeping them in the small login/mutation bucket makes a healthy
+            # long-lived session hit 429 even though account_auth applies its
+            # own stricter IP limiter to actual login attempts.
+            return "read" if method.upper() in {"GET", "HEAD"} else "auth"
         method_u = method.upper()
         # High-frequency owner UI polls must not share the tight "owner" bucket
         # (60/min) with mutating Viteк/Telegram actions — otherwise the Overview
@@ -850,7 +935,7 @@ class Handler(BaseHTTPRequestHandler):
         return "read" if method_u in {"GET", "HEAD"} else "write"
 
     def _check_api_rate_limit(self, context: Dict[str, Any], path: str) -> bool:
-        if os.environ.get("NTA_DISABLE_RATE_LIMIT") == "1":
+        if runtime_env.rate_limits_disabled():
             return True
         action = self._api_action_class(path, self.command)
         limit = int(_API_RATE_LIMITS.get(action, 120))
@@ -897,20 +982,43 @@ class Handler(BaseHTTPRequestHandler):
                     method=self.command, path=path, tunnel_ip=tunnel_ip,
                     forwarded_ip=forwarded_ip,
                 )
+                # Telegram initData authenticates the Mini App request, while
+                # the protected browser session carries device-scoped step-up
+                # state. Merge it only when both identities are identical.
+                browser_session = account_auth.authenticate_session(
+                    self._cookie_value(account_auth.SESSION_COOKIE)
+                )
+                if (browser_session and str(browser_session.get("user_id") or "")
+                        == str(self._remote_context.get("user_id") or "")):
+                    for key in (
+                        "session_id", "device_id", "csrf_hash", "csrf_token",
+                        "nt_elevated_until", "impersonating",
+                        "impersonator_owner_id", "impersonation_started_at_utc",
+                        "impersonation_preset",
+                    ):
+                        if key in browser_session:
+                            self._remote_context[key] = browser_session[key]
                 account = account_auth.find_active_user(self._remote_context.get("user_id")) or {}
                 self._remote_context["is_owner"] = bool(account.get("is_owner"))
                 # Populate the public profile so /api/auth/me and other handlers
                 # that read context["user"] (name, e-mail, avatar, features) work
                 # over the Telegram Mini App, exactly like the desktop session path.
-                self._remote_context["user"] = (
-                    account_auth._public_user(account, include_contact=True, include_avatar=True)
-                    if account else {}
-                )
+                if account:
+                    self._remote_context["user"] = account_auth._public_user(
+                        account, include_contact=True, include_avatar=True)
                 self._remote_context = self._decorate_workspace_context(self._remote_context)
                 method = self.command.upper()
                 role = str(self._remote_context.get("role") or "read_only")
                 workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
+                membership_role = str(self._remote_context.get("membership_role") or "viewer")
                 personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+                if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
+                        and membership_role not in workspaces.WRITE_ROLES
+                        and not _is_self_service_post(path)):
+                    raise telegram_remote.RemoteAccessError(
+                        "В этой рабочей области доступно только наблюдение.", 403,
+                        self._remote_context,
+                    )
                 if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
@@ -919,6 +1027,7 @@ class Handler(BaseHTTPRequestHandler):
                         or path.startswith("/api/notifications")) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
                 try:
+                    self._remote_context["_request_method"] = method
                     permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
                     raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
@@ -948,7 +1057,13 @@ class Handler(BaseHTTPRequestHandler):
         method = self.command.upper()
         role = str(context.get("role") or "read_only")
         workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        membership_role = str(context.get("membership_role") or "viewer")
         personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+        if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
+                and membership_role not in workspaces.WRITE_ROLES
+                and not _is_self_service_post(path)):
+            self._err(HTTPStatus.FORBIDDEN, "В этой рабочей области доступно только наблюдение.")
+            return False
         if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
@@ -961,6 +1076,7 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
         try:
+            context["_request_method"] = method
             permissions.enforce(path, context)
         except permissions.PermissionError as exc:
             self._err(exc.status, str(exc)); return False
@@ -1270,6 +1386,11 @@ class Handler(BaseHTTPRequestHandler):
             "locked_nav": perm["locked_nav"],
             "unlock_message": perm["unlock_message"],
             "demo_tier": bool(perm.get("demo_tier")),
+            # Keep /api/auth/me consistent with /api/auth/status.  Mini App
+            # clients use this cabinet endpoint after Telegram authorization,
+            # so they must receive the mandatory UX-mode state as well.
+            "ux_mode": str(perm.get("ux_mode") or ""),
+            "ux_pending": bool(perm.get("ux_pending")),
             "payments_enabled": bool(subscriptions.payments_active()),
             "telegram_configured": bool(str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()),
             "needs_google": bool(context.get("needs_google") or (isinstance(user, dict) and user.get("needs_google"))),
@@ -1340,6 +1461,31 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", location)
         self.end_headers()
+
+    def _respond_tts(self, result: Dict[str, Any]) -> None:
+        """Send OpenAI MP3 bytes or a quiet browser-fallback JSON payload."""
+        headers = ai_agent_tts.speak_result_headers(result)
+        if result.get("fallback") == "browser":
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "fallback": "browser",
+                "reason": result.get("reason") or "unavailable",
+                "agent_id": result.get("agent_id"),
+                "voice": result.get("voice"),
+                "language": result.get("language") or "ru-RU",
+                "speed": result.get("speed") or 1.0,
+                "fallback_voice": result.get("fallback_voice") or "ru-RU",
+            }, headers=headers)
+            return
+        audio = result.get("audio") or b""
+        if not isinstance(audio, (bytes, bytearray)) or not audio:
+            raise ai_agent_tts.AgentTtsError("Пустой аудиоответ TTS.")
+        self._bytes(
+            HTTPStatus.OK,
+            bytes(audio),
+            str(result.get("content_type") or "audio/mpeg"),
+            headers=headers,
+        )
 
     def _require_owner_actor(self) -> Optional[Dict[str, Any]]:
         context = getattr(self, "_remote_context", None) or {}
@@ -1462,31 +1608,6 @@ class Handler(BaseHTTPRequestHandler):
         if not context.get("is_owner") and requester != target_id:
             self._err(HTTPStatus.FORBIDDEN, "Доступ к аватару запрещён."); return
         path = account_auth.avatar_file(target_id)
-    def _respond_tts(self, result: Dict[str, Any]) -> None:
-        """Send OpenAI MP3 bytes or a quiet browser-fallback JSON payload."""
-        headers = ai_agent_tts.speak_result_headers(result)
-        if result.get("fallback") == "browser":
-            self._json(HTTPStatus.OK, {
-                "ok": True,
-                "fallback": "browser",
-                "reason": result.get("reason") or "unavailable",
-                "agent_id": result.get("agent_id"),
-                "voice": result.get("voice"),
-                "language": result.get("language") or "ru-RU",
-                "speed": result.get("speed") or 1.0,
-                "fallback_voice": result.get("fallback_voice") or "ru-RU",
-            }, headers=headers)
-            return
-        audio = result.get("audio") or b""
-        if not isinstance(audio, (bytes, bytearray)) or not audio:
-            raise ai_agent_tts.AgentTtsError("Пустой аудиоответ TTS.")
-        self._bytes(
-            HTTPStatus.OK,
-            bytes(audio),
-            str(result.get("content_type") or "audio/mpeg"),
-            headers=headers,
-        )
-
         if not path:
             self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
         try:
@@ -1504,7 +1625,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _paypal_audit(self, event: Dict[str, Any], result: Dict[str, Any], verified: bool) -> None:
         try:
-            path = _PROJECT_ROOT / "data" / "audit" / "paypal-webhook.jsonl"
+            path = runtime_env.data_path(
+                "audit", "paypal-webhook.jsonl", project_root=_PROJECT_ROOT,
+            )
             path.parent.mkdir(parents=True, exist_ok=True)
             row = {
                 "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -1807,9 +1930,13 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def _handle_unexpected(self, method: str) -> None:
-        """Last-resort handler: turn any uncaught exception into a 500 JSON
-        response instead of letting it abort the socket with a bare traceback.
+        """Turn an uncaught exception into a stable JSON response.
+
+        Storage exhaustion is operationally actionable and has a dedicated
+        507/code contract.  Other failures remain a generic 500 so internal
+        exception details are never disclosed to the client.
         """
+        exc = sys.exc_info()[1]
         tb = traceback.format_exc()
         try:
             sys.stderr.write(f"[NT-Analyzer] unhandled {method} error:\n{tb}")
@@ -1820,7 +1947,17 @@ class Handler(BaseHTTPRequestHandler):
             # well-formed error. Nothing safe left to do; connection closes.
             return
         try:
-            self._err(HTTPStatus.INTERNAL_SERVER_ERROR, "internal server error")
+            storage_errnos = {errno.ENOSPC}
+            if hasattr(errno, "EDQUOT"):
+                storage_errnos.add(errno.EDQUOT)
+            if isinstance(exc, OSError) and exc.errno in storage_errnos:
+                self._err(
+                    HTTPStatus.INSUFFICIENT_STORAGE,
+                    "insufficient storage space",
+                    code="storage_full",
+                )
+            else:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, "internal server error")
         except OSError:
             pass
 
@@ -2069,7 +2206,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/report-favorites":
             validate = str((qs.get("validate") or ["0"])[0]).strip().lower() in {"1", "true", "yes"}
-            self._json(HTTPStatus.OK, jobqueue.read_report_favorites(validate=validate))
+            self._json(HTTPStatus.OK, jobqueue.read_report_favorites(
+                validate=validate, **self._data_scope()))
             return
 
         if path == "/api/reports":
@@ -2116,6 +2254,7 @@ class Handler(BaseHTTPRequestHandler):
                 pnl_sign=str((qs.get("pnl_sign") or [""])[0] or ""),
                 min_confidence=optional_float("min_confidence"),
                 analysis_limit=analysis_limit,
+                **self._data_scope(),
             ))
             return
 
@@ -2130,8 +2269,20 @@ class Handler(BaseHTTPRequestHandler):
                 offset = 0
             limit = max(1, min(10000, limit))
             offset = max(0, offset)
-            jobs = jobqueue.list_jobs(limit=limit, offset=offset)
-            counts = jobqueue.listable_queue_counts()
+            scope = self._data_scope()
+            jobs = jobqueue.list_jobs(limit=limit, offset=offset, **scope)
+            counts = jobqueue.listable_queue_counts(**scope)
+            caps = (getattr(self, "_remote_context", None) or {}).get("capabilities") or {}
+            if not caps.get("backtesting") and caps.get("demo_backtest"):
+                jobs = [
+                    row for row in jobs
+                    if str((row.get("origin") or {}).get("type") or "") == "demo"
+                ]
+                counts = {key: 0 for key in counts}
+                for row in jobs:
+                    status = str(row.get("status") or "")
+                    if status in counts:
+                        counts[status] += 1
             self._json(HTTPStatus.OK, {
                 "counts": counts,
                 "offset": offset,
@@ -2149,6 +2300,14 @@ class Handler(BaseHTTPRequestHandler):
                 jobqueue._safe_job_id(job_id)
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
+            if not jobqueue.job_in_scope(job_id, **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, f"job not found: {job_id}")
+                return
+            caps = (getattr(self, "_remote_context", None) or {}).get("capabilities") or {}
+            if (not caps.get("backtesting") and caps.get("demo_backtest")
+                    and str(jobqueue.job_origin(job_id).get("type") or "") != "demo"):
+                self._err(HTTPStatus.NOT_FOUND, f"job not found: {job_id}")
                 return
             if len(parts) == 3:
                 full = jobqueue.read_job_full(job_id)
@@ -2219,11 +2378,12 @@ class Handler(BaseHTTPRequestHandler):
                 offset = 0
             limit = max(1, min(10000, limit))
             offset = max(0, offset)
+            scope = self._data_scope()
             self._json(HTTPStatus.OK, {
                 "offset": offset,
                 "limit": limit,
-                "total": jobqueue.count_batches(),
-                "batches": jobqueue.list_batches(limit=limit, offset=offset),
+                "total": jobqueue.count_batches(**scope),
+                "batches": jobqueue.list_batches(limit=limit, offset=offset, **scope),
             })
             return
 
@@ -2233,6 +2393,9 @@ class Handler(BaseHTTPRequestHandler):
                 jobqueue._safe_batch_id(batch_id)
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
+            if not jobqueue.batch_in_scope(batch_id, **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, f"batch not found: {batch_id}")
                 return
             if len(parts) == 3:
                 m = jobqueue.read_batch(batch_id)
@@ -2285,16 +2448,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/practice/account":
             try:
-                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
-                self._json(HTTPStatus.OK, practice_trading.get_account(actor))
+                context = getattr(self, "_remote_context", None) or {}
+                self._json(HTTPStatus.OK, practice_trading.get_account(
+                    context.get("user_id"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                ))
             except practice_trading.PracticeTradingError as exc:
                 self._err(exc.status, str(exc))
             return
 
         if path == "/api/practice/report":
             try:
-                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
-                self._json(HTTPStatus.OK, practice_trading.report(actor))
+                context = getattr(self, "_remote_context", None) or {}
+                self._json(HTTPStatus.OK, practice_trading.report(
+                    context.get("user_id"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                ))
             except practice_trading.PracticeTradingError as exc:
                 self._err(exc.status, str(exc))
             return
@@ -2307,7 +2476,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not (context.get("is_owner") or caps.get("micro_live")):
                     self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
                     return
-                self._json(HTTPStatus.OK, micro_live.ensure_account(actor))
+                self._json(HTTPStatus.OK, micro_live.ensure_account(
+                    actor,
+                    workspace_id=str(context.get("workspace_id") or ""),
+                ))
             except micro_live.MicroLiveError as exc:
                 self._err(exc.status, str(exc))
             return
@@ -2317,15 +2489,24 @@ class Handler(BaseHTTPRequestHandler):
             if not context.get("is_owner"):
                 self._err(HTTPStatus.FORBIDDEN, "Рейтинги ИИ доступны только владельцу.")
                 return
-            self._json(HTTPStatus.OK, ai_ratings.tables())
+            self._json(HTTPStatus.OK, ai_ratings.tables(
+                workspace_id=str(context.get("workspace_id") or ""),
+            ))
             return
 
         if path == "/api/community/feed":
-            self._json(HTTPStatus.OK, community.feed(limit=int((qs.get("limit") or ["50"])[0] or 50)))
+            context = getattr(self, "_remote_context", None) or {}
+            self._json(HTTPStatus.OK, community.feed(
+                limit=(qs.get("limit") or ["50"])[0],
+                workspace_id=str(context.get("workspace_id") or ""),
+            ))
             return
 
         if path == "/api/community/ratings":
-            self._json(HTTPStatus.OK, {"ok": True, "ratings": community.ratings()})
+            context = getattr(self, "_remote_context", None) or {}
+            self._json(HTTPStatus.OK, {"ok": True, "ratings": community.ratings(
+                workspace_id=str(context.get("workspace_id") or ""),
+            )})
             return
 
         if path == "/api/demo-backtests/scenarios":
@@ -2777,7 +2958,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, ops_runtime.read_strategy_display_prefs())
             return True
         if path == "/api/ops/strategy-start-dates":
-            p = _PROJECT_ROOT / "data" / "ops" / "strategy_start_dates.json"
+            p = runtime_env.data_path(
+                "ops", "strategy_start_dates.json", project_root=_PROJECT_ROOT,
+            )
             try:
                 data = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {
                     "schema_version": 1,
@@ -3093,11 +3276,29 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             try:
                 context = getattr(self, "_remote_context", None) or {}
-                payload = _market_bars_payload(
-                    instrument, timeframe, limit, range_days, from_date, to_date,
-                    max_points=max_points,
-                    workspace_id=str(context.get("workspace_id") or ""),
+                effective_points = min(
+                    max(1, int(limit or 1500)),
+                    int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
+                if effective_points > 10000:
+                    market_data.register_request(
+                        instrument, timeframe, limit, range_days, from_date, to_date,
+                    )
+                    queued = self._run_large_chart_batch([{
+                        "instrument": instrument, "timeframe": timeframe,
+                        "limit": limit, "range_days": range_days,
+                        "from": from_date, "to": to_date,
+                        "max_points": max_points,
+                    }], context)
+                    if queued is None:
+                        return True
+                    payload = queued[0] if queued else {"bars": [], "status": "waiting"}
+                else:
+                    payload = _market_bars_payload(
+                        instrument, timeframe, limit, range_days, from_date, to_date,
+                        max_points=max_points,
+                        workspace_id=str(context.get("workspace_id") or ""),
+                    )
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
                 return True
@@ -3153,6 +3354,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------- /api/ai-lab/* GET dispatcher -----------------------------
 
     def _ai_lab_get(self, path: str, qs: Dict[str, Any]) -> bool:
+        path = str(path or "").rstrip("/") or "/"
         parts = [p for p in path.split("/") if p]
         # parts[0]="api", parts[1]="ai-lab", parts[2..]=...
         if len(parts) < 3:
@@ -3160,8 +3362,62 @@ class Handler(BaseHTTPRequestHandler):
             return True
         sub = parts[2]
 
+        if sub == "orchestrator" and len(parts) == 5 and parts[3] == "jobs":
+            context = getattr(self, "_remote_context", None) or {}
+            job = local_worker.get(
+                urllib.parse.unquote(parts[4]),
+                workspace_id=str(context.get("workspace_id") or ""),
+            )
+            if (not job or (not context.get("is_owner")
+                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
+                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
+                return True
+            self._json(HTTPStatus.OK, self._public_ai_worker_job(job))
+            return True
+
         if path == "/api/ai-lab/domain-agents":
             self._json(HTTPStatus.OK, ai_domain_agents.list_personas())
+            return True
+
+        if path == "/api/ai-lab/domain-agents/voices":
+            try:
+                self._json(HTTPStatus.OK, ai_agent_tts.list_voice_profiles())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profiles failed: {e}")
+            return True
+
+        if path in {"/api/ai-lab/tts/catalog", "/api/ai-lab/tts/voices"}:
+            try:
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "catalog": ai_agent_tts.tts_catalog(),
+                    "presets": ai_agent_tts.list_presets(),
+                    "key_configured": bool(ai_agent_tts.resolve_api_key()),
+                })
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"tts catalog failed: {e}")
+            return True
+
+        # GET /api/ai-lab/domain-agents/{id}/voice
+        if sub == "domain-agents" and len(parts) == 5 and parts[4] == "voice":
+            agent_id = urllib.parse.unquote(parts[3])
+            try:
+                profile = ai_agent_tts.get_voice_profile(agent_id)
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "agent": ai_agent_tts.staff_meta(agent_id),
+                    "voice": profile,
+                    "preview_phrase": ai_agent_tts.PREVIEW_PHRASES.get(
+                        ai_agent_tts.normalize_agent_id(agent_id),
+                        ai_agent_tts.PREVIEW_PHRASES["vitek"],
+                    ),
+                    "catalog": ai_agent_tts.tts_catalog(),
+                    "presets": ai_agent_tts.list_presets(),
+                })
+            except ai_agent_tts.AgentTtsError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profile failed: {e}")
             return True
 
         if path == "/api/ai-lab/accounting":
@@ -3280,25 +3536,6 @@ class Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     ai_lm_studio.lm_status(allow_probe=True, force=force),
                 )
-                if effective_points > 10000:
-                    market_data.register_request(
-                        instrument, timeframe, limit, range_days, from_date, to_date,
-                    )
-                    queued = self._run_large_chart_batch([{
-                        "instrument": instrument, "timeframe": timeframe,
-                        "limit": limit, "range_days": range_days,
-                        "from": from_date, "to": to_date,
-                        "max_points": max_points,
-                    }], context)
-                    if queued is None:
-                        return True
-                    payload = queued[0] if queued else {"bars": [], "status": "waiting"}
-                else:
-                    payload = _market_bars_payload(
-                        instrument, timeframe, limit, range_days, from_date, to_date,
-                        max_points=max_points,
-                        workspace_id=str(context.get("workspace_id") or ""),
-                    )
             except Exception as e:
                 self._json(HTTPStatus.OK, {
                     "available": False,
@@ -3362,19 +3599,6 @@ class Handler(BaseHTTPRequestHandler):
                     "messages": ai_chief_agent.conversation_messages(conversation_id, limit=limit, scope=scope),
                 })
             except Exception as e:
-        if sub == "orchestrator" and len(parts) == 5 and parts[3] == "jobs":
-            context = getattr(self, "_remote_context", None) or {}
-            job = local_worker.get(
-                urllib.parse.unquote(parts[4]),
-                workspace_id=str(context.get("workspace_id") or ""),
-            )
-            if (not job or (not context.get("is_owner")
-                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
-                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
-                return True
-            self._json(HTTPStatus.OK, self._public_ai_worker_job(job))
-            return True
-
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversation load failed: {e}")
             return True
 
@@ -3413,47 +3637,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.NOT_FOUND, str(e))
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research detail failed: {e}")
-            return True
-
-        if path == "/api/ai-lab/domain-agents/voices":
-            try:
-                self._json(HTTPStatus.OK, ai_agent_tts.list_voice_profiles())
-            except Exception as e:
-                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profiles failed: {e}")
-            return True
-
-        if path in {"/api/ai-lab/tts/catalog", "/api/ai-lab/tts/voices"}:
-            try:
-                self._json(HTTPStatus.OK, {
-                    "ok": True,
-                    "catalog": ai_agent_tts.tts_catalog(),
-                    "presets": ai_agent_tts.list_presets(),
-                    "key_configured": bool(ai_agent_tts.resolve_api_key()),
-                })
-            except Exception as e:
-                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"tts catalog failed: {e}")
-            return True
-
-        # GET /api/ai-lab/domain-agents/{id}/voice
-        if sub == "domain-agents" and len(parts) == 5 and parts[4] == "voice":
-            agent_id = urllib.parse.unquote(parts[3])
-            try:
-                profile = ai_agent_tts.get_voice_profile(agent_id)
-                self._json(HTTPStatus.OK, {
-                    "ok": True,
-                    "agent": ai_agent_tts.staff_meta(agent_id),
-                    "voice": profile,
-                    "preview_phrase": ai_agent_tts.PREVIEW_PHRASES.get(
-                        ai_agent_tts.normalize_agent_id(agent_id),
-                        ai_agent_tts.PREVIEW_PHRASES["vitek"],
-                    ),
-                    "catalog": ai_agent_tts.tts_catalog(),
-                    "presets": ai_agent_tts.list_presets(),
-                })
-            except ai_agent_tts.AgentTtsError as e:
-                self._err(HTTPStatus.BAD_REQUEST, str(e))
-            except Exception as e:
-                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profile failed: {e}")
             return True
 
         # /api/ai-lab/experiments
@@ -3695,13 +3878,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # Fallback wait statuses for models that expose no native reasoning.
         wait_statuses = ["Определяю исполнителя…", "Работаю над запросом…"]
-        saw_thinking = False
         status_idx = 0
         started_at = time.time()
         last_status = 0.0
-        max_seconds = 600.0
+        max_seconds = 610.0
         while True:
             if time.time() - started_at > max_seconds:
+                local_worker.cancel(job_id, workspace_id=workspace_id)
                 self._sse_write("error", {"error": "orchestrator stream timeout"})
                 self._sse_write("done", {"ok": False})
                 return
@@ -3720,6 +3903,7 @@ class Handler(BaseHTTPRequestHandler):
                     "doubts": out.get("doubts") or [],
                     "message_id": str(msg.get("message_id") or ""),
                     "timestamp_utc": str(msg.get("timestamp_utc") or ""),
+                    "worker_job_id": job_id,
                 })
                 self._sse_write("done", {"ok": True})
                 return
@@ -3728,9 +3912,73 @@ class Handler(BaseHTTPRequestHandler):
                 self._sse_write("error", {"error": error, "worker_job_id": job_id})
                 self._sse_write("done", {"ok": False})
                 return
+            now = time.time()
+            if now - last_status >= 8.0:
+                last_status = now
+                label = wait_statuses[status_idx % len(wait_statuses)]
+                if state == "queued":
+                    label = "Запрос в очереди…"
+                if not self._sse_write("status", {
+                    "text": label, "worker_status": state, "worker_job_id": job_id,
+                }):
+                    return
+                status_idx += 1
+            elif not self._sse_keepalive():
+                return
+            time.sleep(0.25)
+
+    def _ai_lab_orchestrator_sync(self, body: Dict[str, Any], *,
+                                  scope: Dict[str, Any],
+                                  mirror_to_telegram: bool) -> None:
+        workspace_id = str(scope.get("workspace_id") or "")
+        try:
+            job = self._enqueue_ai_message(
+                body, scope=scope, mirror_to_telegram=mirror_to_telegram,
+            )
+        except (TypeError, ValueError) as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except Exception as exc:
+            self._err(HTTPStatus.SERVICE_UNAVAILABLE, f"AI worker queue unavailable: {exc}")
+            return
+        row = self._wait_ai_message(job, workspace_id=workspace_id)
+        if row is None:
+            self._err(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                "AI worker did not finish before the request deadline.",
+                code="ai_worker_timeout",
+            )
+            return
+        state = str(row.get("status") or "")
+        if state == "succeeded":
+            out = row.get("result") if isinstance(row.get("result"), dict) else {}
+            self._json(HTTPStatus.OK, out)
+            return
+        self._err(
+            HTTPStatus.CONFLICT if state == "cancelled" else HTTPStatus.BAD_GATEWAY,
+            str(row.get("error") or f"AI worker job {state}"),
+            code=f"ai_worker_{state or 'failed'}",
+        )
 
     def _ai_lab_post(self, path: str, body: Dict[str, Any]) -> None:
         parts = [part for part in path.split("/") if part]
+        if (len(parts) == 6 and parts[:4] == ["api", "ai-lab", "orchestrator", "jobs"]
+                and parts[5] == "cancel"):
+            context = getattr(self, "_remote_context", None) or {}
+            job_id = urllib.parse.unquote(parts[4])
+            workspace_id = str(context.get("workspace_id") or "")
+            job = local_worker.get(job_id, workspace_id=workspace_id)
+            if (not job or (not context.get("is_owner")
+                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
+                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
+                return
+            cancelled = local_worker.cancel(job_id, workspace_id=workspace_id)
+            self._json(
+                HTTPStatus.OK,
+                {"ok": bool(cancelled.get("ok")),
+                 "job": self._public_ai_worker_job(cancelled.get("job") or job)},
+            )
+            return
         if path == "/api/ai-lab/researches":
             try:
                 research = ai_research_catalog.create(body)
@@ -3814,6 +4062,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/orchestrator/message":
+            self._ai_lab_orchestrator_sync(
+                body, scope=self._ai_conversation_scope(), mirror_to_telegram=True,
+            )
+            return
+
+        if path == "/api/ai-lab/orchestrator/speak":
             try:
                 # Same workspace gate as chat history — TTS is part of the
                 # Orchestrator surface, not a public anonymous endpoint.
@@ -3824,10 +4078,45 @@ class Handler(BaseHTTPRequestHandler):
                     message_id=str(body.get("message_id") or ""),
                     profile_override=body.get("voice") if isinstance(body.get("voice"), dict) else None,
                 )
-                self._json(HTTPStatus.OK, out)
+                self._respond_tts(result)
             except ai_chief_agent.ChiefAgentError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except ai_agent_tts.AgentTtsError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
+            except Exception as e:
+                self._err(HTTPStatus.BAD_GATEWAY, f"TTS failed: {e}", code="tts_failed")
             return
+
+        # Staff voice profiles: POST save / reset / preview
+        # /api/ai-lab/domain-agents/{id}/voice[/(reset|preview)]
+        if path.startswith("/api/ai-lab/domain-agents/") and "/voice" in path:
+            parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            # api ai-lab domain-agents {id} voice [action]
+            if len(parts) >= 5 and parts[3] and parts[4] == "voice":
+                agent_id = parts[3]
+                action = parts[5] if len(parts) >= 6 else "save"
+                if not self._require_owner_actor():
+                    return
+                try:
+                    if action == "save":
+                        profile = ai_agent_tts.set_voice_profile(agent_id, body if isinstance(body, dict) else {})
+                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
+                    elif action == "reset":
+                        profile = ai_agent_tts.reset_voice_profile(agent_id)
+                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
+                    elif action == "preview":
+                        override = body.get("voice") if isinstance(body.get("voice"), dict) else body
+                        if not isinstance(override, dict):
+                            override = None
+                        result = ai_agent_tts.preview_speech(agent_id, profile_override=override)
+                        self._respond_tts(result)
+                    else:
+                        self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
+                except ai_agent_tts.AgentTtsError as e:
+                    self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice action failed: {e}")
+                return
 
         if path.startswith("/api/ai-lab/orchestrator/message/") and path.endswith("/rating"):
             try:
@@ -3865,21 +4154,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/domain-agents/message":
-            try:
-                # Legacy specialist endpoint still enters through the same
-                # Orchestrator gateway as app chat and Telegram.  The selected
-                # agent is a routing hint, never a bypass around authorization,
-                # conversation audit or capability execution.
-                out = ai_chief_agent.handle_message(
-                local_worker.cancel(job_id, workspace_id=workspace_id)
-                    str(body.get("message") or body.get("text") or ""),
-                    source="app", mirror_to_telegram=bool(body.get("mirror_to_telegram", False)),
-                    conversation_id=str(body.get("conversation_id") or "default"),
-                    agent=str(body.get("agent_id") or ""), scope=self._ai_conversation_scope(),
-                )
-                self._json(HTTPStatus.OK, out)
-            except (ValueError, ai_agent_router.AgentRouterError, ai_chief_agent.ChiefAgentError) as e:
-                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            # Legacy specialist endpoint still enters through the same durable
+            # Orchestrator gateway. ``agent_id`` is only a routing hint.
+            self._ai_lab_orchestrator_sync(
+                body, scope=self._ai_conversation_scope(),
+                mirror_to_telegram=bool(body.get("mirror_to_telegram", False)),
+            )
             return
 
         if path == "/api/ai-lab/orchestrator/conversations":
@@ -3904,7 +4184,6 @@ class Handler(BaseHTTPRequestHandler):
                     label=str(body.get("label") or ""),
                     delay_seconds=int(body.get("delay_seconds") or 0),
                     duration_minutes=int(body.get("duration_minutes") or 0),
-                    "worker_job_id": job_id,
                     report_mode=str(body.get("report_mode") or "touch"),
                     action=str(body.get("action") or "snapshot"),
                     mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
@@ -3912,73 +4191,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(HTTPStatus.OK, out)
             except (ai_chief_agent.ChiefAgentError, ValueError, TypeError) as e:
-            now = time.time()
-            if now - last_status >= 8.0:
-                last_status = now
-                label = wait_statuses[status_idx % len(wait_statuses)]
-                if state == "queued":
-                    label = "Запрос в очереди…"
-                if not self._sse_write("status", {
-                    "text": label, "worker_status": state, "worker_job_id": job_id,
-                }):
-                    return
-                status_idx += 1
-            elif not self._sse_keepalive():
-                return
-            time.sleep(0.25)
-
-    def _ai_lab_orchestrator_sync(self, body: Dict[str, Any], *,
-                                  scope: Dict[str, Any],
-                                  mirror_to_telegram: bool) -> None:
-        workspace_id = str(scope.get("workspace_id") or "")
-        try:
-            job = self._enqueue_ai_message(
-                body, scope=scope, mirror_to_telegram=mirror_to_telegram,
-            )
-        except (TypeError, ValueError) as exc:
-            self._err(HTTPStatus.BAD_REQUEST, str(exc))
-            return
-        except Exception as exc:
-            self._err(HTTPStatus.SERVICE_UNAVAILABLE, f"AI worker queue unavailable: {exc}")
-            return
-        row = self._wait_ai_message(job, workspace_id=workspace_id)
-        if row is None:
-            self._err(
-                HTTPStatus.GATEWAY_TIMEOUT,
-                "AI worker did not finish before the request deadline.",
-                code="ai_worker_timeout",
-            )
-            return
-        state = str(row.get("status") or "")
-        if state == "succeeded":
-            out = row.get("result") if isinstance(row.get("result"), dict) else {}
-            self._json(HTTPStatus.OK, out)
-            return
-        self._err(
-            HTTPStatus.CONFLICT if state == "cancelled" else HTTPStatus.BAD_GATEWAY,
-            str(row.get("error") or f"AI worker job {state}"),
-            code=f"ai_worker_{state or 'failed'}",
-        )
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
-        if (len(parts) == 6 and parts[:4] == ["api", "ai-lab", "orchestrator", "jobs"]
-                and parts[5] == "cancel"):
-            context = getattr(self, "_remote_context", None) or {}
-            job_id = urllib.parse.unquote(parts[4])
-            workspace_id = str(context.get("workspace_id") or "")
-            job = local_worker.get(job_id, workspace_id=workspace_id)
-            if (not job or (not context.get("is_owner")
-                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
-                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
-                return
-            cancelled = local_worker.cancel(job_id, workspace_id=workspace_id)
-            self._json(
-                HTTPStatus.OK,
-                {"ok": bool(cancelled.get("ok")),
-                 "job": self._public_ai_worker_job(cancelled.get("job") or job)},
-            )
-            return
         if path == "/api/ai-lab/orchestrator/conversations/rename":
             try:
                 scope = self._ai_conversation_scope()
@@ -4204,7 +4419,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 ttl = float(body.get("heartbeat_ttl_hours") or 6.0)
                 out = ai_stale_sweep.sweep_stale(heartbeat_ttl_hours=ttl)
-                self._respond_tts(result)
+                self._json(HTTPStatus.OK, out)
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"sweep failed: {e}")
             return
@@ -4238,12 +4453,6 @@ class Handler(BaseHTTPRequestHandler):
             priority = str(body.get("priority") or "high")
             try:
                 rec = ai_operator_notes.promote_to_global(
-            self._ai_lab_orchestrator_sync(
-                body, scope=self._ai_conversation_scope(), mirror_to_telegram=True,
-            )
-            return
-
-        if path == "/api/ai-lab/orchestrator/speak":
                     text=text, priority=priority,
                     source_experiment_id=body.get("experiment_id"),
                     trigger="ui_manual",
@@ -4251,42 +4460,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, {"ok": True, "note": rec})
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"global note failed: {e}")
-            except ai_agent_tts.AgentTtsError as e:
-                self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
-            except Exception as e:
-                self._err(HTTPStatus.BAD_GATEWAY, f"TTS failed: {e}", code="tts_failed")
             return
-
-        # Staff voice profiles: POST save / reset / preview
-        # /api/ai-lab/domain-agents/{id}/voice[/(reset|preview)]
-        if path.startswith("/api/ai-lab/domain-agents/") and "/voice" in path:
-            parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
-            # api ai-lab domain-agents {id} voice [action]
-            if len(parts) >= 5 and parts[3] and parts[4] == "voice":
-                agent_id = parts[3]
-                action = parts[5] if len(parts) >= 6 else "save"
-                if not self._require_owner_actor():
-                    return
-                try:
-                    if action == "save":
-                        profile = ai_agent_tts.set_voice_profile(agent_id, body if isinstance(body, dict) else {})
-                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
-                    elif action == "reset":
-                        profile = ai_agent_tts.reset_voice_profile(agent_id)
-                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
-                    elif action == "preview":
-                        override = body.get("voice") if isinstance(body.get("voice"), dict) else body
-                        if not isinstance(override, dict):
-                            override = None
-                        result = ai_agent_tts.preview_speech(agent_id, profile_override=override)
-                        self._respond_tts(result)
-                    else:
-                        self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
-                except ai_agent_tts.AgentTtsError as e:
-                    self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
-                except Exception as e:
-                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice action failed: {e}")
-                return
 
         # /api/ai-lab/experiments/{id}/resume-compile
         parts = [p for p in path.split("/") if p]
@@ -4441,12 +4615,39 @@ class Handler(BaseHTTPRequestHandler):
             result = []
             try:
                 market_data.register_requests(row for row in rows if isinstance(row, dict))
+                normalized_rows: list[Dict[str, Any]] = []
+                work_points = 0
+                oversized = False
+                for raw in rows:
+                    if not isinstance(raw, dict):
+                        continue
+                    limit_value = max(1, min(50000, int(raw.get("limit") or 1500)))
+                    max_value = max(0, min(20000, int(raw.get("max_points") or 0)))
+                    effective = min(limit_value, max_value if max_value >= 3 else limit_value)
+                    work_points += effective
+                    oversized = oversized or effective > 10000
+                    normalized_rows.append({
+                        "instrument": str(raw.get("instrument") or ""),
+                        "timeframe": str(raw.get("timeframe") or "5m"),
+                        "limit": limit_value,
+                        "range_days": int(raw.get("range_days") or 0),
+                        "from": str(raw.get("from") or ""),
+                        "to": str(raw.get("to") or ""),
+                        "max_points": max_value,
+                    })
+                context = getattr(self, "_remote_context", None) or {}
+                if oversized or work_points > 100000:
+                    queued = self._run_large_chart_batch(normalized_rows, context)
+                    if queued is None:
+                        return
+                    market_data.evaluate_alerts()
+                    self._json(HTTPStatus.OK, {"series": queued})
+                    return
                 # Read the bridge snapshot and alerts ONCE for the whole batch —
                 # a 64-chart grid must not re-parse market_bars.json/price_alerts.json
                 # once per instrument on every poll tick.
                 snapshot_index = market_data.read_snapshot_index()
                 alerts_index = market_data.read_alerts_index()
-                context = getattr(self, "_remote_context", None) or {}
                 workspace_id = str(context.get("workspace_id") or "")
                 batch_cache: Dict[Tuple[str, str, int, int, str, str, int], Dict[str, Any]] = {}
                 for row in rows:
@@ -4615,34 +4816,6 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(HTTPStatus.OK, ops.stop_intent(sid, reason)); return
                 if action == "paper/confirm-manual":
                     a = str(body.get("action") or "")
-                normalized_rows: list[Dict[str, Any]] = []
-                work_points = 0
-                oversized = False
-                for raw in rows:
-                    if not isinstance(raw, dict):
-                        continue
-                    limit_value = max(1, min(50000, int(raw.get("limit") or 1500)))
-                    max_value = max(0, min(20000, int(raw.get("max_points") or 0)))
-                    effective = min(limit_value, max_value if max_value >= 3 else limit_value)
-                    work_points += effective
-                    oversized = oversized or effective > 10000
-                    normalized_rows.append({
-                        "instrument": str(raw.get("instrument") or ""),
-                        "timeframe": str(raw.get("timeframe") or "5m"),
-                        "limit": limit_value,
-                        "range_days": int(raw.get("range_days") or 0),
-                        "from": str(raw.get("from") or ""),
-                        "to": str(raw.get("to") or ""),
-                        "max_points": max_value,
-                    })
-                context = getattr(self, "_remote_context", None) or {}
-                if oversized or work_points > 100000:
-                    queued = self._run_large_chart_batch(normalized_rows, context)
-                    if queued is None:
-                        return
-                    market_data.evaluate_alerts()
-                    self._json(HTTPStatus.OK, {"series": queued})
-                    return
                     self._json(HTTPStatus.OK, ops.confirm_manual(sid, a, reason)); return
                 if action == "paper/pause":
                     self._json(HTTPStatus.OK, ops.pause(sid, reason)); return
@@ -4741,6 +4914,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if is_del_favorite:
+            if not jobqueue.report_in_scope(
+                    parts[2], parts[3], **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, "report not found")
+                return
             try:
                 out = jobqueue.unfavorite_report(parts[2], parts[3])
             except jobqueue.JobValidationError as e:
@@ -4768,6 +4945,9 @@ class Handler(BaseHTTPRequestHandler):
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
                 return
+            if not jobqueue.job_in_scope(parts[2], **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, f"job not found: {parts[2]}")
+                return
             result = jobqueue.delete_job(parts[2])
             if not result.get("deleted"):
                 reason = result.get("reason", "unknown")
@@ -4790,6 +4970,9 @@ class Handler(BaseHTTPRequestHandler):
             jobqueue._safe_batch_id(parts[2])
         except jobqueue.JobValidationError as e:
             self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+        if not jobqueue.batch_in_scope(parts[2], **self._data_scope()):
+            self._err(HTTPStatus.NOT_FOUND, f"batch not found: {parts[2]}")
             return
         result = jobqueue.delete_batch(parts[2])
         if not result.get("deleted"):
@@ -4957,12 +5140,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = practice_trading.create_account(
                     context.get("user_id"),
-                    deposit=float(body.get("deposit") or 50000),
-                    commission=float(body.get("commission") or 2),
-                    daily_loss_limit=float(body.get("daily_loss_limit") or 1000),
-                    max_drawdown=float(body.get("max_drawdown") or 2000),
-                    position_limit=int(body.get("position_limit") or 4),
+                    deposit=body.get("deposit", 50000),
+                    commission=body.get("commission", 2),
+                    daily_loss_limit=body.get("daily_loss_limit", 1000),
+                    max_drawdown=body.get("max_drawdown", 2000),
+                    position_limit=body.get("position_limit", 4),
                     symbol=str(body.get("symbol") or "MNQ"),
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except practice_trading.PracticeTradingError as exc:
@@ -4978,7 +5162,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
                 return
             try:
-                self._json(HTTPStatus.OK, micro_live.accept_warnings(context.get("user_id")))
+                self._json(HTTPStatus.OK, micro_live.accept_warnings(
+                    context.get("user_id"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                ))
             except micro_live.MicroLiveError as exc:
                 self._err(exc.status, str(exc))
             return
@@ -4993,7 +5180,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
                 return
             try:
-                self._json(HTTPStatus.OK, micro_live.deposit(context.get("user_id"), float(body.get("amount") or 0)))
+                self._json(HTTPStatus.OK, micro_live.deposit(
+                    context.get("user_id"),
+                    body.get("amount"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                ))
             except micro_live.MicroLiveError as exc:
                 self._err(exc.status, str(exc))
             return
@@ -5012,8 +5203,8 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     symbol=str(body.get("symbol") or "MNQ"),
                     side=str(body.get("side") or "buy"),
-                    notional_full=float(body.get("notional_full") or 100),
-                    pnl_full=float(body.get("pnl_full") or 0),
+                    notional_full=body.get("notional_full", 100),
+                    workspace_id=str(context.get("workspace_id") or ""),
                 ))
             except micro_live.MicroLiveError as exc:
                 self._err(exc.status, str(exc))
@@ -5030,12 +5221,16 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     text=str(body.get("text") or ""),
                     display_name=str(user.get("first_name") or user.get("username") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
                 )
                 try:
-                    out["telegram_mirror"] = bool(
+                    out["telegram_mirror"] = bool(not out.get("deduplicated") and
                         telegram_service.mirror_community_message(
                             out["message"].get("text") or "",
                             display_name=out["message"].get("display_name") or "",
+                            dedupe_key=str(out["message"].get("message_id") or ""),
+                            workspace_id=str(context.get("workspace_id") or ""),
                         )
                     )
                 except Exception:
@@ -5058,6 +5253,8 @@ class Handler(BaseHTTPRequestHandler):
                     metrics=body.get("metrics") if isinstance(body.get("metrics"), dict) else {},
                     notes=str(body.get("notes") or ""),
                     display_name=str(user.get("first_name") or user.get("username") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -5070,7 +5267,12 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             try:
-                out = community.copy_strategy(context.get("user_id"), str(body.get("strategy_id") or ""))
+                out = community.copy_strategy(
+                    context.get("user_id"),
+                    str(body.get("strategy_id") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))
@@ -5086,6 +5288,7 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     target_id=str(body.get("target_id") or ""),
                     reason=str(body.get("reason") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -5102,11 +5305,12 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     symbol=str(body.get("symbol") or "MNQ"),
                     side=str(body.get("side") or "buy"),
-                    quantity=int(body.get("quantity") or 1),
+                    quantity=body.get("quantity", 1),
                     order_type=str(body.get("order_type") or "market"),
-                    limit_price=float(body.get("limit_price") or 0),
-                    stop_loss=float(body.get("stop_loss") or 0),
-                    take_profit=float(body.get("take_profit") or 0),
+                    limit_price=body.get("limit_price", 0),
+                    stop_loss=body.get("stop_loss", 0),
+                    take_profit=body.get("take_profit", 0),
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except practice_trading.PracticeTradingError as exc:
@@ -5123,6 +5327,7 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     str(body.get("position_id") or ""),
                     symbol=str(body.get("symbol") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except practice_trading.PracticeTradingError as exc:
@@ -5135,10 +5340,19 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             try:
+                symbol = str(body.get("symbol") or "")
+                runtime_override = workspaces.runtime_dir_for_context(
+                    context.get("workspace_context") or {}
+                )
+                if runtime_override:
+                    with ops_runtime.runtime_dir_override(runtime_override):
+                        trusted_price = market_data.latest_close(symbol)
+                else:
+                    trusted_price = market_data.latest_close(symbol)
                 out = practice_trading.tick_marks(
-                    context.get("user_id"),
-                    symbol=str(body.get("symbol") or ""),
-                    price=float(body.get("price") or 0),
+                    context.get("user_id"), symbol=symbol,
+                    price=trusted_price,
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except practice_trading.PracticeTradingError as exc:
@@ -5182,6 +5396,7 @@ class Handler(BaseHTTPRequestHandler):
                     context.get("user_id"),
                     scenario_id=str(body.get("scenario_id") or ""),
                     daily_limit=limit,
+                    workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)
             except demo_backtest.DemoBacktestError as exc:
@@ -5336,7 +5551,7 @@ class Handler(BaseHTTPRequestHandler):
                         max_attempts=int(body.get("max_attempts") or 1),
                         timeout_sec=int(body.get("timeout_sec") or 300),
                         user_id=context.get("user_id") or "",
-                        workspace_id=str((context.get("active_workspace") or {}).get("workspace_id") or ""),
+                        workspace_id=str(context.get("workspace_id") or ""),
                     )
                     self._json(HTTPStatus.ACCEPTED, {"ok": True, "job": out})
                 except (TypeError, ValueError) as exc:
@@ -6062,6 +6277,9 @@ class Handler(BaseHTTPRequestHandler):
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
                 return
+            if not jobqueue.job_in_scope(parts[2], **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, f"job not found: {parts[2]}")
+                return
             try:
                 out = jobqueue.cancel_job(parts[2])
             except jobqueue.JobValidationError as e:
@@ -6078,6 +6296,9 @@ class Handler(BaseHTTPRequestHandler):
                 jobqueue._safe_batch_id(parts[2])
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
+                return
+            if not jobqueue.batch_in_scope(parts[2], **self._data_scope()):
+                self._err(HTTPStatus.NOT_FOUND, f"batch not found: {parts[2]}")
                 return
             try:
                 out = jobqueue.cancel_batch(parts[2])
@@ -6097,19 +6318,37 @@ class Handler(BaseHTTPRequestHandler):
         if is_report_favorites:
             try:
                 if path == "/api/report-favorites":
+                    kind = str(body.get("kind") or "")
+                    report_id = str(body.get("id") or body.get("report_id") or "")
+                    if not jobqueue.report_in_scope(
+                            kind, report_id, **self._data_scope()):
+                        self._err(HTTPStatus.NOT_FOUND, "report not found")
+                        return
                     out = jobqueue.favorite_report(
-                        str(body.get("kind") or ""),
-                        str(body.get("id") or body.get("report_id") or ""),
+                        kind,
+                        report_id,
                         description=(str(body["description"]) if "description" in body else None),
                     )
                     self._json(HTTPStatus.OK, out)
                     return
                 fav_parts = [p for p in path.split("/") if p]
                 if len(fav_parts) == 5 and fav_parts[0] == "api" and fav_parts[1] == "report-favorites" and fav_parts[4] == "repeat":
-                    out = jobqueue.repeat_report_favorite(fav_parts[2], fav_parts[3])
+                    if not jobqueue.report_in_scope(
+                            fav_parts[2], fav_parts[3], **self._data_scope()):
+                        self._err(HTTPStatus.NOT_FOUND, "report not found")
+                        return
+                    origin = self._write_origin()
+                    if origin is None:
+                        return
+                    out = jobqueue.repeat_report_favorite(
+                        fav_parts[2], fav_parts[3], origin_override=origin)
                     self._json(HTTPStatus.CREATED, out)
                     return
                 if len(fav_parts) == 5 and fav_parts[0] == "api" and fav_parts[1] == "report-favorites" and fav_parts[4] == "description":
+                    if not jobqueue.report_in_scope(
+                            fav_parts[2], fav_parts[3], **self._data_scope()):
+                        self._err(HTTPStatus.NOT_FOUND, "report not found")
+                        return
                     out = jobqueue.update_report_favorite(
                         fav_parts[2],
                         fav_parts[3],
@@ -6127,6 +6366,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/batches":
+            origin = self._write_origin()
+            if origin is None:
+                return
             try:
                 req = jobqueue.CreateBatchRequest(
                     class_name=str(body.get("class_name") or ""),
@@ -6147,6 +6389,7 @@ class Handler(BaseHTTPRequestHandler):
                     timezone=str(body.get("timezone") or "UTC"),
                     role=str(body.get("role") or "research"),
                     name=(str(body["name"]) if body.get("name") else None),
+                    origin=origin,
                 )
             except (TypeError, ValueError) as e:
                 self._err(HTTPStatus.BAD_REQUEST, f"bad request: {e}")
@@ -6165,6 +6408,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # Defensive whitelist of allowed top-level keys: never accept paths/ids
         # that could escape the queue.
+        origin = self._write_origin()
+        if origin is None:
+            return
         try:
             req = jobqueue.CreateJobRequest(
                 class_name=str(body.get("class_name") or ""),
@@ -6185,6 +6431,7 @@ class Handler(BaseHTTPRequestHandler):
                 timezone=str(body.get("timezone") or "UTC"),
                 role=str(body.get("role") or "research"),
                 job_id=None,  # never trust client-supplied ids
+                origin=origin,
             )
         except (TypeError, ValueError) as e:
             self._err(HTTPStatus.BAD_REQUEST, f"bad request: {e}")
