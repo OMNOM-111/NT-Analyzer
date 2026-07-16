@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-07-14T05:38:13Z",
+  "fetched_at_utc": "2026-07-15T15:20:51Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",
@@ -807,7 +807,7 @@
       "display_name": "E-Mini Crude Oil",
       "exchange": "NYMEX",
       "intraday_margin": 500.0,
-      "initial_margin": 6694.0,
+      "initial_margin": 4253.0,
       "maintenance_margin": null
     },
     "QO": {
