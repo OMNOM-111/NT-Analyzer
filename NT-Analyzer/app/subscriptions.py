@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from . import secure_store
+from . import runtime_env, secure_store
 
 
 _MAGIC = b"STRATFORGE-ENTITLEMENTS-DPAPI-1\n"
@@ -162,11 +162,11 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    return _root() / "data" / "integrations" / "entitlements.dpapi"
+    return runtime_env.data_path("integrations", "entitlements.dpapi", project_root=_root())
 
 
 def _audit_path() -> Path:
-    return _root() / "data" / "audit" / "subscriptions.jsonl"
+    return runtime_env.data_path("audit", "subscriptions.jsonl", project_root=_root())
 
 
 def _now_iso() -> str:

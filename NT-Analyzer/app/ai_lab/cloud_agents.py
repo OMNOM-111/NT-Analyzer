@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .. import local_secrets
+from .. import local_secrets, runtime_env
 from . import llm_timeouts, paths
 from .io_utils import append_jsonl
 
@@ -216,11 +216,13 @@ def _month_key() -> str:
 
 
 def _settings_path() -> Path:
-    return paths.PROJECT_ROOT / "data" / "integrations" / "ai_agents.settings.json"
+    return runtime_env.data_path(
+        "integrations", "ai_agents.settings.json", project_root=paths.PROJECT_ROOT,
+    )
 
 
 def _usage_dir() -> Path:
-    return paths.AI_LAB_DIR / "registry" / "cloud_usage"
+    return paths.REGISTRY_DIR / "cloud_usage"
 
 
 def _usage_path(month: Optional[str] = None) -> Path:

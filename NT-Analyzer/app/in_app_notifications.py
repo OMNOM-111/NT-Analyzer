@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import runtime_env
+
 _LOCK = threading.RLock()
 MAX_ITEMS = 120
 MAX_AGE_HOURS = 72
@@ -26,7 +28,7 @@ def _root() -> Path:
 
 
 def _path() -> Path:
-    return _root() / "data" / "operations" / "in_app_notifications.json"
+    return runtime_env.data_path("operations", "in_app_notifications.json", project_root=_root())
 
 
 def _now() -> str:

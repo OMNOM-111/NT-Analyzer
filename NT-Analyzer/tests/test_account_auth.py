@@ -277,6 +277,13 @@ def test_server_rate_limits_authenticated_api_by_user_and_ip(auth_store, monkeyp
         srv.shutdown(); srv.server_close()
 
 
+def test_authenticated_auth_reads_use_read_bucket_while_mutations_stay_tight() -> None:
+    handler = object.__new__(server_mod.Handler)
+    assert handler._api_action_class("/api/auth/me", "GET") == "read"
+    assert handler._api_action_class("/api/auth/session", "HEAD") == "read"
+    assert handler._api_action_class("/api/auth/logout", "POST") == "auth"
+
+
 def _seed_owner_and_user(auth_store) -> None:
     account_auth._write_doc({
         "version": 1,
@@ -436,7 +443,7 @@ def test_foreign_dpapi_account_store_is_quarantined(auth_store, monkeypatch) -> 
 
     doc = account_auth._read_doc()
 
-    assert doc == {"version": 1, "users": [], "challenges": [], "sessions": []}
+    assert doc == {"version": 2, "users": [], "challenges": [], "sessions": []}
     assert not path.exists()
     assert list(path.parent.glob("accounts.dpapi.unreadable-*.bak"))
     assert (path.parent / "accounts.dpapi.recovery.json").is_file()

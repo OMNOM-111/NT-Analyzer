@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from . import runtime_env
+
 
 CATEGORIES: Dict[str, Dict[str, str]] = {
     "account":       {"file": "account-auth.jsonl",     "label": "Аккаунты"},
@@ -29,7 +31,7 @@ def _root() -> Path:
 
 
 def _audit_dir() -> Path:
-    return _root() / "data" / "audit"
+    return runtime_env.data_path("audit", project_root=_root())
 
 
 def categories() -> List[Dict[str, str]]:

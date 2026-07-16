@@ -54,6 +54,22 @@ def test_init_data_hmac_and_freshness() -> None:
     assert exc.value.status == 401
 
 
+def test_rate_limit_bypass_applies_only_to_staging(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_DISABLE_RATE_LIMIT", "1")
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    for offset in range(telegram_remote.READ_LIMIT_PER_MINUTE + 1):
+        telegram_remote._rate_check(42, "127.0.0.1", "GET", now=float(offset))
+
+    monkeypatch.setenv("NTA_APP_ENV", "production")
+    with telegram_remote._RATE_LOCK:
+        telegram_remote._RATE.clear()
+    for offset in range(telegram_remote.READ_LIMIT_PER_MINUTE):
+        telegram_remote._rate_check(42, "127.0.0.1", "GET", now=float(offset) / 1000)
+    with pytest.raises(telegram_remote.RemoteAccessError) as exc:
+        telegram_remote._rate_check(42, "127.0.0.1", "GET", now=1.0)
+    assert exc.value.status == 429
+
+
 def test_whitelist_roles_revocation_and_live_lock(isolated) -> None:
     telegram_remote._write({
         "remote_enabled": True,

@@ -16,6 +16,8 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from . import runtime_env
+
 
 _LOCK = threading.RLock()
 _MAGIC = b"NTA-DPAPI-1\n"
@@ -35,7 +37,8 @@ class _DATA_BLOB(ctypes.Structure):
 
 
 def store_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "data" / "integrations" / "ai_agent_keys.dpapi"
+    root = Path(__file__).resolve().parent.parent
+    return runtime_env.data_path("integrations", "ai_agent_keys.dpapi", project_root=root)
 
 
 def available() -> bool:

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import jobqueue
+from . import jobqueue, runtime_env
 
 
 class DemoBacktestError(RuntimeError):
@@ -81,7 +81,7 @@ def _root() -> Path:
 
 
 def _quota_path() -> Path:
-    return _root() / "data" / "runtime" / "demo_backtests.json"
+    return runtime_env.data_root(_root()) / "runtime" / "demo_backtests.json"
 
 
 def _now() -> datetime:
@@ -222,7 +222,7 @@ def _build_trades(scenario: Dict[str, Any], job_id: str) -> List[Dict[str, Any]]
 
 
 def _write_job_files(*, job_id: str, user_id: int, scenario_id: str, scenario: Dict[str, Any],
-                     trades: List[Dict[str, Any]]) -> Path:
+                     trades: List[Dict[str, Any]], workspace_id: str = "") -> Path:
     done = jobqueue.jobs_dir() / "done" / job_id
     done.mkdir(parents=True, exist_ok=True)
     end = _now()
@@ -242,6 +242,7 @@ def _write_job_files(*, job_id: str, user_id: int, scenario_id: str, scenario: D
             "type": "demo",
             "scenario_id": scenario_id,
             "user_id": int(user_id),
+            "workspace_id": str(workspace_id or ""),
             "watermark": "Демоверсия. Данные нереальные.",
         },
         "strategy": {
@@ -307,6 +308,7 @@ def create_demo_backtest(
     *,
     scenario_id: str = "",
     daily_limit: int = _DEFAULT_DAILY_LIMIT,
+    workspace_id: str = "",
 ) -> Dict[str, Any]:
     uid = int(user_id or 0)
     if uid <= 0:
@@ -323,6 +325,7 @@ def create_demo_backtest(
     trades = _build_trades(scenario, job_id)
     path = _write_job_files(
         job_id=job_id, user_id=uid, scenario_id=sid, scenario=scenario, trades=trades,
+        workspace_id=workspace_id,
     )
     return {
         "ok": True,

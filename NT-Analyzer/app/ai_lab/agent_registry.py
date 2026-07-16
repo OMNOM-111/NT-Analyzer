@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
-from .. import secure_store
+from .. import runtime_env, secure_store
 from . import paths
 from .io_utils import append_jsonl, read_json, write_json_atomic
 
@@ -275,11 +275,13 @@ def _parse_time(value: Any) -> Optional[datetime]:
 
 
 def registry_path() -> Path:
-    return paths.PROJECT_ROOT / "data" / "integrations" / "ai_agents.registry.json"
+    return runtime_env.data_path(
+        "integrations", "ai_agents.registry.json", project_root=paths.PROJECT_ROOT,
+    )
 
 
 def usage_dir() -> Path:
-    return paths.AI_LAB_DIR / "registry" / "agent_usage"
+    return paths.REGISTRY_DIR / "agent_usage"
 
 
 def usage_path(month: Optional[str] = None) -> Path:

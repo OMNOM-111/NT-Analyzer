@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from . import secure_store
+from . import runtime_env, secure_store
 
 
 _MAGIC = b"STRATFORGE-WORKSPACES-DPAPI-1\n"
@@ -36,16 +36,16 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    return _root() / "data" / "integrations" / "workspaces.dpapi"
+    return runtime_env.data_path("integrations", "workspaces.dpapi", project_root=_root())
 
 
 def _audit_path() -> Path:
-    return _root() / "data" / "audit" / "workspace-access.jsonl"
+    return runtime_env.data_path("audit", "workspace-access.jsonl", project_root=_root())
 
 
 def _tenant_root(workspace_id: str) -> Path:
     safe = _safe_workspace_id(workspace_id)
-    return _root() / "data" / "tenants" / safe
+    return runtime_env.data_path("tenants", safe, project_root=_root())
 
 
 def _now_iso() -> str:

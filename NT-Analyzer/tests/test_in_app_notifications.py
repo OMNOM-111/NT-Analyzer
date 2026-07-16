@@ -10,6 +10,7 @@ from app import telegram_service
 def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(in_app_notifications, "_root", lambda: tmp_path)
     monkeypatch.setattr(telegram_service, "_root", lambda: tmp_path)
+    monkeypatch.delenv(telegram_service.GROUP_ENV, raising=False)
 
 
 def test_record_list_ack_and_dedupe(monkeypatch, tmp_path) -> None:

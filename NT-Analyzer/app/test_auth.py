@@ -17,6 +17,8 @@ from . import account_auth, google_auth, runtime_env
 
 
 class TestAuthError(RuntimeError):
+    __test__ = False  # Runtime exception, not a pytest test class.
+
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
         self.status = int(status)

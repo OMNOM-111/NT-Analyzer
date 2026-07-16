@@ -71,7 +71,9 @@ def _seed_two_accounts(owner_token, owner_csrf, user_token, user_csrf):
         "version": 1,
         "users": [
             {"user_id": 999, "first_name": "Owner", "last_name": "One", "email": "owner@example.com", "role": "owner", "status": "active", "is_owner": True},
-            {"user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com", "role": "read_only", "status": "active", "is_owner": False},
+            # These cabinet scenarios exercise the professional contour.  A
+            # user without this choice is correctly held on the UX chooser.
+            {"user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com", "role": "read_only", "status": "active", "is_owner": False, "ux_mode": "professional"},
         ],
         "challenges": [],
         "sessions": [
@@ -525,7 +527,10 @@ def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatc
 
         me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
         assert me["is_owner"] is False and me["free_preview"] is True
-        assert me["features"]["news"] is True
+        # A newly approved account does not receive professional features
+        # until it chooses that contour.
+        assert me["ux_pending"] is True
+        assert me["features"]["news"] is False
     finally:
         server.shutdown()
         server.server_close()

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app import durable, local_secrets, telegram_service
+from app import durable, local_secrets, runtime_env, telegram_service
 from app.ai_lab import chief_agent
 
 
@@ -22,6 +22,10 @@ def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv(telegram_service.CHAT_ENV, raising=False)
     monkeypatch.delenv(telegram_service.GROUP_ENV, raising=False)
     monkeypatch.delenv(telegram_service.WEBHOOK_SECRET_ENV, raising=False)
+    monkeypatch.delenv("NTA_COMMUNITY_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
+    monkeypatch.delenv("NTA_STAGING_ALLOW_OWNER_TELEGRAM", raising=False)
     with telegram_service._PAIR_LOCK:
         telegram_service._PAIRING.clear()
     with telegram_service._WEBHOOK_RUN_LOCK:
@@ -1166,3 +1170,73 @@ def test_configure_group_requires_forum_topics(monkeypatch, tmp_path) -> None:
         assert "темы" in str(exc).lower()
     else:
         raise AssertionError("must require forum topics enabled")
+
+
+def test_community_mirror_is_idempotent_and_workspace_bound(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "987654")
+    monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")
+    monkeypatch.setenv("NTA_COMMUNITY_TELEGRAM_CHAT_ID", "-1009999999999")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    calls = []
+    monkeypatch.setattr(
+        telegram_service,
+        "_api_call",
+        lambda method, payload=None, **kwargs: calls.append((method, payload, kwargs)) or {},
+    )
+
+    assert telegram_service.mirror_community_message(
+        "hello", display_name="Alice", dedupe_key="cmsg-1", workspace_id="workspace-a",
+    ) is True
+    assert telegram_service.mirror_community_message(
+        "hello", display_name="Alice", dedupe_key="cmsg-1", workspace_id="workspace-a",
+    ) is False
+    # The same external id in a different tenant is a distinct delivery.
+    assert telegram_service.mirror_community_message(
+        "hello", display_name="Alice", dedupe_key="cmsg-1", workspace_id="workspace-b",
+    ) is True
+
+    assert len(calls) == 2
+    assert all(method == "sendMessage" for method, _payload, _kwargs in calls)
+    assert all(payload["chat_id"] == "-1009999999999" for _method, payload, _kwargs in calls)
+    state = telegram_service._load_state()
+    assert len(state["recent_community_delivery_signatures"]) == 2
+
+
+@pytest.mark.parametrize("collision_env", [telegram_service.CHAT_ENV, telegram_service.GROUP_ENV])
+def test_community_mirror_rejects_owner_chat_collisions(
+    monkeypatch, tmp_path, collision_env: str,
+) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(collision_env, "-1001234567890")
+    monkeypatch.setenv("NTA_COMMUNITY_TELEGRAM_CHAT_ID", "-1001234567890")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    monkeypatch.setattr(
+        telegram_service, "_api_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not send")),
+    )
+
+    assert telegram_service.mirror_community_message("secret", dedupe_key="cmsg-1") is False
+
+
+def test_community_mirror_fails_closed_when_policy_breaks(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv("NTA_COMMUNITY_TELEGRAM_CHAT_ID", "-1009999999999")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    monkeypatch.setattr(
+        telegram_service, "_api_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not send")),
+    )
+    assert telegram_service.mirror_community_message("secret", dedupe_key="cmsg-1") is False
+
+    monkeypatch.setenv("NTA_APP_ENV", "production")
+    monkeypatch.setattr(
+        runtime_env, "is_staging",
+        lambda: (_ for _ in ()).throw(RuntimeError("policy unavailable")),
+    )
+
+    assert telegram_service.mirror_community_message("secret", dedupe_key="cmsg-1") is False

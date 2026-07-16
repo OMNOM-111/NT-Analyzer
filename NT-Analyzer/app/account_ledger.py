@@ -15,13 +15,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import runtime_env
 
-LEDGER_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime" / "account_ledger.json"
+
+_DEFAULT_LEDGER_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime" / "account_ledger.json"
+LEDGER_PATH = _DEFAULT_LEDGER_PATH
 _LOCK = threading.RLock()
 _KINDS = {
     "deposit", "withdrawal", "transfer", "fee", "reconciliation",
     "unclassified_adjustment",
 }
+
+
+def _ledger_path() -> Path:
+    if LEDGER_PATH != _DEFAULT_LEDGER_PATH:
+        return Path(LEDGER_PATH)
+    return runtime_env.data_path("runtime", "account_ledger.json", project_root=Path(__file__).resolve().parents[1])
 
 
 def _now() -> str:
@@ -64,10 +73,11 @@ def _empty() -> Dict[str, Any]:
 
 
 def _read() -> Dict[str, Any]:
-    if not LEDGER_PATH.exists():
+    path = _ledger_path()
+    if not path.exists():
         return _empty()
     try:
-        doc = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"account ledger is unreadable: {exc}") from exc
     if not isinstance(doc, dict) or not isinstance(doc.get("accounts"), dict):
@@ -76,11 +86,12 @@ def _read() -> Dict[str, Any]:
 
 
 def _write(doc: Dict[str, Any]) -> None:
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = _ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     doc["updated_at_utc"] = _now()
-    tmp = LEDGER_PATH.with_suffix(".tmp")
+    tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(LEDGER_PATH)
+    tmp.replace(path)
 
 
 def _repair_fallback_artifacts(doc: Dict[str, Any]) -> bool:
@@ -124,13 +135,14 @@ def _repair_fallback_artifacts(doc: Dict[str, Any]) -> bool:
     return changed
 
 
-def record_accounts(payload: Dict[str, Any]) -> None:
+def record_accounts(payload: Dict[str, Any]) -> Dict[str, Any]:
     # A positions-only fallback has no authoritative account balance fields.
     if str(payload.get("source") or "") == "positions_fallback":
-        return
+        return {"ok": True, "changed": False, "new_event_ids": []}
     rows = payload.get("accounts") or payload.get("online_accounts") or []
     if not isinstance(rows, list):
-        return
+        return {"ok": False, "changed": False, "new_event_ids": []}
+    new_events: List[Dict[str, str]] = []
     with _LOCK:
         doc = _read()
         changed = _repair_fallback_artifacts(doc)
@@ -168,7 +180,7 @@ def record_accounts(payload: Dict[str, Any]) -> None:
                 )
                 unexplained = round(equity_delta - trading_delta, 2)
                 if abs(unexplained) >= 0.01:
-                    account.setdefault("events", []).append({
+                    event = {
                         "event_id": "EVT-" + uuid.uuid4().hex[:12],
                         "at_utc": snapshot["at_utc"],
                         "kind": "unclassified_adjustment",
@@ -179,10 +191,17 @@ def record_accounts(payload: Dict[str, Any]) -> None:
                         "classification_status": "needs_review",
                         "actor": "system",
                         "note": "Не классифицировано: источник не предоставляет broker cash transactions.",
-                    })
+                    }
+                    account.setdefault("events", []).append(event)
+                    new_events.append({"account_name": name, "event_id": event["event_id"]})
             changed = True
         if changed:
             _write(doc)
+    return {
+        "ok": True, "changed": bool(changed),
+        "new_event_ids": [row["event_id"] for row in new_events],
+        "new_events": new_events,
+    }
 
 
 def account_history(account_name: str = "", limit: int = 500) -> Dict[str, Any]:

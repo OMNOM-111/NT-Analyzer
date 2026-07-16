@@ -93,6 +93,30 @@ def test_runtime_env_blocks_test_auth_in_production(monkeypatch):
     assert not runtime_env.impersonation_enabled()
 
 
+def test_runtime_env_rejects_unknown_environment_and_prod_impersonation(monkeypatch):
+    monkeypatch.setenv("NTA_APP_ENV", "prodution")
+    with pytest.raises(runtime_env.RuntimeEnvError):
+        runtime_env.assert_production_safe()
+
+    monkeypatch.setenv("NTA_APP_ENV", "production")
+    monkeypatch.setenv("NTA_ENABLE_IMPERSONATION", "1")
+    with pytest.raises(runtime_env.RuntimeEnvError):
+        runtime_env.assert_production_safe()
+
+    monkeypatch.delenv("NTA_ENABLE_IMPERSONATION", raising=False)
+    monkeypatch.setenv("NTA_DISABLE_RATE_LIMIT", "1")
+    with pytest.raises(runtime_env.RuntimeEnvError):
+        runtime_env.assert_production_safe()
+
+
+def test_rate_limit_bypass_is_staging_only(monkeypatch):
+    monkeypatch.setenv("NTA_DISABLE_RATE_LIMIT", "1")
+    monkeypatch.setenv("NTA_APP_ENV", "production")
+    assert runtime_env.rate_limits_disabled() is False
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    assert runtime_env.rate_limits_disabled() is True
+
+
 def test_dual_auth_google_link_unique_and_needs_google(phase_a_store, monkeypatch):
     monkeypatch.setenv("NTA_GOOGLE_CLIENT_ID", "cid.apps.googleusercontent.com")
     monkeypatch.setenv("NTA_GOOGLE_CLIENT_SECRET", "secret")

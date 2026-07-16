@@ -47,7 +47,6 @@
           symbol: qs('#ml-symbol').value,
           side: qs('#ml-side').value,
           notional_full: Number(qs('#ml-notional').value || 100),
-          pnl_full: Number(qs('#ml-pnl').value || 0),
         });
         qs('#ml-compare').textContent = (out.trade && out.trade.comparison) || '';
         toast(out.trade && out.trade.free_trade ? 'Free trade записан' : 'Micro trade записан');
@@ -58,7 +57,7 @@
     const dep = qs('#ml-deposit');
     if (dep) dep.onclick = async () => {
       dep.disabled = true;
-      try { await API.http.microLiveDeposit({ amount: 50 }); toast('Депозит stub +$50'); await refresh(); }
+      try { await API.http.microLiveDeposit({ amount: 50 }); toast('Запрос депозита обработан'); await refresh(); }
       catch (e) { reportError(e); }
       finally { dep.disabled = false; }
     };

@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, google_auth, permissions, practice_trading, runtime_env, subscriptions, test_auth
+from app import account_auth, google_auth, permissions, practice_trading, runtime_env, subscriptions, test_auth, workspaces
 from app import server as server_mod
 from app import telegram_service
 
@@ -26,6 +26,7 @@ def ux_store(tmp_path, monkeypatch):
     monkeypatch.setattr(google_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(practice_trading, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
+    monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(account_auth.secure_store, "_protect", lambda b: b)
     monkeypatch.setattr(account_auth.secure_store, "_unprotect", lambda b: b)
     monkeypatch.setattr(account_auth.secure_store, "available", lambda: True)
@@ -34,6 +35,8 @@ def ux_store(tmp_path, monkeypatch):
     monkeypatch.setattr(subscriptions.secure_store, "_protect", lambda b: b)
     monkeypatch.setattr(subscriptions.secure_store, "_unprotect", lambda b: b)
     monkeypatch.setattr(subscriptions.secure_store, "available", lambda: True)
+    monkeypatch.setattr(workspaces.secure_store, "_protect", lambda b: b)
+    monkeypatch.setattr(workspaces.secure_store, "_unprotect", lambda b: b)
     (tmp_path / "data" / "integrations").mkdir(parents=True)
     (tmp_path / "data" / "audit").mkdir(parents=True)
     (tmp_path / "data" / "runtime").mkdir(parents=True)
@@ -171,7 +174,8 @@ def test_api_beginner_deny_and_practice_ok(http_server, ux_store) -> None:
     account_auth.create_or_update_virtual_user(
         user_id=5201, username="beg", first_name="Beg", ux_mode="beginner", role="full_control",
     )
-    practice_trading.create_account(5201, deposit=10000)
+    workspace_id = workspaces.context_for_user(5201, owner_id=999)["active_workspace"]["workspace_id"]
+    practice_trading.create_account(5201, deposit=10000, workspace_id=workspace_id)
     token, csrf = "b" * 64, "c" * 48
     with account_auth._LOCK:
         doc = account_auth._read_doc()
@@ -212,7 +216,8 @@ def test_api_set_ux_mode(http_server, ux_store) -> None:
     assert body.get("ux_mode") == "beginner"
     assert body.get("features", {}).get("practice") is True
     assert body.get("features", {}).get("strategies") is False
-    practice_trading.create_account(5301, deposit=10000)
+    workspace_id = workspaces.context_for_user(5301, owner_id=999)["active_workspace"]["workspace_id"]
+    practice_trading.create_account(5301, deposit=10000, workspace_id=workspace_id)
     status, _ = _request(http_server, "/api/practice/account", token=token)
     assert status == 200
 
@@ -245,6 +250,13 @@ def test_practice_wallet_first_dom_contract() -> None:
     assert "showOnboard" in js
     assert "showDesk" in js
     assert "ChartEngine" in js
+    assert "body.price = price" not in js
+    server = (root / "app" / "server.py").read_text(encoding="utf-8")
+    practice_tick = server.split('if path == "/api/practice/tick":', 1)[1].split(
+        'if path == "/api/demo-backtests":', 1,
+    )[0]
+    assert "market_data.latest_close" in practice_tick
+    assert 'body.get("price"' not in practice_tick
     # Ticket lives only inside desk — onboard must not embed Buy/MNQ as first step.
     onboard = html.split('id="practice-onboard"', 1)[1].split('id="practice-desk"', 1)[0]
     assert "p-buy" not in onboard

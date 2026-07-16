@@ -43,6 +43,7 @@ IMPERSONATION_TTL_SEC = 4 * 60 * 60
 NT_STEP_UP_TTL_SEC = 30 * 60
 NT_CONFIRM_TTL_SEC = 10 * 60
 UX_MODES = ("beginner", "professional")
+ACCOUNT_STORE_VERSION = 2
 ROLES = {"read_only", "full_control", "owner"}
 # Owner-toggleable capabilities. The ids match the Aurora navigation ids so the
 # client can gate the left rail directly. ``personal_nt`` gates the "connect my
@@ -79,15 +80,15 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    return _root() / "data" / "integrations" / "accounts.dpapi"
+    return runtime_env.data_path("integrations", "accounts.dpapi", project_root=_root())
 
 
 def _remote_config_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.remote-access.json"
+    return runtime_env.data_path("integrations", "telegram.remote-access.json", project_root=_root())
 
 
 def _audit_path() -> Path:
-    return _root() / "data" / "audit" / "account-auth.jsonl"
+    return runtime_env.data_path("audit", "account-auth.jsonl", project_root=_root())
 
 
 def _now_iso() -> str:
@@ -95,7 +96,30 @@ def _now_iso() -> str:
 
 
 def _default_doc() -> Dict[str, Any]:
-    return {"version": 1, "users": [], "challenges": [], "sessions": []}
+    return {"version": ACCOUNT_STORE_VERSION, "users": [], "challenges": [], "sessions": []}
+
+
+def _migrate_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply compatibility defaults without confusing old users with new signups.
+
+    UX modes were introduced in schema v2.  Accounts that already existed in a
+    v1 store had the professional product surface before the upgrade, so they
+    keep it.  New v2 accounts deliberately start without ``ux_mode`` and must
+    pass the beginner/professional choice screen.
+    """
+    try:
+        version = int(doc.get("version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version < 2:
+        for user in doc.get("users") or []:
+            if not isinstance(user, dict):
+                continue
+            if str(user.get("ux_mode") or "").strip().lower() not in UX_MODES:
+                user["ux_mode"] = "professional"
+                user["ux_mode_migrated_at_utc"] = _now_iso()
+        doc["version"] = ACCOUNT_STORE_VERSION
+    return doc
 
 
 def _quarantine_unreadable_store(path: Path, reason: str) -> None:
@@ -161,7 +185,7 @@ def _read_doc() -> Dict[str, Any]:
     for key in ("users", "challenges", "sessions"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
-    return doc
+    return _migrate_doc(doc)
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
@@ -434,6 +458,8 @@ def path_requires_nt_dual_auth(path: str, method: str = "POST") -> bool:
         return True
     if p.startswith("/api/bridge/pair/"):
         return True
+    if p.startswith("/api/bridge/connections/"):
+        return True
     if p.startswith("/api/ops/live/"):
         return True
     if p.startswith("/api/profiles/ninjatrader/"):
@@ -635,7 +661,7 @@ def effective_features(user: Dict[str, Any]) -> Dict[str, bool]:
 
 
 def _avatars_dir() -> Path:
-    directory = _root() / "data" / "integrations" / "avatars"
+    directory = runtime_env.data_path("integrations", "avatars", project_root=_root())
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -1739,6 +1765,20 @@ def start_nt_telegram_confirm(
                 "Сначала подключите Google-аккаунт, затем подтвердите действие в Telegram.",
                 403, code="nt_google_required",
             )
+        sid = str(session_id or "").strip()
+        if not user.get("is_owner"):
+            session = next((
+                row for row in doc["sessions"]
+                if _session_id(row) == sid
+                and int(row.get("user_id") or 0) == uid
+                and not row.get("revoked")
+                and float(row.get("expires_at") or 0) > time.time()
+            ), None)
+            if not sid or session is None:
+                raise AccountAuthError(
+                    "Для Telegram-подтверждения нужна активная сессия этого устройства.",
+                    409, code="nt_session_required",
+                )
         challenge_id = secrets.token_urlsafe(24)
         doc["challenges"].append({
             "challenge_id": challenge_id,
@@ -1747,7 +1787,7 @@ def start_nt_telegram_confirm(
             "kind": "nt_step_up",
             "purpose": str(purpose or "ninjatrader")[:40],
             "user_id": uid,
-            "session_id": str(session_id or "")[:80],
+            "session_id": sid[:80],
             "created_at_utc": _now_iso(),
             "expires_at": time.time() + NT_CONFIRM_TTL_SEC,
         })
@@ -1852,13 +1892,21 @@ def _apply_nt_confirm_callback(doc: Dict[str, Any], *, challenge_id: str, allowe
     challenge["nt_elevated_until"] = until
     challenge["confirmed_at_utc"] = _now_iso()
     sid = str(challenge.get("session_id") or "")
+    if not sid:
+        challenge["status"] = "nt_session_missing"
+        return "session_missing", uid
+    matched = False
     for row in doc["sessions"]:
         if int(row.get("user_id") or 0) != uid or row.get("revoked"):
             continue
-        if sid and _session_id(row) != sid:
+        if _session_id(row) != sid:
             continue
+        matched = True
         row["nt_elevated_until"] = until
         row["nt_elevated_at_utc"] = _now_iso()
+    if not matched:
+        challenge["status"] = "nt_session_missing"
+        return "session_missing", uid
     return "confirmed", uid
 
 

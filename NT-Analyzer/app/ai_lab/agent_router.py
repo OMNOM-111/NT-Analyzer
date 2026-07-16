@@ -101,7 +101,17 @@ def candidates(
     # Star-rating re-rank + exploration on top of safe gated candidates only.
     try:
         from . import ai_ratings
-        rows = ai_ratings.rank_agents(role, rows, explore=True)
+        # ``usage_scope`` is the request-wide source of truth for tenant
+        # attribution. Ratings from one workspace must not steer another.
+        usage_context = universal_llm._USAGE_CONTEXT.get()  # noqa: SLF001
+        workspace_id = str((usage_context or {}).get("workspace_id") or "")
+        # Unscoped/global ratings are legacy data and must not influence a
+        # tenant request (or a process-wide maintenance call). Only a concrete
+        # request workspace may opt into learned routing.
+        if workspace_id:
+            rows = ai_ratings.rank_agents(
+                role, rows, explore=True, workspace_id=workspace_id,
+            )
     except Exception:
         pass
     return rows
@@ -154,6 +164,14 @@ def invoke_role(
             # Normalize once at the routing boundary.
             result["content"] = str(result.get("response") or result.get("content") or "")
             result["request_role"] = role
+            # Persist the route that actually served the response, rather than
+            # a visible persona name that the rating router cannot match.
+            result["routing_role_id"] = role
+            result["routing_model_id"] = str(
+                result.get("actual_model") or result.get("model") or agent.get("model") or "unknown"
+            )
+            result["routing_provider"] = str(result.get("provider") or agent.get("provider") or "")
+            result["routing_agent_id"] = str(agent.get("id") or "")
             result["complexity"] = complexity
             result["route_attempts"] = attempts + [{
                 "agent_id": agent["id"], "account_name": agent.get("account_name"),

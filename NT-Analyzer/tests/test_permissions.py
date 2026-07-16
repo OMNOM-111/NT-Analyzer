@@ -77,7 +77,23 @@ def test_required_capability_prefix_match() -> None:
     assert permissions.required_capability("/api/ai-lab/backtest") == "ai_lab"
     assert permissions.required_capability("/api/ops/live/unlock-request") == "live_commands"
     assert permissions.required_capability("/api/auth/me") is None
-    assert permissions.required_capability("/api/ops/runtime/bars/batch") is None
+    assert permissions.required_capability("/api/ops/runtime/bars/batch") == "charts_realtime"
+    assert permissions.required_capability("/api/jobs") == "backtesting"
+    assert permissions.required_capability("/api/batches") == "backtesting"
+    assert permissions.required_capability("/api/reports") == "backtesting"
+    assert permissions.required_capability("/api/practice/account") == "practice_trading"
+    assert permissions.required_capability("/api/micro-live/trade") == "micro_live"
+    assert permissions.required_capability("/api/ops/runtime/command") == "paper_commands"
+    assert permissions.required_capability("/api/ops/runtime/positions") == "live_read"
+    assert permissions.required_capability("/api/ops/runtime/accounts") == "personal_nt"
+    assert permissions.required_capability("/api/ops/runtime/bars") == "charts_realtime"
+    assert permissions.required_capability("/api/performance") == "live_read"
+    assert permissions.required_capability("/api/chart/snapshot") == "charts_realtime"
+    assert permissions.required_capability("/api/news/live") == "news"
+    assert permissions.required_capability("/api/portfolio/cells") == "strategies"
+    assert permissions.required_capability("/api/governance/summary") == "documents"
+    assert permissions.required_capability("/api/bridge/pair/start") == "personal_nt"
+    assert permissions.required_capability("/api/bridge/setup") is None
 
 
 def test_enforce_owner_bypasses() -> None:
@@ -102,3 +118,27 @@ def test_beginner_may_read_market_bars_for_charts() -> None:
     permissions.enforce("/api/ops/runtime/bars/batch", ctx)
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/ops/runtime/command", ctx)
+    for path in (
+        "/api/strategies", "/api/profiles", "/api/strategy-families",
+        "/api/jobs", "/api/batches", "/api/reports", "/api/performance",
+        "/api/portfolio/cells",
+    ):
+        with pytest.raises(permissions.PermissionError):
+            permissions.enforce(path, ctx)
+
+
+def test_professional_free_preview_cannot_bypass_paid_routes() -> None:
+    perm = permissions.resolve({"ux_mode": "professional"}, {})
+    ctx = {
+        "is_owner": False,
+        "user": {"ux_mode": "professional"},
+        "capabilities": perm["capabilities"],
+    }
+    for path in (
+        "/api/ops/runtime/positions", "/api/performance", "/api/chart/snapshot",
+        "/api/portfolio/cells", "/api/catalog", "/api/diagnostics",
+    ):
+        with pytest.raises(permissions.PermissionError):
+            permissions.enforce(path, ctx)
+    permissions.enforce("/api/news", ctx)
+    permissions.enforce("/api/governance/summary", ctx)

@@ -12,13 +12,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from . import runtime_env
+
 
 def _root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
 def _read_rows(name: str) -> List[Dict[str, Any]]:
-    path = _root() / "data" / "integrations" / name
+    path = runtime_env.data_path("integrations", name, project_root=_root())
     if not path.is_file():
         return []
     try:
@@ -115,7 +117,7 @@ def _parse_iso(value: Any) -> "datetime | None":
 
 def live_news(max_age_min: int = 60, limit: int = 40) -> Dict[str, Any]:
     """Recent live headlines + per-provider fetch status (separate from calendar)."""
-    path = _root() / "data" / "integrations" / "live_news.json"
+    path = runtime_env.data_path("integrations", "live_news.json", project_root=_root())
     doc: Dict[str, Any] = {}
     if path.is_file():
         try:

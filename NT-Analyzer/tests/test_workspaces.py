@@ -64,7 +64,7 @@ def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: st
             {"user_id": 999, "first_name": "Owner", "last_name": "One", "email": "owner@example.com", "role": "owner", "status": "active", "is_owner": True},
             {
                 "user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com",
-                "role": "read_only", "status": "active", "is_owner": False,
+                "role": "full_control", "status": "active", "is_owner": False,
                 # NT control (bridge pair) requires Google + elevated Telegram confirm.
                 "google_sub": "google-dev-42", "google_email": "dev@gmail.com",
                 "google_linked_at_utc": "2026-07-15T00:00:00Z",
@@ -124,6 +124,16 @@ def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatc
         assert user_status["active_workspace"]["kind"] == "owner_training"
         assert user_status["active_membership"]["role"] == "viewer"
 
+        # Account-level full_control must never override a viewer membership in
+        # the owner's runtime workspace.
+        with pytest.raises(urllib.error.HTTPError) as viewer_write:
+            _json_request(
+                base, "/api/ops/runtime/command", method="POST",
+                token=user_token, csrf=user_csrf,
+                body={"command": "start", "strategy_id": "owner-strategy"},
+            )
+        assert viewer_write.value.code == 403
+
         owner_accounts = _json_request(base, "/api/ops/runtime/accounts", token=owner_token)
         assert owner_accounts["accounts"][0]["account_name"] == "DEMO_OWNER"
 
@@ -150,6 +160,8 @@ def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatc
         doc["users"].append({
             "user_id": 77, "first_name": "Bare", "last_name": "User", "email": "bare@example.com",
             "role": "full_control", "status": "active", "is_owner": False,
+            "ux_mode": "professional",
+            "permission_overrides": {"personal_nt": True},
         })
         doc["sessions"].append({
             "user_id": 77,

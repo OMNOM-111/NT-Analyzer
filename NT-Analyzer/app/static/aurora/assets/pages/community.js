@@ -13,7 +13,13 @@
       `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(s.title)}</div><div class="row-sub">${UI.esc(s.display_name)} · copies ${s.copies || 0} · net ${(s.metrics && s.metrics.net_profit) || '—'}</div></div><button class="btn sm" data-copy="${UI.esc(s.strategy_id)}">Copy</button></div>`
     ).join('') || '<div class="muted">Нет публикаций</div>';
     UI.qsa('[data-copy]').forEach(b => b.onclick = async () => {
-      try { await API.http.communityCopy({ strategy_id: b.dataset.copy }); UI.toast('Скопировано в личное пространство'); refresh(); }
+      try {
+        const out = await API.http.communityCopy({ strategy_id: b.dataset.copy });
+        UI.toast(out.import && out.import.personal_strategy_created
+          ? 'Стратегия импортирована в личное пространство'
+          : 'Запрос на импорт создан — подтвердите его в портфеле');
+        refresh();
+      }
       catch (e) { UI.reportError(e); }
     });
     const ratings = (feed.ratings && feed.ratings.composite) || [];

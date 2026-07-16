@@ -750,6 +750,10 @@ def test_agent_router_normalizes_response_to_content(monkeypatch) -> None:
     result = agent_router.invoke_role("hypothesis", "test")
 
     assert result["content"] == '{"status":"OK"}'
+    assert result["routing_role_id"] == "hypothesis"
+    assert result["routing_model_id"] == "gpt-5-mini"
+    assert result["routing_provider"] == "azure_foundry"
+    assert result["routing_agent_id"] == "AGT-1"
 
 
 def test_agent_router_fails_over_and_cools_down_retryable_provider(monkeypatch) -> None:

@@ -232,12 +232,10 @@
   async function tickLoop() {
     if (!hasAccount) return;
     const sym = activeSymbol();
-    let price = Number(lastLiveClose[sym] || 0);
     try {
       const bars = await fetchBars(sym);
       const close = markFromBars(bars);
       if (close) {
-        price = close;
         lastLiveClose[sym] = close;
         charts.forEach(c => {
           if (c.symbol === sym && c.engine && bars.length) {
@@ -250,7 +248,6 @@
     } catch (e) { /* keep sim */ }
     try {
       const body = { symbol: sym };
-      if (price > 0) body.price = price;
       const doc = await API.http.practiceTick(body);
       render(doc);
     } catch (e) { /* ignore while no account */ }

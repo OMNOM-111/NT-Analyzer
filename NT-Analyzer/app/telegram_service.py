@@ -28,6 +28,7 @@ from . import local_secrets
 from . import durable
 from . import performance
 from . import runtime
+from . import runtime_env
 from . import market_data
 from . import telegram_remote
 from . import account_auth
@@ -73,6 +74,7 @@ WEBHOOK_REORDER_GRACE_SEC = 0.75
 REPLY_MAX_ATTEMPTS = 5
 REPLY_RETRY_BASE_SEC = 15
 REPLY_RETRY_MAX_SEC = 300
+COMMUNITY_DEDUPE_TTL_SEC = 10 * 60
 
 _CHIEF_ACTION_STATUS_LABELS = {
     "queued": "Поставлено в очередь", "running": "Выполняется",
@@ -102,31 +104,31 @@ def _root() -> Path:
 
 
 def _settings_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.settings.json"
+    return runtime_env.data_path("integrations", "telegram.settings.json", project_root=_root())
 
 
 def _state_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.state.json"
+    return runtime_env.data_path("integrations", "telegram.state.json", project_root=_root())
 
 
 def _updates_audit_path() -> Path:
-    return _root() / "data" / "audit" / "telegram-updates.jsonl"
+    return runtime_env.data_path("audit", "telegram-updates.jsonl", project_root=_root())
 
 
 def _topics_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.topics.json"
+    return runtime_env.data_path("integrations", "telegram.topics.json", project_root=_root())
 
 
 def _updates_lease_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.getupdates.lock"
+    return runtime_env.data_path("integrations", "telegram.getupdates.lock", project_root=_root())
 
 
 def _reply_outbox_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.reply-outbox.json"
+    return runtime_env.data_path("integrations", "telegram.reply-outbox.json", project_root=_root())
 
 
 def _update_inbox_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.update-inbox.json"
+    return runtime_env.data_path("integrations", "telegram.update-inbox.json", project_root=_root())
 
 
 def _update_conversation_key(update: Dict[str, Any]) -> str:
@@ -1494,11 +1496,41 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     )
 
 
-def mirror_community_message(text: str, *, display_name: str = "") -> bool:
+def _canonical_telegram_chat_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not re.fullmatch(r"-?[1-9]\d*", raw):
+        return ""
+    try:
+        return str(int(raw))
+    except (TypeError, ValueError, OverflowError):
+        return ""
+
+
+def _claim_community_delivery(signature: str) -> bool:
+    """Atomically claim a Community mirror delivery for at-most-once sending."""
+    with _IO_LOCK:
+        state = _load_state()
+        recent = dict(state.get("recent_community_delivery_signatures") or {})
+        cutoff = time.time() - COMMUNITY_DEDUPE_TTL_SEC
+        recent = {
+            key: value for key, value in recent.items()
+            if _iso_timestamp(value) >= cutoff
+        }
+        if signature in recent:
+            return False
+        recent[signature] = _now_iso()
+        state["recent_community_delivery_signatures"] = recent
+        _write_json(_state_path(), state)
+    return True
+
+
+def mirror_community_message(text: str, *, display_name: str = "",
+                             dedupe_key: str = "", workspace_id: str = "") -> bool:
     """Duplicate community chat into a SEPARATE Telegram chat/group.
 
     Controlled by ``NTA_COMMUNITY_TELEGRAM_CHAT_ID``. Never uses owner
-    Orchestrator topics. Returns False when unset or on staging safety gate.
+    Orchestrator topics. Delivery is fail-closed and idempotent: a duplicate
+    call returns False without a second Telegram request.
     """
     try:
         from . import runtime_env
@@ -1506,11 +1538,24 @@ def mirror_community_message(text: str, *, display_name: str = "") -> bool:
             # Staging default: do not touch any Telegram chats.
             return False
     except Exception:
-        pass
-    chat_id = str(os.environ.get("NTA_COMMUNITY_TELEGRAM_CHAT_ID") or "").strip()
+        # A broken/missing safety policy must never become permission to send.
+        return False
+    chat_id = _canonical_telegram_chat_id(
+        os.environ.get("NTA_COMMUNITY_TELEGRAM_CHAT_ID")
+    )
     if not chat_id:
         return False
-    settings = load_settings()
+    owner_chat = _canonical_telegram_chat_id(os.environ.get(CHAT_ENV))
+    owner_group = _canonical_telegram_chat_id(os.environ.get(GROUP_ENV))
+    if chat_id in {value for value in (owner_chat, owner_group) if value}:
+        # Community must never leak into the owner private chat or Orchestrator group.
+        return False
+    if not str(os.environ.get(TOKEN_ENV) or "").strip():
+        return False
+    try:
+        settings = load_settings()
+    except Exception:
+        return False
     if not settings.get("enabled"):
         return False
     body = str(text or "").strip()
@@ -1518,10 +1563,26 @@ def mirror_community_message(text: str, *, display_name: str = "") -> bool:
         return False
     who = html.escape(str(display_name or "user")[:80])
     rendered = f"💬 <b>Community · {who}:</b> " + html.escape(body[:3500])
+    identity = str(dedupe_key or "").strip()[:200]
+    if not identity:
+        # Backward-compatible callers do not yet pass a message id. Content
+        # identity suppresses immediate retries for ten minutes, while callers
+        # with a stable message id get the same protection without conflating
+        # intentional later repetitions.
+        identity = hashlib.sha256(
+            f"{workspace_id}|{display_name}|{body}".encode("utf-8")
+        ).hexdigest()
+    signature = hashlib.sha256(
+        f"community|{chat_id}|{workspace_id}|{identity}".encode("utf-8")
+    ).hexdigest()
     try:
+        if not _claim_community_delivery(signature):
+            return False
         _api_call("sendMessage", {"chat_id": chat_id, "text": rendered, "parse_mode": "HTML"})
         return True
     except Exception:
+        # Keep the claim on an ambiguous transport failure: at-most-once is
+        # safer than duplicating a user message into Telegram after a timeout.
         return False
 
 

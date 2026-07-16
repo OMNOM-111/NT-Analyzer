@@ -10,6 +10,7 @@ Never enable test-auth or impersonation in production. Startup must call
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 
@@ -36,7 +37,7 @@ def app_env() -> str:
         return STAGING
     if raw in _VALID:
         return raw
-    return PRODUCTION
+    raise RuntimeEnvError(f"Неизвестное NTA_APP_ENV={raw!r}.", 503)
 
 
 def is_staging() -> bool:
@@ -65,15 +66,70 @@ def impersonation_enabled() -> bool:
 
 
 def allow_real_payments() -> bool:
+    """Return whether production payment-provider calls are explicitly enabled.
+
+    Staging is deliberately fail-closed: a staging process cannot opt into real
+    payments through an environment typo.  Production also defaults to off and
+    requires the owner-only deployment flag.
+    """
     if is_staging():
-        return str(os.environ.get("NTA_STAGING_ALLOW_REAL_PAYMENTS") or "").strip() == "1"
-    return True
+        return False
+    return str(os.environ.get("NTA_ALLOW_REAL_PAYMENTS") or "").strip() == "1"
 
 
 def allow_live_orders() -> bool:
+    """Return whether production broker order submission is explicitly enabled."""
     if is_staging():
-        return str(os.environ.get("NTA_STAGING_ALLOW_LIVE_ORDERS") or "").strip() == "1"
-    return True
+        return False
+    return str(os.environ.get("NTA_ALLOW_LIVE_ORDERS") or "").strip() == "1"
+
+
+def rate_limits_disabled() -> bool:
+    """Allow deterministic load tests to bypass limiters only in staging."""
+    return is_staging() and str(
+        os.environ.get("NTA_DISABLE_RATE_LIMIT") or ""
+    ).strip() == "1"
+
+
+def _resolved_root(raw: str, project_root: Path) -> Path:
+    path = Path(str(raw or "").strip()).expanduser()
+    if not path.is_absolute():
+        path = project_root / path
+    return path.resolve()
+
+
+def data_root(project_root: Any = None) -> Path:
+    """Return the environment-specific application data directory.
+
+    Production preserves the historical ``<project>/data`` location.  Staging
+    defaults to ``<project>/data/staging`` and rejects the production directory,
+    so changing only ``NTA_APP_ENV`` is sufficient to prevent simulated fills
+    from landing in production stores.  Deployments may point at a separate
+    volume with ``NTA_DATA_ROOT`` (production) or ``NTA_STAGING_DATA_ROOT``.
+    """
+    base = Path(project_root or Path(__file__).resolve().parent.parent).resolve()
+    production_root = _resolved_root(
+        str(os.environ.get("NTA_DATA_ROOT") or (base / "data")), base,
+    )
+    if not is_staging():
+        return production_root
+    staging_raw = str(os.environ.get("NTA_STAGING_DATA_ROOT") or "").strip()
+    staging_root = _resolved_root(staging_raw or str(base / "data" / "staging"), base)
+    if staging_root == production_root:
+        raise RuntimeEnvError(
+            "Staging data root совпадает с production data root. "
+            "Задайте отдельный NTA_STAGING_DATA_ROOT.",
+            503,
+        )
+    return staging_root
+
+
+def data_path(*parts: Any, project_root: Any = None) -> Path:
+    """Resolve a path inside the active environment's isolated data root."""
+    path = data_root(project_root)
+    for part in parts:
+        path = path / str(part)
+    return path
 
 
 def allow_owner_telegram_mirror() -> bool:
@@ -92,7 +148,9 @@ def status() -> Dict[str, Any]:
         "impersonation_enabled": impersonation_enabled(),
         "allow_real_payments": allow_real_payments(),
         "allow_live_orders": allow_live_orders(),
+        "rate_limits_disabled": rate_limits_disabled(),
         "allow_owner_telegram_mirror": allow_owner_telegram_mirror(),
+        "data_root": str(data_root()),
     }
 
 
@@ -107,13 +165,20 @@ def assert_production_safe() -> None:
             )
         if str(os.environ.get("NTA_ENABLE_IMPERSONATION") or "").strip().lower() in {
             "1", "true", "yes", "on",
-        } and str(os.environ.get("NTA_FORCE_IMPERSONATION_IN_PROD") or "").strip() != "1":
-            # Impersonation flag alone in prod without force — refuse.
-            # (Default for NTA_ENABLE_IMPERSONATION is "1" only when staging.)
-            pass
+        }:
+            raise RuntimeEnvError(
+                "NTA_ENABLE_IMPERSONATION запрещён в production.",
+                503,
+            )
+        if str(os.environ.get("NTA_DISABLE_RATE_LIMIT") or "").strip() == "1":
+            raise RuntimeEnvError(
+                "NTA_DISABLE_RATE_LIMIT=1 запрещён в production.",
+                503,
+            )
         return
-    if env != STAGING:
-        raise RuntimeEnvError(f"Неизвестное NTA_APP_ENV={env!r}.", 503)
+    # Resolve eagerly so a staging deployment cannot start on the production
+    # data directory and fail only after its first write.
+    data_root()
 
 
 def require_staging(feature: str = "эта функция") -> None:

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Iterable, Optional, Tuple
 
-from . import account_auth
+from . import account_auth, runtime_env
 
 
 SOURCE = "telegram_mini_app"
@@ -67,11 +67,11 @@ def _root() -> Path:
 
 
 def _access_path() -> Path:
-    return _root() / "data" / "integrations" / "telegram.remote-access.json"
+    return runtime_env.data_path("integrations", "telegram.remote-access.json", project_root=_root())
 
 
 def _audit_path() -> Path:
-    return _root() / "data" / "audit" / "telegram-mini-app.jsonl"
+    return runtime_env.data_path("audit", "telegram-mini-app.jsonl", project_root=_root())
 
 
 def _now_iso() -> str:
@@ -124,6 +124,7 @@ def _public_user(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key: row.get(key) for key in (
         "user_id", "username", "first_name", "last_name", "role", "status",
         "phone_verified", "granted_at_utc", "revoked_at_utc", "updated_at_utc",
+        "ux_mode",
     )}
 
 
@@ -481,6 +482,8 @@ def validate_init_data(raw: str, bot_token: str, *, now: Optional[float] = None,
 
 
 def _rate_check(user_id: int, ip: str, method: str, *, now: Optional[float] = None) -> None:
+    if runtime_env.rate_limits_disabled():
+        return
     current = time.time() if now is None else float(now)
     bucket = "read" if method.upper() in {"GET", "HEAD"} else "write"
     limit = READ_LIMIT_PER_MINUTE if bucket == "read" else WRITE_LIMIT_PER_MINUTE
@@ -523,6 +526,12 @@ def authorize(raw: str, bot_token: str, *, method: str, path: str, tunnel_ip: st
             role = "full_control"
         context["role"] = role
         context["username"] = str(tg_user.get("username") or user.get("username") or "")
+        public_user = _public_user(user)
+        # Entries in the legacy remote-access whitelist predate the UX-mode
+        # selector.  They are existing professional users, not new registrations.
+        if not account_auth.storage_status().get("encrypted") and not public_user.get("ux_mode"):
+            public_user["ux_mode"] = "professional"
+        context["user"] = public_user
     if (method.upper() not in {"GET", "HEAD"} and role != "full_control" and path not in SELF_SERVICE_WRITE_PATHS
             and not path.startswith("/api/bridge/connections/")):
         raise RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, context)

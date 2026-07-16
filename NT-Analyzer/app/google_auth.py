@@ -47,7 +47,7 @@ def _root() -> Path:
 
 
 def _secrets_path() -> Path:
-    return _root() / "data" / "integrations" / "google_oauth.dpapi"
+    return runtime_env.data_path("integrations", "google_oauth.dpapi", project_root=_root())
 
 
 def _now_iso() -> str:

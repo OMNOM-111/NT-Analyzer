@@ -77,7 +77,39 @@ DEMO_UNLOCK_MESSAGE = (
 ROUTE_CAPABILITY = (
     ("/api/ai-lab/", "ai_lab"),
     ("/api/ai-agents", "ai_lab"),
+    ("/api/ops/runtime/bars", "charts_realtime"),
+    ("/api/ops/runtime/command", "paper_commands"),
+    ("/api/ops/runtime/account-history", "personal_nt"),
+    ("/api/ops/runtime/accounts", "personal_nt"),
+    ("/api/ops/runtime/", "live_read"),
+    ("/api/ops/strategies/", "paper_commands"),
+    ("/api/ops/", "paper_commands"),
+    ("/api/report-favorites", "backtesting"),
+    ("/api/strategy-families", "strategies"),
+    ("/api/strategies", "strategies"),
+    ("/api/profiles", "strategies"),
+    ("/api/research-modes", "strategies"),
+    ("/api/portfolio/", "strategies"),
+    ("/api/catalog", "strategies"),
+    ("/api/margins/", "strategies"),
+    ("/api/batches", "backtesting"),
+    ("/api/reports", "backtesting"),
+    ("/api/jobs", "backtesting"),
+    ("/api/coverage", "backtesting"),
+    ("/api/diagnostics", "backtesting"),
+    ("/api/performance", "live_read"),
+    ("/api/chart/", "charts_realtime"),
+    ("/api/scc/", "paper_commands"),
+    ("/api/topstep/", "live_read"),
+    ("/api/news", "news"),
+    ("/api/governance/", "documents"),
+    ("/api/bridge/setup", None),
+    ("/api/bridge/", "personal_nt"),
+    ("/api/workspaces/personal", "personal_nt"),
     ("/api/ops/live/", "live_commands"),
+    ("/api/community/", "community"),
+    ("/api/practice/", "practice_trading"),
+    ("/api/micro-live/", "micro_live"),
 )
 
 # Beginner UX (Phase E): only practice trading contour. Everything else is
@@ -89,8 +121,17 @@ BEGINNER_DENIED_PREFIXES = (
     "/api/ai-lab/",
     "/api/ai-agents",
     "/api/demo-backtests",
+    "/api/batches",
+    "/api/reports",
+    "/api/report-favorites",
     "/api/micro-live/",
     "/api/ops/",
+    "/api/strategies",
+    "/api/strategy-families",
+    "/api/profiles",
+    "/api/portfolio/",
+    "/api/catalog",
+    "/api/performance",
     "/api/bridge/",
     "/api/workspaces/",
     "/api/news",
@@ -262,13 +303,27 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         raise PermissionError(
             "Режим «Новичок»: раздел недоступен. Переключитесь в «Профессионал» в кабинете.",
             403)
+    if ux_mode == "beginner" and p.startswith("/api/ops/runtime/bars"):
+        # Practice charts use market observation only; all other runtime data
+        # and every command remain unavailable in beginner mode.
+        return
     cap = required_capability(path)
     if not cap:
         return
     caps = context.get("capabilities")
     if not isinstance(caps, dict):
         caps = resolve_for_user_id(context.get("user_id"), context.get("user") or {})["capabilities"]
-    if not caps.get(cap):
+    if p.startswith("/api/ops/runtime/bars") and (
+        bool(caps.get("practice_trading"))
+        or str(context.get("role") or "") == "read_only"
+    ):
+        return
+    method = str(context.get("_request_method") or "GET").upper()
+    demo_job_read = (
+        cap == "backtesting" and method in {"GET", "HEAD"}
+        and p.startswith("/api/jobs") and bool(caps.get("demo_backtest"))
+    )
+    if not caps.get(cap) and not demo_job_read:
         label = next((c.get("label") for c in CAPABILITIES if c.get("id") == cap), cap)
         raise PermissionError(
             f"«{label}» недоступно в вашем тарифе. Активируйте подписку, "

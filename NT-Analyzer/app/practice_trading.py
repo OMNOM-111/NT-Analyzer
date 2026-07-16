@@ -6,6 +6,7 @@ Never writes to live NT command queues.
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import threading
@@ -13,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from . import runtime_env
 
 
 class PracticeTradingError(RuntimeError):
@@ -27,6 +30,9 @@ _DEFAULT_MARKS = {
     "MES": 5420.0,
     "MGC": 2355.0,
 }
+_ALLOWED_SYMBOLS = frozenset(_DEFAULT_MARKS)
+_ALLOWED_SIDES = {"buy": "Long", "long": "Long", "sell": "Short", "short": "Short"}
+_ALLOWED_ORDER_TYPES = frozenset({"market", "limit"})
 
 
 def _root() -> Path:
@@ -34,11 +40,64 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    return _root() / "data" / "runtime" / "practice_accounts.json"
+    return runtime_env.data_root(_root()) / "runtime" / "practice_accounts.json"
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _workspace(value: Any) -> str:
+    raw = str(value or "").strip()
+    if (len(raw) > 160
+            or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_." for ch in raw)):
+        raise PracticeTradingError("Некорректная рабочая область.")
+    return raw
+
+
+def _account_key(user_id: Any, workspace_id: Any = "") -> str:
+    uid = int(user_id or 0)
+    if uid <= 0:
+        raise PracticeTradingError("Требуется вход.", 401)
+    workspace = _workspace(workspace_id)
+    return f"{workspace}:{uid}" if workspace else str(uid)
+
+
+def _finite(value: Any, label: str, *, positive: bool = False,
+            allow_zero: bool = True) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PracticeTradingError(f"{label}: укажите число.") from exc
+    if not math.isfinite(number):
+        raise PracticeTradingError(f"{label}: число должно быть конечным.")
+    if positive and (number < 0 or (not allow_zero and number == 0)):
+        raise PracticeTradingError(f"{label}: значение должно быть больше нуля.")
+    return number
+
+
+def _symbol(value: Any) -> str:
+    symbol = str(value or "").strip().upper()
+    root = symbol.split()[0] if symbol else ""
+    if root not in _ALLOWED_SYMBOLS:
+        raise PracticeTradingError(
+            f"Инструмент {symbol or '—'} недоступен. Доступны: {', '.join(sorted(_ALLOWED_SYMBOLS))}."
+        )
+    return root
+
+
+def _side(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _ALLOWED_SIDES:
+        raise PracticeTradingError("Сторона должна быть buy/long или sell/short.")
+    return _ALLOWED_SIDES[normalized]
+
+
+def _order_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _ALLOWED_ORDER_TYPES:
+        raise PracticeTradingError("Тип ордера должен быть market или limit.")
+    return normalized
 
 
 def _load() -> Dict[str, Any]:
@@ -87,35 +146,53 @@ def create_account(
     max_drawdown: float = 2000,
     position_limit: int = 4,
     symbol: str = "MNQ",
+    workspace_id: str = "",
 ) -> Dict[str, Any]:
-    uid = str(int(user_id or 0))
-    if int(user_id or 0) <= 0:
-        raise PracticeTradingError("Требуется вход.", 401)
-    deposit = float(deposit)
+    uid = _account_key(user_id, workspace_id)
+    workspace = _workspace(workspace_id)
+    deposit = _finite(deposit, "Депозит", positive=True, allow_zero=False)
     if deposit < 1000 or deposit > 500000:
         raise PracticeTradingError("Депозит должен быть от $1 000 до $500 000.")
+    commission = _finite(commission, "Комиссия", positive=True)
+    daily_loss_limit = _finite(
+        daily_loss_limit, "Дневной лимит убытка", positive=True, allow_zero=False,
+    )
+    max_drawdown = _finite(
+        max_drawdown, "Максимальная просадка", positive=True, allow_zero=False,
+    )
+    position_limit_number = _finite(
+        position_limit, "Лимит позиции", positive=True, allow_zero=False,
+    )
+    if not position_limit_number.is_integer():
+        raise PracticeTradingError("Лимит позиции должен быть целым числом.")
+    position_limit = int(position_limit_number)
+    if position_limit < 1 or position_limit > 100:
+        raise PracticeTradingError("Лимит позиции должен быть от 1 до 100.")
+    symbol_n = _symbol(symbol)
     with _LOCK:
         doc = _load()
         acct = {
             "account_id": "prac_" + secrets.token_hex(6),
             "user_id": int(user_id),
+            "workspace_id": workspace,
             "mode": "practice",
             "badge": "Учебный счёт · не реальные деньги",
             "created_at_utc": _now_iso(),
             "deposit": deposit,
             "balance": deposit,
             "equity": deposit,
-            "commission": float(commission),
-            "daily_loss_limit": float(daily_loss_limit),
-            "max_drawdown": float(max_drawdown),
-            "position_limit": int(position_limit),
-            "symbol_default": str(symbol or "MNQ").upper(),
+            "commission": commission,
+            "daily_loss_limit": daily_loss_limit,
+            "max_drawdown": max_drawdown,
+            "position_limit": position_limit,
+            "symbol_default": symbol_n,
             "day_start_balance": deposit,
             "day_key": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "locked": False,
             "lock_reason": "",
             "positions": [],
             "orders": [],
+            "executions": [],
             "trades": [],
             "marks": dict(_DEFAULT_MARKS),
         }
@@ -124,8 +201,8 @@ def create_account(
         return _public(acct)
 
 
-def get_account(user_id: Any) -> Dict[str, Any]:
-    uid = str(int(user_id or 0))
+def get_account(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    uid = _account_key(user_id, workspace_id)
     with _LOCK:
         doc = _load()
         acct = (doc.get("accounts") or {}).get(uid)
@@ -185,6 +262,7 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
         "badge": acct.get("badge") or "Учебный счёт · не реальные деньги",
         "account": {
             "account_id": acct.get("account_id"),
+            "workspace_id": acct.get("workspace_id") or "",
             "balance": acct.get("balance"),
             "equity": acct.get("equity"),
             "deposit": acct.get("deposit"),
@@ -200,10 +278,120 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
         },
         "positions": list(acct.get("positions") or []),
         "orders": [o for o in (acct.get("orders") or []) if o.get("status") == "working"],
+        "order_history": list(reversed(acct.get("orders") or []))[:100],
+        "executions": list(reversed(acct.get("executions") or []))[:100],
         "trades": list(reversed(acct.get("trades") or []))[:100],
         "marks": dict(acct.get("marks") or {}),
         "layouts": [1, 2, 4],
     }
+
+
+def _validate_brackets(side: str, reference: float, stop_loss: float,
+                       take_profit: float) -> None:
+    if stop_loss:
+        if side == "Long" and stop_loss >= reference:
+            raise PracticeTradingError("Для Long Stop Loss должен быть ниже цены входа.")
+        if side == "Short" and stop_loss <= reference:
+            raise PracticeTradingError("Для Short Stop Loss должен быть выше цены входа.")
+    if take_profit:
+        if side == "Long" and take_profit <= reference:
+            raise PracticeTradingError("Для Long Take Profit должен быть выше цены входа.")
+        if side == "Short" and take_profit >= reference:
+            raise PracticeTradingError("Для Short Take Profit должен быть ниже цены входа.")
+
+
+def _is_marketable(side: str, limit_price: float, mark: float) -> bool:
+    return mark <= limit_price if side == "Long" else mark >= limit_price
+
+
+def _reserved_quantity(acct: Dict[str, Any]) -> int:
+    opened = sum(int(p.get("quantity") or 0) for p in acct.get("positions") or [])
+    working = sum(
+        int(o.get("quantity") or 0)
+        for o in acct.get("orders") or []
+        if o.get("status") == "working"
+    )
+    return opened + working
+
+
+def _fill_risk_reason(acct: Dict[str, Any], quantity: int) -> str:
+    commission = float(acct.get("commission") or 0) * int(quantity)
+    projected_equity = float(acct.get("equity") or 0) - commission
+    day_start = float(acct.get("day_start_balance") or acct.get("deposit") or 0)
+    if projected_equity - day_start <= -abs(float(acct.get("daily_loss_limit") or 0)):
+        return "daily_loss"
+    if projected_equity - float(acct.get("deposit") or 0) <= -abs(float(acct.get("max_drawdown") or 0)):
+        return "max_drawdown"
+    return ""
+
+
+def _record_open_fill(acct: Dict[str, Any], order: Dict[str, Any],
+                      fill_price: float) -> Dict[str, Any]:
+    qty = int(order.get("quantity") or 0)
+    symbol = str(order.get("symbol") or "")
+    side = str(order.get("side") or "")
+    commission = float(acct.get("commission") or 0) * qty
+    order["status"] = "filled"
+    order["filled_at_utc"] = _now_iso()
+    order["fill_price"] = fill_price
+    pos = next(
+        (p for p in acct.get("positions") or []
+         if p.get("symbol") == symbol and p.get("side") == side),
+        None,
+    )
+    if pos is None:
+        pos = {
+            "position_id": "pos_" + secrets.token_hex(4),
+            "symbol": symbol,
+            "side": side,
+            "quantity": qty,
+            "avg_price": fill_price,
+            "opened_at_utc": _now_iso(),
+            "stop_loss": float(order.get("stop_loss") or 0),
+            "take_profit": float(order.get("take_profit") or 0),
+        }
+        acct.setdefault("positions", []).append(pos)
+    else:
+        total = int(pos.get("quantity") or 0) + qty
+        pos["avg_price"] = round(
+            (float(pos.get("avg_price") or 0) * int(pos.get("quantity") or 0)
+             + fill_price * qty) / total,
+            4,
+        )
+        pos["quantity"] = total
+        if order.get("stop_loss"):
+            pos["stop_loss"] = float(order["stop_loss"])
+        if order.get("take_profit"):
+            pos["take_profit"] = float(order["take_profit"])
+    acct["balance"] = round(float(acct.get("balance") or 0) - commission, 2)
+    execution = {
+        "execution_id": "exe_" + secrets.token_hex(5),
+        "order_id": order.get("order_id"),
+        "symbol": symbol,
+        "side": side,
+        "quantity": qty,
+        "price": fill_price,
+        "commission": commission,
+        "kind": "entry",
+        "at_utc": _now_iso(),
+    }
+    acct.setdefault("executions", []).append(execution)
+    trade = {
+        "trade_id": "tr_" + secrets.token_hex(4),
+        "order_id": order.get("order_id"),
+        "execution_id": execution["execution_id"],
+        "symbol": symbol,
+        "side": side,
+        "quantity": qty,
+        "price": fill_price,
+        "commission": commission,
+        "pnl": 0,
+        "at_utc": execution["at_utc"],
+        "action": "open",
+    }
+    acct.setdefault("trades", []).append(trade)
+    _mark_to_market(acct)
+    return trade
 
 
 def place_order(
@@ -216,14 +404,23 @@ def place_order(
     limit_price: float = 0,
     stop_loss: float = 0,
     take_profit: float = 0,
+    workspace_id: str = "",
 ) -> Dict[str, Any]:
-    uid = str(int(user_id or 0))
-    side_n = "Long" if str(side or "").lower() in {"buy", "long"} else "Short"
-    order_type_n = str(order_type or "market").lower()
-    qty = int(quantity or 0)
+    uid = _account_key(user_id, workspace_id)
+    side_n = _side(side)
+    order_type_n = _order_type(order_type)
+    quantity_number = _finite(
+        quantity, "Количество", positive=True, allow_zero=False,
+    )
+    if not quantity_number.is_integer():
+        raise PracticeTradingError("Количество должно быть целым числом.")
+    qty = int(quantity_number)
     if qty < 1 or qty > 20:
         raise PracticeTradingError("Количество от 1 до 20.")
-    symbol_n = str(symbol or "MNQ").upper()
+    symbol_n = _symbol(symbol)
+    limit_n = _finite(limit_price, "Limit", positive=True)
+    stop_n = _finite(stop_loss, "Stop Loss", positive=True)
+    take_n = _finite(take_profit, "Take Profit", positive=True)
     with _LOCK:
         doc = _load()
         acct = (doc.get("accounts") or {}).get(uid)
@@ -236,58 +433,45 @@ def place_order(
                 f"Торговля заблокирована: {acct.get('lock_reason') or 'risk lock'}.",
                 403,
             )
-        open_qty = sum(int(p.get("quantity") or 0) for p in acct.get("positions") or [])
-        if open_qty + qty > int(acct.get("position_limit") or 4):
+        if _reserved_quantity(acct) + qty > int(acct.get("position_limit") or 4):
             raise PracticeTradingError("Превышен лимит позиции.")
         mark = _mark(symbol_n, acct.get("marks") or {})
-        fill_price = mark if order_type_n == "market" else float(limit_price or 0)
-        if order_type_n == "limit" and fill_price <= 0:
+        if order_type_n == "limit" and limit_n <= 0:
             raise PracticeTradingError("Для limit укажите цену.")
-        # Instant fill for MVP (market always; limit fills if within 0.5% of mark).
-        if order_type_n == "limit" and abs(fill_price - mark) / max(mark, 1) > 0.005:
-            order = {
-                "order_id": "ord_" + secrets.token_hex(4),
-                "symbol": symbol_n, "side": side_n, "quantity": qty,
-                "order_type": "limit", "limit_price": fill_price,
-                "status": "working", "created_at_utc": _now_iso(),
-                "stop_loss": float(stop_loss or 0), "take_profit": float(take_profit or 0),
-            }
-            acct.setdefault("orders", []).append(order)
+        marketable = order_type_n == "market" or _is_marketable(side_n, limit_n, mark)
+        reference = mark if marketable else limit_n
+        _validate_brackets(side_n, reference, stop_n, take_n)
+        order = {
+            "order_id": "ord_" + secrets.token_hex(4),
+            "symbol": symbol_n,
+            "side": side_n,
+            "quantity": qty,
+            "order_type": order_type_n,
+            "limit_price": limit_n if order_type_n == "limit" else 0,
+            "status": "working",
+            "created_at_utc": _now_iso(),
+            "stop_loss": stop_n,
+            "take_profit": take_n,
+        }
+        acct.setdefault("orders", []).append(order)
+        if not marketable:
             _save(doc)
             return {"ok": True, "filled": False, "order": order, **_public(acct)}
-        commission = float(acct.get("commission") or 0) * qty
-        pos = next((p for p in acct.get("positions") or [] if p.get("symbol") == symbol_n and p.get("side") == side_n), None)
-        if pos is None:
-            pos = {
-                "position_id": "pos_" + secrets.token_hex(4),
-                "symbol": symbol_n, "side": side_n, "quantity": qty,
-                "avg_price": fill_price, "opened_at_utc": _now_iso(),
-                "stop_loss": float(stop_loss or 0), "take_profit": float(take_profit or 0),
-            }
-            acct.setdefault("positions", []).append(pos)
-        else:
-            total = int(pos["quantity"]) + qty
-            pos["avg_price"] = round((float(pos["avg_price"]) * int(pos["quantity"]) + fill_price * qty) / total, 4)
-            pos["quantity"] = total
-            if stop_loss:
-                pos["stop_loss"] = float(stop_loss)
-            if take_profit:
-                pos["take_profit"] = float(take_profit)
-        acct["balance"] = round(float(acct["balance"]) - commission, 2)
-        trade = {
-            "trade_id": "tr_" + secrets.token_hex(4),
-            "symbol": symbol_n, "side": side_n, "quantity": qty,
-            "price": fill_price, "commission": commission,
-            "pnl": 0, "at_utc": _now_iso(), "action": "open",
-        }
-        acct.setdefault("trades", []).append(trade)
-        _mark_to_market(acct)
+        risk_reason = _fill_risk_reason(acct, qty)
+        if risk_reason:
+            order["status"] = "rejected_risk"
+            order["reject_reason"] = risk_reason
+            _save(doc)
+            raise PracticeTradingError(f"Ордер отклонён risk guard: {risk_reason}.", 403)
+        trade = _record_open_fill(acct, order, mark)
         _save(doc)
-        return {"ok": True, "filled": True, "trade": trade, **_public(acct)}
+        return {"ok": True, "filled": True, "order": order, "trade": trade, **_public(acct)}
 
 
-def close_position(user_id: Any, position_id: str = "", *, symbol: str = "") -> Dict[str, Any]:
-    uid = str(int(user_id or 0))
+def close_position(user_id: Any, position_id: str = "", *, symbol: str = "",
+                   workspace_id: str = "") -> Dict[str, Any]:
+    uid = _account_key(user_id, workspace_id)
+    symbol_n = _symbol(symbol) if str(symbol or "").strip() else ""
     with _LOCK:
         doc = _load()
         acct = (doc.get("accounts") or {}).get(uid)
@@ -300,10 +484,10 @@ def close_position(user_id: Any, position_id: str = "", *, symbol: str = "") -> 
             if position_id and pos.get("position_id") == position_id:
                 target = pos
                 break
-            if symbol and pos.get("symbol") == str(symbol).upper():
+            if symbol_n and pos.get("symbol") == symbol_n:
                 target = pos
                 break
-        if target is None and positions:
+        if target is None and not position_id and not symbol_n and positions:
             target = positions[0]
         if target is None:
             raise PracticeTradingError("Нет открытой позиции.", 404)
@@ -317,8 +501,34 @@ def close_position(user_id: Any, position_id: str = "", *, symbol: str = "") -> 
         commission = float(acct.get("commission") or 0) * qty
         acct["balance"] = round(float(acct["balance"]) + pnl - commission, 2)
         acct["positions"] = [p for p in positions if p is not target]
+        order = {
+            "order_id": "ord_" + secrets.token_hex(4),
+            "symbol": target.get("symbol"),
+            "side": "Short" if side == "Long" else "Long",
+            "quantity": qty,
+            "order_type": "market",
+            "status": "filled",
+            "created_at_utc": _now_iso(),
+            "filled_at_utc": _now_iso(),
+            "fill_price": mark,
+            "reduce_only": True,
+        }
+        acct.setdefault("orders", []).append(order)
+        execution = {
+            "execution_id": "exe_" + secrets.token_hex(5),
+            "order_id": order["order_id"],
+            "symbol": target.get("symbol"),
+            "side": order["side"],
+            "quantity": qty,
+            "price": mark,
+            "commission": commission,
+            "kind": "exit",
+            "at_utc": _now_iso(),
+        }
+        acct.setdefault("executions", []).append(execution)
         trade = {
             "trade_id": "tr_" + secrets.token_hex(4),
+            "order_id": order["order_id"], "execution_id": execution["execution_id"],
             "symbol": target.get("symbol"), "side": side, "quantity": qty,
             "price": mark, "commission": commission, "pnl": pnl,
             "at_utc": _now_iso(), "action": "close",
@@ -329,23 +539,62 @@ def close_position(user_id: Any, position_id: str = "", *, symbol: str = "") -> 
         return {"ok": True, "trade": trade, **_public(acct)}
 
 
-def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0) -> Dict[str, Any]:
-    """Owner/test helper or client sim: update mark and evaluate SL/TP."""
-    uid = str(int(user_id or 0))
+def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,
+               workspace_id: str = "") -> Dict[str, Any]:
+    """Update a virtual mark, fill marketable limits, then evaluate SL/TP."""
+    uid = _account_key(user_id, workspace_id)
+    price_n = _finite(price, "Цена", positive=True)
     with _LOCK:
         doc = _load()
         acct = (doc.get("accounts") or {}).get(uid)
         if not acct:
             raise PracticeTradingError("Счёт не найден.", 404)
-        root = str(symbol or acct.get("symbol_default") or "MNQ").split()[0].upper()
+        _roll_day(acct)
+        root = _symbol(symbol or acct.get("symbol_default") or "MNQ")
         marks = dict(acct.get("marks") or _DEFAULT_MARKS)
-        if price > 0:
-            marks[root] = float(price)
+        if price_n > 0:
+            marks[root] = price_n
         else:
             # tiny random walk for UI liveliness
             cur = float(marks.get(root) or _DEFAULT_MARKS.get(root) or 100)
             marks[root] = round(cur * (1 + ((time.time() % 7) - 3) * 0.00015), 2)
         acct["marks"] = marks
+        _mark_to_market(acct)
+
+        # A risk lock cancels resting entry orders; exits remain available.
+        if acct.get("locked"):
+            for order in acct.get("orders") or []:
+                if order.get("status") == "working":
+                    order["status"] = "cancelled_risk"
+                    order["cancelled_at_utc"] = _now_iso()
+                    order["cancel_reason"] = acct.get("lock_reason") or "risk_lock"
+        else:
+            for order in acct.get("orders") or []:
+                if order.get("status") != "working" or order.get("symbol") != root:
+                    continue
+                mark = _mark(root, marks)
+                if not _is_marketable(
+                    str(order.get("side") or ""),
+                    float(order.get("limit_price") or 0),
+                    mark,
+                ):
+                    continue
+                qty = int(order.get("quantity") or 0)
+                opened = sum(int(p.get("quantity") or 0) for p in acct.get("positions") or [])
+                if opened + qty > int(acct.get("position_limit") or 4):
+                    order["status"] = "rejected_position_limit"
+                    order["rejected_at_utc"] = _now_iso()
+                    continue
+                risk_reason = _fill_risk_reason(acct, qty)
+                if risk_reason:
+                    order["status"] = "rejected_risk"
+                    order["reject_reason"] = risk_reason
+                    order["rejected_at_utc"] = _now_iso()
+                    continue
+                _record_open_fill(acct, order, mark)
+                if acct.get("locked"):
+                    break
+
         # SL/TP
         still = []
         for pos in list(acct.get("positions") or []):
@@ -366,8 +615,35 @@ def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0) -> Dict[str,
                 pnl = round((mark - entry) * direction * qty * pv, 2)
                 commission = float(acct.get("commission") or 0) * qty
                 acct["balance"] = round(float(acct["balance"]) + pnl - commission, 2)
+                exit_order = {
+                    "order_id": "ord_" + secrets.token_hex(4),
+                    "symbol": pos.get("symbol"),
+                    "side": "Short" if side == "Long" else "Long",
+                    "quantity": qty,
+                    "order_type": "stop" if sl and ((side == "Long" and mark <= sl) or (side == "Short" and mark >= sl)) else "take_profit",
+                    "status": "filled",
+                    "created_at_utc": _now_iso(),
+                    "filled_at_utc": _now_iso(),
+                    "fill_price": mark,
+                    "reduce_only": True,
+                }
+                acct.setdefault("orders", []).append(exit_order)
+                execution = {
+                    "execution_id": "exe_" + secrets.token_hex(5),
+                    "order_id": exit_order["order_id"],
+                    "symbol": pos.get("symbol"),
+                    "side": exit_order["side"],
+                    "quantity": qty,
+                    "price": mark,
+                    "commission": commission,
+                    "kind": "exit",
+                    "at_utc": _now_iso(),
+                }
+                acct.setdefault("executions", []).append(execution)
                 acct.setdefault("trades", []).append({
                     "trade_id": "tr_" + secrets.token_hex(4),
+                    "order_id": exit_order["order_id"],
+                    "execution_id": execution["execution_id"],
                     "symbol": pos.get("symbol"), "side": side, "quantity": qty,
                     "price": mark, "commission": commission, "pnl": pnl,
                     "at_utc": _now_iso(), "action": "sl_tp",
@@ -380,8 +656,8 @@ def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0) -> Dict[str,
         return _public(acct)
 
 
-def report(user_id: Any) -> Dict[str, Any]:
-    acct_view = get_account(user_id)
+def report(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    acct_view = get_account(user_id, workspace_id=workspace_id)
     trades = acct_view.get("trades") or []
     closed = [t for t in trades if t.get("action") in {"close", "sl_tp"}]
     wins = [t for t in closed if float(t.get("pnl") or 0) > 0]
@@ -395,4 +671,6 @@ def report(user_id: Any) -> Dict[str, Any]:
         "realized_pnl": round(sum(float(t.get("pnl") or 0) for t in closed), 2),
         "commissions": round(sum(float(t.get("commission") or 0) for t in trades), 2),
         "trades": closed[:50],
+        "orders": acct_view.get("order_history") or [],
+        "executions": acct_view.get("executions") or [],
     }

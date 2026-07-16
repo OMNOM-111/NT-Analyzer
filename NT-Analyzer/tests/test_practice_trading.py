@@ -44,3 +44,60 @@ def test_sl_tp_triggers(practice_store):
     )
     out = practice_trading.tick_marks(7, symbol="MNQ", price=mark + 10)
     assert out["positions"] == [] or any(t.get("action") == "sl_tp" for t in out["trades"])
+
+
+def test_working_limit_fills_on_cross_and_records_execution(practice_store):
+    practice_trading.create_account(8, deposit=20000)
+    mark = practice_trading.get_account(8)["marks"]["MNQ"]
+    resting = practice_trading.place_order(
+        8, symbol="MNQ", side="buy", quantity=1,
+        order_type="limit", limit_price=mark - 100,
+    )
+    assert resting["filled"] is False
+    assert len(resting["orders"]) == 1
+    filled = practice_trading.tick_marks(8, symbol="MNQ", price=mark - 100)
+    assert filled["orders"] == []
+    assert len(filled["positions"]) == 1
+    assert filled["order_history"][0]["status"] == "filled"
+    assert filled["executions"][0]["kind"] == "entry"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"side": "???", "order_type": "market"}, "Сторона"),
+        ({"side": "buy", "order_type": "bogus"}, "Тип ордера"),
+        ({"side": "buy", "order_type": "market", "quantity": 1.5}, "целым"),
+        ({"side": "buy", "order_type": "limit", "limit_price": float("nan")}, "конечным"),
+        ({"side": "buy", "order_type": "market", "stop_loss": 999999}, "Stop Loss"),
+    ],
+)
+def test_order_validation_is_fail_closed(practice_store, kwargs, message):
+    practice_trading.create_account(9, deposit=20000)
+    request = dict(kwargs)
+    quantity = request.pop("quantity", 1)
+    with pytest.raises(practice_trading.PracticeTradingError) as exc:
+        practice_trading.place_order(9, symbol="MNQ", quantity=quantity, **request)
+    assert message in str(exc.value)
+    assert practice_trading.get_account(9)["positions"] == []
+
+
+def test_workspace_accounts_are_isolated(practice_store):
+    a = practice_trading.create_account(10, workspace_id="ws_a", deposit=10000)
+    b = practice_trading.create_account(10, workspace_id="ws_b", deposit=25000)
+    assert a["account"]["workspace_id"] == "ws_a"
+    assert b["account"]["workspace_id"] == "ws_b"
+    practice_trading.place_order(
+        10, workspace_id="ws_a", symbol="MNQ", side="buy", order_type="market",
+    )
+    assert practice_trading.get_account(10, workspace_id="ws_a")["positions"]
+    assert practice_trading.get_account(10, workspace_id="ws_b")["positions"] == []
+
+
+def test_close_with_unknown_selector_does_not_close_first_position(practice_store):
+    practice_trading.create_account(11, deposit=20000)
+    practice_trading.place_order(11, symbol="MNQ", side="buy", order_type="market")
+    with pytest.raises(practice_trading.PracticeTradingError) as exc:
+        practice_trading.close_position(11, "missing-position")
+    assert exc.value.status == 404
+    assert practice_trading.get_account(11)["positions"]

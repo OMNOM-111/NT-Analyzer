@@ -129,6 +129,16 @@ def test_telegram_confirm_callback_elevates_session(nt_auth_store):
         "expires_at": time.time() + 99999,
         "revoked": False,
     })
+    doc["sessions"].append({
+        "session_id": "sess_other_device",
+        "token_hash": hashlib.sha256(b"other-token").hexdigest(),
+        "csrf_hash": hashlib.sha256(b"other-csrf").hexdigest(),
+        "csrf_token": "other-csrf",
+        "user_id": 42,
+        "created_at_utc": "2026-07-15T00:00:01Z",
+        "expires_at": time.time() + 99999,
+        "revoked": False,
+    })
     account_auth._write_doc(doc)
 
     started = account_auth.start_nt_telegram_confirm(42, session_id="sess_user42", api_call=None)
@@ -142,11 +152,21 @@ def test_telegram_confirm_callback_elevates_session(nt_auth_store):
     assert result == "confirmed" and uid == 42
     sess = next(s for s in account_auth._read_doc()["sessions"] if s["session_id"] == "sess_user42")
     assert float(sess.get("nt_elevated_until") or 0) > time.time()
+    other = next(s for s in account_auth._read_doc()["sessions"] if s["session_id"] == "sess_other_device")
+    assert not float(other.get("nt_elevated_until") or 0)
+
+
+def test_telegram_confirm_requires_specific_active_session(nt_auth_store):
+    account_auth.link_google_identity(42, google_sub="g-alice", google_email="a@example.com")
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.start_nt_telegram_confirm(42, session_id="", api_call=None)
+    assert exc.value.code == "nt_session_required"
 
 
 def test_path_requires_nt_dual_auth():
     assert account_auth.path_requires_nt_dual_auth("/api/workspaces/personal", "POST")
     assert account_auth.path_requires_nt_dual_auth("/api/bridge/pair/start", "POST")
+    assert account_auth.path_requires_nt_dual_auth("/api/bridge/connections/c1/revoke", "POST")
     assert account_auth.path_requires_nt_dual_auth("/api/ops/runtime/command", "POST")
     assert account_auth.path_requires_nt_dual_auth("/api/ops/strategies/x/paper/arm", "POST")
     assert not account_auth.path_requires_nt_dual_auth("/api/demo-backtests", "POST")

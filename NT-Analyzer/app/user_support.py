@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from . import account_auth, secure_store
+from . import account_auth, runtime_env, secure_store
 
 
 _LOCK = threading.RLock()
@@ -44,15 +44,15 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    return _root() / "data" / "runtime" / "user-support.json"
+    return runtime_env.data_path("runtime", "user-support.json", project_root=_root())
 
 
 def _screenshots_dir() -> Path:
-    return _root() / "data" / "runtime" / "support-screenshots"
+    return runtime_env.data_path("runtime", "support-screenshots", project_root=_root())
 
 
 def _audit_path() -> Path:
-    return _root() / "data" / "audit" / "user-support.jsonl"
+    return runtime_env.data_path("audit", "user-support.jsonl", project_root=_root())
 
 
 def _now_iso(epoch: Optional[float] = None) -> str:
