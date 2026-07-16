@@ -17,15 +17,15 @@
 |---|---|---|---|
 | 1 | Админка сессий и ресурсов | ✅ ~95% | Monitoring tab, admin-kill code `session_admin_revoked`, telemetry note, auth sessions overview. Consent-скрин без silent stream. Остаток: ручной прогон owner UI на живом сервере. |
 | 2 | Живая демоверсия вместо blur | ✅ ~90% | `demo_backtest` capability, 1-click сценарии, watermark, quota 3/день, без NT. Остаток: ручной UI-прогон free user. |
-| 3 | Учебная торговля | 🟡 UX-fix | **Wallet-first:** сначала только сумма депозита; после — терминал как TopStep (графики/ордера/позиции/PnL/риск), деньги виртуальные. 6/8 charts — не MVP. |
+| 3 | Учебная торговля | ✅ код+headless QA | **Wallet-first:** сначала только сумма депозита; после — терминал (графики/котировки/ордера/позиции/PnL/риск). Independent failover и root→contract проверены. Visual mobile — отдельно. |
 | 4 | Сообщество | ✅ ~80% | `community.py`, страница, chat/publish/copy/ratings/moderation. Telegram duplicate через `NTA_COMMUNITY_TELEGRAM_CHAT_ID` (отдельно от Orchestrator). |
 | 5 | Telegram + Google для NinjaTrader | ✅ ~95% | Вход — только Telegram. Google + Telegram step-up — только для NT. Gate: public `google_linked` **и** store-lookup `google_sub` по `user_id` (forged flag → 403). Ручной OAuth — ⚪ секреты владельца. |
 | 6 | Staging + «войти как» | ✅ ~90% | `runtime_env`, `test_auth`, presets, impersonation + red banner, prod lock на старте, `docs/STAGING_QA.md`. |
-| 7 | Micro Live | ✅ ~85% | MVP free trades + scale 1:100; staging stubs. |
+| 7 | Micro Live | 🟡 safe scaffold | Staging simulator и risk/ledger contracts готовы. Production честно `coming_soon`/fail-closed до реальных payment/broker adapters; не считать реальным продуктом. |
 | 8 | Рейтинги ИИ ★ → routing | ✅ ~90% | Агрегаты + router exploration после gates. |
 | 9 | Режимы Новичок / Профессионал | ✅ MVP | **Фаза E.** `ux_mode`, экран выбора, nav/API deny beginner, смена режимов §9.0, owner=professional, staging presets, `tests/test_ux_mode.py`. |
 
-**Фазы:** A–E MVP в коде · **доработка UX учебной торговли (wallet-first / TopStep-like desk) — в работе.**
+**Фазы:** A–E в коде и автотестах · Practice/failover headless QA завершён · ручная visual/credentials/Strategy Analyzer матрица остаётся BLOCKED.
 
 **Замечание по аудиту Work 5 (~35%):** внешний аудит сравнивал со *старым* ТЗ «Google обязателен для всего приложения». Владелец уточнил: Google только для NinjaTrader. По актуальному ТЗ Work 5 принят; критическая регрессия bridge pair устранена.
 
@@ -48,7 +48,7 @@
 4. ✅ **Сообщество** — chat / publish / copy / ratings; Telegram duplicate отдельным chat_id.
 5. ✅ **Google + Telegram step-up для NinjaTrader** — вход по-прежнему только через Telegram; Google и повторное подтверждение в Telegram нужны лишь для подключения/управления NT (Pro/dev тоже). Остальной функционал без Google.
 6. ✅ **Режим «войти как пользователь»** — staging + virtual users + impersonation + banner + prod lock.
-7. ✅ **Micro Live (реальные деньги в уменьшенном масштабе)** — 5 free trades → scale 1:100 + comparison PnL; staging stubs; страница + capability.
+7. 🟡 **Micro Live safe scaffold** — 5 free simulated trades → scale 1:100 + comparison PnL на staging; production `coming_soon` до реальных adapters.
 8. ✅ **Рейтинг ИИ по трём звёздам** — агрегаты role/model/role+model; admin tables; routing с exploration без обхода gates.
 9. ✅ **Режимы «Новичок» и «Профессионал»** — выбор при старте определяет весь интерфейс и доступный функционал (см. ПУНКТ 9). *(MVP Фазы E)*
 
@@ -61,7 +61,7 @@
 | **A** | Staging + NT dual-auth (Google+TG step-up) + «войти как» + сессии | Проверка UX и безопасный NT-доступ | ✅ ~95% |
 | **B** | Демо вместо blur + учебная торговля | Чтобы новым пользователям было что трогать | ✅ ~85–90% |
 | **C** | Community | Социальная площадка после базового доступа | ✅ ~80% |
-| **D** | Micro Live + умный AI-routing по ★ | Реальные микроденьги и автоулучшение ИИ | ✅ ~85–90% |
+| **D** | Micro Live scaffold + умный AI-routing по ★ | Staging simulator + автоулучшение ИИ; реальные деньги отдельно | 🟡 micro prod / ✅ AI routing |
 | **E** | Режимы Новичок / Профессионал | Развести простой демо-трейдинг и pro-контур стратегий/ИИ/NT | ✅ MVP — код + `test_ux_mode.py` |
 
 ---
@@ -79,7 +79,7 @@
 | Сессии | Kill, Monitoring tab, journal, admin-kill UX | `account_auth`, `user_support`, `ui.js` | Живой owner UI E2E | ✅ |
 | Скрин | С согласием пользователя | `user_support.py`, consent UI | Silent stream запрещён — оставляем | ✅ |
 | Телеметрия | CPU/RAM/сеть вкладки браузера | `user_support.record_telemetry` | Не обещать ядра ОС | ✅ (browser) |
-| Торговля | Practice + Micro Live + paper | `practice-trading.html`, `micro-live.html`, `trading.html` | Full live NT — отдельно | ✅ practice / ✅ micro / 🟡 full live |
+| Торговля | Practice + Micro Live + paper | `practice-trading.html`, `micro-live.html`, `trading.html` | Full live NT — отдельно | ✅ practice / 🟡 micro scaffold / 🟡 full live |
 | Графики 1–8 | Desktop + practice 1/2/4 | `desktop.html`, `practice-trading.html` | Practice 6/8 не MVP | ✅ engine / 🟡 practice layouts |
 | Topstep | Статус/scaffold | `topstep.html` | Не заменяет practice | 🟡 scaffold |
 | Бэктест | Full UI + demo-tier | `backtesting.html`, `demo_backtest.py` | — | ✅ |
@@ -87,7 +87,7 @@
 | ★★★ | Persist + meta + агрегаты + router | `chief_agent.rate_message`, `ai_ratings.py`, `agent_router.py` | Живая серия 10 задач на prod моделях | ✅ |
 | Staging / impersonation | `runtime_env`, `test_auth`, banner | `docs/STAGING_QA.md` | Полный E2E на отдельном data root | ✅ |
 | Community страница | `community.html` + API | `community.py` | Нужен `NTA_COMMUNITY_TELEGRAM_CHAT_ID` для live mirror | ✅ |
-| Micro Live | `micro_live.py` + UI | capability `micro_live`, staging stubs | Реальные broker fills / payments — prod gate | ✅ MVP / 🟡 prod money |
+| Micro Live | `micro_live.py` + UI | capability `micro_live`, staging simulator | Реальные broker fills / payments — prod gate | ✅ simulator / ❌ prod adapters |
 
 ---
 
@@ -183,7 +183,7 @@
 
 ## ПУНКТ 3. Страница учебной торговли (как Topstep, виртуальные деньги)
 
-> **Статус: 🟡 UX-fix (16.07.2026).** Backend MVP был ✅; владелец зафиксировал критический UX: **нельзя** сразу показывать MNQ/Buy/ticket. Сначала только вопрос о сумме виртуального депозита; после создания счёта — полноценный торговый экран по логике TopStep (графики, котировки, инструменты, ордера, позиции, PnL, риск, отчёты), деньги полностью виртуальные.
+> **Статус: ✅ код+автотесты+production headless QA (16.07.2026).** Wallet-first, terminal, trusted price, source/freshness/recovery, independent NT-off failover и возврат к Bridge проверены. Ручная визуальная/mobile приёмка остаётся отдельным BLOCKER.
 
 ### 3.0. Замечание владельца (зафиксировано 16.07.2026)
 1. При открытии «Учебная торговля» **не** показывать форму ордера / MNQ / Buy как будто сделка уже начата.
@@ -195,7 +195,7 @@
 Отдельная учебная страница: виртуальный депозит → затем market/limit/SL/TP, позиции/отчёты, бейдж «не реальные деньги». Не смешивать с live NT (`trading.html`) и Topstep status scaffold.
 
 Реализовано: `practice_trading.py`, NAV «Учебная», API `/api/practice/*`, `tests/test_practice_trading.py`.  
-**UX 16.07:** `practice-onboard` (сумма) → `practice-desk` (ChartEngine + ticket + риск + отчёт); beginner может читать `/api/ops/runtime/bars*` только для графиков.
+**UX 16.07:** `practice-onboard` (сумма) → `practice-desk` (ChartEngine + bid/ask/last + timeframe + Buy/Sell + cancel/close + риск + отчёт); beginner может читать `/api/ops/runtime/bars*` только для графиков. Market data: NinjaTrader primary → Databento/Yahoo independent failover → artifact; source/freshness/gaps видны в UI.
 
 ### 3.4. Обязательно перепроверить
 - [x] Учебный счёт / market / limit / SL-TP / daily-loss lock / отчёты.
@@ -289,7 +289,7 @@ Staging isolation gates, virtual users, fake Google link, «Войти как» 
 
 ## ПУНКТ 7. Micro Live / Scaled Live (реальные деньги в уменьшенном масштабе)
 
-> **Статус: ✅ ~85% (MVP).** `app/micro_live.py`, capability `micro_live`, nav + `micro-live.html`, free 5 trades, scale 1:100, PnL comparison, warning gate, staging stubs. Не путать с именами стратегий вроде `NTAMicroMnqScalpPilot`.
+> **Статус: 🟡 safe scaffold.** Staging simulator, ledger/risk/verified-result contracts готовы. Production UI/API не объявляются готовыми: `available=false`, `coming_soon` до реальных payment/broker adapters и явных owner flags. Не путать с Practice или именами стратегий.
 
 ### 7.1. Что нужно сделать
 1. После регистрации дать **3–5 бесплатных сделок** без денег пользователя.
@@ -304,7 +304,7 @@ Staging isolation gates, virtual users, fake Google link, «Войти как» 
 | Что | Файл / место | Действие |
 |---|---|---|
 | Новый режим счёта | `app/micro_live.py` (+ ledger) | ✅ Отдельно от practice/paper |
-| UI | `micro-live.html` + `assets/pages/micro-live.js` | ✅ Бейджи «Реальные деньги · масштаб 1:N» |
+| UI | `micro-live.html` + `assets/pages/micro-live.js` | ✅ Staging simulator / production coming-soon, без ложного real-money CTA |
 | Права | `permissions.py`, `subscriptions.py` | ✅ Capability `micro_live` (не на free_preview) |
 | Платежи/депозит | `micro_live.deposit` + runtime_env gates | ✅ Staging stub; prod требует `allow_real_payments` |
 | Runtime safety | `server.py`, `runtime_env.allow_live_orders` | ✅ Staging simulated fills |
@@ -322,15 +322,16 @@ Staging isolation gates, virtual users, fake Google link, «Войти как» 
 
 ### 7.4. Обязательно перепроверить
 - [x] Free trades не списывают деньги и уменьшают счётчик.
-- [x] После лимита включается Micro Live (или CTA на депозит).
+- [x] После лимита staging simulator применяет scale/CTA.
 - [x] Масштаб корректно считает маржу/PnL/эквивалент полного объёма.
 - [x] Бейджи не путают с paper/demo.
 - [x] Risk lock срабатывает. *(daily_loss при отрицательном балансе сверх лимита)*
 - [x] Staging не проводит реальные платежи.
 - [x] Ledger и отчёты сходятся. *(ledger deposits + trades list)*
-- [x] Юридические/риск-предупреждения показаны до первой реальной сделки.
+- [x] Риск-предупреждения показаны до simulated/verified сделки.
+- [ ] Реальный payment adapter + broker adapter + sandbox E2E — **BLOCKED внешней интеграцией и отдельным разрешением**.
 
-*(MVP принят по автотестам + scripted checklist. Prod broker fills — отдельный шаг после включения gates.)*
+*(Staging simulator принят по автотестам + scripted checklist. Production Micro Live не принят и остаётся fail-closed.)*
 
 ---
 
@@ -519,7 +520,8 @@ Nav новичка: короткое меню (кошелёк / торговля
 - [x] Orchestrator mirror не сломан ✅
 
 ## Фаза D
-- [x] Free 3–5 trades → Micro Live scale + PnL comparison ✅ *(MVP; staging stubs; prod broker — gate)*
+- [x] Free 3–5 trades → staging Micro Live scale + PnL comparison ✅
+- [ ] Production Micro Live money/order flow — **BLOCKED до реальных adapters, sandbox QA и отдельного разрешения**.
 - [x] AI ★ → 3 рейтинга → routing с exploration ✅
 
 ## Фаза E (новый блок)
@@ -593,7 +595,7 @@ Staging → Virtual user → Войти как пользователь → пр
 Фазы A–E завершены в коде и автоматической проверке. Work 5: политика NT-only подтверждена владельцем.
 **Фаза E / Пункт 9: режимы Новичок и Профессионал реализованы** (`ux_mode`, gate UI, permissions/API deny, presets, `tests/test_ux_mode.py`).
 
-Повторный независимый прогон: **618 pytest passed**, **13/13 legacy suites**, Python compile, **32/32 JavaScript syntax**, CSP/secrets/Markdown scan и NinjaTrader bridge build (**0 warnings / 0 errors**) — PASS. Staging soak: **2133/2133 HTTP 200**, 0 ошибок/5xx/SQLite locks, 10 виртуальных пользователей, production guard неизменён. Интерактивный Orchestrator/domain AI и тяжёлые chart batches переведены в durable worker; idempotency, cancel/retry/lease и реальный process-crash supervisor probe — PASS. Окончательный локальный production backend перезапущен: UI/resources HTTP 200, worker жив, stderr пуст; read-only Telegram bot/webhook/owner-chat probe — PASS.
+Финальный независимый прогон: **628 pytest passed**, **13/13 legacy suites**, Python/JavaScript compile, CSP/secrets/Markdown scan и NinjaTrader Bridge Release build (**0 warnings / 0 errors**) — PASS. Финальный staging probe: **489/489 HTTP 200**, 0 ошибок/5xx/SQLite locks, workspace isolation PASS, production guard неизменён; worker crash recovery и HTTP/SSE/idempotency/large-chart probes — PASS. Реальный NinjaTrader-stop тест: independent bars + PNG PASS; после запуска root `MNQ` разрешён в `MNQ 09-26`, Bridge live bars вернулись за 6 секунд. Production backend и NinjaTrader heartbeat работают.
 
 Остаточные блокеры production-приёмки: реальные Google/Telegram credentials; payment/broker sandbox adapters и отдельное разрешение на money/order tests; ручной staging E2E/visual mobile/двухпрофильная сессия; NinjaTrader Strategy Analyzer. Это внешние проверки, а не незакрытая кодовая задача.
 

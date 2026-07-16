@@ -1,6 +1,6 @@
 # StratForge Codex run state — 2026-07-16
 
-Last checkpoint: 2026-07-16 08:50 PT
+Last checkpoint: 2026-07-16 09:30 PT
 
 ## Git
 
@@ -28,35 +28,38 @@ Last checkpoint: 2026-07-16 08:50 PT
 6. Started the authorized in-app Browser QA and captured the initial unauthenticated production desktop state. The browser-client retry then correlated with another Codex desktop restart; no full role/device matrix has been claimed.
 7. Completed the premature-exit investigation. Evidence and conclusion are recorded in `docs/CODEX_CRASH_INVESTIGATION_2026-07-16.md`.
 8. Added a standalone watchdog that preserves five-second process/package/reboot/resource/Git checkpoints and warns on detectable restart risks without controlling or terminating Codex.
+9. Implemented independent Databento/Yahoo providers, provider health/cooldown, automatic failover, gap recovery, freshness/quote/source metadata and a read-only status API.
+10. Completed the real NinjaTrader-stop test: 180 independent bars and a valid PNG remained available; after restart, root `MNQ` resolved to `MNQ 09-26` and primary Bridge bars resumed in six seconds.
+11. Repaired Practice Trading data states/controls/reset/cancel/close, made Micro Live production UI fail-closed/coming-soon, and confirmed TopStep as safe scaffold.
+12. Re-ran pytest, legacy suites, static release scan, worker crash/HTTP probes, staging probe and Bridge Release build. Exact final evidence is recorded in the release audit.
+13. Found and fixed a pre-existing subscription test that lacked its temp-store fixture and could touch production DPAPI data. Added unique temp names plus bounded Windows sharing retries, backed up the encrypted store, removed only five rows proven to be created during this session, and restored the prior entitlement state.
 
 ## Branch preservation audit
 
 | Branch | Commit | Purpose | State | Preservation check |
 | --- | --- | --- | --- | --- |
 | `codex/stratforge-pre-separation-safety` | `3019a571de43fccec3e928ee350f5e18de03bb5e` | Complete original dirty tracked+untracked snapshot | Immutable safety ref, 746 files | Tree `044c9d0774b08d84637378efc77e2a75d0cf0ef6`; scratch plan present |
-| `codex/stratforge-release-20260716` | `9f95446f8be5ed3b2f2e5deec34d01a3c900e506` before this checkpoint | Atomic release history plus run-state mechanism | Clean, 746 files | Seven separated implementation commits plus checkpoint; no uncommitted files |
+| `codex/stratforge-release-20260716` | Current tip; authoritative hash is the final `git log` entry | Atomic release history, recovery controls, failover and audit | Clean after final documentation commit | Separate implementation/recovery/data/documentation commits; no history rewrite |
 
-The release/safety differences are intentional and auditable: the scratch `STRATFORGE_PLAN_TEMP.md` stays only in safety; the release audit contains corrected branch metadata; one diagnostic-script trailing space was removed; the release branch adds the run-state file. No original file is unrecoverable.
+The release/safety differences are intentional and auditable: the scratch `STRATFORGE_PLAN_TEMP.md` stays only in safety; the release branch adds implementation, tests, watchdog/run-state, failover task and corrected audit documents. No original file is unrecoverable.
 
 ## Verified
 
 - Release branch was clean after the seven commits.
 - Safety and release refs exist.
 - Initial production UI loads and presents a Telegram login gate.
-- Previous automated evidence before history separation: 618 pytest tests, 13/13 legacy suites, Python/JavaScript/static scans and bridge build passed. These results must be rerun from the final post-failover HEAD.
+- Final post-failover evidence: 628 pytest tests, 13/13 legacy suites, Python/JavaScript/static scans, worker/recovery probes, staging isolation and Bridge Release build passed.
 
-## Not completed
+## External/manual blockers (not incomplete code claims)
 
-- Full Browser/mobile/Telegram Mini App and role/impersonation matrix.
-- Visual repair and acceptance of Practice Trading.
-- Safe product decision and UI for Micro Live.
-- TopStep scaffold review.
-- NinjaTrader/Strategy Analyzer manual checks.
-- Independent market-data provider, failover, freshness and gap recovery.
-- Final full regression and updated acceptance documentation.
+- Full visual/mobile/Telegram Mini App and two-profile role/impersonation matrix in user-controlled Chrome.
+- Real Google OAuth and separate Community Telegram destination.
+- NinjaTrader Strategy Analyzer manual comparison.
+- Credentialed Databento entitlement (current independent Yahoo chart fallback is delayed and chart-only).
+- Real payment/broker sandbox adapters and separate authorization for any money/order test.
 
-The file `STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md` was not found in the workspace, Git refs or common attachment folders. Its required scope has been restored from the owner's attached text: provider abstraction, a source independent of NinjaTrader, freshness control, automatic failover, gap detection/recovery, unified bars, source status UI and a NinjaTrader-stop test.
+The originally referenced `STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md` was absent, so its scope was restored from the owner's attachment and the completed implementation/evidence report now exists at the project root under that name.
 
 ## Exact next action
 
-Run and validate `tools/codex_watchdog.ps1`, start it as a detached background process, commit this recovery-control stage, then audit Practice Trading/Micro Live/TopStep and the market-data chain through HTTP, tests and source inspection. Do not initialize the in-app browser runtime again.
+Run the remaining human visual/role matrix in an already-open user-controlled Chrome window, then perform the separately credentialed Google/Community/Databento/payment/broker/Strategy Analyzer checks. Do not initialize the in-app browser runtime again.
