@@ -80,6 +80,29 @@ ROUTE_CAPABILITY = (
     ("/api/ops/live/", "live_commands"),
 )
 
+# Beginner UX (Phase E): only practice trading contour. Everything else is
+# soft-denied even if a subscription would otherwise grant it.
+BEGINNER_NAV_ALLOWED = frozenset({"practice"})
+BEGINNER_CAPS_ALLOWED = frozenset({"practice_trading"})
+BEGINNER_DENIED_PREFIXES = (
+    "/api/community/",
+    "/api/ai-lab/",
+    "/api/ai-agents",
+    "/api/demo-backtests",
+    "/api/micro-live/",
+    "/api/ops/",
+    "/api/bridge/",
+    "/api/workspaces/",
+    "/api/news",
+    "/api/documents",
+    "/api/jobs",
+    "/api/topstep",
+    "/api/vitek/",
+    "/api/owner/",
+    "/api/worker/",
+    "/api/telegram/",
+)
+
 
 class PermissionError(RuntimeError):
     def __init__(self, message: str, status: int = 403):
@@ -103,6 +126,13 @@ def _free_preview_features() -> Dict[str, bool]:
     return feats or {cid: False for cid in CAPABILITY_IDS}
 
 
+def _ux_mode_of(user: Dict[str, Any]) -> str:
+    if user.get("is_owner"):
+        return "professional"
+    mode = str(user.get("ux_mode") or "").strip().lower()
+    return mode if mode in ("beginner", "professional") else ""
+
+
 def resolve(user: Optional[Dict[str, Any]],
             entitlement: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Compute a user's effective capabilities + navigation from their plan.
@@ -119,6 +149,20 @@ def resolve(user: Optional[Dict[str, Any]],
             "is_owner": True, "plan_id": "founder", "free_preview": False,
             "capabilities": caps, "nav": nav, "locked_nav": [],
             "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
+            "ux_mode": "professional", "ux_pending": False,
+        }
+
+    ux_mode = _ux_mode_of(user)
+    if not ux_mode:
+        # Must choose beginner/professional before any product contour opens.
+        caps = {cid: False for cid in CAPABILITY_IDS}
+        nav = {nid: False for nid in NAV_SECTIONS}
+        return {
+            "is_owner": False, "plan_id": "", "free_preview": True,
+            "capabilities": caps, "nav": nav,
+            "locked_nav": list(NAV_SECTIONS),
+            "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
+            "ux_mode": "", "ux_pending": True,
         }
 
     plan_feats = _features_from_plan((entitlement or {}).get("plan"))
@@ -149,13 +193,22 @@ def resolve(user: Optional[Dict[str, Any]],
             enabled = section_override
         nav[nid] = enabled
 
-    locked = [nid for nid in NAV_SECTIONS if nid != "overview" and not nav.get(nid)]
+    if ux_mode == "beginner":
+        caps = {cid: (cid in BEGINNER_CAPS_ALLOWED) for cid in CAPABILITY_IDS}
+        nav = {nid: (nid in BEGINNER_NAV_ALLOWED) for nid in NAV_SECTIONS}
+
+    locked = [nid for nid in NAV_SECTIONS if not nav.get(nid)]
+    if ux_mode != "beginner":
+        locked = [nid for nid in NAV_SECTIONS if nid != "overview" and not nav.get(nid)]
     demo_tier = bool(caps.get("demo_backtest")) and not bool(caps.get("backtesting"))
+    if ux_mode == "beginner":
+        demo_tier = True
     return {
         "is_owner": False, "plan_id": plan_id, "free_preview": free_preview,
         "capabilities": caps, "nav": nav, "locked_nav": locked,
         "unlock_message": DEMO_UNLOCK_MESSAGE if demo_tier else UNLOCK_MESSAGE,
         "demo_tier": demo_tier,
+        "ux_mode": ux_mode, "ux_pending": False,
     }
 
 
@@ -179,6 +232,14 @@ def required_capability(path: str) -> Optional[str]:
     return best
 
 
+def beginner_path_denied(path: str) -> bool:
+    p = str(path or "")
+    for prefix in BEGINNER_DENIED_PREFIXES:
+        if p == prefix.rstrip("/") or p.startswith(prefix):
+            return True
+    return False
+
+
 def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
     """Raise ``PermissionError`` when the request's user lacks the capability
     that ``path`` requires. The owner is always allowed; unrestricted paths and
@@ -186,6 +247,18 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
     context = context or {}
     if context.get("is_owner"):
         return
+    user = context.get("user") if isinstance(context.get("user"), dict) else {}
+    ux_mode = _ux_mode_of(user) or str(context.get("ux_mode") or "").strip().lower()
+    p = str(path or "")
+    if ux_mode not in ("beginner", "professional"):
+        if p.startswith("/api/auth/"):
+            return
+        raise PermissionError(
+            "Сначала выберите режим: «Новичок» или «Профессионал».", 403)
+    if ux_mode == "beginner" and beginner_path_denied(p):
+        raise PermissionError(
+            "Режим «Новичок»: раздел недоступен. Переключитесь в «Профессионал» в кабинете.",
+            403)
     cap = required_capability(path)
     if not cap:
         return

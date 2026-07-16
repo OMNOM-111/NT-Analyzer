@@ -26,7 +26,7 @@ def test_owner_has_all_capabilities() -> None:
 
 
 def test_free_preview_when_no_entitlement() -> None:
-    perm = permissions.resolve({"is_owner": False}, {})
+    perm = permissions.resolve({"is_owner": False, "ux_mode": "professional"}, {})
     assert perm["free_preview"] is True
     assert perm["plan_id"] == permissions.FREE_PREVIEW_PLAN_ID
     # Free Preview: news, docs, demo backtest, practice trading.
@@ -42,7 +42,7 @@ def test_free_preview_when_no_entitlement() -> None:
 
 
 def test_plan_capabilities_map_to_nav() -> None:
-    perm = permissions.resolve({"is_owner": False}, _entitlement("standard"))
+    perm = permissions.resolve({"is_owner": False, "ux_mode": "professional"}, _entitlement("standard"))
     assert perm["free_preview"] is False
     assert perm["capabilities"]["charts_realtime"] is True
     assert perm["nav"]["desktop"] is True   # charts_realtime -> desktop
@@ -52,7 +52,7 @@ def test_plan_capabilities_map_to_nav() -> None:
 
 
 def test_user_permission_override_grants_capability() -> None:
-    user = {"is_owner": False, "permission_overrides": {"ai_lab": True}}
+    user = {"is_owner": False, "ux_mode": "professional", "permission_overrides": {"ai_lab": True}}
     perm = permissions.resolve(user, _entitlement("basic"))
     # basic has no ai_lab, but the per-user override grants it (and its nav).
     assert perm["capabilities"]["ai_lab"] is True
@@ -60,7 +60,7 @@ def test_user_permission_override_grants_capability() -> None:
 
 
 def test_user_permission_override_revokes_capability() -> None:
-    user = {"is_owner": False, "permission_overrides": {"backtesting": False, "demo_backtest": False}}
+    user = {"is_owner": False, "ux_mode": "professional", "permission_overrides": {"backtesting": False, "demo_backtest": False}}
     perm = permissions.resolve(user, _entitlement("pro"))
     assert perm["capabilities"]["backtesting"] is False
     assert perm["capabilities"]["demo_backtest"] is False
@@ -68,7 +68,7 @@ def test_user_permission_override_revokes_capability() -> None:
 
 
 def test_user_nav_override_wins() -> None:
-    user = {"is_owner": False, "feature_overrides": {"topstep": True}}
+    user = {"is_owner": False, "ux_mode": "professional", "feature_overrides": {"topstep": True}}
     perm = permissions.resolve(user, {})
     assert perm["nav"]["topstep"] is True
 
@@ -85,17 +85,17 @@ def test_enforce_owner_bypasses() -> None:
 
 
 def test_enforce_blocks_without_capability() -> None:
-    ctx = {"is_owner": False, "capabilities": {"ai_lab": False}}
+    ctx = {"is_owner": False, "user": {"ux_mode": "professional"}, "capabilities": {"ai_lab": False}}
     with pytest.raises(permissions.PermissionError) as exc:
         permissions.enforce("/api/ai-lab/x", ctx)
     assert exc.value.status == 403
 
 
 def test_enforce_allows_with_capability() -> None:
-    ctx = {"is_owner": False, "capabilities": {"ai_lab": True}}
+    ctx = {"is_owner": False, "user": {"ux_mode": "professional"}, "capabilities": {"ai_lab": True}}
     permissions.enforce("/api/ai-lab/x", ctx)  # must not raise
 
 
 def test_enforce_ignores_unrestricted_paths() -> None:
-    ctx = {"is_owner": False, "capabilities": {}}
+    ctx = {"is_owner": False, "user": {"ux_mode": "professional"}, "capabilities": {}}
     permissions.enforce("/api/auth/me", ctx)  # must not raise

@@ -804,6 +804,11 @@
     startDesktopCommandBridge();
     startUserSupportBridge();
     renderImpersonationBanner(CURRENT_AUTH);
+    if (user.needs_ux_mode || CURRENT_AUTH.ux_pending) {
+      renderUxModeGate();
+      return;
+    }
+    if (maybeRedirectBeginnerHome(user)) return;
     // Google is NOT required for login / general use — only for NinjaTrader control.
     runReady();
     maybeRedeemStoredPromo();
@@ -821,6 +826,63 @@
     document.body.appendChild(card);
     const btn = qs('#session-ended-login', card);
     if (btn) btn.onclick = () => { card.remove(); renderTelegramLogin(''); };
+  }
+
+  function renderUxModeGate() {
+    const existing = qs('#ux-mode-gate');
+    if (existing) existing.remove();
+    document.documentElement.classList.add('ux-mode-locked');
+    const card = el(`<div id="ux-mode-gate" class="auth-screen ux-mode-gate" role="dialog" aria-modal="true" aria-label="Выбор режима">
+      <section class="auth-card ux-mode-card">
+        <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Выберите режим работы</span></div></div>
+        <p class="auth-lead">Без выбора режим нельзя пропустить. Позже можно сменить в кабинете.</p>
+        <div class="ux-mode-choices">
+          <button type="button" class="ux-mode-choice" data-ux="beginner">
+            <strong>Новичок</strong>
+            <span>Кошелёк → инструмент → график → сделки. Всё виртуально, без стратегий и ИИ.</span>
+          </button>
+          <button type="button" class="ux-mode-choice" data-ux="professional">
+            <strong>Профессионал</strong>
+            <span>Стратегии, AI Lab, Community, NinjaTrader и расширенные разделы по тарифу.</span>
+          </button>
+        </div>
+        <div class="cab-sub" id="ux-mode-msg"></div>
+      </section>
+    </div>`);
+    document.body.appendChild(card);
+    qsa('[data-ux]', card).forEach(btn => {
+      btn.onclick = async () => {
+        const mode = btn.dataset.ux;
+        const msg = qs('#ux-mode-msg', card);
+        qsa('[data-ux]', card).forEach(b => { b.disabled = true; });
+        if (msg) msg.textContent = 'Сохраняю…';
+        try {
+          const out = await API.http.authUxMode({ ux_mode: mode });
+          CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, out, {
+            user: out.user || CURRENT_AUTH.user,
+            features: out.features,
+            capabilities: out.capabilities,
+            locked_nav: out.locked_nav,
+            ux_mode: out.ux_mode || mode,
+            ux_pending: false,
+          });
+          if (CURRENT_AUTH.user) {
+            CURRENT_AUTH.user.ux_mode = out.ux_mode || mode;
+            CURRENT_AUTH.user.needs_ux_mode = false;
+          }
+          document.documentElement.classList.remove('ux-mode-locked');
+          card.remove();
+          applyNavAccess(CURRENT_AUTH);
+          if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
+          runReady();
+          maybeRedeemStoredPromo();
+          maybeHandleGoogleReturn();
+        } catch (e) {
+          if (msg) msg.textContent = e.message || String(e);
+          qsa('[data-ux]', card).forEach(b => { b.disabled = false; });
+        }
+      };
+    });
   }
 
   function renderImpersonationBanner(auth) {
@@ -1071,20 +1133,32 @@
   // sections) the rail keeps every section VISIBLE but marks locked ones, and a
   // locked page is covered by an unlock gate instead of being hidden.
   // Demo-tier unlocks backtest/practice without full subscription blur.
+  // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
     const isOwner = !!auth.is_owner;
-    const features = auth.features || (auth.user && auth.user.features) || null;
+    const user = auth.user || {};
+    const uxMode = String(auth.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
+    const features = auth.features || user.features || null;
     const caps = auth.capabilities || {};
-    const demoTier = !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting));
+    const demoTier = !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting) || uxMode === 'beginner');
     document.body.dataset.demoTier = demoTier ? '1' : '0';
+    document.body.dataset.uxMode = uxMode || '';
     document.documentElement.classList.toggle('demo-tier', demoTier);
+    document.documentElement.classList.toggle('ux-beginner', uxMode === 'beginner');
     const hasLockList = Array.isArray(auth.locked_nav);
     const locked = new Set(isOwner ? [] : (auth.locked_nav || []));
     qsa('.rail-item[data-nav]').forEach(item => {
       const id = item.dataset.nav;
-      item.hidden = false;
       item.removeEventListener('click', lockedNavClick);
+      if (uxMode === 'beginner') {
+        item.hidden = id !== 'practice';
+        item.classList.remove('rail-locked');
+        const lk = item.querySelector('.rail-lock');
+        if (lk) lk.remove();
+        return;
+      }
+      item.hidden = false;
       if (id === 'overview') { item.classList.remove('rail-locked'); return; }
       let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
       item.classList.toggle('rail-locked', !!isLocked);
@@ -1095,11 +1169,30 @@
       } else if (lk) { lk.remove(); }
     });
     const page = document.body.dataset.page;
+    if (uxMode === 'beginner') {
+      ensureBeginnerWatermark();
+      return;
+    }
     if (!isOwner && page && locked.has(page)) {
       renderLockGate(auth.unlock_message || 'Раздел доступен после активации подписки, промокода или доступа владельца.', auth.free_preview);
     } else if (demoTier && (page === 'backtest' || page === 'practice')) {
       ensureDemoWatermark();
     }
+  }
+  function maybeRedirectBeginnerHome(user) {
+    user = user || {};
+    if (String(user.ux_mode || '').toLowerCase() !== 'beginner') return false;
+    const page = document.body.dataset.page;
+    if (!page || page === 'practice') return false;
+    location.replace('practice-trading.html');
+    return true;
+  }
+  function ensureBeginnerWatermark() {
+    if (qs('#beginner-watermark')) return;
+    const bar = el(`<div id="beginner-watermark" class="demo-watermark beginner-watermark" role="status">Режим «Новичок» · виртуальные деньги · учебный контур <button type="button" class="btn sm" id="beginner-upgrade-cta">Стать профессионалом</button></div>`);
+    document.body.appendChild(bar);
+    const btn = qs('#beginner-upgrade-cta', bar);
+    if (btn) btn.onclick = () => openCabinet('profile');
   }
   function ensureDemoWatermark() {
     if (qs('#demo-watermark')) return;
@@ -1309,17 +1402,35 @@
     const feats = me.features || {};
     const activeFeatures = (me.feature_catalog || []).filter(f => feats[f.id] !== false);
     const isOwner = !!me.is_owner;
+    const user = me.user || {};
+    const uxMode = String(me.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
     const planLabel = sub.plan_id ? (plan.label || sub.plan_id) : (isOwner ? 'Founder' : 'Нет активной подписки');
     const planBadge = isOwner
       ? '<span class="badge trial">★ Золотая звезда · Основатель</span>'
       : (sub.plan_id ? `<span class="badge ${(sub.status === 'active' || sub.status === 'promo_grant' || sub.status === 'founder') ? 'live' : 'archived'}">${esc(sub.status || '')}</span>` : '');
     const expires = sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : '');
+    const modeLabel = uxMode === 'beginner' ? 'Новичок' : (uxMode === 'professional' ? 'Профессионал' : 'не выбран');
+    const modeCard = isOwner
+      ? `<div class="cab-card"><h4>Режим интерфейса</h4><div class="cab-kv"><span class="k">Режим</span><span class="v"><strong>Профессионал</strong> <span class="badge live">владелец</span></span></div><div class="cab-sub">Владелец всегда в режиме «Профессионал». Для проверки новичка используйте Staging → impersonation.</div></div>`
+      : `<div class="cab-card"><h4>Режим интерфейса</h4>
+          <div class="cab-kv"><span class="k">Сейчас</span><span class="v"><strong>${esc(modeLabel)}</strong></span></div>
+          <p class="cab-sub">Новичок — только учебная торговля. Профессионал — стратегии, ИИ, Community и NT по тарифу.</p>
+          <div class="flex gap-sm wrap" id="cab-ux-actions">
+            <button type="button" class="btn ${uxMode === 'beginner' ? 'ghost' : 'primary'} sm" data-set-ux="professional" ${uxMode === 'professional' ? 'disabled' : ''}>Стать профессионалом</button>
+            <button type="button" class="btn ${uxMode === 'professional' ? 'ghost' : 'primary'} sm" data-set-ux="beginner" ${uxMode === 'beginner' ? 'disabled' : ''}>Режим новичка</button>
+          </div>
+          <div class="cab-sub" id="cab-ux-msg"></div>
+        </div>`;
+    const ntCard = uxMode === 'beginner'
+      ? `<div class="cab-card"><h4>Мой NinjaTrader</h4><div class="cab-sub">Подключение NT доступно в режиме «Профессионал».</div></div>`
+      : `<div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>`;
     return `
+      ${modeCard}
       <div class="cab-card"><h4>Подписка</h4>
         <div class="cab-kv"><span class="k">Тариф</span><span class="v"><strong>${esc(planLabel)}</strong> ${planBadge}</span></div>
         ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
       </div>
-      <div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>
+      ${ntCard}
       <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${activeFeatures.map(f => `<span class="chip-tag">${esc(f.label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
   }
 
@@ -2084,6 +2195,47 @@
     cb.innerHTML = cabinetProfile(me);
     const nt = qs('#cab-nt', cb);
     if (nt) renderNinjaInto(nt, me);
+    qsa('[data-set-ux]', cb).forEach(btn => {
+      btn.onclick = async () => {
+        const mode = btn.dataset.setUx;
+        const msg = qs('#cab-ux-msg', cb);
+        if (mode === 'beginner') {
+          const ok = confirm('Перейти в режим «Новичок»? Стратегии, ИИ, Community и NinjaTrader будут скрыты.');
+          if (!ok) return;
+        } else if (mode === 'professional') {
+          const ok = confirm('Перейти в режим «Профессионал»? Откроются разделы по вашему тарифу (стратегии, ИИ, NT и др.).');
+          if (!ok) return;
+        }
+        btn.disabled = true;
+        if (msg) msg.textContent = 'Сохраняю…';
+        try {
+          const out = await API.http.authUxMode({
+            ux_mode: mode,
+            confirm_downgrade: mode === 'beginner',
+          });
+          CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, out, {
+            user: out.user || CURRENT_AUTH.user,
+            features: out.features,
+            capabilities: out.capabilities,
+            locked_nav: out.locked_nav,
+            ux_mode: out.ux_mode || mode,
+          });
+          applyNavAccess(CURRENT_AUTH);
+          toast(mode === 'beginner' ? 'Режим «Новичок»' : 'Режим «Профессионал»');
+          if (mode === 'beginner') {
+            closeDrawer();
+            if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
+            location.reload();
+            return;
+          }
+          openCabinet('profile');
+        } catch (e) {
+          if (msg) msg.textContent = e.message || String(e);
+          reportError(e);
+          btn.disabled = false;
+        }
+      };
+    });
   }
   function renderCabinet(body, me, tab) {
     const header = cabinetHeader(me);
@@ -3812,6 +3964,9 @@
   }
   function buildOrchestratorWidget() {
     if (ORCH.built || qs('.orch-fab')) return;
+    const auth = CURRENT_AUTH || {};
+    const ux = String(auth.ux_mode || (auth.user && auth.user.ux_mode) || '').toLowerCase();
+    if (ux === 'beginner' || auth.ux_pending || (auth.user && auth.user.needs_ux_mode)) return;
     ORCH.built = true;
     const offline = !window.API || API.config.offline;
     const skin = orchSkinMeta(orchLoadSkin());

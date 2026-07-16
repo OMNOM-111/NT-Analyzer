@@ -43,7 +43,7 @@ def test_micro_live_free_trades_and_scale(micro_store):
 
 
 def test_micro_live_not_on_free_preview():
-    perm = permissions.resolve({}, None)
+    perm = permissions.resolve({"ux_mode": "professional"}, None)
     assert perm["capabilities"].get("micro_live") is False
     assert perm["nav"].get("micro_live") is False
     assert perm["capabilities"].get("practice_trading") is True

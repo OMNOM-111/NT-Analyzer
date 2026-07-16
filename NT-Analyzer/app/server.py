@@ -224,6 +224,7 @@ _SELF_SERVICE_POSTS = {
     "/api/bridge/pair/start",
     "/api/bridge/pair/complete",
     "/api/auth/avatar/refresh",
+    "/api/auth/ux-mode",
     # Chart data is a read that carries its request list in the body; viewers
     # (read_only) must be able to poll it so the desktop grid works in the
     # Telegram Mini App exactly like the local UI.
@@ -1030,6 +1031,9 @@ class Handler(BaseHTTPRequestHandler):
         payload["free_preview"] = perm["free_preview"]
         payload["locked_nav"] = perm["locked_nav"]
         payload["unlock_message"] = perm["unlock_message"]
+        payload["ux_mode"] = perm.get("ux_mode") or (user.get("ux_mode") if isinstance(user, dict) else "") or ""
+        payload["ux_pending"] = bool(perm.get("ux_pending"))
+        payload["demo_tier"] = bool(perm.get("demo_tier"))
         return payload
 
     def _ai_conversation_scope(self) -> Dict[str, Any]:
@@ -4869,6 +4873,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, out)
             except demo_backtest.DemoBacktestError as exc:
                 self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/auth/ux-mode":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            body = self._read_body() or {}
+            try:
+                result = account_auth.set_ux_mode(
+                    context.get("user_id"),
+                    str(body.get("ux_mode") or body.get("mode") or ""),
+                    confirm_downgrade=bool(body.get("confirm_downgrade") or body.get("confirm")),
+                )
+                # Refresh auth payload so client gets new nav immediately.
+                user = result.get("user") or {}
+                payload = self._augment_permissions(context, {
+                    "ok": True,
+                    "authenticated": True,
+                    "ux_mode": result.get("ux_mode"),
+                    "previous": result.get("previous"),
+                    "user": user,
+                    "is_owner": bool(context.get("is_owner")),
+                    "role": context.get("role"),
+                    "user_id": context.get("user_id"),
+                })
+                self._json(HTTPStatus.OK, payload)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/auth/logout":

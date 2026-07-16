@@ -31,6 +31,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "plan_hint": "free_preview",
         "google_linked": True,
         "onboarding_complete": False,
+        "ux_mode": "",
     },
     "no_google": {
         "label": "Telegram без Google (миграция)",
@@ -39,6 +40,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "plan_hint": "free_preview",
         "google_linked": False,
         "onboarding_complete": True,
+        "ux_mode": "professional",
     },
     "demo": {
         "label": "Demo доступ",
@@ -47,6 +49,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "plan_hint": "free_preview",
         "google_linked": True,
         "onboarding_complete": True,
+        "ux_mode": "professional",
     },
     "paid": {
         "label": "Платный тариф",
@@ -55,6 +58,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "plan_hint": "pro",
         "google_linked": True,
         "onboarding_complete": True,
+        "ux_mode": "professional",
     },
     "blocked": {
         "label": "Заблокирован",
@@ -63,6 +67,25 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "plan_hint": "free_preview",
         "google_linked": True,
         "onboarding_complete": True,
+        "ux_mode": "professional",
+    },
+    "beginner": {
+        "label": "Режим Новичок",
+        "status": "active",
+        "role": "read_only",
+        "plan_hint": "free_preview",
+        "google_linked": False,
+        "onboarding_complete": True,
+        "ux_mode": "beginner",
+    },
+    "professional": {
+        "label": "Режим Профессионал",
+        "status": "active",
+        "role": "full_control",
+        "plan_hint": "pro",
+        "google_linked": True,
+        "onboarding_complete": True,
+        "ux_mode": "professional",
     },
 }
 
@@ -116,6 +139,7 @@ def create_virtual_user(
         virtual=True,
         preset=preset_key,
         terms_accepted=True,
+        ux_mode=spec.get("ux_mode") if "ux_mode" in spec else None,
     )
     return {"ok": True, "preset": preset_key, "user": user}
 

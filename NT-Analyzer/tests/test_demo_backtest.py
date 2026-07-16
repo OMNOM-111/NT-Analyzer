@@ -32,7 +32,7 @@ def demo_store(tmp_path, monkeypatch):
         "version": 1,
         "users": [
             {"user_id": 999, "first_name": "Owner", "role": "owner", "status": "active", "is_owner": True},
-            {"user_id": 42, "first_name": "Free", "role": "read_only", "status": "active", "is_owner": False},
+            {"user_id": 42, "first_name": "Free", "role": "read_only", "status": "active", "is_owner": False, "ux_mode": "professional"},
         ],
         "challenges": [],
         "sessions": [],
@@ -71,7 +71,7 @@ def _request(base, path, *, token="", csrf="", method="GET", body=None):
 
 
 def test_free_preview_unlocks_demo_backtest_nav():
-    perm = permissions.resolve({"user_id": 1, "is_owner": False}, None)
+    perm = permissions.resolve({"user_id": 1, "is_owner": False, "ux_mode": "professional"}, None)
     assert perm["free_preview"] is True
     assert perm["capabilities"]["demo_backtest"] is True
     assert perm["capabilities"]["backtesting"] is False

@@ -269,6 +269,7 @@
     testAuthGoogleLink: (body) => send('/api/auth/test/google-link', 'POST', body || {}),
     runtimeEnv: (o) => getJSON('/api/runtime/env', o),
     authMe: (o) => getJSON('/api/auth/me', o),
+    authUxMode: (body) => send('/api/auth/ux-mode', 'POST', body || {}),
     authAvatarRefresh: () => send('/api/auth/avatar/refresh', 'POST', {}),
     billingPlans: (o) => getJSON('/api/billing/plans', o),
     billingMe: (o) => getJSON('/api/billing/me', o),

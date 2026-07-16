@@ -42,6 +42,7 @@ ADMIN_REVOKE_NOTICE_TTL_SEC = 24 * 60 * 60
 IMPERSONATION_TTL_SEC = 4 * 60 * 60
 NT_STEP_UP_TTL_SEC = 30 * 60
 NT_CONFIRM_TTL_SEC = 10 * 60
+UX_MODES = ("beginner", "professional")
 ROLES = {"read_only", "full_control", "owner"}
 # Owner-toggleable capabilities. The ids match the Aurora navigation ids so the
 # client can gate the left rail directly. ``personal_nt`` gates the "connect my
@@ -275,6 +276,53 @@ def google_linked(user: Optional[Dict[str, Any]]) -> bool:
         return True
     # Auth context often carries ``_public_user`` (no raw google_sub).
     return bool(user.get("google_linked"))
+
+
+def effective_ux_mode(user: Optional[Dict[str, Any]]) -> str:
+    """Owner is always professional; others use stored ux_mode or empty."""
+    if not user:
+        return ""
+    if user.get("is_owner"):
+        return "professional"
+    mode = str(user.get("ux_mode") or "").strip().lower()
+    return mode if mode in UX_MODES else ""
+
+
+def needs_ux_mode_choice(user: Optional[Dict[str, Any]]) -> bool:
+    if not user or user.get("is_owner"):
+        return False
+    return effective_ux_mode(user) not in UX_MODES
+
+
+def set_ux_mode(user_id: Any, mode: str, *, confirm_downgrade: bool = False) -> Dict[str, Any]:
+    """Set beginner/professional. Downgrade to beginner requires confirm_downgrade."""
+    uid = int(user_id or 0)
+    clean = str(mode or "").strip().lower()
+    if clean not in UX_MODES:
+        raise AccountAuthError("Режим должен быть beginner или professional.", 400, code="ux_mode_invalid")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if not user:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        if user.get("is_owner"):
+            user["ux_mode"] = "professional"
+            _write_doc(doc)
+            return {"ok": True, "user": _public_user(user, include_contact=True), "ux_mode": "professional"}
+        prev = str(user.get("ux_mode") or "").strip().lower()
+        if prev == "professional" and clean == "beginner" and not confirm_downgrade:
+            raise AccountAuthError(
+                "Переход в режим «Новичок» скроет стратегии, ИИ, Community и NinjaTrader. "
+                "Подтвердите действие явно.",
+                409,
+                code="ux_mode_confirm_required",
+            )
+        user["ux_mode"] = clean
+        user["ux_mode_set_at_utc"] = _now_iso()
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True)
+    _audit("ux_mode_set", user_id=uid, extra={"ux_mode": clean, "previous": prev})
+    return {"ok": True, "user": public, "ux_mode": clean, "previous": prev}
 
 
 def _session_nt_elevated(session: Optional[Dict[str, Any]]) -> bool:
@@ -635,6 +683,7 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         "last_login_source", "last_login_device", "last_login_machine",
         "last_login_device_id", "blocked_at_utc",
         "google_linked_at_utc", "google_email", "is_virtual", "virtual_preset",
+        "ux_mode",
     )}
     out["profile_complete"] = _profile_complete(user)
     out["google_linked"] = bool(str(user.get("google_sub") or "").strip())
@@ -642,6 +691,9 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
     out["needs_google"] = user_needs_google(user)
     out["dual_auth_complete"] = True  # login is Telegram-only
     out["nt_google_required"] = bool(user_needs_google(user))
+    mode = effective_ux_mode(user)
+    out["ux_mode"] = mode
+    out["needs_ux_mode"] = needs_ux_mode_choice(user)
     out["has_avatar"] = bool(user.get("avatar_ext"))
     out["avatar_updated_at_utc"] = str(user.get("avatar_updated_at_utc") or "")
     if out["has_avatar"]:
@@ -2027,6 +2079,7 @@ def create_or_update_virtual_user(
     virtual: bool = True,
     preset: str = "",
     terms_accepted: bool = True,
+    ux_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     runtime_env.require_staging("Virtual users")
     uid = int(user_id)
@@ -2034,6 +2087,12 @@ def create_or_update_virtual_user(
     if role_id not in ROLES or role_id == "owner":
         role_id = "read_only"
     status_id = str(status or "active")
+    if ux_mode is None:
+        mode = "professional"
+    else:
+        mode = str(ux_mode or "").strip().lower()
+        if mode and mode not in UX_MODES:
+            mode = ""
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
@@ -2054,7 +2113,10 @@ def create_or_update_virtual_user(
                 "revoked_at_utc": "",
                 "is_virtual": bool(virtual),
                 "virtual_preset": str(preset or "")[:40],
+                "ux_mode": mode,
             }
+            if mode:
+                user["ux_mode_set_at_utc"] = _now_iso()
             if terms_accepted:
                 user["terms_accepted_at_utc"] = _now_iso()
                 user["terms_version"] = str(getattr(legal, "TERMS_VERSION", "1") or "1")
@@ -2072,6 +2134,10 @@ def create_or_update_virtual_user(
             })
             if status_id == "active" and not user.get("approved_at_utc"):
                 user["approved_at_utc"] = _now_iso()
+            if ux_mode is not None:
+                user["ux_mode"] = mode
+                if mode:
+                    user["ux_mode_set_at_utc"] = user.get("ux_mode_set_at_utc") or _now_iso()
         if google_linked:
             user["google_sub"] = str(google_sub or f"test-google-{uid}")
             user["google_email"] = str(google_email or email or f"virtual{uid}@staging.stratforge.local").lower()
@@ -2083,7 +2149,7 @@ def create_or_update_virtual_user(
             user["google_linked_at_utc"] = ""
         _write_doc(doc)
         public = _public_user(user, include_contact=True, include_avatar=True)
-    _audit("virtual_user_upsert", user_id=uid, extra={"preset": preset})
+    _audit("virtual_user_upsert", user_id=uid, extra={"preset": preset, "ux_mode": mode})
     return public
 
 

@@ -2276,6 +2276,37 @@ html.has-lock-gate .content { position: relative; }
 .welcome-access-actions {
   display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
 }
+html.ux-mode-locked .rail,
+html.ux-mode-locked .topbar,
+html.ux-mode-locked .content { pointer-events: none; opacity: 0.35; }
+.ux-mode-gate { z-index: 80; }
+.ux-mode-card { max-width: 560px; }
+.ux-mode-choices {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.ux-mode-choice {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg-2, rgba(255,255,255,0.04));
+  color: inherit;
+  border-radius: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+}
+.ux-mode-choice strong { font-size: 16px; }
+.ux-mode-choice span { color: var(--tx-2); font-size: 13px; line-height: 1.45; }
+.ux-mode-choice:hover { border-color: var(--accent, #6aa3ff); }
+.ux-mode-choice:disabled { opacity: 0.55; cursor: wait; }
+.beginner-watermark { background: color-mix(in srgb, #1d6b4f 18%, transparent); }
+html.ux-beginner .orch-fab { display: none !important; }
+@media (max-width: 720px) {
+  .ux-mode-card { margin: 12px; width: calc(100% - 24px); }
+  .ux-mode-choice { padding: 12px; }
+}
 @media (min-width: 720px) {
   .welcome-access-overlay { place-items: center; }
   .welcome-access-card { border-radius: 18px; }
