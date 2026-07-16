@@ -156,7 +156,7 @@ UI.ready(async function () {
 
   if (!(await fetchAll())) { UI.renderError(kpiBox, new Error('backend недоступен'), () => location.reload()); return; }
   renderKpis(); renderKanban(); renderMatrix(); renderGoals(); wireControls(); loadTolik(); loadVitek();
-  window.setInterval(refreshVitekStatus, 3000);
+  window.setInterval(refreshVitekStatus, 10000);
   const wanted = new URLSearchParams(location.search).get('strategy');
   if (wanted) { const c = [...profiles, ...aiCards].find(x => x.name === wanted); if (c) openCard(c); }
 
