@@ -29,6 +29,7 @@ _LOCK = threading.RLock()
 # these ids; each plan enables a subset. Ordered for display.
 PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "backtesting",     "label": "Бэктест-движок"},
+    {"id": "demo_backtest",   "label": "Демо-бэктест (синтетика)", "hint": "1-click демо без NinjaTrader"},
     {"id": "strategies",      "label": "Портфель стратегий"},
     {"id": "charts_realtime", "label": "Онлайн-графики (реалтайм)", "hint": "Дорогой ресурс рыночных данных"},
     {"id": "ai_lab",          "label": "AI Lab (исследования)"},
@@ -37,6 +38,9 @@ PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "documents",       "label": "Документы"},
     {"id": "personal_nt",     "label": "Свой NinjaTrader"},
     {"id": "paper_commands",  "label": "Paper/Demo команды"},
+    {"id": "practice_trading","label": "Учебная торговля (виртуальные деньги)"},
+    {"id": "community",       "label": "Сообщество пользователей"},
+    {"id": "micro_live",      "label": "Micro Live (реальные деньги × scale)"},
     {"id": "live_read",       "label": "Live-чтение счёта"},
     {"id": "live_commands",   "label": "Live-управление"},
 )
@@ -69,11 +73,11 @@ PLANS: Dict[str, Dict[str, Any]] = {
     # promo code, activate a subscription or receive owner access. A few sections
     # are unlocked so the app can be explored; the rest are visible but locked.
     "free_preview": {
-        "label": "Free Preview", "badge": "Бесплатно", "category": "free", "tier": "free",
+        "label": "Free Preview", "badge": "Демо", "category": "free", "tier": "free",
         "price_usd": 0.0, "period": "ознакомление", "public": False,
-        "tagline": "Ознакомительный доступ — часть разделов открыта, остальные под замком",
-        "features": _feat("news", "documents"),
-        "limits": {"max_backtests_per_day": 0, "max_charts": 1},
+        "tagline": "Живое демо: бэктест на тестовых данных + новости и документы",
+        "features": _feat("news", "documents", "demo_backtest", "practice_trading", "community"),
+        "limits": {"max_backtests_per_day": 0, "max_demo_backtests_per_day": 3, "max_charts": 2},
     },
     # Donations "для своих" — symbolic support, generous access.
     "donate_1": {

@@ -35,23 +35,27 @@ CAPABILITIES = subscriptions.PLAN_FEATURES  # tuple of {"id","label","hint"?}
 CAPABILITY_IDS = tuple(c["id"] for c in CAPABILITIES)
 
 # Aurora left-nav sections (ui.js NAV ids). "overview" is always available.
-NAV_SECTIONS = ("overview", "backtest", "trading", "desktop", "performance",
-                "strategies", "ai", "agents", "news", "topstep", "docs")
+NAV_SECTIONS = ("overview", "backtest", "trading", "practice", "micro_live", "desktop", "performance",
+                "strategies", "ai", "agents", "news", "community", "topstep", "docs")
 
 # Which nav sections each subscription capability unlocks. A section is open
 # when ANY of its contributing capabilities is granted.
 CAPABILITY_NAV: Dict[str, tuple] = {
-    "backtesting":     ("backtest",),
-    "strategies":      ("strategies",),
-    "charts_realtime": ("desktop",),
-    "ai_lab":          ("ai",),
-    "ai_pro_models":   ("agents",),
-    "news":            ("news",),
-    "documents":       ("docs",),
-    "paper_commands":  ("trading",),
-    "live_read":       ("performance",),
-    "live_commands":   (),
-    "personal_nt":     (),
+    "backtesting":      ("backtest",),
+    "demo_backtest":    ("backtest",),
+    "strategies":       ("strategies",),
+    "charts_realtime":  ("desktop",),
+    "ai_lab":           ("ai",),
+    "ai_pro_models":    ("agents",),
+    "news":             ("news",),
+    "documents":        ("docs",),
+    "paper_commands":   ("trading",),
+    "practice_trading": ("practice",),
+    "micro_live":       ("micro_live",),
+    "community":        ("community",),
+    "live_read":        ("performance",),
+    "live_commands":    (),
+    "personal_nt":      (),
 }
 
 # Nav sections not tied to any subscription capability. Locked for non-owners
@@ -62,6 +66,9 @@ _OWNER_ONLY_NAV = ("topstep",)
 UNLOCK_MESSAGE = (
     "Раздел откроется после активации подписки, ввода промокода "
     "или доступа от владельца."
+)
+DEMO_UNLOCK_MESSAGE = (
+    "Демоверсия открыта на тестовых данных. Полный бэктест, live и свои стратегии — после подписки."
 )
 
 # API action -> capability required (prefix match, longest prefix wins). The
@@ -111,7 +118,7 @@ def resolve(user: Optional[Dict[str, Any]],
         return {
             "is_owner": True, "plan_id": "founder", "free_preview": False,
             "capabilities": caps, "nav": nav, "locked_nav": [],
-            "unlock_message": UNLOCK_MESSAGE,
+            "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
         }
 
     plan_feats = _features_from_plan((entitlement or {}).get("plan"))
@@ -143,10 +150,12 @@ def resolve(user: Optional[Dict[str, Any]],
         nav[nid] = enabled
 
     locked = [nid for nid in NAV_SECTIONS if nid != "overview" and not nav.get(nid)]
+    demo_tier = bool(caps.get("demo_backtest")) and not bool(caps.get("backtesting"))
     return {
         "is_owner": False, "plan_id": plan_id, "free_preview": free_preview,
         "capabilities": caps, "nav": nav, "locked_nav": locked,
-        "unlock_message": UNLOCK_MESSAGE,
+        "unlock_message": DEMO_UNLOCK_MESSAGE if demo_tier else UNLOCK_MESSAGE,
+        "demo_tier": demo_tier,
     }
 
 

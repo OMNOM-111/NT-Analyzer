@@ -78,9 +78,11 @@
 
   // ---- real async HTTP layer over the actual endpoints --------------------
   class HttpError extends Error {
-    constructor(status, message, path, retryAfterMs) {
+    constructor(status, message, path, retryAfterMs, code, payload) {
       super(message); this.name = 'HttpError'; this.status = status; this.path = path;
       this.retryAfterMs = Number(retryAfterMs || 0);
+      this.code = code || '';
+      this.payload = payload || null;
     }
   }
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -97,11 +99,18 @@
         const res = await fetch(path, { headers: requestHeaders({ Accept: 'application/json' }), signal });
         if (!res.ok) {
           let detail = '';
-          try { detail = (await res.json()).error || ''; } catch (e) { /* non-json */ }
+          let code = '';
+          let payload = null;
+          try {
+            payload = await res.json();
+            detail = (payload && payload.error) || '';
+            code = (payload && payload.code) || '';
+          } catch (e) { /* non-json */ }
           const retryHeader = Number(res.headers.get('Retry-After') || 0);
           throw new HttpError(
             res.status, detail || res.statusText, path,
             retryHeader > 0 ? retryHeader * 1000 : 0,
+            code, payload,
           );
         }
         return await res.json();
@@ -124,7 +133,14 @@
     });
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty */ }
-    if (!res.ok) throw new HttpError(res.status, (data && data.error) || res.statusText, path);
+    if (!res.ok) {
+      const retryHeader = Number(res.headers.get('Retry-After') || 0);
+      throw new HttpError(
+        res.status, (data && data.error) || res.statusText, path,
+        retryHeader > 0 ? retryHeader * 1000 : 0,
+        (data && data.code) || '', data,
+      );
+    }
     return data;
   }
   async function del(path) {
@@ -236,6 +252,22 @@
     ownerSupportReload: (id, body) => send('/api/owner/support/users/' + encodeURIComponent(id) + '/reload', 'POST', body || {}),
     ownerSupportDeviceName: (id, deviceId, name) => send('/api/owner/support/users/' + encodeURIComponent(id) + '/device-name', 'POST', { device_id: deviceId, name }),
     ownerSupportScreenshotDelete: (requestId) => send('/api/owner/support/screenshots/' + encodeURIComponent(requestId) + '/delete', 'POST', {}),
+    ownerSessions: (o) => getJSON('/api/owner/sessions', o),
+    ownerGoogleMigration: (o) => getJSON('/api/owner/google-migration', o),
+    ownerImpersonate: (userId, preset) => send('/api/owner/impersonate', 'POST', { user_id: userId, preset: preset || '' }),
+    ownerImpersonateEnd: () => send('/api/owner/impersonate/end', 'POST', {}),
+    ownerGoogleSecrets: (body) => send('/api/owner/google/secrets', 'POST', body || {}),
+    googleAuthStatus: (o) => getJSON('/api/auth/google/status', o),
+    googleAuthStart: (body) => send('/api/auth/google/start', 'POST', body || {}),
+    ntConfirmStart: (body) => send('/api/auth/nt-confirm/start', 'POST', body || {}),
+    ntConfirmStatus: (body) => send('/api/auth/nt-confirm/status', 'POST', body || {}),
+    testAuthNtElevate: (body) => send('/api/auth/test/nt-elevate', 'POST', body || {}),
+    testAuthStatus: (o) => getJSON('/api/auth/test/status', o),
+    testAuthUsers: (o) => getJSON('/api/auth/test/users', o),
+    testAuthVirtualUser: (body) => send('/api/auth/test/virtual-user', 'POST', body || {}),
+    testAuthLogin: (userId) => send('/api/auth/test/login', 'POST', { user_id: userId }),
+    testAuthGoogleLink: (body) => send('/api/auth/test/google-link', 'POST', body || {}),
+    runtimeEnv: (o) => getJSON('/api/runtime/env', o),
     authMe: (o) => getJSON('/api/auth/me', o),
     authAvatarRefresh: () => send('/api/auth/avatar/refresh', 'POST', {}),
     billingPlans: (o) => getJSON('/api/billing/plans', o),
@@ -365,6 +397,25 @@
     job: (id, o) => getJSON('/api/jobs/' + encodeURIComponent(id), o),
     jobTrades: (id, q, o) => getJSON('/api/jobs/' + encodeURIComponent(id) + '/trades' + qs(q), o),
     createJob: (body) => send('/api/jobs', 'POST', body),
+    createDemoBacktest: (body) => send('/api/demo-backtests', 'POST', body || {}),
+    demoBacktestScenarios: (o) => getJSON('/api/demo-backtests/scenarios', o),
+    practiceAccount: (o) => getJSON('/api/practice/account', o),
+    practiceReport: (o) => getJSON('/api/practice/report', o),
+    practiceCreateAccount: (body) => send('/api/practice/account', 'POST', body || {}),
+    practiceOrder: (body) => send('/api/practice/orders', 'POST', body || {}),
+    practiceClose: (body) => send('/api/practice/close', 'POST', body || {}),
+    practiceTick: (body) => send('/api/practice/tick', 'POST', body || {}),
+    communityFeed: (o) => getJSON('/api/community/feed', o),
+    communityRatings: (o) => getJSON('/api/community/ratings', o),
+    communityMessage: (body) => send('/api/community/message', 'POST', body || {}),
+    communityPublishStrategy: (body) => send('/api/community/strategies', 'POST', body || {}),
+    communityCopy: (body) => send('/api/community/copy', 'POST', body || {}),
+    communityReport: (body) => send('/api/community/report', 'POST', body || {}),
+    microLiveAccount: (o) => getJSON('/api/micro-live/account', o),
+    microLiveAccept: (body) => send('/api/micro-live/accept-warnings', 'POST', body || {}),
+    microLiveDeposit: (body) => send('/api/micro-live/deposit', 'POST', body || {}),
+    microLiveTrade: (body) => send('/api/micro-live/trade', 'POST', body || {}),
+    aiStarRatings: (o) => getJSON('/api/ai-lab/ratings', o),
     createBatch: (body) => send('/api/batches', 'POST', body),
     cancelJob: (id) => send('/api/jobs/' + encodeURIComponent(id) + '/cancel', 'POST', {}),
     deleteJob: (id) => del('/api/jobs/' + encodeURIComponent(id)),
@@ -425,6 +476,7 @@
     aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '' }),
     aiOrchestratorMessageStream: (message, conversationId, agent, handlers) => streamOrchestrator(message, conversationId, agent, handlers),
     aiOrchestratorRateMessage: (conversationId, messageId, rating, comment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/rating', 'POST', { conversation_id: conversationId || 'default', rating, feedback_comment: comment || '', feedback_source: 'owner' }),
+    aiOrchestratorFulfillMessage: (conversationId, messageId, fulfillment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/fulfillment', 'POST', { conversation_id: conversationId || 'default', fulfillment: fulfillment || 'done', fulfillment_source: 'owner' }),
     aiOrchestratorConversations: (o) => getJSON('/api/ai-lab/orchestrator/conversations', o),
     aiOrchestratorConversation: (id, q, o) => getJSON('/api/ai-lab/orchestrator/conversations/' + encodeURIComponent(id) + qs(q), o),
     aiOrchestratorCreateConversation: (title) => send('/api/ai-lab/orchestrator/conversations', 'POST', { title: title || '' }),
@@ -433,6 +485,10 @@
     aiOrchestratorPinConversation: (id, pinned) => send('/api/ai-lab/orchestrator/conversations/pin', 'POST', { conversation_id: id, pinned: pinned }),
     aiOrchestratorSetConversationState: (id, state) => send('/api/ai-lab/orchestrator/conversations/state', 'POST', { conversation_id: id, state: state }),
     aiOrchestratorDeleteConversation: (id) => send('/api/ai-lab/orchestrator/conversations/delete', 'POST', { conversation_id: id }),
+    notifications: (q, o) => getJSON('/api/notifications' + qs(q), o),
+    notificationsAck: (body) => send('/api/notifications/ack', 'POST', body || {}),
+    notificationsDelete: (body) => send('/api/notifications/delete', 'POST', body || {}),
+    notificationsClear: (body) => send('/api/notifications/clear', 'POST', body || {}),
     domainAgents: (o) => getJSON('/api/ai-lab/domain-agents', o),
     accounting: (q, o) => getJSON('/api/ai-lab/accounting' + qs(q), o),
     strategyAnalysis: (q, o) => getJSON('/api/ai-lab/strategy-analysis' + qs(q), o),

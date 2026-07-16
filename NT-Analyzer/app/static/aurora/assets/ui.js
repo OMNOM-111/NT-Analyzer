@@ -50,6 +50,7 @@
     plug: '<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v6"/>',
     chart: '<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 4-6"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2V5Z"/><path d="M8 7h7M8 11h7"/>',
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>',
     palette: '<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-.5-.3-.9-.6-1.2-.3-.3-.5-.6-.5-1 0-.8.7-1.3 1.5-1.3H15a5 5 0 0 0 5-5c0-4-3.6-7-8-7Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>',
     desktop: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M3 13h18M9 21h6M12 17v4M7 9l2.5 2.5L13 8l4 4"/>',
   };
@@ -92,10 +93,110 @@
   applyMotion(loadMotion());
 
   const BRAND_MARK = 'brand/stratforge-mark.png';
+  // Staff faces: one webm per agent. Paused frame = avatar; hover/typing = play.
+  // Masters: `/Agents/<Имя>/`; served: `assets/agents/<id>/speaking.webm`.
+  // Crop tuned per source framing (verified via tools/_avatar_preview.py).
+  const AGENT_AVATAR_IDS = {
+    vitek: 'vitek', виктор: 'vitek', витёк: 'vitek', витек: 'vitek', витя: 'vitek',
+    manager: 'manager', управляющий: 'manager', orchestrator: 'manager',
+    secretary: 'manager', секретарь: 'manager',
+    deputy: 'manager', заместитель: 'manager', зам: 'manager',
+    marina: 'marina', марина: 'marina',
+    tolik: 'tolik', толик: 'tolik',
+    nikita: 'nikita', никита: 'nikita',
+    ivan: 'ivan', иван: 'ivan',
+  };
+  const AGENT_FACE_CROP = {
+    vitek: { zoom: 2.5, cx: 50, cy: 34.53 },
+    manager: { zoom: 2.274, cx: 49.1, cy: 43.63 },
+    marina: { zoom: 2.274, cx: 46.32, cy: 43.16 },
+    tolik: { zoom: 2.274, cx: 49.93, cy: 44.65 },
+    nikita: { zoom: 3.333, cx: 38.89, cy: 31.17 },
+    ivan: { zoom: 2.5, cx: 50.14, cy: 51.17 },
+  };
+  function agentAvatarId(ref) {
+    const raw = String(ref == null ? '' : ref).trim();
+    if (!raw) return 'vitek';
+    const key = raw.toLowerCase();
+    if (AGENT_AVATAR_IDS[key]) return AGENT_AVATAR_IDS[key];
+    const head = key.split(/[\s·|,(/]+/)[0];
+    return AGENT_AVATAR_IDS[head] || 'vitek';
+  }
+  function agentAvatarUrl(ref) {
+    return `assets/agents/${agentAvatarId(ref)}/speaking.webm`;
+  }
+  function agentFaceReduceMotion() {
+    try {
+      if (document.documentElement.getAttribute('data-reduce-motion') === 'on') return true;
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
+  function agentFacePause(face) {
+    if (!face) return;
+    const video = face.querySelector('video');
+    if (!video) return;
+    try { video.loop = false; video.pause(); if (video.currentTime) video.currentTime = 0; } catch (e) { /* ignore */ }
+    face.classList.remove('playing');
+  }
+  function agentFacePlay(face, opts) {
+    if (!face || agentFaceReduceMotion()) return;
+    const video = face.querySelector('video');
+    if (!video) return;
+    const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
+    video.loop = loop;
+    face.classList.add('playing');
+    const start = () => { video.play().catch(() => {}); };
+    if (video.readyState >= 2) start();
+    else video.addEventListener('loadeddata', start, { once: true });
+  }
+  function agentAvatarHtml(ref, opts) {
+    const options = opts || {};
+    const speaking = !!options.speaking;
+    const cls = options.cls ? ` ${options.cls}` : '';
+    const label = String(options.label || ref || 'агент');
+    const id = agentAvatarId(ref);
+    const src = agentAvatarUrl(ref);
+    const crop = AGENT_FACE_CROP[id] || AGENT_FACE_CROP.vitek;
+    const attrs = speaking ? ' loop autoplay' : '';
+    const style = `--face-zoom:${crop.zoom};--face-cx:${crop.cx};--face-cy:${crop.cy};`;
+    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}" style="${style}"><video src="${esc(src)}" muted playsinline preload="metadata"${attrs} aria-hidden="true"></video></span>`;
+  }
+  function wireAgentFaces(root) {
+    qsa('.agent-face', root || document).forEach((face) => {
+      if (face.dataset.faceWired === '1') return;
+      face.dataset.faceWired = '1';
+      const video = face.querySelector('video');
+      if (!video) return;
+      const freeze = () => {
+        if (face.classList.contains('speaking') || face.classList.contains('playing')) return;
+        try {
+          video.pause();
+          if (video.currentTime > 0.02) video.currentTime = 0;
+        } catch (e) { /* ignore */ }
+      };
+      video.addEventListener('loadeddata', freeze);
+      video.addEventListener('ended', () => {
+        if (face.classList.contains('speaking')) return;
+        agentFacePause(face);
+      });
+      face.addEventListener('mouseenter', () => {
+        if (face.classList.contains('speaking') || agentFaceReduceMotion()) return;
+        agentFacePlay(face, { loop: false });
+      });
+      face.addEventListener('mouseleave', () => {
+        if (face.classList.contains('speaking')) return;
+        agentFacePause(face);
+      });
+      if (face.classList.contains('speaking')) agentFacePlay(face, { loop: true });
+      else if (video.readyState >= 2) freeze();
+    });
+  }
 
   const NAV = [
     { id: 'overview', label: 'Обзор', href: 'index.html', icon: 'overview' },
     { id: 'backtest', label: 'Бэктест', href: 'backtesting.html', icon: 'backtest' },
+    { id: 'practice', label: 'Учебная', href: 'practice-trading.html', icon: 'trading' },
+    { id: 'micro_live', label: 'Micro Live', href: 'micro-live.html', icon: 'trading' },
     { id: 'trading', label: 'Торговля', href: 'trading.html', icon: 'trading' },
     { id: 'desktop', label: 'Рабочий стол', href: 'desktop.html', icon: 'desktop' },
     { id: 'performance', label: 'Финансы', href: 'performance.html', icon: 'performance' },
@@ -103,6 +204,7 @@
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
+    { id: 'community', label: 'Сообщество', href: 'community.html', icon: 'docs' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
@@ -535,6 +637,7 @@
         <button class="chip off chip-account" id="chip-account" type="button" title="Текущий торговый счёт"><span class="dot"></span>Счёт —</button>
         <span class="tb-datetime"><span id="pt-date">—</span><span class="mono" id="clock">—</span></span>
         <span class="tb-sep"></span>
+        <button class="btn icon ghost tb-bell" id="tb-bell" type="button" title="Уведомления" aria-label="Уведомления" hidden>${icon('bell')}<span class="tb-bell-badge" id="tb-bell-badge" hidden>0</span></button>
         <button class="btn icon ghost" id="tb-more" title="Системные действия">${icon('dots')}</button>
       </div>
     </header>`);
@@ -657,6 +760,14 @@
       // access sheet on top. Never replace .content with the promo screen —
       // that destroyed the overview and made "close" feel broken.
       startGuestBrowse(newsStrip);
+      const adminRevoked = result.error.code === 'session_admin_revoked'
+        || /Сессия завершена администратором/i.test(String(result.error.message || ''));
+      if (adminRevoked) {
+        try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
+        toast('Сессия завершена администратором');
+        renderSessionEndedNotice();
+        return;
+      }
       const dismissed = (() => { try { return sessionStorage.getItem('stratforge.welcome.dismissed') === '1'; } catch (e) { return false; } })();
       if (!dismissed) renderWelcomeAccess({ asOverlay: true });
       return;
@@ -689,10 +800,145 @@
     wireSearch();
     wireGlobalNewsStrip(newsStrip);
     buildOrchestratorWidget();
+    startInAppNotices();
     startDesktopCommandBridge();
     startUserSupportBridge();
+    renderImpersonationBanner(CURRENT_AUTH);
+    // Google is NOT required for login / general use — only for NinjaTrader control.
     runReady();
     maybeRedeemStoredPromo();
+    maybeHandleGoogleReturn();
+  }
+
+  function renderSessionEndedNotice() {
+    const existing = qs('#session-ended-notice');
+    if (existing) existing.remove();
+    const card = el(`<div id="session-ended-notice" class="auth-screen"><section class="auth-card">
+      <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Сессия завершена</span></div></div>
+      <p class="auth-lead">Сессия завершена администратором. Войдите снова через Telegram.</p>
+      <button class="btn primary" type="button" id="session-ended-login">Войти</button>
+    </section></div>`);
+    document.body.appendChild(card);
+    const btn = qs('#session-ended-login', card);
+    if (btn) btn.onclick = () => { card.remove(); renderTelegramLogin(''); };
+  }
+
+  function renderImpersonationBanner(auth) {
+    const old = qs('#impersonation-banner');
+    if (old) old.remove();
+    if (!auth || !auth.impersonating) return;
+    const user = auth.user || {};
+    const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.user_id || 'пользователь';
+    const bar = el(`<div id="impersonation-banner" class="impersonation-banner" role="status">
+      <strong>Тестовый режим.</strong> Вы вошли как пользователь: ${esc(label)} (id ${esc(user.user_id || '')}).
+      <button type="button" class="btn sm" id="impersonation-return">Вернуться в админку</button>
+    </div>`);
+    document.body.appendChild(bar);
+    const btn = qs('#impersonation-return', bar);
+    if (btn) btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await API.http.ownerImpersonateEnd();
+        toast('Возврат в админку');
+        setTimeout(() => location.reload(), 400);
+      } catch (e) { reportError(e); btn.disabled = false; }
+    };
+  }
+
+  function renderGoogleLinkGate(auth) {
+    if (qs('#google-link-gate')) return;
+    const staging = !!(auth.runtime && auth.runtime.test_auth_enabled);
+    const configured = !!(auth.google_oauth && auth.google_oauth.configured);
+    const card = el(`<div id="google-link-gate" class="auth-screen google-link-gate"><section class="auth-card">
+      <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Google для NinjaTrader</span></div></div>
+      <p class="auth-lead">Остальные разделы доступны с Telegram. Google нужен только перед подключением и управлением NinjaTrader (личный или рабочий контур).</p>
+      <div class="auth-actions">
+        <button class="btn primary" type="button" id="google-link-start">${configured ? 'Подключить Google' : (staging ? 'Привязать тестовый Google (staging)' : 'Google OAuth не настроен')}</button>
+        <button class="btn ghost" type="button" id="google-link-later">Закрыть</button>
+      </div>
+      <div class="auth-security">После Google потребуется повторное подтверждение в Telegram</div>
+    </section></div>`);
+    document.body.appendChild(card);
+    const start = qs('#google-link-start', card);
+    const later = qs('#google-link-later', card);
+    if (later) later.onclick = () => card.remove();
+    if (start) start.onclick = async () => {
+      start.disabled = true;
+      try {
+        if (configured) {
+          const out = await API.http.googleAuthStart({ return_path: location.pathname || '/ui/' });
+          if (out.auth_url) location.href = out.auth_url;
+          else toast('Не удалось начать Google OAuth');
+        } else if (staging) {
+          await API.http.testAuthGoogleLink({});
+          toast('Тестовый Google привязан');
+          setTimeout(() => location.reload(), 500);
+        } else {
+          toast('Владелец должен задать NTA_GOOGLE_CLIENT_ID / SECRET');
+          start.disabled = false;
+        }
+      } catch (e) { reportError(e); start.disabled = false; }
+    };
+  }
+
+  async function ensureNtDualAuth(me) {
+    const nt = (me && me.nt_access) || (CURRENT_AUTH && CURRENT_AUTH.nt_access) || {};
+    if (me && me.is_owner) return true;
+    if (nt.ready) return true;
+    if (!nt.google_ok) {
+      renderGoogleLinkGate(me || CURRENT_AUTH || {});
+      toast(nt.message || 'Подключите Google для NinjaTrader');
+      return false;
+    }
+    const staging = !!(me && me.runtime && me.runtime.test_auth_enabled) || !!(CURRENT_AUTH && CURRENT_AUTH.runtime && CURRENT_AUTH.runtime.test_auth_enabled);
+    try {
+      if (staging) {
+        await API.http.testAuthNtElevate({});
+        toast('Staging: Telegram-подтверждение NT выдано');
+        if (CURRENT_AUTH) CURRENT_AUTH.nt_access = Object.assign({}, CURRENT_AUTH.nt_access || {}, { ready: true, telegram_ok: true, google_ok: true });
+        return true;
+      }
+      const started = await API.http.ntConfirmStart({});
+      toast('Подтвердите действие в Telegram');
+      const challengeId = started.challenge_id;
+      for (let i = 0; i < 45; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const st = await API.http.ntConfirmStatus({ challenge_id: challengeId });
+        if (st.status === 'nt_confirmed' || (st.nt_access && st.nt_access.ready)) {
+          if (CURRENT_AUTH) CURRENT_AUTH.nt_access = st.nt_access || Object.assign({}, CURRENT_AUTH.nt_access || {}, { ready: true, telegram_ok: true });
+          toast('NinjaTrader подтверждён');
+          return true;
+        }
+        if (st.status === 'nt_denied' || st.status === 'expired') {
+          toast(st.message || 'Подтверждение отклонено или истекло');
+          return false;
+        }
+      }
+      toast('Не дождались подтверждения в Telegram');
+      return false;
+    } catch (e) {
+      reportError(e);
+      return false;
+    }
+  }
+
+  function maybeHandleGoogleReturn() {
+    try {
+      const params = new URLSearchParams(location.search || '');
+      if (params.get('google_linked') === '1') {
+        toast('Google успешно подключён');
+        params.delete('google_linked');
+        const next = location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash;
+        history.replaceState({}, '', next);
+      }
+      const err = params.get('google_error');
+      if (err) {
+        toast('Google: ' + err);
+        params.delete('google_error');
+        const next = location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash;
+        history.replaceState({}, '', next);
+      }
+    } catch (e) { /* ignore */ }
   }
 
   async function maybeRedeemStoredPromo() {
@@ -824,10 +1070,15 @@
   // Central access control: in Free Preview (or any non-owner with locked
   // sections) the rail keeps every section VISIBLE but marks locked ones, and a
   // locked page is covered by an unlock gate instead of being hidden.
+  // Demo-tier unlocks backtest/practice without full subscription blur.
   function applyNavAccess(auth) {
     auth = auth || {};
     const isOwner = !!auth.is_owner;
     const features = auth.features || (auth.user && auth.user.features) || null;
+    const caps = auth.capabilities || {};
+    const demoTier = !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting));
+    document.body.dataset.demoTier = demoTier ? '1' : '0';
+    document.documentElement.classList.toggle('demo-tier', demoTier);
     const hasLockList = Array.isArray(auth.locked_nav);
     const locked = new Set(isOwner ? [] : (auth.locked_nav || []));
     qsa('.rail-item[data-nav]').forEach(item => {
@@ -846,7 +1097,16 @@
     const page = document.body.dataset.page;
     if (!isOwner && page && locked.has(page)) {
       renderLockGate(auth.unlock_message || 'Раздел доступен после активации подписки, промокода или доступа владельца.', auth.free_preview);
+    } else if (demoTier && (page === 'backtest' || page === 'practice')) {
+      ensureDemoWatermark();
     }
+  }
+  function ensureDemoWatermark() {
+    if (qs('#demo-watermark')) return;
+    const bar = el(`<div id="demo-watermark" class="demo-watermark" role="status">Демоверсия. Данные нереальные. <button type="button" class="btn sm" id="demo-upgrade-cta">Что откроется после подписки</button></div>`);
+    document.body.appendChild(bar);
+    const btn = qs('#demo-upgrade-cta', bar);
+    if (btn) btn.onclick = () => openCabinet('plans');
   }
   function renderLockGate(msg, freePreview) {
     if (qs('#lock-gate')) return;
@@ -859,7 +1119,7 @@
       <div class="lock-gate-actions">
         <button class="btn primary" id="lock-gate-plans">Промокод или донат</button>
       </div>
-      ${freePreview ? '<div class="lock-gate-hint">Ознакомительный режим: открыты Обзор, Новости и Документы.</div>' : ''}
+      ${freePreview ? '<div class="lock-gate-hint">Ознакомительный режим: открыты Обзор, Демо-бэктест, Учебная торговля, Новости и Документы.</div>' : ''}
     </div></div>`);
     host.appendChild(gate);
     const p = qs('#lock-gate-plans', gate);
@@ -1074,12 +1334,16 @@
         return;
       }
       const canPersonal = !!(me.is_owner || (me.capabilities || {}).personal_nt === true || (me.features || {}).personal_nt === true);
+      const ntAccess = me.nt_access || {};
+      const googleOk = !!(me.is_owner || ntAccess.google_ok || (me.user && me.user.google_linked));
+      const tgOk = !!(me.is_owner || ntAccess.telegram_ok);
+      const dualNote = me.is_owner ? '' : `<div class="finance-note">NinjaTrader: Google ${googleOk ? '✓' : 'нужен'} · Telegram-подтверждение ${tgOk ? '✓' : 'нужно'}. Остальной кабинет работает без Google.</div>`;
       const areaSwitch = rows.length > 1
         ? `<div class="cab-kv"><span class="k">Область</span><span class="v"><select id="nt-area">${rows.map(r => `<option value="${esc(r.workspace_id)}" ${r.workspace_id === active.workspace_id ? 'selected' : ''}>${esc(r.uses_owner_runtime ? 'Наблюдение за владельцем' : (r.display_name || 'Мой NinjaTrader'))}</option>`).join('')}</select></span></div>`
         : '';
-      let inner = areaSwitch;
+      let inner = dualNote + areaSwitch;
       if (active.uses_owner_runtime) {
-        inner += `<div class="cab-sub">Сейчас вы наблюдаете за реальным аккаунтом владельца (только просмотр).</div>`;
+        inner += `<div class="cab-sub">Сейчас вы наблюдаете за реальным аккаунтом владельца (только просмотр). Наблюдение не требует Google.</div>`;
         inner += canPersonal
           ? `<div class="dchart-actions"><button class="btn primary" id="nt-connect">Подключить свой NinjaTrader</button></div>`
           : `<div class="cab-sub">Свой NinjaTrader доступен на тарифах «Стандарт» и выше.</div>`;
@@ -1090,13 +1354,34 @@
         if (setup.runtime_data_dir) inner += `<div class="cab-kv"><span class="k">runtime_data_dir</span><span class="v mono nt-path">${esc(setup.runtime_data_dir)}</span></div>`;
         inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-copycfg">Скопировать конфиг</button><button class="btn primary" id="nt-pair">Получить код подключения</button><button class="btn ghost" id="nt-observe">Вернуться к наблюдению</button></div>`;
       }
+      if (!me.is_owner && (!googleOk || !tgOk)) {
+        inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-dual">Пройти Google + Telegram для NT</button></div>`;
+      }
       node.innerHTML = inner;
       const areaSel = qs('#nt-area', node);
       if (areaSel) areaSel.onchange = async () => { try { await API.http.workspaceSelect(areaSel.value); toast('Область переключена'); location.reload(); } catch (e) { reportError(e); } };
+      const dualBtn = qs('#nt-dual', node);
+      if (dualBtn) dualBtn.onclick = async () => { dualBtn.disabled = true; try { await ensureNtDualAuth(me); await renderNinjaInto(node, me); } catch (e) { reportError(e); } finally { dualBtn.disabled = false; } };
       const connect = qs('#nt-connect', node);
-      if (connect) connect.onclick = async () => { connect.disabled = true; try { await API.http.workspacePersonal({ display_name: 'Мой NinjaTrader' }); toast('Личный контур создан'); await renderNinjaInto(node, me); } catch (e) { reportError(e); connect.disabled = false; } };
+      if (connect) connect.onclick = async () => {
+        connect.disabled = true;
+        try {
+          if (!(await ensureNtDualAuth(me))) { connect.disabled = false; return; }
+          await API.http.workspacePersonal({ display_name: 'Мой NinjaTrader' });
+          toast('Личный контур создан');
+          await renderNinjaInto(node, me);
+        } catch (e) { reportError(e); connect.disabled = false; }
+      };
       const pair = qs('#nt-pair', node);
-      if (pair) pair.onclick = async () => { pair.disabled = true; try { const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер' }); showCode(out && out.code, 'Код подключения'); } catch (e) { reportError(e); } finally { pair.disabled = false; } };
+      if (pair) pair.onclick = async () => {
+        pair.disabled = true;
+        try {
+          if (!(await ensureNtDualAuth(me))) return;
+          const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер' });
+          showCode(out && out.code, 'Код подключения');
+        } catch (e) { reportError(e); }
+        finally { pair.disabled = false; }
+      };
       const copycfg = qs('#nt-copycfg', node);
       if (copycfg) copycfg.onclick = () => { try { navigator.clipboard.writeText(JSON.stringify(setup.config_template || {}, null, 2)); toast('Конфиг NinjaTrader скопирован'); } catch (e) { reportError(e); } };
       const observe = qs('#nt-observe', node);
@@ -1159,7 +1444,7 @@
       return `<div class="row support-auth-session"><div class="row-main"><div class="row-title">${esc(session.device_name || session.machine || 'Устройство')} · ${esc(session.client || 'Браузер')}${isCurrent ? ' · <span class="badge live">текущая сессия</span>' : ''}</div><div class="row-sub">Создана ${esc(shortDt(session.created_at_utc) || '—')}${session.ip ? ' · ' + esc(session.ip) : ''}</div></div><button class="btn sm ghost" data-support-reload-session="${esc(session.session_id)}">Перезагрузить</button><button class="btn sm danger" data-support-end-session="${esc(session.session_id)}" data-support-current="${isCurrent ? '1' : ''}">Завершить</button></div>`;
     }).join('');
     const shotCards = activeShots.map(shot => `<div class="support-shot"><div class="flex between gap-sm"><div><strong>${esc(supportStatusLabel(shot.status))}</strong><div class="cab-sub">${esc(shortDt(shot.created_at_utc) || '—')}${shot.retained_until_utc ? ' · хранится до ' + esc(shortDt(shot.retained_until_utc)) : ''}</div></div>${shot.status === 'completed' ? `<button class="btn sm danger" data-support-delete-shot="${esc(shot.request_id)}">Удалить</button>` : ''}</div>${shot.error ? `<div class="support-error">${esc(shot.error)}</div>` : ''}${shot.image_url ? `<a href="${esc(shot.image_url)}" target="_blank" rel="noopener"><img src="${esc(shot.image_url)}" loading="lazy" alt="Снимок экрана пользователя"></a>` : ''}</div>`).join('');
-    return `${selfNote}<div class="support-toolbar"><button class="btn primary" data-support-request-shot>Запросить снимок экрана</button><button class="btn ghost" data-support-reload-all ${authSessions.length || telemetry.some(row => row.online) ? '' : 'disabled'}>Перезагрузить все</button><button class="btn danger" data-support-end-all ${authSessions.length ? '' : 'disabled'} data-support-self="${data.is_self ? '1' : ''}">Завершить все браузерные сессии</button><button class="btn ghost" data-support-refresh>Обновить</button></div>
+    return `${selfNote}<div class="support-toolbar"><button class="btn primary" data-support-request-shot>Запросить снимок экрана</button><button class="btn ghost" data-support-reload-all ${authSessions.length || telemetry.some(row => row.online) ? '' : 'disabled'}>Перезагрузить все</button><button class="btn danger" data-support-end-all ${authSessions.length ? '' : 'disabled'} data-support-self="${data.is_self ? '1' : ''}">Завершить все браузерные сессии</button>${(CURRENT_AUTH && CURRENT_AUTH.runtime && CURRENT_AUTH.runtime.is_staging && !data.is_self) ? '<button class="btn ghost" data-support-impersonate>Войти как пользователь</button>' : ''}<button class="btn ghost" data-support-refresh>Обновить</button></div>
       <div class="finance-note support-privacy-note">${esc(data.telemetry_note || '')} Снимок возможен только после согласия пользователя и системного выбора экрана; хранится зашифрованным не более ${esc(data.screenshot_retention_hours || 24)} часов.</div>
       ${alerts.length ? `<div class="support-alerts">${alerts.map(alert => `<div class="support-alert ${alert.severity === 'critical' ? 'critical' : ''}">⚠ ${esc(alert.message)}</div>`).join('')}</div>` : '<div class="support-ok">Критических превышений сейчас нет.</div>'}
       <div class="section-title">Живая телеметрия вкладок</div>${liveCards || '<div class="empty-state">Пользователь не передаёт телеметрию: приложение закрыто или ещё не обновлено.</div>'}
@@ -1186,6 +1471,14 @@
           ? 'Это ваш аккаунт. Завершить все браузерные сессии, включая текущую? Вы сразу выйдете из приложения на этих устройствах.'
           : 'Принудительно завершить все браузерные сессии пользователя?';
         if (confirm(warning)) run(endAll, () => API.http.authUserSessions(uid, { all_sessions: true }), 'Сессии завершены');
+      };
+      const impersonate = qs('[data-support-impersonate]', container);
+      if (impersonate) impersonate.onclick = () => {
+        if (!confirm('Войти как этот пользователь? Появится красный banner тестового режима.')) return;
+        run(impersonate, async () => {
+          await API.http.ownerImpersonate(Number(uid));
+          setTimeout(() => location.reload(), 400);
+        }, 'Impersonation активна');
       };
       const refresh = qs('[data-support-refresh]', container); if (refresh) refresh.onclick = () => refreshUserSupport(container, uid);
       qsa('[data-support-reload-session]', container).forEach(button => button.onclick = () => run(button, () => API.http.ownerSupportReload(uid, { session_id: button.dataset.supportReloadSession }), 'Команда перезагрузки отправлена'));
@@ -1794,8 +2087,20 @@
   }
   function renderCabinet(body, me, tab) {
     const header = cabinetHeader(me);
+    const staging = !!(me.runtime && me.runtime.is_staging);
     const tabs = me.is_owner
-      ? [['profile', 'Профиль'], ['users', 'Пользователи'], ['requests', 'Заявки'], ['plans', 'Тарифы'], ['invites', 'Приглашения'], ['payment', 'Оплата'], ['journal', 'Журнал']]
+      ? [
+          ['profile', 'Профиль'],
+          ['users', 'Пользователи'],
+          ['monitoring', 'Мониторинг'],
+          ['ai_ratings', 'Рейтинги ИИ'],
+          ['requests', 'Заявки'],
+          ['plans', 'Тарифы'],
+          ['invites', 'Приглашения'],
+          ['payment', 'Оплата'],
+          ['journal', 'Журнал'],
+          ...(staging ? [['staging', 'Staging QA']] : []),
+        ]
       : [['profile', 'Профиль'], ['plans', 'Тарифы']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
@@ -1803,6 +2108,9 @@
     const renderTab = (t) => {
       qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
       if (t === 'users') renderUsersInto(cb);
+      else if (t === 'monitoring') renderMonitoringInto(cb);
+      else if (t === 'ai_ratings') renderAiRatingsInto(cb);
+      else if (t === 'staging') renderStagingInto(cb);
       else if (t === 'requests') renderRequestsInto(cb);
       else if (t === 'plans') renderPlansInto(cb, me);
       else if (t === 'invites') renderInvitesInto(cb);
@@ -1813,6 +2121,136 @@
     qsa('[data-cab-tab]', body).forEach(b => b.onclick = () => renderTab(b.dataset.cabTab));
     renderTab(start);
     wireCabinetHeader(body, me);
+  }
+
+  async function renderAiRatingsInto(node) {
+    node.innerHTML = `<div class="cab-sub">Три рейтинга ★★★ · влияют на routing (после gates ключей/бюджета)</div><div class="muted">Загрузка…</div>`;
+    try {
+      const data = await API.http.aiStarRatings();
+      const table = (rows, cols) => rows && rows.length
+        ? `<div class="list">${rows.slice(0, 40).map(r => `<div class="row"><div class="row-main"><div class="row-title">${esc(cols.map(c => r[c] ?? '').filter(Boolean).join(' · '))}</div>
+            <div class="row-sub">avg ${esc(r.avg)} · n=${esc(r.count)} · ★1=${esc(r.ones || 0)}</div></div></div>`).join('')}</div>`
+        : '<div class="muted">Пока нет оценок</div>';
+      node.innerHTML = `
+        <div class="cab-sub">Exploration rate: ${esc(data.exploration_rate)} · рейтинги не обходят key/budget/cooldown</div>
+        <h4 class="cab-section-title">Должности</h4>${table(data.roles, ['role_id'])}
+        <h4 class="cab-section-title">Модели</h4>${table(data.models, ['model_id', 'provider'])}
+        <h4 class="cab-section-title">Должность + модель</h4>${table(data.role_model, ['role_id', 'model_id'])}
+        <div class="support-toolbar"><button class="btn ghost" id="air-refresh">Обновить</button></div>`;
+      const refresh = qs('#air-refresh', node);
+      if (refresh) refresh.onclick = () => renderAiRatingsInto(node);
+    } catch (e) {
+      node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  async function renderMonitoringInto(node) {
+    node.innerHTML = `<div class="cab-sub">Сессии и ресурсы · метрики вкладки браузера</div><div class="muted">Загрузка…</div>`;
+    try {
+      const data = await API.http.ownerSupportMonitoring();
+      const users = data.users || [];
+      const sessions = data.auth_sessions || [];
+      const note = esc(data.telemetry_note || 'Метрики вкладки браузера, не ОС.');
+      node.innerHTML = `
+        <div class="cab-sub">${note}</div>
+        <div class="kpi-row cab-kpi"><div class="kpi"><div class="kpi-label">Online</div><div class="kpi-value">${Number(data.online_count || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Алерты</div><div class="kpi-value">${Number(data.alert_count || 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Auth-сессии</div><div class="kpi-value">${sessions.length}</div></div></div>
+        <h4 class="cab-section-title">Пользователи online</h4>
+        <div class="list">${users.length ? users.map(u => {
+          const name = esc(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username || u.user_id);
+          const metrics = u.online
+            ? `CPU ${Number(u.cpu_main_thread_percent || 0).toFixed(0)}% · heap ${Number(u.js_heap_used_mb || 0).toFixed(0)} MB · net ${Number(u.network_mb_per_min || 0).toFixed(2)} MB/мин`
+            : 'offline';
+          return `<div class="row"><div class="row-main"><div class="row-title">${name} <span class="badge ${u.online ? 'live' : ''}">${u.online ? 'online' : 'offline'}</span></div>
+            <div class="row-sub">id ${esc(u.user_id)} · вкладок ${Number(u.session_count || 0)} · auth ${Number(u.auth_session_count || 0)} · ${esc(metrics)}${u.page ? ' · ' + esc(u.page) : ''}</div></div>
+            <button class="btn sm ghost" data-mon-open="${esc(u.user_id)}">Карточка</button></div>`;
+        }).join('') : '<div class="muted">Нет данных телеметрии</div>'}</div>
+        <h4 class="cab-section-title">Активные auth-сессии</h4>
+        <div class="list">${sessions.length ? sessions.map(s => {
+          const name = esc(`${s.first_name || ''} ${s.last_name || ''}`.trim() || s.username || s.user_id);
+          return `<div class="row"><div class="row-main"><div class="row-title">${name}${s.impersonating ? ' · <span class="badge">impersonation</span>' : ''}</div>
+            <div class="row-sub">${esc(s.client || 'Браузер')} · ${esc(s.machine || '—')} · ${esc(s.ip || '')} · ${esc(shortDt(s.created_at_utc) || '')}</div></div>
+            <button class="btn sm danger" data-mon-end="${esc(s.user_id)}" data-mon-session="${esc(s.session_id)}">Завершить</button></div>`;
+        }).join('') : '<div class="muted">Нет активных сессий</div>'}</div>
+        <div class="support-toolbar"><button class="btn ghost" id="mon-refresh">Обновить</button></div>`;
+      const refresh = qs('#mon-refresh', node);
+      if (refresh) refresh.onclick = () => renderMonitoringInto(node);
+      qsa('[data-mon-open]', node).forEach(btn => btn.onclick = () => {
+        try { sessionStorage.setItem('stratforge.open.user', String(btn.dataset.monOpen || '')); } catch (e) { /* ignore */ }
+        openCabinet('users');
+      });
+      qsa('[data-mon-end]', node).forEach(btn => btn.onclick = async () => {
+        if (!confirm('Завершить выбранную сессию? Пользователь увидит сообщение «Сессия завершена администратором».')) return;
+        btn.disabled = true;
+        try {
+          await API.http.authUserSessions(btn.dataset.monEnd, { session_id: btn.dataset.monSession });
+          toast('Сессия завершена');
+          renderMonitoringInto(node);
+        } catch (e) { reportError(e); btn.disabled = false; }
+      });
+    } catch (e) {
+      node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  async function renderStagingInto(node) {
+    node.innerHTML = `<div class="cab-sub">Staging QA · виртуальные пользователи и «войти как»</div><div class="muted">Загрузка…</div>`;
+    try {
+      const [status, usersDoc] = await Promise.all([
+        API.http.testAuthStatus().catch(err => ({ enabled: false, error: err.message })),
+        API.http.testAuthUsers().catch(() => ({ users: [] })),
+      ]);
+      if (!status.enabled) {
+        node.innerHTML = `<div class="cab-sub">Test auth выключен. Нужны <code>NTA_APP_ENV=staging</code> и <code>NTA_ENABLE_TEST_AUTH=1</code>.</div>
+          <div class="error">${esc(status.error || '')}</div>`;
+        return;
+      }
+      const presets = status.presets || [];
+      node.innerHTML = `
+        <div class="cab-sub">Создайте виртуального пользователя и войдите его глазами без реального телефона/Google.</div>
+        <div class="form-row"><label>Preset</label><select id="stg-preset">${presets.map(p => `<option value="${esc(p.id)}">${esc(p.label || p.id)}</option>`).join('')}</select>
+        <input id="stg-name" placeholder="Имя (опционально)" /><button class="btn primary" id="stg-create">Создать</button></div>
+        <h4 class="cab-section-title">Виртуальные пользователи</h4>
+        <div class="list" id="stg-list">${(usersDoc.users || []).map(u => {
+          const name = esc(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username || u.user_id);
+          return `<div class="row"><div class="row-main"><div class="row-title">${name} · <span class="badge">${esc(u.virtual_preset || '')}</span></div>
+            <div class="row-sub">id ${esc(u.user_id)} · Google ${u.google_linked ? '✓' : 'нужен'} · ${esc(u.status || '')}</div></div>
+            <button class="btn sm primary" data-stg-as="${esc(u.user_id)}">Войти как</button>
+            ${u.google_linked ? '' : `<button class="btn sm ghost" data-stg-google="${esc(u.user_id)}">+ Google</button>`}
+          </div>`;
+        }).join('') || '<div class="muted">Пока нет виртуальных пользователей</div>'}</div>`;
+      const create = qs('#stg-create', node);
+      if (create) create.onclick = async () => {
+        create.disabled = true;
+        try {
+          await API.http.testAuthVirtualUser({
+            preset: qs('#stg-preset', node)?.value || 'demo',
+            display_name: qs('#stg-name', node)?.value || '',
+          });
+          toast('Виртуальный пользователь создан');
+          renderStagingInto(node);
+        } catch (e) { reportError(e); create.disabled = false; }
+      };
+      qsa('[data-stg-as]', node).forEach(btn => btn.onclick = async () => {
+        if (!confirm('Войти как этот пользователь? Появится красный banner тестового режима.')) return;
+        btn.disabled = true;
+        try {
+          await API.http.ownerImpersonate(Number(btn.dataset.stgAs));
+          toast('Impersonation активна');
+          setTimeout(() => location.reload(), 400);
+        } catch (e) { reportError(e); btn.disabled = false; }
+      });
+      qsa('[data-stg-google]', node).forEach(btn => btn.onclick = async () => {
+        try {
+          await API.http.testAuthGoogleLink({ user_id: Number(btn.dataset.stgGoogle) });
+          toast('Google привязан');
+          renderStagingInto(node);
+        } catch (e) { reportError(e); }
+      });
+    } catch (e) {
+      node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
+    }
   }
 
   function loginCard(inner) {
@@ -2820,6 +3258,368 @@
     setTimeout(() => { t.style.transition = 'opacity .3s, transform .3s'; t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; setTimeout(() => t.remove(), 320); }, 2200);
   }
 
+  // ---- in-app notices: large top banners + bell inbox -------------------------
+  const NOTICE = {
+    shown: new Set(), timers: new Map(), started: false,
+    unreadByConversation: {}, unreadCount: 0, panelOpen: false,
+    graceUntil: 0, fading: false, interactWired: false,
+    retryAfter: 0, inflight: false,
+  };
+  function canUseNotices() {
+    return !!(window.API && !API.config.offline && !isGuest()
+      && CURRENT_AUTH && (CURRENT_AUTH.is_owner || CURRENT_AUTH.role === 'owner')
+      && API.http && typeof API.http.notifications === 'function');
+  }
+  function noticeWrap() {
+    let wrap = qs('.sf-notice-wrap');
+    if (!wrap) {
+      wrap = el('<div class="sf-notice-wrap" aria-live="polite"></div>');
+      document.body.appendChild(wrap);
+    }
+    return wrap;
+  }
+  function noticeVisibleInOpenChat(item) {
+    const cid = String((item && item.conversation_id) || '');
+    if (!ORCH.open) return false;
+    if (!cid) return false;
+    return cid === String(ORCH.currentId || '');
+  }
+  async function ackNotices(payload) {
+    if (!canUseNotices()) return null;
+    try { return await API.http.notificationsAck(payload || {}); }
+    catch (e) { return null; }
+  }
+  async function purgeReadNotices() {
+    if (!canUseNotices()) return;
+    try { await API.http.notificationsClear({ mode: 'read' }); } catch (e) { /* ignore */ }
+  }
+  function updateBellBadge(count) {
+    const bell = qs('#tb-bell');
+    const badge = qs('#tb-bell-badge');
+    if (!bell) return;
+    bell.hidden = !canUseNotices();
+    const n = Math.max(0, Number(count) || 0);
+    NOTICE.unreadCount = n;
+    if (!badge) return;
+    if (n <= 0) { badge.hidden = true; badge.textContent = '0'; bell.classList.remove('has-unread'); return; }
+    badge.hidden = false;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    bell.classList.add('has-unread');
+  }
+  function updateNoticeFabBadge(count) {
+    const fab = qs('#orch-fab'); if (!fab) return;
+    let badge = qs('.orch-fab-notice', fab);
+    const n = Math.max(0, Number(count) || 0);
+    if (n <= 0) { if (badge) badge.remove(); return; }
+    if (!badge) {
+      badge = el('<span class="orch-fab-notice" aria-hidden="true"></span>');
+      fab.appendChild(badge);
+    }
+    badge.textContent = n > 9 ? '9+' : String(n);
+  }
+  function applyUnreadConversationMap(map) {
+    NOTICE.unreadByConversation = map && typeof map === 'object' ? map : {};
+    if (qs('#orch-convos')) orchRenderConversations();
+  }
+  function dismissNoticeDom(id, opts) {
+    const immediate = !!(opts && opts.immediate);
+    const sel = (CSS && CSS.escape) ? CSS.escape(String(id || '')) : String(id || '');
+    if (!sel) return;
+    const node = qs(`.sf-notice[data-nid="${sel}"]`);
+    const timer = NOTICE.timers.get(id);
+    if (timer) { clearTimeout(timer); NOTICE.timers.delete(id); }
+    if (!node) return;
+    if (immediate) { node.remove(); return; }
+    if (node.classList.contains('leaving')) return;
+    node.classList.add('leaving');
+    setTimeout(() => { if (node.parentNode) node.remove(); }, 780);
+  }
+  function dismissNoticesForConversation(cid) {
+    const want = String(cid || '');
+    if (!want) return;
+    qsa('.sf-notice[data-cid]').forEach((node) => {
+      if (String(node.dataset.cid || '') === want) dismissNoticeDom(node.dataset.nid);
+    });
+  }
+  /** Soft-hide banners after user activity — stay unread in the bell. */
+  function fadeAwayVisibleNotices() {
+    const cards = qsa('.sf-notice:not(.leaving)');
+    if (!cards.length) return;
+    NOTICE.fading = true;
+    cards.forEach((node, i) => {
+      const id = String(node.dataset.nid || '');
+      setTimeout(() => {
+        node.classList.add('leaving');
+        if (id) NOTICE.shown.add(id);
+        const timer = NOTICE.timers.get(id);
+        if (timer) { clearTimeout(timer); NOTICE.timers.delete(id); }
+        setTimeout(() => { if (node.parentNode) node.remove(); }, 780);
+      }, i * 90);
+    });
+    setTimeout(() => { NOTICE.fading = false; }, 90 * cards.length + 820);
+  }
+  function wireNoticeInteractionFade() {
+    if (NOTICE.interactWired) return;
+    NOTICE.interactWired = true;
+    let pending = null;
+    const onInteract = (e) => {
+      if (NOTICE.fading) return;
+      if (Date.now() < NOTICE.graceUntil) return;
+      const t = e && e.target;
+      if (t && t.closest && t.closest('.sf-notice-wrap, #tb-bell, .drawer-back, .drawer')) {
+        if (pending) { clearTimeout(pending); pending = null; }
+        return;
+      }
+      if (!qs('.sf-notice:not(.leaving)')) return;
+      // Debounce: brief pause after activity so a quick mouse twitch doesn't wipe it.
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = null;
+        if (Date.now() < NOTICE.graceUntil) return;
+        if (qs('.sf-notice:hover')) return;
+        fadeAwayVisibleNotices();
+      }, 900);
+    };
+    ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => {
+      window.addEventListener(ev, onInteract, { passive: true, capture: true });
+    });
+  }
+  async function markNoticeRead(itemOrId, opts) {
+    const item = (itemOrId && typeof itemOrId === 'object') ? itemOrId : { id: itemOrId };
+    const id = String(item.id || '');
+    const cid = String(item.conversation_id || (opts && opts.conversation_id) || '');
+    if (id) {
+      dismissNoticeDom(id);
+      NOTICE.shown.add(id);
+    }
+    if (cid) dismissNoticesForConversation(cid);
+    const payload = {};
+    if (id) payload.ids = [id];
+    // Only clear the whole conversation when the user explicitly opened a notice
+    // that belongs to it (openNotice). Polling / opening chat must NOT do this.
+    if (cid && opts && opts.ackConversation) payload.conversation_id = cid;
+    if (!payload.ids && !payload.conversation_id) return null;
+    const res = await ackNotices(payload);
+    // Drop consumed items from storage so the unread inbox stays truthful.
+    if (id) {
+      try { await API.http.notificationsDelete({ ids: [id] }); } catch (e) { /* ignore */ }
+    }
+    if (opts && opts.ackConversation) await purgeReadNotices();
+    await refreshInAppNotices({ silent: true });
+    return res;
+  }
+  async function openNotice(item) {
+    const cid = String(item.conversation_id || '');
+    await markNoticeRead(item, { ackConversation: !!cid });
+    if (cid) {
+      await openOrchestrator();
+      if (cid !== ORCH.currentId) {
+        try { await orchSelectConversation(cid); } catch (e) { /* ignore */ }
+      }
+    } else if (!ORCH.open) {
+      await openOrchestrator();
+    }
+    await refreshInAppNotices({ silent: true });
+  }
+  function renderNotice(item) {
+    const id = String(item.id || '');
+    if (!id || NOTICE.shown.has(id) || qs(`.sf-notice[data-nid="${id}"]`)) return;
+    NOTICE.shown.add(id);
+    wireNoticeInteractionFade();
+    // Stay visible long enough to read even if the mouse moves right away.
+    NOTICE.graceUntil = Math.max(NOTICE.graceUntil, Date.now() + 9000);
+    const wrap = noticeWrap();
+    wrap.classList.add('has-notices');
+    const urgent = !!item.urgent;
+    const cid = String(item.conversation_id || '');
+    const kicker = item.conversation_title
+      ? String(item.conversation_title)
+      : (urgent ? 'Срочно' : 'Уведомление');
+    const preview = String(item.body || '').trim();
+    const card = el(`<button type="button" class="sf-notice ${urgent ? 'urgent' : ''}" data-nid="${esc(id)}" data-cid="${esc(cid)}">
+      <span class="sf-notice-glow" aria-hidden="true"></span>
+      <span class="sf-notice-top">
+        <span class="sf-notice-kicker">${esc(kicker)}</span>
+        <span class="sf-notice-close" data-notice-close="${esc(id)}" title="Скрыть" aria-label="Скрыть">${icon('close')}</span>
+      </span>
+      <span class="sf-notice-title">${esc(item.title || 'Уведомление')}</span>
+      ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
+      <span class="sf-notice-hint">Открыть · через несколько секунд скроется само</span>
+    </button>`);
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('[data-notice-close]')) {
+        e.preventDefault(); e.stopPropagation();
+        dismissNoticeDom(id);
+        NOTICE.shown.add(id);
+        return;
+      }
+      openNotice(item);
+    });
+    wrap.prepend(card);
+    requestAnimationFrame(() => card.classList.add('in'));
+  }
+  function noticeTimeLabel(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles',
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return String(iso).slice(0, 16); }
+  }
+  async function showNotificationsCenter() {
+    if (!canUseNotices()) { toast('Уведомления доступны владельцу'); return; }
+    fadeAwayVisibleNotices();
+    const d = drawer(
+      `<span style="display:inline-flex;align-items:center;gap:8px">${icon('bell')} Уведомления</span>`,
+      '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>',
+    );
+    NOTICE.panelOpen = true;
+    const render = async () => {
+      const body = qs('.drawer-b', d); if (!body) return;
+      let data;
+      try { data = await API.http.notifications({ unread: 1, limit: 80 }); }
+      catch (e) { renderError(body, e, render); return; }
+      const items = (data && data.items) || [];
+      const unread = Number((data && data.unread_count) || 0);
+      applyUnreadConversationMap((data && data.unread_by_conversation) || {});
+      updateBellBadge(unread);
+      updateNoticeFabBadge(unread);
+      const tools = `
+        <div class="sf-inbox-toolbar">
+          <p class="sf-inbox-lead">Новые ответы и события, пока вы в приложении. Откройте — и пункт исчезнет.</p>
+          <div class="sf-inbox-actions">
+            <button type="button" class="btn sm ghost" data-inbox-ack-all ${unread ? '' : 'disabled'}>Прочитать все</button>
+            <button type="button" class="btn sm danger" data-inbox-clear-all ${unread ? '' : 'disabled'}>Очистить</button>
+          </div>
+        </div>`;
+      if (!items.length) {
+        body.innerHTML = tools + '<div class="empty-state">Нет новых уведомлений.</div>';
+      } else {
+        body.innerHTML = tools + `<div class="sf-inbox-list">${items.map((item, idx) => {
+          const urgentCls = item.urgent ? ' urgent' : '';
+          const preview = String(item.body || '').trim().slice(0, 180);
+          return `<article class="sf-inbox-item unread${urgentCls}" data-inbox-id="${esc(item.id)}" style="--i:${idx}">
+            <button type="button" class="sf-inbox-main" data-inbox-open="${esc(item.id)}">
+              <div class="sf-inbox-meta">
+                <span class="sf-inbox-title">${esc(item.title || 'Уведомление')}</span>
+                <span class="sf-inbox-time">${esc(noticeTimeLabel(item.created_at_utc))}</span>
+              </div>
+              ${item.conversation_title ? `<div class="sf-inbox-thread">${esc(item.conversation_title)}</div>` : ''}
+              ${preview ? `<div class="sf-inbox-body">${esc(preview)}</div>` : ''}
+            </button>
+            <div class="sf-inbox-acts">
+              <button type="button" class="btn sm ghost" data-inbox-del="${esc(item.id)}" title="Удалить">${icon('trash')}</button>
+            </div>
+          </article>`;
+        }).join('')}</div>`;
+      }
+      const byId = Object.fromEntries(items.map((row) => [String(row.id), row]));
+      const ackAll = qs('[data-inbox-ack-all]', body);
+      if (ackAll) ackAll.onclick = async () => {
+        try {
+          const ids = items.map((row) => row.id).filter(Boolean);
+          if (!ids.length) return;
+          await API.http.notificationsAck({ ids });
+          await purgeReadNotices();
+          toast('Все прочитаны');
+          await render();
+          refreshInAppNotices({ silent: true });
+        } catch (e) { reportError(e); }
+      };
+      const clearAll = qs('[data-inbox-clear-all]', body);
+      if (clearAll) clearAll.onclick = async () => {
+        if (!confirm('Удалить все уведомления?')) return;
+        try {
+          await API.http.notificationsClear({ mode: 'all' });
+          qsa('.sf-notice').forEach((n) => n.remove());
+          toast('Уведомления очищены');
+          await render();
+          refreshInAppNotices({ silent: true });
+        } catch (e) { reportError(e); }
+      };
+      qsa('[data-inbox-open]', body).forEach((btn) => btn.addEventListener('click', async () => {
+        const item = byId[btn.dataset.inboxOpen]; if (!item) return;
+        const row = btn.closest('.sf-inbox-item');
+        if (row) {
+          row.classList.add('removing');
+          await new Promise((r) => setTimeout(r, 280));
+        }
+        closeDrawer();
+        NOTICE.panelOpen = false;
+        await openNotice(item);
+      }));
+      qsa('[data-inbox-del]', body).forEach((btn) => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const row = btn.closest('.sf-inbox-item');
+        try {
+          await API.http.notificationsDelete({ ids: [btn.dataset.inboxDel] });
+          dismissNoticeDom(btn.dataset.inboxDel);
+          if (row) {
+            row.classList.add('removing');
+            await new Promise((r) => setTimeout(r, 280));
+          }
+          await render();
+          refreshInAppNotices({ silent: true });
+        } catch (err) { reportError(err); }
+      }));
+    };
+    await render();
+    const back = qs('.drawer-back');
+    if (back) back.addEventListener('click', () => { NOTICE.panelOpen = false; }, { once: true });
+  }
+  function wireNotificationsBell() {
+    const bell = qs('#tb-bell');
+    if (!bell || bell._wired) return;
+    bell._wired = true;
+    bell.addEventListener('click', (e) => { e.stopPropagation(); showNotificationsCenter(); });
+    updateBellBadge(NOTICE.unreadCount);
+  }
+  function startInAppNotices() {
+    if (NOTICE.started) return;
+    if (!canUseNotices()) return;
+    NOTICE.started = true;
+    wireNotificationsBell();
+    wireNoticeInteractionFade();
+    const bell = qs('#tb-bell'); if (bell) bell.hidden = false;
+    // 12s is enough for live alerts without flooding the owner rate bucket.
+    poll(() => refreshInAppNotices(), 12000);
+  }
+  async function refreshInAppNotices(opts) {
+    if (!canUseNotices()) return;
+    if (NOTICE.inflight) return;
+    if (Date.now() < NOTICE.retryAfter) return;
+    wireNotificationsBell();
+    const silent = !!(opts && opts.silent);
+    NOTICE.inflight = true;
+    let data;
+    try {
+      data = await API.http.notifications({ unread: 1, limit: 40 });
+      NOTICE.retryAfter = 0;
+    } catch (e) {
+      if (e && e.status === 429) {
+        NOTICE.retryAfter = Date.now() + Math.max(20000, Number(e.retryAfterMs || 0));
+      }
+      return;
+    } finally {
+      NOTICE.inflight = false;
+    }
+    const items = (data && data.items) || [];
+    const unread = Number((data && data.unread_count) || items.length || 0);
+    applyUnreadConversationMap((data && data.unread_by_conversation) || {});
+    updateBellBadge(unread);
+    updateNoticeFabBadge(unread);
+    for (const item of items) {
+      // While the matching chat is open, skip the toast — but NEVER auto-ack.
+      // Unread must stay in the bell until the user opens or clears it.
+      if (noticeVisibleInOpenChat(item)) {
+        dismissNoticeDom(String(item.id || ''));
+        continue;
+      }
+      if (!silent) renderNotice(item);
+    }
+  }
+
   // ---- drawer -----------------------------------------------------------------
   function drawer(titleHtml, bodyHtml) {
     let back = qs('.drawer-back');
@@ -2901,6 +3701,92 @@
     retryAfter: 0, transientError: null,
   };
   const ORCH_KEY = 'orch.currentConversationId';
+  const ORCH_SKIN_KEY = 'orch.skin';
+  const ORCH_SKIN_LEGACY = {
+    ledger: 'terminal', pulse: 'slate', atelier: 'studio', mica: 'glass', signal: 'day',
+  };
+  const ORCH_SKINS = [
+    { id: 'forge',    title: 'Forge',    sub: 'Стандарт · торговый терминал',     icon: 'chat',   fabTitle: 'StratForge Orchestrator · Forge' },
+    { id: 'terminal', title: 'Terminal', sub: 'Институциональный desk · amber',   icon: 'cpu',    fabTitle: 'StratForge Orchestrator · Terminal' },
+    { id: 'slate',    title: 'Slate',    sub: 'Современный продукт · Linear',     icon: 'spark',  fabTitle: 'StratForge Orchestrator · Slate' },
+    { id: 'studio',   title: 'Studio',   sub: 'Корпоративный светлый · Stripe',  icon: 'layers', fabTitle: 'StratForge Orchestrator · Studio' },
+    { id: 'glass',    title: 'Glass',    sub: 'Сдержанное стекло · Fluent',      icon: 'desktop', fabTitle: 'StratForge Orchestrator · Glass' },
+    { id: 'day',      title: 'Day',      sub: 'Светлый operations desk',         icon: 'chart',  fabTitle: 'StratForge Orchestrator · Day' },
+  ];
+  function orchSkinMeta(id) {
+    const mapped = ORCH_SKIN_LEGACY[id] || id;
+    return ORCH_SKINS.find((s) => s.id === mapped) || ORCH_SKINS[0];
+  }
+  function orchLoadSkin() {
+    try {
+      const v = localStorage.getItem(ORCH_SKIN_KEY);
+      const mapped = ORCH_SKIN_LEGACY[v] || v;
+      return ORCH_SKINS.some((s) => s.id === mapped) ? mapped : 'forge';
+    } catch (e) { return 'forge'; }
+  }
+  function orchApplySkin(id) {
+    const skin = orchSkinMeta(id);
+    if (document.documentElement) document.documentElement.setAttribute('data-orch-skin', skin.id);
+    const fab = qs('#orch-fab');
+    if (fab) {
+      fab.innerHTML = `${icon(skin.icon)}<span class="orch-fab-dot" aria-hidden="true"></span>`;
+      fab.title = skin.fabTitle;
+      fab.setAttribute('aria-label', `Открыть ${skin.fabTitle}`);
+    }
+    const menu = qs('#orch-skin-menu');
+    if (menu && !menu.hidden) orchRenderSkinMenu();
+  }
+  function orchSetSkin(id) {
+    const skin = orchSkinMeta(id);
+    try { localStorage.setItem(ORCH_SKIN_KEY, skin.id); } catch (e) { /* ignore */ }
+    orchApplySkin(skin.id);
+    const panel = qs('#orch-panel');
+    if (panel) panel.classList.remove('show-convos');
+  }
+  function orchRenderSkinMenu() {
+    const menu = qs('#orch-skin-menu');
+    if (!menu) return;
+    const cur = orchLoadSkin();
+    menu.innerHTML = `<div class="orch-skin-menu-head">Облик чата</div>` + ORCH_SKINS.map((s) => `
+      <button type="button" class="orch-skin-item ${s.id === cur ? 'active' : ''}" data-orch-skin-opt="${esc(s.id)}" title="${esc(s.sub)}">
+        <span class="orch-skin-swatch" data-swatch="${esc(s.id)}" aria-hidden="true"><i></i><i></i></span>
+        <span class="orch-skin-item-main">
+          <span class="orch-skin-item-title">${esc(s.title)}</span>
+          <span class="orch-skin-item-sub">${esc(s.sub)}</span>
+        </span>
+        <span class="orch-skin-item-check">${s.id === cur ? icon('check') : ''}</span>
+      </button>`).join('');
+    qsa('[data-orch-skin-opt]', menu).forEach((b) => b.addEventListener('click', () => {
+      orchSetSkin(b.dataset.orchSkinOpt);
+      orchCloseSkinMenu();
+      toast(`Облик: ${orchSkinMeta(b.dataset.orchSkinOpt).title}`);
+    }));
+  }
+  function orchOpenSkinMenu() {
+    const menu = qs('#orch-skin-menu');
+    const btn = qs('#orch-skin-btn');
+    if (!menu || !btn) return;
+    orchRenderSkinMenu();
+    menu.hidden = false;
+    btn.classList.add('on-skin');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+  function orchCloseSkinMenu() {
+    const menu = qs('#orch-skin-menu');
+    const btn = qs('#orch-skin-btn');
+    if (menu) menu.hidden = true;
+    if (btn) {
+      btn.classList.remove('on-skin');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  }
+  function orchToggleSkinMenu() {
+    const menu = qs('#orch-skin-menu');
+    if (!menu) return;
+    if (menu.hidden) orchOpenSkinMenu();
+    else orchCloseSkinMenu();
+  }
+  orchApplySkin(orchLoadSkin());
   // Model selection is an internal responsibility of Vitek and the Manager.
   const ORCH_MODES = {
     auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите задачу обычным текстом…' },
@@ -2928,16 +3814,23 @@
     if (ORCH.built || qs('.orch-fab')) return;
     ORCH.built = true;
     const offline = !window.API || API.config.offline;
-    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="StratForge Orchestrator · Витёк" aria-label="Открыть StratForge Orchestrator">${icon('chat')}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
+    const skin = orchSkinMeta(orchLoadSkin());
+    orchApplySkin(skin.id);
+    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="${esc(skin.fabTitle)}" aria-label="Открыть ${esc(skin.fabTitle)}">${icon(skin.icon)}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
     const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="StratForge Orchestrator · чат с Витьком">
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
         <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">Витёк · ваша правая рука</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
         <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
+        <div class="orch-skin-wrap">
+          <button class="orch-icon-btn" id="orch-skin-btn" type="button" title="Облик чата" aria-label="Облик чата" aria-haspopup="menu" aria-expanded="false">${icon('palette')}</button>
+          <div class="orch-skin-menu" id="orch-skin-menu" role="menu" hidden></div>
+        </div>
         <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
       </header>
       <div class="orch-body">
+        <button type="button" class="orch-drawer-scrim" id="orch-drawer-scrim" aria-label="Закрыть список диалогов" tabindex="-1"></button>
         <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
         <div class="orch-main">
           <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
@@ -2957,14 +3850,27 @@
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
-    qs('#orch-list-toggle', panel).addEventListener('click', () => panel.classList.toggle('show-convos'));
-    qs('#orch-new', panel).addEventListener('click', orchNewConversation);
-    qs('#orch-thread-state', panel).addEventListener('click', orchToggleConversationState);
+    qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
+    qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
+    qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    qs('#orch-thread-state', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchToggleConversationState(); });
+    qs('#orch-skin-btn', panel).addEventListener('click', (e) => { e.stopPropagation(); orchToggleSkinMenu(); });
+    qs('#orch-skin-menu', panel).addEventListener('click', (e) => e.stopPropagation());
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
     const ta = qs('#orch-text', panel);
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ORCH.open) closeOrchestrator(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !ORCH.open) return;
+      const menu = qs('#orch-skin-menu');
+      if (menu && !menu.hidden) { orchCloseSkinMenu(); e.preventDefault(); return; }
+      if (panel.classList.contains('show-convos')) { panel.classList.remove('show-convos'); e.preventDefault(); return; }
+      closeOrchestrator();
+    });
+    document.addEventListener('click', (e) => {
+      const wrap = qs('.orch-skin-wrap', panel);
+      if (wrap && !wrap.contains(e.target)) orchCloseSkinMenu();
+    });
     wireOrchestratorVoice(panel);
     orchSelectMode(orchLoadMode(), { silent: true });
   }
@@ -3057,6 +3963,7 @@
     if (!loaded) return;
     await orchLoadMessages(ORCH.currentId);
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
+    if (ORCH.currentId) dismissNoticesForConversation(ORCH.currentId);
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,
     // so new messages and a first-request title become visible here almost at once.
     if (ORCH.pollStop) ORCH.pollStop();
@@ -3093,6 +4000,7 @@
   function closeOrchestrator() {
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     ORCH.open = false;
+    orchCloseSkinMenu();
     if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 220); }
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
@@ -3137,11 +4045,12 @@
     const isDefault = !!(c && c.is_default);
     const badge = qs('#orch-task-state');
     if (badge) {
-      if (c && c.closed) {
-        badge.textContent = 'Тема закрыта'; badge.className = 'orch-task-state closed'; badge.hidden = false;
-      } else if (isDefault && workState === 'open') {
-        // For the always-open system chat hide the "Тема открыта" label — it adds no information.
+      if (isDefault) {
+        // The main/system chat is a durable service inbox — never show topic
+        // lifecycle badges such as «Тема открыта» / «Тема завершена».
         badge.hidden = true;
+      } else if (c && c.closed) {
+        badge.textContent = 'Тема закрыта'; badge.className = 'orch-task-state closed'; badge.hidden = false;
       } else {
         badge.textContent = meta[0]; badge.className = 'orch-task-state ' + meta[1]; badge.hidden = false;
       }
@@ -3162,14 +4071,21 @@
   }
   function orchRenderConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
+    const unreadMap = NOTICE.unreadByConversation || {};
     const rows = ORCH.conversations.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const canEdit = !c.is_default;
       const pinned = !!c.pinned;
-      return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
+      const unreadN = Math.max(0, Number(unreadMap[c.conversation_id] || 0));
+      const unreadCls = unreadN ? ' unread' : '';
+      const unreadBadge = unreadN
+        ? `<span class="orch-convo-unread" title="${unreadN} непрочитанных">${unreadN > 9 ? '9+' : unreadN}</span>`
+        : '';
+      return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}${unreadCls}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
         <div class="orch-convo-main">
-          <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}</div>
-          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ. <span class="orch-convo-state ${(c.closed ? 'closed' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1])}">${c.closed ? 'закрыта' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0]}</span></div>
+          <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}${unreadBadge}</div>
+          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.</div>
+          <div class="orch-convo-state ${(c.closed ? 'closed' : (c.is_default ? 'open' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1]))}">${c.closed ? 'закрыта' : (c.is_default ? 'всегда открыт' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0])}</div>
         </div>
         <div class="orch-convo-acts">
           ${c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">служебный</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`}
@@ -3198,7 +4114,11 @@
   }
   async function orchSelectConversation(cid) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (!cid || cid === ORCH.currentId) { qs('#orch-panel').classList.remove('show-convos'); return; }
+    if (!cid || cid === ORCH.currentId) {
+      qs('#orch-panel').classList.remove('show-convos');
+      if (cid) dismissNoticesForConversation(cid);
+      return;
+    }
     if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Перейти в другой диалог?')) return;
     orchSaveCurrentId(cid);
     ORCH.messagesSignature = '';
@@ -3207,6 +4127,7 @@
     qs('#orch-panel').classList.remove('show-convos');
     await orchLoadMessages(cid);
     orchRenderWorkState();
+    dismissNoticesForConversation(cid);
     const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
   }
   async function orchNewConversation() {
@@ -3266,6 +4187,36 @@
       </div>
     </div>`;
   }
+  const ORCH_KIND_LABELS = {
+    chat: 'сообщение', request: 'просьба', task: 'поручение', report: 'отчёт',
+  };
+  const ORCH_FULFILL_LABELS = {
+    unset: 'не отмечено', done: 'выполнено', failed: 'не выполнено', na: 'переписка',
+  };
+  function orchInferKind(row) {
+    const explicit = String(row.message_kind || '').trim();
+    if (ORCH_KIND_LABELS[explicit]) return explicit;
+    const actions = Array.isArray(row.actions) ? row.actions.filter(a => a && typeof a === 'object') : [];
+    if (!actions.length) return 'chat';
+    const names = actions.map(a => String(a.name || a.action || ''));
+    const statuses = actions.map(a => String(a.status || ''));
+    if (names.some(n => /mission_completed|deliver_report|request_.*_report/.test(n))) return 'report';
+    if (statuses.some(s => /needs_input|approval_required|waiting_review/.test(s))) return 'request';
+    return 'task';
+  }
+  function orchFulfillmentOf(row) {
+    const raw = String(row.fulfillment || '').trim();
+    if (ORCH_FULFILL_LABELS[raw]) return raw;
+    const kind = orchInferKind(row);
+    if (kind === 'chat') return 'na';
+    const actions = Array.isArray(row.actions) ? row.actions.filter(a => a && typeof a === 'object') : [];
+    if (!actions.length) return 'unset';
+    const statuses = actions.map(a => String(a.status || ''));
+    if (statuses.some(s => /queued|running|in_progress|needs_input|approval_required|waiting_review/.test(s))) return 'unset';
+    if (statuses.some(s => /error|blocked/.test(s))) return 'failed';
+    if (statuses.some(s => /completed|confirmed_connected/.test(s))) return 'done';
+    return 'unset';
+  }
   const ORCH_ACTION_LABELS = {
     reconnect_runtime_connection: 'Проверка связи с NinjaTrader',
     runtime_reconnect: 'Восстановление связи с NinjaTrader',
@@ -3273,7 +4224,7 @@
     review_failed_strategies: 'Проверка проваленных стратегий',
     start_research: 'Исследование стратегии',
     research_progress: 'Исследование стратегии',
-    mission_completed: 'Исследование завершено',
+    mission_completed: 'Исследование',
     request_performance_report: 'Подготовка финансового отчёта',
     request_accounting_report: 'Проверка бухгалтерского журнала',
     request_strategy_report: 'Подготовка отчёта по стратегиям',
@@ -3290,45 +4241,117 @@
     vitek_resume_task: 'Ответ передан исполнителю',
   };
   const ORCH_ACTION_STATES = {
-    queued: ['Поставлено в очередь', 'running'], running: ['Выполняется', 'running'],
+    queued: ['В очереди', 'running'], running: ['Выполняется', 'running'],
     in_progress: ['Выполняется', 'running'], approval_required: ['Нужно ваше решение', 'waiting'],
     needs_input: ['Жду ваш ответ', 'waiting'], waiting_review: ['Жду ваш ответ', 'waiting'],
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
-    completed: ['Выполнено', 'done'], confirmed_connected: ['Связь подтверждена', 'done'],
+    completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
+    // Progress rows stay informative while unfinished; terminal «Выполнено»
+    // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
       const name = String(action.name || action.action || 'vitek_task');
       const status = String(action.status || 'running');
       const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];
       const label = String(action.owner_label || action.summary || ORCH_ACTION_LABELS[name] || 'Работа по поручению');
-      return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span><span class="orch-action-state">${esc(state[0])}</span></div>`;
+      const stateText = state[0] ? `<span class="orch-action-state">${esc(state[0])}</span>` : '';
+      return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span>${stateText}</div>`;
     }).join('');
     return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}</div>` : '';
+  }
+  function orchChainHtml(row) {
+    const chain = Array.isArray(row.participation_chain)
+      ? row.participation_chain.filter(step => step && typeof step === 'object')
+      : [];
+    if (chain.length < 2) return '';
+    const steps = chain.map((step, index) => {
+      const who = String(step.agent_name || step.agent_id || 'агент');
+      const title = String(step.title || step.role || '');
+      const model = String(step.model || '');
+      const provider = String(step.provider || '');
+      const detail = [title, model ? `модель: ${model}${provider ? ` (${provider})` : ''}` : ''].filter(Boolean).join(' · ');
+      return `<li class="orch-chain-step"><span class="orch-chain-n">${index + 1}</span><div><strong>${esc(who)}</strong>${detail ? `<div class="orch-chain-detail">${esc(detail)}</div>` : ''}</div></li>`;
+    }).join('');
+    return `<details class="orch-chain"><summary>Цепочка участников · ${chain.length}</summary><ol class="orch-chain-list">${steps}</ol></details>`;
+  }
+  function orchFooterHtml(row, isUser) {
+    if (isUser || !row.message_id) return orchRatingHtml(row, isUser);
+    const kind = orchInferKind(row);
+    const fulfillment = orchFulfillmentOf(row);
+    const kindLabel = ORCH_KIND_LABELS[kind] || kind;
+    const fulfillLabel = ORCH_FULFILL_LABELS[fulfillment] || fulfillment;
+    const showMarks = kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed';
+    const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
+    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const title = String(row.agent_title || '').trim();
+    const model = String(row.model || '').trim();
+    const provider = String(row.provider || '').trim();
+    const modelMeta = model ? `модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}` : '';
+    const metaBits = [
+      esc(agentLabel),
+      title ? esc(title) : '',
+      modelMeta,
+      orchFmtTime(row.timestamp_utc),
+    ].filter(Boolean).join(' · ');
+    const statusCls = fulfillment === 'done' ? 'done' : fulfillment === 'failed' ? 'failed' : fulfillment === 'na' ? 'na' : 'unset';
+    const marks = showMarks ? `<div class="orch-fulfill-marks" data-orch-fulfill-id="${esc(row.message_id)}" data-fulfillment="${esc(fulfillment)}">
+        <span class="orch-msg-kind">${esc(kindLabel)}</span>
+        <button type="button" class="orch-fulfill-btn ${fulfillment === 'done' ? 'active done' : ''}" data-orch-fulfill="done" title="Выполнено" aria-label="Выполнено">${icon('check')}</button>
+        <button type="button" class="orch-fulfill-btn ${fulfillment === 'failed' ? 'active failed' : ''}" data-orch-fulfill="failed" title="Не выполнено" aria-label="Не выполнено">${icon('close')}</button>
+      </div>` : `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>`;
+    return `<div class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}">
+      <div class="orch-msg-footer-row">
+        <div class="orch-msg-footer-left">
+          <div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${Number(row.rating || 0) || ''}">
+            <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${Number(row.rating || 0) >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
+          </div>
+          <span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>
+        </div>
+        <div class="orch-msg-footer-right">${marks}</div>
+      </div>
+      <div class="orch-msg-meta">${metaBits}${orchChainHtml(row)}</div>
+      ${(() => {
+        const comment = String(row.feedback_comment || '');
+        const hasComment = !!comment.trim();
+        const rating = Number(row.rating || 0);
+        const feedbackOpen = rating === 1 && !hasComment;
+        return `<div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
+          <div><span class="orch-feedback-archive-label">Сохранённый комментарий</span><div class="orch-feedback-archive-text">${esc(comment)}</div></div>
+          <button type="button" class="orch-feedback-edit">Редактировать</button>
+        </div>
+        <div class="orch-feedback-area" ${feedbackOpen ? '' : 'hidden'}>
+          <textarea class="orch-feedback-text" rows="2" maxlength="2000" placeholder="Что исправить в ответе?"></textarea>
+          <div class="orch-feedback-actions">
+            <button type="button" class="orch-feedback-mic" title="Надиктовать комментарий" aria-label="Надиктовать комментарий" hidden>${icon('mic')}</button>
+            <button type="button" class="orch-feedback-cancel" hidden>Отмена</button>
+            <button type="button" class="orch-feedback-save">Сохранить комментарий</button>
+          </div>
+        </div>`;
+      })()}
+    </div>`;
   }
   function orchMessageHtml(row) {
     const isUser = row.role === 'user';
     const actor = isUser
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
-    const model = String(row.model || '').trim();
-    const provider = String(row.provider || '').trim();
-    const modelMeta = !isUser && model
-      ? `модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}`
+    const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
+    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const meta = isUser
+      ? [esc(actor), orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ')
       : '';
-    const meta = [
-      isUser ? esc(actor) : (row.agent_name ? esc(row.agent_name) : ''),
-      modelMeta,
-      orchFmtTime(row.timestamp_utc),
-    ].filter(Boolean).join(' · ');
     const actions = orchActionsHtml(row, isUser);
-    const rating = orchRatingHtml(row, isUser);
+    const footer = isUser
+      ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
+      : orchFooterHtml(row, isUser);
     const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
     const media = attachments.map(a =>
       `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
     ).join('');
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}<div class="orch-msg-meta">${meta}</div>${rating}</div>`;
+    const face = isUser ? '' : agentAvatarHtml(agentRef, { label: agentLabel, cls: 'orch-msg-face' });
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -3396,6 +4419,19 @@
     };
     try { rec.start(); } catch (e) { orchStopFeedbackVoice(); toast('Голосовой ввод недоступен в этом браузере'); }
   }
+  async function orchSaveFulfillment(node, fulfillment) {
+    if (!node || !window.API || API.config.offline) return;
+    const mid = node.dataset.orchFulfillId || '';
+    if (!mid || !API.http.aiOrchestratorFulfillMessage) return;
+    const next = fulfillment === node.dataset.fulfillment ? 'unset' : fulfillment;
+    node.classList.add('saving');
+    try {
+      await API.http.aiOrchestratorFulfillMessage(ORCH.currentId, mid, next);
+      ORCH.messagesSignature = '';
+      await orchLoadMessages(ORCH.currentId, true);
+    } catch (e) { reportError(e); }
+    finally { node.classList.remove('saving'); }
+  }
   async function orchSaveRating(node, rating, comment) {
     if (!node || !window.API || API.config.offline) return;
     const mid = node.dataset.orchMessageId || '';
@@ -3407,68 +4443,79 @@
       const savedComment = String(result && result.message && result.message.feedback_comment || '');
       node.dataset.rating = String(rating);
       qsa('[data-orch-rate]', node).forEach(btn => btn.classList.toggle('active', Number(btn.dataset.orchRate) <= rating));
-      const saved = qs('.orch-feedback-saved', node);
+      const root = node.closest('.orch-msg-footer') || node;
+      const saved = qs('.orch-feedback-saved', root);
       if (saved) { saved.hidden = false; saved.textContent = 'сохранено'; }
-      const archive = qs('.orch-feedback-archive', node);
-      const archiveText = qs('.orch-feedback-archive-text', node);
+      const archive = qs('.orch-feedback-archive', root);
+      const archiveText = qs('.orch-feedback-archive-text', root);
       if (archiveText) archiveText.textContent = savedComment;
       if (archive) archive.hidden = !savedComment;
-      const area = qs('.orch-feedback-area', node);
+      const area = qs('.orch-feedback-area', root);
       if (area) area.hidden = rating !== 1 || !!savedComment;
-      const ta = qs('.orch-feedback-text', node);
+      const ta = qs('.orch-feedback-text', root);
       if (ta) { ta.value = ''; ta.dataset.dirty = ''; }
-      const cancel = qs('.orch-feedback-cancel', node); if (cancel) cancel.hidden = true;
+      const cancel = qs('.orch-feedback-cancel', root); if (cancel) cancel.hidden = true;
+      const status = qs('.orch-fulfill-status', root);
+      if (status && result && result.message) {
+        /* keep footer marks in sync after a silent reload path */
+      }
     } catch (e) { reportError(e); }
     finally { node.classList.remove('saving'); }
   }
   function wireOrchFeedback(root) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    qsa('.orch-fulfill-marks', root).forEach(node => {
+      qsa('[data-orch-fulfill]', node).forEach(btn => btn.addEventListener('click', () => {
+        orchSaveFulfillment(node, btn.dataset.orchFulfill);
+      }));
+    });
     qsa('.orch-rating', root).forEach(node => {
+      const shell = node.closest('.orch-msg-footer') || node;
       qsa('[data-orch-rate]', node).forEach(btn => btn.addEventListener('click', () => {
         const rating = Number(btn.dataset.orchRate || 0);
-        const ta = qs('.orch-feedback-text', node);
-        const archive = qs('.orch-feedback-archive', node);
-        const archived = qs('.orch-feedback-archive-text', node);
+        const ta = qs('.orch-feedback-text', shell);
+        const archive = qs('.orch-feedback-archive', shell);
+        const archived = qs('.orch-feedback-archive-text', shell);
         if (rating === 1) {
           node.dataset.rating = '1';
           qsa('[data-orch-rate]', node).forEach(star => star.classList.toggle('active', Number(star.dataset.orchRate) <= 1));
-          const area = qs('.orch-feedback-area', node); if (area) area.hidden = false;
+          const area = qs('.orch-feedback-area', shell); if (area) area.hidden = false;
           if (archive) archive.hidden = true;
           if (ta) { ta.value = archived ? archived.textContent : ta.value; ta.dataset.dirty = '1'; ta.focus(); }
-          const saved = qs('.orch-feedback-saved', node); if (saved) { saved.hidden = false; saved.textContent = 'добавьте комментарий'; }
+          const saved = qs('.orch-feedback-saved', shell); if (saved) { saved.hidden = false; saved.textContent = 'добавьте комментарий'; }
           return;
         }
         const comment = archive && !archive.hidden && archived ? archived.textContent : (ta ? ta.value : '');
         orchSaveRating(node, rating, comment);
       }));
-      const save = qs('.orch-feedback-save', node);
+      const save = qs('.orch-feedback-save', shell);
       if (save) save.addEventListener('click', () => {
         const rating = Number(node.dataset.rating || 1) || 1;
-        const ta = qs('.orch-feedback-text', node);
+        const ta = qs('.orch-feedback-text', shell);
         orchSaveRating(node, rating, ta ? ta.value : '');
       });
-      const edit = qs('.orch-feedback-edit', node);
+      const edit = qs('.orch-feedback-edit', shell);
       if (edit) edit.addEventListener('click', () => {
         orchStopFeedbackVoice();
-        const area = qs('.orch-feedback-area', node);
-        const archive = qs('.orch-feedback-archive', node);
-        const archived = qs('.orch-feedback-archive-text', node);
-        const ta = qs('.orch-feedback-text', node);
+        const area = qs('.orch-feedback-area', shell);
+        const archive = qs('.orch-feedback-archive', shell);
+        const archived = qs('.orch-feedback-archive-text', shell);
+        const ta = qs('.orch-feedback-text', shell);
         if (area) area.hidden = false;
         if (archive) archive.hidden = true;
         if (ta) { ta.value = archived ? archived.textContent : ''; ta.dataset.dirty = '1'; ta.focus(); }
-        const cancel = qs('.orch-feedback-cancel', node); if (cancel) cancel.hidden = false;
+        const cancel = qs('.orch-feedback-cancel', shell); if (cancel) cancel.hidden = false;
       });
-      const cancel = qs('.orch-feedback-cancel', node);
+      const cancel = qs('.orch-feedback-cancel', shell);
       if (cancel) cancel.addEventListener('click', () => {
         orchStopFeedbackVoice();
-        const area = qs('.orch-feedback-area', node); if (area) area.hidden = true;
-        const archive = qs('.orch-feedback-archive', node); if (archive) archive.hidden = false;
-        const ta = qs('.orch-feedback-text', node); if (ta) { ta.value = ''; ta.dataset.dirty = ''; }
+        const area = qs('.orch-feedback-area', shell); if (area) area.hidden = true;
+        const archive = qs('.orch-feedback-archive', shell); if (archive) archive.hidden = false;
+        const ta = qs('.orch-feedback-text', shell); if (ta) { ta.value = ''; ta.dataset.dirty = ''; }
         cancel.hidden = true;
       });
-      const mic = qs('.orch-feedback-mic', node);
-      const ta = qs('.orch-feedback-text', node);
+      const mic = qs('.orch-feedback-mic', shell);
+      const ta = qs('.orch-feedback-text', shell);
       if (ta) ta.addEventListener('input', () => { ta.dataset.dirty = '1'; });
       if (mic && ta && SR && window.API && !API.config.offline) {
         mic.hidden = false;
@@ -3494,7 +4541,7 @@
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
-      row.agent_name, row.actions,
+      row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
@@ -3506,6 +4553,7 @@
     }
     ORCH.messagesSignature = signature;
     wireOrchFeedback(box);
+    wireAgentFaces(box);
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
     return true;
   }
@@ -3531,14 +4579,30 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body"><span class="orch-dots"><i></i><i></i><i></i></span></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
+    wireAgentFaces(live);
     box.scrollTop = box.scrollHeight;
     const cid = ORCH.currentId;
     const thinkWrap = qs('#orch-live-think', live);
     const thinkBody = qs('#orch-live-think-body', live);
     const liveBody = qs('#orch-live-body', live);
+    const liveStack = () => qs('.orch-msg-stack', liveBody) || liveBody;
+    const setLiveFace = (ref, label) => {
+      if (!liveBody) return;
+      const next = agentAvatarHtml(ref || 'vitek', {
+        speaking: true, label: label || 'Виктор', cls: 'orch-msg-face',
+      });
+      const current = qs('.orch-msg-face', liveBody);
+      if (current) current.outerHTML = next;
+      else liveBody.insertAdjacentHTML('afterbegin', next);
+      wireAgentFaces(liveBody);
+    };
+    const setLiveBody = (html) => {
+      const stack = liveStack();
+      if (stack) stack.innerHTML = html;
+    };
     let sawThinking = false;
     const nearBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 160;
     const keepBottom = () => { if (nearBottom()) box.scrollTop = box.scrollHeight; };
@@ -3552,12 +4616,15 @@
         onFinal: (data) => {
           if (ORCH.currentId === cid && data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
           removeThink();
-          if (liveBody) liveBody.textContent = String((data && data.reply) || '');
+          const faceRef = (data && (data.agent_id || data.domain_agent || data.agent_name || data.agent)) || 'vitek';
+          const faceLabel = String((data && data.agent_name) || faceRef || 'Виктор');
+          setLiveFace(faceRef, faceLabel);
+          setLiveBody(esc(String((data && data.reply) || '')));
           keepBottom();
         },
         onError: (err) => {
           removeThink();
-          if (liveBody) liveBody.innerHTML = `<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`;
+          setLiveBody(`<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`);
           keepBottom();
         },
       });
@@ -3565,7 +4632,7 @@
         const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
         ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
         removeThink();
-        if (liveBody) liveBody.innerHTML = `<span class="orch-err">${esc(ORCH.transientError.text)}</span>`;
+        setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
       }
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
@@ -3573,7 +4640,7 @@
       const message = String((e && e.message) || e || 'Соединение прервалось');
       ORCH.transientError = { cid, text: `Не удалось подтвердить получение ответа: ${message}. Обновите историю перед повторной отправкой.` };
       removeThink();
-      if (liveBody) liveBody.innerHTML = `<span class="orch-err">${esc(ORCH.transientError.text)}</span>`;
+      setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
     } finally {
       ORCH.sending = false;
       if (sendBtn) sendBtn.disabled = false;
@@ -3585,6 +4652,6 @@
     }
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

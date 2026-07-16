@@ -70,6 +70,17 @@ _WEBHOOK_RUN_LOCK = threading.RLock()
 _WEBHOOK_ACTIVE: Dict[str, str] = {}
 WEBHOOK_MAX_PARALLEL = 6
 WEBHOOK_REORDER_GRACE_SEC = 0.75
+REPLY_MAX_ATTEMPTS = 5
+REPLY_RETRY_BASE_SEC = 15
+REPLY_RETRY_MAX_SEC = 300
+
+_CHIEF_ACTION_STATUS_LABELS = {
+    "queued": "Поставлено в очередь", "running": "Выполняется",
+    "in_progress": "Выполняется", "needs_input": "Жду ваш ответ",
+    "waiting_review": "Жду ваш ответ", "approval_required": "Нужно ваше решение",
+    "blocked": "Нужно внимание", "error": "Ошибка",
+    "completed": "Выполнено", "confirmed_connected": "Связь подтверждена",
+}
 
 _COMMAND_STATE_KEYS = (
     "chief_update_id", "chief_commands_initialized", "chief_command_error",
@@ -1281,6 +1292,10 @@ def status() -> Dict[str, Any]:
         row for row in (_read_json(_update_inbox_path()).get("items") or [])
         if isinstance(row, dict)
     ]
+    reply_rows = [
+        row for row in (_read_json(_reply_outbox_path()).get("items") or [])
+        if isinstance(row, dict)
+    ]
     return {
         "configured": configured or (token_configured and group_ready),
         "status": "connected" if (configured or (token_configured and group_ready)) else ("token_ready" if token_configured else "not_configured"),
@@ -1317,6 +1332,11 @@ def status() -> Dict[str, Any]:
             "running": sum(1 for row in inbox_rows if row.get("status") == "running"),
             "dead_letter": sum(1 for row in inbox_rows if row.get("status") == "dead_letter"),
             "parallel_limit": WEBHOOK_MAX_PARALLEL,
+        },
+        "telegram_reply_queue": {
+            "queued": sum(1 for row in reply_rows if str(row.get("status") or "queued") == "queued"),
+            "dead_letter": sum(1 for row in reply_rows if row.get("status") == "dead_letter"),
+            "max_attempts": REPLY_MAX_ATTEMPTS,
         },
         "note": (
             "Витёк понимает обычный текст из привязанного личного чата и тем рабочей группы. "
@@ -1368,6 +1388,19 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
         state["recent_delivery_signatures"] = recent
         _write_json(_state_path(), state)
     try:
+        from . import in_app_notifications
+        in_app_notifications.record(
+            title,
+            list(lines or []),
+            urgent=urgent,
+            conversation_id=str(conversation_id or ""),
+            conversation_title=str(conversation_title or ""),
+            dedupe_key=str(dedupe_key or signature),
+            kind=str(setting or ""),
+        )
+    except Exception:
+        pass
+    try:
         _send_raw("\n".join(body), silent=not urgent, thread_id=thread_id)
         return True
     except TelegramServiceError as exc:
@@ -1388,6 +1421,50 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
         return False
 
 
+def _chief_presentation_lines(lines: List[str], *, model_name: str = "",
+                              provider_name: str = "", action_status: str = "") -> List[str]:
+    """Build the public metadata footer shared by app and Telegram replies."""
+    visible_lines = [str(line) for line in lines]
+    metadata = []
+    if str(model_name or "").strip():
+        model_label = str(model_name).strip()
+        if str(provider_name or "").strip():
+            model_label += f" ({str(provider_name).strip()})"
+        metadata.append("Модель: " + model_label)
+    if str(action_status or "").strip():
+        status = str(action_status).strip()
+        metadata.append("Ход работы: " + _CHIEF_ACTION_STATUS_LABELS.get(status, status))
+    if metadata:
+        visible_lines.append(" · ".join(metadata))
+    return visible_lines
+
+
+def _chief_presentation_html(title: str, lines: List[str], *, model_name: str = "",
+                             provider_name: str = "", action_status: str = "") -> str:
+    visible = _chief_presentation_lines(
+        lines, model_name=model_name, provider_name=provider_name,
+        action_status=action_status,
+    )
+    body = [f"<b>{html.escape(str(title or 'StratForge Orchestrator'))}</b>"]
+    body.extend(html.escape(str(line)) for line in visible if str(line).strip())
+    return "\n".join(body)
+
+
+def _result_action_status(result: Dict[str, Any], assistant: Dict[str, Any]) -> str:
+    actions = assistant.get("actions") if isinstance(assistant.get("actions"), list) else result.get("actions")
+    statuses = [
+        str(row.get("status") or "") for row in (actions or [])
+        if isinstance(row, dict) and str(row.get("status") or "")
+    ]
+    for preferred in (
+        "error", "blocked", "approval_required", "needs_input", "waiting_review",
+        "running", "in_progress", "queued", "completed",
+    ):
+        if preferred in statuses:
+            return preferred
+    return statuses[0] if statuses else ""
+
+
 def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
                       model_name: str = "Chief agent / deterministic",
                       provider_name: str = "", action_status: str = "",
@@ -1405,30 +1482,47 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
     replies to "Как дела?") are both delivered instead of the second being
     silently dropped.
     """
-    status_labels = {
-        "queued": "Поставлено в очередь", "running": "Выполняется",
-        "in_progress": "Выполняется", "needs_input": "Жду ваш ответ",
-        "waiting_review": "Жду ваш ответ", "approval_required": "Нужно ваше решение",
-        "blocked": "Нужно внимание", "error": "Ошибка",
-        "completed": "Выполнено", "confirmed_connected": "Связь подтверждена",
-    }
-    visible_lines = list(lines)
-    metadata = []
-    if str(model_name or "").strip():
-        model_label = str(model_name).strip()
-        if str(provider_name or "").strip():
-            model_label += f" ({str(provider_name).strip()})"
-        metadata.append("Модель: " + model_label)
-    if str(action_status or "").strip():
-        metadata.append("Ход работы: " + status_labels.get(str(action_status), str(action_status)))
-    if metadata:
-        visible_lines.append(" · ".join(metadata))
+    visible_lines = _chief_presentation_lines(
+        lines, model_name=model_name, provider_name=provider_name,
+        action_status=action_status,
+    )
     return _notify(
         "chief_agent_reports", title, visible_lines,
         urgent=urgent, conversation_id=str(conversation_id or ""),
         conversation_title=conversation_title, dedupe_key=dedupe_key,
         queue_on_failure=True,
     )
+
+
+def mirror_community_message(text: str, *, display_name: str = "") -> bool:
+    """Duplicate community chat into a SEPARATE Telegram chat/group.
+
+    Controlled by ``NTA_COMMUNITY_TELEGRAM_CHAT_ID``. Never uses owner
+    Orchestrator topics. Returns False when unset or on staging safety gate.
+    """
+    try:
+        from . import runtime_env
+        if runtime_env.is_staging() and not runtime_env.allow_owner_telegram_mirror():
+            # Staging default: do not touch any Telegram chats.
+            return False
+    except Exception:
+        pass
+    chat_id = str(os.environ.get("NTA_COMMUNITY_TELEGRAM_CHAT_ID") or "").strip()
+    if not chat_id:
+        return False
+    settings = load_settings()
+    if not settings.get("enabled"):
+        return False
+    body = str(text or "").strip()
+    if not body:
+        return False
+    who = html.escape(str(display_name or "user")[:80])
+    rendered = f"💬 <b>Community · {who}:</b> " + html.escape(body[:3500])
+    try:
+        _api_call("sendMessage", {"chat_id": chat_id, "text": rendered, "parse_mode": "HTML"})
+        return True
+    except Exception:
+        return False
 
 
 def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
@@ -1445,6 +1539,12 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
     settings = load_settings()
     if not settings.get("enabled") or not settings.get("chief_agent_reports"):
         return False
+    try:
+        from . import runtime_env
+        if not runtime_env.allow_owner_telegram_mirror():
+            return False
+    except Exception:
+        pass
     body = str(text or "").strip()
     if not body:
         return False
@@ -1522,20 +1622,36 @@ def _enqueue_reply_outbox(text: str, *, thread_id: Optional[int] = None,
             "text": clean, "thread_id": int(thread_id) if thread_id else None,
             "conversation_id": str(conversation_id or "")[:120],
             "conversation_title": str(conversation_title or "")[:120],
-            "created_at_utc": _now_iso(), "attempts": 0, "last_error": "",
+            "status": "queued", "created_at_utc": _now_iso(),
+            "available_at_utc": _now_iso(), "attempts": 0, "last_error": "",
         })
-        _write_json(_reply_outbox_path(), {"items": rows[-200:], "updated_at_utc": _now_iso()})
+        # Telegram may already have accepted the related owner command. Never
+        # discard an undelivered reply merely because the local queue is large.
+        # Successful items are removed; exhausted items remain as explicit
+        # dead-letter evidence until an operator handles them.
+        _write_json(_reply_outbox_path(), {"items": rows, "updated_at_utc": _now_iso()})
 
 
 def _flush_reply_outbox(limit: int = 10) -> Dict[str, int]:
-    """Retry replies whose command succeeded while Telegram delivery failed."""
+    """Retry due replies independently without letting one topic block another."""
     with _IO_LOCK:
         doc = _read_json(_reply_outbox_path())
         rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
     if not rows:
         return {"sent": 0, "pending": 0}
+    now_ts = time.time()
+    due_rows = [
+        row for row in rows
+        if str(row.get("status") or "queued") == "queued"
+        and _iso_timestamp(row.get("available_at_utc")) <= now_ts
+    ][:max(1, int(limit or 10))]
+    if not due_rows:
+        pending = sum(1 for row in rows if str(row.get("status") or "queued") == "queued")
+        return {"sent": 0, "pending": pending}
     sent_ids = set()
-    for row in rows[:max(1, int(limit or 10))]:
+    attempted: Dict[str, Dict[str, Any]] = {}
+    for row in due_rows:
+        row_id = str(row.get("id") or "")
         try:
             thread_id = row.get("thread_id")
             conversation_id = str(row.get("conversation_id") or "")
@@ -1545,28 +1661,44 @@ def _flush_reply_outbox(limit: int = 10) -> Dict[str, int]:
                 )
                 row["thread_id"] = thread_id
             _send_raw(str(row.get("text") or "")[:4000], thread_id=thread_id)
-            sent_ids.add(str(row.get("id") or ""))
+            sent_ids.add(row_id)
         except TelegramServiceError as exc:
-            row["attempts"] = int(row.get("attempts") or 0) + 1
+            attempts = int(row.get("attempts") or 0) + 1
+            row["attempts"] = attempts
             row["last_error"] = _safe_error(exc)
-            break
+            if attempts >= REPLY_MAX_ATTEMPTS:
+                row["status"] = "dead_letter"
+                row["finished_at_utc"] = _now_iso()
+                row.pop("available_at_utc", None)
+            else:
+                delay = min(REPLY_RETRY_MAX_SEC, REPLY_RETRY_BASE_SEC * (2 ** max(0, attempts - 1)))
+                row["status"] = "queued"
+                row["available_at_utc"] = datetime.fromtimestamp(
+                    time.time() + delay, timezone.utc,
+                ).isoformat().replace("+00:00", "Z")
+            attempted[row_id] = dict(row)
+            # Continue with other conversations. A deleted or unavailable
+            # Telegram topic must not hold every subsequent reply hostage.
+            continue
     with _IO_LOCK:
         latest = _read_json(_reply_outbox_path())
         latest_rows = [row for row in (latest.get("items") or []) if isinstance(row, dict)]
-        attempted = {str(row.get("id") or ""): row for row in rows}
         remaining = []
         for row in latest_rows:
             row_id = str(row.get("id") or "")
             if row_id in sent_ids:
                 continue
             if row_id in attempted:
-                row.update({
-                    "attempts": attempted[row_id].get("attempts", row.get("attempts", 0)),
-                    "last_error": attempted[row_id].get("last_error", row.get("last_error", "")),
-                })
+                updated = attempted[row_id]
+                row.update({key: updated[key] for key in (
+                    "status", "attempts", "last_error", "available_at_utc", "finished_at_utc",
+                ) if key in updated})
+                if "available_at_utc" not in updated:
+                    row.pop("available_at_utc", None)
             remaining.append(row)
-        _write_json(_reply_outbox_path(), {"items": remaining[-200:], "updated_at_utc": _now_iso()})
-    return {"sent": len(sent_ids), "pending": len(remaining)}
+        _write_json(_reply_outbox_path(), {"items": remaining, "updated_at_utc": _now_iso()})
+    pending = sum(1 for row in remaining if str(row.get("status") or "queued") == "queued")
+    return {"sent": len(sent_ids), "pending": pending}
 
 
 def _chief_command_reply(text: str, *, thread_id: Optional[int] = None,
@@ -1724,8 +1856,19 @@ def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
             ))
             delivered = sent_photo
             if not sent_photo:
+                agent = result.get("agent") if isinstance(result.get("agent"), dict) else {}
+                agent_name = str(
+                    assistant.get("agent_name") or agent.get("name")
+                    or result.get("agent_name") or "StratForge Orchestrator"
+                )
+                rendered_reply = _chief_presentation_html(
+                    f"{agent_name} · ответ", [str(result.get("reply") or "")],
+                    model_name=str(assistant.get("model") or result.get("model") or ""),
+                    provider_name=str(assistant.get("provider") or result.get("provider") or ""),
+                    action_status=_result_action_status(result, assistant),
+                )
                 delivered = _chief_command_reply(
-                    html.escape(str(result.get("reply") or "")),
+                    rendered_reply,
                     thread_id=thread_id,
                     dedupe_key=str(assistant.get("message_id") or ""),
                 )

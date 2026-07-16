@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import errno
 import copy
+import hashlib
 import json
 import math
 import os
@@ -69,6 +70,7 @@ if __package__ is None or __package__ == "":
     from app import runtime as ops_runtime  # type: ignore[no-redef]
     from app import local_worker  # type: ignore[no-redef]
     from app import vitek  # type: ignore[no-redef]
+    from app import in_app_notifications  # type: ignore[no-redef]
     from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
     from app.ai_lab import registry as ai_registry  # type: ignore[no-redef]
     from app.ai_lab import orchestrator as ai_orchestrator  # type: ignore[no-redef]
@@ -93,6 +95,14 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import research_catalog as ai_research_catalog  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
+    from app import runtime_env  # type: ignore[no-redef]
+    from app import google_auth  # type: ignore[no-redef]
+    from app import test_auth  # type: ignore[no-redef]
+    from app import demo_backtest  # type: ignore[no-redef]
+    from app import practice_trading  # type: ignore[no-redef]
+    from app import community  # type: ignore[no-redef]
+    from app import micro_live  # type: ignore[no-redef]
+    from app.ai_lab import ai_ratings as ai_ratings  # type: ignore[no-redef]
 else:
     from . import jobqueue
     from . import governance
@@ -119,6 +129,7 @@ else:
     from . import runtime as ops_runtime
     from . import local_worker
     from . import vitek
+    from . import in_app_notifications
     from .ai_lab import read_model as ai_read_model
     from .ai_lab import registry as ai_registry
     from .ai_lab import orchestrator as ai_orchestrator
@@ -143,6 +154,14 @@ else:
     from .ai_lab import research_catalog as ai_research_catalog
     from . import local_secrets as _local_secrets
     from . import news_refresh
+    from . import runtime_env
+    from . import google_auth
+    from . import test_auth
+    from . import demo_backtest
+    from . import practice_trading
+    from . import community
+    from . import micro_live
+    from .ai_lab import ai_ratings as ai_ratings
 
 _local_secrets.apply()
 
@@ -151,6 +170,39 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None:
+    """Wake Marina/Victor after a durable owner-ledger mutation.
+
+    The ledger remains the source of truth; this event contains only stable IDs
+    and never substitutes a model-generated financial classification.
+    """
+    if not isinstance(change, dict) or not change.get("ok", True):
+        return
+    event = change.get("event") if isinstance(change.get("event"), dict) else {}
+    event_ids = [str(value) for value in change.get("event_ids") or change.get("new_event_ids") or [] if value]
+    if event.get("event_id"):
+        event_ids.append(str(event["event_id"]))
+    event_ids = list(dict.fromkeys(event_ids))
+    if not event_ids:
+        return
+    account_names = [
+        str(row.get("account_name") or "")
+        for row in change.get("new_events") or [] if isinstance(row, dict) and row.get("account_name")
+    ]
+    payload = {
+        "event_ids": event_ids,
+        "account_names": list(dict.fromkeys(account_names)),
+        "change": str(source or "account_ledger"),
+    }
+    vitek.emit_event(
+        "financial_event_changed", payload, source="account_ledger", severity="info",
+        dedupe_key="ledger:" + hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:24],
+        dedupe_seconds=24 * 3600,
+    )
 
 # Uniform Content-Security-Policy for all served static UI (new Aurora + legacy).
 # Both UIs externalize JS and use no inline <script>/onclick, so `script-src 'self'`
@@ -176,12 +228,21 @@ _SELF_SERVICE_POSTS = {
     # (read_only) must be able to poll it so the desktop grid works in the
     # Telegram Mini App exactly like the local UI.
     "/api/ops/runtime/bars/batch",
+    "/api/demo-backtests",
 }
 
 
 def _is_self_service_post(path: str) -> bool:
     """POSTs a read-only account may perform on its own behalf."""
-    return path in _SELF_SERVICE_POSTS or path.startswith("/api/support/")
+    return (
+        path in _SELF_SERVICE_POSTS
+        or path.startswith("/api/support/")
+        or path.startswith("/api/practice/")
+        or path.startswith("/api/community/")
+        or path.startswith("/api/micro-live/")
+        or path.startswith("/api/auth/nt-confirm/")
+        or path == "/api/demo-backtests"
+    )
 
 
 _BILLING_PROMO_POSTS = {
@@ -634,8 +695,11 @@ class Handler(BaseHTTPRequestHandler):
             raise
 
     def _err(self, status: int, msg: str, *,
-             headers: Optional[Dict[str, str]] = None) -> None:
-        self._json(status, {"error": msg}, headers=headers)
+             headers: Optional[Dict[str, str]] = None, code: str = "") -> None:
+        payload: Dict[str, Any] = {"error": msg}
+        if code:
+            payload["code"] = str(code)
+        self._json(status, payload, headers=headers)
 
     def _bytes(self, status: int, data: bytes, content_type: str,
                download_name: Optional[str] = None) -> None:
@@ -766,10 +830,21 @@ class Handler(BaseHTTPRequestHandler):
     def _api_action_class(self, path: str, method: str) -> str:
         if path.startswith("/api/auth/"):
             return "auth"
+        method_u = method.upper()
+        # High-frequency owner UI polls must not share the tight "owner" bucket
+        # (60/min) with mutating Viteк/Telegram actions — otherwise the Overview
+        # + notifications + chat polling cascade trips HTTP 429.
+        if method_u in {"GET", "HEAD"} and (
+            path == "/api/notifications"
+            or path == "/api/vitek/status"
+            or path == "/api/vitek/time-windows"
+        ):
+            return "read"
         if (path.startswith("/api/owner/") or path.startswith("/api/telegram/")
-                or path.startswith("/api/worker/") or path.startswith("/api/vitek/")):
+                or path.startswith("/api/worker/") or path.startswith("/api/vitek/")
+                or path.startswith("/api/notifications")):
             return "owner"
-        return "read" if method.upper() in {"GET", "HEAD"} else "write"
+        return "read" if method_u in {"GET", "HEAD"} else "write"
 
     def _check_api_rate_limit(self, context: Dict[str, Any], path: str) -> bool:
         if os.environ.get("NTA_DISABLE_RATE_LIMIT") == "1":
@@ -837,26 +912,32 @@ class Handler(BaseHTTPRequestHandler):
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
                 if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")
-                        or path.startswith("/api/worker/") or path.startswith("/api/vitek/")) and not self._remote_context["is_owner"]:
+                        or path.startswith("/api/worker/") or path.startswith("/api/vitek/")
+                        or path.startswith("/api/notifications")) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
                 try:
                     permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
                     raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
+                if account_auth.path_requires_nt_dual_auth(path, method):
+                    try:
+                        account_auth.require_nt_dual_auth(self._remote_context)
+                    except account_auth.AccountAuthError as exc:
+                        raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
                 if not self._check_api_rate_limit(self._remote_context, path):
                     return False
                 return True
             except (telegram_remote.RemoteAccessError, account_auth.AccountAuthError) as exc:
                 self._remote_context = getattr(exc, "context", None)
                 self._remote_error = str(exc)
-                self._err(getattr(exc, "status", 403), str(exc))
+                self._err(getattr(exc, "status", 403), str(exc), code=getattr(exc, "code", "") or "")
                 return False
         try:
             context = account_auth.authenticate_session(
                 self._cookie_value(account_auth.SESSION_COOKIE),
             )
         except account_auth.AccountAuthError as exc:
-            self._err(exc.status, str(exc)); return False
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or ""); return False
         if not context:
             self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
             return False
@@ -871,7 +952,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         owner_only = (path.startswith("/api/telegram/") or path.startswith("/api/auth/users")
                       or path.startswith("/api/owner/") or path.startswith("/api/worker/")
-                      or path.startswith("/api/vitek/")
+                      or path.startswith("/api/vitek/") or path.startswith("/api/notifications")
                       or path == "/api/server/restart")
         if owner_only and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
@@ -880,6 +961,11 @@ class Handler(BaseHTTPRequestHandler):
             permissions.enforce(path, context)
         except permissions.PermissionError as exc:
             self._err(exc.status, str(exc)); return False
+        if account_auth.path_requires_nt_dual_auth(path, method):
+            try:
+                account_auth.require_nt_dual_auth(context)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or ""); return False
         if not self._check_api_rate_limit(context, path):
             return False
         self._remote_context = context
@@ -1018,6 +1104,17 @@ class Handler(BaseHTTPRequestHandler):
             if context:
                 context = self._decorate_workspace_context(context)
             if not context:
+                failure = account_auth.session_auth_failure(self._cookie_value(account_auth.SESSION_COOKIE))
+                if failure:
+                    self._clear_session_cookie()
+                    self._json(HTTPStatus.UNAUTHORIZED, {
+                        **failure,
+                        "authenticated": False,
+                        "auth_required": account_auth.auth_required(),
+                        "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                        "storage": account_auth.storage_status(),
+                    })
+                    return
                 self._json(HTTPStatus.UNAUTHORIZED, {
                     "error": "Требуется вход через Telegram.", "authenticated": False,
                     "auth_required": account_auth.auth_required(),
@@ -1025,7 +1122,7 @@ class Handler(BaseHTTPRequestHandler):
                     "storage": account_auth.storage_status(),
                 })
                 return
-            self._json(HTTPStatus.OK, self._augment_permissions(context, {
+            payload = {
                 "authenticated": True, "source": context.get("source"),
                 "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
                 "csrf_token": str(context.get("csrf_token") or ""),
@@ -1033,7 +1130,15 @@ class Handler(BaseHTTPRequestHandler):
                 "workspaces": context.get("workspaces") or [],
                 "active_workspace": context.get("active_workspace") or {},
                 "active_membership": context.get("active_membership") or {},
-            }))
+                "needs_google": bool(context.get("needs_google")),
+                "dual_auth_complete": True,
+                "nt_access": context.get("nt_access") or account_auth.nt_action_gate(None, context=context),
+                "impersonating": bool(context.get("impersonating")),
+                "impersonator_owner_id": context.get("impersonator_owner_id"),
+                "runtime": runtime_env.status(),
+                "google_oauth": google_auth.status(),
+            }
+            self._json(HTTPStatus.OK, self._augment_permissions(context, payload))
         except (account_auth.AccountAuthError, telegram_remote.RemoteAccessError) as exc:
             self._err(getattr(exc, "status", 503), str(exc))
 
@@ -1158,8 +1263,18 @@ class Handler(BaseHTTPRequestHandler):
             "free_preview": perm["free_preview"],
             "locked_nav": perm["locked_nav"],
             "unlock_message": perm["unlock_message"],
+            "demo_tier": bool(perm.get("demo_tier")),
             "payments_enabled": bool(subscriptions.payments_active()),
             "telegram_configured": bool(str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()),
+            "needs_google": bool(context.get("needs_google") or (isinstance(user, dict) and user.get("needs_google"))),
+            "dual_auth_complete": True,
+            "nt_access": context.get("nt_access") or account_auth.nt_action_gate(user if isinstance(user, dict) else None, context=context),
+            "impersonating": bool(context.get("impersonating")),
+            "impersonator_owner_id": context.get("impersonator_owner_id"),
+            "impersonation_started_at_utc": context.get("impersonation_started_at_utc") or "",
+            "impersonation_preset": context.get("impersonation_preset") or "",
+            "runtime": runtime_env.status(),
+            "google_oauth": google_auth.status(),
             "nt_connection": {
                 "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
                 "owner_full_access": owner_full_access,
@@ -1171,6 +1286,165 @@ class Handler(BaseHTTPRequestHandler):
 
     def _auth_me(self) -> None:
         self._json(HTTPStatus.OK, self._cabinet_payload())
+
+    def _google_oauth_start(self) -> None:
+        context = getattr(self, "_remote_context", None) or {}
+        uid = int(context.get("user_id") or 0)
+        if uid <= 0:
+            self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход."); return
+        body = self._read_body() or {}
+        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
+        redirect_uri = str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
+        try:
+            out = google_auth.start_link(
+                user_id=uid,
+                redirect_uri=redirect_uri,
+                return_path=str(body.get("return_path") or "/ui/"),
+            )
+            self._json(HTTPStatus.OK, out)
+        except google_auth.GoogleAuthError as exc:
+            self._err(exc.status, str(exc))
+
+    def _google_oauth_callback(self, qs: Dict[str, Any]) -> None:
+        code = str((qs.get("code") or [""])[0] or "")
+        state = str((qs.get("state") or [""])[0] or "")
+        err = str((qs.get("error") or [""])[0] or "")
+        if err:
+            self._html_redirect("/ui/?google_error=" + urllib.parse.quote(err))
+            return
+        try:
+            identity = google_auth.exchange_code(code=code, state=state)
+            account_auth.link_google_identity(
+                identity["user_id"],
+                google_sub=identity["google_sub"],
+                google_email=identity.get("google_email") or "",
+                google_name=identity.get("google_name") or "",
+                source="google_oauth",
+            )
+            path = str(identity.get("return_path") or "/ui/")
+            if not path.startswith("/"):
+                path = "/ui/"
+            self._html_redirect(path + ("&" if "?" in path else "?") + "google_linked=1")
+        except (google_auth.GoogleAuthError, account_auth.AccountAuthError) as exc:
+            self._html_redirect("/ui/?google_error=" + urllib.parse.quote(str(exc)[:180]))
+
+    def _html_redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.end_headers()
+
+    def _require_owner_actor(self) -> Optional[Dict[str, Any]]:
+        context = getattr(self, "_remote_context", None) or {}
+        if not context.get("is_owner"):
+            self._err(HTTPStatus.FORBIDDEN, "Только владелец.")
+            return None
+        return context
+
+    def _test_create_virtual_user(self) -> None:
+        if not self._require_owner_actor():
+            return
+        body = self._read_body() or {}
+        try:
+            out = test_auth.create_virtual_user(
+                preset=str(body.get("preset") or "demo"),
+                display_name=str(body.get("display_name") or ""),
+                telegram_id=int(body.get("telegram_id") or 0),
+                google_email=str(body.get("google_email") or ""),
+            )
+            self._json(HTTPStatus.OK, out)
+        except (runtime_env.RuntimeEnvError, test_auth.TestAuthError, account_auth.AccountAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc))
+
+    def _test_login_virtual(self) -> None:
+        if not self._require_owner_actor():
+            return
+        body = self._read_body() or {}
+        tunnel_ip, forwarded_ip = self._request_ips()
+        try:
+            out = test_auth.login_virtual(
+                user_id=int(body.get("user_id") or 0),
+                ip=forwarded_ip or tunnel_ip,
+                user_agent=str(self.headers.get("User-Agent") or "staging-test-auth"),
+            )
+            token = str(out.pop("session_token", ""))
+            if token:
+                self._set_session_cookie(token)
+            self._json(HTTPStatus.OK, out)
+        except (runtime_env.RuntimeEnvError, test_auth.TestAuthError, account_auth.AccountAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc))
+
+    def _test_google_link(self) -> None:
+        context = getattr(self, "_remote_context", None) or {}
+        body = self._read_body() or {}
+        uid = int(body.get("user_id") or context.get("user_id") or 0)
+        if not context.get("is_owner") and uid != int(context.get("user_id") or 0):
+            self._err(HTTPStatus.FORBIDDEN, "Нельзя привязать Google другому пользователю."); return
+        try:
+            out = test_auth.link_fake_google(
+                user_id=uid,
+                google_sub=str(body.get("google_sub") or ""),
+                email=str(body.get("email") or ""),
+            )
+            self._json(HTTPStatus.OK, out)
+        except (runtime_env.RuntimeEnvError, test_auth.TestAuthError, account_auth.AccountAuthError, google_auth.GoogleAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc))
+
+    def _owner_impersonate(self) -> None:
+        context = self._require_owner_actor()
+        if not context:
+            return
+        body = self._read_body() or {}
+        tunnel_ip, forwarded_ip = self._request_ips()
+        try:
+            out = account_auth.start_impersonation(
+                context.get("user_id"),
+                body.get("user_id"),
+                ip=forwarded_ip or tunnel_ip,
+                user_agent=str(self.headers.get("User-Agent") or "owner-impersonation"),
+                preset=str(body.get("preset") or ""),
+            )
+            token = str(out.pop("session_token", ""))
+            if token:
+                self._set_session_cookie(token)
+            self._json(HTTPStatus.OK, out)
+        except (runtime_env.RuntimeEnvError, account_auth.AccountAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc))
+
+    def _owner_impersonate_end(self) -> None:
+        context = getattr(self, "_remote_context", None) or {}
+        owner_id = context.get("impersonator_owner_id") or context.get("user_id")
+        if not owner_id:
+            self._err(HTTPStatus.FORBIDDEN, "Нет активной impersonation-сессии."); return
+        tunnel_ip, forwarded_ip = self._request_ips()
+        try:
+            out = account_auth.end_impersonation(
+                self._cookie_value(account_auth.SESSION_COOKIE),
+                owner_id=owner_id,
+                ip=forwarded_ip or tunnel_ip,
+                user_agent=str(self.headers.get("User-Agent") or "owner-return"),
+            )
+            token = str(out.pop("session_token", ""))
+            if token:
+                self._set_session_cookie(token)
+            self._json(HTTPStatus.OK, out)
+        except (runtime_env.RuntimeEnvError, account_auth.AccountAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc))
+
+    def _owner_google_secrets(self) -> None:
+        if not self._require_owner_actor():
+            return
+        body = self._read_body() or {}
+        try:
+            out = google_auth.save_secrets(
+                client_id=str(body.get("client_id") or ""),
+                client_secret=str(body.get("client_secret") or ""),
+                redirect_uri=str(body.get("redirect_uri") or ""),
+            )
+            self._json(HTTPStatus.OK, out)
+        except google_auth.GoogleAuthError as exc:
+            self._err(exc.status, str(exc))
 
     def _serve_avatar(self, target: str) -> None:
         context = getattr(self, "_remote_context", None) or {}
@@ -1574,6 +1848,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, subscriptions.donation_options())
             return
 
+        if path == "/api/auth/google/callback":
+            # Public browser redirect from Google OAuth.
+            self._google_oauth_callback(qs)
+            return
+
+        if path == "/api/runtime/env":
+            # Public enough for UI banners; no secrets.
+            self._json(HTTPStatus.OK, runtime_env.status())
+            return
+
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
@@ -1613,7 +1897,8 @@ class Handler(BaseHTTPRequestHandler):
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
                 "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
-                "/news.html", "/topstep.html", "/desktop.html",
+                "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
+                "/micro-live.html",
             }
             if rel in _new_pages or rel.startswith("/assets/"):
                 self._serve_static("aurora/index.html" if rel == "/" else "aurora" + rel)
@@ -1640,6 +1925,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/vitek/time-windows":
             self._json(HTTPStatus.OK, vitek.build_time_windows())
+            return
+
+        if path == "/api/notifications":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            unread = str((qs.get("unread") or ["1"])[0] or "1").lower() not in {"0", "false", "no"}
+            since = str((qs.get("since") or [""])[0] or "")
+            try:
+                limit = int((qs.get("limit") or ["30"])[0])
+            except ValueError:
+                limit = 30
+            self._json(HTTPStatus.OK, in_app_notifications.list_notices(
+                unread_only=unread, since=since, limit=limit,
+            ))
             return
 
         if path == "/api/worker/jobs":
@@ -1947,12 +2248,110 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, telegram_service.status())
             return
 
+        if path == "/api/practice/account":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                self._json(HTTPStatus.OK, practice_trading.get_account(actor))
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/practice/report":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                self._json(HTTPStatus.OK, practice_trading.report(actor))
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/micro-live/account":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                context = getattr(self, "_remote_context", None) or {}
+                caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+                if not (context.get("is_owner") or caps.get("micro_live")):
+                    self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
+                    return
+                self._json(HTTPStatus.OK, micro_live.ensure_account(actor))
+            except micro_live.MicroLiveError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/ai-lab/ratings":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Рейтинги ИИ доступны только владельцу.")
+                return
+            self._json(HTTPStatus.OK, ai_ratings.tables())
+            return
+
+        if path == "/api/community/feed":
+            self._json(HTTPStatus.OK, community.feed(limit=int((qs.get("limit") or ["50"])[0] or 50)))
+            return
+
+        if path == "/api/community/ratings":
+            self._json(HTTPStatus.OK, {"ok": True, "ratings": community.ratings()})
+            return
+
+        if path == "/api/demo-backtests/scenarios":
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "scenarios": demo_backtest.list_scenarios(),
+                "watermark": "Демоверсия. Данные нереальные.",
+            })
+            return
+
         if path == "/api/owner/support/monitoring":
             try:
                 actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
-                self._json(HTTPStatus.OK, user_support.owner_overview(actor))
-            except user_support.UserSupportError as exc:
+                overview = user_support.owner_overview(actor)
+                overview["auth_sessions"] = account_auth.active_sessions_overview(actor).get("sessions") or []
+                overview["telemetry_note"] = (
+                    "Показатели относятся к вкладке приложения. "
+                    "Системные CPU/RAM других программ браузер не раскрывает."
+                )
+                overview["runtime"] = runtime_env.status()
+                self._json(HTTPStatus.OK, overview)
+            except (user_support.UserSupportError, account_auth.AccountAuthError) as exc:
+                self._err(getattr(exc, "status", 400), str(exc))
+            return
+
+        if path == "/api/owner/sessions":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                self._json(HTTPStatus.OK, account_auth.active_sessions_overview(actor))
+            except account_auth.AccountAuthError as exc:
                 self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/google-migration":
+            try:
+                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+                self._json(HTTPStatus.OK, account_auth.google_migration_users(actor))
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/auth/google/status":
+            self._json(HTTPStatus.OK, google_auth.status())
+            return
+
+        if path == "/api/auth/test/status":
+            try:
+                self._json(HTTPStatus.OK, test_auth.status())
+            except (runtime_env.RuntimeEnvError, test_auth.TestAuthError) as exc:
+                self._err(getattr(exc, "status", 403), str(exc))
+            return
+
+        if path == "/api/auth/test/users":
+            try:
+                context = getattr(self, "_remote_context", None) or {}
+                if not context.get("is_owner"):
+                    self._err(HTTPStatus.FORBIDDEN, "Только владелец.")
+                    return
+                self._json(HTTPStatus.OK, test_auth.list_virtual_users())
+            except (runtime_env.RuntimeEnvError, test_auth.TestAuthError, account_auth.AccountAuthError) as exc:
+                self._err(getattr(exc, "status", 403), str(exc))
             return
 
         if path.startswith("/api/owner/support/users/"):
@@ -3266,6 +3665,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
+        if path.startswith("/api/ai-lab/orchestrator/message/") and path.endswith("/fulfillment"):
+            try:
+                scope = self._ai_conversation_scope()
+                parts = path.strip("/").split("/")
+                message_id = urllib.parse.unquote(parts[-2]) if len(parts) >= 6 else ""
+                out = ai_chief_agent.set_message_fulfillment(
+                    str(body.get("conversation_id") or "default"),
+                    message_id,
+                    body.get("fulfillment") or body.get("status"),
+                    source=str(body.get("fulfillment_source") or body.get("source") or "owner"),
+                    scope=scope,
+                )
+                self._json(HTTPStatus.OK, out)
+            except ai_chief_agent.ChiefAgentError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
         if path == "/api/ai-lab/domain-agents/message":
             try:
                 # Legacy specialist endpoint still enters through the same
@@ -4111,6 +4527,350 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorize_api(path):
             return
 
+        if path == "/api/auth/google/start":
+            if not self._check_local_post():
+                return
+            self._google_oauth_start()
+            return
+
+        if path == "/api/auth/nt-confirm/start":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = account_auth.start_nt_telegram_confirm(
+                    context.get("user_id"),
+                    session_id=str(context.get("session_id") or ""),
+                    api_call=telegram_service._api_call,
+                )
+                self._json(HTTPStatus.OK, out)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/auth/nt-confirm/status":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = account_auth.nt_confirm_status(
+                    str(body.get("challenge_id") or ""),
+                    user_id=context.get("user_id"),
+                )
+                # Refresh gate after possible confirm.
+                out["nt_access"] = account_auth.nt_action_gate(None, context=context)
+                if out.get("status") == "nt_confirmed" and context.get("session_id"):
+                    # Ensure current session elevated even if challenge targeted another session id.
+                    try:
+                        elev = account_auth.elevate_session_for_nt(
+                            str(context.get("session_id") or ""),
+                            user_id=context.get("user_id"),
+                        )
+                        out["nt_elevated_until"] = elev.get("nt_elevated_until")
+                        out["nt_access"] = account_auth.nt_action_gate(
+                            None,
+                            context={**context, "nt_elevated_until": elev.get("nt_elevated_until")},
+                        )
+                    except account_auth.AccountAuthError:
+                        pass
+                self._json(HTTPStatus.OK, out)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/auth/test/nt-elevate":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = account_auth.grant_nt_elevation_staging(
+                    context.get("user_id"),
+                    session_id=str(context.get("session_id") or ""),
+                )
+                out["nt_access"] = account_auth.nt_action_gate(
+                    None, context={**context, "nt_elevated_until": out.get("nt_elevated_until")},
+                )
+                self._json(HTTPStatus.OK, out)
+            except (account_auth.AccountAuthError, runtime_env.RuntimeEnvError) as exc:
+                self._err(getattr(exc, "status", 403), str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/auth/test/virtual-user":
+            if not self._check_local_post():
+                return
+            self._test_create_virtual_user()
+            return
+
+        if path == "/api/auth/test/login":
+            if not self._check_local_post():
+                return
+            self._test_login_virtual()
+            return
+
+        if path == "/api/auth/test/google-link":
+            if not self._check_local_post():
+                return
+            self._test_google_link()
+            return
+
+        if path == "/api/owner/impersonate":
+            if not self._check_local_post():
+                return
+            self._owner_impersonate()
+            return
+
+        if path == "/api/owner/impersonate/end":
+            if not self._check_local_post():
+                return
+            self._owner_impersonate_end()
+            return
+
+        if path == "/api/owner/google/secrets":
+            if not self._check_local_post():
+                return
+            self._owner_google_secrets()
+            return
+
+        if path == "/api/practice/account":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.create_account(
+                    context.get("user_id"),
+                    deposit=float(body.get("deposit") or 50000),
+                    commission=float(body.get("commission") or 2),
+                    daily_loss_limit=float(body.get("daily_loss_limit") or 1000),
+                    max_drawdown=float(body.get("max_drawdown") or 2000),
+                    position_limit=int(body.get("position_limit") or 4),
+                    symbol=str(body.get("symbol") or "MNQ"),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/micro-live/accept-warnings":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+            if not (context.get("is_owner") or caps.get("micro_live")):
+                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
+                return
+            try:
+                self._json(HTTPStatus.OK, micro_live.accept_warnings(context.get("user_id")))
+            except micro_live.MicroLiveError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/micro-live/deposit":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+            if not (context.get("is_owner") or caps.get("micro_live")):
+                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
+                return
+            try:
+                self._json(HTTPStatus.OK, micro_live.deposit(context.get("user_id"), float(body.get("amount") or 0)))
+            except micro_live.MicroLiveError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/micro-live/trade":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+            if not (context.get("is_owner") or caps.get("micro_live")):
+                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
+                return
+            try:
+                self._json(HTTPStatus.OK, micro_live.place_scaled_trade(
+                    context.get("user_id"),
+                    symbol=str(body.get("symbol") or "MNQ"),
+                    side=str(body.get("side") or "buy"),
+                    notional_full=float(body.get("notional_full") or 100),
+                    pnl_full=float(body.get("pnl_full") or 0),
+                ))
+            except micro_live.MicroLiveError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/message":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            try:
+                out = community.post_message(
+                    context.get("user_id"),
+                    text=str(body.get("text") or ""),
+                    display_name=str(user.get("first_name") or user.get("username") or ""),
+                )
+                try:
+                    out["telegram_mirror"] = bool(
+                        telegram_service.mirror_community_message(
+                            out["message"].get("text") or "",
+                            display_name=out["message"].get("display_name") or "",
+                        )
+                    )
+                except Exception:
+                    out["telegram_mirror"] = False
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/strategies":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            try:
+                out = community.publish_strategy(
+                    context.get("user_id"),
+                    title=str(body.get("title") or ""),
+                    metrics=body.get("metrics") if isinstance(body.get("metrics"), dict) else {},
+                    notes=str(body.get("notes") or ""),
+                    display_name=str(user.get("first_name") or user.get("username") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/copy":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = community.copy_strategy(context.get("user_id"), str(body.get("strategy_id") or ""))
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/report":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = community.report_abuse(
+                    context.get("user_id"),
+                    target_id=str(body.get("target_id") or ""),
+                    reason=str(body.get("reason") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/practice/orders":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.place_order(
+                    context.get("user_id"),
+                    symbol=str(body.get("symbol") or "MNQ"),
+                    side=str(body.get("side") or "buy"),
+                    quantity=int(body.get("quantity") or 1),
+                    order_type=str(body.get("order_type") or "market"),
+                    limit_price=float(body.get("limit_price") or 0),
+                    stop_loss=float(body.get("stop_loss") or 0),
+                    take_profit=float(body.get("take_profit") or 0),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/practice/close":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.close_position(
+                    context.get("user_id"),
+                    str(body.get("position_id") or ""),
+                    symbol=str(body.get("symbol") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/practice/tick":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.tick_marks(
+                    context.get("user_id"),
+                    symbol=str(body.get("symbol") or ""),
+                    price=float(body.get("price") or 0),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/demo-backtests":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+            # Allow demo for users with demo_backtest OR full backtesting (preview).
+            if not (context.get("is_owner") or caps.get("demo_backtest") or caps.get("backtesting")):
+                # Capabilities may live on augmented auth payload only — re-resolve.
+                try:
+                    user = context.get("user") or {}
+                    sub = None
+                    if not context.get("is_owner"):
+                        try:
+                            sub = subscriptions.active_entitlement(context.get("user_id"))
+                        except Exception:
+                            sub = None
+                    if not isinstance(sub, dict) or not sub:
+                        sub = None
+                    perm = permissions.resolve(user, sub)
+                    caps = perm.get("capabilities") or {}
+                except Exception:
+                    caps = {}
+            if not (context.get("is_owner") or caps.get("demo_backtest") or caps.get("backtesting")):
+                self._err(HTTPStatus.FORBIDDEN, "Демо-бэктест недоступен для этого аккаунта.")
+                return
+            try:
+                limit = 3
+                try:
+                    plan = subscriptions.effective_plan(str((context.get("user") or {}).get("plan_id") or "free_preview"))
+                    limit = int(((plan or {}).get("limits") or {}).get("max_demo_backtests_per_day") or 3)
+                except Exception:
+                    pass
+                out = demo_backtest.create_demo_backtest(
+                    context.get("user_id"),
+                    scenario_id=str(body.get("scenario_id") or ""),
+                    daily_limit=limit,
+                )
+                self._json(HTTPStatus.OK, out)
+            except demo_backtest.DemoBacktestError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path == "/api/auth/logout":
             if not self._check_local_post():
                 return
@@ -4632,6 +5392,7 @@ class Handler(BaseHTTPRequestHandler):
         is_portfolio = path.startswith("/api/portfolio/")
         is_telegram = path.startswith("/api/telegram/")
         is_vitek = path.startswith("/api/vitek/")
+        is_notifications = path.startswith("/api/notifications")
         is_ai_agents = path == "/api/ai-agents" or path.startswith("/api/ai-agents/")
 
         if not (path in ("/api/jobs", "/api/batches")
@@ -4639,12 +5400,40 @@ class Handler(BaseHTTPRequestHandler):
                 or is_catalog_refresh or is_margins_refresh
                 or is_server_restart
                 or is_ops or is_profiles or is_report_favorites
-                or is_ai_lab or is_governance or is_portfolio or is_telegram or is_vitek or is_ai_agents):
+                or is_ai_lab or is_governance or is_portfolio or is_telegram or is_vitek
+                or is_notifications or is_ai_agents):
             self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
             return
 
         if not self._check_local_post():
             return  # _check_local_post already wrote an error
+
+        if is_notifications:
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            if path == "/api/notifications/ack":
+                ids = body.get("ids") if isinstance(body.get("ids"), list) else []
+                self._json(HTTPStatus.OK, in_app_notifications.ack(
+                    ids=[str(x) for x in ids],
+                    conversation_id=str(body.get("conversation_id") or ""),
+                ))
+                return
+            if path == "/api/notifications/delete":
+                ids = body.get("ids") if isinstance(body.get("ids"), list) else []
+                self._json(HTTPStatus.OK, in_app_notifications.delete(ids=[str(x) for x in ids]))
+                return
+            if path == "/api/notifications/clear":
+                self._json(HTTPStatus.OK, in_app_notifications.clear(
+                    mode=str(body.get("mode") or "all"),
+                ))
+                return
+            self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
+            return
 
         if is_vitek:
             body = self._read_body()
@@ -5078,6 +5867,13 @@ def _bind_or_pick_port(start_port: int = DEFAULT_PORT, attempts: int = 10) -> in
 
 
 def run(port: Optional[int] = None) -> None:
+    try:
+        runtime_env.assert_production_safe()
+    except runtime_env.RuntimeEnvError as exc:
+        print(f"[nta-backend] FATAL: {exc}")
+        raise SystemExit(2) from exc
+    env = runtime_env.status()
+    print(f"[nta-backend] app_env={env['app_env']} test_auth={env['test_auth_enabled']} impersonation={env['impersonation_enabled']}")
     bind_port = port or _bind_or_pick_port(DEFAULT_PORT)
     server = ThreadingHTTPServer((HOST, bind_port), Handler)
     server.daemon_threads = True

@@ -29,13 +29,16 @@ def test_free_preview_when_no_entitlement() -> None:
     perm = permissions.resolve({"is_owner": False}, {})
     assert perm["free_preview"] is True
     assert perm["plan_id"] == permissions.FREE_PREVIEW_PLAN_ID
-    # Free Preview default unlocks news + documents only.
+    # Free Preview: news, docs, demo backtest, practice trading.
     assert perm["nav"]["news"] is True
     assert perm["nav"]["docs"] is True
-    assert perm["nav"]["backtest"] is False
-    assert perm["nav"]["desktop"] is False
-    assert "backtest" in perm["locked_nav"]
+    assert perm["nav"]["backtest"] is True
+    assert perm["capabilities"]["demo_backtest"] is True
     assert perm["capabilities"]["backtesting"] is False
+    assert perm["demo_tier"] is True
+    assert perm["nav"]["desktop"] is False
+    assert "backtest" not in perm["locked_nav"]
+    assert "desktop" in perm["locked_nav"]
 
 
 def test_plan_capabilities_map_to_nav() -> None:
@@ -57,9 +60,10 @@ def test_user_permission_override_grants_capability() -> None:
 
 
 def test_user_permission_override_revokes_capability() -> None:
-    user = {"is_owner": False, "permission_overrides": {"backtesting": False}}
+    user = {"is_owner": False, "permission_overrides": {"backtesting": False, "demo_backtest": False}}
     perm = permissions.resolve(user, _entitlement("pro"))
     assert perm["capabilities"]["backtesting"] is False
+    assert perm["capabilities"]["demo_backtest"] is False
     assert perm["nav"]["backtest"] is False
 
 

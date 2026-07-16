@@ -47,6 +47,7 @@ SELF_SERVICE_WRITE_PATHS = {
     "/api/ops/runtime/account-history/import",
     # Batch chart-bars poll is a read that carries its request list in the body.
     "/api/ops/runtime/bars/batch",
+    "/api/demo-backtests",
 }
 
 _LOCK = threading.RLock()
