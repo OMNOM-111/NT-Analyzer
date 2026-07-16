@@ -15,6 +15,8 @@ import os
 import re
 import secrets
 import threading
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
@@ -219,14 +221,27 @@ def _write_doc(doc: Dict[str, Any]) -> None:
         payload = _MAGIC + base64.b64encode(secure_store._protect(plaintext))
     except secure_store.SecureStoreError as exc:
         raise SubscriptionError(str(exc), 503) from None
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # A production backend, worker and maintenance/test process can all touch
+    # the encrypted store. Use a writer-unique temp file and retry Windows
+    # sharing violations during the final atomic replace.
+    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
     try:
         tmp.write_bytes(payload)
         try:
             os.chmod(tmp, 0o600)
         except OSError:
             pass
-        os.replace(tmp, path)
+        last_error: Optional[OSError] = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp, path)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.02 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
         try:
             os.chmod(path, 0o600)
         except OSError:

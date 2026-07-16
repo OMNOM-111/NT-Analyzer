@@ -332,7 +332,7 @@ def test_donation_access_request_grants_donation_plan(subscription_store) -> Non
     assert active["plan_id"] == five["plan_id"] and active["active"] is True
 
 
-def test_custom_donation_amount_maps_to_highest_affordable_tier() -> None:
+def test_custom_donation_amount_maps_to_highest_affordable_tier(subscription_store) -> None:
     """Mirrors ui.js donationPlanForAmount: custom $4 → donate_3, $7 → donate_5."""
     tiers = [
         {"plan_id": "donate_1", "price_usd": 1.0},
@@ -375,6 +375,25 @@ def test_custom_donation_amount_maps_to_highest_affordable_tier() -> None:
     with pytest.raises(subscriptions.SubscriptionError) as exc:
         subscriptions.list_payment_requests(0)
     assert exc.value.status == 403
+
+
+def test_subscription_store_retries_transient_windows_replace(
+    subscription_store, monkeypatch,
+) -> None:
+    real_replace = subscriptions.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(source, target):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError(5, "simulated Windows sharing violation")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(subscriptions.os, "replace", flaky_replace)
+    subscriptions.create_payment_request(42, "pro", note="retry contract")
+
+    assert calls["count"] == 3
+    assert subscriptions.list_payment_requests(999)["pending"] == 1
 
 
 def test_reject_payment_request_grants_nothing(subscription_store) -> None:
