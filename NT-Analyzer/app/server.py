@@ -90,6 +90,7 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import agent_router as ai_agent_router  # type: ignore[no-redef]
     from app.ai_lab import universal_llm as ai_universal_llm  # type: ignore[no-redef]
     from app.ai_lab import chief_agent as ai_chief_agent  # type: ignore[no-redef]
+    from app.ai_lab import agent_tts as ai_agent_tts  # type: ignore[no-redef]
     from app.ai_lab import domain_agents as ai_domain_agents  # type: ignore[no-redef]
     from app.ai_lab import news_agent as ai_news_agent  # type: ignore[no-redef]
     from app.ai_lab import research_catalog as ai_research_catalog  # type: ignore[no-redef]
@@ -149,6 +150,7 @@ else:
     from .ai_lab import agent_router as ai_agent_router
     from .ai_lab import universal_llm as ai_universal_llm
     from .ai_lab import chief_agent as ai_chief_agent
+    from .ai_lab import agent_tts as ai_agent_tts
     from .ai_lab import domain_agents as ai_domain_agents
     from .ai_lab import news_agent as ai_news_agent
     from .ai_lab import research_catalog as ai_research_catalog
@@ -1460,6 +1462,31 @@ class Handler(BaseHTTPRequestHandler):
         if not context.get("is_owner") and requester != target_id:
             self._err(HTTPStatus.FORBIDDEN, "Доступ к аватару запрещён."); return
         path = account_auth.avatar_file(target_id)
+    def _respond_tts(self, result: Dict[str, Any]) -> None:
+        """Send OpenAI MP3 bytes or a quiet browser-fallback JSON payload."""
+        headers = ai_agent_tts.speak_result_headers(result)
+        if result.get("fallback") == "browser":
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "fallback": "browser",
+                "reason": result.get("reason") or "unavailable",
+                "agent_id": result.get("agent_id"),
+                "voice": result.get("voice"),
+                "language": result.get("language") or "ru-RU",
+                "speed": result.get("speed") or 1.0,
+                "fallback_voice": result.get("fallback_voice") or "ru-RU",
+            }, headers=headers)
+            return
+        audio = result.get("audio") or b""
+        if not isinstance(audio, (bytes, bytearray)) or not audio:
+            raise ai_agent_tts.AgentTtsError("Пустой аудиоответ TTS.")
+        self._bytes(
+            HTTPStatus.OK,
+            bytes(audio),
+            str(result.get("content_type") or "audio/mpeg"),
+            headers=headers,
+        )
+
         if not path:
             self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
         try:
@@ -3352,6 +3379,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research detail failed: {e}")
             return True
 
+        if path == "/api/ai-lab/domain-agents/voices":
+            try:
+                self._json(HTTPStatus.OK, ai_agent_tts.list_voice_profiles())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profiles failed: {e}")
+            return True
+
+        if path in {"/api/ai-lab/tts/catalog", "/api/ai-lab/tts/voices"}:
+            try:
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "catalog": ai_agent_tts.tts_catalog(),
+                    "presets": ai_agent_tts.list_presets(),
+                    "key_configured": bool(ai_agent_tts.resolve_api_key()),
+                })
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"tts catalog failed: {e}")
+            return True
+
+        # GET /api/ai-lab/domain-agents/{id}/voice
+        if sub == "domain-agents" and len(parts) == 5 and parts[4] == "voice":
+            agent_id = urllib.parse.unquote(parts[3])
+            try:
+                profile = ai_agent_tts.get_voice_profile(agent_id)
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "agent": ai_agent_tts.staff_meta(agent_id),
+                    "voice": profile,
+                    "preview_phrase": ai_agent_tts.PREVIEW_PHRASES.get(
+                        ai_agent_tts.normalize_agent_id(agent_id),
+                        ai_agent_tts.PREVIEW_PHRASES["vitek"],
+                    ),
+                    "catalog": ai_agent_tts.tts_catalog(),
+                    "presets": ai_agent_tts.list_presets(),
+                })
+            except ai_agent_tts.AgentTtsError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e))
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice profile failed: {e}")
+            return True
+
         # /api/ai-lab/experiments
         if path == "/api/ai-lab/experiments":
             root = (qs.get("root") or [None])[0]
@@ -3639,12 +3707,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/orchestrator/message":
             try:
-                scope = self._ai_conversation_scope()
-                out = ai_chief_agent.handle_message(
-                    str(body.get("message") or body.get("text") or ""),
-                    source="app", mirror_to_telegram=True,
-                    conversation_id=str(body.get("conversation_id") or "default"),
-                    agent=str(body.get("agent") or ""), scope=scope,
+                # Same workspace gate as chat history — TTS is part of the
+                # Orchestrator surface, not a public anonymous endpoint.
+                self._ai_conversation_scope()
+                result = ai_agent_tts.synthesize(
+                    str(body.get("text") or body.get("message") or ""),
+                    agent_id=str(body.get("agent_id") or body.get("agent") or "vitek"),
+                    message_id=str(body.get("message_id") or ""),
+                    profile_override=body.get("voice") if isinstance(body.get("voice"), dict) else None,
                 )
                 self._json(HTTPStatus.OK, out)
             except ai_chief_agent.ChiefAgentError as e:
@@ -3960,7 +4030,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 ttl = float(body.get("heartbeat_ttl_hours") or 6.0)
                 out = ai_stale_sweep.sweep_stale(heartbeat_ttl_hours=ttl)
-                self._json(HTTPStatus.OK, out)
+                self._respond_tts(result)
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"sweep failed: {e}")
             return
@@ -3994,6 +4064,12 @@ class Handler(BaseHTTPRequestHandler):
             priority = str(body.get("priority") or "high")
             try:
                 rec = ai_operator_notes.promote_to_global(
+            self._ai_lab_orchestrator_sync(
+                body, scope=self._ai_conversation_scope(), mirror_to_telegram=True,
+            )
+            return
+
+        if path == "/api/ai-lab/orchestrator/speak":
                     text=text, priority=priority,
                     source_experiment_id=body.get("experiment_id"),
                     trigger="ui_manual",
@@ -4001,7 +4077,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, {"ok": True, "note": rec})
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"global note failed: {e}")
+            except ai_agent_tts.AgentTtsError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
+            except Exception as e:
+                self._err(HTTPStatus.BAD_GATEWAY, f"TTS failed: {e}", code="tts_failed")
             return
+
+        # Staff voice profiles: POST save / reset / preview
+        # /api/ai-lab/domain-agents/{id}/voice[/(reset|preview)]
+        if path.startswith("/api/ai-lab/domain-agents/") and "/voice" in path:
+            parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+            # api ai-lab domain-agents {id} voice [action]
+            if len(parts) >= 5 and parts[3] and parts[4] == "voice":
+                agent_id = parts[3]
+                action = parts[5] if len(parts) >= 6 else "save"
+                if not self._require_owner_actor():
+                    return
+                try:
+                    if action == "save":
+                        profile = ai_agent_tts.set_voice_profile(agent_id, body if isinstance(body, dict) else {})
+                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
+                    elif action == "reset":
+                        profile = ai_agent_tts.reset_voice_profile(agent_id)
+                        self._json(HTTPStatus.OK, {"ok": True, "voice": profile})
+                    elif action == "preview":
+                        override = body.get("voice") if isinstance(body.get("voice"), dict) else body
+                        if not isinstance(override, dict):
+                            override = None
+                        result = ai_agent_tts.preview_speech(agent_id, profile_override=override)
+                        self._respond_tts(result)
+                    else:
+                        self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
+                except ai_agent_tts.AgentTtsError as e:
+                    self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
+                except Exception as e:
+                    self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"voice action failed: {e}")
+                return
 
         # /api/ai-lab/experiments/{id}/resume-compile
         parts = [p for p in path.split("/") if p]

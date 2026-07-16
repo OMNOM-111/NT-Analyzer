@@ -94,6 +94,7 @@
 
   const BRAND_MARK = 'brand/stratforge-mark.png';
   // Staff faces: one webm per agent. Paused frame = avatar; hover/typing = play.
+  // Orchestrator message faces also TTS the message body (see agentSpeakFromFace).
   // Masters: `/Agents/<Имя>/`; served: `assets/agents/<id>/speaking.webm`.
   // Crop tuned per source framing (verified via tools/_avatar_preview.py).
   const AGENT_AVATAR_IDS = {
@@ -149,6 +150,122 @@
     if (video.readyState >= 2) start();
     else video.addEventListener('loadeddata', start, { once: true });
   }
+  // Hover TTS for Orchestrator message faces: loop webm while reading the
+  // message body via OpenAI Speech (or browser speechSynthesis fallback).
+  const AGENT_SPEAK = { gen: 0, timer: null, audio: null, url: null, face: null, utter: null };
+  const AGENT_SPEAK_HOVER_MS = 350;
+  function agentSpeakStop() {
+    AGENT_SPEAK.gen += 1;
+    if (AGENT_SPEAK.timer) { clearTimeout(AGENT_SPEAK.timer); AGENT_SPEAK.timer = null; }
+    if (AGENT_SPEAK.audio) {
+      try { AGENT_SPEAK.audio.pause(); AGENT_SPEAK.audio.removeAttribute('src'); AGENT_SPEAK.audio.load(); } catch (e) { /* ignore */ }
+      AGENT_SPEAK.audio = null;
+    }
+    if (AGENT_SPEAK.url) {
+      try { URL.revokeObjectURL(AGENT_SPEAK.url); } catch (e) { /* ignore */ }
+      AGENT_SPEAK.url = null;
+    }
+    if (AGENT_SPEAK.utter) {
+      AGENT_SPEAK.utter = null;
+      try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    }
+    const face = AGENT_SPEAK.face;
+    AGENT_SPEAK.face = null;
+    if (face && face.isConnected && !face.classList.contains('speaking')) agentFacePause(face);
+  }
+  function agentSpeakBrowser(text, face, gen, opts) {
+    const options = opts || {};
+    if (!window.speechSynthesis || !text) {
+      if (gen === AGENT_SPEAK.gen && face && !face.classList.contains('speaking')) agentFacePause(face);
+      return;
+    }
+    try { speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = String(options.language || options.fallback_voice || 'ru-RU');
+    const speed = Number(options.speed);
+    utter.rate = Number.isFinite(speed) && speed > 0 ? Math.max(0.5, Math.min(1.8, speed)) : 1.02;
+    AGENT_SPEAK.utter = utter;
+    try {
+      const voices = speechSynthesis.getVoices() || [];
+      const lang = utter.lang.toLowerCase();
+      const match = voices.find(v => String(v.lang || '').toLowerCase().startsWith(lang.slice(0, 2)))
+        || voices.find(v => /ru/i.test(String(v.lang || '')));
+      if (match) utter.voice = match;
+    } catch (e) { /* ignore */ }
+    const done = () => {
+      if (gen !== AGENT_SPEAK.gen) return;
+      AGENT_SPEAK.utter = null;
+      AGENT_SPEAK.face = null;
+      if (face && face.isConnected && !face.classList.contains('speaking')) agentFacePause(face);
+    };
+    utter.onend = done;
+    utter.onerror = done;
+    try { speechSynthesis.speak(utter); }
+    catch (e) { done(); }
+  }
+  async function agentSpeakPlayAudio(blob, text, face, gen, fallbackOpts) {
+    if (gen !== AGENT_SPEAK.gen) return;
+    if (!(blob instanceof Blob) || !blob.size) {
+      agentSpeakBrowser(text, face, gen, fallbackOpts);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    AGENT_SPEAK.url = url;
+    const audio = new Audio(url);
+    AGENT_SPEAK.audio = audio;
+    const done = () => {
+      if (gen !== AGENT_SPEAK.gen) return;
+      agentSpeakStop();
+    };
+    audio.onended = done;
+    audio.onerror = () => {
+      if (gen !== AGENT_SPEAK.gen) return;
+      if (AGENT_SPEAK.url) {
+        try { URL.revokeObjectURL(AGENT_SPEAK.url); } catch (e) { /* ignore */ }
+        AGENT_SPEAK.url = null;
+      }
+      AGENT_SPEAK.audio = null;
+      agentSpeakBrowser(text, face, gen, fallbackOpts);
+    };
+    try { await audio.play(); }
+    catch (e) { agentSpeakBrowser(text, face, gen, fallbackOpts); }
+  }
+  function agentSpeakFromFace(face) {
+    if (!face || !face.classList.contains('orch-msg-face')) return;
+    if (face.classList.contains('speaking')) return;
+    const msg = face.closest('.orch-msg');
+    if (!msg || msg.classList.contains('user')) return;
+    const body = msg.querySelector('.orch-msg-body');
+    const text = String((body && body.textContent) || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    agentSpeakStop();
+    const gen = AGENT_SPEAK.gen;
+    AGENT_SPEAK.face = face;
+    agentFacePlay(face, { loop: true });
+    AGENT_SPEAK.timer = setTimeout(async () => {
+      AGENT_SPEAK.timer = null;
+      if (gen !== AGENT_SPEAK.gen) return;
+      const agentId = face.getAttribute('data-agent-face') || 'vitek';
+      const messageId = face.getAttribute('data-message-id') || '';
+      try {
+        if (!window.API || API.config.offline || !API.http.aiOrchestratorSpeak) {
+          agentSpeakBrowser(text, face, gen, { language: 'ru-RU' });
+          return;
+        }
+        const result = await API.http.aiOrchestratorSpeak({
+          text, agent_id: agentId, message_id: messageId,
+        });
+        if (gen !== AGENT_SPEAK.gen) return;
+        if (result && !(result instanceof Blob) && result.fallback === 'browser') {
+          agentSpeakBrowser(text, face, gen, result);
+          return;
+        }
+        await agentSpeakPlayAudio(result, text, face, gen, { language: 'ru-RU' });
+      } catch (e) {
+        if (gen === AGENT_SPEAK.gen) agentSpeakBrowser(text, face, gen, { language: 'ru-RU' });
+      }
+    }, AGENT_SPEAK_HOVER_MS);
+  }
   function agentAvatarHtml(ref, opts) {
     const options = opts || {};
     const speaking = !!options.speaking;
@@ -159,7 +276,8 @@
     const crop = AGENT_FACE_CROP[id] || AGENT_FACE_CROP.vitek;
     const attrs = speaking ? ' loop autoplay' : '';
     const style = `--face-zoom:${crop.zoom};--face-cx:${crop.cx};--face-cy:${crop.cy};`;
-    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}" style="${style}"><video src="${esc(src)}" muted playsinline preload="metadata"${attrs} aria-hidden="true"></video></span>`;
+    const msgAttr = options.messageId ? ` data-message-id="${esc(String(options.messageId))}"` : '';
+    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}"${msgAttr} style="${style}"><video src="${esc(src)}" muted playsinline preload="metadata"${attrs} aria-hidden="true"></video></span>`;
   }
   function wireAgentFaces(root) {
     qsa('.agent-face', root || document).forEach((face) => {
@@ -177,14 +295,25 @@
       video.addEventListener('loadeddata', freeze);
       video.addEventListener('ended', () => {
         if (face.classList.contains('speaking')) return;
+        if (AGENT_SPEAK.face === face) return;
         agentFacePause(face);
       });
       face.addEventListener('mouseenter', () => {
-        if (face.classList.contains('speaking') || agentFaceReduceMotion()) return;
+        if (face.classList.contains('speaking')) return;
+        if (face.classList.contains('orch-msg-face')) {
+          agentSpeakFromFace(face);
+          return;
+        }
+        if (agentFaceReduceMotion()) return;
         agentFacePlay(face, { loop: false });
       });
       face.addEventListener('mouseleave', () => {
         if (face.classList.contains('speaking')) return;
+        if (face.classList.contains('orch-msg-face')) {
+          if (AGENT_SPEAK.face === face || AGENT_SPEAK.timer) agentSpeakStop();
+          else agentFacePause(face);
+          return;
+        }
         agentFacePause(face);
       });
       if (face.classList.contains('speaking')) agentFacePlay(face, { loop: true });
@@ -3975,7 +4104,7 @@
     const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="StratForge Orchestrator · чат с Витьком">
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
-        <div class="orch-head-title"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">Витёк · ваша правая рука</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
+        <div class="orch-head-title" title="StratForge Orchestrator · Витёк"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">Витёк · ваша правая рука</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
         <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
         <div class="orch-skin-wrap">
@@ -4160,6 +4289,7 @@
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
     orchStopFeedbackVoice();
+    agentSpeakStop();
   }
   async function orchLoadConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
@@ -4343,7 +4473,7 @@
     </div>`;
   }
   const ORCH_KIND_LABELS = {
-    chat: 'сообщение', request: 'просьба', task: 'поручение', report: 'отчёт',
+    chat: 'сообщение', request: 'просьба', task: 'поручение', report: 'отчёт', informational: 'уведомление',
   };
   const ORCH_FULFILL_LABELS = {
     unset: 'не отмечено', done: 'выполнено', failed: 'не выполнено', na: 'переписка',
@@ -4355,6 +4485,7 @@
     if (!actions.length) return 'chat';
     const names = actions.map(a => String(a.name || a.action || ''));
     const statuses = actions.map(a => String(a.status || ''));
+    if (names.some(n => /^(strategy_(started|stopped|enabled|disabled)|ninjatrader_(started|stopped)|connection_restored)$/.test(n))) return 'informational';
     if (names.some(n => /mission_completed|deliver_report|request_.*_report/.test(n))) return 'report';
     if (statuses.some(s => /needs_input|approval_required|waiting_review/.test(s))) return 'request';
     return 'task';
@@ -4437,7 +4568,8 @@
     const fulfillment = orchFulfillmentOf(row);
     const kindLabel = ORCH_KIND_LABELS[kind] || kind;
     const fulfillLabel = ORCH_FULFILL_LABELS[fulfillment] || fulfillment;
-    const showMarks = kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed';
+    const isInformational = kind === 'informational';
+    const showMarks = !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
     const agentLabel = String(row.agent_name || agentRef || 'Витёк');
     const title = String(row.agent_title || '').trim();
@@ -4459,10 +4591,10 @@
     return `<div class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}">
       <div class="orch-msg-footer-row">
         <div class="orch-msg-footer-left">
-          <div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${Number(row.rating || 0) || ''}">
+          ${isInformational ? '' : `<div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${Number(row.rating || 0) || ''}">
             <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${Number(row.rating || 0) >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
-          </div>
-          <span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>
+          </div>`}
+          ${isInformational ? `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>` : `<span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>`}
         </div>
         <div class="orch-msg-footer-right">${marks}</div>
       </div>
@@ -4505,7 +4637,9 @@
     const media = attachments.map(a =>
       `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
     ).join('');
-    const face = isUser ? '' : agentAvatarHtml(agentRef, { label: agentLabel, cls: 'orch-msg-face' });
+    const face = isUser ? '' : agentAvatarHtml(agentRef, {
+      label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
+    });
     return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
   }
   function orchStopFeedbackVoice() {

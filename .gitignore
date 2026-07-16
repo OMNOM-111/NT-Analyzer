@@ -61,6 +61,7 @@
 /NT-Analyzer/data/integrations/avatars/
 /NT-Analyzer/data/integrations/ai_agents.settings.json
 /NT-Analyzer/data/integrations/ai_agents.registry.json
+/NT-Analyzer/data/integrations/agent_voices.json
 /NT-Analyzer/data/integrations/ai_agent_keys.dpapi
 /NT-Analyzer/data/tenants/
 /NT-Analyzer/logs/

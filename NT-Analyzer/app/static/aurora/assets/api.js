@@ -151,6 +151,51 @@
     return data;
   }
 
+  // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
+  // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
+  async function orchestratorSpeak(payload) {
+    const path = '/api/ai-lab/orchestrator/speak';
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: requestHeaders({
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg, application/json',
+      }),
+      body: JSON.stringify(payload || {}),
+    });
+    const ct = String(res.headers.get('Content-Type') || '').toLowerCase();
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* non-json */ }
+      const retryHeader = Number(res.headers.get('Retry-After') || 0);
+      throw new HttpError(
+        res.status, (data && data.error) || res.statusText, path,
+        retryHeader > 0 ? retryHeader * 1000 : 0,
+        (data && data.code) || '', data,
+      );
+    }
+    if (ct.includes('application/json')) return await res.json();
+    return await res.blob();
+  }
+  async function orchestratorSpeakPreview(agentId, voice) {
+    const path = '/api/ai-lab/domain-agents/' + encodeURIComponent(agentId || 'vitek') + '/voice/preview';
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: requestHeaders({
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg, application/json',
+      }),
+      body: JSON.stringify(voice && typeof voice === 'object' ? { voice } : {}),
+    });
+    const ct = String(res.headers.get('Content-Type') || '').toLowerCase();
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* non-json */ }
+      throw new HttpError(res.status, (data && data.error) || res.statusText, path, 0, (data && data.code) || '', data);
+    }
+    if (ct.includes('application/json')) return await res.json();
+    return await res.blob();
+  }
   // Server-Sent Events client for the orchestrator chat. Streams two channels —
   // native reasoning ("thinking") and then the final answer — over one POST.
   // No polyfill/EventSource (that is GET-only): we read the fetch body stream
@@ -487,6 +532,15 @@
     aiOrchestratorSetConversationState: (id, state) => send('/api/ai-lab/orchestrator/conversations/state', 'POST', { conversation_id: id, state: state }),
     aiOrchestratorDeleteConversation: (id) => send('/api/ai-lab/orchestrator/conversations/delete', 'POST', { conversation_id: id }),
     notifications: (q, o) => getJSON('/api/notifications' + qs(q), o),
+    aiOrchestratorJob: (jobId, o) => getJSON('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId), o),
+    aiOrchestratorCancelJob: (jobId) => send('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId) + '/cancel', 'POST', {}),
+    aiOrchestratorSpeak: (payload) => orchestratorSpeak(payload || {}),
+    domainAgentVoices: (o) => getJSON('/api/ai-lab/domain-agents/voices', o),
+    domainAgentVoice: (agentId, o) => getJSON('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', o),
+    domainAgentVoiceSave: (agentId, body) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', 'POST', body || {}),
+    domainAgentVoiceReset: (agentId) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice/reset', 'POST', {}),
+    domainAgentVoicePreview: (agentId, voice) => orchestratorSpeakPreview(agentId, voice),
+    ttsCatalog: (o) => getJSON('/api/ai-lab/tts/catalog', o),
     notificationsAck: (body) => send('/api/notifications/ack', 'POST', body || {}),
     notificationsDelete: (body) => send('/api/notifications/delete', 'POST', body || {}),
     notificationsClear: (body) => send('/api/notifications/clear', 'POST', body || {}),

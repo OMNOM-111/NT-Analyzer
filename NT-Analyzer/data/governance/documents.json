@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "owner": "Черевко Дмитро",
-  "updated_at_utc": "2026-07-03T00:00:00Z",
+  "updated_at_utc": "2026-07-15T19:58:33Z",
   "documents": [
     {
       "id": "project-overview",
@@ -147,6 +147,86 @@
       "label": "Локальный AI prompt contract",
       "category": "technical",
       "path": "ai_lab/prompts/system_coder.txt",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-index",
+      "title": "AGENTS",
+      "label": "Карта агентов StratForge",
+      "category": "ai-staff",
+      "path": "docs/AGENTS.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-vitek",
+      "title": "VITEK",
+      "label": "Виктор — правая рука",
+      "category": "ai-staff",
+      "path": "docs/VITEK.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-chief",
+      "title": "CHIEF_AI_AGENT",
+      "label": "Orchestrator и маршрутизация",
+      "category": "ai-staff",
+      "path": "docs/CHIEF_AI_AGENT.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-dialogue",
+      "title": "AI_DIALOGUE_CONTRACT",
+      "label": "Публичный контракт диалога",
+      "category": "ai-staff",
+      "path": "docs/AI_DIALOGUE_CONTRACT.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-management",
+      "title": "AI_MANAGEMENT",
+      "label": "Секретарь / Заместитель / Управляющий",
+      "category": "ai-staff",
+      "path": "docs/AI_MANAGEMENT.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-marina",
+      "title": "AI_ACCOUNTANT",
+      "label": "Марина — финансы",
+      "category": "ai-staff",
+      "path": "docs/AI_ACCOUNTANT.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-tolik",
+      "title": "AI_STRATEGY_ANALYST",
+      "label": "Толик — стратегии",
+      "category": "ai-staff",
+      "path": "docs/AI_STRATEGY_ANALYST.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-nikita",
+      "title": "AI_NEWS_AGENT",
+      "label": "Никита — новости",
+      "category": "ai-staff",
+      "path": "docs/AI_NEWS_AGENT.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-ivan",
+      "title": "AI_CHART_OPERATOR",
+      "label": "Иван — графики",
+      "category": "ai-staff",
+      "path": "docs/AI_CHART_OPERATOR.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "ai-staff-recovery",
+      "title": "STRATEGY_RECOVERY",
+      "label": "Восстановление стратегии из карантина",
+      "category": "ai-staff",
+      "path": "docs/STRATEGY_RECOVERY.md",
       "editable_kind": "none"
     },
     {

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>AI Agents / API Keys — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260715-inbox6">
+<link rel="stylesheet" href="assets/theme.css?v=20260716-voices1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
   .agent-security { display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:start; }
@@ -18,6 +18,17 @@
   .agent-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
   .agent-form-grid .wide { grid-column:1/-1; }
   .agent-test-result { min-height:76px; white-space:pre-wrap; }
+  .staff-voice-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+  .staff-voice-card { border:1px solid var(--line-2); border-radius:14px; background:var(--bg-2); padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .staff-voice-card .staff-voice-top { display:flex; gap:12px; align-items:center; }
+  .staff-voice-card .staff-voice-meta { min-width:0; }
+  .staff-voice-card .staff-voice-meta strong { display:block; }
+  .staff-voice-card .voice-tags { display:flex; flex-wrap:wrap; gap:6px; }
+  .staff-voice-card .voice-tags span { font-size:11px; color:var(--tx-2); background:var(--bg-3); border:1px solid var(--line-2); border-radius:999px; padding:2px 8px; }
+  .voice-status { font-size:12px; color:var(--tx-2); min-height:1.2em; }
+  .voice-status.warn { color:var(--warn); }
+  .voice-status.err { color:var(--neg); }
+  .voice-status.ok { color:var(--pos); }
   @media(max-width:700px){ .agent-form-grid { grid-template-columns:minmax(0,1fr); } .agent-form-grid .wide { grid-column:auto; } }
 </style>
 </head>
@@ -28,13 +39,27 @@
       <div>
         <div class="kick">AI Agents / API Keys</div>
         <h1>Агенты, ключи, квоты и расходы</h1>
-        <p>Ключи шифруются локально Windows DPAPI. Grant/credit и budget — разные величины: кредит показывает доступный ресурс, а дневной и месячный лимиты ограничивают скорость расходования.</p>
+        <p>Ключи шифруются локально Windows DPAPI. Grant/credit и budget — разные величины: кредит показывает доступный ресурс, а дневной и месячный лимиты ограничивают скорость расходования. Ниже — голоса сотрудников Orchestrator: они независимы от модели, которая пишет текст.</p>
       </div>
       <button class="btn primary" id="agent-add">Add Model</button>
     </div>
   </section>
 
   <div class="grid cols-5" id="agent-kpis"></div>
+
+  <section class="panel">
+    <div class="panel-h">
+      <h2>Голоса сотрудников Orchestrator</h2>
+      <span class="sub">настройки · пресеты · предпрослушивание</span>
+      <div class="spacer"></div>
+      <span class="badge" id="voice-key-badge"><span class="dot"></span>TTS</span>
+    </div>
+    <div class="panel-b col gap-lg">
+      <div class="finance-note">Голос принадлежит профилю сотрудника (Виктор, Марина…), а не chat-модели ответа. Без OpenAI-ключа озвучка уходит в браузерный fallback.</div>
+      <div class="staff-voice-grid" id="staff-voice-grid"><div class="empty-state">Загрузка голосов…</div></div>
+      <div class="voice-status" id="staff-voice-status"></div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="panel-h"><h2>Безопасность хранилища</h2><div class="spacer"></div><span class="badge" id="storage-badge"><span class="dot"></span>проверка</span></div>
@@ -98,11 +123,11 @@
     </table></div></div>
   </section>
 
-<script src="assets/api.js?v=20260715-inbox6"></script>
+<script src="assets/api.js?v=20260716-release1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260715-inbox6"></script>
+<script src="assets/ui.js?v=20260716-voices2"></script>
 <script src="assets/victor.js?v=20260715-inbox6"></script>
-<script src="assets/pages/ai-agents.js?v=20260702-staged1"></script>
+<script src="assets/pages/ai-agents.js?v=20260716-voices2"></script>
 </body>
 </html>

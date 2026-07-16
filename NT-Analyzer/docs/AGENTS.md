@@ -69,6 +69,54 @@ UI: `app/static/aurora/assets/agents/<id>/speaking.webm`.
 пока пишется ответ или агент `working` — loop. Круг зумит лицо
 (`object-position` + `scale`). При уменьшении движения анимация не запускается.
 
+### Озвучка сообщения (hover в чате Orchestrator)
+
+В чате StratForge Orchestrator наведение на аватар **ответа ассистента**
+(`.orch-msg-face`) делает две вещи одновременно:
+
+1. **Анимация** — `speaking.webm` крутится в loop, пока идёт речь.
+2. **Речь** — читается текст соседнего `.orch-msg-body` голосом **профиля этого агента**.
+
+#### Голосовые профили сотрудников
+
+Каждый сотрудник (Виктор, Управляющий, Марина…) имеет отдельный голосовой профиль.
+Он **не зависит** от chat-модели, которая написала ответ (DeepSeek / Gemini / GPT / local).
+
+| Элемент | Значение |
+| --- | --- |
+| UI | `AI Agents` → блок «Голоса сотрудников Orchestrator» → «Настройки · Голос» |
+| Хранение | `data/integrations/agent_voices.json` (без API-ключей; gitignored) |
+| Defaults | `app/ai_lab/agent_tts.py` → `DEFAULT_PROFILES` |
+| Пресеты | глубокий/спокойный/молодой мужской, строгий руководитель, мягкий/уверенный/молодой женский, спокойный аналитик, энергичный помощник, нейтральный |
+| Endpoint list | `GET /api/ai-lab/domain-agents/voices` |
+| Endpoint one | `GET /api/ai-lab/domain-agents/{id}/voice` |
+| Save / reset | `POST .../voice`, `POST .../voice/reset` (только owner) |
+| Preview | `POST .../voice/preview` (можно до сохранения, с draft-телом) |
+| Catalog | `GET /api/ai-lab/tts/catalog` |
+| Speak | `POST /api/ai-lab/orchestrator/speak` — подтягивает профиль по `agent_id` |
+| Debounce | ~350 ms |
+| Mouseleave / закрытие чата | сразу stop |
+| TTS-модели | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` (instructions только у mini-tts) |
+| Ключ | `NTA_OPENAI_API_KEY` или OpenAI-агент из AI Agents (не в карточке голоса) |
+| Кэш | `data/runtime/tts-cache/` — ключ = agent+provider+model+voice+speed+style+instructions+language+text |
+| Fallback | нет ключа / ошибка провайдера / provider=browser → `speechSynthesis` |
+| Pitch | OpenAI не поддерживает — в UI не показывается как рабочий |
+
+Стандартные голоса (обоснование выбора):
+
+| id | Пол | Voice | Характер |
+| --- | --- | --- | --- |
+| `vitek` | муж | onyx | глубокий уверенный |
+| `manager` | муж | sage | строгий руководитель |
+| `deputy` | муж | fable | спокойный профессионал |
+| `secretary` | жен | coral | яркий помощник |
+| `marina` | жен | nova | мягкий точный |
+| `tolik` | муж | echo | спокойный аналитик |
+| `nikita` | муж | ash | энергичный |
+| `ivan` | муж | alloy | ясный практичный |
+
+Модуль: `app/ai_lab/agent_tts.py`.
+
 | id | Портрет |
 | --- | --- |
 | `vitek` | Виктор |
@@ -76,6 +124,7 @@ UI: `app/static/aurora/assets/agents/<id>/speaking.webm`.
 | `manager` | Управляющий; Секретарь и Заместитель — тот же файл |
 
 Подробнее: [`Agents/README.md`](../../Agents/README.md).
+Модуль: `app/ai_lab/agent_tts.py`.
 
 ## Связанные технические документы
 

@@ -45,6 +45,16 @@ Orchestrator — единым внутренним шлюзом. Единств�
   `user_id + workspace_id + conversation_id`. Для владельца прежние
   неразмеченные диалоги мигрируются один раз и идемпотентно; обычный пользователь
   их не видит.
+- `POST /api/ai-lab/orchestrator/speak` озвучивает текст ответа агента при
+  наведении на аватар в чате. Успех → `audio/mpeg` (профиль голоса агента →
+  OpenAI Speech); без ключа / ошибка → JSON `{ fallback: "browser" }`.
+  Кэш учитывает agent+model+voice+speed+style+language+text.
+- Голоса сотрудников: `GET /api/ai-lab/domain-agents/voices`,
+  `GET/POST /api/ai-lab/domain-agents/{id}/voice`,
+  `POST .../voice/reset`, `POST .../voice/preview`,
+  `GET /api/ai-lab/tts/catalog`. UI: страница AI Agents → «Голоса сотрудников».
+  Канон: [AGENTS.md](AGENTS.md) § озвучка. Хранение:
+  `data/integrations/agent_voices.json` (без секретов).
 - Сохранённая категория поручения определяет профильный handler: runtime остаётся
   у Виктора, финансы у Марины, lifecycle стратегии у Толика. GPT-5 mini может
   понять свободную речь, но не может перевести финансовое поручение в график.

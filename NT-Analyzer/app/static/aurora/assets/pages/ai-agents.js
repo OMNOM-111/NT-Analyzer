@@ -85,11 +85,6 @@ UI.ready(async function () {
     wireRows();
   }
 
-  async function load() {
-    try { state = await API.http.aiAgents({ signal: UI.signal() }); render(); }
-    catch (error) { UI.reportError(error); }
-  }
-
   function providerDefaults(providerId) {
     const count = state.agents.filter(row => row.provider === providerId).length + 1;
     if (providerId === 'azure_foundry') return { account: 'Azure Student Grant ($100)', billing: 'credit', credit: 100, pool: 'azure-student', model: '' };
@@ -191,6 +186,289 @@ UI.ready(async function () {
     UI.qsa('[data-agent-balance]').forEach(button => button.onclick = async () => {
       try { await API.http.aiAgentSyncBalance(button.dataset.agentBalance); UI.toast('Credit balance synchronized'); await load(); } catch (error) { UI.reportError(error); }
     });
+  }
+
+  let voiceState = { agents: [], presets: [], catalog: null, key_configured: false };
+  let voicePreviewAudio = null;
+  let voicePreviewUrl = null;
+
+  function stopVoicePreview() {
+    if (voicePreviewAudio) {
+      try { voicePreviewAudio.pause(); voicePreviewAudio.removeAttribute('src'); voicePreviewAudio.load(); } catch (e) { /* ignore */ }
+      voicePreviewAudio = null;
+    }
+    if (voicePreviewUrl) {
+      try { URL.revokeObjectURL(voicePreviewUrl); } catch (e) { /* ignore */ }
+      voicePreviewUrl = null;
+    }
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  }
+
+  function setVoiceStatus(text, cls) {
+    const el = UI.qs('#staff-voice-status');
+    if (!el) return;
+    el.className = `voice-status${cls ? ' ' + cls : ''}`;
+    el.textContent = text || '';
+  }
+
+  function voicesForModel(modelId) {
+    const providers = voiceState.catalog?.providers || [];
+    for (const provider of providers) {
+      for (const model of provider.models || []) {
+        if (model.id === modelId) return model.voices || [];
+      }
+    }
+    return [];
+  }
+
+  function supportsFor(providerId, modelId) {
+    const providers = voiceState.catalog?.providers || [];
+    for (const provider of providers) {
+      if (provider.id !== providerId) continue;
+      for (const model of provider.models || []) {
+        if (model.id === modelId) return model.supports || {};
+      }
+    }
+    return {};
+  }
+
+  function renderStaffVoices() {
+    const grid = UI.qs('#staff-voice-grid');
+    const badge = UI.qs('#voice-key-badge');
+    if (!grid) return;
+    if (badge) {
+      badge.className = `badge ${voiceState.key_configured ? 'live' : 'archived'}`;
+      badge.innerHTML = `<span class="dot"></span>${voiceState.key_configured ? 'OpenAI TTS' : 'browser fallback'}`;
+    }
+    const rows = voiceState.agents || [];
+    if (!rows.length) {
+      grid.innerHTML = '<div class="empty-state">Голоса сотрудников пока недоступны.</div>';
+      return;
+    }
+    grid.innerHTML = rows.map(row => {
+      const v = row.voice || {};
+      const face = UI.agentAvatarHtml ? UI.agentAvatarHtml(row.id, { label: row.name, cls: 'sm' }) : '';
+      return `<article class="staff-voice-card" data-staff-id="${UI.esc(row.id)}">
+        <div class="staff-voice-top">${face}<div class="staff-voice-meta"><strong>${UI.esc(row.name || row.id)}</strong><div class="row-sub">${UI.esc(row.title || '')}</div></div></div>
+        <div class="row-sub">${UI.esc(row.personality || '')}</div>
+        <div class="voice-tags">
+          <span>${UI.esc(v.voice || '—')}</span>
+          <span>${UI.esc(v.tts_model || '—')}</span>
+          <span>×${Number(v.speed || 1).toFixed(2)}</span>
+          <span>${v.is_custom ? 'свой' : 'стандарт'}</span>
+          <span>${v.tts_enabled === false ? 'выкл' : 'вкл'}</span>
+        </div>
+        <div class="agent-actions">
+          <button class="btn sm primary" data-voice-settings="${UI.esc(row.id)}">Настройки · Голос</button>
+          <button class="btn sm" data-voice-preview-card="${UI.esc(row.id)}">Прослушать</button>
+        </div>
+      </article>`;
+    }).join('');
+    if (UI.wireAgentFaces) UI.wireAgentFaces(grid);
+    UI.qsa('[data-voice-settings]', grid).forEach(btn => {
+      btn.onclick = () => openVoiceSettings(btn.dataset.voiceSettings);
+    });
+    UI.qsa('[data-voice-preview-card]', grid).forEach(btn => {
+      btn.onclick = () => previewSavedVoice(btn.dataset.voicePreviewCard);
+    });
+  }
+
+  async function playVoiceResult(result, phrase, meta) {
+    stopVoicePreview();
+    if (result && !(result instanceof Blob) && result.fallback === 'browser') {
+      setVoiceStatus(`Fallback: браузерный голос (${result.reason || 'no key'})`, 'warn');
+      if (!window.speechSynthesis) return;
+      const utter = new SpeechSynthesisUtterance(phrase);
+      utter.lang = result.language || result.fallback_voice || 'ru-RU';
+      const speed = Number(result.speed);
+      if (Number.isFinite(speed) && speed > 0) utter.rate = Math.max(0.5, Math.min(1.8, speed));
+      speechSynthesis.speak(utter);
+      return;
+    }
+    if (!(result instanceof Blob)) {
+      setVoiceStatus('Не удалось получить аудио', 'err');
+      return;
+    }
+    const url = URL.createObjectURL(result);
+    voicePreviewUrl = url;
+    const audio = new Audio(url);
+    voicePreviewAudio = audio;
+    setVoiceStatus(`Воспроизведение${meta ? ': ' + meta : ''}…`, 'ok');
+    audio.onended = () => setVoiceStatus('Остановлено', '');
+    audio.onerror = () => setVoiceStatus('Ошибка воспроизведения', 'err');
+    await audio.play();
+  }
+
+  async function previewSavedVoice(agentId) {
+    const row = (voiceState.agents || []).find(a => a.id === agentId);
+    const phrase = row?.preview_phrase || 'Здравствуйте. Готов приступить к работе.';
+    setVoiceStatus('Загрузка аудио…', '');
+    try {
+      const result = await API.http.domainAgentVoicePreview(agentId, null);
+      await playVoiceResult(result, phrase, row?.voice?.voice);
+    } catch (error) {
+      setVoiceStatus(error.message || 'Ошибка предпрослушивания', 'err');
+      UI.reportError(error);
+    }
+  }
+
+  function openVoiceSettings(agentId) {
+    const row = (voiceState.agents || []).find(a => a.id === agentId);
+    if (!row) return;
+    const draft = Object.assign({}, row.voice || {});
+    const presets = voiceState.presets || [];
+    const providers = voiceState.catalog?.providers || [];
+    const face = UI.agentAvatarHtml ? UI.agentAvatarHtml(row.id, { label: row.name, cls: 'lg' }) : '';
+    const presetOpts = presets.map(p => `<option value="${UI.esc(p.id)}" ${draft.preset_id === p.id ? 'selected' : ''}>${UI.esc(p.label)}</option>`).join('');
+    const providerOpts = providers.map(p => `<option value="${UI.esc(p.id)}" ${draft.tts_provider === p.id ? 'selected' : ''}>${UI.esc(p.label)}</option>`).join('');
+    const d = UI.drawer(`<h3>Голос · ${UI.esc(row.name)}</h3>`, `
+      <div class="staff-voice-top" style="margin-bottom:12px">${face}<div class="staff-voice-meta"><strong>${UI.esc(row.name)}</strong><div class="row-sub">${UI.esc(row.title || '')}</div><div class="row-sub">${UI.esc(row.personality || '')}</div></div></div>
+      <div class="finance-note">Модель ответа и TTS — разные механизмы. Здесь только озвучка. Pitch OpenAI не поддерживает и скрыт.</div>
+      <div class="agent-form-grid">
+        <div class="field wide"><label class="telegram-setting"><span class="telegram-setting-copy"><strong>Озвучка включена</strong><small>Выкл. — только анимация аватара без речи</small></span><input id="vf-enabled" type="checkbox" ${draft.tts_enabled !== false ? 'checked' : ''}><span class="telegram-switch"></span></label></div>
+        <div class="field"><label for="vf-preset">Пресет</label><select id="vf-preset"><option value="">— свой набор —</option>${presetOpts}</select></div>
+        <div class="field"><label for="vf-provider">TTS-провайдер</label><select id="vf-provider">${providerOpts}</select></div>
+        <div class="field" id="vf-model-wrap"><label for="vf-model">TTS-модель</label><select id="vf-model"></select></div>
+        <div class="field" id="vf-voice-wrap"><label for="vf-voice">Голос</label><select id="vf-voice"></select></div>
+        <div class="field"><label for="vf-gender">Тип голоса</label><select id="vf-gender">
+          <option value="male" ${draft.voice_gender === 'male' ? 'selected' : ''}>Мужской</option>
+          <option value="female" ${draft.voice_gender === 'female' ? 'selected' : ''}>Женский</option>
+          <option value="neutral" ${draft.voice_gender === 'neutral' ? 'selected' : ''}>Нейтральный</option>
+        </select></div>
+        <div class="field" id="vf-speed-wrap"><label for="vf-speed">Скорость <span id="vf-speed-val">${Number(draft.speed || 1).toFixed(2)}</span></label><input id="vf-speed" type="range" min="0.5" max="1.5" step="0.01" value="${Number(draft.speed || 1)}"></div>
+        <div class="field"><label for="vf-lang">Язык</label><input id="vf-lang" maxlength="16" value="${UI.esc(draft.language || 'ru-RU')}"></div>
+        <div class="field wide" id="vf-style-wrap"><label for="vf-style">Стиль / выразительность</label><input id="vf-style" maxlength="200" value="${UI.esc(draft.style || '')}"></div>
+        <div class="field wide" id="vf-instr-wrap"><label for="vf-instructions">Инструкция манеры (gpt-4o-mini-tts)</label><textarea id="vf-instructions" rows="3" maxlength="500">${UI.esc(draft.instructions || '')}</textarea></div>
+      </div>
+      <div class="voice-status" id="vf-status"></div>
+      <div class="flex wrap gap-sm" style="margin-top:12px">
+        <button class="btn primary" id="vf-preview">Прослушать голос</button>
+        <button class="btn primary" id="vf-save">Сохранить</button>
+        <button class="btn ghost" id="vf-cancel" data-close-drawer>Отменить изменения</button>
+        <button class="btn danger" id="vf-reset">Вернуть стандартный голос</button>
+      </div>`);
+    d.classList.add('wide');
+    const body = UI.qs('.drawer-b', d);
+    const status = UI.qs('#vf-status', body);
+    const modelSel = UI.qs('#vf-model', body);
+    const voiceSel = UI.qs('#vf-voice', body);
+    const providerSel = UI.qs('#vf-provider', body);
+    const speed = UI.qs('#vf-speed', body);
+
+    function fillModels() {
+      const provider = providers.find(p => p.id === providerSel.value) || providers[0];
+      const models = provider?.models || [];
+      modelSel.innerHTML = models.map(m => `<option value="${UI.esc(m.id)}" ${draft.tts_model === m.id ? 'selected' : ''}>${UI.esc(m.label || m.id)}</option>`).join('');
+      if (!models.some(m => m.id === modelSel.value) && models[0]) modelSel.value = models[0].id;
+    }
+    function fillVoices() {
+      const list = voicesForModel(modelSel.value);
+      voiceSel.innerHTML = list.length
+        ? list.map(v => `<option value="${UI.esc(v)}" ${draft.voice === v ? 'selected' : ''}>${UI.esc(v)}</option>`).join('')
+        : '<option value="">—</option>';
+      if (list.includes(draft.voice)) voiceSel.value = draft.voice;
+    }
+    function applySupports() {
+      const supports = supportsFor(providerSel.value, modelSel.value);
+      UI.qs('#vf-voice-wrap', body).hidden = supports.voice === false;
+      UI.qs('#vf-speed-wrap', body).hidden = supports.speed === false;
+      UI.qs('#vf-style-wrap', body).hidden = !supports.style;
+      UI.qs('#vf-instr-wrap', body).hidden = !supports.instructions;
+      UI.qs('#vf-model-wrap', body).hidden = providerSel.value === 'browser';
+    }
+    function readDraft() {
+      return {
+        tts_enabled: UI.qs('#vf-enabled', body).checked,
+        tts_provider: providerSel.value,
+        tts_model: modelSel.value || 'tts-1',
+        voice: voiceSel.value || draft.voice,
+        voice_gender: UI.qs('#vf-gender', body).value,
+        language: UI.qs('#vf-lang', body).value.trim() || 'ru-RU',
+        speed: Number(speed.value || 1),
+        style: UI.qs('#vf-style', body).value.trim(),
+        instructions: UI.qs('#vf-instructions', body).value.trim(),
+        fallback_voice: UI.qs('#vf-lang', body).value.trim() || 'ru-RU',
+        preset_id: UI.qs('#vf-preset', body).value || '',
+      };
+    }
+    fillModels(); fillVoices(); applySupports();
+    providerSel.onchange = () => { fillModels(); fillVoices(); applySupports(); };
+    modelSel.onchange = () => { fillVoices(); applySupports(); };
+    speed.oninput = () => { UI.qs('#vf-speed-val', body).textContent = Number(speed.value).toFixed(2); };
+    UI.qs('#vf-preset', body).onchange = () => {
+      const preset = presets.find(p => p.id === UI.qs('#vf-preset', body).value);
+      if (!preset) return;
+      if (preset.voice) { draft.voice = preset.voice; if ([...voiceSel.options].some(o => o.value === preset.voice)) voiceSel.value = preset.voice; }
+      if (preset.voice_gender) UI.qs('#vf-gender', body).value = preset.voice_gender;
+      if (preset.speed != null) { speed.value = preset.speed; UI.qs('#vf-speed-val', body).textContent = Number(preset.speed).toFixed(2); }
+      if (preset.style) UI.qs('#vf-style', body).value = preset.style;
+      if (preset.instructions) UI.qs('#vf-instructions', body).value = preset.instructions;
+    };
+    UI.qs('#vf-preview', body).onclick = async () => {
+      const payload = readDraft();
+      status.textContent = 'Загрузка аудио…'; status.className = 'voice-status';
+      try {
+        const result = await API.http.domainAgentVoicePreview(agentId, payload);
+        await playVoiceResult(result, row.preview_phrase || '', payload.voice);
+        status.textContent = voiceState.key_configured ? 'Предпрослушивание' : 'Browser fallback';
+        status.className = voiceState.key_configured ? 'voice-status ok' : 'voice-status warn';
+      } catch (error) {
+        status.textContent = error.message || 'Ошибка'; status.className = 'voice-status err';
+        UI.reportError(error);
+      }
+    };
+    UI.qs('#vf-save', body).onclick = async () => {
+      const btn = UI.qs('#vf-save', body); btn.disabled = true;
+      status.textContent = 'Сохранение…';
+      try {
+        await API.http.domainAgentVoiceSave(agentId, readDraft());
+        UI.toast('Голос сохранён');
+        stopVoicePreview();
+        UI.closeDrawer();
+        await loadVoices();
+      } catch (error) {
+        btn.disabled = false;
+        status.textContent = error.message || 'Ошибка сохранения';
+        status.className = 'voice-status err';
+        UI.reportError(error);
+      }
+    };
+    UI.qs('#vf-reset', body).onclick = async () => {
+      if (!confirm('Вернуть стандартный голос этого сотрудника?')) return;
+      try {
+        await API.http.domainAgentVoiceReset(agentId);
+        UI.toast('Стандартный голос восстановлен');
+        stopVoicePreview();
+        UI.closeDrawer();
+        await loadVoices();
+      } catch (error) { UI.reportError(error); }
+    };
+    UI.qs('#vf-cancel', body).onclick = () => stopVoicePreview();
+  }
+
+  async function loadVoices() {
+    try {
+      const data = await API.http.domainAgentVoices({ signal: UI.signal() });
+      voiceState = {
+        agents: data.agents || [],
+        presets: data.presets || [],
+        catalog: data.catalog || null,
+        key_configured: !!data.key_configured,
+      };
+      renderStaffVoices();
+      if (!data.key_configured) setVoiceStatus('OpenAI-ключ не настроен — озвучка через браузерный fallback.', 'warn');
+      else setVoiceStatus('', '');
+    } catch (error) {
+      const grid = UI.qs('#staff-voice-grid');
+      if (grid) grid.innerHTML = `<div class="empty-state">${UI.esc(error.message || 'Не удалось загрузить голоса')}</div>`;
+      setVoiceStatus(error.message || 'Ошибка загрузки голосов', 'err');
+    }
+  }
+
+  async function load() {
+    try { state = await API.http.aiAgents({ signal: UI.signal() }); render(); }
+    catch (error) { UI.reportError(error); }
+    await loadVoices();
   }
 
   UI.qs('#agent-add').onclick = () => openAgentForm(null);

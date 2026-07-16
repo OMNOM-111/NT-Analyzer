@@ -1,0 +1,881 @@
+"""Per-agent TTS voice profiles for StratForge Orchestrator staff.
+
+Text generation models (DeepSeek, Gemini, GPT, local) are unrelated to speech.
+Speech always goes through the agent's voice profile → OpenAI Audio Speech
+(or another future TTS provider) → browser speechSynthesis fallback.
+
+Staff ids: vitek, marina, tolik, nikita, ivan, manager, secretary, deputy.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+import threading
+import urllib.error
+import urllib.request
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from .. import local_secrets, runtime_env
+from . import io_utils, paths
+
+log = logging.getLogger("nta.agent_tts")
+
+MAX_CHARS = 1200
+DEFAULT_PROVIDER = "openai"
+DEFAULT_MODEL = "tts-1"
+ALLOWED_PROVIDERS = ("openai", "browser")
+ALLOWED_MODELS = ("tts-1", "tts-1-hd", "gpt-4o-mini-tts")
+OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
+KEY_ENV = "NTA_OPENAI_API_KEY"
+_DEFAULT_VOICES_PATH = paths.PROJECT_ROOT / "data" / "integrations" / "agent_voices.json"
+VOICES_PATH = _DEFAULT_VOICES_PATH
+
+OPENAI_VOICES = (
+    "alloy", "ash", "ballad", "coral", "echo", "fable", "nova",
+    "onyx", "sage", "shimmer", "verse", "marin", "cedar",
+)
+# Voices available on classic tts-1 / tts-1-hd (subset).
+TTS1_VOICES = (
+    "alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer",
+)
+
+STAFF_ORDER = (
+    "vitek", "manager", "deputy", "secretary",
+    "marina", "tolik", "nikita", "ivan",
+)
+
+_LOCK = threading.RLock()
+_WS = re.compile(r"\s+")
+_CODE_FENCE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
+_INLINE_CODE = re.compile(r"`([^`]+)`")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_URL = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+_MD_EMPH = re.compile(r"[*_~]{1,3}")
+
+
+class AgentTtsError(ValueError):
+    """User-facing TTS failure."""
+
+
+# ---------------------------------------------------------------------------
+# Defaults & presets (documented baseline voices)
+# ---------------------------------------------------------------------------
+
+# Rationale (docs/AGENTS.md § voice profiles):
+# vitek — deep confident male (onyx); marina — calm precise female (nova);
+# tolik — measured male analyst (echo); nikita — energetic male (ash);
+# ivan — clear practical male (alloy); manager — strict executive (sage);
+# secretary — bright efficient female (coral); deputy — balanced male (fable).
+DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
+    "vitek": {
+        "agent_id": "vitek",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "onyx",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 1.0,
+        "style": "confident, warm, professional right-hand advisor",
+        "instructions": (
+            "Speak Russian clearly. Confident, warm male voice of a trusted "
+            "executive assistant. Steady pace, no theatrical drama."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "deep_male",
+    },
+    "marina": {
+        "agent_id": "marina",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "nova",
+        "voice_gender": "female",
+        "language": "ru-RU",
+        "speed": 0.95,
+        "style": "calm, precise, professional",
+        "instructions": (
+            "Speak Russian clearly. Calm precise female financial controller. "
+            "Numbers and facts first; soft but confident tone."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "soft_female",
+    },
+    "tolik": {
+        "agent_id": "tolik",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "echo",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 0.98,
+        "style": "calm analyst, measured",
+        "instructions": (
+            "Speak Russian clearly. Calm male strategy analyst. Measured, "
+            "thoughtful delivery without rushing."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "calm_analyst",
+    },
+    "nikita": {
+        "agent_id": "nikita",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "ash",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 1.06,
+        "style": "energetic news analyst",
+        "instructions": (
+            "Speak Russian clearly. Energetic male news analyst. Crisp and "
+            "alert, like a market briefing."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "energetic_assistant",
+    },
+    "ivan": {
+        "agent_id": "ivan",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "alloy",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 1.0,
+        "style": "clear, practical chart operator",
+        "instructions": (
+            "Speak Russian clearly. Practical male chart operator. Clear, "
+            "direct, no fluff."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "young_male",
+    },
+    "manager": {
+        "agent_id": "manager",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "sage",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 0.92,
+        "style": "strict executive, authoritative",
+        "instructions": (
+            "Speak Russian clearly. Strict authoritative executive. Slow, "
+            "deliberate, decisive."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "strict_leader",
+    },
+    "secretary": {
+        "agent_id": "secretary",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "coral",
+        "voice_gender": "female",
+        "language": "ru-RU",
+        "speed": 1.05,
+        "style": "bright efficient assistant",
+        "instructions": (
+            "Speak Russian clearly. Bright efficient female secretary. "
+            "Friendly, quick, organized."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "young_female",
+    },
+    "deputy": {
+        "agent_id": "deputy",
+        "tts_enabled": True,
+        "tts_provider": "openai",
+        "tts_model": "gpt-4o-mini-tts",
+        "voice": "fable",
+        "voice_gender": "male",
+        "language": "ru-RU",
+        "speed": 1.0,
+        "style": "balanced professional",
+        "instructions": (
+            "Speak Russian clearly. Balanced professional male deputy. "
+            "Neutral, reliable, composed."
+        ),
+        "fallback_voice": "ru-RU",
+        "preset_id": "calm_male",
+    },
+}
+
+VOICE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "deep_male": {
+        "id": "deep_male",
+        "label": "Глубокий мужской",
+        "voice": "onyx",
+        "voice_gender": "male",
+        "speed": 0.96,
+        "style": "deep, confident",
+        "instructions": "Deep confident male voice. Steady and grounded.",
+    },
+    "calm_male": {
+        "id": "calm_male",
+        "label": "Спокойный мужской",
+        "voice": "echo",
+        "voice_gender": "male",
+        "speed": 0.98,
+        "style": "calm, measured",
+        "instructions": "Calm measured male voice. Soft authority.",
+    },
+    "young_male": {
+        "id": "young_male",
+        "label": "Молодой мужской",
+        "voice": "alloy",
+        "voice_gender": "male",
+        "speed": 1.05,
+        "style": "young, clear",
+        "instructions": "Young clear male voice. Practical and direct.",
+    },
+    "strict_leader": {
+        "id": "strict_leader",
+        "label": "Строгий руководитель",
+        "voice": "sage",
+        "voice_gender": "male",
+        "speed": 0.9,
+        "style": "strict, authoritative",
+        "instructions": "Strict authoritative executive. Deliberate pace.",
+    },
+    "soft_female": {
+        "id": "soft_female",
+        "label": "Мягкий женский",
+        "voice": "nova",
+        "voice_gender": "female",
+        "speed": 0.95,
+        "style": "soft, precise",
+        "instructions": "Soft precise female voice. Calm professionalism.",
+    },
+    "confident_female": {
+        "id": "confident_female",
+        "label": "Уверенный женский",
+        "voice": "shimmer",
+        "voice_gender": "female",
+        "speed": 1.0,
+        "style": "confident, clear",
+        "instructions": "Confident clear female voice. Assertive but polite.",
+    },
+    "young_female": {
+        "id": "young_female",
+        "label": "Молодой женский",
+        "voice": "coral",
+        "voice_gender": "female",
+        "speed": 1.06,
+        "style": "bright, energetic",
+        "instructions": "Bright young female voice. Friendly and efficient.",
+    },
+    "calm_analyst": {
+        "id": "calm_analyst",
+        "label": "Спокойный аналитик",
+        "voice": "fable",
+        "voice_gender": "male",
+        "speed": 0.97,
+        "style": "calm analyst",
+        "instructions": "Calm analytical male voice. Thoughtful pauses.",
+    },
+    "energetic_assistant": {
+        "id": "energetic_assistant",
+        "label": "Энергичный помощник",
+        "voice": "ash",
+        "voice_gender": "male",
+        "speed": 1.08,
+        "style": "energetic",
+        "instructions": "Energetic assistant male voice. Crisp briefing tone.",
+    },
+    "neutral_pro": {
+        "id": "neutral_pro",
+        "label": "Нейтральный профессиональный",
+        "voice": "verse",
+        "voice_gender": "neutral",
+        "speed": 1.0,
+        "style": "neutral professional",
+        "instructions": "Neutral professional voice. Clear and even.",
+    },
+}
+
+PREVIEW_PHRASES: Dict[str, str] = {
+    "vitek": "Здравствуйте. Я Виктор, правая рука руководителя. Готов приступить к работе.",
+    "marina": "Здравствуйте. Я Марина, финансовый контролёр. Готова сверить цифры.",
+    "tolik": "Здравствуйте. Я ваш стратегический аналитик. Готов приступить к работе.",
+    "nikita": "Здравствуйте. Я Никита, новостной аналитик. Слежу за рынком.",
+    "ivan": "Здравствуйте. Я Иван, оператор графиков. Готов отметить уровни.",
+    "manager": "Здравствуйте. Я Управляющий. Готов принять решение по задаче.",
+    "secretary": "Здравствуйте. Я Секретарь. Чем помочь быстро?",
+    "deputy": "Здравствуйте. Я Заместитель управляющего. Готов разобрать задачу.",
+}
+
+# Backward-compatible alias used by older callers/tests.
+AGENT_VOICES = {aid: row["voice"] for aid, row in DEFAULT_PROFILES.items()}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def cache_dir() -> Path:
+    root = runtime_env.data_path(
+        "runtime", "tts-cache", project_root=paths.PROJECT_ROOT,
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def voices_store_path() -> Path:
+    if VOICES_PATH != _DEFAULT_VOICES_PATH:
+        return Path(VOICES_PATH)
+    return runtime_env.data_path(
+        "integrations", "agent_voices.json", project_root=paths.PROJECT_ROOT,
+    )
+
+
+def normalize_agent_id(agent_id: str) -> str:
+    raw = str(agent_id or "").strip().lower()
+    if not raw:
+        return "vitek"
+    aliases = {
+        "виктор": "vitek", "витёк": "vitek", "витек": "vitek", "витя": "vitek",
+        "orchestrator": "manager", "управляющий": "manager",
+        "секретарь": "secretary", "заместитель": "deputy", "зам": "deputy",
+        "марина": "marina", "толик": "tolik", "никита": "nikita", "иван": "ivan",
+        "accountant": "marina", "strategy_analyst": "tolik",
+        "news_analyst": "nikita", "chart_operator": "ivan",
+    }
+    if raw in DEFAULT_PROFILES:
+        return raw
+    if raw in aliases:
+        return aliases[raw]
+    head = raw.split()[0]
+    return aliases.get(head, head if head in DEFAULT_PROFILES else "vitek")
+
+
+def voice_for_agent(agent_id: str) -> str:
+    return str(get_voice_profile(agent_id).get("voice") or "onyx")
+
+
+def staff_meta(agent_id: str) -> Dict[str, Any]:
+    """Public card fields for UI (no secrets)."""
+    from . import domain_agents
+    aid = normalize_agent_id(agent_id)
+    if aid == "vitek":
+        return {
+            "id": "vitek",
+            "name": "Виктор",
+            "title": "Правая рука руководителя",
+            "role": "orchestrator",
+            "personality": "Итоговый собеседник владельца; поручения, инциденты, координация.",
+            "avatar_webm": "assets/agents/vitek/speaking.webm",
+        }
+    for bucket in (domain_agents.PERSONAS, domain_agents.MANAGEMENT):
+        row = bucket.get(aid)
+        if row:
+            caps = row.get("capabilities") or row.get("hint") or ""
+            if isinstance(caps, (list, tuple)):
+                personality = "; ".join(str(c) for c in caps[:3])
+            else:
+                personality = str(caps)
+            return {
+                "id": aid,
+                "name": row.get("name") or aid,
+                "title": row.get("title") or "",
+                "role": row.get("role") or "",
+                "personality": personality,
+                "avatar_webm": row.get("avatar_webm") or f"assets/agents/{aid}/speaking.webm",
+            }
+    return {"id": aid, "name": aid, "title": "", "role": "", "personality": "", "avatar_webm": ""}
+
+
+def prepare_text(text: str, *, max_chars: int = MAX_CHARS) -> str:
+    raw = str(text or "")
+    raw = _CODE_FENCE.sub(" ", raw)
+    raw = _MD_LINK.sub(r"\1", raw)
+    raw = _URL.sub(" ", raw)
+    raw = _INLINE_CODE.sub(r"\1", raw)
+    raw = _MD_EMPH.sub("", raw)
+    cleaned = _WS.sub(" ", raw).strip()
+    if not cleaned:
+        raise AgentTtsError("Пустой текст для озвучки.")
+    if len(cleaned) <= max_chars:
+        return cleaned
+    cut = cleaned[: max_chars - 1].rsplit(" ", 1)[0].rstrip(" ,.;:—-")
+    return (cut or cleaned[: max_chars - 1]) + "…"
+
+
+def resolve_model(profile: Optional[Dict[str, Any]] = None) -> str:
+    if profile and str(profile.get("tts_model") or "").strip() in ALLOWED_MODELS:
+        return str(profile["tts_model"]).strip()
+    raw = str(os.environ.get("NTA_TTS_MODEL") or DEFAULT_MODEL).strip().lower()
+    return raw if raw in ALLOWED_MODELS else DEFAULT_MODEL
+
+
+def resolve_api_key() -> str:
+    local_secrets.apply()
+    key = str(os.environ.get(KEY_ENV) or "").strip()
+    if len(key) >= 12:
+        return key
+    try:
+        from . import agent_registry
+        for row in agent_registry.list_agents():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("provider") or "").strip().lower() != "openai":
+                continue
+            if not row.get("enabled", True):
+                continue
+            try:
+                agent_key = agent_registry.get_api_key(str(row.get("id") or ""))
+            except Exception:
+                continue
+            if len(str(agent_key or "").strip()) >= 12:
+                return str(agent_key).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _clamp_speed(value: Any) -> float:
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        speed = 1.0
+    if not (0.25 <= speed <= 4.0):
+        speed = max(0.25, min(4.0, speed))
+    return round(speed, 3)
+
+
+def _read_store() -> Dict[str, Any]:
+    doc = io_utils.read_json(voices_store_path(), default=None)
+    if not isinstance(doc, dict):
+        return {"version": 1, "profiles": {}, "updated_at_utc": ""}
+    profiles = doc.get("profiles")
+    if not isinstance(profiles, dict):
+        profiles = {}
+    return {
+        "version": int(doc.get("version") or 1),
+        "profiles": profiles,
+        "updated_at_utc": str(doc.get("updated_at_utc") or ""),
+    }
+
+
+def _write_store(doc: Dict[str, Any]) -> None:
+    path = voices_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    io_utils.write_json_atomic(path, doc)
+
+
+def normalize_profile(raw: Dict[str, Any], *, agent_id: str) -> Dict[str, Any]:
+    aid = normalize_agent_id(agent_id)
+    base = deepcopy(DEFAULT_PROFILES.get(aid) or DEFAULT_PROFILES["vitek"])
+    src = raw if isinstance(raw, dict) else {}
+    provider = str(src.get("tts_provider") or base["tts_provider"]).strip().lower()
+    if provider not in ALLOWED_PROVIDERS:
+        provider = DEFAULT_PROVIDER
+    model = str(src.get("tts_model") or base["tts_model"]).strip().lower()
+    if model not in ALLOWED_MODELS:
+        model = resolve_model()
+    voice = str(src.get("voice") or base["voice"]).strip().lower()
+    allowed = OPENAI_VOICES if model == "gpt-4o-mini-tts" else TTS1_VOICES
+    if voice not in allowed:
+        # Fall back to a voice valid for the selected model.
+        voice = base["voice"] if base["voice"] in allowed else allowed[0]
+    gender = str(src.get("voice_gender") or base.get("voice_gender") or "neutral").strip().lower()
+    if gender not in {"male", "female", "neutral"}:
+        gender = "neutral"
+    out = {
+        "agent_id": aid,
+        "tts_enabled": bool(src.get("tts_enabled", base.get("tts_enabled", True))),
+        "tts_provider": provider,
+        "tts_model": model,
+        "voice": voice,
+        "voice_gender": gender,
+        "language": str(src.get("language") or base.get("language") or "ru-RU").strip() or "ru-RU",
+        "speed": _clamp_speed(src.get("speed", base.get("speed", 1.0))),
+        "style": str(src.get("style") or base.get("style") or "").strip()[:200],
+        "instructions": str(src.get("instructions") or base.get("instructions") or "").strip()[:500],
+        "fallback_voice": str(src.get("fallback_voice") or base.get("fallback_voice") or "ru-RU").strip() or "ru-RU",
+        "preset_id": str(src.get("preset_id") or base.get("preset_id") or "").strip(),
+        "is_custom": bool(src.get("is_custom", False)),
+        "supports": supported_params(provider, model),
+    }
+    # Pitch is not supported by OpenAI Speech — never persist as working.
+    return out
+
+
+def supported_params(provider: str, model: str) -> Dict[str, bool]:
+    provider = str(provider or "").lower()
+    model = str(model or "").lower()
+    if provider == "browser":
+        return {
+            "voice": False,
+            "speed": True,
+            "pitch": False,
+            "instructions": False,
+            "style": False,
+            "language": True,
+        }
+    if provider == "openai":
+        return {
+            "voice": True,
+            "speed": True,
+            "pitch": False,
+            "instructions": model == "gpt-4o-mini-tts",
+            "style": model == "gpt-4o-mini-tts",
+            "language": True,
+        }
+    return {
+        "voice": False, "speed": False, "pitch": False,
+        "instructions": False, "style": False, "language": True,
+    }
+
+
+def get_voice_profile(agent_id: str) -> Dict[str, Any]:
+    aid = normalize_agent_id(agent_id)
+    with _LOCK:
+        store = _read_store()
+        custom = store["profiles"].get(aid)
+    if isinstance(custom, dict):
+        profile = normalize_profile(custom, agent_id=aid)
+        profile["is_custom"] = True
+        profile["source"] = "stored"
+    else:
+        profile = normalize_profile(DEFAULT_PROFILES[aid], agent_id=aid)
+        profile["is_custom"] = False
+        profile["source"] = "default"
+    return profile
+
+
+def list_voice_profiles() -> Dict[str, Any]:
+    agents = []
+    for aid in STAFF_ORDER:
+        meta = staff_meta(aid)
+        profile = get_voice_profile(aid)
+        agents.append({
+            **meta,
+            "voice": profile,
+            "preview_phrase": PREVIEW_PHRASES.get(aid, PREVIEW_PHRASES["vitek"]),
+        })
+    return {
+        "ok": True,
+        "agents": agents,
+        "presets": list_presets(),
+        "catalog": tts_catalog(),
+        "key_configured": bool(resolve_api_key()),
+    }
+
+
+def list_presets() -> List[Dict[str, Any]]:
+    return [dict(row) for row in VOICE_PRESETS.values()]
+
+
+def tts_catalog() -> Dict[str, Any]:
+    return {
+        "providers": [
+            {
+                "id": "openai",
+                "label": "OpenAI Speech",
+                "models": [
+                    {
+                        "id": "tts-1",
+                        "label": "tts-1 (быстрый)",
+                        "voices": list(TTS1_VOICES),
+                        "supports": supported_params("openai", "tts-1"),
+                    },
+                    {
+                        "id": "tts-1-hd",
+                        "label": "tts-1-hd (качество)",
+                        "voices": list(TTS1_VOICES),
+                        "supports": supported_params("openai", "tts-1-hd"),
+                    },
+                    {
+                        "id": "gpt-4o-mini-tts",
+                        "label": "gpt-4o-mini-tts (стиль / instructions)",
+                        "voices": list(OPENAI_VOICES),
+                        "supports": supported_params("openai", "gpt-4o-mini-tts"),
+                    },
+                ],
+            },
+            {
+                "id": "browser",
+                "label": "Браузерный speechSynthesis",
+                "models": [
+                    {
+                        "id": "speechSynthesis",
+                        "label": "Системный голос",
+                        "voices": [],
+                        "supports": supported_params("browser", "speechSynthesis"),
+                    }
+                ],
+            },
+        ],
+        "note": (
+            "Высота тона (pitch) OpenAI Speech не поддерживает — параметр скрыт. "
+            "instructions/style доступны только для gpt-4o-mini-tts. "
+            "Ключи API не хранятся в голосовом профиле."
+        ),
+    }
+
+
+def apply_preset(agent_id: str, preset_id: str, *, draft: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    preset = VOICE_PRESETS.get(str(preset_id or "").strip())
+    if not preset:
+        raise AgentTtsError(f"Неизвестный пресет: {preset_id}")
+    base = draft if isinstance(draft, dict) else get_voice_profile(agent_id)
+    merged = dict(base)
+    for key in ("voice", "voice_gender", "speed", "style", "instructions"):
+        if key in preset:
+            merged[key] = preset[key]
+    merged["preset_id"] = preset["id"]
+    return normalize_profile(merged, agent_id=agent_id)
+
+
+def set_voice_profile(agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    aid = normalize_agent_id(agent_id)
+    if aid not in DEFAULT_PROFILES:
+        raise AgentTtsError(f"Неизвестный сотрудник: {agent_id}")
+    profile = normalize_profile(payload or {}, agent_id=aid)
+    profile["is_custom"] = True
+    profile["updated_at_utc"] = _now()
+    # Never persist secrets or unsupported pitch.
+    safe = {k: profile[k] for k in (
+        "agent_id", "tts_enabled", "tts_provider", "tts_model", "voice",
+        "voice_gender", "language", "speed", "style", "instructions",
+        "fallback_voice", "preset_id", "is_custom", "updated_at_utc",
+    ) if k in profile}
+    with _LOCK:
+        store = _read_store()
+        store["profiles"][aid] = safe
+        store["updated_at_utc"] = _now()
+        store["version"] = 1
+        _write_store(store)
+    # New cache keys include profile fields — old entries simply miss.
+    return get_voice_profile(aid)
+
+
+def reset_voice_profile(agent_id: str) -> Dict[str, Any]:
+    aid = normalize_agent_id(agent_id)
+    with _LOCK:
+        store = _read_store()
+        store["profiles"].pop(aid, None)
+        store["updated_at_utc"] = _now()
+        _write_store(store)
+    return get_voice_profile(aid)
+
+
+def ensure_defaults_migrated() -> Dict[str, Any]:
+    """No-op write migration marker; defaults live in code until customized."""
+    with _LOCK:
+        store = _read_store()
+        if not store.get("updated_at_utc"):
+            store["updated_at_utc"] = _now()
+            store["version"] = 1
+            store.setdefault("profiles", {})
+            _write_store(store)
+    return list_voice_profiles()
+
+
+# ---------------------------------------------------------------------------
+# Cache & synthesis
+# ---------------------------------------------------------------------------
+
+def _cache_key(*, text: str, profile: Dict[str, Any]) -> str:
+    payload = "\n".join([
+        str(profile.get("agent_id") or ""),
+        str(profile.get("tts_provider") or ""),
+        str(profile.get("tts_model") or ""),
+        str(profile.get("voice") or ""),
+        str(profile.get("speed") or ""),
+        str(profile.get("style") or ""),
+        str(profile.get("instructions") or ""),
+        str(profile.get("language") or ""),
+        text,
+    ]).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _cache_path(key: str) -> Path:
+    return cache_dir() / f"{key}.mp3"
+
+
+def _read_cache(key: str) -> Optional[bytes]:
+    path = _cache_path(key)
+    try:
+        if path.is_file() and path.stat().st_size > 64:
+            return path.read_bytes()
+    except OSError:
+        return None
+    return None
+
+
+def _write_cache(key: str, data: bytes) -> None:
+    if not data or len(data) < 64:
+        return
+    path = _cache_path(key)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with _LOCK:
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _openai_speech(*, text: str, profile: Dict[str, Any], api_key: str) -> bytes:
+    model = resolve_model(profile)
+    voice = str(profile.get("voice") or "onyx")
+    body: Dict[str, Any] = {
+        "model": model,
+        "voice": voice,
+        "input": text,
+        "response_format": "mp3",
+        "speed": _clamp_speed(profile.get("speed", 1.0)),
+    }
+    supports = supported_params("openai", model)
+    if supports.get("instructions"):
+        instructions = str(profile.get("instructions") or profile.get("style") or "").strip()
+        if instructions:
+            body["instructions"] = instructions
+    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        OPENAI_SPEECH_URL,
+        data=raw,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+            "User-Agent": "StratForge-NT-Analyzer/agent-tts",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            detail = str(exc)
+        raise AgentTtsError(f"OpenAI TTS недоступен: HTTP {exc.code}. {detail}".strip()) from None
+    except urllib.error.URLError as exc:
+        raise AgentTtsError(f"OpenAI TTS сеть: {exc.reason}") from None
+    if not data or len(data) < 64:
+        raise AgentTtsError("OpenAI TTS вернул пустой аудиоответ.")
+    return data
+
+
+def _browser_fallback(profile: Dict[str, Any], *, reason: str, chars: int) -> Dict[str, Any]:
+    log.info("tts_fallback agent=%s reason=%s", profile.get("agent_id"), reason)
+    return {
+        "fallback": "browser",
+        "reason": reason,
+        "agent_id": profile.get("agent_id"),
+        "voice": profile.get("voice"),
+        "language": profile.get("language") or "ru-RU",
+        "speed": _clamp_speed(profile.get("speed", 1.0)),
+        "fallback_voice": profile.get("fallback_voice") or "ru-RU",
+        "chars": chars,
+        "tts_provider": "browser",
+        "tts_model": "speechSynthesis",
+    }
+
+
+def synthesize(
+    text: str,
+    *,
+    agent_id: str = "vitek",
+    message_id: str = "",
+    profile_override: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return MP3 bytes or a browser-fallback signal using the agent voice profile."""
+    del message_id
+    cleaned = prepare_text(text)
+    aid = normalize_agent_id(agent_id)
+    if isinstance(profile_override, dict) and profile_override:
+        profile = normalize_profile(profile_override, agent_id=aid)
+        profile["source"] = "override"
+    else:
+        profile = get_voice_profile(aid)
+
+    if not profile.get("tts_enabled", True):
+        return _browser_fallback(profile, reason="tts_disabled", chars=len(cleaned))
+
+    provider = str(profile.get("tts_provider") or DEFAULT_PROVIDER).lower()
+    if provider == "browser":
+        return _browser_fallback(profile, reason="provider_browser", chars=len(cleaned))
+
+    api_key = resolve_api_key()
+    if not api_key:
+        return _browser_fallback(profile, reason="no_api_key", chars=len(cleaned))
+
+    model = resolve_model(profile)
+    profile = dict(profile)
+    profile["tts_model"] = model
+
+    key = _cache_key(text=cleaned, profile=profile)
+    cached = _read_cache(key)
+    if cached:
+        return {
+            "audio": cached,
+            "content_type": "audio/mpeg",
+            "model": model,
+            "voice": profile.get("voice"),
+            "cached": True,
+            "agent_id": aid,
+            "chars": len(cleaned),
+            "speed": profile.get("speed"),
+            "tts_provider": provider,
+            "tts_model": model,
+            "language": profile.get("language"),
+        }
+
+    try:
+        audio = _openai_speech(text=cleaned, profile=profile, api_key=api_key)
+    except AgentTtsError as exc:
+        return _browser_fallback(profile, reason=f"provider_error:{exc}", chars=len(cleaned))
+
+    _write_cache(key, audio)
+    return {
+        "audio": audio,
+        "content_type": "audio/mpeg",
+        "model": model,
+        "voice": profile.get("voice"),
+        "cached": False,
+        "agent_id": aid,
+        "chars": len(cleaned),
+        "speed": profile.get("speed"),
+        "tts_provider": provider,
+        "tts_model": model,
+        "language": profile.get("language"),
+    }
+
+
+def preview_speech(agent_id: str, *, profile_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    aid = normalize_agent_id(agent_id)
+    phrase = PREVIEW_PHRASES.get(aid, PREVIEW_PHRASES["vitek"])
+    return synthesize(phrase, agent_id=aid, profile_override=profile_override)
+
+
+def speak_result_headers(result: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "X-TTS-Agent": str(result.get("agent_id") or ""),
+        "X-TTS-Voice": str(result.get("voice") or ""),
+        "X-TTS-Model": str(result.get("tts_model") or result.get("model") or ""),
+        "X-TTS-Provider": str(result.get("tts_provider") or ""),
+        "X-TTS-Cached": "1" if result.get("cached") else "0",
+        "X-TTS-Chars": str(result.get("chars") or 0),
+        "X-TTS-Speed": str(result.get("speed") or ""),
+        "X-TTS-Fallback": "1" if result.get("fallback") == "browser" else "0",
+    }
