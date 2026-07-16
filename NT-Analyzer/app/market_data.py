@@ -22,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from . import runtime_env
+
 
 _LOCK = threading.RLock()
 _REQUEST_TTL_SEC = 180
@@ -54,7 +56,10 @@ def _runtime_dir() -> Path:
     # telemetry. The default remains the owner's legacy data/runtime path.
     from . import runtime
     override = getattr(runtime._RUNTIME_CONTEXT, "runtime_dir", "")
-    path = Path(override) if override else (_root() / "data" / "runtime")
+    path = (
+        Path(override) if override
+        else runtime_env.data_path("runtime", project_root=_root())
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -1109,6 +1114,34 @@ def resolve_chart_instrument(instrument: Any) -> str:
     return requested
 
 
+def latest_close(instrument: Any, *,
+                 timeframes: Iterable[str] = ("1m", "5m", "15m")) -> float:
+    """Return the newest finite Bridge close for a root/contract, or zero."""
+    symbol = resolve_chart_instrument(instrument)
+    if not symbol:
+        return 0.0
+    newest: Optional[Tuple[str, float]] = None
+    for timeframe in timeframes:
+        try:
+            series = read_runtime_series(symbol, timeframe, 4) or {}
+        except (MarketDataError, TypeError, ValueError):
+            continue
+        for row in reversed(series.get("bars") or []):
+            if not isinstance(row, dict):
+                continue
+            try:
+                close = float(row.get("c", row.get("close")))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(close) or close <= 0:
+                continue
+            stamp = str(row.get("t") or row.get("time_utc") or row.get("time") or "")
+            if newest is None or stamp >= newest[0]:
+                newest = (stamp, close)
+            break
+    return float(newest[1]) if newest else 0.0
+
+
 def ensure_chart_runtime(instrument: Any = "", timeframe: Any = "5m", *,
                          wait_seconds: float = 10.0) -> Dict[str, Any]:
     """Subscribe the Bridge and wait briefly instead of refusing immediately."""
@@ -1258,8 +1291,9 @@ def process_due_chart_snapshots() -> Dict[str, Any]:
 
 
 def _chart_worker_runtime_dirs() -> List[Path]:
-    roots = [_root() / "data" / "runtime"]
-    tenants = _root() / "data" / "tenants"
+    data_root = runtime_env.data_root(_root())
+    roots = [data_root / "runtime"]
+    tenants = data_root / "tenants"
     if tenants.is_dir():
         roots.extend(path for path in tenants.glob("*/runtime") if path.is_dir())
     return roots

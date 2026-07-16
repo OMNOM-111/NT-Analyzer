@@ -15,6 +15,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import errno
 import sys
 import threading
 import traceback
@@ -151,6 +152,33 @@ def t04():
     assert payload.get("ok") is True, payload
 
 
+@case("GET /api/performance returns HTTP 507 and storage_full on ENOSPC")
+def t06():
+    saved = server_mod.performance.build_performance_response
+
+    def _disk_full(*_a, **_k):
+        raise OSError(errno.ENOSPC, "simulated full disk")
+
+    server_mod.performance.build_performance_response = _disk_full  # type: ignore[assignment]
+    srv = _start_server()
+    try:
+        host, port = srv.server_address[0], srv.server_address[1]
+        url = f"http://{host}:{port}/api/performance"
+        try:
+            urllib.request.urlopen(url, timeout=5)
+            raise AssertionError("expected HTTP 507")
+        except urllib.error.HTTPError as e:
+            status = e.code
+            payload = json.loads(e.read().decode("utf-8"))
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        server_mod.performance.build_performance_response = saved  # type: ignore[assignment]
+
+    assert status == 507, status
+    assert payload.get("code") == "storage_full", payload
+
+
 @case("POST /api/ai-lab/run returns 409 JSON when runner busy")
 def t05():
     import threading as th
@@ -200,7 +228,7 @@ def t05():
 # --------------------------------------------------------------------------
 
 def main() -> int:
-    tests = [t01, t02, t03, t04, t05]
+    tests = [t01, t02, t03, t04, t05, t06]
     print(f"Running {len(tests)} server/tz regression tests:")
     # These tests exercise downstream 500/409 handling on isolated ephemeral
     # servers. Production now requires Telegram authentication, so disable the

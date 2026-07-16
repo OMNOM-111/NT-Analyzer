@@ -39,7 +39,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import governance
+from . import governance, runtime_env
 
 try:
     from zoneinfo import ZoneInfo
@@ -107,7 +107,7 @@ def _project_root() -> Path:
 
 
 def _ops_dir() -> Path:
-    d = _project_root() / "data" / "ops"
+    d = runtime_env.data_path("ops", project_root=_project_root())
     d.mkdir(parents=True, exist_ok=True)
     (d / "notes").mkdir(parents=True, exist_ok=True)
     return d

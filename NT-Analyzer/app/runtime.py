@@ -37,7 +37,7 @@ from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from . import ops
+from . import ops, runtime_env
 from . import strategy_families
 
 HEARTBEAT_MAX_AGE_SEC = 60          # heartbeat older than this => stale
@@ -795,7 +795,7 @@ def runtime_dir() -> Path:
     override = getattr(_RUNTIME_CONTEXT, "runtime_dir", "")
     if override:
         return Path(str(override))
-    d = ops._project_root() / "data" / RUNTIME_DIR_NAME
+    d = runtime_env.data_path(RUNTIME_DIR_NAME, project_root=ops._project_root())
     return d
 
 

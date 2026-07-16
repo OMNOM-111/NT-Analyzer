@@ -67,6 +67,8 @@
 /NT-Analyzer/logs/
 /NT-Analyzer/_backup_before_restore_*/
 /NT-Analyzer/research_archive/
+/NT-Analyzer/.artifacts/
+/NT-Analyzer/data/staging/
 
 # Keep only safe static catalog sources in Git.
 /NT-Analyzer/data/catalog/*.json

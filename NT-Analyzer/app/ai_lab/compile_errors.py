@@ -16,12 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .. import runtime_env
 from . import paths
 from .io_utils import append_jsonl, iter_jsonl, read_json
 
 
 def _runtime_dir() -> Path:
-    return paths.PROJECT_ROOT / "data" / "runtime"
+    return runtime_env.data_path("runtime", project_root=paths.PROJECT_ROOT)
 
 
 def jsonl_path() -> Path:

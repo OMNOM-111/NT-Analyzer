@@ -60,6 +60,20 @@ def test_runtime_request_and_snapshot(tmp_path: Path, monkeypatch) -> None:
     series = market_data.read_runtime_series("MNQ 09-26", "5m", 10)
     assert series and series["live"] is True
     assert series["bars"][0]["c"] == 100
+    assert market_data.latest_close("MNQ") == 100
+
+
+def test_corrupt_market_snapshot_degrades_to_empty_and_recovers(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
+    snapshot = tmp_path / "data" / "runtime" / "market_bars.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text('{"series": [broken', encoding="utf-8")
+
+    assert market_data.read_runtime_series("MNQ 09-26", "5m", 10) is None
+
+    _write_snapshot(tmp_path, close=101, high=102, low=100)
+    recovered = market_data.read_runtime_series("MNQ 09-26", "5m", 10)
+    assert recovered and recovered["bars"][0]["c"] == 101
 
 
 def test_chart_queues_follow_runtime_workspace_override(tmp_path: Path) -> None:
@@ -340,7 +354,11 @@ def _batch_status(base: str, *, origin: str, host: str = "", xfh: str = "", init
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        return exc.code, None
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw) if raw else None
+        except ValueError:
+            return exc.code, {"error": raw}
 
 
 def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch) -> None:
@@ -385,7 +403,7 @@ def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch)
         status, out = _batch_status(base, origin="https://app.stratforges.com",
                                     host="app.stratforges.com", xfh="app.stratforges.com",
                                     init_data=viewer)
-        assert status == 200
+        assert status == 200, out
         assert out["series"][0]["bars"]
 
         # Unauthenticated remote tunnel POST is denied — no owner bypass. This is

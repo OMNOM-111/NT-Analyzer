@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from . import jobqueue
+from . import jobqueue, runtime_env
 from .ai_lab import compile_pipeline, paths
 
 
@@ -134,7 +134,10 @@ def _rollback_created(rows: Iterable[Tuple[bool, Path]], manifest: Dict[str, str
 
 
 def _audit_path(run_id: str) -> Path:
-    return paths.PROJECT_ROOT / "data" / "operations" / "strategy-recovery" / f"{run_id}.json"
+    return runtime_env.data_path(
+        "operations", "strategy-recovery", f"{run_id}.json",
+        project_root=paths.PROJECT_ROOT,
+    )
 
 
 def _write_audit(run_id: str, document: Dict[str, Any]) -> None:
@@ -219,6 +222,10 @@ def _enqueue_validation_jobs(profile: Dict[str, Any], class_name: str, run_id: s
 def begin(profile: Dict[str, Any], quarantine_record: Dict[str, Any], *,
           task_id: str, compile_wait_sec: int = 300) -> Dict[str, Any]:
     """Restore, compile and enqueue evidence jobs for an approved task."""
+    if runtime_env.is_staging():
+        raise StrategyRecoveryError(
+            "Восстановление исходников NinjaTrader запрещено в staging."
+        )
     class_name = str(profile.get("strategy_class") or "")
     profile_id = str(profile.get("profile_id") or "")
     run_id = _run_id(task_id)

@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
+from . import runtime_env
+
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
 PROJECT_OWNER = "Черевко Дмитро"
@@ -45,13 +47,17 @@ def workspace_root() -> Path:
 
 
 def data_dir() -> Path:
-    path = project_root() / "data" / "governance"
+    path = runtime_env.data_path("governance", project_root=project_root())
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def docs_dir() -> Path:
-    path = project_root() / "docs" / "governance"
+    path = (
+        runtime_env.data_path("governance-rendered", project_root=project_root())
+        if runtime_env.is_staging()
+        else project_root() / "docs" / "governance"
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
 

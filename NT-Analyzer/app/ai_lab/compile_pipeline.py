@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .. import runtime_env
 from . import activity, paths
 from .io_utils import read_json
 
@@ -43,7 +44,7 @@ def nt_custom_dll() -> Path:
 
 
 def _commands_dir() -> Path:
-    d = paths.PROJECT_ROOT / "data" / "commands"
+    d = runtime_env.data_path("commands", project_root=paths.PROJECT_ROOT)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import telegram_remote
+from . import runtime_env, telegram_remote
 
 
 _LOCK = threading.RLock()
@@ -43,7 +43,9 @@ def _root() -> Path:
 
 
 def _state_path() -> Path:
-    return _root() / "data" / "integrations" / "cloudflared-tunnel.state.json"
+    return runtime_env.data_path(
+        "integrations", "cloudflared-tunnel.state.json", project_root=_root(),
+    )
 
 
 def _portable_exe_candidates() -> List[Path]:

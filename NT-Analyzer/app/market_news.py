@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from xml.etree import ElementTree as ET
 
-from app import local_secrets
+from app import local_secrets, runtime_env
 
 local_secrets.apply()
 
@@ -82,6 +82,12 @@ def _root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _live_news_path() -> Path:
+    return runtime_env.data_path(
+        "integrations", "live_news.json", project_root=_root(),
+    )
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -95,7 +101,7 @@ def _classify(title: str, summary: str) -> Tuple[str, List[str]]:
 
 
 def _read_cached_live_doc() -> Dict[str, Any]:
-    path = _root() / "data" / "integrations" / "live_news.json"
+    path = _live_news_path()
     if not path.is_file():
         return {}
     try:
@@ -417,7 +423,7 @@ def fetch_live_news() -> Dict[str, Any]:
 
 
 def write_live_news() -> Path:
-    path = _root() / "data" / "integrations" / "live_news.json"
+    path = _live_news_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(fetch_live_news(), ensure_ascii=False, indent=2), encoding="utf-8")

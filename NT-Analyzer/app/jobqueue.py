@@ -36,6 +36,7 @@ from . import report_assessment
 from . import strategy_families
 from . import strategy_lifecycle
 from . import ninjatrader_ops
+from . import runtime_env
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -311,10 +312,15 @@ def _configured_jobs_dir() -> Optional[Path]:
 
 
 def jobs_dir() -> Path:
-    return _configured_jobs_dir() or (project_root() / "jobs")
+    configured = _configured_jobs_dir()
+    if runtime_env.is_staging():
+        return runtime_env.data_path("jobs", project_root=project_root())
+    return configured or (project_root() / "jobs")
 
 
 def default_jobs_dir() -> Path:
+    if runtime_env.is_staging():
+        return runtime_env.data_path("jobs", project_root=project_root())
     return project_root() / "jobs"
 
 
@@ -323,11 +329,24 @@ def default_jobs_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 def catalog_dir() -> Path:
-    return project_root() / "data" / "catalog"
+    return runtime_env.data_path("catalog", project_root=project_root())
+
+
+def _environment_read_path(section: str, name: str) -> Path:
+    """Read isolated data first, then safe checked-in baselines on staging.
+
+    Mutable writes always target the active environment. This fallback keeps a
+    clean staging root useful without copying or modifying production files.
+    """
+    active = runtime_env.data_path(section, name, project_root=project_root())
+    if active.is_file() or not runtime_env.is_staging():
+        return active
+    baseline = project_root() / "data" / section / name
+    return baseline if baseline.is_file() else active
 
 
 def reports_dir() -> Path:
-    return project_root() / "data" / "reports"
+    return runtime_env.data_path("reports", project_root=project_root())
 
 
 def report_numbers_file() -> Path:
@@ -729,7 +748,8 @@ def unfavorite_report(kind: str, report_id: str) -> Dict[str, Any]:
     return {"ok": True, "removed": removed, "key": key}
 
 
-def read_report_favorites(validate: bool = False) -> Dict[str, Any]:
+def read_report_favorites(validate: bool = False, *, workspace_id: str = "",
+                          user_id: Any = "", allow_legacy: bool = False) -> Dict[str, Any]:
     data = _read_report_favorites_raw()
     out: List[Dict[str, Any]] = []
     changed = False
@@ -739,6 +759,10 @@ def read_report_favorites(validate: bool = False) -> Dict[str, Any]:
         kind = str(entry.get("kind") or "").strip().lower()
         rid = str(entry.get("id") or "").strip()
         if kind not in {"job", "batch"} or not rid:
+            continue
+        if (workspace_id or user_id) and not report_in_scope(
+                kind, rid, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy):
             continue
         item = dict(entry)
         item["key"] = key
@@ -770,7 +794,8 @@ def _favorite_timeframe_parts(doc: Dict[str, Any]) -> Tuple[str, int]:
     return bars_period_type, bars_period_value
 
 
-def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
+def repeat_report_favorite(kind: str, report_id: str, *,
+                           origin_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     kind, report_id = _normalize_report_ref(kind, report_id)
     data = _read_report_favorites_raw()
     favorites = data.setdefault("favorites", {})
@@ -823,6 +848,7 @@ def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
             timezone=str(execution.get("timezone") or "UTC"),
             name=(str(batch.get("name")) if batch.get("name") else None),
             role=str(execution.get("role") or "research"),
+            origin=dict(origin_override or batch.get("origin") or {}),
         )
         batch_id, job_ids = create_batch(req)
         return {
@@ -866,6 +892,7 @@ def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
         timezone=str(execution.get("timezone") or "UTC"),
         role=str(execution.get("role") or "research"),
         job_id=None,
+        origin=dict(origin_override or job.get("origin") or {}),
     )
     job_id, path = create_job(req)
     return {
@@ -1115,7 +1142,7 @@ def _get_report_numbers_cached() -> Dict[str, int]:
 
 def profiles_dir() -> Path:
     """Directory holding the curated Strategy Profiles registry."""
-    return project_root() / "data" / "profiles"
+    return runtime_env.data_path("profiles", project_root=project_root())
 
 
 def read_strategy_profiles() -> Dict[str, Any]:
@@ -1126,7 +1153,7 @@ def read_strategy_profiles() -> Dict[str, Any]:
     second left-panel tab; the Trading page will compare live-running NT
     strategies against them to surface parameter drift.
     """
-    p = profiles_dir() / "strategies.json"
+    p = _environment_read_path("profiles", "strategies.json")
     if not p.is_file():
         return {"schema_version": "1.0", "profiles": []}
     try:
@@ -1152,7 +1179,7 @@ def read_strategy_families() -> Dict[str, Any]:
 
 def read_research_modes() -> Dict[str, Any]:
     """Return the Research Hub Mode registry."""
-    path = project_root() / "data" / "profiles" / "research_modes.json"
+    path = _environment_read_path("profiles", "research_modes.json")
     try:
         with path.open("r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
@@ -1342,7 +1369,7 @@ def _write_json_atomic(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _read_strategy_profiles_raw() -> Dict[str, Any]:
-    path = _strategy_profiles_path()
+    path = _environment_read_path("profiles", "strategies.json")
     if not path.is_file():
         return {"schema_version": "1.1", "profiles": []}
     with open(path, "r", encoding="utf-8-sig") as fh:
@@ -1533,7 +1560,7 @@ def read_archived_strategies() -> Dict[str, Any]:
     Keyed by a stable :func:`strategy_lifecycle.archive_fingerprint` so the UI
     can warn when an operator/AI tries to rebuild a previously-failed strategy.
     """
-    path = _archived_strategies_path()
+    path = _environment_read_path("profiles", "archived_strategies.json")
     if not path.is_file():
         return {"schema_version": "1.0", "entries": []}
     try:
@@ -1669,7 +1696,7 @@ def read_instrument_coverage() -> Dict[str, Any]:
     `tools/research/python/write_instrument_coverage.py`; we just expose it
     over HTTP without re-deriving here.
     """
-    p = profiles_dir() / "instrument_strategy_coverage.json"
+    p = _environment_read_path("profiles", "instrument_strategy_coverage.json")
     if not p.is_file():
         return {"schema_version": "1.0", "instruments": [], "summary": {}}
     try:
@@ -1690,7 +1717,7 @@ def read_instrument_coverage() -> Dict[str, Any]:
         # through project_root() so isolated tests and portable installations use
         # the same source of truth.
         registry_targets: Dict[str, int] = {}
-        registry_path = project_root() / "data" / "portfolio" / "cells.json"
+        registry_path = runtime_env.data_path("portfolio", "cells.json", project_root=project_root())
         if registry_path.is_file():
             try:
                 registry_doc = json.loads(registry_path.read_text(encoding="utf-8-sig"))
@@ -2178,7 +2205,7 @@ def _persist_result_portfolio(jdir: Path, result_doc: Any, portfolio: Dict[str, 
 
 
 def _read_catalog_file(name: str) -> Optional[Dict[str, Any]]:
-    p = catalog_dir() / name
+    p = _environment_read_path("catalog", name)
     if not p.is_file():
         return None
     try:
@@ -2297,7 +2324,7 @@ def read_instrument_groups_catalog() -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def commands_dir() -> Path:
-    return project_root() / "data" / "commands"
+    return runtime_env.data_path("commands", project_root=project_root())
 
 
 def _custom_dll_path() -> Path:
@@ -2412,7 +2439,7 @@ def _catalog_rejected_classes() -> set[str]:
     A decommissioned class can remain in the DLL/source tree for audit history,
     but it must not be offered as a launch/backtest choice from the app.
     """
-    path = project_root() / "data" / "ops" / "scc_classes.json"
+    path = runtime_env.data_path("ops", "scc_classes.json", project_root=project_root())
     try:
         with path.open("r", encoding="utf-8-sig") as fh:
             doc = json.load(fh)
@@ -2549,7 +2576,7 @@ def catalog_staleness() -> Dict[str, Any]:
     the catalog), the catalog is stale and the user should refresh.
     """
     dll = _custom_dll_path()
-    cat = catalog_dir() / "strategies.json"
+    cat = _environment_read_path("catalog", "strategies.json")
     dll_mt = _safe_mtime(dll)
     cat_mt = _safe_mtime(cat)
     out: Dict[str, Any] = {
@@ -3867,7 +3894,8 @@ def _job_loc_from_index(job_id: Any,
     return hit[0], hit[1]
 
 
-def listable_queue_counts() -> Dict[str, int]:
+def listable_queue_counts(*, workspace_id: str = "", user_id: Any = "",
+                          allow_legacy: bool = False) -> Dict[str, int]:
     out: Dict[str, int] = {}
     report_numbers = _get_report_numbers_cached()
     for sub in QUEUE_SUBDIRS:
@@ -3880,6 +3908,10 @@ def listable_queue_counts() -> Dict[str, int]:
             if not child.is_dir() or child.name.startswith("."):
                 continue
             if _report_key("job", child.name) not in report_numbers:
+                continue
+            if (workspace_id or user_id) and not job_in_scope(
+                    child.name, workspace_id=workspace_id, user_id=user_id,
+                    allow_legacy=allow_legacy):
                 continue
             n += 1
         out[sub] = n
@@ -3938,7 +3970,8 @@ def _build_job_list_row(index_row: Dict[str, Any],
     return r
 
 
-def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_jobs(limit: int = 50, offset: int = 0, *, workspace_id: str = "",
+              user_id: Any = "", allow_legacy: bool = False) -> List[Dict[str, Any]]:
     """Most recent first across all queues.
 
     Performance: walks all queue subdirs once to build (jid, status, mtime),
@@ -3946,6 +3979,14 @@ def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     before. Only changed entries hit disk via read_job_summary().
     """
     rows, report_numbers = _indexed_job_rows()
+    if workspace_id or user_id:
+        rows = [
+            row for row in rows
+            if job_in_scope(
+                str(row.get("job_id") or ""), workspace_id=workspace_id,
+                user_id=user_id, allow_legacy=allow_legacy,
+            )
+        ]
     favorite_keys = _report_favorite_key_set()
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 50))
@@ -3968,6 +4009,68 @@ def _read_json_safe(path: Path) -> Optional[Any]:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _origin_in_scope(origin: Any, *, workspace_id: str = "", user_id: Any = "",
+                     allow_legacy: bool = False) -> bool:
+    data = origin if isinstance(origin, dict) else {}
+    actual_workspace = str(data.get("workspace_id") or "")
+    actual_user = str(data.get("user_id") or "")
+    expected_workspace = str(workspace_id or "")
+    expected_user = str(user_id or "")
+    if not actual_workspace and not actual_user:
+        return bool(allow_legacy)
+    if expected_workspace and actual_workspace != expected_workspace:
+        return False
+    if expected_user and actual_user and actual_user != expected_user:
+        return False
+    return True
+
+
+def job_origin(job_id: str) -> Dict[str, Any]:
+    located = find_job_dir(job_id)
+    if not located:
+        return {}
+    doc = _read_json_safe(located[1] / "job.json") or {}
+    return dict(doc.get("origin") or {}) if isinstance(doc, dict) else {}
+
+
+def batch_origin(batch_id: str) -> Dict[str, Any]:
+    batch_id = _safe_batch_id(batch_id)
+    doc = _read_json_safe(_safe_child_path(batches_dir(), batch_id, "batch_id") / "batch.json") or {}
+    return dict(doc.get("origin") or {}) if isinstance(doc, dict) else {}
+
+
+def job_in_scope(job_id: str, *, workspace_id: str = "", user_id: Any = "",
+                 allow_legacy: bool = False) -> bool:
+    if not find_job_dir(job_id):
+        return False
+    return _origin_in_scope(
+        job_origin(job_id), workspace_id=workspace_id, user_id=user_id,
+        allow_legacy=allow_legacy,
+    )
+
+
+def batch_in_scope(batch_id: str, *, workspace_id: str = "", user_id: Any = "",
+                   allow_legacy: bool = False) -> bool:
+    path = _safe_child_path(batches_dir(), _safe_batch_id(batch_id), "batch_id")
+    if not path.is_dir():
+        return False
+    return _origin_in_scope(
+        batch_origin(batch_id), workspace_id=workspace_id, user_id=user_id,
+        allow_legacy=allow_legacy,
+    )
+
+
+def report_in_scope(kind: str, report_id: str, *, workspace_id: str = "",
+                    user_id: Any = "", allow_legacy: bool = False) -> bool:
+    return (
+        batch_in_scope(report_id, workspace_id=workspace_id, user_id=user_id,
+                       allow_legacy=allow_legacy)
+        if str(kind or "").lower() == "batch"
+        else job_in_scope(report_id, workspace_id=workspace_id, user_id=user_id,
+                          allow_legacy=allow_legacy)
+    )
 
 
 def _json_value_after_key(text: str, key: str) -> Optional[Any]:
@@ -4647,7 +4750,7 @@ def ninjatrader_running() -> Optional[bool]:
 # ---------------------------------------------------------------------------
 
 def batches_dir() -> Path:
-    return project_root() / "data" / "batches"
+    return runtime_env.data_path("batches", project_root=project_root())
 
 
 def gen_batch_id(prefix: str = "batch") -> str:
@@ -4676,6 +4779,7 @@ class CreateBatchRequest:
     name: Optional[str] = None  # display name for the batch
     # See CreateJobRequest.role.
     role: str = "research"
+    origin: Optional[Dict[str, Any]] = None
 
 
 def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
@@ -4732,6 +4836,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             batch_id=batch_id,
             batch_index=idx,
             batch_total=total,
+            origin=dict(req.origin or {}),
         )
         try:
             jid, _ = create_job(child_req)
@@ -4785,6 +4890,8 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
         "children": children_meta,
         "total": total,
     }
+    if isinstance(req.origin, dict):
+        manifest["origin"] = dict(req.origin)
     _atomic_write_text(bdir / "batch.json",
                        json.dumps(manifest, ensure_ascii=False, indent=2))
     _ensure_report_number("batch", batch_id, created_at_utc)
@@ -4806,7 +4913,13 @@ def _safe_batch_id(batch_id: str) -> str:
     return _validate_safe_id(batch_id, "batch_id")
 
 
-def count_batches() -> int:
+def count_batches(*, workspace_id: str = "", user_id: Any = "",
+                  allow_legacy: bool = False) -> int:
+    if workspace_id or user_id:
+        return len(list_batches(
+            limit=1_000_000, workspace_id=workspace_id, user_id=user_id,
+            allow_legacy=allow_legacy,
+        ))
     bdir = batches_dir()
     if not bdir.is_dir():
         return 0
@@ -4910,6 +5023,7 @@ def _build_batch_list_row(bdir_mtime: float,
             "gross_loss":      agg_metrics.get("gross_loss"),
             "profit_factor":   agg_metrics.get("profit_factor"),
             "max_drawdown":    agg_metrics.get("max_drawdown"),
+            "origin":          dict(m.get("origin") or {}),
         }
         if include_metrics:
             assessment = report_assessment.assess_report(
@@ -4937,7 +5051,8 @@ def _build_batch_list_row(bdir_mtime: float,
     }
 
 
-def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_batches(limit: int = 50, offset: int = 0, *, workspace_id: str = "",
+                 user_id: Any = "", allow_legacy: bool = False) -> List[Dict[str, Any]]:
     """Most recent batches first.
 
     Aggregate metrics + period + finished_at scans are O(N)
@@ -4948,6 +5063,14 @@ def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
 
     rows = _indexed_batch_rows()
+    if workspace_id or user_id:
+        rows = [
+            row for row in rows
+            if batch_in_scope(
+                row[1].name, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy,
+            )
+        ]
     if not rows:
         return []
 
@@ -5038,7 +5161,10 @@ def list_reports(limit: int = 100,
                  min_pf: Optional[float] = None,
                  pnl_sign: str = "",
                  min_confidence: Optional[float] = None,
-                 analysis_limit: int = 500) -> Dict[str, Any]:
+                 analysis_limit: int = 500,
+                 workspace_id: str = "",
+                 user_id: Any = "",
+                 allow_legacy: bool = False) -> Dict[str, Any]:
     """Mixed reports feed with one shared server-side pagination stream.
 
     The UI scrolls by pages, so sorting must happen before slicing.  The
@@ -5049,6 +5175,21 @@ def list_reports(limit: int = 100,
     _load_persisted_report_summaries()
     job_rows, report_numbers = _indexed_job_rows()
     batch_rows = _indexed_batch_rows()
+    if workspace_id or user_id:
+        job_rows = [
+            row for row in job_rows
+            if job_in_scope(
+                str(row.get("job_id") or ""), workspace_id=workspace_id,
+                user_id=user_id, allow_legacy=allow_legacy,
+            )
+        ]
+        batch_rows = [
+            row for row in batch_rows
+            if batch_in_scope(
+                row[1].name, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy,
+            )
+        ]
     favorite_keys = _report_favorite_key_set()
     sort_col = _coerce_report_sort_col(sort_col)
     sort_dir = _coerce_report_sort_dir(sort_dir)

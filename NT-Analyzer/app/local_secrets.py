@@ -10,12 +10,15 @@ import threading
 from pathlib import Path
 from typing import Any, Dict
 
+from . import runtime_env
+
 
 _LOCK = threading.RLock()
 
 
 def secrets_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "data" / "integrations" / "secrets.local.json"
+    root = Path(__file__).resolve().parent.parent
+    return runtime_env.data_path("integrations", "secrets.local.json", project_root=root)
 
 
 def apply() -> bool:

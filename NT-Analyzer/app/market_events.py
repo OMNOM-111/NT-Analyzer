@@ -19,6 +19,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
+from . import runtime_env
+
 try:  # Python 3.9+; tzdata supplies this on Windows.
     from zoneinfo import ZoneInfo
     _ET = ZoneInfo("America/New_York")
@@ -109,6 +111,12 @@ _EIA_EXCEPTIONS_2026: Dict[date, Tuple[date, time]] = {
 
 def _root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _news_path() -> Path:
+    return runtime_env.data_path(
+        "integrations", "news.json", project_root=_root(),
+    )
 
 
 def _et_to_utc(day: date, hhmm: time) -> datetime:
@@ -275,7 +283,7 @@ def _atomic_json(path: Path, payload: Dict[str, Any]) -> None:
 
 
 def write_news_json(days_back: int = 2, days_ahead: int = 60) -> Path:
-    path = _root() / "data" / "integrations" / "news.json"
+    path = _news_path()
     rows = build_calendar(days_back, days_ahead)
     doc = {
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

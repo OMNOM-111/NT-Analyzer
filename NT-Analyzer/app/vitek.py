@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from . import runtime_env
+
 
 NAME = "Витёк"
 FORMAL_NAME = "Виктор"
@@ -98,16 +100,20 @@ def _root() -> Path:
 
 
 def _state_path() -> Path:
-    return _root() / "data" / "operations" / "vitek.json"
+    return runtime_env.data_path("operations", "vitek.json", project_root=_root())
 
 
 def _service_marker_path() -> Path:
-    return _root() / "data" / "operations" / "vitek-background.json"
+    return runtime_env.data_path(
+        "operations", "vitek-background.json", project_root=_root(),
+    )
 
 
 def _bridge_event_path() -> Path:
     """Append-only hand-off written by NinjaTrader/Bridge processes."""
-    return _root() / "data" / "runtime" / "vitek_events.jsonl"
+    return runtime_env.data_path(
+        "runtime", "vitek_events.jsonl", project_root=_root(),
+    )
 
 
 def _now_dt() -> datetime:
@@ -444,7 +450,7 @@ def status() -> Dict[str, Any]:
                 "last_event_at_utc": str(doc.get("last_event_at_utc") or ""),
                 "last_event_type": str(doc.get("last_event_type") or ""),
                 "last_event_error": str(doc.get("last_event_error") or ""),
-                "bridge_spool": str(_root() / "data" / "runtime" / "vitek_events.jsonl"),
+                "bridge_spool": str(_bridge_event_path()),
                 "full_scan_schedule": "manual_or_startup_only",
                 "parallel_limit": MAX_PARALLEL_AGENTS,
                 "active_agents": sum(1 for row in agent_rows if row.get("working")),
@@ -2988,12 +2994,13 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
 
 def _notify_event_result(event: Dict[str, Any], result: Dict[str, Any]) -> bool:
     content = str(result.get("content") or result.get("reply") or "Событие обработано.")[:3200]
+    event_type = str(event.get("event_type") or "vitek_owner_alert")
     return _deliver_owner_alert(
         f"{NAME} · результат", [content],
         urgent=str(event.get("severity") or "") in {"critical", "error"},
         dedupe_key=f"vitek-event:{event.get('event_id')}",
         action_status="completed",
-        action_name="vitek_event_result",
+        action_name=event_type,
     )
 
 
