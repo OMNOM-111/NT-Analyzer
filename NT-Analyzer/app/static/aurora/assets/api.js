@@ -86,6 +86,14 @@
     }
   }
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function mutationRequestId(prefix) {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return String(prefix || 'req') + ':' + window.crypto.randomUUID();
+      }
+    } catch (e) { /* hardened WebView fallback below */ }
+    return String(prefix || 'req') + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+  }
   const qs = (obj) => {
     const p = new URLSearchParams();
     Object.entries(obj || {}).forEach(([k, v]) => { if (v != null && v !== '') p.set(k, v); });
@@ -143,14 +151,6 @@
     }
     return data;
   }
-  async function del(path) {
-    const res = await fetch(path, { method: 'DELETE', headers: requestHeaders({ 'Content-Type': 'application/json' }), body: '{}' });
-    let data = null;
-    try { data = await res.json(); } catch (e) { /* empty */ }
-    if (!res.ok) throw new HttpError(res.status, (data && data.error) || res.statusText, path);
-    return data;
-  }
-
   // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
   // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
   async function orchestratorSpeak(payload) {
@@ -196,6 +196,14 @@
     if (ct.includes('application/json')) return await res.json();
     return await res.blob();
   }
+  async function del(path) {
+    const res = await fetch(path, { method: 'DELETE', headers: requestHeaders({ 'Content-Type': 'application/json' }), body: '{}' });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* empty */ }
+    if (!res.ok) throw new HttpError(res.status, (data && data.error) || res.statusText, path);
+    return data;
+  }
+
   // Server-Sent Events client for the orchestrator chat. Streams two channels —
   // native reasoning ("thinking") and then the final answer — over one POST.
   // No polyfill/EventSource (that is GET-only): we read the fetch body stream
@@ -208,7 +216,10 @@
     const res = await fetch(path, {
       method: 'POST',
       headers: requestHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
-      body: JSON.stringify({ message, conversation_id: conversationId || 'default', agent: agent || '' }),
+      body: JSON.stringify({
+        message, conversation_id: conversationId || 'default', agent: agent || '',
+        request_id: mutationRequestId('orchestrator'),
+      }),
     });
     if (!res.ok || !res.body || !res.body.getReader) {
       let detail = '';
@@ -519,8 +530,17 @@
     aiRunStatus: (o) => getJSON('/api/ai-lab/run/status', o),
     aiChiefStatus: (o) => getJSON('/api/ai-lab/chief-agent', o),
     aiOrchestratorStatus: (o) => getJSON('/api/ai-lab/orchestrator', o),
-    aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '' }),
+    aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '', request_id: mutationRequestId('orchestrator') }),
     aiOrchestratorMessageStream: (message, conversationId, agent, handlers) => streamOrchestrator(message, conversationId, agent, handlers),
+    aiOrchestratorJob: (jobId, o) => getJSON('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId), o),
+    aiOrchestratorCancelJob: (jobId) => send('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId) + '/cancel', 'POST', {}),
+    aiOrchestratorSpeak: (payload) => orchestratorSpeak(payload || {}),
+    domainAgentVoices: (o) => getJSON('/api/ai-lab/domain-agents/voices', o),
+    domainAgentVoice: (agentId, o) => getJSON('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', o),
+    domainAgentVoiceSave: (agentId, body) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', 'POST', body || {}),
+    domainAgentVoiceReset: (agentId) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice/reset', 'POST', {}),
+    domainAgentVoicePreview: (agentId, voice) => orchestratorSpeakPreview(agentId, voice),
+    ttsCatalog: (o) => getJSON('/api/ai-lab/tts/catalog', o),
     aiOrchestratorRateMessage: (conversationId, messageId, rating, comment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/rating', 'POST', { conversation_id: conversationId || 'default', rating, feedback_comment: comment || '', feedback_source: 'owner' }),
     aiOrchestratorFulfillMessage: (conversationId, messageId, fulfillment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/fulfillment', 'POST', { conversation_id: conversationId || 'default', fulfillment: fulfillment || 'done', fulfillment_source: 'owner' }),
     aiOrchestratorConversations: (o) => getJSON('/api/ai-lab/orchestrator/conversations', o),
@@ -532,15 +552,6 @@
     aiOrchestratorSetConversationState: (id, state) => send('/api/ai-lab/orchestrator/conversations/state', 'POST', { conversation_id: id, state: state }),
     aiOrchestratorDeleteConversation: (id) => send('/api/ai-lab/orchestrator/conversations/delete', 'POST', { conversation_id: id }),
     notifications: (q, o) => getJSON('/api/notifications' + qs(q), o),
-    aiOrchestratorJob: (jobId, o) => getJSON('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId), o),
-    aiOrchestratorCancelJob: (jobId) => send('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId) + '/cancel', 'POST', {}),
-    aiOrchestratorSpeak: (payload) => orchestratorSpeak(payload || {}),
-    domainAgentVoices: (o) => getJSON('/api/ai-lab/domain-agents/voices', o),
-    domainAgentVoice: (agentId, o) => getJSON('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', o),
-    domainAgentVoiceSave: (agentId, body) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice', 'POST', body || {}),
-    domainAgentVoiceReset: (agentId) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice/reset', 'POST', {}),
-    domainAgentVoicePreview: (agentId, voice) => orchestratorSpeakPreview(agentId, voice),
-    ttsCatalog: (o) => getJSON('/api/ai-lab/tts/catalog', o),
     notificationsAck: (body) => send('/api/notifications/ack', 'POST', body || {}),
     notificationsDelete: (body) => send('/api/notifications/delete', 'POST', body || {}),
     notificationsClear: (body) => send('/api/notifications/clear', 'POST', body || {}),
@@ -548,7 +559,7 @@
     accounting: (q, o) => getJSON('/api/ai-lab/accounting' + qs(q), o),
     strategyAnalysis: (q, o) => getJSON('/api/ai-lab/strategy-analysis' + qs(q), o),
     newsAnalysis: (q, o) => getJSON('/api/ai-lab/news-analysis' + qs(q), o),
-    domainAgentMessage: (agentId, message, options) => send('/api/ai-lab/domain-agents/message', 'POST', Object.assign({ agent_id: agentId, message }, options || {})),
+    domainAgentMessage: (agentId, message, options) => send('/api/ai-lab/domain-agents/message', 'POST', Object.assign({ agent_id: agentId, message, request_id: mutationRequestId('domain-agent') }, options || {})),
     aiChiefMission: (body) => send('/api/ai-lab/chief-agent/mission', 'POST', body || {}),
     aiChiefMissionState: (action) => send('/api/ai-lab/chief-agent/mission/state', 'POST', { action }),
     aiChiefTask: (body) => send('/api/ai-lab/chief-agent/tasks', 'POST', body || {}),

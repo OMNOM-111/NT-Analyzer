@@ -1207,7 +1207,8 @@ def test_vitek_ui_and_background_install_contracts() -> None:
     assert '"/api/vitek/time-windows"' in server
     assert '"/api/vitek/events"' in server
     legacy_domain_block = server.split('if path == "/api/ai-lab/domain-agents/message":', 1)[1].split("return", 1)[0]
-    assert "ai_chief_agent.handle_message" in legacy_domain_block
+    assert "_ai_lab_orchestrator_sync" in legacy_domain_block
+    assert "ai_chief_agent.handle_message" not in legacy_domain_block
     assert "ai_domain_agents.answer" not in legacy_domain_block
     assert "New-ScheduledTaskTrigger -AtLogOn" in installer
     assert "RestartCount 999" in installer

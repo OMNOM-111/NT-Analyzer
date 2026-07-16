@@ -509,7 +509,10 @@ def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dic
     runtime_dir = ""
     if not uses_owner_runtime and workspace_kind != "owner_training":
         # Derive the tenant path locally; never trust a caller-supplied path.
-        runtime_dir = str(paths.PROJECT_ROOT / "data" / "tenants" / safe_workspace / "runtime")
+        from .. import runtime_env
+        runtime_dir = str(runtime_env.data_path(
+            "tenants", safe_workspace, "runtime", project_root=paths.PROJECT_ROOT,
+        ))
     return {
         "scope_id": f"u{user_id}__{safe_workspace}",
         "user_id": user_id,
@@ -1052,7 +1055,12 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
 
 _CONVERSATION_WORK_STATES = {"open", "awaiting_owner", "in_progress", "completed", "blocked"}
 _MESSAGE_FULFILLMENTS = {"unset", "done", "failed", "na"}
-_MESSAGE_KINDS = {"chat", "request", "task", "report"}
+_MESSAGE_KINDS = {"chat", "request", "task", "report", "informational"}
+_INFORMATIONAL_ACTION_NAMES = {
+    "strategy_started", "strategy_stopped", "strategy_enabled", "strategy_disabled",
+    "ninjatrader_started", "ninjatrader_stopped", "connection_restored",
+}
+_INFORMATIONAL_RATING_WEIGHT = 0.0001  # one hundredth of one percent
 _FULFILLMENT_AUTO_HOURS = 24
 _OPEN_ACTION_STATUSES = {
     "queued", "running", "in_progress", "approval_required",
@@ -1110,6 +1118,8 @@ def _infer_message_kind(actions: Optional[List[Dict[str, Any]]]) -> str:
         return "chat"
     names = {str(row.get("name") or row.get("action") or "") for row in rows}
     statuses = {str(row.get("status") or "") for row in rows}
+    if names & _INFORMATIONAL_ACTION_NAMES:
+        return "informational"
     if names & {"mission_completed", "deliver_report", "request_performance_report",
                 "request_accounting_report", "request_strategy_report", "request_news_report"}:
         return "report"
@@ -1432,6 +1442,67 @@ def conversation_messages(conversation_id: str, limit: int = 200,
     return _read_conversation(limit, path=path)
 
 
+_RATING_ROLE_ALIASES = {
+    "management": "chief_agent", "manager": "chief_agent",
+    "secretary": "chief_agent", "deputy": "chief_agent",
+    "vitek": "vitek_dispatcher", "victor": "vitek_dispatcher",
+    "marina": "accountant", "tolik": "strategy_analyst",
+    "nikita": "news_analyst",
+}
+
+
+def _canonical_rating_role(value: Any, *, agent_id: str = "", default: str = "general") -> str:
+    valid = set(agent_router.ROLE_PROVIDER_ORDER)
+    for candidate in (value, agent_id, default):
+        clean = str(candidate or "").strip().lower()
+        clean = _RATING_ROLE_ALIASES.get(clean, clean)
+        if clean in valid:
+            return clean
+    return "general"
+
+
+def _rating_event_id(row: Dict[str, Any]) -> str:
+    existing = str(row.get("rating_event_id") or "").strip()
+    if existing:
+        return existing
+    workspace = str(row.get("workspace_id") or "global").strip() or "global"
+    message = str(row.get("message_id") or "").strip()
+    return f"message_rating:{workspace}:{message}"[:300]
+
+
+def _record_message_rating(
+    row: Dict[str, Any],
+    score: int,
+    *,
+    source: str,
+    weight: float = 1.0,
+) -> None:
+    from . import ai_ratings
+
+    event_id = _rating_event_id(row)
+    row["rating_event_id"] = event_id
+    role_id = _canonical_rating_role(
+        row.get("routing_role_id") or row.get("role_id") or row.get("agent_role"),
+        agent_id=str(row.get("agent_id") or ""),
+    )
+    model_id = str(
+        row.get("routing_model_id") or row.get("model_id") or row.get("model") or "unknown"
+    ).strip() or "unknown"
+    ai_ratings.record_rating(
+        event_id=event_id,
+        message_id=str(row.get("message_id") or ""),
+        role_id=role_id,
+        model_id=model_id,
+        provider=str(row.get("routing_provider") or row.get("provider") or ""),
+        rating=int(score),
+        task_category=str(row.get("task_category") or row.get("message_kind") or "")[:60],
+        weight=weight,
+        workspace_id=str(row.get("workspace_id") or ""),
+        user_id=str(row.get("user_id") or ""),
+        source=str(source or row.get("source") or "")[:80],
+    )
+
+
 def _apply_fulfillment_side_effects(row: Dict[str, Any], fulfillment: str) -> None:
     """Slightly lower the visible rating when a task auto-fails without owner marks."""
     if fulfillment != "failed":
@@ -1447,6 +1518,12 @@ def _apply_fulfillment_side_effects(row: Dict[str, Any], fulfillment: str) -> No
     row["feedback_source"] = str(row.get("feedback_source") or "auto_penalty")
     row["feedback_timestamp_utc"] = _now()
     row["auto_rating_penalty"] = 1
+    try:
+        _record_message_rating(
+            row, int(row["rating"]), source=str(row.get("feedback_source") or "auto_penalty"),
+        )
+    except Exception:
+        pass
 
 
 def _apply_auto_fulfillment(path: Path) -> None:
@@ -1482,6 +1559,8 @@ def _apply_auto_fulfillment(path: Path) -> None:
             row["fulfillment_at_utc"] = _now()
             row["message_kind"] = kind if kind in _MESSAGE_KINDS else "chat"
             _apply_fulfillment_side_effects(row, next_state)
+            if kind == "informational" and next_state == "done":
+                _record_informational_auto_rating(row)
             changed = True
         if changed:
             write_jsonl_atomic(path, rows)
@@ -1510,6 +1589,8 @@ def set_message_fulfillment(conversation_id: str, message_id: str, fulfillment: 
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Отмечать можно только ответы Orchestrator.")
+            if str(row.get("message_kind") or "") == "informational":
+                raise ChiefAgentError("Информационные уведомления подтверждаются автоматически.")
             row["fulfillment"] = clean
             row["fulfillment_source"] = clean_source
             row["fulfillment_at_utc"] = _now()
@@ -1760,10 +1841,13 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Оценивать можно только ответы Orchestrator.")
+            if str(row.get("message_kind") or "") == "informational":
+                raise ChiefAgentError("Информационные уведомления не требуют ручной оценки.")
             row["rating"] = score
             row["feedback_comment"] = clean_comment
             row["feedback_source"] = clean_source
             row["feedback_timestamp_utc"] = _now()
+            row["rating_event_id"] = _rating_event_id(row)
             updated = dict(row)
             updated_index = index
             break
@@ -1785,17 +1869,25 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
             ),
         )
     try:
-        from . import ai_ratings
-        role_id = str(updated.get("agent_role") or updated.get("role_id") or updated.get("agent_name") or "general")
-        model_id = str(updated.get("model") or "unknown")
-        provider = str(updated.get("provider") or "")
-        ai_ratings.record_rating(
-            role_id=role_id, model_id=model_id, provider=provider, rating=score,
-            task_category=str(updated.get("task_category") or ""),
-        )
+        _record_message_rating(updated, score, source=clean_source)
     except Exception:
         pass
     return {"ok": True, "conversation_id": cid, "message": updated}
+
+
+def _record_informational_auto_rating(row: Dict[str, Any]) -> None:
+    """Give completed operational notices a negligible positive routing signal once."""
+    if row.get("informational_rating_recorded"):
+        return
+    try:
+        row["task_category"] = "informational"
+        _record_message_rating(
+            row, 3, source="informational_auto", weight=_INFORMATIONAL_RATING_WEIGHT,
+        )
+        row["informational_rating_recorded"] = True
+        row["informational_rating_weight"] = _INFORMATIONAL_RATING_WEIGHT
+    except Exception:
+        pass
 
 
 def _conversation_title(conversation_id: str, *, scope: Optional[Dict[str, Any]] = None) -> str:
@@ -1830,6 +1922,9 @@ def _append_conversation(role: str, content: str, *, source: str,
                          model: str = "", provider: str = "",
                          agent_name: str = "",
                          agent_id: str = "",
+                         role_id: str = "",
+                         model_id: str = "",
+                         task_category: str = "",
                          actions: Optional[List[Dict[str, Any]]] = None,
                          doubts: Optional[List[str]] = None,
                          thinking: str = "",
@@ -1837,6 +1932,7 @@ def _append_conversation(role: str, content: str, *, source: str,
                          participation_chain: Optional[List[Dict[str, Any]]] = None,
                          message_kind: str = "",
                          fulfillment: str = "",
+                         request_id: str = "",
                          path: Optional[Path] = None,
                          scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     scope_info = _normalize_conversation_scope(scope)
@@ -1852,6 +1948,10 @@ def _append_conversation(role: str, content: str, *, source: str,
     }
     if role == "assistant" and not profile["agent_name"]:
         profile = _agent_public_profile(agent_name or "Витёк", agent_id or "vitek")
+    canonical_role_id = _canonical_rating_role(
+        role_id, agent_id=str(profile.get("agent_id") or agent_id),
+    ) if role == "assistant" else ""
+    canonical_model_id = str(model_id or model or "unknown").strip()[:180] if role == "assistant" else ""
     chain_source = participation_chain
     if chain_source is None and role == "assistant":
         chain_source = universal_llm.current_participation()
@@ -1868,6 +1968,7 @@ def _append_conversation(role: str, content: str, *, source: str,
         "role": role if role in {"user", "assistant", "system"} else "assistant",
         "content": _redact_sensitive(str(content or "").strip())[:12000],
         "source": str(source or "app")[:40],
+        "request_id": re.sub(r"[^A-Za-z0-9_.:-]", "", str(request_id or ""))[:120],
         "model": str(model or "")[:180],
         "provider": str(provider or "")[:80],
         # Vitek is the default chief of staff, while an explicitly addressed or
@@ -1875,6 +1976,9 @@ def _append_conversation(role: str, content: str, *, source: str,
         "agent_name": (str(profile["agent_name"] or agent_name or "Витёк")[:80] if role == "assistant" else str(agent_name or "")[:80]),
         "agent_id": str(profile["agent_id"] or agent_id or "")[:80] if role == "assistant" else "",
         "agent_title": str(profile["title"] or "")[:120] if role == "assistant" else "",
+        "role_id": canonical_role_id,
+        "model_id": canonical_model_id,
+        "task_category": str(task_category or kind)[:60] if role == "assistant" else "",
         "actions": clean_actions,
         "doubts": [str(item)[:500] for item in (doubts or [])[:10]],
         "message_kind": kind if role == "assistant" else "chat",
@@ -1892,6 +1996,8 @@ def _append_conversation(role: str, content: str, *, source: str,
             "actor_name": scope_info.get("display_name") or "",
             "actor_is_owner": bool(scope_info.get("is_owner")),
         })
+    if role == "assistant":
+        rec["rating_event_id"] = _rating_event_id(rec)
     # Image/file attachments (e.g. chart snapshots) reference stored files by URL;
     # never inline base64 payloads into the conversation log.
     clean_attachments: List[Dict[str, Any]] = []
@@ -1911,6 +2017,8 @@ def _append_conversation(role: str, content: str, *, source: str,
     # Provider chain-of-thought is deliberately neither persisted nor exposed.
     # The owner sees only auditable action/progress states; internal reasoning
     # may contain unstable or sensitive implementation details.
+    if role == "assistant" and kind == "informational" and fulfill == "done":
+        _record_informational_auto_rating(rec)
     append_jsonl(path or _conversation_file(DEFAULT_CONVERSATION_ID, scope=scope), rec)
     return rec
 
@@ -3076,6 +3184,8 @@ def _post_mission_update(mission: Dict[str, Any], text: str,
     try:
         _append_conversation(
             "assistant", text, source="mission", model=actual_model,
+            role_id="orchestrator", model_id=actual_model,
+            task_category=str(action_name or "research_progress"),
             provider="local", actions=[{"name": action_name, "status": action_status}],
             doubts=[], path=_conversation_file(cid, scope=scope), scope=scope,
         )
@@ -3947,7 +4057,8 @@ def _gateway_envelope(result: Dict[str, Any], *, source: str) -> Dict[str, Any]:
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                    on_thinking: Optional[Callable[[str], None]] = None,
-                   scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   scope: Optional[Dict[str, Any]] = None,
+                   request_id: str = "") -> Dict[str, Any]:
     """Run one turn inside the current user's isolated runtime directory."""
     scope_info = _normalize_conversation_scope(scope)
     runtime_dir = str(scope_info.get("runtime_dir") or "")
@@ -3965,13 +4076,13 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 result = _handle_message_impl(
                     message, source=source, mirror_to_telegram=mirror_to_telegram,
                     conversation_id=conversation_id, agent=agent,
-                    on_thinking=on_thinking, scope=scope,
+                    on_thinking=on_thinking, scope=scope, request_id=request_id,
                 )
             return _gateway_envelope(result, source=source)
         result = _handle_message_impl(
                 message, source=source, mirror_to_telegram=mirror_to_telegram,
                 conversation_id=conversation_id, agent=agent,
-                on_thinking=on_thinking, scope=scope,
+                on_thinking=on_thinking, scope=scope, request_id=request_id,
             )
         return _gateway_envelope(result, source=source)
 
@@ -4115,7 +4226,8 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
 def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
                         cid: str, conv_path: Path, requested_agent: str,
                         scope: Optional[Dict[str, Any]],
-                        scope_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                        scope_info: Dict[str, Any],
+                        request_id: str = "") -> Optional[Dict[str, Any]]:
     """Route operational-controller messages through the shared conversation.
 
     The technical Orchestrator remains the invisible ingress. Vitek is the
@@ -4155,7 +4267,10 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
     model = "internal"
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider="local",
-        agent_name=vitek.FORMAL_NAME, actions=actions, doubts=[], path=conv_path, scope=scope,
+        agent_name=vitek.FORMAL_NAME, role_id="vitek_dispatcher", model_id=model,
+        task_category=str(vitek_result.get("kind") or "vitek_command"),
+        actions=actions, doubts=[], request_id=request_id,
+        path=conv_path, scope=scope,
     )
     _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
     kind = str(vitek_result.get("kind") or "status")
@@ -4208,7 +4323,8 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
 def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                          conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                          on_thinking: Optional[Callable[[str], None]] = None,
-                         scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         scope: Optional[Dict[str, Any]] = None,
+                         request_id: str = "") -> Dict[str, Any]:
     """Understand one owner message, validate a plan and execute allowlisted actions.
 
     Each ``conversation_id`` keeps its own isolated dialogue context. The memory
@@ -4231,6 +4347,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         raise ChiefAgentError("Сообщение не может быть пустым.")
     if len(clean) > 6000:
         raise ChiefAgentError("Сообщение должно быть короче 6000 символов.")
+    request_key = re.sub(r"[^A-Za-z0-9_.:-]", "", str(request_id or ""))[:120]
     progress_callback = None
     if on_thinking is not None:
         progress_emitted = False
@@ -4248,17 +4365,45 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         scope_info["shared_memory"] = shared_memory
         scope_info["user_memory"] = list(shared_memory.get("entries") or [])
     cid = _safe_conversation_id(conversation_id)
+    conv_path = _conversation_file(cid, scope=scope)
+    existing_user: Optional[Dict[str, Any]] = None
+    if request_key:
+        request_rows = [
+            row for row in _read_conversation(500, path=conv_path)
+            if str(row.get("request_id") or "") == request_key
+        ]
+        existing_assistant = next(
+            (row for row in reversed(request_rows) if row.get("role") == "assistant"),
+            None,
+        )
+        if existing_assistant:
+            return {
+                "ok": True,
+                "message": existing_assistant,
+                "reply": str(existing_assistant.get("content") or ""),
+                "conversation_id": cid,
+                "model": existing_assistant.get("model"),
+                "provider": existing_assistant.get("provider"),
+                "agent": existing_assistant.get("agent_id") or "auto",
+                "doubts": existing_assistant.get("doubts") or [],
+                "actions": existing_assistant.get("actions") or [],
+                "idempotent_replay": True,
+            }
+        existing_user = next(
+            (row for row in request_rows if row.get("role") == "user"), None,
+        )
     if _conversation_is_closed(cid, scope=scope):
         raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
-    conv_path = _conversation_file(cid, scope=scope)
-    user_message = _append_conversation(
-        "user", clean, source=source, path=conv_path, scope=scope,
+    user_message = existing_user or _append_conversation(
+        "user", clean, source=source, request_id=request_key,
+        path=conv_path, scope=scope,
     )
     _touch_conversation(cid, title_hint=clean, scope=scope)
     # Mirror the owner's own app-typed message into the bound Telegram topic so
     # the Telegram thread shows the full conversation, not only replies. Never
     # mirror a message that came from Telegram (it is already there).
-    if mirror_to_telegram and source == "app" and _can_mirror_to_telegram(scope_info):
+    if (not existing_user and mirror_to_telegram and source == "app"
+            and _can_mirror_to_telegram(scope_info)):
         try:
             from .. import telegram_service
             telegram_service.mirror_owner_message(
@@ -4271,7 +4416,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     vitek_turn = _vitek_gateway_turn(
         clean, source=source, mirror_to_telegram=mirror_to_telegram,
         cid=cid, conv_path=conv_path, requested_agent=requested_agent,
-        scope=scope, scope_info=scope_info,
+        scope=scope, scope_info=scope_info, request_id=request_key,
     )
     if vitek_turn is not None:
         return vitek_turn
@@ -4386,8 +4531,15 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
         assistant = _append_conversation(
             "assistant", reply, source=source, model=model, provider=provider,
             agent_name=responder_name or "Витёк", agent_id=responder_id,
+            role_id=str(
+                domain.get("routing_role_id") or domain.get("request_role")
+                or (domain_agents.PERSONAS.get(responder_id) or {}).get("role") or "general"
+            ),
+            model_id=str(domain.get("routing_model_id") or model),
+            task_category=str(domain.get("task_category") or domain.get("capability") or "domain_reply"),
             actions=domain_actions, doubts=[],
-            attachments=attachments, path=conv_path, scope=scope,
+            attachments=attachments, request_id=request_key,
+            path=conv_path, scope=scope,
         )
         _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
         with _LOCK:
@@ -4655,8 +4807,16 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     assistant = _append_conversation(
         "assistant", reply, source=source, model=model, provider=provider,
         agent_name=response_actor, agent_id=response_actor_id,
+        role_id=str(result.get("routing_role_id") or result.get("request_role") or "orchestrator"),
+        model_id=str(result.get("routing_model_id") or model),
+        task_category=(
+            "strategic_dialogue" if strategic_dialogue else
+            "manager_dialogue" if manager_dialogue else
+            "direct_plan" if direct is not None else "orchestrator_chat_plan"
+        ),
         actions=action_results, doubts=doubts,
-        thinking=thinking, attachments=recovery_attachments, path=conv_path, scope=scope,
+        thinking=thinking, attachments=recovery_attachments,
+        request_id=request_key, path=conv_path, scope=scope,
     )
     work_state, work_detail = _conversation_work_state(action_results, reply)
     _set_conversation_work_state(cid, work_state, work_detail, scope=scope)
@@ -4751,6 +4911,9 @@ def analyze_event(event_type: str, payload: Dict[str, Any], *, send_telegram: bo
     model = str(result.get("actual_model") or result.get("model") or "unknown")
     message = _append_conversation(
         "assistant", content, source="system_event", model=model,
+        role_id=str(result.get("routing_role_id") or result.get("request_role") or "orchestrator"),
+        model_id=str(result.get("routing_model_id") or model),
+        task_category=f"system_event_{str(event_type)[:40]}",
         provider=str(result.get("provider") or ""), agent_name="Витёк", doubts=[], actions=[],
         path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope), scope=scope,
     )
@@ -5543,6 +5706,7 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
     cid = mission.get("conversation_id") or DEFAULT_CONVERSATION_ID
     _append_conversation(
         "assistant", content, source="mission_report", model=model,
+        role_id="orchestrator", model_id=model, task_category="mission_report",
         provider="local", actions=[{"name": "mission_completed", "status": "completed"}], doubts=[],
         path=_conversation_file(cid, scope=scope), scope=scope,
     )

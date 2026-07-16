@@ -14,8 +14,10 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from . import runtime_env
 
-SCHEMA_VERSION = 1
+
+SCHEMA_VERSION = 2
 DEFAULT_DB_NAME = "nt_analyzer.sqlite3"
 _LOCK = threading.RLock()
 
@@ -32,7 +34,7 @@ def db_path(root: Optional[Path] = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     base = Path(root or project_root()).resolve()
-    return base / "data" / "durable" / DEFAULT_DB_NAME
+    return runtime_env.data_path("durable", DEFAULT_DB_NAME, project_root=base)
 
 
 def connect(root: Optional[Path] = None) -> sqlite3.Connection:
@@ -124,6 +126,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           finished_at_utc TEXT NOT NULL DEFAULT '',
           updated_at_utc TEXT NOT NULL DEFAULT '',
           locked_until REAL NOT NULL DEFAULT 0,
+          deadline_at REAL NOT NULL DEFAULT 0,
+          worker_id TEXT NOT NULL DEFAULT '',
+          heartbeat_at_utc TEXT NOT NULL DEFAULT '',
           cancel_requested INTEGER NOT NULL DEFAULT 0,
           user_id TEXT NOT NULL DEFAULT '',
           workspace_id TEXT NOT NULL DEFAULT '',
@@ -137,6 +142,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           ON worker_jobs(workspace_id, status, updated_at_utc);
         """
     )
+    # ``CREATE TABLE IF NOT EXISTS`` does not evolve an existing v1 WAL.
+    # Keep the migration additive so production metadata upgrades in place.
+    worker_columns = {
+        str(row["name"]) for row in conn.execute("PRAGMA table_info(worker_jobs)").fetchall()
+    }
+    for name, definition in (
+        ("deadline_at", "REAL NOT NULL DEFAULT 0"),
+        ("worker_id", "TEXT NOT NULL DEFAULT ''"),
+        ("heartbeat_at_utc", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in worker_columns:
+            conn.execute(f"ALTER TABLE worker_jobs ADD COLUMN {name} {definition}")
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
         (str(SCHEMA_VERSION),),
@@ -476,7 +493,7 @@ def enqueue_worker_job(root: Optional[Path], *, worker_job_id: str, kind: str,
                 (
                     jid, clean_kind, "queued", int(priority), max(1, int(max_attempts or 1)),
                     max(1, int(timeout_sec or 300)), now, now, str(user_id or ""),
-                    str(workspace_id or ""), _compact_json(payload or {}),
+                    str(workspace_id or "system"), _compact_json(payload or {}),
                 ),
             )
             conn.commit()
@@ -493,25 +510,44 @@ def _worker_row(row: sqlite3.Row) -> Dict[str, Any]:
     return out
 
 
-def get_worker_job(root: Optional[Path], worker_job_id: str) -> Optional[Dict[str, Any]]:
+def get_worker_job(root: Optional[Path], worker_job_id: str, *,
+                   workspace_id: str = "") -> Optional[Dict[str, Any]]:
     with _LOCK:
         with connect(root) as conn:
-            row = conn.execute(
-                "SELECT * FROM worker_jobs WHERE worker_job_id=?",
-                (str(worker_job_id),),
-            ).fetchone()
+            if workspace_id:
+                row = conn.execute(
+                    "SELECT * FROM worker_jobs WHERE worker_job_id=? AND workspace_id=?",
+                    (str(worker_job_id), str(workspace_id)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM worker_jobs WHERE worker_job_id=?",
+                    (str(worker_job_id),),
+                ).fetchone()
     return _worker_row(row) if row else None
 
 
 def list_worker_jobs(root: Optional[Path], *, status: str = "",
-                     limit: int = 100) -> List[Dict[str, Any]]:
+                     limit: int = 100, workspace_id: str = "") -> List[Dict[str, Any]]:
     limit = max(1, min(1000, int(limit or 100)))
     with _LOCK:
         with connect(root) as conn:
-            if status:
+            if status and workspace_id:
+                rows = conn.execute(
+                    "SELECT * FROM worker_jobs WHERE status=? AND workspace_id=? "
+                    "ORDER BY updated_at_utc DESC LIMIT ?",
+                    (status, str(workspace_id), limit),
+                ).fetchall()
+            elif status:
                 rows = conn.execute(
                     "SELECT * FROM worker_jobs WHERE status=? ORDER BY updated_at_utc DESC LIMIT ?",
                     (status, limit),
+                ).fetchall()
+            elif workspace_id:
+                rows = conn.execute(
+                    "SELECT * FROM worker_jobs WHERE workspace_id=? "
+                    "ORDER BY updated_at_utc DESC LIMIT ?",
+                    (str(workspace_id), limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -521,22 +557,58 @@ def list_worker_jobs(root: Optional[Path], *, status: str = "",
     return [_worker_row(row) for row in rows]
 
 
-def worker_job_counts(root: Optional[Path]) -> Dict[str, int]:
+def worker_job_counts(root: Optional[Path], *, workspace_id: str = "") -> Dict[str, int]:
     with _LOCK:
         with connect(root) as conn:
-            rows = conn.execute(
-                "SELECT status, COUNT(*) AS count FROM worker_jobs GROUP BY status"
-            ).fetchall()
+            if workspace_id:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) AS count FROM worker_jobs "
+                    "WHERE workspace_id=? GROUP BY status",
+                    (str(workspace_id),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) AS count FROM worker_jobs GROUP BY status"
+                ).fetchall()
     return {str(row["status"]): int(row["count"]) for row in rows}
 
 
-def request_worker_cancel(root: Optional[Path], worker_job_id: str) -> Optional[Dict[str, Any]]:
+def prune_terminal_worker_jobs(root: Optional[Path], *, kind: str,
+                               workspace_id: str, keep: int = 4) -> int:
+    """Bound bulky terminal job results without touching active work."""
+    keep_n = max(0, min(100, int(keep or 0)))
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                """
+                SELECT worker_job_id FROM worker_jobs
+                WHERE kind=? AND workspace_id=?
+                  AND status IN ('succeeded','failed','cancelled','stale')
+                ORDER BY updated_at_utc DESC, worker_job_id DESC
+                """,
+                (str(kind), str(workspace_id)),
+            ).fetchall()
+            stale_ids = [str(row["worker_job_id"]) for row in rows[keep_n:]]
+            if stale_ids:
+                conn.executemany(
+                    "DELETE FROM worker_jobs WHERE worker_job_id=?",
+                    ((job_id,) for job_id in stale_ids),
+                )
+            conn.commit()
+    return len(stale_ids)
+
+
+def request_worker_cancel(root: Optional[Path], worker_job_id: str, *,
+                          workspace_id: str = "") -> Optional[Dict[str, Any]]:
     now = _now_iso()
     with _LOCK:
         with connect(root) as conn:
+            scope_sql = " AND workspace_id=?" if workspace_id else ""
+            select_params = ((str(worker_job_id), str(workspace_id)) if workspace_id
+                             else (str(worker_job_id),))
             row = conn.execute(
-                "SELECT status FROM worker_jobs WHERE worker_job_id=?",
-                (str(worker_job_id),),
+                "SELECT status FROM worker_jobs WHERE worker_job_id=?" + scope_sql,
+                select_params,
             ).fetchone()
             if row is None:
                 return None
@@ -546,107 +618,208 @@ def request_worker_cancel(root: Optional[Path], worker_job_id: str) -> Optional[
                     UPDATE worker_jobs
                     SET status='cancelled', cancel_requested=1, finished_at_utc=?,
                         updated_at_utc=?
-                    WHERE worker_job_id=?
-                    """,
-                    (now, now, str(worker_job_id)),
+                    WHERE worker_job_id=?""" + scope_sql,
+                    (now, now, *select_params),
                 )
-            else:
+            elif str(row["status"]) == "running":
                 conn.execute(
                     """
                     UPDATE worker_jobs
                     SET cancel_requested=1, updated_at_utc=?
-                    WHERE worker_job_id=?
-                    """,
-                    (now, str(worker_job_id)),
+                    WHERE worker_job_id=?""" + scope_sql,
+                    (now, *select_params),
                 )
+            # Terminal rows are immutable: late cancellation cannot rewrite history.
+            conn.commit()
+    return get_worker_job(root, worker_job_id, workspace_id=workspace_id)
+
+
+def finalize_worker_cancel(root: Optional[Path], worker_job_id: str, *,
+                           worker_id: str = "") -> Optional[Dict[str, Any]]:
+    now = _now_iso()
+    worker_sql = " AND worker_id=?" if worker_id else ""
+    params = ((now, now, str(worker_job_id), str(worker_id)) if worker_id else
+              (now, now, str(worker_job_id)))
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                UPDATE worker_jobs
+                SET status='cancelled', cancel_requested=1, finished_at_utc=?,
+                    updated_at_utc=?, locked_until=0, deadline_at=0,
+                    error='cancelled by request'
+                WHERE worker_job_id=? AND status='running'""" + worker_sql,
+                params,
+            )
             conn.commit()
     return get_worker_job(root, worker_job_id)
 
 
-def sweep_stale_worker_jobs(root: Optional[Path], *, now: Optional[float] = None) -> int:
+def heartbeat_worker_job(root: Optional[Path], worker_job_id: str, *,
+                         worker_id: str, now: Optional[float] = None,
+                         lease_sec: float = 30.0) -> bool:
     current = time.time() if now is None else float(now)
     stamp = _now_iso()
+    lease = max(1.0, min(60.0, float(lease_sec or 30.0)))
     with _LOCK:
         with connect(root) as conn:
             cur = conn.execute(
                 """
                 UPDATE worker_jobs
-                SET status='stale', finished_at_utc=?, updated_at_utc=?,
-                    error='worker heartbeat timed out'
-                WHERE status='running' AND locked_until > 0 AND locked_until < ?
+                SET heartbeat_at_utc=?, updated_at_utc=?, locked_until=?
+                WHERE worker_job_id=? AND worker_id=? AND status='running'
+                  AND cancel_requested=0 AND deadline_at>?
                 """,
-                (stamp, stamp, current),
+                (stamp, stamp, current + lease, str(worker_job_id), str(worker_id), current),
             )
             conn.commit()
-            return int(cur.rowcount or 0)
+            return int(cur.rowcount or 0) == 1
+
+
+def worker_cancel_requested(root: Optional[Path], worker_job_id: str, *,
+                            worker_id: str = "") -> bool:
+    row = get_worker_job(root, worker_job_id)
+    if not row or str(row.get("status") or "") != "running":
+        return True
+    if worker_id and str(row.get("worker_id") or "") != str(worker_id):
+        return True
+    return bool(int(row.get("cancel_requested") or 0))
+
+
+def sweep_stale_worker_jobs(root: Optional[Path], *, now: Optional[float] = None) -> int:
+    current = time.time() if now is None else float(now)
+    stamp = _now_iso()
+    changed = 0
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                """
+                SELECT worker_job_id, attempts, max_attempts, cancel_requested,
+                       deadline_at, locked_until
+                FROM worker_jobs
+                WHERE status='running' AND (
+                  (deadline_at > 0 AND deadline_at < ?) OR
+                  (locked_until > 0 AND locked_until < ?)
+                )
+                """,
+                (current, current),
+            ).fetchall()
+            for row in rows:
+                cancelled = bool(int(row["cancel_requested"] or 0))
+                can_retry = int(row["attempts"] or 0) < int(row["max_attempts"] or 1)
+                deadline_value = float(row["deadline_at"] or 0)
+                deadline_hit = deadline_value > 0 and deadline_value < current
+                if cancelled:
+                    status, finished, error = "cancelled", stamp, "cancelled by request"
+                elif can_retry:
+                    status, finished = "queued", ""
+                    error = "worker execution timed out" if deadline_hit else "worker heartbeat timed out"
+                else:
+                    status, finished = ("failed" if deadline_hit else "stale"), stamp
+                    error = "worker execution timed out" if deadline_hit else "worker heartbeat timed out"
+                cur = conn.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET status=?, finished_at_utc=?, updated_at_utc=?, locked_until=0,
+                        deadline_at=0, worker_id='', heartbeat_at_utc='', error=?
+                    WHERE worker_job_id=? AND status='running'
+                    """,
+                    (status, finished, stamp, error, str(row["worker_job_id"])),
+                )
+                changed += int(cur.rowcount or 0)
+            conn.commit()
+    return changed
 
 
 def claim_worker_job(root: Optional[Path], *, worker_id: str,
                      now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     current = time.time() if now is None else float(now)
     stamp = _now_iso()
+    claimed_id = ""
     with _LOCK:
         with connect(root) as conn:
+            # BEGIN IMMEDIATE serializes the SELECT+UPDATE across worker processes.
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT * FROM worker_jobs
-                WHERE status='queued'
+                WHERE status='queued' AND cancel_requested=0
                 ORDER BY priority ASC, queued_at_utc ASC
                 LIMIT 1
                 """
             ).fetchone()
-            if row is None:
-                return None
-            timeout_sec = max(1, int(row["timeout_sec"] or 300))
-            conn.execute(
-                """
-                UPDATE worker_jobs
-                SET status='running', attempts=attempts+1, started_at_utc=?,
-                    updated_at_utc=?, locked_until=?, error=''
-                WHERE worker_job_id=? AND status='queued'
-                """,
-                (stamp, stamp, current + timeout_sec, str(row["worker_job_id"])),
-            )
+            if row is not None:
+                timeout_sec = max(1, int(row["timeout_sec"] or 300))
+                lease_sec = min(30, timeout_sec)
+                claimed_id = str(row["worker_job_id"])
+                cur = conn.execute(
+                    """
+                    UPDATE worker_jobs
+                    SET status='running', attempts=attempts+1, started_at_utc=?,
+                        finished_at_utc='', updated_at_utc=?, locked_until=?,
+                        deadline_at=?, worker_id=?, heartbeat_at_utc=?, error=''
+                    WHERE worker_job_id=? AND status='queued' AND cancel_requested=0
+                    """,
+                    (
+                        stamp, stamp, current + lease_sec, current + timeout_sec,
+                        str(worker_id), stamp, claimed_id,
+                    ),
+                )
+                if int(cur.rowcount or 0) != 1:
+                    claimed_id = ""
             conn.commit()
-    return get_worker_job(root, str(row["worker_job_id"]))
+    return get_worker_job(root, claimed_id) if claimed_id else None
 
 
 def finish_worker_job(root: Optional[Path], worker_job_id: str,
-                      result: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                      result: Optional[Dict[str, Any]] = None, *,
+                      worker_id: str = "") -> Optional[Dict[str, Any]]:
     now = _now_iso()
+    worker_sql = " AND worker_id=?" if worker_id else ""
+    params = ((now, now, _compact_json(result or {}), str(worker_job_id), str(worker_id))
+              if worker_id else
+              (now, now, _compact_json(result or {}), str(worker_job_id)))
     with _LOCK:
         with connect(root) as conn:
             conn.execute(
                 """
                 UPDATE worker_jobs
                 SET status='succeeded', finished_at_utc=?, updated_at_utc=?,
-                    locked_until=0, result_json=?, error=''
-                WHERE worker_job_id=?
-                """,
-                (now, now, _compact_json(result or {}), str(worker_job_id)),
+                    locked_until=0, deadline_at=0, result_json=?, error=''
+                WHERE worker_job_id=? AND status='running' AND cancel_requested=0""" + worker_sql,
+                params,
             )
             conn.commit()
     return get_worker_job(root, worker_job_id)
 
 
 def fail_worker_job(root: Optional[Path], worker_job_id: str, error: str,
-                    *, retry: bool = True) -> Optional[Dict[str, Any]]:
+                    *, retry: bool = True, worker_id: str = "") -> Optional[Dict[str, Any]]:
     now = _now_iso()
     current = get_worker_job(root, worker_job_id) or {}
+    if not current or str(current.get("status") or "") != "running":
+        return current or None
+    if worker_id and str(current.get("worker_id") or "") != str(worker_id):
+        return current
+    if int(current.get("cancel_requested") or 0):
+        return finalize_worker_cancel(root, worker_job_id, worker_id=worker_id)
     attempts = int(current.get("attempts") or 0)
     max_attempts = int(current.get("max_attempts") or 1)
     status = "queued" if retry and attempts < max_attempts else "failed"
     finished = "" if status == "queued" else now
+    worker_sql = " AND worker_id=?" if worker_id else ""
+    params = ((status, finished, now, str(error or "")[:1000], str(worker_job_id), str(worker_id))
+              if worker_id else
+              (status, finished, now, str(error or "")[:1000], str(worker_job_id)))
     with _LOCK:
         with connect(root) as conn:
             conn.execute(
                 """
                 UPDATE worker_jobs
                 SET status=?, finished_at_utc=?, updated_at_utc=?,
-                    locked_until=0, error=?
-                WHERE worker_job_id=?
-                """,
-                (status, finished, now, str(error or "")[:1000], str(worker_job_id)),
+                    locked_until=0, deadline_at=0, worker_id='', heartbeat_at_utc='', error=?
+                WHERE worker_job_id=? AND status='running'""" + worker_sql,
+                params,
             )
             conn.commit()
     return get_worker_job(root, worker_job_id)

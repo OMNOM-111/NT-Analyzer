@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app import durable, vitek
-from app.ai_lab import chief_agent, dialogue_policy
+from app.ai_lab import agent_router, ai_ratings, chief_agent, dialogue_policy, universal_llm
+
+_REAL_AGENT_CANDIDATES = agent_router.candidates
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -242,6 +244,9 @@ def test_orchestrator_chat_uses_auto_model_and_executes_allowlisted_plan(tmp_pat
     assert started[0]["strategy_count_per_cycle"] == 1
     history = chief_agent._read_conversation(10)
     assert [row["role"] for row in history] == ["user", "assistant"]
+    assert history[-1]["role_id"] == "orchestrator"
+    assert history[-1]["model_id"] == "gemini-2.5-flash"
+    assert history[-1]["task_category"] == "orchestrator_chat_plan"
 
 
 def test_orchestrator_message_rating_updates_assistant_row(tmp_path, monkeypatch) -> None:
@@ -264,6 +269,65 @@ def test_orchestrator_message_rating_updates_assistant_row(tmp_path, monkeypatch
         assert "только ответы" in str(exc)
     else:
         raise AssertionError("user message rating must fail")
+
+
+def test_rate_message_upserts_canonical_route_and_changes_workspace_candidates(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(ai_ratings, "_root", lambda: tmp_path)
+    monkeypatch.setattr(ai_ratings, "EXPLORATION_RATE", 0.0)
+    monkeypatch.setattr(agent_router, "candidates", _REAL_AGENT_CANDIDATES)
+    agents = [
+        {
+            "id": "weak", "model": "weak-model", "provider": "test-provider",
+            "key_configured": True, "enabled": True, "endpoint_type": "chat",
+            "cooldown_active": False, "billing_mode": "free_tier", "role": "coder",
+            "priority": 1, "requests_today": 0, "account_name": "weak",
+        },
+        {
+            "id": "good", "model": "good-model", "provider": "test-provider",
+            "key_configured": True, "enabled": True, "endpoint_type": "chat",
+            "cooldown_active": False, "billing_mode": "free_tier", "role": "coder",
+            "priority": 10, "requests_today": 0, "account_name": "good",
+        },
+    ]
+    monkeypatch.setattr(agent_router.agent_registry, "list_agents", lambda: agents)
+    scope = {
+        "user_id": 17, "workspace_id": "ws-rating", "membership_role": "owner",
+        "is_owner": True,
+    }
+    assistant = chief_agent._append_conversation(
+        "assistant", "Фактический ответ кодера", source="app",
+        model="display-alias", provider="test-provider",
+        role_id="coder", model_id="good-model", task_category="code_review",
+        scope=scope,
+    )
+
+    assert [row["id"] for row in ai_ratings.rank_agents(
+        "coder", list(agents), explore=False, workspace_id="ws-rating",
+    )] == ["weak", "good"]
+    with universal_llm.usage_scope({"workspace_id": "ws-rating"}):
+        assert agent_router.candidates("coder")[0]["id"] == "weak"
+
+    rated = chief_agent.rate_message(
+        "default", assistant["message_id"], 3, source="owner", scope=scope,
+    )
+
+    assert rated["message"]["role_id"] == "coder"
+    assert rated["message"]["model_id"] == "good-model"
+    assert rated["message"]["workspace_id"] == "ws-rating"
+    with universal_llm.usage_scope({"workspace_id": "ws-rating"}):
+        assert agent_router.candidates("coder")[0]["id"] == "good"
+    with universal_llm.usage_scope({"workspace_id": "another-workspace"}):
+        assert agent_router.candidates("coder")[0]["id"] == "weak"
+
+    chief_agent.rate_message(
+        "default", assistant["message_id"], 1, source="owner", scope=scope,
+    )
+    pair = ai_ratings.tables(workspace_id="ws-rating")["role_model"][0]
+    assert pair["count"] == 1
+    assert pair["avg"] == 1.0
+    with universal_llm.usage_scope({"workspace_id": "ws-rating"}):
+        assert agent_router.candidates("coder")[0]["id"] == "weak"
 
 
 def test_message_fulfillment_and_participation_chain(tmp_path, monkeypatch) -> None:
@@ -308,6 +372,28 @@ def test_message_fulfillment_and_participation_chain(tmp_path, monkeypatch) -> N
     auto = next(row for row in refreshed if row["message_id"] == stale["message_id"])
     assert auto["fulfillment"] == "done"
     assert auto["fulfillment_source"] == "auto"
+
+
+def test_informational_message_has_no_manual_confirmation_and_negligible_auto_rating(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    from app.ai_lab import ai_ratings
+    monkeypatch.setattr(ai_ratings, "_root", lambda: tmp_path)
+
+    notice = chief_agent._append_conversation(
+        "assistant", "Стратегия включена.", source="test", model="notice-model",
+        actions=[{"name": "strategy_started", "status": "completed"}],
+    )
+
+    assert notice["message_kind"] == "informational"
+    assert notice["fulfillment"] == "done"
+    assert notice["informational_rating_weight"] == 0.0001
+    assert ai_ratings.tables()["models"][0]["avg"] == 3.0
+    try:
+        chief_agent.set_message_fulfillment("default", notice["message_id"], "failed")
+    except chief_agent.ChiefAgentError as exc:
+        assert "Информационные" in str(exc)
+    else:
+        raise AssertionError("informational notice must not accept manual fulfillment")
 
 
 def test_default_conversation_never_shows_completed_topic(tmp_path, monkeypatch) -> None:
@@ -2223,6 +2309,36 @@ def test_every_orchestrator_turn_has_auditable_gateway_metadata(tmp_path, monkey
     assert result["gateway"]["target"] == "orchestrator"
     assert result["gateway"]["outcome"] == "answered"
     assert result["gateway"]["single_response"] is True
+
+
+def test_orchestrator_request_id_replays_without_duplicate_messages(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    invocations = []
+
+    def invoke(*args, **kwargs):
+        invocations.append((args, kwargs))
+        return {
+            "content": '{"reply":"Один ответ.","confidence":0.9,"doubts":[],"actions":[]}',
+            "provider": "test", "actual_model": "test-model",
+        }
+
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", invoke)
+    first = chief_agent.handle_message(
+        "Один запрос", mirror_to_telegram=False,
+        conversation_id="C-IDEMPOTENT", request_id="request:one",
+    )
+    replay = chief_agent.handle_message(
+        "Один запрос", mirror_to_telegram=False,
+        conversation_id="C-IDEMPOTENT", request_id="request:one",
+    )
+
+    rows = chief_agent.conversation_messages("C-IDEMPOTENT")
+    assert [row["role"] for row in rows] == ["user", "assistant"]
+    assert {row["request_id"] for row in rows} == {"request:one"}
+    assert replay["idempotent_replay"] is True
+    assert replay["message"]["message_id"] == first["message"]["message_id"]
+    assert len(invocations) == 1
 
 
 def test_internal_task_execution_does_not_forge_owner_message(tmp_path, monkeypatch) -> None:

@@ -1984,7 +1984,11 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 100
             status_filter = str((qs.get("status") or [""])[0] or "")
-            self._json(HTTPStatus.OK, local_worker.list_jobs(status=status_filter, limit=limit))
+            self._json(HTTPStatus.OK, local_worker.list_jobs(
+                status=status_filter,
+                limit=limit,
+                workspace_id=str(context.get("workspace_id") or ""),
+            ))
             return
 
         if path == "/api/strategies":
@@ -3276,6 +3280,25 @@ class Handler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     ai_lm_studio.lm_status(allow_probe=True, force=force),
                 )
+                if effective_points > 10000:
+                    market_data.register_request(
+                        instrument, timeframe, limit, range_days, from_date, to_date,
+                    )
+                    queued = self._run_large_chart_batch([{
+                        "instrument": instrument, "timeframe": timeframe,
+                        "limit": limit, "range_days": range_days,
+                        "from": from_date, "to": to_date,
+                        "max_points": max_points,
+                    }], context)
+                    if queued is None:
+                        return True
+                    payload = queued[0] if queued else {"bars": [], "status": "waiting"}
+                else:
+                    payload = _market_bars_payload(
+                        instrument, timeframe, limit, range_days, from_date, to_date,
+                        max_points=max_points,
+                        workspace_id=str(context.get("workspace_id") or ""),
+                    )
             except Exception as e:
                 self._json(HTTPStatus.OK, {
                     "available": False,
@@ -3339,6 +3362,19 @@ class Handler(BaseHTTPRequestHandler):
                     "messages": ai_chief_agent.conversation_messages(conversation_id, limit=limit, scope=scope),
                 })
             except Exception as e:
+        if sub == "orchestrator" and len(parts) == 5 and parts[3] == "jobs":
+            context = getattr(self, "_remote_context", None) or {}
+            job = local_worker.get(
+                urllib.parse.unquote(parts[4]),
+                workspace_id=str(context.get("workspace_id") or ""),
+            )
+            if (not job or (not context.get("is_owner")
+                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
+                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
+                return True
+            self._json(HTTPStatus.OK, self._public_ai_worker_job(job))
+            return True
+
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"conversation load failed: {e}")
             return True
 
@@ -3522,37 +3558,120 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             raise
 
+    def _enqueue_ai_message(self, body: Dict[str, Any], *, scope: Dict[str, Any],
+                            mirror_to_telegram: bool = True) -> Dict[str, Any]:
+        request_id = str(
+            body.get("request_id") or self.headers.get("Idempotency-Key") or ""
+        ).strip()
+        if not request_id:
+            request_id = "air_" + hashlib.sha256(
+                f"{time.time_ns()}:{threading.get_ident()}:{os.urandom(16).hex()}".encode()
+            ).hexdigest()[:32]
+        # Self-heal a crashed worker before accepting more durable work.
+        local_worker.start_background_worker(interval_sec=0.2)
+        return local_worker.enqueue_ai_message(
+            str(body.get("message") or body.get("text") or ""),
+            request_id=request_id,
+            conversation_id=str(body.get("conversation_id") or "default"),
+            agent=str(body.get("agent") or body.get("agent_id") or ""),
+            scope=scope,
+            mirror_to_telegram=mirror_to_telegram,
+            timeout_sec=600,
+        )
+
+    @staticmethod
+    def _public_ai_worker_job(job: Dict[str, Any]) -> Dict[str, Any]:
+        state = str(job.get("status") or "")
+        out: Dict[str, Any] = {
+            "worker_job_id": str(job.get("worker_job_id") or ""),
+            "status": state,
+            "attempts": int(job.get("attempts") or 0),
+            "max_attempts": int(job.get("max_attempts") or 0),
+            "queued_at_utc": str(job.get("queued_at_utc") or ""),
+            "started_at_utc": str(job.get("started_at_utc") or ""),
+            "finished_at_utc": str(job.get("finished_at_utc") or ""),
+            "cancel_requested": bool(job.get("cancel_requested")),
+        }
+        if state == "succeeded" and isinstance(job.get("result"), dict):
+            out["result"] = job["result"]
+        if state in {"failed", "cancelled", "stale"}:
+            out["error"] = str(job.get("error") or "")
+        return out
+
+    def _wait_ai_message(self, job: Dict[str, Any], *, workspace_id: str,
+                         timeout_sec: float = 610.0) -> Optional[Dict[str, Any]]:
+        job_id = str(job.get("worker_job_id") or "")
+        deadline = time.monotonic() + max(1.0, float(timeout_sec))
+        while time.monotonic() < deadline:
+            row = local_worker.get(job_id, workspace_id=workspace_id)
+            if row and str(row.get("status") or "") in {
+                "succeeded", "failed", "cancelled", "stale",
+            }:
+                return row
+            time.sleep(0.2)
+        return None
+
+    def _run_large_chart_batch(self, rows: list[Dict[str, Any]],
+                               context: Dict[str, Any]) -> Optional[list[Dict[str, Any]]]:
+        """Execute a large chart calculation in the durable worker process."""
+        workspace_id = str(context.get("workspace_id") or "")
+        scope = {
+            "user_id": context.get("user_id"),
+            "workspace_id": workspace_id,
+            "membership_role": context.get("membership_role") or "",
+        }
+        runtime_dir = workspaces.runtime_dir_for_context(
+            context.get("workspace_context") or {}
+        )
+        try:
+            local_worker.start_background_worker(interval_sec=0.2)
+            job = local_worker.enqueue_chart_batch(
+                rows, scope=scope, runtime_dir=runtime_dir, timeout_sec=60,
+            )
+            terminal = self._wait_ai_message(
+                job, workspace_id=workspace_id, timeout_sec=65,
+            )
+        except (TypeError, ValueError) as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return None
+        except Exception as exc:
+            self._err(HTTPStatus.SERVICE_UNAVAILABLE, f"chart worker unavailable: {exc}")
+            return None
+        if terminal is None:
+            self._err(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                "chart worker did not finish before the request deadline",
+                code="chart_worker_timeout",
+            )
+            return None
+        if terminal.get("status") != "succeeded":
+            self._err(
+                HTTPStatus.BAD_GATEWAY,
+                str(terminal.get("error") or "chart worker failed"),
+                code=f"chart_worker_{terminal.get('status') or 'failed'}",
+            )
+            return None
+        result = terminal.get("result") if isinstance(terminal.get("result"), dict) else {}
+        series = result.get("series") if isinstance(result.get("series"), list) else None
+        return [row for row in (series or []) if isinstance(row, dict)] if series is not None else None
+
     def _ai_lab_orchestrator_stream(self, body: Dict[str, Any], *, scope: Dict[str, Any]) -> None:
-        """Stream the orchestrator reply as Server-Sent Events.
+        """Stream status/final events while durable worker executes the turn.
 
-        A live progress channel is streamed first, then the final answer. The
-        provider's private chain-of-thought is never exposed. The heavy work — including allowlisted
-        actions — runs in a worker thread through the SAME handle_message path as
-        the synchronous endpoint, so behaviour and safety are identical; only the
-        transport differs. Telegram receives the final reply and its auditable
-        model/action metadata; no extra model call is made for progress text.
+        The HTTP handler never invokes an LLM or an allowlisted action. It only
+        enqueues a workspace-bound SQLite job and observes its persisted state.
         """
-        message = str(body.get("message") or body.get("text") or "")
         conversation_id = str(body.get("conversation_id") or "default")
-        agent = str(body.get("agent") or "")
-
-        events: "queue.Queue[tuple]" = queue.Queue()
-
-        def on_thinking(_delta: str) -> None:
-            events.put(("progress", "Анализирую задачу…"))
-
-        def worker() -> None:
-            try:
-                out = ai_chief_agent.handle_message(
-                    message, source="app", mirror_to_telegram=True,
-                    conversation_id=conversation_id, agent=agent,
-                    on_thinking=on_thinking, scope=scope,
-                )
-                events.put(("result", out))
-            except ai_chief_agent.ChiefAgentError as exc:
-                events.put(("error", str(exc)))
-            except Exception as exc:  # defensive: a failure must not hang the stream
-                events.put(("error", f"orchestrator error: {exc}"))
+        workspace_id = str(scope.get("workspace_id") or "")
+        try:
+            job = self._enqueue_ai_message(body, scope=scope, mirror_to_telegram=True)
+        except (TypeError, ValueError) as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except Exception as exc:
+            self._err(HTTPStatus.SERVICE_UNAVAILABLE, f"AI worker queue unavailable: {exc}")
+            return
+        job_id = str(job.get("worker_job_id") or "")
 
         try:
             self.send_response(HTTPStatus.OK)
@@ -3567,9 +3686,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             raise
 
-        threading.Thread(target=worker, name="orchestrator-stream", daemon=True).start()
-
-        if not self._sse_write("thinking_start", {"conversation_id": conversation_id}):
+        if not self._sse_write("thinking_start", {
+            "conversation_id": conversation_id,
+            "worker_job_id": job_id,
+            "durable": True,
+        }):
             return
 
         # Fallback wait statuses for models that expose no native reasoning.
@@ -3584,24 +3705,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._sse_write("error", {"error": "orchestrator stream timeout"})
                 self._sse_write("done", {"ok": False})
                 return
-            try:
-                kind, payload = events.get(timeout=1.0)
-            except queue.Empty:
-                now = time.time()
-                if not saw_thinking and now - last_status >= 8.0:
-                    last_status = now
-                    if not self._sse_write("status", {"text": wait_statuses[status_idx % len(wait_statuses)]}):
-                        return
-                    status_idx += 1
-                elif not self._sse_keepalive():
-                    return
-                continue
-            if kind == "progress":
-                saw_thinking = True
-                if not self._sse_write("status", {"text": str(payload or "Анализирую задачу…")}):
-                    return
-            elif kind == "result":
-                out = payload if isinstance(payload, dict) else {}
+            row = local_worker.get(job_id, workspace_id=workspace_id)
+            state = str((row or {}).get("status") or "queued")
+            if state == "succeeded":
+                out = (row or {}).get("result") if isinstance((row or {}).get("result"), dict) else {}
                 msg = out.get("message") if isinstance(out.get("message"), dict) else {}
                 self._sse_write("thinking_done", {"text": ""})
                 self._sse_write("final", {
@@ -3616,8 +3723,9 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 self._sse_write("done", {"ok": True})
                 return
-            elif kind == "error":
-                self._sse_write("error", {"error": str(payload)})
+            if state in {"failed", "cancelled", "stale"}:
+                error = str((row or {}).get("error") or f"AI worker job {state}")
+                self._sse_write("error", {"error": error, "worker_job_id": job_id})
                 self._sse_write("done", {"ok": False})
                 return
 
@@ -3763,6 +3871,7 @@ class Handler(BaseHTTPRequestHandler):
                 # agent is a routing hint, never a bypass around authorization,
                 # conversation audit or capability execution.
                 out = ai_chief_agent.handle_message(
+                local_worker.cancel(job_id, workspace_id=workspace_id)
                     str(body.get("message") or body.get("text") or ""),
                     source="app", mirror_to_telegram=bool(body.get("mirror_to_telegram", False)),
                     conversation_id=str(body.get("conversation_id") or "default"),
@@ -3795,6 +3904,7 @@ class Handler(BaseHTTPRequestHandler):
                     label=str(body.get("label") or ""),
                     delay_seconds=int(body.get("delay_seconds") or 0),
                     duration_minutes=int(body.get("duration_minutes") or 0),
+                    "worker_job_id": job_id,
                     report_mode=str(body.get("report_mode") or "touch"),
                     action=str(body.get("action") or "snapshot"),
                     mirror_to_telegram=bool(body.get("mirror_to_telegram", True)),
@@ -3802,9 +3912,73 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(HTTPStatus.OK, out)
             except (ai_chief_agent.ChiefAgentError, ValueError, TypeError) as e:
+            now = time.time()
+            if now - last_status >= 8.0:
+                last_status = now
+                label = wait_statuses[status_idx % len(wait_statuses)]
+                if state == "queued":
+                    label = "Запрос в очереди…"
+                if not self._sse_write("status", {
+                    "text": label, "worker_status": state, "worker_job_id": job_id,
+                }):
+                    return
+                status_idx += 1
+            elif not self._sse_keepalive():
+                return
+            time.sleep(0.25)
+
+    def _ai_lab_orchestrator_sync(self, body: Dict[str, Any], *,
+                                  scope: Dict[str, Any],
+                                  mirror_to_telegram: bool) -> None:
+        workspace_id = str(scope.get("workspace_id") or "")
+        try:
+            job = self._enqueue_ai_message(
+                body, scope=scope, mirror_to_telegram=mirror_to_telegram,
+            )
+        except (TypeError, ValueError) as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except Exception as exc:
+            self._err(HTTPStatus.SERVICE_UNAVAILABLE, f"AI worker queue unavailable: {exc}")
+            return
+        row = self._wait_ai_message(job, workspace_id=workspace_id)
+        if row is None:
+            self._err(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                "AI worker did not finish before the request deadline.",
+                code="ai_worker_timeout",
+            )
+            return
+        state = str(row.get("status") or "")
+        if state == "succeeded":
+            out = row.get("result") if isinstance(row.get("result"), dict) else {}
+            self._json(HTTPStatus.OK, out)
+            return
+        self._err(
+            HTTPStatus.CONFLICT if state == "cancelled" else HTTPStatus.BAD_GATEWAY,
+            str(row.get("error") or f"AI worker job {state}"),
+            code=f"ai_worker_{state or 'failed'}",
+        )
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
+        if (len(parts) == 6 and parts[:4] == ["api", "ai-lab", "orchestrator", "jobs"]
+                and parts[5] == "cancel"):
+            context = getattr(self, "_remote_context", None) or {}
+            job_id = urllib.parse.unquote(parts[4])
+            workspace_id = str(context.get("workspace_id") or "")
+            job = local_worker.get(job_id, workspace_id=workspace_id)
+            if (not job or (not context.get("is_owner")
+                    and str(job.get("user_id") or "") != str(context.get("user_id") or ""))):
+                self._err(HTTPStatus.NOT_FOUND, "AI worker job not found")
+                return
+            cancelled = local_worker.cancel(job_id, workspace_id=workspace_id)
+            self._json(
+                HTTPStatus.OK,
+                {"ok": bool(cancelled.get("ok")),
+                 "job": self._public_ai_worker_job(cancelled.get("job") or job)},
+            )
+            return
         if path == "/api/ai-lab/orchestrator/conversations/rename":
             try:
                 scope = self._ai_conversation_scope()
@@ -4441,6 +4615,34 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(HTTPStatus.OK, ops.stop_intent(sid, reason)); return
                 if action == "paper/confirm-manual":
                     a = str(body.get("action") or "")
+                normalized_rows: list[Dict[str, Any]] = []
+                work_points = 0
+                oversized = False
+                for raw in rows:
+                    if not isinstance(raw, dict):
+                        continue
+                    limit_value = max(1, min(50000, int(raw.get("limit") or 1500)))
+                    max_value = max(0, min(20000, int(raw.get("max_points") or 0)))
+                    effective = min(limit_value, max_value if max_value >= 3 else limit_value)
+                    work_points += effective
+                    oversized = oversized or effective > 10000
+                    normalized_rows.append({
+                        "instrument": str(raw.get("instrument") or ""),
+                        "timeframe": str(raw.get("timeframe") or "5m"),
+                        "limit": limit_value,
+                        "range_days": int(raw.get("range_days") or 0),
+                        "from": str(raw.get("from") or ""),
+                        "to": str(raw.get("to") or ""),
+                        "max_points": max_value,
+                    })
+                context = getattr(self, "_remote_context", None) or {}
+                if oversized or work_points > 100000:
+                    queued = self._run_large_chart_batch(normalized_rows, context)
+                    if queued is None:
+                        return
+                    market_data.evaluate_alerts()
+                    self._json(HTTPStatus.OK, {"series": queued})
+                    return
                     self._json(HTTPStatus.OK, ops.confirm_manual(sid, a, reason)); return
                 if action == "paper/pause":
                     self._json(HTTPStatus.OK, ops.pause(sid, reason)); return
@@ -5144,7 +5346,10 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts_worker) != 5:
                 self._err(HTTPStatus.NOT_FOUND, f"no worker route: {path}")
                 return
-            self._json(HTTPStatus.OK, local_worker.cancel(parts_worker[3]))
+            self._json(HTTPStatus.OK, local_worker.cancel(
+                parts_worker[3],
+                workspace_id=str(context.get("workspace_id") or ""),
+            ))
             return
 
         if path.startswith("/api/auth/users/"):
