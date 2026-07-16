@@ -2429,6 +2429,22 @@ html.demo-tier.guest-browse .panel { filter: none; }
 .practice-chart-meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .practice-chart-host { flex: 1; min-height: 180px; position: relative; }
 .practice-chart-fallback { display: grid; place-items: center; min-height: 180px; text-align: center; gap: 4px; }
+.practice-chart-loading { min-height: 180px; display: grid; place-items: center; color: var(--tx-2); font-size: 12px; }
+.practice-market-state {
+  display: grid; grid-template-columns: repeat(3, minmax(72px, auto)) minmax(220px, 1fr) auto;
+  gap: 10px; align-items: center; margin-bottom: 10px; padding: 9px 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--bg-3, #1a2436) 88%, transparent);
+}
+.practice-market-state > div { display: grid; gap: 2px; }
+.practice-market-state span, .practice-market-state small { color: var(--tx-2); font-size: 10px; }
+.practice-market-state strong { font-size: 13px; }
+.practice-market-state[data-state="ready"] { border-color: color-mix(in srgb, var(--ok, #53c88f) 45%, var(--line)); }
+.practice-market-state[data-state="stale"], .practice-market-state[data-state="empty"] { border-color: color-mix(in srgb, var(--warn, #e0a33a) 55%, var(--line)); }
+.practice-market-state[data-state="error"] { border-color: color-mix(in srgb, var(--bad, #e46f6f) 55%, var(--line)); }
+.practice-market-source { min-width: 0; }
+.practice-market-source strong, .practice-market-source small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.practice-tf select { min-width: 70px; height: 30px; }
+.practice-list-title { margin: 0; color: var(--tx-2); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .practice-onboard {
   display: grid; place-items: center; min-height: min(70vh, 640px); padding: 12px;
 }
@@ -2470,6 +2486,9 @@ html.demo-tier.guest-browse .panel { filter: none; }
   .practice-charts.layout-2, .practice-charts.layout-4 { grid-template-columns: 1fr; }
   .practice-onboard-card { padding: 16px; }
   .practice-ticket { grid-template-columns: 1fr; }
+  .practice-market-state { grid-template-columns: repeat(3, 1fr); }
+  .practice-market-source { grid-column: 1 / -1; }
+  .practice-market-state > button { grid-column: 1 / -1; width: 100%; }
 }
 
 /* Mobile bottom-nav gets a light glass treatment so the ambient reads behind */

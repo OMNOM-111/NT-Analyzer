@@ -256,6 +256,8 @@ def _apply_risk(acct: Dict[str, Any]) -> None:
 
 
 def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
+    reserved_quantity = _reserved_quantity(acct)
+    equity = float(acct.get("equity") or 0)
     return {
         "ok": True,
         "mode": "practice",
@@ -275,6 +277,9 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
             "lock_reason": acct.get("lock_reason") or "",
             "symbol_default": acct.get("symbol_default"),
             "day_pnl": round(float(acct.get("equity") or 0) - float(acct.get("day_start_balance") or 0), 2),
+            # This is explicitly virtual buying power, not broker margin.
+            "buying_power": round(max(0.0, equity), 2),
+            "contracts_available": max(0, int(acct.get("position_limit") or 4) - reserved_quantity),
         },
         "positions": list(acct.get("positions") or []),
         "orders": [o for o in (acct.get("orders") or []) if o.get("status") == "working"],
@@ -284,6 +289,18 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
         "marks": dict(acct.get("marks") or {}),
         "layouts": [1, 2, 4],
     }
+
+
+def reset_account(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    """Delete only this user's virtual account; no live contour is touched."""
+    uid = _account_key(user_id, workspace_id)
+    with _LOCK:
+        doc = _load()
+        accounts = doc.setdefault("accounts", {})
+        existed = uid in accounts
+        accounts.pop(uid, None)
+        _save(doc)
+    return {"ok": True, "deleted": existed, "mode": "practice"}
 
 
 def _validate_brackets(side: str, reference: float, stop_loss: float,
@@ -537,6 +554,31 @@ def close_position(user_id: Any, position_id: str = "", *, symbol: str = "",
         _mark_to_market(acct)
         _save(doc)
         return {"ok": True, "trade": trade, **_public(acct)}
+
+
+def cancel_order(user_id: Any, order_id: str, *, workspace_id: str = "") -> Dict[str, Any]:
+    uid = _account_key(user_id, workspace_id)
+    target_id = str(order_id or "").strip()
+    if not target_id:
+        raise PracticeTradingError("Укажите ордер.")
+    with _LOCK:
+        doc = _load()
+        acct = (doc.get("accounts") or {}).get(uid)
+        if not acct:
+            raise PracticeTradingError("Счёт не найден.", 404)
+        order = next(
+            (row for row in acct.get("orders") or [] if str(row.get("order_id") or "") == target_id),
+            None,
+        )
+        if order is None:
+            raise PracticeTradingError("Ордер не найден.", 404)
+        if order.get("status") != "working":
+            raise PracticeTradingError("Отменить можно только рабочий ордер.", 409)
+        order["status"] = "cancelled_by_user"
+        order["cancelled_at_utc"] = _now_iso()
+        _mark_to_market(acct)
+        _save(doc)
+        return {"ok": True, "cancelled_order_id": target_id, **_public(acct)}
 
 
 def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,

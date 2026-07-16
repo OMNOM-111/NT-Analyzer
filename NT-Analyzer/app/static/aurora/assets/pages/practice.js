@@ -3,13 +3,15 @@
   const UI = window.UI;
   const API = window.API;
   const SYMBOLS = ['MNQ', 'MES', 'MGC'];
-  const TF = '1m';
+  let TF = '1m';
 
   let state = null;
   let hasAccount = false;
   let charts = []; // { el, engine, symbol }
   let pollTimer = null;
   let lastLiveClose = {};
+  let latestSeries = {};
+  let chartRequestId = 0;
 
   function money(v) { return UI.money(Number(v || 0), { sign: true, dec: 2 }); }
   function activeSymbol() {
@@ -56,21 +58,23 @@
     });
   }
 
-  async function fetchBars(symbol) {
+  function firstSeries(payload) {
+    const series = (payload && (payload.series || payload.results || payload.items)) || [];
+    if (Array.isArray(series) && series.length && series[0] && typeof series[0] === 'object') return series[0];
+    return payload && typeof payload === 'object' ? payload : {};
+  }
+
+  async function fetchSeries(symbol) {
     try {
       const payload = await API.http.marketBarsBatch({
-        requests: [{ instrument: symbol, timeframe: TF, max_points: 180 }],
+        requests: [{ instrument: symbol, timeframe: TF, limit: 600, max_points: 240 }],
       });
-      const series = (payload && (payload.series || payload.results || payload.items)) || [];
-      if (Array.isArray(series) && series.length) {
-        const first = series[0];
-        if (Array.isArray(first?.bars)) return first.bars;
-      }
-      if (payload && Array.isArray(payload.bars)) return payload.bars;
-      const one = await API.http.marketBars({ instrument: symbol, timeframe: TF, max_points: 180 });
-      return Array.isArray(one?.bars) ? one.bars : [];
+      const first = firstSeries(payload);
+      if (Array.isArray(first.bars)) return first;
+      const one = await API.http.marketBars({ instrument: symbol, timeframe: TF, limit: 600, max_points: 240 });
+      return one && typeof one === 'object' ? one : { bars: [], status: 'empty' };
     } catch (e) {
-      return [];
+      return { bars: [], status: 'error', error: e.message || String(e) };
     }
   }
 
@@ -80,21 +84,77 @@
     return Number(last.c || last.close || 0) || 0;
   }
 
+  function price(v) {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n.toLocaleString('en-US', { maximumFractionDigits: 8 }) : '—';
+  }
+
+  function ageLabel(seconds) {
+    const n = Number(seconds);
+    if (!Number.isFinite(n)) return 'время неизвестно';
+    if (n < 90) return Math.round(n) + ' сек. назад';
+    if (n < 7200) return Math.round(n / 60) + ' мин. назад';
+    return Math.round(n / 3600) + ' ч. назад';
+  }
+
+  function sourceLabel(series) {
+    const src = (series && series.source) || {};
+    const active = src.active || src.provider || src.kind || 'источник не определён';
+    const recovery = (series && series.gap_recovery) || {};
+    const recovered = Number(recovery.recovered_bars || 0);
+    return String(active) + (recovered ? ` · восстановлено ${recovered}` : '');
+  }
+
+  function setMarketState(series, symbol) {
+    const root = UI.qs('#p-market-state');
+    const srcEl = UI.qs('#p-chart-src');
+    const bars = Array.isArray(series?.bars) ? series.bars : [];
+    const close = markFromBars(bars);
+    const quote = series?.quote || {};
+    const freshness = series?.freshness || {};
+    const source = series?.source || {};
+    const recovery = series?.gap_recovery || {};
+    const loading = series?.status === 'loading';
+    const failed = series?.status === 'error';
+    const empty = !bars.length;
+    const stale = !!freshness.stale || series?.status === 'external_stale' || series?.status === 'failover_stale';
+    const stateName = loading ? 'loading' : (failed ? 'error' : (empty ? 'empty' : (stale ? 'stale' : 'ready')));
+    if (root) root.dataset.state = stateName;
+    const set = (id, text) => { const el = UI.qs(id); if (el) el.textContent = text; };
+    set('#p-bid', price(quote.bid));
+    set('#p-ask', price(quote.ask));
+    set('#p-last', price(quote.last || close));
+    const provider = sourceLabel(series || {});
+    set('#p-source-state', loading ? 'Загрузка…' : (failed ? ('Ошибка: ' + (series.error || 'нет ответа')) : (empty ? 'Нет доступных баров' : provider)));
+    const timing = freshness.data_as_of_utc || source.updated_at_utc || '';
+    const flags = [];
+    if (quote.bid_ask_estimated) flags.push('bid/ask ориентировочные');
+    if (stale) flags.push('данные неактуальны');
+    if (recovery.attempted && recovery.provider_available === false) flags.push('failover недоступен');
+    set('#p-source-time', [timing ? ageLabel(freshness.age_sec ?? source.age_sec) : 'timestamp отсутствует', ...flags].join(' · '));
+    if (srcEl) srcEl.textContent = empty ? 'котировки недоступны' : `${provider} · ${symbol} · ${TF}`;
+  }
+
   async function renderCharts(layout) {
     const host = UI.qs('#practice-charts');
     if (!host) return;
+    const requestId = ++chartRequestId;
     destroyCharts();
     const n = Number(layout) || 1;
     const base = activeSymbol();
     host.className = 'practice-charts layout-' + n;
-    host.innerHTML = '';
+    host.innerHTML = '<div class="practice-chart-loading">Загружаю рыночные данные…</div>';
     const srcEl = UI.qs('#p-chart-src');
+    if (srcEl) srcEl.textContent = 'загрузка · ' + base + ' · ' + TF;
+    setMarketState({ bars: [], status: 'loading', freshness: {} }, base);
+    host.innerHTML = '';
 
     for (let i = 0; i < n; i++) {
+      if (requestId !== chartRequestId) return;
       const sym = SYMBOLS[(SYMBOLS.indexOf(base) + i) % SYMBOLS.length];
       const pane = document.createElement('div');
       pane.className = 'practice-chart-pane';
-      pane.innerHTML = `<div class="practice-chart-meta"><strong>${UI.esc(sym)}</strong><span class="sub">${TF}</span></div><div class="practice-chart-host"></div>`;
+      pane.innerHTML = `<div class="practice-chart-meta"><strong>${UI.esc(sym)}</strong><span class="sub">${UI.esc(TF)} · загрузка</span></div><div class="practice-chart-host"><div class="practice-chart-loading">Ожидание данных…</div></div>`;
       host.appendChild(pane);
       const chartHost = UI.qs('.practice-chart-host', pane);
       let engine = null;
@@ -106,20 +166,27 @@
           });
         } catch (e) { engine = null; }
       }
-      const bars = await fetchBars(sym);
+      const series = await fetchSeries(sym);
+      if (requestId !== chartRequestId) return;
+      latestSeries[sym] = series;
+      const bars = Array.isArray(series?.bars) ? series.bars : [];
       const close = markFromBars(bars);
       if (close) lastLiveClose[sym] = close;
+      const meta = UI.qs('.practice-chart-meta .sub', pane);
+      if (meta) meta.textContent = `${TF} · ${sourceLabel(series)}`;
+      if (i === 0) setMarketState(series, sym);
       if (engine && bars.length) {
         engine.setData(bars);
-        if (srcEl) srcEl.textContent = 'рыночный поток · ' + sym;
       } else {
         const mark = ((state && state.marks) || {})[sym] || close || '—';
         if (chartHost) {
-          chartHost.innerHTML = `<div class="practice-chart-fallback"><div class="tb-h1">${UI.esc(String(mark))}</div><div class="sub">${bars.length ? 'график недоступен' : 'ожидание котировок · симуляция mark'}</div></div>`;
+          const reason = series?.error || series?.note || (bars.length ? 'ChartEngine не построил серию' : 'Ни один источник не вернул бары');
+          chartHost.innerHTML = `<div class="practice-chart-fallback"><div class="tb-h1">${UI.esc(String(mark))}</div><div class="sub">${UI.esc(reason)}</div><button class="btn ghost sm practice-pane-retry" type="button">Повторить</button></div>`;
+          const retry = UI.qs('.practice-pane-retry', chartHost);
+          if (retry) retry.onclick = () => renderCharts(activeLayout());
         }
-        if (srcEl) srcEl.textContent = bars.length ? 'котировки без ChartEngine' : 'симуляция · не биржа';
       }
-      charts.push({ el: pane, engine, symbol: sym });
+      charts.push({ el: pane, engine, symbol: sym, series });
     }
   }
 
@@ -152,6 +219,7 @@
       kpis.innerHTML = [
         ['Equity', money(a.equity)],
         ['Balance', money(a.balance)],
+        ['Buying power · virtual', money(a.buying_power)],
         ['Day P&L', money(a.day_pnl)],
         ['Unrealized', money(a.unrealized_pnl)],
         ['Deposit', money(a.deposit)],
@@ -160,16 +228,32 @@
     renderRisk(a);
     const positions = doc.positions || [];
     UI.qs('#p-positions').innerHTML = positions.length
-      ? positions.map(p => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(p.side)} ${UI.esc(p.symbol)} ×${p.quantity}</div><div class="row-sub">avg ${p.avg_price} · mark ${p.mark || '—'} · uPnL ${money(p.unrealized_pnl)}</div></div></div>`).join('')
+      ? positions.map(p => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(p.side)} ${UI.esc(p.symbol)} ×${p.quantity}</div><div class="row-sub">avg ${p.avg_price} · mark ${p.mark || '—'} · uPnL ${money(p.unrealized_pnl)} · SL ${p.stop_loss || '—'} · TP ${p.take_profit || '—'}</div></div><button class="btn ghost sm p-close-one" data-position-id="${UI.esc(p.position_id || '')}" type="button">Закрыть</button></div>`).join('')
       : '<div class="muted">Нет открытых позиций</div>';
     const orders = doc.orders || [];
     UI.qs('#p-orders').innerHTML = orders.length
-      ? orders.map(o => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(o.order_type)} ${UI.esc(o.side)} ${UI.esc(o.symbol)}</div><div class="row-sub">${o.limit_price || ''} · ${UI.esc(o.status)}</div></div></div>`).join('')
+      ? orders.map(o => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(o.order_type)} ${UI.esc(o.side)} ${UI.esc(o.symbol)} ×${o.quantity}</div><div class="row-sub">${o.limit_price || ''} · ${UI.esc(o.status)}</div></div><button class="btn ghost sm p-cancel-order" data-order-id="${UI.esc(o.order_id || '')}" type="button">Отменить</button></div>`).join('')
       : '<div class="muted">Нет рабочих ордеров</div>';
     const trades = doc.trades || [];
     UI.qs('#p-trades').innerHTML = trades.slice(0, 12).map(t =>
       `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(t.action)} ${UI.esc(t.side)} ${UI.esc(t.symbol)}</div><div class="row-sub">${money(t.pnl)} · comm ${money(t.commission)} · ${UI.esc((t.at_utc || '').slice(0, 19))}</div></div></div>`
     ).join('') || '<div class="muted">Сделок пока нет</div>';
+    UI.qsa('.p-close-one').forEach(btn => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try { render(await API.http.practiceClose({ position_id: btn.dataset.positionId })); await refreshReport(); }
+        catch (e) { UI.reportError(e); }
+        finally { btn.disabled = false; }
+      };
+    });
+    UI.qsa('.p-cancel-order').forEach(btn => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try { render(await API.http.practiceCancelOrder({ order_id: btn.dataset.orderId })); UI.toast('Ордер отменён'); }
+        catch (e) { UI.reportError(e); }
+        finally { btn.disabled = false; }
+      };
+    });
   }
 
   async function refreshReport() {
@@ -233,7 +317,9 @@
     if (!hasAccount) return;
     const sym = activeSymbol();
     try {
-      const bars = await fetchBars(sym);
+      const series = await fetchSeries(sym);
+      latestSeries[sym] = series;
+      const bars = Array.isArray(series?.bars) ? series.bars : [];
       const close = markFromBars(bars);
       if (close) {
         lastLiveClose[sym] = close;
@@ -242,15 +328,43 @@
             try { c.engine.setData(bars); } catch (e) { /* ignore */ }
           }
         });
-        const srcEl = UI.qs('#p-chart-src');
-        if (srcEl) srcEl.textContent = 'рыночный поток · live · ' + sym;
       }
+      setMarketState(series, sym);
     } catch (e) { /* keep sim */ }
     try {
+      // The backend deliberately ignores client price and resolves the newest
+      // trusted bridge/failover close itself before updating the virtual mark.
       const body = { symbol: sym };
       const doc = await API.http.practiceTick(body);
       render(doc);
     } catch (e) { /* ignore while no account */ }
+  }
+
+  async function submitOrder(side) {
+    const buy = UI.qs('#p-buy');
+    const sell = UI.qs('#p-sell');
+    if (buy) buy.disabled = true;
+    if (sell) sell.disabled = true;
+    const sideSelect = UI.qs('#p-side');
+    if (sideSelect) sideSelect.value = side;
+    try {
+      const doc = await API.http.practiceOrder({
+        symbol: UI.qs('#p-symbol').value,
+        side,
+        quantity: Number(UI.qs('#p-qty').value || 1),
+        order_type: UI.qs('#p-type').value,
+        limit_price: Number(UI.qs('#p-limit').value || 0),
+        stop_loss: Number(UI.qs('#p-sl').value || 0),
+        take_profit: Number(UI.qs('#p-tp').value || 0),
+      });
+      UI.toast(doc.filled ? 'Исполнено на учебном счёте' : 'Учебный ордер выставлен');
+      render(doc);
+      await refreshReport();
+    } catch (e) { UI.reportError(e); }
+    finally {
+      if (buy) buy.disabled = false;
+      if (sell) sell.disabled = false;
+    }
   }
 
   UI.ready(async () => {
@@ -274,11 +388,21 @@
 
     const resetBtn = UI.qs('#p-reset');
     if (resetBtn) {
-      resetBtn.onclick = () => {
+      resetBtn.onclick = async () => {
         if (!confirm('Сбросить учебный счёт? Потребуется снова внести виртуальную сумму.')) return;
-        showOnboard('Введите новую сумму депозита.');
+        resetBtn.disabled = true;
+        try {
+          await API.http.practiceReset();
+          state = null;
+          latestSeries = {};
+          showOnboard('Учебный счёт удалён. Введите новую сумму депозита.');
+        } catch (e) { UI.reportError(e); }
+        finally { resetBtn.disabled = false; }
       };
     }
+
+    const retryData = UI.qs('#p-retry-data');
+    if (retryData) retryData.onclick = () => renderCharts(activeLayout());
 
     UI.qsa('#layout-seg button').forEach(b => {
       b.onclick = async () => {
@@ -302,25 +426,20 @@
       };
     }
 
-    const buy = UI.qs('#p-buy');
-    if (buy) {
-      buy.onclick = async () => {
-        try {
-          const doc = await API.http.practiceOrder({
-            symbol: UI.qs('#p-symbol').value,
-            side: UI.qs('#p-side').value,
-            quantity: Number(UI.qs('#p-qty').value || 1),
-            order_type: UI.qs('#p-type').value,
-            limit_price: Number(UI.qs('#p-limit').value || 0),
-            stop_loss: Number(UI.qs('#p-sl').value || 0),
-            take_profit: Number(UI.qs('#p-tp').value || 0),
-          });
-          UI.toast(doc.filled ? 'Исполнено' : 'Ордер выставлен');
-          render(doc);
-          await refreshReport();
-        } catch (e) { UI.reportError(e); }
+    const timeframe = UI.qs('#p-timeframe');
+    if (timeframe) {
+      timeframe.value = TF;
+      timeframe.onchange = async () => {
+        TF = timeframe.value || '1m';
+        latestSeries = {};
+        if (hasAccount) await renderCharts(activeLayout());
       };
     }
+
+    const buy = UI.qs('#p-buy');
+    if (buy) buy.onclick = () => submitOrder('buy');
+    const sell = UI.qs('#p-sell');
+    if (sell) sell.onclick = () => submitOrder('sell');
     const closeBtn = UI.qs('#p-close');
     if (closeBtn) {
       closeBtn.onclick = async () => {

@@ -19,6 +19,9 @@ def test_integration_status_never_exposes_secrets(monkeypatch) -> None:
     assert status["telegram"]["configured"] is True
     assert status["topstep"]["configured"] is True
     assert status["topstep"]["live_actions_enabled"] is False
+    assert status["topstep"]["available"] is False
+    assert status["topstep"]["phase"] == "safe_scaffold"
+    assert status["topstep"]["blocking_reasons"]
     assert "secret" not in str(status).lower()
     assert "123456" not in str(status)
 

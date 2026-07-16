@@ -101,3 +101,33 @@ def test_close_with_unknown_selector_does_not_close_first_position(practice_stor
         practice_trading.close_position(11, "missing-position")
     assert exc.value.status == 404
     assert practice_trading.get_account(11)["positions"]
+
+
+def test_cancel_working_order_releases_virtual_buying_power(practice_store):
+    created = practice_trading.create_account(12, deposit=20000, position_limit=4)
+    assert created["account"]["buying_power"] == 20000
+    mark = created["marks"]["MNQ"]
+    resting = practice_trading.place_order(
+        12, symbol="MNQ", side="buy", quantity=2,
+        order_type="limit", limit_price=mark - 100,
+    )
+    assert resting["account"]["contracts_available"] == 2
+
+    cancelled = practice_trading.cancel_order(12, resting["order"]["order_id"])
+
+    assert cancelled["orders"] == []
+    assert cancelled["account"]["contracts_available"] == 4
+    assert cancelled["order_history"][0]["status"] == "cancelled_by_user"
+
+
+def test_reset_account_really_deletes_only_selected_workspace(practice_store):
+    practice_trading.create_account(13, workspace_id="ws_a", deposit=10000)
+    practice_trading.create_account(13, workspace_id="ws_b", deposit=25000)
+
+    result = practice_trading.reset_account(13, workspace_id="ws_a")
+
+    assert result["deleted"] is True
+    with pytest.raises(practice_trading.PracticeTradingError) as exc:
+        practice_trading.get_account(13, workspace_id="ws_a")
+    assert exc.value.status == 404
+    assert practice_trading.get_account(13, workspace_id="ws_b")["account"]["balance"] == 25000

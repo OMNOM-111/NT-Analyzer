@@ -128,6 +128,22 @@ def test_production_requires_explicit_flags_and_verified_results(micro_store, mo
     assert filled["trade"]["pnl_full"] == 25
 
 
+def test_micro_live_ui_gate_is_coming_soon_without_real_adapters(micro_store, monkeypatch):
+    monkeypatch.setenv("NTA_APP_ENV", "production")
+    monkeypatch.delenv("NTA_ALLOW_REAL_PAYMENTS", raising=False)
+    monkeypatch.delenv("NTA_ALLOW_LIVE_ORDERS", raising=False)
+    monkeypatch.delenv("NTA_MICRO_LIVE_PAYMENT_ADAPTER", raising=False)
+    monkeypatch.delenv("NTA_MICRO_LIVE_BROKER_ADAPTER", raising=False)
+
+    doc = micro_live.ensure_account(47)
+
+    assert doc["available"] is False
+    assert doc["availability"]["mode"] == "coming_soon"
+    assert doc["availability"]["real_money"] is False
+    assert "payment_adapter_not_configured" in doc["availability"]["blocking_reasons"]
+    assert "broker_adapter_not_configured" in doc["availability"]["blocking_reasons"]
+
+
 def test_staging_data_root_is_separate_by_construction(micro_store, monkeypatch):
     monkeypatch.setenv("NTA_APP_ENV", "production")
     production = micro_live._store_path()

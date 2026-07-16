@@ -45,13 +45,20 @@ def topstep_status() -> Dict[str, Any]:
     configured = bool(os.environ.get("NTA_TOPSTEP_API_KEY") and os.environ.get("NTA_TOPSTEP_ACCOUNT_ID"))
     return {
         "configured": configured,
-        "status": "configured" if configured else "not_configured",
+        "status": "scaffold_configured" if configured else "scaffold_not_configured",
+        "phase": "safe_scaffold",
+        "available": False,
         "account_id_configured": bool(os.environ.get("NTA_TOPSTEP_ACCOUNT_ID")),
         "api_key_configured": bool(os.environ.get("NTA_TOPSTEP_API_KEY")),
         "live_actions_enabled": False,
         "approved_strategies_only": True,
         "transport": "NinjaTrader",
-        "note": "Передача live-сигналов заблокирована до отдельной валидации API и risk-gate.",
+        "blocking_reasons": [
+            "topstep_api_adapter_not_validated",
+            "end_to_end_risk_gate_not_certified",
+            "browser_live_commands_forbidden",
+        ],
+        "note": "Это безопасный scaffold: передача live-сигналов заблокирована до отдельной валидации API, broker path и risk-gate.",
     }
 
 

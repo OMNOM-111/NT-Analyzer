@@ -1037,6 +1037,34 @@ def chart_runtime_status(instrument: Any = "", timeframe: Any = "5m") -> Dict[st
     max_age_sec = 172800 if tf == "1D" else 300
     data_available = bool(row and row.get("bars"))
     data_fresh = bool(data_available and age_sec is not None and age_sec <= max_age_sec)
+    bridge_ready = bool(nt_running and heartbeat_fresh and data_available)
+    external: Optional[Dict[str, Any]] = None
+    if not bridge_ready:
+        try:
+            from . import market_data_failover
+            external = market_data_failover.fetch_external_series(requested or root, tf, 10)
+        except Exception:
+            external = None
+    external_bars = list((external or {}).get("bars") or [])
+    external_source = (external or {}).get("source") if isinstance((external or {}).get("source"), dict) else {}
+    if external_bars:
+        external_freshness = (external or {}).get("freshness") if isinstance((external or {}).get("freshness"), dict) else {}
+        return {
+            "ready": True,
+            "nt_running": nt_running,
+            "heartbeat_fresh": heartbeat_fresh,
+            "heartbeat_age_sec": heartbeat.get("age_sec"),
+            "data_fresh": bool(external_freshness.get("fresh")),
+            "data_available": True,
+            "stale_data": bool(external_freshness.get("stale")),
+            "data_age_sec": external_freshness.get("age_sec"),
+            "instrument": str((external or {}).get("instrument") or requested),
+            "timeframe": str((external or {}).get("matched_timeframe") or tf),
+            "reason": "",
+            "source": external_source,
+            "independent_provider": True,
+            "failover_active": True,
+        }
     if not nt_running:
         reason = "NinjaTrader не запущен. Не могу открыть актуальный график или прислать его снимок."
     elif not heartbeat_fresh:
@@ -1054,7 +1082,7 @@ def chart_runtime_status(instrument: Any = "", timeframe: Any = "5m") -> Dict[st
         # time is metadata, not a reason to refuse a snapshot. Fresh heartbeat
         # proves the Bridge itself is alive; ``data_fresh`` remains available
         # to callers that truly require live-price semantics.
-        "ready": bool(nt_running and heartbeat_fresh and data_available),
+        "ready": bridge_ready,
         "nt_running": nt_running,
         "heartbeat_fresh": heartbeat_fresh,
         "heartbeat_age_sec": heartbeat.get("age_sec"),
@@ -1065,6 +1093,8 @@ def chart_runtime_status(instrument: Any = "", timeframe: Any = "5m") -> Dict[st
         "instrument": str(row.get("instrument") or requested),
         "timeframe": str(row.get("timeframe") or tf),
         "reason": reason,
+        "independent_provider": False,
+        "failover_active": False,
     }
 
 
@@ -1139,7 +1169,21 @@ def latest_close(instrument: Any, *,
             if newest is None or stamp >= newest[0]:
                 newest = (stamp, close)
             break
-    return float(newest[1]) if newest else 0.0
+    if newest:
+        return float(newest[1])
+    try:
+        from . import market_data_failover
+        external = market_data_failover.fetch_external_series(symbol, "1m", 4)
+        for row in reversed((external or {}).get("bars") or []):
+            try:
+                close = float(row.get("c", row.get("close")))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if math.isfinite(close) and close > 0:
+                return close
+    except Exception:
+        pass
+    return 0.0
 
 
 def ensure_chart_runtime(instrument: Any = "", timeframe: Any = "5m", *,
@@ -1186,18 +1230,25 @@ def render_chart_snapshot(instrument: Any = "", timeframe: Any = "5m", *,
     rows = [row for row in (doc.get("series") or []) if isinstance(row, dict) and isinstance(row.get("bars"), list)]
     if root:
         rows = [row for row in rows if str(row.get("instrument") or "").upper().split(" ")[0] == root]
-    if not rows:
+    payload: Optional[Dict[str, Any]] = None
+    if rows and not availability.get("independent_provider"):
+        rows.sort(key=lambda row: (
+            1 if normalize_timeframe(row.get("timeframe") or "") == tf else 0,
+            str(row.get("updated_at_utc") or ""),
+        ), reverse=True)
+        row = rows[0]
+        symbol = str(row.get("instrument") or requested or "")
+        matched_tf = normalize_timeframe(row.get("timeframe") or tf)
+        payload = _series_from_row(row, symbol, matched_tf, 180)
+    else:
+        from . import market_data_failover
+        payload = market_data_failover.fetch_external_series(requested or root, tf, 180)
+        symbol = str((payload or {}).get("instrument") or requested or root)
+        matched_tf = normalize_timeframe((payload or {}).get("matched_timeframe") or tf)
+    if not payload or not payload.get("bars"):
         if requested:
             register_request(requested, tf, 600, range_days=5)
-        raise MarketDataError("Живые бары для серверного снимка пока не поступили от bridge.")
-    rows.sort(key=lambda row: (
-        1 if normalize_timeframe(row.get("timeframe") or "") == tf else 0,
-        str(row.get("updated_at_utc") or ""),
-    ), reverse=True)
-    row = rows[0]
-    symbol = str(row.get("instrument") or requested or "")
-    matched_tf = normalize_timeframe(row.get("timeframe") or tf)
-    payload = _series_from_row(row, symbol, matched_tf, 180)
+        raise MarketDataError("Бары для серверного снимка не получены ни от bridge, ни от независимого provider.")
     bars = list((payload or {}).get("bars") or [])
     png = _render_candles_png(bars)
     clean_meta = {

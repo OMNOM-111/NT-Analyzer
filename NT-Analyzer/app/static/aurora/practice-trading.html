@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Учебная торговля — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260716-practice2">
+<link rel="stylesheet" href="assets/theme.css?v=20260716-practice3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="practice" data-title="Учебная торговля" data-kicker="Сначала виртуальный депозит · затем терминал как в TopStep">
@@ -58,6 +58,7 @@
             <button type="button" data-symbol="MES">MES</button>
             <button type="button" data-symbol="MGC">MGC</button>
           </div>
+          <label class="practice-tf"><span class="sr-only">Таймфрейм</span><select id="p-timeframe" aria-label="Таймфрейм"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option></select></label>
           <div class="seg" id="layout-seg" role="group" aria-label="Раскладка графиков">
             <button type="button" class="active" data-layout="1">1</button>
             <button type="button" data-layout="2">2</button>
@@ -65,6 +66,13 @@
           </div>
         </div>
         <div class="panel-b">
+          <div class="practice-market-state" id="p-market-state" data-state="loading">
+            <div><span>Bid</span><strong id="p-bid">—</strong></div>
+            <div><span>Ask</span><strong id="p-ask">—</strong></div>
+            <div><span>Last</span><strong id="p-last">—</strong></div>
+            <div class="practice-market-source"><span>Источник / актуальность</span><strong id="p-source-state">Загрузка…</strong><small id="p-source-time">—</small></div>
+            <button class="btn ghost sm" id="p-retry-data" type="button">Повторить</button>
+          </div>
           <div id="practice-charts" class="practice-charts layout-1"></div>
         </div>
       </section>
@@ -92,7 +100,8 @@
               <div class="field"><label>Take Profit</label><input id="p-tp" type="number" step="0.25" placeholder="опц."></div>
             </div>
             <div class="flex gap-sm wrap">
-              <button class="btn primary" id="p-buy" type="button">Отправить ордер</button>
+              <button class="btn primary" id="p-buy" type="button">Buy / Long</button>
+              <button class="btn danger" id="p-sell" type="button">Sell / Short</button>
               <button class="btn danger" id="p-close" type="button">Закрыть позицию</button>
             </div>
           </div>
@@ -106,8 +115,11 @@
         <section class="panel">
           <div class="panel-h"><h2>Позиции · ордера · отчёт</h2></div>
           <div class="panel-b col gap-lg">
+            <h3 class="practice-list-title">Открытые позиции</h3>
             <div class="list" id="p-positions"></div>
+            <h3 class="practice-list-title">Рабочие ордера</h3>
             <div class="list" id="p-orders"></div>
+            <h3 class="practice-list-title">История сделок</h3>
             <div class="list" id="p-trades"></div>
             <div class="finance-note" id="p-report"></div>
             <button class="btn ghost sm" id="p-reset" type="button">Сбросить счёт и внести заново</button>
@@ -117,12 +129,12 @@
     </div>
   </div>
 
-<script src="assets/api.js?v=20260716-release1"></script>
+<script src="assets/api.js?v=20260716-practice3"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260715-inbox6"></script>
 <script src="assets/victor.js?v=20260715-inbox6"></script>
 <script src="assets/chart-engine.js?v=20260710-tpl2"></script>
-<script src="assets/pages/practice.js?v=20260716-practice2"></script>
+<script src="assets/pages/practice.js?v=20260716-practice3"></script>
 </body>
 </html>

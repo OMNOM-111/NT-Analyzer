@@ -60,6 +60,7 @@ if __package__ is None or __package__ == "":
     from app import paypal  # type: ignore[no-redef]
     from app import workspaces  # type: ignore[no-redef]
     from app import market_data  # type: ignore[no-redef]
+    from app import market_data_failover  # type: ignore[no-redef]
     from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
@@ -120,6 +121,7 @@ else:
     from . import paypal
     from . import workspaces
     from . import market_data
+    from . import market_data_failover
     from . import secure_store as _secure_store
     from . import marginrefresh
     from . import ops
@@ -369,8 +371,14 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         runtime_bars = market_data.series_from_index(snapshot_index, instrument, timeframe, limit)
     else:
         runtime_bars = market_data.read_runtime_series(instrument, timeframe, limit)
-    if runtime_bars and runtime_bars.get("bars"):
-        out = runtime_bars
+    heartbeat = ops_runtime.read_heartbeat()
+    primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+    unified = market_data_failover.apply_failover(
+        runtime_bars, instrument, timeframe, limit,
+        primary_healthy=primary_healthy,
+    )
+    if unified and unified.get("bars"):
+        out = unified
     else:
         out = jobqueue.read_instrument_bars(instrument, timeframe, limit)
         out["status"] = "historical_fallback" if out.get("bars") else (
@@ -384,6 +392,14 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
             out["note"] = detail or (
                 "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
                 "актуальность контракта и установленную версию Bridge.")
+        out["gap_recovery"] = {
+            "attempted": True,
+            "provider_available": False,
+            "mode": "historical_artifact" if out.get("bars") else "unavailable",
+            "recovered_bars": 0,
+            "unresolved_gaps": 0,
+            "primary_healthy": primary_healthy,
+        }
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     try:
@@ -2502,6 +2518,20 @@ class Handler(BaseHTTPRequestHandler):
             ))
             return
 
+        if path == "/api/practice/reset":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.reset_account(
+                    context.get("user_id"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path == "/api/community/ratings":
             context = getattr(self, "_remote_context", None) or {}
             self._json(HTTPStatus.OK, {"ok": True, "ratings": community.ratings(
@@ -3250,6 +3280,15 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             data, mime = found
             self._bytes(HTTPStatus.OK, data, mime)
+            return True
+
+        if path == "/api/ops/runtime/bars/status":
+            status = market_data_failover.status()
+            status["ninjatrader"] = {
+                "running": bool(jobqueue.ninjatrader_running()),
+                "heartbeat": ops_runtime.read_heartbeat(),
+            }
+            self._json(HTTPStatus.OK, status)
             return True
 
         if path == "/api/ops/runtime/bars":
@@ -6410,6 +6449,21 @@ class Handler(BaseHTTPRequestHandler):
         # that could escape the queue.
         origin = self._write_origin()
         if origin is None:
+            return
+
+        if path == "/api/practice/orders/cancel":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = practice_trading.cancel_order(
+                    context.get("user_id"), str(body.get("order_id") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
             return
         try:
             req = jobqueue.CreateJobRequest(

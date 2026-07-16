@@ -425,10 +425,15 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
     scale = int(acct.get("scale") or _DEFAULT_SCALE)
     equity = float(acct.get("equity") or 0)
     day_start = float(acct.get("day_start_equity") or 0)
+    gate = availability()
     return {
         "ok": True,
         "mode": "micro_live",
-        "badge": acct.get("badge") or f"Реальные деньги · масштаб 1:{scale}",
+        "badge": (
+            acct.get("badge") or f"Реальные деньги · масштаб 1:{scale}"
+            if gate["available"]
+            else "Micro Live · недоступно до подключения реальных adapters"
+        ),
         "account": {
             "workspace_id": acct.get("workspace_id") or "",
             "scale": scale,
@@ -447,4 +452,44 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
         "trades": list(reversed(acct.get("trades") or []))[:100],
         "ledger": list(reversed(acct.get("ledger") or []))[:100],
         "staging_stub": runtime_env.is_staging(),
+        "available": gate["available"],
+        "availability": gate,
+    }
+
+
+def availability() -> Dict[str, Any]:
+    """Truthful product gate; flags alone do not pretend adapters exist."""
+    if runtime_env.is_staging():
+        return {
+            "available": True,
+            "mode": "staging_simulator",
+            "real_money": False,
+            "payment_adapter": "staging_stub",
+            "broker_adapter": "staging_stub",
+            "blocking_reasons": [],
+            "note": "Staging simulator: ни платежи, ни сделки не выходят во внешние системы.",
+        }
+    payment_adapter = str(os.environ.get("NTA_MICRO_LIVE_PAYMENT_ADAPTER") or "").strip()
+    broker_adapter = str(os.environ.get("NTA_MICRO_LIVE_BROKER_ADAPTER") or "").strip()
+    blockers = []
+    if not payment_adapter:
+        blockers.append("payment_adapter_not_configured")
+    if not broker_adapter:
+        blockers.append("broker_adapter_not_configured")
+    if not runtime_env.allow_real_payments():
+        blockers.append("real_payments_disabled")
+    if not runtime_env.allow_live_orders():
+        blockers.append("live_orders_disabled")
+    return {
+        "available": not blockers,
+        "mode": "live" if not blockers else "coming_soon",
+        "real_money": not blockers,
+        "payment_adapter": payment_adapter or "",
+        "broker_adapter": broker_adapter or "",
+        "blocking_reasons": blockers,
+        "note": (
+            "Live-контур подключён и явно разрешён владельцем."
+            if not blockers else
+            "Micro Live скрыт за fail-closed gate до подключения и проверки payment/broker adapters."
+        ),
     }

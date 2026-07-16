@@ -250,6 +250,15 @@ def test_practice_wallet_first_dom_contract() -> None:
     assert "showOnboard" in js
     assert "showDesk" in js
     assert "ChartEngine" in js
+    assert 'id="p-timeframe"' in html
+    assert 'id="p-bid"' in html and 'id="p-ask"' in html and 'id="p-last"' in html
+    assert 'id="p-retry-data"' in html
+    assert 'id="p-sell"' in html
+    assert "practiceCancelOrder" in js
+    assert "practiceReset" in js
+    assert "gap_recovery" in js
+    assert "freshness" in js
+    assert "bid_ask_estimated" in js
     assert "body.price = price" not in js
     server = (root / "app" / "server.py").read_text(encoding="utf-8")
     practice_tick = server.split('if path == "/api/practice/tick":', 1)[1].split(

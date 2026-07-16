@@ -8,8 +8,8 @@
 <link rel="stylesheet" href="assets/theme.css?v=20260715-inbox6">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="micro_live" data-title="Micro Live" data-kicker="Реальные деньги · уменьшенный масштаб">
-  <div class="demo-report-banner warn" id="ml-badge">Реальные деньги · масштаб 1:N · не Demo / не Учебная</div>
+<body data-page="micro_live" data-title="Micro Live" data-kicker="Fail-closed · только после реальных payment/broker adapters">
+  <div class="demo-report-banner warn" id="ml-badge">Micro Live · проверка доступности…</div>
   <div class="grid cols-4" id="ml-kpis"></div>
   <div class="grid cols-2" style="margin-top:18px">
     <section class="panel">
@@ -19,14 +19,14 @@
       </div>
       <div class="panel-b col gap-lg">
         <div class="finance-note" id="ml-warn">
-          Micro Live списывает реальные микросуммы (на staging — stub). Это не учебный счёт и не демо-бэктест.
-          Сначала примите риск-предупреждение. После бесплатных сделок PnL делится на масштаб 1:N.
+          <strong>По умолчанию недоступно.</strong> Production-кнопки включаются только после подключения и отдельной проверки
+          реальных payment/broker adapters и явного разрешения владельца. Staging работает исключительно как simulator.
         </div>
         <div class="composer">
           <div class="field"><label>Символ</label><select id="ml-symbol"><option>MNQ</option><option>MES</option><option>MGC</option></select></div>
           <div class="field"><label>Сторона</label><select id="ml-side"><option value="buy">Buy / Long</option><option value="sell">Sell / Short</option></select></div>
           <div class="field"><label>Notional full $</label><input id="ml-notional" type="number" min="10" max="5000" value="100"></div>
-          <div class="finance-note">Результат сделки формируется серверным simulated fill на staging. В production принимается только подтверждённый fill брокера.</div>
+          <div class="finance-note">Staging: серверный simulated fill без внешних денег. Production: только подтверждённый broker fill; иначе запрос отклоняется.</div>
         </div>
         <div class="flex gap-sm wrap">
           <button class="btn ghost" id="ml-accept" type="button">Принять риски</button>
@@ -46,6 +46,6 @@
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260715-microlive1"></script>
 <script src="assets/victor.js?v=20260715-inbox6"></script>
-<script src="assets/pages/micro-live.js?v=20260715-microlive1"></script>
+<script src="assets/pages/micro-live.js?v=20260716-microlive2"></script>
 </body>
 </html>
