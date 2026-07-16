@@ -232,6 +232,25 @@ def test_ui_contracts_ux_mode_markers() -> None:
     assert "@media (max-width: 720px)" in css
 
 
+def test_practice_wallet_first_dom_contract() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "app" / "static" / "aurora" / "practice-trading.html").read_text(encoding="utf-8")
+    js = (root / "app" / "static" / "aurora" / "assets" / "pages" / "practice.js").read_text(encoding="utf-8")
+    assert 'id="practice-onboard"' in html
+    assert 'id="practice-desk"' in html
+    assert 'id="p-deposit"' in html
+    assert "Какую сумму виртуальных денег" in html
+    assert "practice-onboard" in js
+    assert "showOnboard" in js
+    assert "showDesk" in js
+    assert "ChartEngine" in js
+    # Ticket lives only inside desk — onboard must not embed Buy/MNQ as first step.
+    onboard = html.split('id="practice-onboard"', 1)[1].split('id="practice-desk"', 1)[0]
+    assert "p-buy" not in onboard
+    assert "Buy / Long" not in onboard
+
+
 def test_practice_wallet_flow_beginner(ux_store) -> None:
     account_auth.create_or_update_virtual_user(
         user_id=5401, username="wallet", first_name="Wallet", ux_mode="beginner",

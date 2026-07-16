@@ -96,6 +96,9 @@ def test_enforce_allows_with_capability() -> None:
     permissions.enforce("/api/ai-lab/x", ctx)  # must not raise
 
 
-def test_enforce_ignores_unrestricted_paths() -> None:
-    ctx = {"is_owner": False, "user": {"ux_mode": "professional"}, "capabilities": {}}
-    permissions.enforce("/api/auth/me", ctx)  # must not raise
+def test_beginner_may_read_market_bars_for_charts() -> None:
+    ctx = {"is_owner": False, "user": {"ux_mode": "beginner"}, "capabilities": {"practice_trading": True}}
+    permissions.enforce("/api/ops/runtime/bars", ctx)
+    permissions.enforce("/api/ops/runtime/bars/batch", ctx)
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/ops/runtime/command", ctx)

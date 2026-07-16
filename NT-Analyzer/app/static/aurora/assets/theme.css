@@ -2422,11 +2422,54 @@ html.demo-tier.guest-browse .panel { filter: none; }
 .practice-charts.layout-2 { grid-template-columns: 1fr 1fr; }
 .practice-charts.layout-4 { grid-template-columns: 1fr 1fr; }
 .practice-chart-pane {
-  min-height: 120px; padding: 14px; border-radius: 12px;
+  min-height: 220px; padding: 10px; border-radius: 12px;
   border: 1px solid var(--line-2); background: color-mix(in srgb, var(--bg-3, #1a2436) 70%, transparent);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.practice-chart-meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.practice-chart-host { flex: 1; min-height: 180px; position: relative; }
+.practice-chart-fallback { display: grid; place-items: center; min-height: 180px; text-align: center; gap: 4px; }
+.practice-onboard {
+  display: grid; place-items: center; min-height: min(70vh, 640px); padding: 12px;
+}
+.practice-onboard-card {
+  width: min(520px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg-2, rgba(255,255,255,0.03));
+  padding: 22px 22px 18px;
+  display: grid; gap: 12px;
+}
+.practice-onboard-brand { display: grid; gap: 4px; }
+.practice-onboard-brand strong { font-size: 15px; }
+.practice-onboard-brand span { color: var(--tx-2); font-size: 12.5px; line-height: 1.45; }
+.practice-onboard-card h2 { margin: 0; font-size: 22px; line-height: 1.25; }
+.practice-onboard-lead { margin: 0; color: var(--tx-2); font-size: 13.5px; line-height: 1.5; }
+.practice-deposit-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.practice-deposit-field { display: grid; gap: 6px; }
+.practice-deposit-field span { font-size: 12px; color: var(--tx-2); }
+.practice-onboard-actions { display: flex; gap: 10px; }
+.practice-onboard-points {
+  margin: 4px 0 0; padding-left: 18px; color: var(--tx-3); font-size: 12px; line-height: 1.55;
+}
+.practice-desk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.9fr);
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+.practice-side { display: grid; gap: 14px; }
+.practice-ticket { grid-template-columns: 1fr 1fr; }
+.grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .practice-desk-grid { grid-template-columns: 1fr; }
+  .grid.cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 800px) {
   .practice-charts.layout-2, .practice-charts.layout-4 { grid-template-columns: 1fr; }
+  .practice-onboard-card { padding: 16px; }
+  .practice-ticket { grid-template-columns: 1fr; }
 }
 
 /* Mobile bottom-nav gets a light glass treatment so the ambient reads behind */

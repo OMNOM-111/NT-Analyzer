@@ -234,6 +234,9 @@ def required_capability(path: str) -> Optional[str]:
 
 def beginner_path_denied(path: str) -> bool:
     p = str(path or "")
+    # Market observation for practice charts (not NT control).
+    if p.startswith("/api/ops/runtime/bars"):
+        return False
     for prefix in BEGINNER_DENIED_PREFIXES:
         if p == prefix.rstrip("/") or p.startswith(prefix):
             return True

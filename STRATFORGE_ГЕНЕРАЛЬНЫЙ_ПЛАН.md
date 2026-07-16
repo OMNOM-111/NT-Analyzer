@@ -17,7 +17,7 @@
 |---|---|---|---|
 | 1 | Админка сессий и ресурсов | ✅ ~95% | Monitoring tab, admin-kill code `session_admin_revoked`, telemetry note, auth sessions overview. Consent-скрин без silent stream. Остаток: ручной прогон owner UI на живом сервере. |
 | 2 | Живая демоверсия вместо blur | ✅ ~90% | `demo_backtest` capability, 1-click сценарии, watermark, quota 3/день, без NT. Остаток: ручной UI-прогон free user. |
-| 3 | Учебная торговля | ✅ ~85% | `practice_trading.py`, страница `practice-trading.html`, layouts 1/2/4, ticket, SL/TP, risk lock, отчёты. 6/8 charts — не MVP. |
+| 3 | Учебная торговля | 🟡 UX-fix | **Wallet-first:** сначала только сумма депозита; после — терминал как TopStep (графики/ордера/позиции/PnL/риск), деньги виртуальные. 6/8 charts — не MVP. |
 | 4 | Сообщество | ✅ ~80% | `community.py`, страница, chat/publish/copy/ratings/moderation. Telegram duplicate через `NTA_COMMUNITY_TELEGRAM_CHAT_ID` (отдельно от Orchestrator). |
 | 5 | Telegram + Google для NinjaTrader | ✅ ~95% | Вход — только Telegram. Google + Telegram step-up — только для NT. Gate: public `google_linked` **и** store-lookup `google_sub` по `user_id` (forged flag → 403). Ручной OAuth — ⚪ секреты владельца. |
 | 6 | Staging + «войти как» | ✅ ~90% | `runtime_env`, `test_auth`, presets, impersonation + red banner, prod lock на старте, `docs/STAGING_QA.md`. |
@@ -25,7 +25,7 @@
 | 8 | Рейтинги ИИ ★ → routing | ✅ ~90% | Агрегаты + router exploration после gates. |
 | 9 | Режимы Новичок / Профессионал | ✅ MVP | **Фаза E.** `ux_mode`, экран выбора, nav/API deny beginner, смена режимов §9.0, owner=professional, staging presets, `tests/test_ux_mode.py`. |
 
-**Фазы:** A–D ~85–95% (MVP) · **E (режимы UX) — не начата**.
+**Фазы:** A–E MVP в коде · **доработка UX учебной торговли (wallet-first / TopStep-like desk) — в работе.**
 
 **Замечание по аудиту Work 5 (~35%):** внешний аудит сравнивал со *старым* ТЗ «Google обязателен для всего приложения». Владелец уточнил: Google только для NinjaTrader. По актуальному ТЗ Work 5 принят; критическая регрессия bridge pair устранена.
 
@@ -44,7 +44,7 @@
 
 1. ✅ **Админка сессий и ресурсов** — Monitoring tab, kill + сообщение пользователю, consent-скрин, browser telemetry, journal.
 2. ✅ **Живая демоверсия** — demo-tier вместо blur: 1-click бэктест, watermark, CTA.
-3. ✅ **Учебная торговля** — virtual account, ticket, layouts 1/2/4, risk lock, отчёты.
+3. 🟡 **Учебная торговля** — virtual account, ticket, layouts 1/2/4, risk lock, отчёты; **онбординг: сначала только виртуальный депозит**, затем полный терминал.
 4. ✅ **Сообщество** — chat / publish / copy / ratings; Telegram duplicate отдельным chat_id.
 5. ✅ **Google + Telegram step-up для NinjaTrader** — вход по-прежнему только через Telegram; Google и повторное подтверждение в Telegram нужны лишь для подключения/управления NT (Pro/dev тоже). Остальной функционал без Google.
 6. ✅ **Режим «войти как пользователь»** — staging + virtual users + impersonation + banner + prod lock.
@@ -183,18 +183,27 @@
 
 ## ПУНКТ 3. Страница учебной торговли (как Topstep, виртуальные деньги)
 
-> **Статус: ✅ ~85% (код+автотесты).** `practice_trading.py`, `practice-trading.html`, layouts 1/2/4, ticket, SL/TP, risk lock. 6/8 charts — не MVP. Ручной mobile E2E — ⚪.
+> **Статус: 🟡 UX-fix (16.07.2026).** Backend MVP был ✅; владелец зафиксировал критический UX: **нельзя** сразу показывать MNQ/Buy/ticket. Сначала только вопрос о сумме виртуального депозита; после создания счёта — полноценный торговый экран по логике TopStep (графики, котировки, инструменты, ордера, позиции, PnL, риск, отчёты), деньги полностью виртуальные.
+
+### 3.0. Замечание владельца (зафиксировано 16.07.2026)
+1. При открытии «Учебная торговля» **не** показывать форму ордера / MNQ / Buy как будто сделка уже начата.
+2. Первый шаг — **только**: «какую сумму виртуальных денег внести на учебный счёт».
+3. После ввода суммы и создания счёта открывается торговый терминал **один в один по логике и удобству как в TopStep**.
+4. Единственная разница с реалом: баланс, сделки и PnL — виртуальные (не live / не Micro Live / не NT ledger).
 
 ### 3.1–3.3. Требования
-Отдельная учебная страница: виртуальный депозит, market/limit/SL/TP, позиции/отчёты, бейдж «не реальные деньги». Не смешивать с live NT (`trading.html`) и Topstep status scaffold.
+Отдельная учебная страница: виртуальный депозит → затем market/limit/SL/TP, позиции/отчёты, бейдж «не реальные деньги». Не смешивать с live NT (`trading.html`) и Topstep status scaffold.
 
-Реализовано: `practice_trading.py`, NAV «Учебная», API `/api/practice/*`, `tests/test_practice_trading.py`.
+Реализовано: `practice_trading.py`, NAV «Учебная», API `/api/practice/*`, `tests/test_practice_trading.py`.  
+**UX 16.07:** `practice-onboard` (сумма) → `practice-desk` (ChartEngine + ticket + риск + отчёт); beginner может читать `/api/ops/runtime/bars*` только для графиков.
 
 ### 3.4. Обязательно перепроверить
 - [x] Учебный счёт / market / limit / SL-TP / daily-loss lock / отчёты.
 - [x] Нет записи в live NT.
 - [x] pytest practice.
-- [ ] Phone viewport + полный ручной сценарий — ⚪ у владельца.
+- [x] Без счёта виден **только** экран выбора суммы (нет ticket/MNQ).
+- [x] После депозита открывается терминал (KPI / график / ticket / позиции / риск / отчёт).
+- [ ] Phone viewport + полный ручной сценарий с живыми котировками NT — ⚪ у владельца.
 
 ---
 
@@ -502,6 +511,7 @@ Nav новичка: короткое меню (кошелёк / торговля
 ## Фаза B
 - [x] Demo вместо blur: 1-click backtest + watermark + CTA ✅ *(автотесты; ручной UI — у владельца)*
 - [x] Учебная торговля MVP 1/2/4 + virtual account + отчёты ✅ *(автотесты; 6/8 charts не в MVP)*
+- [x] **Wallet-first UX учебной торговли** ✅ *(16.07: сначала только сумма депозита → затем TopStep-like desk; ручной live-quotes E2E — у владельца)*
 
 ## Фаза C
 - [x] Community page + chat + publish/copy + simple ratings ✅
