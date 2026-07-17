@@ -306,6 +306,39 @@ def register_request(instrument: Any, timeframe: Any, limit: int = 1500,
 
 
 def register_requests(requests: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Circuit breaker: when NinjaTrader/Bridge heartbeat is dead, do not enqueue
+    # dozens of Bridge subscriptions that will only timeout.
+    try:
+        from . import jobqueue
+        from . import runtime as ops_runtime
+        # Unit tests must keep writing request files; circuit is a runtime guard.
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            circuit_open = False
+        else:
+            heartbeat = ops_runtime.read_heartbeat()
+            nt_running = bool(jobqueue.ninjatrader_running())
+            # Trip only when a real heartbeat exists but bridge is unhealthy.
+            circuit_open = bool(heartbeat.get("present")) and not (
+                nt_running and heartbeat.get("fresh")
+            )
+    except Exception:
+        circuit_open = False
+    if circuit_open:
+        now = _utcnow()
+        skipped: List[Dict[str, Any]] = []
+        for spec in requests:
+            symbol = " ".join(str(spec.get("instrument") or "").strip().upper().split())
+            tf = normalize_timeframe(spec.get("timeframe"))
+            skipped.append({
+                "key": series_key(symbol, tf),
+                "instrument": symbol,
+                "timeframe": tf,
+                "skipped": True,
+                "skip_reason": "ninjatrader_circuit_open",
+                "requested_at_utc": _iso(now),
+            })
+        return skipped
+
     now = _utcnow()
     normalized: List[Dict[str, Any]] = []
     for spec in requests:

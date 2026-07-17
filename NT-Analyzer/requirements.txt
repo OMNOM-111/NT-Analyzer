@@ -15,6 +15,10 @@
 # so Pacific-time conversions (metrics / performance / runtime) are correct.
 tzdata>=2024.1
 
+# Optional live market-data vendor clients (install when credentials exist):
+#   python -m pip install databento
+# Without this package + NTA_DATABENTO_API_KEY, Databento Live stays PRODUCTION BLOCKED.
+
 # --- dev / tests -----------------------------------------------------------
 # Test runner. The suite can also be launched without pytest via the custom
 # runner: `python -m tests` (see tests/__main__.py).

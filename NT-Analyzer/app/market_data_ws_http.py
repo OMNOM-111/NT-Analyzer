@@ -1,0 +1,302 @@
+"""Same-origin browser WebSocket hub for /ws/market-data.
+
+Uses RFC6455 framing over the main HTTP server socket after Upgrade.
+Bridge IPC remains on localhost:18765 and is never exposed to browsers.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import struct
+import threading
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple
+
+GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+MAX_OUTBOUND = 64
+
+_LOCK = threading.RLock()
+_CLIENTS: Set["WsClient"] = set()
+_METRICS = {
+    "accepted": 0,
+    "rejected": 0,
+    "messages_out": 0,
+    "coalesced": 0,
+    "dropped": 0,
+    "clients": 0,
+}
+
+
+def _iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def accept_key(sec_key: str) -> str:
+    digest = hashlib.sha1((sec_key + GUID).encode("utf-8")).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def encode_text_frame(text: str) -> bytes:
+    payload = text.encode("utf-8")
+    n = len(payload)
+    if n < 126:
+        header = struct.pack("!BB", 0x81, n)
+    elif n < 65536:
+        header = struct.pack("!BBH", 0x81, 126, n)
+    else:
+        header = struct.pack("!BBQ", 0x81, 127, n)
+    return header + payload
+
+
+def decode_frames(buffer: bytearray) -> Tuple[List[str], bytearray]:
+    """Decode one or more masked client frames; return texts and remainder."""
+    messages: List[str] = []
+    while True:
+        if len(buffer) < 2:
+            return messages, buffer
+        b0, b1 = buffer[0], buffer[1]
+        opcode = b0 & 0x0F
+        masked = (b1 & 0x80) != 0
+        length = b1 & 0x7F
+        idx = 2
+        if length == 126:
+            if len(buffer) < 4:
+                return messages, buffer
+            length = struct.unpack("!H", buffer[2:4])[0]
+            idx = 4
+        elif length == 127:
+            if len(buffer) < 10:
+                return messages, buffer
+            length = struct.unpack("!Q", buffer[2:10])[0]
+            idx = 10
+        mask = b""
+        if masked:
+            if len(buffer) < idx + 4:
+                return messages, buffer
+            mask = bytes(buffer[idx:idx + 4])
+            idx += 4
+        if len(buffer) < idx + length:
+            return messages, buffer
+        payload = bytearray(buffer[idx:idx + length])
+        if masked:
+            for i in range(len(payload)):
+                payload[i] ^= mask[i % 4]
+        del buffer[: idx + length]
+        if opcode == 0x8:  # close
+            messages.append("")
+            return messages, buffer
+        if opcode == 0x9:  # ping → ignore here; handler may pong
+            continue
+        if opcode in (0x1, 0x2, 0x0):
+            try:
+                messages.append(payload.decode("utf-8"))
+            except UnicodeDecodeError:
+                continue
+    return messages, buffer
+
+
+class WsClient:
+    def __init__(self, request_handler: Any, user_id: str = "") -> None:
+        self.handler = request_handler
+        self.user_id = user_id
+        self.subscriptions: Set[str] = set()  # exact_contract|tf
+        self.outbound: Deque[Dict[str, Any]] = deque()
+        self.coalesce_slot: Dict[str, Dict[str, Any]] = {}
+        self.alive = True
+        self.connected_at = _iso()
+
+    def enqueue(self, message: Dict[str, Any]) -> None:
+        """Latest-value coalesce for provisional bar updates; never drop closes."""
+        kind = str(message.get("type") or "")
+        bar = (message.get("bar_updates") or [None])[0] if message.get("bar_updates") else None
+        action = ""
+        key = ""
+        if isinstance(bar, dict):
+            action = str(bar.get("action") or "")
+            b = bar.get("bar") if isinstance(bar.get("bar"), dict) else bar
+            if isinstance(b, dict):
+                key = f"{b.get('exact_contract')}|{b.get('timeframe')}|prov"
+        if kind == "market_event" and action == "update" and key:
+            self.coalesce_slot[key] = message
+            with _LOCK:
+                _METRICS["coalesced"] += 1
+            return
+        if len(self.outbound) >= MAX_OUTBOUND:
+            # Drop oldest coalescable-looking events only.
+            self.outbound.popleft()
+            with _LOCK:
+                _METRICS["dropped"] += 1
+        self.outbound.append(message)
+
+    def flush(self) -> None:
+        if self.coalesce_slot:
+            for msg in self.coalesce_slot.values():
+                self.outbound.append(msg)
+            self.coalesce_slot.clear()
+        while self.outbound and self.alive:
+            msg = self.outbound.popleft()
+            try:
+                raw = encode_text_frame(json.dumps(msg, ensure_ascii=False))
+                self.handler.wfile.write(raw)
+                self.handler.wfile.flush()
+                with _LOCK:
+                    _METRICS["messages_out"] += 1
+            except Exception:
+                self.alive = False
+                break
+
+
+def register_client(client: WsClient) -> None:
+    with _LOCK:
+        _CLIENTS.add(client)
+        _METRICS["accepted"] += 1
+        _METRICS["clients"] = len(_CLIENTS)
+
+
+def unregister_client(client: WsClient) -> None:
+    with _LOCK:
+        _CLIENTS.discard(client)
+        _METRICS["clients"] = len(_CLIENTS)
+
+
+def reject() -> None:
+    with _LOCK:
+        _METRICS["rejected"] += 1
+
+
+def broadcast(message: Dict[str, Any]) -> None:
+    with _LOCK:
+        clients = list(_CLIENTS)
+    contract = ""
+    updates = message.get("bar_updates") or []
+    if updates and isinstance(updates[0], dict):
+        bar = updates[0].get("bar") if isinstance(updates[0].get("bar"), dict) else updates[0]
+        if isinstance(bar, dict):
+            contract = str(bar.get("exact_contract") or "")
+    event = message.get("event") if isinstance(message.get("event"), dict) else {}
+    if not contract:
+        contract = str(event.get("exact_contract") or "")
+    for client in clients:
+        if not client.alive:
+            continue
+        if client.subscriptions:
+            # Deliver if subscribed to contract (any TF) or wildcard.
+            wanted = any(
+                sub == "*" or sub.startswith(contract + "|") or sub == contract
+                for sub in client.subscriptions
+            )
+            if contract and not wanted:
+                continue
+        client.enqueue(message)
+        client.flush()
+
+
+def metrics() -> Dict[str, Any]:
+    with _LOCK:
+        return dict(_METRICS)
+
+
+def handle_websocket_upgrade(handler: Any) -> bool:
+    """Return True if the request was a market-data WS upgrade and was handled."""
+    path = (handler.path or "").split("?", 1)[0]
+    if path != "/ws/market-data":
+        return False
+    upgrade = (handler.headers.get("Upgrade") or "").lower()
+    if upgrade != "websocket":
+        handler.send_error(426, "Upgrade Required")
+        return True
+    key = handler.headers.get("Sec-WebSocket-Key")
+    if not key:
+        reject()
+        handler.send_error(400, "missing Sec-WebSocket-Key")
+        return True
+
+    # Prefer authenticated session cookie / bearer when present; allow staging.
+    user_id = ""
+    try:
+        from . import account_auth
+        # Best-effort: reuse remote context if handler already authenticated.
+        ctx = getattr(handler, "_remote_context", None) or {}
+        user_id = str(ctx.get("user_id") or "")
+    except Exception:
+        user_id = ""
+
+    handler.send_response(101, "Switching Protocols")
+    handler.send_header("Upgrade", "websocket")
+    handler.send_header("Connection", "Upgrade")
+    handler.send_header("Sec-WebSocket-Accept", accept_key(key))
+    handler.end_headers()
+
+    client = WsClient(handler, user_id=user_id)
+    register_client(client)
+    welcome = {
+        "type": "welcome",
+        "server_time_utc": _iso(),
+        "path": "/ws/market-data",
+        "sources": {
+            "chart_source": "pending",
+            "strategy_source": "ninjatrader",
+            "execution_source": "ninjatrader",
+        },
+    }
+    try:
+        handler.wfile.write(encode_text_frame(json.dumps(welcome)))
+        handler.wfile.flush()
+    except Exception:
+        unregister_client(client)
+        return True
+
+    buf = bytearray()
+    try:
+        while client.alive:
+            chunk = handler.rfile.read(4096)
+            if not chunk:
+                break
+            buf.extend(chunk)
+            messages, buf = decode_frames(buf)
+            for text in messages:
+                if text == "":
+                    client.alive = False
+                    break
+                try:
+                    msg = json.loads(text)
+                except Exception:
+                    continue
+                _on_client_message(client, msg)
+                client.flush()
+    finally:
+        client.alive = False
+        unregister_client(client)
+    return True
+
+
+def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
+    mtype = str(msg.get("type") or "")
+    if mtype == "subscribe":
+        contract = str(msg.get("exact_contract") or msg.get("instrument") or "").upper()
+        timeframe = str(msg.get("timeframe") or "*").lower()
+        if contract:
+            client.subscriptions.add(f"{contract}|{timeframe}")
+            try:
+                from .market_data_subscriptions import get_subscription_registry
+                get_subscription_registry().acquire("ninjatrader", contract, "trades")
+            except Exception:
+                pass
+            client.outbound.append({
+                "type": "subscribe_ack",
+                "exact_contract": contract,
+                "timeframe": timeframe,
+            })
+    elif mtype == "unsubscribe":
+        contract = str(msg.get("exact_contract") or msg.get("instrument") or "").upper()
+        timeframe = str(msg.get("timeframe") or "*").lower()
+        client.subscriptions.discard(f"{contract}|{timeframe}")
+        try:
+            from .market_data_subscriptions import get_subscription_registry
+            get_subscription_registry().release("ninjatrader", contract, "trades")
+        except Exception:
+            pass
+    elif mtype == "ping":
+        client.outbound.append({"type": "pong", "server_time_utc": _iso()})

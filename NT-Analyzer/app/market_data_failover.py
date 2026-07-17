@@ -262,6 +262,17 @@ class YahooChartProvider(MarketDataProvider):
             "0", "false", "no", "off", "disabled",
         }
 
+    def public_status(self) -> Dict[str, Any]:
+        return {
+            "name": self.name, "configured": self.configured(),
+            "independent": self.independent, "tier": self.tier,
+            "implementation_state": "ADAPTER_READY",
+            "runtime_state": "DISABLED" if not self.configured() else "STALE",
+            "capability": "DELAYED_OR_UNVERIFIED",
+            "live_eligible": False,
+            "production_failover_eligible": False,
+        }
+
     def fetch(self, instrument: str, timeframe: str, limit: int) -> Dict[str, Any]:
         tf = _timeframe(timeframe)
         root = _root_symbol(instrument)
@@ -317,20 +328,32 @@ class YahooChartProvider(MarketDataProvider):
         last = _finite(meta.get("regularMarketPrice")) or float(bars[-1]["c"])
         fetched_at = _iso()
         fresh = series_freshness(bars, tf)
+        # Yahoo is delayed/unverified — NEVER claim LIVE for production charts.
+        fresh = dict(fresh)
+        fresh["fresh"] = False
+        fresh["stale"] = True
+        fresh["delayed"] = True
+        fresh["live_eligible"] = False
         return {
             "instrument": str(instrument or root), "bars": bars, "total": len(bars),
-            "raw_total": len(raw), "live": fresh["fresh"],
-            "status": "external_live" if fresh["fresh"] else "external_stale",
+            "raw_total": len(raw), "live": False,
+            "status": "external_stale",
             "requested_timeframe": tf, "matched_timeframe": tf,
             "source": {
                 "kind": "external_provider", "provider": self.name,
                 "provider_symbol": symbol, "independent": True, "tier": self.tier,
                 "updated_at_utc": fresh["data_as_of_utc"], "fetched_at_utc": fetched_at,
-                "age_sec": fresh["age_sec"], "fresh": fresh["fresh"],
+                "age_sec": fresh["age_sec"], "fresh": False,
+                "delayed": True, "live_eligible": False,
+                "implementation_state": "ADAPTER_READY",
+                "runtime_state": "STALE",
+                "capability": "DELAYED_OR_UNVERIFIED",
             },
             "freshness": fresh,
             "quote": _quote(last, root, source=self.name),
-            "note": "Независимый best-effort поток для графиков; не источник live-исполнения.",
+            "note": "Yahoo delayed/public fallback — не live и не eligible для automatic failover.",
+            "data_plane": "display",
+            "market_data_available": False,
         }
 
 
@@ -343,6 +366,19 @@ class DatabentoProvider(MarketDataProvider):
 
     def configured(self) -> bool:
         return bool(self._key())
+
+    def public_status(self) -> Dict[str, Any]:
+        configured = self.configured()
+        return {
+            "name": self.name, "configured": configured,
+            "independent": self.independent, "tier": self.tier,
+            "implementation_state": "ADAPTER_READY" if configured else "ADAPTER_READY",
+            "runtime_state": "DISABLED" if not configured else "CONNECTING",
+            "capability": "REALTIME_PRODUCTION" if configured else "ENTITLEMENT_MISSING",
+            "live_eligible": configured,
+            "production_failover_eligible": configured,
+            "note": "Live key required before PRODUCTION failover eligibility.",
+        }
 
     def fetch(self, instrument: str, timeframe: str, limit: int) -> Dict[str, Any]:
         key = self._key()
@@ -528,6 +564,76 @@ def _source_name(payload: Optional[Dict[str, Any]]) -> str:
     return str(source.get("provider") or source.get("kind") or "unknown")
 
 
+def production_live_failover_eligible(provider_name: str) -> bool:
+    """Yahoo/Recorded/FaultInjection are never production live failover."""
+    name = str(provider_name or "").strip().lower()
+    return name not in {
+        "", "yahoo", "yahoo_chart", "recorded", "fault_injection", "unknown",
+    }
+
+
+def live_backup_candidates(
+    providers: Optional[Sequence[MarketDataProvider]] = None,
+) -> List[MarketDataProvider]:
+    """Credentialed, production-eligible live backups only (never Yahoo)."""
+    candidates = list(providers) if providers is not None else configured_providers()
+    return [
+        provider for provider in candidates
+        if production_live_failover_eligible(provider.name) and provider.configured()
+    ]
+
+
+def mark_offline_snapshot(
+    payload: Optional[Dict[str, Any]],
+    *,
+    reason: str,
+    last_source: str = "ninjatrader",
+    backup_providers_available: int = 0,
+) -> Dict[str, Any]:
+    """Force safe OFFLINE semantics — never present cache as LIVE."""
+    out = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+    freshness = dict(out.get("freshness") or {})
+    age = freshness.get("age_sec")
+    data_as_of = freshness.get("data_as_of_utc") or ""
+    source = dict(out.get("source") or {})
+    source.update({
+        "fresh": False,
+        "live_eligible": False,
+        "runtime_state": "OFFLINE",
+        "failover_status": "offline_no_live_backup",
+        "reason": reason,
+        "last_source": last_source,
+        "backup_providers_available": int(backup_providers_available),
+    })
+    freshness.update({
+        "fresh": False,
+        "stale": True,
+        "offline": True,
+        "live_eligible": False,
+    })
+    out["live"] = False
+    out["status"] = "offline"
+    out["freshness"] = freshness
+    out["source"] = source
+    out["market_data_available"] = False
+    out["strategy_blocked"] = True
+    out["execution_blocked"] = True
+    out["price_marker_live"] = False
+    out["offline_banner"] = {
+        "title": "OFFLINE — LIVE MARKET DATA UNAVAILABLE",
+        "last_valid_event": data_as_of,
+        "age_sec": age,
+        "last_source": last_source,
+        "backup_providers_available": int(backup_providers_available),
+        "reason": reason,
+    }
+    out["note"] = (
+        f"OFFLINE: {reason}. Last event {data_as_of or 'unknown'}; "
+        f"age_sec={age}. Cache/history only — not live."
+    )
+    return out
+
+
 def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe: str,
                    limit: int = 1500, *, primary_healthy: bool = True,
                    providers: Optional[Sequence[MarketDataProvider]] = None,
@@ -537,6 +643,9 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
     Primary bars win on timestamp collisions.  The independent provider may
     append newer bars and fill internal holes, but never overwrites a bridge
     candle.  No synthetic OHLCV candle is invented.
+
+    Safety: Yahoo/Recorded are never LIVE. When primary is unhealthy and no
+    credentialed live backup is available, return an explicit OFFLINE snapshot.
     """
     tf = _timeframe(timeframe)
     primary_copy = copy.deepcopy(primary) if isinstance(primary, dict) else None
@@ -556,12 +665,96 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
             "gaps_after": gaps_before, "unresolved_gaps": len(gaps_before),
         }
         primary_copy.setdefault("source", {})["fresh"] = freshness_before["fresh"]
+        primary_copy.setdefault("source", {})["runtime_state"] = (
+            "LIVE" if freshness_before["fresh"] else "STALE"
+        )
+        primary_copy["live"] = bool(freshness_before["fresh"] and primary_healthy)
+        if not primary_copy["live"]:
+            primary_copy["status"] = "stale"
+            primary_copy["price_marker_live"] = False
         return primary_copy
 
-    external = fetch_external_series(
-        instrument, tf, limit, providers=providers, force=force_external,
-    )
+    # When NinjaTrader is down, NEVER fan out to Yahoo/delayed HTTP per chart.
+    # That caused 12–20s timeouts × 30–64 panels. Only credentialed live backups
+    # may be contacted; otherwise serve cache immediately as OFFLINE.
+    if not primary_healthy:
+        live_cands = live_backup_candidates(providers)
+        if not live_cands:
+            base = primary_copy
+            if not base:
+                return mark_offline_snapshot(
+                    {"bars": [], "instrument": instrument},
+                    reason="ninjatrader_offline_no_live_backup",
+                    last_source="none",
+                    backup_providers_available=0,
+                )
+            base["bars"] = primary_bars[-max(1, int(limit)):]
+            base["freshness"] = freshness_before
+            base["gap_recovery"] = {
+                "attempted": False,
+                "provider_available": False,
+                "mode": "offline_cache_fastpath",
+                "recovered_bars": 0,
+                "gaps_before": gaps_before,
+                "gaps_after": gaps_before,
+                "unresolved_gaps": len(gaps_before),
+                "primary_healthy": False,
+                "skipped_delayed_providers": True,
+            }
+            return mark_offline_snapshot(
+                base,
+                reason="ninjatrader_offline_no_live_backup",
+                last_source="ninjatrader" if primary_bars else "cache",
+                backup_providers_available=0,
+            )
+        external = fetch_external_series(
+            instrument, tf, limit, providers=live_cands, force=force_external,
+        )
+    else:
+        external = fetch_external_series(
+            instrument, tf, limit, providers=providers, force=force_external,
+        )
     external_bars = normalize_bars((external or {}).get("bars") or [])
+    external_source = (external or {}).get("source") if isinstance((external or {}).get("source"), dict) else {}
+    external_provider = str(external_source.get("provider") or "")
+    live_backup_ok = bool(
+        external_bars
+        and production_live_failover_eligible(external_provider)
+        and bool((external or {}).get("live"))
+        and bool(external_source.get("live_eligible", True))
+    )
+
+    if not primary_healthy and not live_backup_ok:
+        # Correct offline mode: serve history fast, never claim LIVE.
+        base = primary_copy
+        if not base and external:
+            # Delayed Yahoo/etc may still paint history with STALE, not LIVE.
+            base = copy.deepcopy(external)
+        if not base:
+            return mark_offline_snapshot(
+                {"bars": [], "instrument": instrument},
+                reason="ninjatrader_offline_no_live_backup",
+                last_source="none",
+                backup_providers_available=0,
+            )
+        if base is primary_copy:
+            base["bars"] = primary_bars[-max(1, int(limit)):]
+            base["freshness"] = freshness_before
+        # If only Yahoo-like delayed data exists, keep bars but mark offline/stale.
+        reason = "ninjatrader_offline_no_live_backup"
+        if external_provider and not production_live_failover_eligible(external_provider):
+            reason = f"ninjatrader_offline_delayed_only:{external_provider}"
+            # Prefer richer delayed bars for display history if primary empty.
+            if not primary_bars and external_bars:
+                base["bars"] = external_bars[-max(1, int(limit)):]
+                base["freshness"] = series_freshness(base["bars"], tf)
+        return mark_offline_snapshot(
+            base,
+            reason=reason,
+            last_source="ninjatrader" if primary_bars else (external_provider or "cache"),
+            backup_providers_available=0,
+        )
+
     if not external_bars:
         if not primary_copy:
             return None
@@ -572,7 +765,15 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
             "gaps_before": gaps_before, "gaps_after": gaps_before,
             "unresolved_gaps": len(gaps_before),
         }
+        if not primary_healthy:
+            return mark_offline_snapshot(
+                primary_copy,
+                reason="ninjatrader_offline_external_unavailable",
+                last_source="ninjatrader",
+                backup_providers_available=0,
+            )
         primary_copy.setdefault("source", {})["failover_status"] = "unavailable"
+        primary_copy["live"] = False
         return primary_copy
 
     primary_by_time = {row["t"]: row for row in primary_bars}
@@ -584,7 +785,6 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
     recovered_in_window = len([row for row in merged if row["t"] in recovered_stamps])
     gaps_after = detect_gaps(merged, tf)
     freshness_after = series_freshness(merged, tf)
-    external_source = (external or {}).get("source") if isinstance((external or {}).get("source"), dict) else {}
 
     if not primary_bars:
         result = copy.deepcopy(external)
@@ -594,8 +794,6 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
         result["bars"] = merged
         result["total"] = len(merged)
         result["raw_total"] = len(merged)
-        result["live"] = freshness_after["fresh"]
-        result["status"] = "failover_live" if freshness_after["fresh"] else "failover_stale"
         result["quote"] = copy.deepcopy((external or {}).get("quote") or result.get("quote") or {})
         result["source"] = {
             "kind": "market_data_composite", "provider": external_source.get("provider"),
@@ -609,6 +807,20 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
             "age_sec": freshness_after["age_sec"], "fresh": freshness_after["fresh"],
         }
         mode = "gap_recovery" if recovered_in_window else "validated_failover"
+
+    # Only credentialed live backups may claim LIVE after primary failure.
+    if live_backup_ok:
+        result["live"] = True
+        result["status"] = "failover_live"
+        result.setdefault("source", {})["runtime_state"] = "LIVE"
+        result.setdefault("source", {})["live_eligible"] = True
+    else:
+        result["live"] = False
+        result["status"] = "failover_stale" if freshness_after.get("stale") else "external_stale"
+        result.setdefault("source", {})["runtime_state"] = "STALE"
+        result.setdefault("source", {})["live_eligible"] = False
+        result["price_marker_live"] = False
+
     result["freshness"] = freshness_after
     result["gap_recovery"] = {
         "attempted": True, "provider_available": True, "mode": mode,
