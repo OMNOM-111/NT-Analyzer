@@ -43,6 +43,7 @@
 /NT-Analyzer/data/runtime/
 /NT-Analyzer/data/ops/
 /NT-Analyzer/data/operations/
+/NT-Analyzer/data/logs/
 /NT-Analyzer/data/last_job.txt
 /NT-Analyzer/data/integrations/news.json
 /NT-Analyzer/data/integrations/live_news.json

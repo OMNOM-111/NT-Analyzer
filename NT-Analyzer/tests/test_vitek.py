@@ -12,6 +12,7 @@ from app import jobqueue, vitek
 def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
     monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "background.json")
+    monkeypatch.setattr(vitek, "_supervisor_state_path", lambda: tmp_path / "backend-supervisor.json")
 
 
 def test_time_windows_use_locked_parameters_days_and_local_session() -> None:
@@ -237,8 +238,9 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(vitek, "build_time_windows", lambda: {
         "ok": True, "timezone": vitek.LOCAL_TIMEZONE, "roots": [{"root": "MGC"}],
     })
-    monkeypatch.setattr(vitek, "reconcile_lifecycle", lambda *, apply=False: {
+    monkeypatch.setattr(vitek, "reconcile_lifecycle", lambda *, apply=False, kinds=None: {
         "ok": True, "mode": "apply" if apply else "preview", "action_count": 2,
+        "selected_kinds": list(kinds or []),
     })
     monkeypatch.setattr(vitek, "record_client_telemetry", lambda body: {
         "kind": str(body.get("kind") or ""), "correlation_id": str(body.get("correlation_id") or ""),
@@ -248,6 +250,9 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     })
     monkeypatch.setattr(vitek, "answer_task", lambda task_id, answer: {
         "task_id": task_id, "status": "planned", "input_answer": answer,
+    })
+    monkeypatch.setattr(vitek, "update_task_progress", lambda task_id, **body: {
+        "task_id": task_id, "status": "in_progress", "progress": {"stage": body.get("stage")},
     })
     with vitek._LOCK:
         doc = vitek._read()
@@ -287,6 +292,8 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
         assert code == 200 and choices["task_id"] == "T-HTTP-1"
         code, answered = request("/api/vitek/tasks/T-HTTP-1/answer", body={"answer": "MGC-1"})
         assert code == 200 and answered["task"]["input_answer"] == "MGC-1"
+        code, progress = request("/api/vitek/tasks/T-HTTP-1/progress", body={"stage": "inventory"})
+        assert code == 200 and progress["task"]["progress"]["stage"] == "inventory"
         code, telemetry = request("/api/vitek/client-events", body={
             "kind": "frontend_error", "correlation_id": "CORR-HTTP-1",
         })
@@ -315,6 +322,34 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     finally:
         server.shutdown()
         server.server_close()
+        thread.join(timeout=5)
+
+
+def test_vitek_non_conversation_posts_do_not_require_ai_workspace(tmp_path, monkeypatch) -> None:
+    from app import server as server_mod
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(server_mod.account_auth, "auth_required", lambda: False)
+    monkeypatch.setattr(
+        server_mod.Handler, "_ai_conversation_scope",
+        lambda self: (_ for _ in ()).throw(AssertionError("workspace lookup must be lazy")),
+    )
+    srv = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    host, port = srv.server_address
+    try:
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/vitek/reconcile",
+            data=json.dumps({"apply": False}).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.load(response)
+        assert payload["ok"] is True and payload["mode"] == "preview"
+    finally:
+        srv.shutdown()
+        srv.server_close()
         thread.join(timeout=5)
 
 
@@ -1458,6 +1493,37 @@ def test_incident_approval_is_idempotent_and_persists_scope(tmp_path, monkeypatc
     assert len(vitek._read()["tasks"]) == 1
 
 
+def test_ten_deliveries_and_ten_approvals_converge_on_one_lifecycle(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident = None
+        for _ in range(10):
+            incident, _created = vitek._record_incident(
+                doc, category="runtime_error", key="REPLAY-10", severity="error",
+                title="Bridge error", details="same evidence", recommendation="audit",
+            )
+        vitek._write(doc)
+    assert incident is not None
+
+    decisions = [
+        vitek.decide_incident(
+            incident["incident_id"], "create_task", authorized_by="owner-1",
+            authorization_scope=["audit"],
+        )
+        for _ in range(10)
+    ]
+    state = vitek._read()
+
+    assert len(state["incidents"]) == 1
+    assert state["incidents"][0]["occurrences"] == 10
+    assert len(state["tasks"]) == 1
+    assert len({row["decision_id"] for row in decisions}) == 1
+    assert len({row["task"]["task_id"] for row in decisions}) == 1
+    assert len({row["conversation_id"] for row in decisions}) == 1
+
+
 def test_session_closed_skips_runtime_recovery_incident(tmp_path, monkeypatch) -> None:
     from app import market_data_ipc
 
@@ -1513,6 +1579,38 @@ def test_reconciliation_previews_then_preserves_history_on_apply(tmp_path, monke
     assert state["history"][-1]["action"] == "lifecycle_reconciled"
 
 
+def test_reconciliation_applies_only_selected_cleanup_action(tmp_path, monkeypatch) -> None:
+    from app import market_data_ipc
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: False)
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["tasks"] = [{
+            "task_id": "VT-KEEP", "incident_id": "VI-1", "status": "in_progress",
+            "created_at_utc": "2026-07-18T01:00:00Z",
+        }, {
+            "task_id": "VT-DUP", "incident_id": "VI-1", "status": "planned",
+            "created_at_utc": "2026-07-18T01:00:01Z",
+        }, {
+            "task_id": "VT-DONE", "status": "completed", "result": "report",
+            "completed_at_utc": "2026-07-18T02:00:00Z",
+        }]
+        doc["incidents"] = [{
+            "incident_id": "VI-1", "status": "awaiting_decision",
+            "owner_decision_required": True, "context": {"event_type": "strategy_disappeared"},
+        }]
+        vitek._write(doc)
+
+    selected = vitek.reconcile_lifecycle(apply=True, kinds=["duplicate_task"])
+    state = vitek._read()
+
+    assert selected["counts"] == {"duplicate_task": 1}
+    assert next(row for row in state["tasks"] if row["task_id"] == "VT-DUP")["status"] == "duplicate"
+    assert not next(row for row in state["tasks"] if row["task_id"] == "VT-DONE").get("result_id")
+    assert state["incidents"][0]["status"] == "awaiting_decision"
+
+
 def test_completed_task_requires_result_and_gets_result_id(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch, tmp_path)
     task = vitek.add_task({"title": "Audit", "status": "planned", "auto_execute": False})
@@ -1562,6 +1660,107 @@ def test_frontend_telemetry_is_bounded_and_deduplicated(tmp_path, monkeypatch) -
     assert replay["telemetry_id"] == first["telemetry_id"]
     assert replay["deduplicated"] is True
     assert vitek._read()["client_telemetry"][0]["occurrences"] == 2
+
+
+def test_task_progress_is_monotonic_and_persists_checkpoint(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Проверить сохранённые стратегии", "auto_execute": False,
+        "authorization_status": "approved", "authorization_scope": ["audit"],
+    })
+    claimed = vitek._set_task_execution(
+        task["task_id"], status="in_progress", worker_lease_owner="worker-a",
+        worker_lease_expires_at_utc=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+    )
+    assert claimed["workflow"]["workflow_id"].startswith("VWF-")
+
+    first = vitek.update_task_progress(
+        task["task_id"], stage="inventory", items_found=12, items_checked=4,
+        items_total=12, current_item="CELL-004", completed_steps=1, total_steps=3,
+        checkpoint={"cursor": 4}, worker_id="worker-a",
+    )
+    second = vitek.update_task_progress(
+        task["task_id"], stage="inventory", items_found=8, items_checked=2,
+        items_total=10, current_item="CELL-002", worker_id="worker-a",
+    )
+
+    assert second["progress"]["items_found"] == 12
+    assert second["progress"]["items_checked"] == 4
+    assert first["progress"]["items_remaining"] == 8
+    assert first["checkpoint"]["data"]["cursor"] == 4
+    try:
+        vitek.update_task_progress(task["task_id"], stage="stale", worker_id="worker-b")
+    except vitek.VitekError as exc:
+        assert "worker lease" in str(exc)
+    else:
+        raise AssertionError("stale worker progress must be rejected")
+    try:
+        vitek.update_task_progress(task["task_id"], stage="anonymous")
+    except vitek.VitekError as exc:
+        assert "worker lease" in str(exc)
+    else:
+        raise AssertionError("anonymous progress must not bypass an active worker lease")
+
+
+def test_structured_workflow_requires_every_named_participant_evidence(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({
+        "title": "Толик проводит аудит, Управляющий проверяет план исправления",
+        "auto_execute": False,
+    })
+    routed = vitek._set_task_execution(
+        task["task_id"], assigned_agent="tolik", routing_capability="review_failed_strategies",
+    )
+    assert routed["workflow"]["participants"] == ["vitek", "tolik", "manager"]
+
+    waiting = vitek._set_task_execution(
+        task["task_id"], status="completed", result="Аудит сохранён.",
+        _evidence_agents=["tolik"],
+    )
+    assert waiting["status"] == "waiting_review"
+    assert waiting["blocking_reason"] == "workflow_participant_evidence_missing"
+
+    completed = vitek._set_task_execution(
+        task["task_id"], status="completed", result="Аудит и план исправления сохранены.",
+        _evidence_agents=["tolik", "manager"],
+    )
+    assert completed["status"] == "completed"
+    assert completed["result_id"].startswith("VR-")
+    assert completed["workflow"]["state"] == "completed"
+
+
+def test_restart_recovery_resumes_checkpoint_and_stalls_unrecoverable_task(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    resumable = vitek.add_task({"title": "Продолжить аудит", "auto_execute": False})
+    lost = vitek.add_task({"title": "Неизвестная работа", "auto_execute": False})
+    vitek._set_task_execution(
+        resumable["task_id"], status="in_progress", worker_lease_owner="old-instance",
+        worker_lease_expires_at_utc="2020-01-01T00:00:00Z",
+        checkpoint={"revision": 2, "stage": "inventory", "data": {"cursor": 5}},
+    )
+    vitek._set_task_execution(
+        lost["task_id"], status="in_progress", worker_lease_owner="old-instance",
+        worker_lease_expires_at_utc="2020-01-01T00:00:00Z",
+    )
+
+    result = vitek.recover_interrupted_tasks()
+    assert result == {"resumed": 1, "stopped": 1}
+    rows = {row["task_id"]: row for row in vitek._read()["tasks"]}
+    assert rows[resumable["task_id"]]["worker_lease_owner"] == vitek.PROCESS_INSTANCE_ID
+    assert rows[resumable["task_id"]]["current_stage"] == "recovered_from_checkpoint"
+    assert rows[lost["task_id"]]["status"] == "stalled"
+    assert rows[lost["task_id"]]["blocking_reason"] == "backend_restart_without_resumable_checkpoint"
+
+
+def test_crash_loop_safe_mode_pauses_new_automatic_tasks(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_background_status", lambda: {"safe_mode": True})
+    task = vitek.add_task({"title": "Автоматическая проверка", "auto_execute": True})
+
+    assert task["status"] == "new"
+    assert vitek._claim_next_event() is None
+    queued = vitek._read()["events"]
+    assert len(queued) == 1 and queued[0]["status"] == "queued"
 
 
 def test_startup_audit_resolves_stale_connection_question_when_heartbeat_is_fresh(tmp_path, monkeypatch) -> None:

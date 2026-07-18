@@ -119,6 +119,12 @@ def _service_marker_path() -> Path:
     )
 
 
+def _supervisor_state_path() -> Path:
+    return runtime_env.data_path(
+        "operations", "backend-supervisor.json", project_root=_root(),
+    )
+
+
 def _bridge_event_path() -> Path:
     """Append-only hand-off written by NinjaTrader/Bridge processes."""
     return runtime_env.data_path(
@@ -228,6 +234,10 @@ def _read() -> Dict[str, Any]:
         task.setdefault("mission_id", str(task.get("task_id") or ""))
         task.setdefault("authorization_status", "pending")
         task.setdefault("authorization_scope", [])
+        if not isinstance(task.get("progress"), dict):
+            task["progress"] = {}
+        if not isinstance(task.get("workflow"), dict):
+            task["workflow"] = {}
     if not isinstance(doc.get("rest"), dict):
         doc["rest"] = {"active": False, "until_utc": "", "reason": ""}
     if not isinstance(doc.get("plans"), dict):
@@ -330,6 +340,141 @@ def _canonical_task_status(task: Dict[str, Any]) -> str:
     }.get(value, value)
 
 
+def _bounded_count(value: Any) -> int:
+    try:
+        return max(0, min(1_000_000, int(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _progress_snapshot(value: Any, *, status: str, stage: str = "",
+                       heartbeat_at_utc: str = "") -> Dict[str, Any]:
+    """Return one stable, measurable progress contract for every executor."""
+    source = dict(value) if isinstance(value, dict) else {}
+    total_steps = max(1, _bounded_count(source.get("total_steps") or 1))
+    completed_steps = min(total_steps, _bounded_count(source.get("completed_steps")))
+    found = _bounded_count(source.get("items_found", source.get("found")))
+    checked = _bounded_count(source.get("items_checked", source.get("checked")))
+    total = _bounded_count(source.get("items_total", source.get("total")))
+    total = max(total, found, checked)
+    checked = min(checked, total) if total else checked
+    if str(status or "") == "completed":
+        completed_steps = total_steps
+        checked = total or checked
+    remaining = max(0, total - checked) if total else _bounded_count(source.get("items_remaining"))
+    numerator, denominator = (checked, total) if total else (completed_steps, total_steps)
+    percent = round((100.0 * numerator / denominator) if denominator else 0.0, 1)
+    return {
+        "completed_steps": completed_steps,
+        "total_steps": total_steps,
+        "items_found": found,
+        "items_checked": checked,
+        "items_total": total,
+        "items_remaining": remaining,
+        "current_item": str(source.get("current_item") or "")[:500],
+        "stage": str(stage or source.get("stage") or _canonical_task_status({"status": status}))[:120],
+        "percent": min(100.0, max(0.0, percent)),
+        "heartbeat_at_utc": str(heartbeat_at_utc or source.get("heartbeat_at_utc") or "")[:40],
+    }
+
+
+def _workflow_template(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a deterministic workflow; text generation cannot change its route."""
+    task_id = str(task.get("task_id") or "")
+    assigned = str(task.get("assigned_agent") or "manager")
+    capability = str(task.get("routing_capability") or "generic_application_task")
+    text = " ".join(str(task.get(key) or "") for key in ("title", "description")).lower()
+    requested_agents: List[str] = []
+    for agent_id, tokens in (
+        ("tolik", ("толик", "strategy", "стратег")),
+        ("manager", ("управляющ", "manager")),
+        ("marina", ("марин", "финанс", "ledger")),
+        ("nikita", ("никит", "новост")),
+        ("ivan", ("иван", "график")),
+    ):
+        if agent_id == assigned or any(token in text for token in tokens):
+            if agent_id not in requested_agents:
+                requested_agents.append(agent_id)
+    if not requested_agents:
+        requested_agents = [assigned]
+    accepted_at = str(task.get("created_at_utc") or _now())
+    steps: List[Dict[str, Any]] = [{
+        "step_id": "accepted", "title": "Поручение зарегистрировано",
+        "assigned_agent": "vitek", "status": "completed",
+        "depends_on": [], "completed_at_utc": accepted_at,
+    }]
+    previous = "accepted"
+    for index, agent_id in enumerate(requested_agents, start=1):
+        step_id = f"execute-{index}"
+        steps.append({
+            "step_id": step_id,
+            "title": "Проверить и выполнить свою часть поручения",
+            "assigned_agent": agent_id, "status": "queued" if index == 1 else "blocked",
+            "depends_on": [previous], "evidence_required": True,
+        })
+        previous = step_id
+    steps.append({
+        "step_id": "owner-report", "title": "Проверить доказательства и доложить владельцу",
+        "assigned_agent": "vitek", "status": "blocked", "depends_on": [previous],
+        "evidence_required": True,
+    })
+    material = f"{task_id}|{capability}|{'|'.join(requested_agents)}"
+    return {
+        "workflow_id": "VWF-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper(),
+        "version": 1, "capability": capability, "state": "queued",
+        "current_step_id": requested_agents and "execute-1" or "owner-report",
+        "participants": ["vitek", *[row for row in requested_agents if row != "vitek"]],
+        "steps": steps,
+    }
+
+
+def _advance_workflow(value: Any, *, task_status: str, stage: str,
+                      evidence_agents: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+    workflow = dict(value) if isinstance(value, dict) else {}
+    steps = [dict(row) for row in workflow.get("steps") or [] if isinstance(row, dict)]
+    evidence = {str(row or "") for row in (evidence_agents or []) if str(row or "")}
+    now = _now()
+    execution_steps = [row for row in steps if str(row.get("step_id") or "").startswith("execute-")]
+    if task_status == "in_progress":
+        selected = next((row for row in execution_steps if row.get("status") in {"queued", "running"}), None)
+        if selected is not None:
+            selected["status"] = "running"
+            selected.setdefault("started_at_utc", now)
+            selected["heartbeat_at_utc"] = now
+            workflow["current_step_id"] = selected.get("step_id")
+        workflow["state"] = "running"
+    elif task_status in {"waiting_review", "waiting_for_input", "blocked", "stalled"}:
+        selected = next((row for row in execution_steps if row.get("status") == "running"), None)
+        if selected is not None:
+            selected["status"] = "waiting_for_input" if task_status in {"waiting_review", "waiting_for_input"} else "blocked"
+        workflow["state"] = "waiting_for_input" if task_status in {"waiting_review", "waiting_for_input"} else "blocked"
+    elif task_status == "completed":
+        for row in execution_steps:
+            agent_id = str(row.get("assigned_agent") or "")
+            if row.get("status") == "completed":
+                continue
+            if agent_id and evidence and agent_id not in evidence:
+                row["status"] = "waiting_for_evidence"
+                workflow["state"] = "waiting_for_evidence"
+                workflow["current_step_id"] = row.get("step_id")
+                break
+            row.update({"status": "completed", "completed_at_utc": now})
+        else:
+            report = next((row for row in steps if row.get("step_id") == "owner-report"), None)
+            if report is not None:
+                report.update({"status": "completed", "completed_at_utc": now})
+            workflow.update({"state": "completed", "current_step_id": "owner-report"})
+    elif task_status in {"failed", "cancelled", "obsolete", "duplicate", "archived"}:
+        for row in steps:
+            if row.get("status") not in {"completed", "failed", "cancelled", "skipped"}:
+                row["status"] = "cancelled" if task_status == "cancelled" else "skipped"
+        workflow.update({"state": task_status, "current_step_id": ""})
+    workflow["steps"] = steps
+    workflow["updated_at_utc"] = now
+    workflow["stage"] = str(stage or "")[:120]
+    return workflow
+
+
 def _incident_counts(incidents: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     counts: Dict[str, int] = {}
     open_count = 0
@@ -397,9 +542,52 @@ def _deduplicate_active_incident_tasks() -> int:
         return changed
 
 
-def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) -> Dict[str, Any]:
+def _apply_reconciliation_action(doc: Dict[str, Any], action: Dict[str, Any]) -> None:
+    kind = str(action.get("kind") or "")
+    task = next((row for row in doc.get("tasks") or []
+                 if str(row.get("task_id") or "") == str(action.get("task_id") or "")), None)
+    incident = next((row for row in doc.get("incidents") or []
+                     if str(row.get("incident_id") or "") == str(action.get("incident_id") or "")), None)
+    now = _now()
+    if task is not None:
+        if kind == "duplicate_task":
+            task.update({"status": "duplicate", "duplicate_of": action.get("canonical_task_id"), "archived_at_utc": now, "updated_at_utc": now})
+        elif kind == "orphan_task":
+            task.update({"status": "blocked", "blocking_reason": "linked_incident_missing", "updated_at_utc": now})
+        elif kind == "stalled_task":
+            task.update({"status": "stalled", "blocking_reason": "heartbeat_missing", "stalled_at_utc": now, "updated_at_utc": now})
+        elif kind == "retire_legacy_guard_failure":
+            task.update({"status": "failed", "blocking_reason": "legacy_authorization_not_persisted", "failed_at_utc": now, "updated_at_utc": now})
+        elif kind == "retire_executor_plan_failure":
+            task.update({"status": "failed", "blocking_reason": "executor_plan_missing", "failed_at_utc": now, "updated_at_utc": now})
+        elif kind == "obsolete_unactivated_task":
+            task.update({"status": "obsolete", "obsolete_reason": "activation_not_confirmed", "obsolete_at_utc": now, "updated_at_utc": now})
+        elif kind == "obsolete_stale_queued_task":
+            task.update({"status": "obsolete", "obsolete_reason": "queued_ttl_expired", "obsolete_at_utc": now, "updated_at_utc": now})
+        elif kind == "missing_blocking_reason":
+            task["blocking_reason"] = str(task.get("execution_error") or "execution_blocked")[:500]
+        elif kind == "backfill_result_id":
+            material = f"{task.get('task_id')}|{task.get('result')}|{task.get('completed_at_utc')}"
+            task["result_id"] = "VR-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper()
+        elif kind == "completed_without_result":
+            task.update({"status": "blocked", "blocking_reason": "completion_requires_verifiable_result", "updated_at_utc": now})
+        elif kind == "archive_terminal_task":
+            task.update({"status": "archived", "archived_from_status": action.get("previous_status"), "archived_at_utc": now, "updated_at_utc": now})
+    if incident is not None:
+        if kind == "ghost_task_link":
+            incident["task_id"] = ""
+        elif kind == "obsolete_expired_incident":
+            incident.update({"status": "obsolete", "owner_decision_required": False, "obsolete_reason": "decision_ttl_expired", "obsolete_at_utc": now})
+        elif kind == "defer_session_closed":
+            incident.update({"status": "deferred", "owner_decision_required": False, "deferred_reason": "SESSION_CLOSED", "deferred_at_utc": now})
+
+
+def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None,
+                        kinds: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     """Preview or apply safe lifecycle repairs without deleting audit history."""
     current = (now or _now_dt()).astimezone(timezone.utc)
+    selected_kinds = {str(value or "") for value in (kinds or []) if str(value or "")}
+    inline_apply = bool(apply and not selected_kinds)
     with _LOCK:
         doc = _read()
         tasks = [row for row in doc.get("tasks") or [] if isinstance(row, dict)]
@@ -424,7 +612,7 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
                     "kind": "duplicate_task", "task_id": duplicate.get("task_id"),
                     "incident_id": incident_id, "canonical_task_id": canonical.get("task_id"),
                 })
-                if apply:
+                if inline_apply:
                     duplicate.update({
                         "status": "duplicate", "duplicate_of": canonical.get("task_id"),
                         "archived_at_utc": _now(), "updated_at_utc": _now(),
@@ -437,6 +625,11 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
             linked_incident = str(task.get("incident_id") or "")
             if linked_incident and linked_incident not in incident_ids:
                 actions.append({"kind": "orphan_task", "task_id": task.get("task_id"), "incident_id": linked_incident})
+                if inline_apply:
+                    task.update({
+                        "status": "blocked", "blocking_reason": "linked_incident_missing",
+                        "updated_at_utc": _now(),
+                    })
             if status_value == "in_progress":
                 heartbeat = _parse_time(task.get("execution_heartbeat_at_utc") or task.get("updated_at_utc"))
                 has_external_work = bool(
@@ -445,7 +638,7 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
                 )
                 if heartbeat and not has_external_work and (current - heartbeat).total_seconds() > 30 * 60:
                     actions.append({"kind": "stalled_task", "task_id": task.get("task_id"), "last_heartbeat_at_utc": heartbeat.isoformat()})
-                    if apply:
+                    if inline_apply:
                         task.update({
                             "status": "stalled", "blocking_reason": "heartbeat_missing",
                             "stalled_at_utc": _now(), "updated_at_utc": _now(),
@@ -454,64 +647,69 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
             created_at = _parse_time(task.get("created_at_utc"))
             if status_value == "blocked" and "current_message_does_not_authorize_action" in result_text:
                 actions.append({"kind": "retire_legacy_guard_failure", "task_id": task.get("task_id")})
-                if apply:
+                if inline_apply:
                     task.update({
                         "status": "failed", "blocking_reason": "legacy_authorization_not_persisted",
                         "failed_at_utc": _now(), "updated_at_utc": _now(),
                     })
-                status_value = "failed"
+                if not selected_kinds or "retire_legacy_guard_failure" in selected_kinds:
+                    status_value = "failed"
             if (
                 status_value == "waiting_review"
                 and "не вернул проверяемый план" in result_text.lower()
             ):
                 actions.append({"kind": "retire_executor_plan_failure", "task_id": task.get("task_id")})
-                if apply:
+                if inline_apply:
                     task.update({
                         "status": "failed", "blocking_reason": "executor_plan_missing",
                         "failed_at_utc": _now(), "updated_at_utc": _now(),
                     })
-                status_value = "failed"
+                if not selected_kinds or "retire_executor_plan_failure" in selected_kinds:
+                    status_value = "failed"
             if (
                 status_value == "planned" and not bool(task.get("auto_execute")) and created_at
                 and (current - created_at).total_seconds() > 30 * 60
             ):
                 actions.append({"kind": "obsolete_unactivated_task", "task_id": task.get("task_id")})
-                if apply:
+                if inline_apply:
                     task.update({
                         "status": "obsolete", "obsolete_reason": "activation_not_confirmed",
                         "obsolete_at_utc": _now(), "updated_at_utc": _now(),
                     })
-                status_value = "obsolete"
+                if not selected_kinds or "obsolete_unactivated_task" in selected_kinds:
+                    status_value = "obsolete"
             if (
                 status_value in {"new", "planned"} and bool(task.get("auto_execute")) and created_at
                 and (current - created_at).total_seconds() > 24 * 3600
                 and not task.get("execution_job_ids") and not task.get("execution_mission_id")
             ):
                 actions.append({"kind": "obsolete_stale_queued_task", "task_id": task.get("task_id")})
-                if apply:
+                if inline_apply:
                     task.update({
                         "status": "obsolete", "obsolete_reason": "queued_ttl_expired",
                         "obsolete_at_utc": _now(), "updated_at_utc": _now(),
                     })
-                status_value = "obsolete"
+                if not selected_kinds or "obsolete_stale_queued_task" in selected_kinds:
+                    status_value = "obsolete"
             if status_value == "blocked" and not task.get("blocking_reason"):
                 actions.append({"kind": "missing_blocking_reason", "task_id": task.get("task_id")})
-                if apply:
+                if inline_apply:
                     task["blocking_reason"] = str(task.get("execution_error") or "execution_blocked")[:500]
             if status_value == "completed" and not task.get("result_id"):
                 if str(task.get("result") or "").strip():
                     actions.append({"kind": "backfill_result_id", "task_id": task.get("task_id")})
-                    if apply:
+                    if inline_apply:
                         material = f"{task.get('task_id')}|{task.get('result')}|{task.get('completed_at_utc')}"
                         task["result_id"] = "VR-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper()
                 else:
                     actions.append({"kind": "completed_without_result", "task_id": task.get("task_id")})
-                    if apply:
+                    if inline_apply:
                         task.update({
                             "status": "blocked", "blocking_reason": "completion_requires_verifiable_result",
                             "updated_at_utc": _now(),
                         })
-                    status_value = "blocked"
+                    if not selected_kinds or "completed_without_result" in selected_kinds:
+                        status_value = "blocked"
             terminal_at = _parse_time(
                 task.get("completed_at_utc") or task.get("failed_at_utc")
                 or task.get("cancelled_at_utc") or task.get("updated_at_utc")
@@ -521,7 +719,7 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
                 and terminal_at and (current - terminal_at).total_seconds() > TERMINAL_TASK_ARCHIVE_DAYS * 86400
             ):
                 actions.append({"kind": "archive_terminal_task", "task_id": task.get("task_id"), "previous_status": status_value})
-                if apply:
+                if inline_apply:
                     task.update({
                         "status": "archived", "archived_from_status": status_value,
                         "archived_at_utc": _now(), "updated_at_utc": _now(),
@@ -536,7 +734,7 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
             linked_task_id = str(incident.get("task_id") or "")
             if linked_task_id and linked_task_id not in task_ids:
                 actions.append({"kind": "ghost_task_link", "incident_id": incident.get("incident_id"), "task_id": linked_task_id})
-                if apply:
+                if inline_apply:
                     incident["task_id"] = ""
             context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
             event_type = str(context.get("event_type") or "")
@@ -546,7 +744,7 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
                 and (current - first_seen).total_seconds() > INCIDENT_DECISION_TTL_DAYS * 86400
             ):
                 actions.append({"kind": "obsolete_expired_incident", "incident_id": incident.get("incident_id")})
-                if apply:
+                if inline_apply:
                     incident.update({
                         "status": "obsolete", "owner_decision_required": False,
                         "obsolete_reason": "decision_ttl_expired", "obsolete_at_utc": _now(),
@@ -557,35 +755,57 @@ def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) 
                 and str(incident.get("status") or "") in OPEN_INCIDENT_STATUSES
             ):
                 actions.append({"kind": "defer_session_closed", "incident_id": incident.get("incident_id")})
-                if apply:
+                if inline_apply:
                     incident.update({
                         "status": "deferred", "owner_decision_required": False,
                         "deferred_reason": "SESSION_CLOSED", "deferred_at_utc": _now(),
                     })
 
+        effective_actions = [
+            action for action in actions
+            if not selected_kinds or str(action.get("kind") or "") in selected_kinds
+        ]
+        if apply and selected_kinds:
+            for action in effective_actions:
+                _apply_reconciliation_action(doc, action)
         counts: Dict[str, int] = {}
-        for action in actions:
+        for action in effective_actions:
             kind = str(action.get("kind") or "unknown")
             counts[kind] = counts.get(kind, 0) + 1
-        if apply and actions:
-            _append_history(doc, "lifecycle_reconciled", action_count=len(actions), counts=counts)
+        if apply and effective_actions:
+            _append_history(
+                doc, "lifecycle_reconciled", action_count=len(effective_actions),
+                counts=counts, selected_kinds=sorted(selected_kinds),
+            )
             _write(doc)
         return {
             "ok": True, "mode": "apply" if apply else "preview",
             "generated_at_utc": _now(), "market_session_state": "OPEN" if session_open else "SESSION_CLOSED",
-            "action_count": len(actions), "counts": counts, "actions": actions[:500],
+            "action_count": len(effective_actions), "counts": counts, "actions": effective_actions[:500],
             "history_preserved": True,
+            "selected_kinds": sorted(selected_kinds),
         }
 
 
 def _background_status() -> Dict[str, Any]:
     marker = _read_json(_service_marker_path())
+    supervisor = _read_json(_supervisor_state_path())
+    safe_until = _parse_time(supervisor.get("safe_mode_until_utc"))
+    safe_active = bool(
+        supervisor.get("safe_mode") and safe_until and safe_until > _now_dt()
+    )
     return {
         "installed": bool(marker.get("installed")),
         "task_name": str(marker.get("task_name") or "StratForge Vitek"),
         "installed_at_utc": str(marker.get("installed_at_utc") or ""),
         "launcher": str(marker.get("launcher") or ""),
         "current_process_background": os.environ.get("NTA_VITEK_BACKGROUND") == "1",
+        "supervised": os.environ.get("NTA_BACKEND_SUPERVISED") == "1" or bool(supervisor),
+        "supervisor": supervisor,
+        "safe_mode": safe_active,
+        "safe_mode_until_utc": (
+            str(supervisor.get("safe_mode_until_utc") or "") if safe_active else ""
+        ),
     }
 
 
@@ -670,12 +890,16 @@ def status() -> Dict[str, Any]:
                 incident["owner_brief"] = _owner_incident_brief(incident)
         task_counts = _task_counts(tasks)
         incident_counts = _incident_counts(incidents)
+        background = _background_status()
         try:
             from . import market_data_ipc
             market_session_state = "OPEN" if market_data_ipc.is_market_open() else "SESSION_CLOSED"
         except Exception:
             market_session_state = "UNKNOWN"
-        if rest.get("active"):
+        if background.get("safe_mode"):
+            mode = "safe_mode"
+            message = "Безопасный режим после серии сбоев: новые автоматические поручения приостановлены, состояние и очередь сохранены."
+        elif rest.get("active"):
             mode = "resting"
             message = f"Отдыхаю до {rest.get('until_utc') or 'отмены'}. Критические события контролирую."
         elif incident_counts.get("awaiting_owner"):
@@ -755,7 +979,7 @@ def status() -> Dict[str, Any]:
                 "active_agents": sum(1 for row in agent_rows if row.get("working")),
             },
             "agent_activity": agent_rows,
-            "background": _background_status(),
+            "background": background,
             "rest": rest,
             "plans": plans,
             "task_counts": task_counts,
@@ -1343,6 +1567,7 @@ def _task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
 
 def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
     expected_lease_owner = str(changes.pop("_expected_lease_owner", "") or "")
+    explicit_evidence_agents = changes.pop("_evidence_agents", None)
     with _LOCK:
         doc = _read()
         task = next((row for row in doc.get("tasks") or [] if row.get("task_id") == task_id), None)
@@ -1357,13 +1582,40 @@ def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
             return dict(task)
         task.update(changes)
         task["updated_at_utc"] = _now()
+        if not isinstance(task.get("workflow"), dict) or not task.get("workflow", {}).get("steps"):
+            task["workflow"] = _workflow_template(task)
+        evidence_agents = {
+            str(value or "") for value in (explicit_evidence_agents or []) if str(value or "")
+        }
+        for action in task.get("execution_actions") or []:
+            if not isinstance(action, dict) or str(action.get("status") or "") not in {
+                "completed", "done", "success", "succeeded", "queued", "running",
+            }:
+                continue
+            agent_id = str(action.get("agent_id") or action.get("assigned_agent") or action.get("agent") or "")
+            if agent_id:
+                evidence_agents.add(agent_id)
+        if any((
+            str(task.get("result") or "").strip(), task.get("execution_confirmation"),
+            task.get("execution_job_summaries"), task.get("execution_mission_status") == "completed",
+        )):
+            evidence_agents.add(str(task.get("assigned_agent") or ""))
+        task["workflow"] = _advance_workflow(
+            task.get("workflow"), task_status=str(task.get("status") or ""),
+            stage=str(task.get("current_stage") or ""), evidence_agents=evidence_agents,
+        )
+        task["progress"] = _progress_snapshot(
+            task.get("progress"), status=str(task.get("status") or ""),
+            stage=str(task.get("current_stage") or ""),
+            heartbeat_at_utc=str(task.get("execution_heartbeat_at_utc") or ""),
+        )
         if task.get("status") in {"completed", "failed", "cancelled", "blocked", "waiting_review", "waiting_for_input"}:
             task["current_stage"] = _canonical_task_status(task)
-            progress = dict(task.get("progress") or {})
-            progress["stage"] = task["current_stage"]
-            if task.get("status") == "completed":
-                progress.update({"completed_steps": max(1, int(progress.get("total_steps") or 1)), "total_steps": max(1, int(progress.get("total_steps") or 1))})
-            task["progress"] = progress
+            task["progress"] = _progress_snapshot(
+                task.get("progress"), status=str(task.get("status") or ""),
+                stage=task["current_stage"],
+                heartbeat_at_utc=str(task.get("execution_heartbeat_at_utc") or ""),
+            )
             task.pop("worker_lease_owner", None)
             task.pop("worker_lease_expires_at_utc", None)
         if task.get("status") == "completed":
@@ -1383,6 +1635,15 @@ def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
                     "jobs": task.get("execution_job_states"),
                 }, ensure_ascii=False, sort_keys=True, default=str)
                 task["result_id"] = "VR-" + hashlib.sha256(result_material.encode("utf-8")).hexdigest()[:16].upper()
+        if task.get("status") == "completed" and task.get("workflow", {}).get("state") == "waiting_for_evidence":
+            task["status"] = "waiting_review"
+            task["blocking_reason"] = "workflow_participant_evidence_missing"
+            task.pop("result_id", None)
+            task["current_stage"] = "waiting_for_input"
+            task["progress"] = _progress_snapshot(
+                task.get("progress"), status="waiting_review", stage="waiting_for_input",
+                heartbeat_at_utc=str(task.get("execution_heartbeat_at_utc") or ""),
+            )
         if task.get("status") == "completed" and not task.get("completed_at_utc"):
             task["completed_at_utc"] = _now()
         if str(task.get("status") or "") in {"completed", "cancelled", "blocked"}:
@@ -1408,6 +1669,93 @@ def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
                     "resolved_at_utc": _now(),
                 })
         _append_history(doc, "task_execution_updated", task_id=task_id, status=task.get("status"))
+        _write(doc)
+        return dict(task)
+
+
+def update_task_progress(task_id: str, *, stage: str, items_found: Any = None,
+                         items_checked: Any = None, items_total: Any = None,
+                         current_item: str = "", completed_steps: Any = None,
+                         total_steps: Any = None, checkpoint: Optional[Dict[str, Any]] = None,
+                         worker_id: str = "") -> Dict[str, Any]:
+    """Persist a monotonic heartbeat/checkpoint for any task executor."""
+    wanted = str(task_id or "").strip().upper()
+    if not wanted or not str(stage or "").strip():
+        raise VitekError("Для progress update нужны task_id и stage.")
+    now = _now_dt()
+    with _LOCK:
+        doc = _read()
+        task = next((row for row in doc.get("tasks") or []
+                     if str(row.get("task_id") or "").upper() == wanted), None)
+        if task is None:
+            raise VitekError(f"Задача {wanted} не найдена.")
+        if str(task.get("status") or "") not in ACTIVE_TASK_STATUSES:
+            raise VitekError("Нельзя обновить прогресс завершённой задачи.")
+        lease_owner = str(task.get("worker_lease_owner") or "")
+        supplied_worker = str(worker_id or "")
+        if lease_owner and supplied_worker != lease_owner:
+            raise VitekError("Progress update отклонён: worker lease принадлежит другому процессу.")
+        previous_progress = _progress_snapshot(
+            task.get("progress"), status=str(task.get("status") or "in_progress"),
+            stage=str(task.get("current_stage") or ""),
+            heartbeat_at_utc=str(task.get("execution_heartbeat_at_utc") or ""),
+        )
+        progress = dict(task.get("progress") or {})
+        if items_found is not None:
+            progress["items_found"] = max(_bounded_count(progress.get("items_found")), _bounded_count(items_found))
+        if items_checked is not None:
+            progress["items_checked"] = max(_bounded_count(progress.get("items_checked")), _bounded_count(items_checked))
+        if items_total is not None:
+            progress["items_total"] = max(_bounded_count(progress.get("items_total")), _bounded_count(items_total))
+        if completed_steps is not None:
+            progress["completed_steps"] = max(_bounded_count(progress.get("completed_steps")), _bounded_count(completed_steps))
+        if total_steps is not None:
+            progress["total_steps"] = max(_bounded_count(progress.get("total_steps")), _bounded_count(total_steps), 1)
+        if current_item:
+            progress["current_item"] = str(current_item)[:500]
+        candidate = _progress_snapshot(
+            progress, status=str(task.get("status") or "in_progress"),
+            stage=str(stage)[:120], heartbeat_at_utc="",
+        )
+        semantic_keys = (
+            "completed_steps", "total_steps", "items_found", "items_checked",
+            "items_total", "items_remaining", "current_item", "stage", "percent",
+        )
+        changed = any(previous_progress.get(key) != candidate.get(key) for key in semantic_keys)
+        last_heartbeat = _parse_time(task.get("execution_heartbeat_at_utc"))
+        if not changed and last_heartbeat and (now - last_heartbeat).total_seconds() < 30:
+            return dict(task)
+        heartbeat = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        task["execution_heartbeat_at_utc"] = heartbeat
+        task["current_stage"] = str(stage)[:120]
+        task["progress"] = {**candidate, "heartbeat_at_utc": heartbeat}
+        task["progress_revision"] = int(task.get("progress_revision") or 0) + 1
+        if lease_owner:
+            task["worker_lease_expires_at_utc"] = (
+                now + timedelta(minutes=10)
+            ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        if checkpoint is not None:
+            clean_checkpoint: Dict[str, Any] = {}
+            for key, value in list(checkpoint.items())[:30]:
+                safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", str(key))[:80]
+                if isinstance(value, (bool, int, float)) or value is None:
+                    clean_checkpoint[safe_key] = value
+                else:
+                    clean_checkpoint[safe_key] = str(value)[:1000]
+            task["checkpoint"] = {
+                "revision": task["progress_revision"], "stage": task["current_stage"],
+                "at_utc": heartbeat, "data": clean_checkpoint,
+            }
+        task["workflow"] = _advance_workflow(
+            task.get("workflow") or _workflow_template(task),
+            task_status=str(task.get("status") or "in_progress"), stage=task["current_stage"],
+        )
+        task["updated_at_utc"] = heartbeat
+        if changed:
+            _append_history(
+                doc, "task_progress_updated", task_id=wanted,
+                revision=task["progress_revision"], stage=task["current_stage"],
+            )
         _write(doc)
         return dict(task)
 
@@ -3512,12 +3860,18 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     claimed = _set_task_execution(
         task_id, status="in_progress", assigned_agent=route["agent"], assigned_role=route["role"],
         complexity=route["complexity"], execution_started_at_utc=_now(),
-        execution_heartbeat_at_utc=_now(), current_stage="executor_running",
+        execution_heartbeat_at_utc=_now(), worker_accepted_at_utc=_now(),
+        current_stage="executor_running",
         worker_lease_owner=PROCESS_INSTANCE_ID,
         worker_lease_expires_at_utc=(
             _now_dt() + timedelta(minutes=10)
         ).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        progress={"completed_steps": 0, "total_steps": 1, "stage": "executor_running"},
+        progress={"completed_steps": 1, "total_steps": 3, "stage": "executor_running"},
+        progress_revision=1,
+        checkpoint={
+            "revision": 1, "stage": "executor_running", "at_utc": _now(),
+            "data": {"event_id": str(event.get("event_id") or ""), "capability": str(intent.get("capability") or "")},
+        },
         execution_event_id=event.get("event_id"),
         routing_model=intent.get("routing_model"),
         routing_provider=intent.get("routing_provider"),
@@ -3555,6 +3909,13 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         )
     actions = [row for row in (response.get("actions") or []) if isinstance(row, dict)]
     statuses = {str(row.get("status") or "") for row in actions}
+    terminal_action_states = {"completed", "done", "success", "succeeded", "error", "blocked", "cancelled"}
+    checked_actions = sum(1 for row in actions if str(row.get("status") or "") in terminal_action_states)
+    action_agents = {
+        str(row.get("agent_id") or row.get("assigned_agent") or row.get("agent") or "")
+        for row in actions if isinstance(row, dict)
+    }
+    action_agents.discard("")
     model = str(response.get("model") or "unknown")
     reply = str(response.get("reply") or "")[:4000]
     execution_unavailable = (
@@ -3572,7 +3933,19 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         "result": reply,
         "execution_heartbeat_at_utc": _now(),
         "current_stage": "executor_returned",
-        "progress": {"completed_steps": 1, "total_steps": 1, "stage": "executor_returned"},
+        "progress": {
+            "completed_steps": 2, "total_steps": 3, "stage": "executor_returned",
+            "items_found": len(actions), "items_checked": checked_actions,
+            "items_total": len(actions),
+            "current_item": str(next((row.get("name") for row in actions
+                                       if str(row.get("status") or "") not in terminal_action_states), "") or ""),
+        },
+        "progress_revision": 2,
+        "checkpoint": {
+            "revision": 2, "stage": "executor_returned", "at_utc": _now(),
+            "data": {"action_count": len(actions), "checked_actions": checked_actions},
+        },
+        "_evidence_agents": sorted(action_agents),
         "_expected_lease_owner": PROCESS_INSTANCE_ID,
     }
     mission_ids = [str(row.get("mission_id") or "") for row in actions if row.get("mission_id")]
@@ -3741,6 +4114,17 @@ def _reconcile_task_executions() -> None:
         if command_id:
             command = runtime.get_command_status(command_id, timeout_sec=120)
             command_state = str(command.get("state") or "")
+            try:
+                update_task_progress(
+                    task_id, stage=f"runtime_command:{command_state or 'waiting'}",
+                    items_found=1, items_checked=1 if command_state == "confirmed_connected" or command_state.startswith("failed_") else 0,
+                    items_total=1, current_item=command_id,
+                    completed_steps=2 if command_state == "confirmed_connected" or command_state.startswith("failed_") else 1,
+                    total_steps=3, checkpoint={"command_id": command_id, "command_state": command_state},
+                    worker_id=PROCESS_INSTANCE_ID,
+                )
+            except VitekError:
+                pass
             if command_state == "confirmed_connected":
                 text = "Связь с NinjaTrader восстановлена и подтверждена Bridge и подключённым демо-счётом."
                 updated = _set_task_execution(
@@ -3767,12 +4151,37 @@ def _reconcile_task_executions() -> None:
         if mission_id:
             try:
                 from .ai_lab import chief_agent
-                mission = dict(chief_agent.status().get("mission") or {})
+                chief_status = chief_agent.status()
+                mission = dict(chief_status.get("mission") or {})
             except Exception:
                 continue
             if str(mission.get("mission_id") or "") != mission_id:
                 continue
             mission_state = str(mission.get("status") or "")
+            mission_found = int(mission.get("cycles_started") or 0)
+            mission_checked = len(mission.get("reported_experiment_ids") or [])
+            mission_total = int(mission.get("max_cycles") or 0) or max(mission_found, mission_checked)
+            active_run = chief_status.get("current_run") if isinstance(chief_status.get("current_run"), dict) else {}
+            mission_stage = str(
+                active_run.get("stage") or active_run.get("current_stage")
+                or ("mission_" + (mission_state or "waiting"))
+            )
+            try:
+                update_task_progress(
+                    task_id, stage=mission_stage,
+                    items_found=mission_found, items_checked=mission_checked,
+                    items_total=mission_total,
+                    current_item=str(mission.get("active_strategy_experiment_id") or active_run.get("current_experiment_id") or ""),
+                    completed_steps=2 if mission_state in {"completed", "stopped", "deadline_reached", "failed", "blocked"} else 1,
+                    total_steps=3,
+                    checkpoint={
+                        "mission_id": mission_id, "mission_state": mission_state,
+                        "cycles_started": mission_found, "reported": mission_checked,
+                    },
+                    worker_id=PROCESS_INSTANCE_ID,
+                )
+            except VitekError:
+                pass
             if mission_state == "completed":
                 text = str(mission.get("completion_report") or "Исследование завершено.")
                 updated = _set_task_execution(
@@ -3805,6 +4214,21 @@ def _reconcile_task_executions() -> None:
         if any(location is None for location in locations):
             continue
         states = [str(location[0]) for location in locations if location is not None]
+        terminal_job_states = {"done", "failed", "cancelled"}
+        checked_jobs = sum(1 for state in states if state in terminal_job_states)
+        current_job = next((job_id for job_id, state in zip(job_ids, states)
+                            if state not in terminal_job_states), "")
+        try:
+            update_task_progress(
+                task_id, stage="strategy_jobs_reconciliation",
+                items_found=len(job_ids), items_checked=checked_jobs,
+                items_total=len(job_ids), current_item=current_job,
+                completed_steps=2 if checked_jobs == len(job_ids) else 1, total_steps=3,
+                checkpoint={"job_ids": ",".join(job_ids), "job_states": json.dumps(dict(zip(job_ids, states)), sort_keys=True)},
+                worker_id=PROCESS_INSTANCE_ID,
+            )
+        except VitekError:
+            pass
         if any(state in {"failed", "cancelled"} for state in states):
             failed = [job_id for job_id, state in zip(job_ids, states) if state in {"failed", "cancelled"}]
             text = (
@@ -3959,6 +4383,7 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
         with _LOCK:
             rest = _rest_state(_read())
         recovered_events = recover_interrupted_events()
+        recovered_tasks = recover_interrupted_tasks()
         reconciliation = reconcile_lifecycle(apply=True)
         idle = _maybe_notify_idle()
         plan = _maybe_notify_plan_prompt(resting=bool(rest.get("active")))
@@ -3966,6 +4391,7 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "model": "deterministic scheduler", "content": "Плановая служебная проверка выполнена.",
                 "idle_notified": idle, "plan_prompted": plan,
                 "recovered_events": recovered_events,
+                "recovered_tasks": recovered_tasks,
                 "reconciliation": reconciliation}
     if kind == "connection_restored":
         resolved_ids = _resolve_connection_incidents()
@@ -4125,11 +4551,14 @@ def _claim_next_event(*, excluded_agents: Optional[set[str]] = None) -> Optional
     with _LOCK:
         doc = _read()
         rest = _rest_state(doc)
+        safe_mode = bool(_background_status().get("safe_mode"))
         now = _now_dt()
         selected = None
         excluded = excluded_agents or set()
         for row in doc.get("events") or []:
             if row.get("status") != "queued":
+                continue
+            if safe_mode and str(row.get("event_type") or "") == "task_created":
                 continue
             available = _parse_time(row.get("available_at_utc"))
             if available and available > now:
@@ -4185,12 +4614,82 @@ def recover_interrupted_events() -> int:
             doc["last_recovery"] = {
                 "at_utc": _now(), "recovered_events": recovered,
                 "outcome": "requeued", "instance_id": PROCESS_INSTANCE_ID,
+                "lost_actions": 0,
             }
             _append_history(doc, "events_recovered_after_restart", count=recovered)
             _write(doc)
     if recovered:
         _WAKE.set()
     return recovered
+
+
+def recover_interrupted_tasks() -> Dict[str, int]:
+    """Take over resumable checkpoints and stop tasks that cannot be resumed."""
+    resumed = 0
+    stopped = 0
+    now = _now_dt()
+    with _LOCK:
+        doc = _read()
+        for task in doc.get("tasks") or []:
+            if not isinstance(task, dict) or str(task.get("status") or "") != "in_progress":
+                continue
+            owner = str(task.get("worker_lease_owner") or "")
+            expires = _parse_time(task.get("worker_lease_expires_at_utc"))
+            if owner == PROCESS_INSTANCE_ID and expires and expires > now:
+                continue
+            resumable = bool(
+                task.get("execution_command_id") or task.get("execution_mission_id")
+                or task.get("execution_job_ids") or task.get("checkpoint")
+            )
+            if resumable:
+                task.update({
+                    "worker_lease_owner": PROCESS_INSTANCE_ID,
+                    "worker_lease_expires_at_utc": (
+                        now + timedelta(minutes=10)
+                    ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                    "execution_heartbeat_at_utc": _now(),
+                    "current_stage": "recovered_from_checkpoint",
+                    "recovered_at_utc": _now(), "updated_at_utc": _now(),
+                })
+                checkpoint = dict(task.get("checkpoint") or {})
+                checkpoint["recovered_by_instance_id"] = PROCESS_INSTANCE_ID
+                checkpoint["recovered_at_utc"] = _now()
+                task["checkpoint"] = checkpoint
+                task["progress"] = _progress_snapshot(
+                    task.get("progress"), status="in_progress",
+                    stage="recovered_from_checkpoint",
+                    heartbeat_at_utc=str(task.get("execution_heartbeat_at_utc") or ""),
+                )
+                task["workflow"] = _advance_workflow(
+                    task.get("workflow") or _workflow_template(task),
+                    task_status="in_progress", stage="recovered_from_checkpoint",
+                )
+                resumed += 1
+            else:
+                task.update({
+                    "status": "stalled", "blocking_reason": "backend_restart_without_resumable_checkpoint",
+                    "current_stage": "stopped_after_restart", "stalled_at_utc": _now(),
+                    "updated_at_utc": _now(),
+                })
+                task.pop("worker_lease_owner", None)
+                task.pop("worker_lease_expires_at_utc", None)
+                task["workflow"] = _advance_workflow(
+                    task.get("workflow") or _workflow_template(task),
+                    task_status="stalled", stage="stopped_after_restart",
+                )
+                stopped += 1
+        if resumed or stopped:
+            previous = dict(doc.get("last_recovery") or {})
+            doc["last_recovery"] = {
+                **previous, "at_utc": _now(), "resumed_tasks": resumed,
+                "stopped_tasks": stopped, "instance_id": PROCESS_INSTANCE_ID,
+                "outcome": "checkpoint_reconciled", "lost_actions": 0,
+            }
+            _append_history(
+                doc, "tasks_recovered_after_restart", resumed=resumed, stopped=stopped,
+            )
+            _write(doc)
+    return {"resumed": resumed, "stopped": stopped}
 
 
 def _finish_event(event: Dict[str, Any], *, result: Optional[Dict[str, Any]] = None,
@@ -4441,6 +4940,7 @@ def start_background_worker(interval_sec: int = 1) -> bool:
         if _WORKER is not None and _WORKER.is_alive():
             return False
         recover_interrupted_events()
+        recover_interrupted_tasks()
         _STOP.clear()
         _WAKE.clear()
         _WORKER = threading.Thread(

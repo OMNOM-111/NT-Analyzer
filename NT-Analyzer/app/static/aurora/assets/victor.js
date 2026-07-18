@@ -13,7 +13,7 @@
     marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван',
   };
   const MODE_LABELS = {
-    free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', needs_attention: 'нужно внимание', resting: 'отдыхает',
+    free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', needs_attention: 'нужно внимание', resting: 'отдыхает', safe_mode: 'безопасный режим',
   };
   let state = null;
   let loading = false;
@@ -247,17 +247,24 @@
     const rows = Object.entries(counts).map(([key, value]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(labels[key] || key)}</div></div><span class="badge pending">${Number(value || 0)}</span></div>`).join('');
     UI.drawer(
       '<div class="tb-title"><span class="tb-kicker">Виктор · lifecycle manager</span><span class="tb-h1">Очистка поручений</span></div>',
-      `<div class="col gap-lg"><div class="finance-note">Режим preview ничего не удаляет. Применение архивирует и меняет статусы с сохранением полного audit trail.</div><div class="kpi ${preview.action_count ? 'warn' : 'pos'}"><div class="kpi-label">Найдено действий</div><div class="kpi-val sm">${Number(preview.action_count || 0)}</div><div class="kpi-foot">Сессия: ${esc(preview.market_session_state || 'UNKNOWN')}</div></div><div class="list">${rows || '<div class="empty-state">Lifecycle согласован; очистка не требуется.</div>'}</div><button class="btn primary" id="victor-cleanup-apply" ${preview.action_count ? '' : 'disabled'}>Применить безопасную очистку</button></div>`,
+      `<div class="col gap-lg"><div class="finance-note">Режим preview ничего не удаляет. Каждое действие ниже применяет только выбранную группу и сохраняет полный audit trail.</div><div class="kpi ${preview.action_count ? 'warn' : 'pos'}"><div class="kpi-label">Найдено действий</div><div class="kpi-val sm">${Number(preview.action_count || 0)}</div><div class="kpi-foot">Сессия: ${esc(preview.market_session_state || 'UNKNOWN')}</div></div><div class="list">${rows || '<div class="empty-state">Lifecycle согласован; очистка не требуется.</div>'}</div><div class="flex wrap gap-sm"><button class="btn ghost" data-cleanup-preview>Проверить актуальность</button><button class="btn ghost" data-cleanup-kinds="duplicate_task">Объединить дубликаты</button><button class="btn ghost" data-cleanup-kinds="backfill_result_id,archive_terminal_task">Архивировать выполненные</button><button class="btn ghost" data-cleanup-kinds="orphan_task,ghost_task_link,obsolete_unactivated_task,obsolete_stale_queued_task,obsolete_expired_incident">Закрыть неактуальные</button><button class="btn ghost" data-cleanup-kinds="stalled_task">Отменить зависшие</button></div><button class="btn primary" id="victor-cleanup-apply" ${preview.action_count ? '' : 'disabled'}>Очистить рабочий экран</button></div>`,
     );
+    const runCleanup = async (button, kinds) => {
+      button.disabled = true; const original = button.textContent; button.textContent = 'Применяю…';
+      try {
+        const result = await API.http.vitekReconcile(true, kinds);
+        UI.toast(`Применено: ${Number(result.action_count || 0)}; история сохранена`);
+        UI.closeDrawer(); await refresh();
+      } catch (error) { button.disabled = false; button.textContent = original; UI.reportError(error); }
+    };
+    const previewButton = UI.qs('[data-cleanup-preview]');
+    if (previewButton) previewButton.onclick = async () => { UI.closeDrawer(); await cleanupDrawer(); };
+    UI.qsa('[data-cleanup-kinds]').forEach(button => {
+      button.onclick = () => runCleanup(button, String(button.dataset.cleanupKinds || '').split(',').filter(Boolean));
+    });
     const apply = UI.qs('#victor-cleanup-apply');
     if (apply) apply.onclick = async function () {
-      this.disabled = true; this.textContent = 'Сверяю и архивирую…';
-      try {
-        const result = await API.http.vitekReconcile(true);
-        UI.toast(`Очистка завершена: ${Number(result.action_count || 0)} действий, история сохранена`);
-        UI.closeDrawer();
-        await refresh();
-      } catch (error) { this.disabled = false; this.textContent = 'Применить безопасную очистку'; UI.reportError(error); }
+      await runCleanup(this, []);
     };
   }
 
@@ -313,12 +320,22 @@
     const provider = String(task.execution_provider || task.routing_provider || '');
     const modelLine = modelParts.length ? ` · ${esc(modelParts.join(' → '))}${provider ? ` (${esc(provider)})` : ''}` : '';
     const control = task.control && task.control.condition ? `<div class="row-sub">Контроль: ${esc(task.control.condition)}</div>` : '';
+    const progress = task.progress || {};
+    const progressBits = [];
+    if (Number.isFinite(Number(progress.percent))) progressBits.push(`${Number(progress.percent).toFixed(0)}%`);
+    if (Number(progress.items_total || 0) > 0) progressBits.push(`найдено ${Number(progress.items_found || 0)} · проверено ${Number(progress.items_checked || 0)} · осталось ${Number(progress.items_remaining || 0)}`);
+    if (progress.current_item) progressBits.push(`сейчас ${String(progress.current_item)}`);
+    const progressLine = progressBits.length ? `<div class="row-sub">Прогресс: ${esc(progressBits.join(' · '))}</div>` : '';
+    const workflow = task.workflow || {};
+    const participants = Array.isArray(workflow.participants) ? workflow.participants.map(id => ({ vitek: 'Виктор', manager: 'Управляющий', tolik: 'Толик', marina: 'Марина', nikita: 'Никита', ivan: 'Иван' }[id] || id)) : [];
+    const workflowLine = workflow.workflow_id ? `<div class="row-sub mono">${esc(workflow.workflow_id)} · ${esc(workflow.state || 'queued')}${participants.length ? ` · ${esc(participants.join(' → '))}` : ''}</div>` : '';
     const statusLabels = { new: 'принято', planned: 'в очереди', in_progress: 'выполняется', waiting_review: 'ждёт ответа', waiting_for_input: 'ждёт ответа', blocked: 'заблокировано', stalled: 'нет heartbeat' };
     const needsInput = ['waiting_review', 'waiting_for_input', 'awaiting_decision'].includes(task.status);
     return `<div class="row"><div class="row-main"><div class="row-title">${esc(task.owner_title || task.title || 'Поручение')}</div>
       <div class="row-sub mono">${esc(task.task_id || '')}${task.mission_id ? ` · ${esc(task.mission_id)}` : ''} · ${esc(statusLabels[task.status] || task.status || 'неизвестно')}</div>
       <div class="row-sub">${esc(agent)}${modelLine}${task.due_at_utc ? ` · срок ${esc(fmtDate(task.due_at_utc))}` : ''}</div>
       ${task.current_stage ? `<div class="row-sub">Этап: ${esc(task.current_stage)}${task.execution_heartbeat_at_utc ? ` · heartbeat ${esc(fmtDate(task.execution_heartbeat_at_utc))}` : ''}</div>` : ''}
+      ${progressLine}${workflowLine}
       ${context.entity_label ? `<div class="row-sub">Связано с: ${esc(context.entity_label)}</div>` : ''}${control}</div>
       <div class="flex wrap gap-sm">${needsInput ? `<button class="btn sm primary" data-victor-answer-task="${esc(task.task_id)}">Уточнить</button>` : ''}${task.conversation_id ? `<button class="btn sm ghost" data-victor-open-chat="${esc(task.conversation_id)}">Чат</button>` : ''}<button class="btn sm ghost" data-victor-cancel-task="${esc(task.task_id)}" data-incident-id="${esc(task.incident_id || '')}">Отменить</button></div></div>`;
   }
@@ -333,12 +350,14 @@
       .map((row) => [row.incident_id, row.status, (row.owner_brief || {}).fact || '']);
     const tasks = (doc.tasks || [])
       .filter((row) => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'waiting_for_input', 'blocked', 'stalled'].includes(row.status))
-      .map((row) => [row.task_id, row.status, row.assigned_agent || '', row.owner_title || row.title || '']);
+      .map((row) => [row.task_id, row.status, row.assigned_agent || '', row.owner_title || row.title || '', row.progress_revision || 0, (row.workflow || {}).state || '']);
     const plans = doc.plans || {};
     return JSON.stringify({
       mode: doc.mode,
       message: doc.message || '',
       bg: !!(doc.background && doc.background.installed),
+      safeMode: !!(doc.background && doc.background.safe_mode),
+      supervisorUpdated: String(doc.background && doc.background.supervisor && doc.background.supervisor.updated_at_utc || ''),
       parallel: Number(doc.event_engine && doc.event_engine.parallel_limit || 0),
       agents, incidents, tasks,
       day: plans.day && { status: plans.day.status, focus: plans.day.focus },
@@ -362,15 +381,19 @@
     const incidents = (doc.incidents || []).filter(row => ['awaiting_decision', 'acknowledged', 'in_progress'].includes(row.status) && row.owner_decision_required);
     const agents = doc.agent_activity || [];
     const plans = doc.plans || {};
+    const background = doc.background || {};
+    const supervisor = background.supervisor || {};
+    const lastExit = supervisor.last_exit || {};
+    const recovery = doc.last_recovery || {};
     body.innerHTML = `<div class="col gap-lg">
       <div class="grid cols-5">
         <div class="kpi ${doc.mode === 'free' ? 'pos' : 'info'}"><div class="kpi-label">Состояние</div><div class="kpi-val sm">${esc(MODE_LABELS[doc.mode] || doc.mode)}</div><div class="kpi-foot">личный контроль</div></div>
         <div class="kpi ${incidents.length ? 'warn' : 'pos'}"><div class="kpi-label">Нужен ваш ответ</div><div class="kpi-val sm">${incidents.length}</div><div class="kpi-foot">только важные решения</div></div>
         <div class="kpi ${Number(doc.task_counts && doc.task_counts.running || 0) ? 'info' : 'pos'}"><div class="kpi-label">Выполняются / в очереди</div><div class="kpi-val sm">${Number(doc.task_counts && doc.task_counts.running || 0)}</div><div class="kpi-foot">ждут ответа: ${Number(doc.task_counts && doc.task_counts.waiting_for_input || 0)} · blocked: ${Number(doc.task_counts && doc.task_counts.blocked_total || 0)}</div></div>
         <div class="kpi ${agents.some(row => row.working) ? 'info' : 'pos'}"><div class="kpi-label">Команда работает</div><div class="kpi-val sm">${agents.filter(row => row.working).length}</div><div class="kpi-foot">до ${Number(doc.event_engine && doc.event_engine.parallel_limit || 6)} одновременно</div></div>
-        <div class="kpi ${doc.background && doc.background.installed ? 'pos' : 'warn'}"><div class="kpi-label">Фоновый контроль</div><div class="kpi-val sm">${doc.background && doc.background.installed ? 'включён' : 'не установлен'}</div><div class="kpi-foot">событийный режим</div></div>
+        <div class="kpi ${background.safe_mode ? 'warn' : background.installed ? 'pos' : 'warn'}"><div class="kpi-label">Фоновый контроль</div><div class="kpi-val sm">${background.safe_mode ? 'безопасный режим' : background.installed ? 'включён' : 'не установлен'}</div><div class="kpi-foot">${background.supervised ? 'внешний supervisor' : 'событийный режим'}${supervisor.restart_count ? ` · рестартов ${Number(supervisor.restart_count)}` : ''}</div></div>
       </div>
-      <div class="finance-note"><strong>Виктор:</strong> ${esc(doc.message || 'Готов принять поручение.')}<div class="row-sub">Торговая сессия: ${esc(doc.market_session_state || 'UNKNOWN')}${doc.last_recovery && doc.last_recovery.at_utc ? ` · восстановление ${esc(fmtDate(doc.last_recovery.at_utc))}: ${Number(doc.last_recovery.recovered_events || 0)} событий возвращено в очередь` : ''}</div></div>
+      <div class="finance-note"><strong>Виктор:</strong> ${esc(doc.message || 'Готов принять поручение.')}<div class="row-sub">Торговая сессия: ${esc(doc.market_session_state || 'UNKNOWN')}${recovery.at_utc ? ` · восстановление ${esc(fmtDate(recovery.at_utc))}: событий ${Number(recovery.recovered_events || 0)}, задач продолжено ${Number(recovery.resumed_tasks || 0)}, остановлено ${Number(recovery.stopped_tasks || 0)}` : ''}${lastExit.at_utc ? ` · последний backend exit ${Number(lastExit.exit_code)} (${esc(lastExit.reason || 'unknown')}) ${esc(fmtDate(lastExit.at_utc))}` : ''}</div></div>
       <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm">${agents.map(row => {
         const stateLabel = row.working ? 'работает' : row.state === 'waiting_owner' ? 'ждёт ответа' : row.state === 'blocked' ? 'есть препятствие' : 'свободен';
         const model = row.model ? ` · ${row.model}${row.provider ? ` (${row.provider})` : ''}` : '';
@@ -401,7 +424,10 @@
     try {
       const next = await API.http.vitekStatus();
       const instance = String(next && next.backend_instance && next.backend_instance.instance_id || '');
-      if (instance && lastBackendInstance && instance !== lastBackendInstance) UI.toast('Backend был перезапущен. Состояние поручений восстановлено и сверено.');
+      if (instance && lastBackendInstance && instance !== lastBackendInstance) {
+        const recovered = next.last_recovery || {};
+        UI.toast(`Backend перезапущен: продолжено задач ${Number(recovered.resumed_tasks || 0)}, остановлено ${Number(recovered.stopped_tasks || 0)}, потеряно по durable-журналу ${Number(recovered.lost_actions || 0)}.`);
+      }
       if (instance) {
         lastBackendInstance = instance;
         try { sessionStorage.setItem('victor.backendInstance', instance); } catch (_) { /* ignore */ }
@@ -423,7 +449,7 @@
       API.http.vitekClientEvent({
         kind, message: String(message || '').slice(0, 2000), stack: String(stack || '').slice(0, 6000),
         route: location.pathname + location.search, correlation_id: correlationId,
-        app_version: '20260718-lifecycle1', backend_instance_id: lastBackendInstance,
+        app_version: '20260718-lifecycle3', backend_instance_id: lastBackendInstance,
       }).catch(() => {});
     };
     window.addEventListener('error', event => sendEvent('frontend_error', event.message, event.error && event.error.stack));

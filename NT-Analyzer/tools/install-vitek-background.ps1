@@ -8,15 +8,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$launcher = Join-Path $projectRoot 'start-vitek-background.ps1'
-if (-not (Test-Path -LiteralPath $launcher)) {
-    throw "Vitek launcher not found: $launcher"
+$python = $null
+foreach ($candidate in 'python', 'python3', 'py') {
+    try {
+        if ($candidate -eq 'py') {
+            $resolved = (& $candidate -3 -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1)
+        } else {
+            $resolved = (& $candidate -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1)
+        }
+        if ($LASTEXITCODE -eq 0 -and $resolved) {
+            $python = [string]$resolved
+            break
+        }
+    } catch {}
+}
+if (-not $python -or -not (Test-Path -LiteralPath $python)) {
+    throw 'Python 3 executable not found; Vitek supervisor was not installed.'
 }
 
-$powerShell = (Get-Command powershell.exe -ErrorAction Stop).Source
-$escapedLauncher = $launcher.Replace('"', '""')
-$arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$escapedLauncher`" -Port $Port"
-$action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments -WorkingDirectory $projectRoot
+$arguments = "-m app.backend_supervisor --port $Port --retry-seconds 10"
+$action = New-ScheduledTaskAction -Execute $python -Argument $arguments -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
@@ -40,7 +51,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $markerPath) | Out
     installed = $true
     task_name = $TaskName
     installed_at_utc = [DateTime]::UtcNow.ToString('o')
-    launcher = $launcher
+    launcher = $python
+    arguments = $arguments
     port = $Port
 } | ConvertTo-Json | Set-Content -LiteralPath $markerPath -Encoding UTF8
 

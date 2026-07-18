@@ -1,6 +1,6 @@
 # StratForge Codex run state — 2026-07-16
 
-Last checkpoint: 2026-07-16 09:30 PT
+Last checkpoint: 2026-07-18 04:15 PT
 
 ## Git
 
@@ -49,6 +49,16 @@ Last checkpoint: 2026-07-16 09:30 PT
     Backed up the real Vitek store, applied 40 safe repairs with no record deletion,
     and confirmed a zero-action second preview. Final evidence for this block:
     690 pytest tests, 217 focused tests and 13/13 project suites pass.
+19. **2026-07-18 PT — orchestrator completion and browser QA:** added universal
+    progress/checkpoints, deterministic multi-participant workflow evidence,
+    selective cleanup, exact backend exit/restart ledger, bounded crash-loop safe
+    mode and task checkpoint recovery. The explicitly authorized in-app Browser
+    passed the isolated owner desktop/reload/drawer flow and exposed two additional
+    defects: eager Vitek workspace lookup and lost local-owner capabilities. Both
+    were fixed and rechecked. The production scheduled action now launches the
+    supervisor directly and a Windows kill-on-close Job Object prevents orphan
+    backend processes. Final repository evidence: 704 pytest tests, 230 focused
+    tests and 13/13 project suites pass.
 
 ## Branch preservation audit
 
@@ -78,4 +88,7 @@ The originally referenced `STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md` was absen
 
 ## Exact next action
 
-Run the remaining human visual/role matrix in an already-open user-controlled Chrome window, then perform the separately credentialed Google/Community/Databento/payment/broker/Strategy Analyzer checks. Do not initialize the in-app browser runtime again.
+Run the remaining mobile/Telegram/two-profile role matrix with separate real
+identities, then perform the separately credentialed
+Google/Community/Databento/payment/broker/Strategy Analyzer checks. The owner
+desktop in-app Browser contour has already passed and is no longer a blocker.

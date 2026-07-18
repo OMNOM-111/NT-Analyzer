@@ -1,7 +1,7 @@
-# Last-change audit — 2026-07-17
+# Last-change audit — 2026-07-18
 
 Branch: `codex/stratforge-release-20260716`
-Audit status: **repository implementation reconciled; automated gates pass; production acceptance blocked**
+Audit status: **repository implementation and owner desktop contour reconciled; automated/browser gates pass; external production acceptance blocked**
 
 ## Attribution and scope
 
@@ -61,14 +61,36 @@ commit subjects, run-state notes, tests and code boundaries:
 12. The clean GitHub runner depended on undeclared third-party `requests` in the
     TopstepX prototype. The adapter now uses Python stdlib HTTP and the dependency
     mismatch is covered by tests.
+13. The previous PowerShell restart loop logged an empty backend exit code. Process
+    ownership now belongs to a durable Python supervisor with exact exit code,
+    reason, stdout/stderr paths, append-only restart history, bounded backoff and
+    crash-loop safe mode.
+14. Task progress was a stage label rather than a universal measurable contract.
+    It now persists monotonic found/checked/total/remaining and step counts,
+    current item, percent, heartbeat, revision and a bounded recovery checkpoint.
+15. A route could show several employees but complete after evidence from only one.
+    Deterministic workflow steps now record dependencies and named participants;
+    completion waits for evidence from every explicitly named participant.
+16. Browser QA found that every Vitek POST eagerly requested AI conversation
+    workspace, which returned HTTP 500 for unrelated progress/reconcile actions.
+    The lookup is now lazy and only used by incident decisions that need it.
+17. A local owner without a pre-created account row was authenticated as owner but
+    received empty capabilities and the unfinishable UX-mode dialog. Owner parity
+    is now enforced in context, auth status and cabinet payloads.
+18. A disabled mass-cleanup button looked active. All disabled buttons now have a
+    clear non-interactive visual state, and Aurora cache versions were advanced.
+19. Stopping the old scheduled PowerShell wrapper left its Python descendants and
+    listener orphaned. The scheduled action now starts Python directly, and the
+    backend is assigned to a Windows Job Object with kill-on-close semantics.
+    A real administrative stop now closes the entire tree and port.
 
 ## Verification evidence
 
 | Gate | Result |
 |---|---|
-| `python -m pytest -q` | **690 passed** in 156.65 s |
+| `python -m pytest -q` | **704 passed** in 130.83 s |
 | `python -m tests` | **13/13 suites passed** |
-| Focused Vitek / Chief Agent / market-data / Aurora | **217 passed** |
+| Focused Vitek / Chief Agent / market-data / Aurora / supervisor | **230 passed** |
 | Focused market-data / entitlement / IPC | **35 passed** |
 | AI Lab bootstrap | **93/93 passed** |
 | Python changed-file compile | **PASS** |
@@ -78,15 +100,23 @@ commit subjects, run-state notes, tests and code boundaries:
 | `git diff --check` | **PASS** |
 | Secret-pattern review of added lines | placeholders/mocks only; no live credential found |
 | Bridge DLL install | **PASS**, build/install SHA-256 `24F7DC...C514F`; backup retained |
+| In-app Browser, isolated staging owner desktop | **PASS**: professional owner, progress/workflow, cleanup preview, drawer, reload and checkpoint recovery |
+| Supervised staging restart | **PASS**: 3 clean exits, new instance IDs, exact exit `0`, task resumed from checkpoint without duplicate |
+| Production scheduled supervisor | **PASS**: direct action, Job Object tree stop, hard-kill `4294967295` classified as forced, PID restart, 18 tasks/68 incidents preserved |
 
 The real Vitek store was backed up byte-for-byte, then 40 previewed lifecycle
 repairs were applied. The second preview returned 0 actions; no tasks or incidents
 were deleted.
 
-## Not production-accepted
+## Browser evidence and remaining production acceptance
 
-- No in-app browser was launched under the workspace stability rule. Manual
-  Desktop/mobile/two-profile/Telegram visual acceptance is still **BLOCKED**.
+- The owner explicitly authorized in-app Browser use. An isolated staging server
+  on `127.0.0.1:8877` used a separate data root and kept real payments, live
+  orders and owner Telegram mirroring disabled. Manual owner-desktop checks passed
+  and directly exposed the two API/owner bugs listed above.
+- Mobile/Telegram Mini App and two-profile role/impersonation matrices remain
+  **BLOCKED** because they require separate real identities/devices; they are not
+  implied by the owner desktop PASS.
 - Live NinjaTrader callback → IPC → same-origin WS, controlled NT kill/restore and
   Strategy Analyzer comparison still need an owner-controlled run.
 - TopstepX has no sandbox according to its current official help; no credentialed

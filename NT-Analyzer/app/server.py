@@ -280,6 +280,10 @@ _API_RATE_LIMITS = {"read": 600, "write": 120, "owner": 60, "auth": 45}
 
 def _do_restart_server() -> None:
     """Spawn a helper that waits for the old process to exit, then starts a new one."""
+    if os.environ.get("NTA_BACKEND_SUPERVISED") == "1":
+        # The external supervisor owns restart ordering, crash telemetry and
+        # backoff. A clean exit here is an explicit restart request, not a crash.
+        os._exit(0)
     port = sys.argv[1] if len(sys.argv) > 1 else str(DEFAULT_PORT)
     cwd = str(_PROJECT_ROOT)
     exe = sys.executable
@@ -1036,8 +1040,18 @@ class Handler(BaseHTTPRequestHandler):
                     (context.get("user") or {}).get("ux_mode") or ""
                 ),
             }
-        context["capabilities"] = dict(resolved.get("capabilities") or {})
-        context["ux_mode"] = str(resolved.get("ux_mode") or "")
+        if context.get("is_owner"):
+            # The local/test owner can legitimately exist before the durable
+            # account row is bootstrapped.  Permission lookup then returns a
+            # fail-closed empty record even though the request is already
+            # authenticated as owner.  Owner parity is authoritative here.
+            context["capabilities"] = {
+                capability_id: True for capability_id in permissions.CAPABILITY_IDS
+            }
+            context["ux_mode"] = "professional"
+        else:
+            context["capabilities"] = dict(resolved.get("capabilities") or {})
+            context["ux_mode"] = str(resolved.get("ux_mode") or "")
         return context
 
     def _data_scope(self) -> Dict[str, Any]:
@@ -1308,7 +1322,8 @@ class Handler(BaseHTTPRequestHandler):
                 subscription = subscriptions.active_entitlement(context.get("user_id"))
             except subscriptions.SubscriptionError:
                 subscription = {}
-        perm = permissions.resolve(user, None if is_owner else subscription)
+        permission_user = {**user, "is_owner": True} if is_owner else user
+        perm = permissions.resolve(permission_user, None if is_owner else subscription)
         if isinstance(user, dict):
             payload["user"] = {**user, "features": perm["nav"]}
         payload["features"] = perm["nav"]
@@ -1531,7 +1546,8 @@ class Handler(BaseHTTPRequestHandler):
         # Central authorization: turn the plan (or Free Preview) + owner overrides
         # into concrete capabilities and navigation. The client gates the rail and
         # locks premium sections from this single source of truth.
-        perm = permissions.resolve(user, None if is_owner else subscription)
+        permission_user = {**user, "is_owner": True} if is_owner else user
+        perm = permissions.resolve(permission_user, None if is_owner else subscription)
         nav_features = perm["nav"]
         if isinstance(user, dict):
             user = {**user, "features": nav_features}
@@ -6300,7 +6316,6 @@ class Handler(BaseHTTPRequestHandler):
             if not context.get("is_owner"):
                 self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
                 return
-            conversation_scope = self._ai_conversation_scope()
             try:
                 vitek_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
                 if path == "/api/vitek/scan":
@@ -6314,13 +6329,29 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/vitek/resume":
                     out = {"ok": True, "rest": vitek.resume()}
                 elif path == "/api/vitek/reconcile":
-                    out = vitek.reconcile_lifecycle(apply=bool(body.get("apply", False)))
+                    out = vitek.reconcile_lifecycle(
+                        apply=bool(body.get("apply", False)),
+                        kinds=body.get("kinds") if isinstance(body.get("kinds"), list) else None,
+                    )
                 elif path == "/api/vitek/client-events":
                     out = {"ok": True, "event": vitek.record_client_telemetry(body)}
                 elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "tasks"]
                       and vitek_parts[4] == "answer"):
                     out = {"ok": True, "task": vitek.answer_task(
                         vitek_parts[3], str(body.get("answer") or ""),
+                    )}
+                elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "tasks"]
+                      and vitek_parts[4] == "progress"):
+                    out = {"ok": True, "task": vitek.update_task_progress(
+                        vitek_parts[3], stage=str(body.get("stage") or ""),
+                        items_found=body.get("items_found"),
+                        items_checked=body.get("items_checked"),
+                        items_total=body.get("items_total"),
+                        current_item=str(body.get("current_item") or ""),
+                        completed_steps=body.get("completed_steps"),
+                        total_steps=body.get("total_steps"),
+                        checkpoint=body.get("checkpoint") if isinstance(body.get("checkpoint"), dict) else None,
+                        worker_id=str(body.get("worker_id") or ""),
                     )}
                 elif path == "/api/vitek/tasks":
                     out = {"ok": True, "task": vitek.add_task(body)}
@@ -6338,6 +6369,7 @@ class Handler(BaseHTTPRequestHandler):
                     out = {"ok": True, "task": vitek.update_task(vitek_parts[3], body)}
                 elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "incidents"]
                       and vitek_parts[4] == "decision"):
+                    conversation_scope = self._ai_conversation_scope()
                     out = {"ok": True, "incident": vitek.decide_incident(
                         vitek_parts[3], str(body.get("decision") or ""),
                         note=str(body.get("note") or ""),

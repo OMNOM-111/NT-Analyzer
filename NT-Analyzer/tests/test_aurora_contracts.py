@@ -136,7 +136,17 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260718-lifecycle1"}, versions
+    assert set(versions.values()) == {"20260718-lifecycle3"}, versions
+
+
+def test_every_aurora_page_uses_current_theme_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'href="assets/theme.css?v='
+        assert marker in html, page.name
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert set(versions.values()) == {"20260718-lifecycle3"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
@@ -663,3 +673,19 @@ def test_heartbeat_and_ipc_contracts():
     }
     for key in expected_ipc_keys:
         assert key in ipc, f"Missing key {key} in IPC metrics"
+
+
+def test_victor_ui_exposes_durable_progress_workflow_and_selective_cleanup():
+    js = (AURORA / "assets" / "victor.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "items_remaining" in js
+    assert "progress_revision" in js
+    assert "workflow.participants" in js
+    assert "безопасный режим" in js
+    assert "backend_instance_id" in js
+    assert "data-cleanup-kinds" in js
+    assert "vitekReconcile(true, kinds)" in js
+    assert "vitekTaskProgress" in api
+    assert ".btn:disabled" in theme
+    assert "cursor: not-allowed" in theme

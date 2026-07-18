@@ -366,6 +366,31 @@ def test_auth_required_forced_on_when_remote_enabled(auth_store, monkeypatch) ->
     assert account_auth.auth_required() is False
 
 
+def test_local_owner_keeps_professional_mode_and_full_capabilities(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server_mod.workspaces, "context_for_user",
+        lambda *args, **kwargs: {"workspaces": [], "active_workspace": {}, "active_membership": {}},
+    )
+    monkeypatch.setattr(
+        server_mod.permissions, "resolve_for_user_id",
+        lambda *args, **kwargs: {"capabilities": {}, "ux_mode": ""},
+    )
+    handler = server_mod.Handler.__new__(server_mod.Handler)
+    context = handler._decorate_workspace_context({
+        "user_id": 0, "is_owner": True, "role": "owner", "user": {},
+    })
+    assert context["active_workspace"]["workspace_id"] == "ws_local_owner"
+    assert context["ux_mode"] == "professional"
+    assert context["capabilities"]
+    assert all(context["capabilities"].values())
+    payload = handler._augment_permissions(context, {
+        "authenticated": True, "is_owner": True, "user": {},
+    })
+    assert payload["ux_mode"] == "professional"
+    assert payload["ux_pending"] is False
+    assert all(payload["capabilities"].values())
+
+
 def test_register_via_telegram_waits_for_owner(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
