@@ -5,11 +5,14 @@ Audit status: **repository implementation reconciled; automated gates pass; prod
 
 ## Attribution and scope
 
-Git records every recent commit under `dimon <dimon@users.noreply.github.com>`.
-It does not record which Codex/Cursor/other task produced an uncommitted line, so
-agent-level authorship cannot be reconstructed reliably and is not invented here.
-Functional ownership can be reconstructed from commit subjects, run-state notes,
-tests and code boundaries:
+Git records `dimon <dimon@users.noreply.github.com>` as the primary author of the
+recent branch history. Eleven StratForge A–E commits (`ed6f97f3` through
+`73e005e0`) also contain an explicit `Co-authored-by: Cursor` trailer. Later TTS,
+platform, worker, failover, audit and market-data commits have no additional
+co-author trailer. Git does not record which Codex/other task produced each
+previously uncommitted line, so any finer agent-level attribution would be
+speculation and is not invented here. Functional ownership is reconstructed from
+commit subjects, run-state notes, tests and code boundaries:
 
 | Contour | What changed | Why |
 |---|---|---|
