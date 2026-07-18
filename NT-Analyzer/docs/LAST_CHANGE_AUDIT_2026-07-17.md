@@ -3,6 +3,13 @@
 Branch: `codex/stratforge-release-20260716`
 Audit status: **repository implementation and owner desktop contour reconciled; automated/browser gates pass; external production acceptance blocked**
 
+Product-contour follow-up (2026-07-18): [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md)
+records the implemented separate Student/Professional boot-flow, removal of the
+unapproved Micro Live contour, safe virtual-quote handling and Community
+workspace additions. It distinguishes those completed cleanup items from the
+remaining TopStep-parity and credentialed-production work; neither is silently
+counted as complete by this infrastructure audit.
+
 ## Attribution and scope
 
 Git records `dimon <dimon@users.noreply.github.com>` as the primary author of the

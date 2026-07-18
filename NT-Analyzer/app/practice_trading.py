@@ -1,4 +1,4 @@
-"""Practice trading — virtual money, Topstep-like mechanics (not Micro Live / not NT live).
+"""Practice trading — virtual money and Topstep-like mechanics (never NT live).
 
 Isolated per-user store under ``data/runtime/practice_accounts.json``.
 Never writes to live NT command queues.
@@ -10,7 +10,6 @@ import math
 import os
 import secrets
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,6 +32,7 @@ _DEFAULT_MARKS = {
 _ALLOWED_SYMBOLS = frozenset(_DEFAULT_MARKS)
 _ALLOWED_SIDES = {"buy": "Long", "long": "Long", "sell": "Short", "short": "Short"}
 _ALLOWED_ORDER_TYPES = frozenset({"market", "limit"})
+_ACCOUNT_STATUSES = frozenset({"active", "daily_locked", "failed"})
 
 
 def _root() -> Path:
@@ -131,10 +131,94 @@ def _point_value(symbol: str) -> float:
 
 
 def _mark(symbol: str, accounts_marks: Dict[str, float]) -> float:
+    """Return the last stored mark for PnL display only.
+
+    A default value is deliberately *not* an executable quote.  It remains a
+    compatibility fallback for an already persisted legacy position, while
+    every new entry/exit is guarded by ``_tradable_mark`` below.
+    """
     root = str(symbol or "").split()[0].upper()
     if root in accounts_marks:
         return float(accounts_marks[root])
     return float(_DEFAULT_MARKS.get(root, 100.0))
+
+
+def _market_record(acct: Dict[str, Any], symbol: str) -> Dict[str, Any]:
+    root = str(symbol or "").split()[0].upper()
+    rows = acct.get("markets") if isinstance(acct.get("markets"), dict) else {}
+    row = rows.get(root) if isinstance(rows, dict) else {}
+    return dict(row) if isinstance(row, dict) else {}
+
+
+def _tradable_mark(acct: Dict[str, Any], symbol: str) -> Optional[float]:
+    """Return an independently verified, current virtual fill price only.
+
+    The client never supplies this price.  A missing, stale, or legacy static
+    mark may still be displayed as historic PnL context, but it must never be
+    used to fill a new virtual order or close a position.
+    """
+    market = _market_record(acct, symbol)
+    if not bool(market.get("tradable")):
+        return None
+    try:
+        value = float(market.get("price"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _normalize_market(symbol: str, price: float, market: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Keep a compact, public-safe market provenance record with each account."""
+    root = _symbol(symbol)
+    raw = dict(market) if isinstance(market, dict) else {}
+    quote = raw.get("quote") if isinstance(raw.get("quote"), dict) else {}
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    freshness = raw.get("freshness") if isinstance(raw.get("freshness"), dict) else {}
+    price_n = float(price or 0)
+    explicit_tradable = raw.get("tradable")
+    # Direct module callers are test/internal code.  The HTTP handler always
+    # passes an explicit market record built from the server-side data plane.
+    tradable = bool(price_n > 0 if explicit_tradable is None else explicit_tradable)
+    if not math.isfinite(price_n) or price_n <= 0:
+        tradable = False
+        price_n = 0.0
+    status = str(raw.get("status") or ("ready" if tradable else "unavailable"))[:80]
+    reason = str(raw.get("reason") or "")[:300]
+    source_out = {
+        key: source.get(key)
+        for key in ("kind", "provider", "active", "updated_at_utc", "age_sec", "runtime_state")
+        if source.get(key) not in (None, "")
+    }
+    freshness_out = {
+        key: freshness.get(key)
+        for key in ("fresh", "stale", "age_sec", "max_age_sec", "data_as_of_utc")
+        if freshness.get(key) not in (None, "")
+    }
+    quote_out: Dict[str, Any] = {}
+    for key in ("bid", "ask", "last", "bid_ask_estimated"):
+        if key in quote:
+            quote_out[key] = quote.get(key)
+    if price_n > 0:
+        quote_out["last"] = price_n
+    return {
+        "symbol": root,
+        "tradable": tradable,
+        "available": bool(tradable),
+        "price": round(price_n, 8) if price_n > 0 else 0.0,
+        "status": status,
+        "reason": reason,
+        "quote": quote_out,
+        "source": source_out,
+        "freshness": freshness_out,
+        "updated_at_utc": _now_iso(),
+    }
+
+
+def _market_unavailable_message(symbol: str) -> str:
+    return (
+        f"Нет актуальной подтверждённой котировки {symbol}. "
+        "Учебный ордер не будет исполнен по вымышленной цене."
+    )
 
 
 def create_account(
@@ -188,13 +272,17 @@ def create_account(
             "symbol_default": symbol_n,
             "day_start_balance": deposit,
             "day_key": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "account_status": "active",
             "locked": False,
             "lock_reason": "",
             "positions": [],
             "orders": [],
             "executions": [],
             "trades": [],
-            "marks": dict(_DEFAULT_MARKS),
+            # A new account starts without an executable quote.  Static
+            # defaults used by old accounts must never become a fake fill.
+            "marks": {},
+            "markets": {},
         }
         doc.setdefault("accounts", {})[uid] = acct
         _save(doc)
@@ -219,9 +307,37 @@ def _roll_day(acct: Dict[str, Any]) -> None:
     if str(acct.get("day_key") or "") != today:
         acct["day_key"] = today
         acct["day_start_balance"] = float(acct.get("equity") or acct.get("balance") or 0)
-        if acct.get("locked") and acct.get("lock_reason") == "daily_loss":
+        if _account_status(acct) == "daily_locked":
             acct["locked"] = False
             acct["lock_reason"] = ""
+            acct["account_status"] = "active"
+            acct["daily_lock_released_at_utc"] = _now_iso()
+
+
+def _account_status(acct: Dict[str, Any]) -> str:
+    """Normalize legacy accounts into a small, explicit prop-account lifecycle."""
+    status = str(acct.get("account_status") or "").strip().lower()
+    if status not in _ACCOUNT_STATUSES:
+        reason = str(acct.get("lock_reason") or "")
+        if bool(acct.get("locked")):
+            status = "failed" if reason in {"max_drawdown", "account_depleted"} else "daily_locked"
+        else:
+            status = "active"
+        acct["account_status"] = status
+    return status
+
+
+def _lock_account(acct: Dict[str, Any], *, reason: str, status: str) -> None:
+    was_locked = bool(acct.get("locked"))
+    previous_reason = str(acct.get("lock_reason") or "")
+    previous_status = _account_status(acct)
+    acct["locked"] = True
+    acct["lock_reason"] = reason
+    acct["account_status"] = status
+    if not was_locked or previous_reason != reason:
+        acct["locked_at_utc"] = _now_iso()
+    if status == "failed" and previous_status != "failed":
+        acct["failed_at_utc"] = _now_iso()
 
 
 def _mark_to_market(acct: Dict[str, Any]) -> None:
@@ -247,17 +363,31 @@ def _apply_risk(acct: Dict[str, Any]) -> None:
     equity = float(acct.get("equity") or 0)
     daily_pnl = equity - day_start
     dd = equity - float(acct.get("deposit") or 0)
-    if daily_pnl <= -abs(float(acct.get("daily_loss_limit") or 0)):
+    status = _account_status(acct)
+    # A failed virtual prop account remains closed even if an open position
+    # later marks back in profit.  The student deliberately opens a new
+    # virtual account via reset, matching the intended evaluation lifecycle.
+    if status == "failed":
         acct["locked"] = True
-        acct["lock_reason"] = "daily_loss"
-    if dd <= -abs(float(acct.get("max_drawdown") or 0)):
+        return
+    if equity <= 0:
+        _lock_account(acct, reason="account_depleted", status="failed")
+    elif dd <= -abs(float(acct.get("max_drawdown") or 0)):
+        _lock_account(acct, reason="max_drawdown", status="failed")
+    elif status == "daily_locked":
         acct["locked"] = True
-        acct["lock_reason"] = "max_drawdown"
+    elif daily_pnl <= -abs(float(acct.get("daily_loss_limit") or 0)):
+        _lock_account(acct, reason="daily_loss", status="daily_locked")
+    else:
+        acct["locked"] = False
+        acct["lock_reason"] = ""
+        acct["account_status"] = "active"
 
 
 def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
     reserved_quantity = _reserved_quantity(acct)
     equity = float(acct.get("equity") or 0)
+    market_rows = acct.get("markets") if isinstance(acct.get("markets"), dict) else {}
     return {
         "ok": True,
         "mode": "practice",
@@ -273,8 +403,10 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
             "daily_loss_limit": acct.get("daily_loss_limit"),
             "max_drawdown": acct.get("max_drawdown"),
             "position_limit": acct.get("position_limit"),
+            "account_status": _account_status(acct),
             "locked": bool(acct.get("locked")),
             "lock_reason": acct.get("lock_reason") or "",
+            "requires_new_account": _account_status(acct) == "failed",
             "symbol_default": acct.get("symbol_default"),
             "day_pnl": round(float(acct.get("equity") or 0) - float(acct.get("day_start_balance") or 0), 2),
             # This is explicitly virtual buying power, not broker margin.
@@ -287,6 +419,11 @@ def _public(acct: Dict[str, Any]) -> Dict[str, Any]:
         "executions": list(reversed(acct.get("executions") or []))[:100],
         "trades": list(reversed(acct.get("trades") or []))[:100],
         "marks": dict(acct.get("marks") or {}),
+        "markets": {
+            str(symbol): dict(row)
+            for symbol, row in market_rows.items()
+            if isinstance(row, dict)
+        },
         "layouts": [1, 2, 4],
     }
 
@@ -446,17 +583,30 @@ def place_order(
         _roll_day(acct)
         _mark_to_market(acct)
         if acct.get("locked"):
+            status = _account_status(acct)
+            reason = str(acct.get("lock_reason") or "risk lock")
+            detail = {
+                "daily_loss": "достигнут дневной лимит; счёт станет доступен в следующий UTC-день",
+                "max_drawdown": "достигнута максимальная просадка; откройте новый виртуальный счёт",
+                "account_depleted": "виртуальный баланс исчерпан; откройте новый виртуальный счёт",
+            }.get(reason, reason)
             raise PracticeTradingError(
-                f"Торговля заблокирована: {acct.get('lock_reason') or 'risk lock'}.",
+                f"Учебная торговля остановлена ({status}): {detail}.",
                 403,
             )
         if _reserved_quantity(acct) + qty > int(acct.get("position_limit") or 4):
             raise PracticeTradingError("Превышен лимит позиции.")
-        mark = _mark(symbol_n, acct.get("marks") or {})
+        executable_mark = _tradable_mark(acct, symbol_n)
         if order_type_n == "limit" and limit_n <= 0:
             raise PracticeTradingError("Для limit укажите цену.")
-        marketable = order_type_n == "market" or _is_marketable(side_n, limit_n, mark)
-        reference = mark if marketable else limit_n
+        if order_type_n == "market" and executable_mark is None:
+            raise PracticeTradingError(_market_unavailable_message(symbol_n), 409)
+        marketable = bool(
+            order_type_n == "market"
+            or (executable_mark is not None and _is_marketable(side_n, limit_n, executable_mark))
+        )
+        reference = executable_mark if marketable else limit_n
+        assert reference is not None
         _validate_brackets(side_n, reference, stop_n, take_n)
         order = {
             "order_id": "ord_" + secrets.token_hex(4),
@@ -480,7 +630,8 @@ def place_order(
             order["reject_reason"] = risk_reason
             _save(doc)
             raise PracticeTradingError(f"Ордер отклонён risk guard: {risk_reason}.", 403)
-        trade = _record_open_fill(acct, order, mark)
+        # ``marketable`` guarantees a current trusted mark above.
+        trade = _record_open_fill(acct, order, float(executable_mark))
         _save(doc)
         return {"ok": True, "filled": True, "order": order, "trade": trade, **_public(acct)}
 
@@ -508,7 +659,12 @@ def close_position(user_id: Any, position_id: str = "", *, symbol: str = "",
             target = positions[0]
         if target is None:
             raise PracticeTradingError("Нет открытой позиции.", 404)
-        mark = _mark(target.get("symbol"), acct.get("marks") or {})
+        mark = _tradable_mark(acct, str(target.get("symbol") or ""))
+        if mark is None:
+            raise PracticeTradingError(
+                _market_unavailable_message(str(target.get("symbol") or "инструмента")),
+                409,
+            )
         qty = int(target.get("quantity") or 0)
         side = str(target.get("side") or "Long")
         entry = float(target.get("avg_price") or 0)
@@ -582,8 +738,14 @@ def cancel_order(user_id: Any, order_id: str, *, workspace_id: str = "") -> Dict
 
 
 def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,
+               market: Optional[Dict[str, Any]] = None,
                workspace_id: str = "") -> Dict[str, Any]:
-    """Update a virtual mark, fill marketable limits, then evaluate SL/TP."""
+    """Apply a server-verified market update to the virtual account.
+
+    ``price`` is never supplied by the browser.  A zero/missing value records
+    an unavailable market state and deliberately performs no random walk, no
+    fill, and no automatic SL/TP action.
+    """
     uid = _account_key(user_id, workspace_id)
     price_n = _finite(price, "Цена", positive=True)
     with _LOCK:
@@ -593,14 +755,14 @@ def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,
             raise PracticeTradingError("Счёт не найден.", 404)
         _roll_day(acct)
         root = _symbol(symbol or acct.get("symbol_default") or "MNQ")
-        marks = dict(acct.get("marks") or _DEFAULT_MARKS)
-        if price_n > 0:
-            marks[root] = price_n
-        else:
-            # tiny random walk for UI liveliness
-            cur = float(marks.get(root) or _DEFAULT_MARKS.get(root) or 100)
-            marks[root] = round(cur * (1 + ((time.time() % 7) - 3) * 0.00015), 2)
+        marks = dict(acct.get("marks") or {})
+        markets = dict(acct.get("markets") or {})
+        market_state = _normalize_market(root, price_n, market)
+        if market_state["tradable"]:
+            marks[root] = float(market_state["price"])
+        markets[root] = market_state
         acct["marks"] = marks
+        acct["markets"] = markets
         _mark_to_market(acct)
 
         # A risk lock cancels resting entry orders; exits remain available.
@@ -610,7 +772,7 @@ def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,
                     order["status"] = "cancelled_risk"
                     order["cancelled_at_utc"] = _now_iso()
                     order["cancel_reason"] = acct.get("lock_reason") or "risk_lock"
-        else:
+        elif market_state["tradable"]:
             for order in acct.get("orders") or []:
                 if order.get("status") != "working" or order.get("symbol") != root:
                     continue
@@ -637,62 +799,67 @@ def tick_marks(user_id: Any, *, symbol: str = "", price: float = 0,
                 if acct.get("locked"):
                     break
 
-        # SL/TP
-        still = []
-        for pos in list(acct.get("positions") or []):
-            mark = _mark(pos.get("symbol"), marks)
-            sl = float(pos.get("stop_loss") or 0)
-            tp = float(pos.get("take_profit") or 0)
-            side = str(pos.get("side") or "Long")
-            hit = False
-            if side == "Long":
-                hit = (sl and mark <= sl) or (tp and mark >= tp)
-            else:
-                hit = (sl and mark >= sl) or (tp and mark <= tp)
-            if hit:
-                qty = int(pos.get("quantity") or 0)
-                entry = float(pos.get("avg_price") or 0)
-                pv = _point_value(str(pos.get("symbol") or ""))
-                direction = 1 if side == "Long" else -1
-                pnl = round((mark - entry) * direction * qty * pv, 2)
-                commission = float(acct.get("commission") or 0) * qty
-                acct["balance"] = round(float(acct["balance"]) + pnl - commission, 2)
-                exit_order = {
-                    "order_id": "ord_" + secrets.token_hex(4),
-                    "symbol": pos.get("symbol"),
-                    "side": "Short" if side == "Long" else "Long",
-                    "quantity": qty,
-                    "order_type": "stop" if sl and ((side == "Long" and mark <= sl) or (side == "Short" and mark >= sl)) else "take_profit",
-                    "status": "filled",
-                    "created_at_utc": _now_iso(),
-                    "filled_at_utc": _now_iso(),
-                    "fill_price": mark,
-                    "reduce_only": True,
-                }
-                acct.setdefault("orders", []).append(exit_order)
-                execution = {
-                    "execution_id": "exe_" + secrets.token_hex(5),
-                    "order_id": exit_order["order_id"],
-                    "symbol": pos.get("symbol"),
-                    "side": exit_order["side"],
-                    "quantity": qty,
-                    "price": mark,
-                    "commission": commission,
-                    "kind": "exit",
-                    "at_utc": _now_iso(),
-                }
-                acct.setdefault("executions", []).append(execution)
-                acct.setdefault("trades", []).append({
-                    "trade_id": "tr_" + secrets.token_hex(4),
-                    "order_id": exit_order["order_id"],
-                    "execution_id": execution["execution_id"],
-                    "symbol": pos.get("symbol"), "side": side, "quantity": qty,
-                    "price": mark, "commission": commission, "pnl": pnl,
-                    "at_utc": _now_iso(), "action": "sl_tp",
-                })
-            else:
-                still.append(pos)
-        acct["positions"] = still
+            # SL/TP is evaluated only for the instrument that just received a
+            # current, server-verified price.  An unavailable quote cannot
+            # invent a stop fill for another symbol.
+            still = []
+            for pos in list(acct.get("positions") or []):
+                if str(pos.get("symbol") or "") != root:
+                    still.append(pos)
+                    continue
+                mark = float(market_state["price"])
+                sl = float(pos.get("stop_loss") or 0)
+                tp = float(pos.get("take_profit") or 0)
+                side = str(pos.get("side") or "Long")
+                hit = False
+                if side == "Long":
+                    hit = (sl and mark <= sl) or (tp and mark >= tp)
+                else:
+                    hit = (sl and mark >= sl) or (tp and mark <= tp)
+                if hit:
+                    qty = int(pos.get("quantity") or 0)
+                    entry = float(pos.get("avg_price") or 0)
+                    pv = _point_value(str(pos.get("symbol") or ""))
+                    direction = 1 if side == "Long" else -1
+                    pnl = round((mark - entry) * direction * qty * pv, 2)
+                    commission = float(acct.get("commission") or 0) * qty
+                    acct["balance"] = round(float(acct["balance"]) + pnl - commission, 2)
+                    exit_order = {
+                        "order_id": "ord_" + secrets.token_hex(4),
+                        "symbol": pos.get("symbol"),
+                        "side": "Short" if side == "Long" else "Long",
+                        "quantity": qty,
+                        "order_type": "stop" if sl and ((side == "Long" and mark <= sl) or (side == "Short" and mark >= sl)) else "take_profit",
+                        "status": "filled",
+                        "created_at_utc": _now_iso(),
+                        "filled_at_utc": _now_iso(),
+                        "fill_price": mark,
+                        "reduce_only": True,
+                    }
+                    acct.setdefault("orders", []).append(exit_order)
+                    execution = {
+                        "execution_id": "exe_" + secrets.token_hex(5),
+                        "order_id": exit_order["order_id"],
+                        "symbol": pos.get("symbol"),
+                        "side": exit_order["side"],
+                        "quantity": qty,
+                        "price": mark,
+                        "commission": commission,
+                        "kind": "exit",
+                        "at_utc": _now_iso(),
+                    }
+                    acct.setdefault("executions", []).append(execution)
+                    acct.setdefault("trades", []).append({
+                        "trade_id": "tr_" + secrets.token_hex(4),
+                        "order_id": exit_order["order_id"],
+                        "execution_id": execution["execution_id"],
+                        "symbol": pos.get("symbol"), "side": side, "quantity": qty,
+                        "price": mark, "commission": commission, "pnl": pnl,
+                        "at_utc": _now_iso(), "action": "sl_tp",
+                    })
+                else:
+                    still.append(pos)
+            acct["positions"] = still
         _mark_to_market(acct)
         _save(doc)
         return _public(acct)

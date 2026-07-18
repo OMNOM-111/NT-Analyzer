@@ -6,6 +6,8 @@ must never write into owner Orchestrator topics.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import hashlib
 import math
@@ -28,12 +30,26 @@ class CommunityError(RuntimeError):
 
 _LOCK = threading.RLock()
 _MAX_MSG = 4000
-_COLLECTIONS = ("accounts", "messages", "posts", "strategies", "copies", "reports", "blocks")
+_MAX_ATTACHMENTS = 3
+_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
+_COLLECTIONS = (
+    "accounts", "messages", "posts", "strategies", "copies", "reports", "blocks",
+    "shared_reports", "requests",
+)
 _WORKSPACE_RE = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
+_CHANNELS = (
+    {"id": "general", "label": "Общий чат", "hint": "Обсуждение внутри сообщества"},
+    {"id": "study", "label": "Учебная", "hint": "Разборы и вопросы студентов"},
+    {"id": "strategy-review", "label": "Стратегии", "hint": "Идеи, результаты и ревью"},
+    {"id": "reports", "label": "Отчёты", "hint": "Статистика, файлы и запросы"},
+)
+_CHANNEL_IDS = frozenset(row["id"] for row in _CHANNELS)
+_ATTACHMENT_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$", re.I)
+_MIME_EXTENSION = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 
 
 def _empty_doc() -> Dict[str, Any]:
-    return {"version": 2, **{key: [] for key in _COLLECTIONS}}
+    return {"version": 3, **{key: [] for key in _COLLECTIONS}}
 
 
 def _root() -> Path:
@@ -63,7 +79,7 @@ def _load() -> Dict[str, Any]:
         doc[key] = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
     # Treat the on-disk version as untrusted input as well.  The normalized
     # document is always written in the current format.
-    doc["version"] = 2
+    doc["version"] = 3
     return doc
 
 
@@ -93,6 +109,18 @@ def _workspace_id(value: Any) -> str:
     if workspace and not _WORKSPACE_RE.fullmatch(workspace):
         raise CommunityError("Некорректный workspace_id.")
     return workspace
+
+
+def _channel_id(value: Any) -> str:
+    channel = str(value or "general").strip().lower() or "general"
+    if channel not in _CHANNEL_IDS:
+        raise CommunityError("Неизвестный канал Community.")
+    return channel
+
+
+def _attachment_dir(workspace_id: str) -> Path:
+    scope = workspace_id or "shared"
+    return runtime_env.data_root(_root()) / "runtime" / "community_uploads" / scope
 
 
 def _same_workspace(row: Dict[str, Any], workspace_id: str) -> bool:
@@ -149,6 +177,77 @@ def _idempotency_hash(value: Any) -> str:
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
+def _validate_attachments(value: Any, *, workspace_id: str, owner_id: str) -> List[Dict[str, Any]]:
+    """Persist only small image attachments supplied as data URLs.
+
+    JSON keeps the local UI dependency-free while the resulting message stores
+    no base64 payload.  The generated id is later resolved only through the
+    authorised Community attachment route.
+    """
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list) or len(value) > _MAX_ATTACHMENTS:
+        raise CommunityError(f"Можно приложить до {_MAX_ATTACHMENTS} изображений.")
+    target_dir = _attachment_dir(workspace_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    rows: List[Dict[str, Any]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise CommunityError("Некорректное вложение Community.")
+        data_url = str(raw.get("data_url") or "")
+        match = _ATTACHMENT_RE.fullmatch(data_url)
+        if not match:
+            raise CommunityError("Поддерживаются только PNG, JPEG и WebP-изображения.")
+        mime = match.group(1).lower()
+        try:
+            payload = base64.b64decode(match.group(2), validate=True)
+        except (ValueError, binascii.Error):
+            raise CommunityError("Повреждённые данные изображения.") from None
+        if not payload or len(payload) > _MAX_ATTACHMENT_BYTES:
+            raise CommunityError("Размер каждого изображения не должен превышать 2 МБ.")
+        attachment_id = "catt_" + secrets.token_hex(9)
+        extension = _MIME_EXTENSION[mime]
+        stored_name = f"{owner_id}_{index}{extension}"
+        target = (target_dir / stored_name).resolve()
+        try:
+            target.relative_to(target_dir.resolve())
+        except ValueError:  # pragma: no cover - defensive invariant
+            raise CommunityError("Некорректный путь вложения.") from None
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(payload)
+        os.replace(tmp, target)
+        name = re.sub(r"[\\/:*?\"<>|]+", "_", str(raw.get("name") or "image"))[:120]
+        rows.append({
+            "attachment_id": attachment_id,
+            "name": name or "image",
+            "mime_type": mime,
+            "size": len(payload),
+            "stored_name": stored_name,
+            "url": "/api/community/attachment/" + attachment_id,
+        })
+    return rows
+
+
+def _public_attachments(value: Any) -> List[Dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    return [
+        {
+            "attachment_id": str(row.get("attachment_id") or ""),
+            "name": str(row.get("name") or "image")[:120],
+            "mime_type": str(row.get("mime_type") or ""),
+            "size": max(0, _safe_int(row.get("size"))),
+            "url": str(row.get("url") or ""),
+        }
+        for row in rows if isinstance(row, dict)
+    ]
+
+
+def _public_message(row: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row)
+    out["attachments"] = _public_attachments(row.get("attachments"))
+    return out
+
+
 def _blocked(doc: Dict[str, Any], user_id: int, workspace_id: str) -> bool:
     for row in doc.get("blocks") or []:
         if _safe_int(row.get("user_id")) != int(user_id):
@@ -185,13 +284,19 @@ def _touch_account(doc: Dict[str, Any], user_id: int, workspace_id: str,
     return row
 
 
-def feed(*, limit: int = 50, workspace_id: str = "") -> Dict[str, Any]:
+def feed(*, limit: int = 50, workspace_id: str = "", channel_id: str = "") -> Dict[str, Any]:
     workspace = _workspace_id(workspace_id)
+    channel = _channel_id(channel_id) if str(channel_id or "").strip() else ""
     with _LOCK:
         doc = _load()
-        scoped_messages = [row for row in doc.get("messages") or [] if _same_workspace(row, workspace)]
+        scoped_messages = [
+            row for row in doc.get("messages") or []
+            if _same_workspace(row, workspace) and (not channel or str(row.get("channel_id") or "general") == channel)
+        ]
         scoped_strategies = [row for row in doc.get("strategies") or [] if _same_workspace(row, workspace)]
         scoped_posts = [row for row in doc.get("posts") or [] if _same_workspace(row, workspace)]
+        scoped_reports = [row for row in doc.get("shared_reports") or [] if _same_workspace(row, workspace)]
+        scoped_requests = [row for row in doc.get("requests") or [] if _same_workspace(row, workspace)]
         accounts = [row for row in doc.get("accounts") or [] if _same_workspace(row, workspace)]
         messages = list(reversed(scoped_messages))[: max(1, min(_safe_int(limit, 50), 200))]
         strategies = list(reversed(scoped_strategies))[:50]
@@ -200,19 +305,27 @@ def feed(*, limit: int = 50, workspace_id: str = "") -> Dict[str, Any]:
         "ok": True,
         "contour": "community",
         "workspace_id": workspace,
+        "channels": [dict(row) for row in _CHANNELS],
+        "selected_channel": channel or "all",
         "accounts": accounts[-200:],
-        "messages": list(reversed(messages)),
+        "messages": [_public_message(row) for row in reversed(messages)],
         "strategies": strategies,
         "posts": posts,
+        "shared_reports": [_public_message(row) for row in list(reversed(scoped_reports))[:50]],
+        "requests": list(reversed(scoped_requests))[:50],
         "ratings": _ratings_for(scoped_strategies),
     }
 
 
 def post_message(user_id: Any, *, text: str, display_name: str = "",
-                 workspace_id: str = "", idempotency_key: str = "") -> Dict[str, Any]:
+                 workspace_id: str = "", idempotency_key: str = "",
+                 channel_id: str = "general", thread_root_id: str = "",
+                 attachments: Any = None) -> Dict[str, Any]:
     uid = int(user_id or 0)
     body = str(text or "").strip()
     workspace = _workspace_id(workspace_id)
+    channel = _channel_id(channel_id)
+    root_id = str(thread_root_id or "").strip()[:80]
     idem_hash = _idempotency_hash(idempotency_key)
     if uid <= 0:
         raise CommunityError("Требуется вход.", 401)
@@ -228,23 +341,155 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
                              and _same_workspace(item, workspace)
                              and item.get("idempotency_key_hash") == idem_hash), None)
             if existing is not None:
-                return {"ok": True, "message": existing, "telegram_mirror": False, "deduplicated": True}
+                return {"ok": True, "message": _public_message(existing), "telegram_mirror": False, "deduplicated": True}
+        if root_id:
+            root = next((item for item in doc.get("messages") or []
+                         if item.get("message_id") == root_id and _same_workspace(item, workspace)), None)
+            if root is None:
+                raise CommunityError("Исходное сообщение ветки не найдено.", 404)
+            if str(root.get("channel_id") or "general") != channel:
+                raise CommunityError("Ответ должен остаться в том же канале.")
+        message_id = "cmsg_" + secrets.token_hex(6)
         row = {
-            "message_id": "cmsg_" + secrets.token_hex(6),
+            "message_id": message_id,
             "workspace_id": workspace,
+            "channel_id": channel,
             "user_id": uid,
             "display_name": str(display_name or f"user_{uid}")[:80],
             "text": body,
             "created_at_utc": _now_iso(),
             "contour": "community",
         }
+        if root_id:
+            row["thread_root_id"] = root_id
+        stored_attachments = _validate_attachments(
+            attachments, workspace_id=workspace, owner_id=message_id,
+        )
+        if stored_attachments:
+            row["attachments"] = stored_attachments
         if idem_hash:
             row["idempotency_key_hash"] = idem_hash
         _touch_account(doc, uid, workspace, display_name)
         doc.setdefault("messages", []).append(row)
         doc["messages"] = doc["messages"][-1000:]
         _save(doc)
-    return {"ok": True, "message": row, "telegram_mirror": False, "deduplicated": False}
+    return {"ok": True, "message": _public_message(row), "telegram_mirror": False, "deduplicated": False}
+
+
+def share_report(user_id: Any, *, title: str, summary: str = "", metrics: Any = None,
+                 display_name: str = "", workspace_id: str = "", channel_id: str = "reports",
+                 attachments: Any = None) -> Dict[str, Any]:
+    """Share an explicit user report without turning it into an AI task."""
+    uid = int(user_id or 0)
+    workspace = _workspace_id(workspace_id)
+    channel = _channel_id(channel_id)
+    clean_title = str(title or "").strip()
+    if uid <= 0:
+        raise CommunityError("Требуется вход.", 401)
+    if not clean_title or len(clean_title) > 140:
+        raise CommunityError("Укажите название отчёта до 140 символов.")
+    clean_metrics = _validated_metrics(metrics)
+    with _LOCK:
+        doc = _load()
+        if _blocked(doc, uid, workspace):
+            raise CommunityError("Вы заблокированы в community.", 403)
+        report_id = "crshare_" + secrets.token_hex(7)
+        row = {
+            "report_id": report_id,
+            "workspace_id": workspace,
+            "channel_id": channel,
+            "user_id": uid,
+            "display_name": str(display_name or f"user_{uid}")[:80],
+            "title": clean_title,
+            "summary": str(summary or "")[:4000],
+            "metrics": clean_metrics,
+            "created_at_utc": _now_iso(),
+            "contour": "community",
+        }
+        stored_attachments = _validate_attachments(
+            attachments, workspace_id=workspace, owner_id=report_id,
+        )
+        if stored_attachments:
+            row["attachments"] = stored_attachments
+        _touch_account(doc, uid, workspace, display_name)
+        doc.setdefault("shared_reports", []).append(row)
+        doc["shared_reports"] = doc["shared_reports"][-500:]
+        _save(doc)
+    return {"ok": True, "report": _public_message(row)}
+
+
+def create_request(user_id: Any, *, title: str, request_type: str = "report",
+                   recipient_user_id: Any = 0, notes: str = "", display_name: str = "",
+                   workspace_id: str = "", channel_id: str = "reports") -> Dict[str, Any]:
+    """Create a transparent in-product request for a report, data or screenshot."""
+    uid = int(user_id or 0)
+    workspace = _workspace_id(workspace_id)
+    channel = _channel_id(channel_id)
+    clean_title = str(title or "").strip()
+    kind = str(request_type or "report").strip().lower()
+    if uid <= 0:
+        raise CommunityError("Требуется вход.", 401)
+    if not clean_title or len(clean_title) > 180:
+        raise CommunityError("Укажите запрос до 180 символов.")
+    if kind not in {"report", "data", "screenshot"}:
+        raise CommunityError("Тип запроса: report, data или screenshot.")
+    target = _safe_int(recipient_user_id)
+    if target < 0:
+        raise CommunityError("Некорректный получатель запроса.")
+    with _LOCK:
+        doc = _load()
+        if _blocked(doc, uid, workspace):
+            raise CommunityError("Вы заблокированы в community.", 403)
+        row = {
+            "request_id": "creq_" + secrets.token_hex(7),
+            "workspace_id": workspace,
+            "channel_id": channel,
+            "from_user_id": uid,
+            "from_display_name": str(display_name or f"user_{uid}")[:80],
+            "recipient_user_id": target,
+            "request_type": kind,
+            "title": clean_title,
+            "notes": str(notes or "")[:2000],
+            "status": "open",
+            "created_at_utc": _now_iso(),
+        }
+        _touch_account(doc, uid, workspace, display_name)
+        doc.setdefault("requests", []).append(row)
+        doc["requests"] = doc["requests"][-500:]
+        _save(doc)
+    return {"ok": True, "request": row}
+
+
+def attachment(attachment_id: str, *, workspace_id: str = "") -> Dict[str, Any]:
+    """Return a verified attachment record and file path for the HTTP handler."""
+    aid = str(attachment_id or "").strip()
+    workspace = _workspace_id(workspace_id)
+    if not re.fullmatch(r"catt_[a-f0-9]{18}", aid):
+        raise CommunityError("Вложение не найдено.", 404)
+    with _LOCK:
+        doc = _load()
+        candidates = list(doc.get("messages") or []) + list(doc.get("shared_reports") or [])
+        owner = next((row for row in candidates if _same_workspace(row, workspace)
+                      and any(isinstance(item, dict) and item.get("attachment_id") == aid
+                              for item in (row.get("attachments") or []))), None)
+        if owner is None:
+            raise CommunityError("Вложение не найдено.", 404)
+        meta = next(item for item in (owner.get("attachments") or [])
+                    if isinstance(item, dict) and item.get("attachment_id") == aid)
+        stored_name = str(meta.get("stored_name") or "")
+        target_dir = _attachment_dir(workspace).resolve()
+        path = (target_dir / stored_name).resolve()
+        try:
+            path.relative_to(target_dir)
+        except ValueError:
+            raise CommunityError("Вложение не найдено.", 404) from None
+        if not path.is_file():
+            raise CommunityError("Файл вложения недоступен.", 404)
+        return {
+            "path": path,
+            "name": str(meta.get("name") or "image")[:120],
+            "mime_type": str(meta.get("mime_type") or "application/octet-stream"),
+        }
 
 
 def publish_strategy(

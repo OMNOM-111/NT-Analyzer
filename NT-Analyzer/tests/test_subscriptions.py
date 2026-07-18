@@ -51,6 +51,39 @@ def _request_json(base: str, path: str, *, method: str = "GET", body: dict | Non
         return json.loads(response.read().decode("utf-8"))
 
 
+def test_entitlement_store_read_cache_is_isolated_and_updates_on_write(subscription_store, monkeypatch) -> None:
+    subscriptions._clear_doc_cache()
+    subscriptions._write_doc({
+        "version": 1,
+        "vouchers": [],
+        "entitlements": [{"entitlement_id": "e1", "user_id": 42, "plan_id": "basic"}],
+        "plan_overrides": {},
+        "payment_config": {},
+        "paypal": {},
+        "payment_requests": [],
+    })
+    subscriptions._clear_doc_cache()
+    original_unprotect = secure_store._unprotect
+    decrypts = []
+
+    def counting_unprotect(value):
+        decrypts.append(True)
+        return original_unprotect(value)
+
+    monkeypatch.setattr(secure_store, "_unprotect", counting_unprotect)
+    first = subscriptions._read_doc()
+    second = subscriptions._read_doc()
+    assert len(decrypts) == 1
+    first["entitlements"][0]["plan_id"] = "tampered"
+    assert second["entitlements"][0]["plan_id"] == "basic"
+
+    updated = subscriptions._read_doc()
+    updated["entitlements"][0]["plan_id"] = "pro"
+    subscriptions._write_doc(updated)
+    assert subscriptions._read_doc()["entitlements"][0]["plan_id"] == "pro"
+    assert len(decrypts) == 1
+
+
 def test_owner_creates_and_user_redeems_developer_free_voucher(subscription_store) -> None:
     created = subscriptions.create_voucher(999, {
         "label": "Developer seats",
@@ -332,6 +365,13 @@ def test_donation_access_request_grants_donation_plan(subscription_store) -> Non
     assert active["plan_id"] == five["plan_id"] and active["active"] is True
 
 
+def test_payment_request_requires_configured_paypal(subscription_store) -> None:
+    with pytest.raises(subscriptions.SubscriptionError) as exc:
+        subscriptions.create_payment_request(42, "donate_1")
+    assert exc.value.status == 409
+    assert subscriptions.list_payment_requests(999)["pending"] == 0
+
+
 def test_custom_donation_amount_maps_to_highest_affordable_tier(subscription_store) -> None:
     """Mirrors ui.js donationPlanForAmount: custom $4 → donate_3, $7 → donate_5."""
     tiers = [
@@ -353,6 +393,7 @@ def test_custom_donation_amount_maps_to_highest_affordable_tier(subscription_sto
     assert pick(3) == "donate_3"
     assert pick(4) == "donate_3"
     assert pick(7) == "donate_5"
+    subscriptions.set_payment_config(999, {"paypal_me": "sfOwner", "enabled": True})
     created = subscriptions.create_payment_request(42, "pro", note="paid via PayPal")
     assert created["duplicate"] is False
     assert created["request"]["status"] == "pending"
@@ -380,6 +421,7 @@ def test_custom_donation_amount_maps_to_highest_affordable_tier(subscription_sto
 def test_subscription_store_retries_transient_windows_replace(
     subscription_store, monkeypatch,
 ) -> None:
+    subscriptions.set_payment_config(999, {"paypal_me": "sfOwner", "enabled": True})
     real_replace = subscriptions.os.replace
     calls = {"count": 0}
 
@@ -397,6 +439,7 @@ def test_subscription_store_retries_transient_windows_replace(
 
 
 def test_reject_payment_request_grants_nothing(subscription_store) -> None:
+    subscriptions.set_payment_config(999, {"paypal_me": "sfOwner", "enabled": True})
     created = subscriptions.create_payment_request(42, "standard")
     request_id = created["request"]["request_id"]
     resolved = subscriptions.resolve_payment_request(999, request_id, approve=False)

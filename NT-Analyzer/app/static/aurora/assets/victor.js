@@ -520,6 +520,20 @@
   }
 
   function init() {
+    const auth = UI.CURRENT_AUTH || {};
+    const mode = String(auth.ux_mode || (auth.user && auth.user.ux_mode) || '').toLowerCase();
+    // Victor belongs to the professional command centre.  A student learns in
+    // the isolated virtual terminal and Community; loading this owner-facing
+    // surface there both confuses the UX and can trigger denied API polling.
+    // It is also an owner tool: a subscribed professional must not see a
+    // broken owner dashboard or receive a forbidden response for a control
+    // they are deliberately not allowed to use.
+    if (mode === 'beginner' || auth.ux_pending || (auth.user && auth.user.needs_ux_mode)
+        || !(auth.is_owner || auth.role === 'owner')) {
+      const center = UI.qs('[data-victor-center]');
+      if (center) center.remove();
+      return;
+    }
     installClientTelemetry();
     ensurePageAction();
     formalizeChat();

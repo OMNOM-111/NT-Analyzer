@@ -791,19 +791,39 @@ def runtime_stub(path: str, query: Dict[str, list[str]], context: Dict[str, Any]
     if runtime_dir_for_context(context):
         return None
     workspace_id = str(active.get("workspace_id") or "")
-    if path == "/api/ops/runtime/instruments":
+    workspace_ready = bool(workspace_id)
+    # Never fall through to the owner's global runtime when an authenticated
+    # user has no active workspace yet (for example during an interrupted
+    # entitlement migration).  The old fall-through made account-history call
+    # the tenant ledger with an empty id and surfaced a 500 on Overview.
+    if not workspace_ready:
+        warning = "Для этого профиля ещё не подготовлена рабочая область NinjaTrader."
+        source = "workspace_required"
+    else:
+        warning = "Личный NinjaTrader для этой рабочей области ещё не подключён. Запустите pairing bridge."
+        source = "workspace_runtime_not_connected"
+    if path == "/api/ops/runtime/instruments" and workspace_ready:
         return None
-    warning = "Личный NinjaTrader для этой рабочей области ещё не подключён. Запустите pairing bridge."
     base = {
         "ok": True,
-        "source": "workspace_runtime_not_connected",
+        "source": source,
         "workspace": active,
         "warnings": [warning],
         "next_action": warning,
     }
+    if path == "/api/ops/runtime/instruments":
+        return {**base, "instruments": []}
     if path == "/api/ops/runtime/accounts":
         return {**base, "accounts": [], "online_accounts": [], "connection_required": True}
     if path == "/api/ops/runtime/account-history":
+        if not workspace_ready:
+            return {
+                **base,
+                "workspace_id": "",
+                "accounts": [],
+                "cash_flow_capability": "workspace_unavailable",
+                "cash_flow_note": warning,
+            }
         account = (query.get("account") or [""])[0]
         try:
             limit = int((query.get("limit") or ["500"])[0])

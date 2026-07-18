@@ -39,6 +39,39 @@ def _api_recorder():
     return calls, api
 
 
+def test_dpapi_read_cache_is_isolated_and_refreshes_after_write(auth_store, monkeypatch) -> None:
+    account_auth._clear_doc_cache()
+    account_auth._write_doc({
+        "version": 2,
+        "users": [{"user_id": 42, "first_name": "Ada", "status": "active"}],
+        "challenges": [],
+        "sessions": [],
+    })
+    # Force the first read through the decryptor, then verify that concurrent
+    # page requests can reuse only an immutable in-memory snapshot.
+    account_auth._clear_doc_cache()
+    original_unprotect = secure_store._unprotect
+    decrypts = []
+
+    def counting_unprotect(value):
+        decrypts.append(True)
+        return original_unprotect(value)
+
+    monkeypatch.setattr(secure_store, "_unprotect", counting_unprotect)
+    first = account_auth._read_doc()
+    second = account_auth._read_doc()
+    assert len(decrypts) == 1
+    first["users"][0]["first_name"] = "Tampered"
+    assert second["users"][0]["first_name"] == "Ada"
+    assert account_auth._read_doc()["users"][0]["first_name"] == "Ada"
+
+    updated = account_auth._read_doc()
+    updated["users"][0]["first_name"] = "Grace"
+    account_auth._write_doc(updated)
+    assert account_auth._read_doc()["users"][0]["first_name"] == "Grace"
+    assert len(decrypts) == 1
+
+
 def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store) -> None:
     account_auth.ensure_owner(999)
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")

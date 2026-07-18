@@ -342,8 +342,7 @@
   const NAV = [
     { id: 'overview', label: 'Обзор', href: 'index.html', icon: 'overview' },
     { id: 'backtest', label: 'Бэктест', href: 'backtesting.html', icon: 'backtest' },
-    { id: 'practice', label: 'Учебная', href: 'practice-trading.html', icon: 'trading' },
-    { id: 'micro_live', label: 'Micro Live', href: 'micro-live.html', icon: 'trading' },
+    { id: 'practice', label: 'Учебный терминал', href: 'practice-trading.html', icon: 'trading' },
     { id: 'trading', label: 'Торговля', href: 'trading.html', icon: 'trading' },
     { id: 'desktop', label: 'Рабочий стол', href: 'desktop.html', icon: 'desktop' },
     { id: 'performance', label: 'Финансы', href: 'performance.html', icon: 'performance' },
@@ -941,21 +940,30 @@
     const miniChip = qs('#mini-app-chip');
     if (miniChip) miniChip.innerHTML = `<span class="dot"></span>${CURRENT_AUTH.role === 'read_only' ? 'Только чтение' : 'Управление'}`;
     maybeRefreshAvatar(user);
-    startClock();
-    wireSystemStatus();
-    wireTopbar();
-    wireSearch();
-    wireGlobalNewsStrip(newsStrip);
-    buildOrchestratorWidget();
-    startInAppNotices();
-    startDesktopCommandBridge();
-    startUserSupportBridge();
-    renderImpersonationBanner(CURRENT_AUTH);
     if (user.needs_ux_mode || CURRENT_AUTH.ux_pending) {
-      renderUxModeGate();
+      // The initial choice must precede the Aurora shell.  A direct deep link
+      // may still reach this code, so send it back to the dedicated entry page.
+      location.replace('mode-entry.html');
       return;
     }
     if (maybeRedirectBeginnerHome(user)) return;
+    const studentShell = isStudentContour(CURRENT_AUTH);
+    if (studentShell) applyStudentShell(newsStrip);
+    startClock();
+    if (!studentShell) {
+      wireSystemStatus();
+      wireTopbar();
+      wireSearch();
+      wireGlobalNewsStrip(newsStrip);
+      buildOrchestratorWidget();
+      startInAppNotices();
+      startDesktopCommandBridge();
+    }
+    // Student can still use the account cabinet, the virtual terminal and
+    // Community.  This support bridge is self-service and never exposes a
+    // professional runtime command.
+    startUserSupportBridge();
+    renderImpersonationBanner(CURRENT_AUTH);
     // Google is NOT required for login / general use — only for NinjaTrader control.
     runReady();
     maybeRedeemStoredPromo();
@@ -985,12 +993,12 @@
         <p class="auth-lead">Без выбора режим нельзя пропустить. Позже можно сменить в кабинете.</p>
         <div class="ux-mode-choices">
           <button type="button" class="ux-mode-choice" data-ux="beginner">
-            <strong>Новичок</strong>
-            <span>Кошелёк → инструмент → график → сделки. Всё виртуально, без стратегий и ИИ.</span>
+            <strong>Студент</strong>
+            <span>Виртуальный prop-счёт: баланс → график → сделки → риск-лимиты. Без стратегий и ИИ.</span>
           </button>
           <button type="button" class="ux-mode-choice" data-ux="professional">
             <strong>Профессионал</strong>
-            <span>Стратегии, AI Lab, Community, NinjaTrader и расширенные разделы по тарифу.</span>
+            <span>Стратегии, AI Lab, NinjaTrader и расширенные разделы по тарифу. Community остаётся общим.</span>
           </button>
         </div>
         <div class="cab-sub" id="ux-mode-msg"></div>
@@ -1017,13 +1025,7 @@
             CURRENT_AUTH.user.ux_mode = out.ux_mode || mode;
             CURRENT_AUTH.user.needs_ux_mode = false;
           }
-          document.documentElement.classList.remove('ux-mode-locked');
-          card.remove();
-          applyNavAccess(CURRENT_AUTH);
-          if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
-          runReady();
-          maybeRedeemStoredPromo();
-          maybeHandleGoogleReturn();
+          location.replace(mode === 'beginner' ? 'practice-trading.html' : 'index.html');
         } catch (e) {
           if (msg) msg.textContent = e.message || String(e);
           qsa('[data-ux]', card).forEach(b => { b.disabled = false; });
@@ -1161,14 +1163,26 @@
     } catch (e) { /* keep code for retry from cabinet */ }
   }
 
+  function entryMode() {
+    try {
+      const saved = String(sessionStorage.getItem('stratforge.entry.mode') || '').toLowerCase();
+      return saved === 'student' ? 'beginner' : 'professional';
+    } catch (e) { return 'professional'; }
+  }
   function guestAuthStub() {
+    const uxMode = entryMode();
     return {
       role: 'guest', is_owner: false, guest: true, free_preview: true,
       plan_id: 'free_preview',
-      features: { overview: true, news: true, docs: true },
-      locked_nav: ['backtest', 'trading', 'desktop', 'performance', 'strategies', 'ai', 'agents', 'topstep'],
+      ux_mode: uxMode,
+      features: uxMode === 'beginner'
+        ? { practice: true, community: true }
+        : { overview: true, news: true, docs: true },
+      locked_nav: uxMode === 'beginner'
+        ? []
+        : ['backtest', 'trading', 'desktop', 'performance', 'strategies', 'ai', 'agents', 'topstep'],
       unlock_message: 'Чтобы открыть больше возможностей — введите промокод или отблагодарите донатом.',
-      user: { first_name: 'Гость', last_name: '', user_id: 0 },
+      user: { first_name: 'Гость', last_name: '', user_id: 0, ux_mode: uxMode },
     };
   }
 
@@ -1180,8 +1194,6 @@
     CURRENT_AUTH = guestAuthStub();
     document.documentElement.classList.remove('auth-locked');
     document.documentElement.classList.add('guest-browse');
-    const news = qs('[data-global-news-strip]');
-    if (news) news.hidden = false;
     // If a previous full-screen auth/welcome wiped the page, go back to overview.
     const content = qs('.content');
     if (content && (qs('#welcome-access', content) || qs('.auth-screen', content))) {
@@ -1191,17 +1203,23 @@
     }
     applyChipUser(CURRENT_AUTH.user);
     applyNavAccess(CURRENT_AUTH);
+    if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
+    const studentShell = isStudentContour(CURRENT_AUTH);
+    if (studentShell) applyStudentShell(newsStrip);
     const chipUser = qs('#chip-user');
     if (chipUser) chipUser.onclick = () => renderWelcomeAccess({ asOverlay: true });
     startClock();
-    // Guest preview must not hit authenticated APIs (whitelist 403 spam).
-    wireGuestPreviewChrome();
-    wireTopbar();
-    wireSearch();
-    // Keep the established StratForge Orchestrator entry point visible.  In
-    // guest mode it becomes a clear sign-in surface instead of disappearing.
-    buildOrchestratorWidget();
-    if (newsStrip) {
+    if (!studentShell) {
+      // Guest preview must not hit authenticated APIs (whitelist 403 spam).
+      wireGuestPreviewChrome();
+      wireTopbar();
+      wireSearch();
+      // Keep the established StratForge Orchestrator entry point visible.  In
+      // guest mode it becomes a clear sign-in surface instead of disappearing.
+      buildOrchestratorWidget();
+    }
+    if (!studentShell && newsStrip) {
+      newsStrip.hidden = false;
       const track = qs('.global-news-track', newsStrip);
       if (track) track.innerHTML = '<span class="global-news-static">Ознакомительный просмотр · войдите, чтобы видеть живую ленту</span>';
     }
@@ -1276,6 +1294,31 @@
       item.hidden = !(!features || features[id] !== false);
     });
   }
+  const STUDENT_NAV_IDS = new Set(['practice', 'community']);
+
+  function isStudentContour(auth) {
+    const source = auth || {};
+    const user = source.user || {};
+    return String(source.ux_mode || user.ux_mode || '').toLowerCase() === 'beginner';
+  }
+
+  function applyStudentShell(newsStrip) {
+    // The student product is a separate virtual prop terminal, not a
+    // professional dashboard with some tabs hidden.  Suppress professional
+    // controls before page scripts initialize so they cannot issue forbidden
+    // background calls or leave misleading NT/AI controls on the screen.
+    document.body.classList.add('student-shell');
+    document.body.dataset.studentShell = '1';
+    const sub = qs('.rail-brand-sub');
+    if (sub) sub.textContent = 'Учебный prop-терминал';
+    const search = qs('.tb-search-wrap');
+    if (search) search.hidden = true;
+    if (newsStrip) newsStrip.hidden = true;
+    qsa('#page-actions, #chip-workspace, #chip-nt, #chip-bridge, #chip-lm, #chip-account, #tb-bell, #tb-more').forEach(node => {
+      node.hidden = true;
+      node.setAttribute('aria-hidden', 'true');
+    });
+  }
   // Central access control: in Free Preview (or any non-owner with locked
   // sections) the rail keeps every section VISIBLE but marks locked ones, and a
   // locked page is covered by an unlock gate instead of being hidden.
@@ -1299,13 +1342,14 @@
       const id = item.dataset.nav;
       item.removeEventListener('click', lockedNavClick);
       if (uxMode === 'beginner') {
-        item.hidden = id !== 'practice';
+        item.hidden = !STUDENT_NAV_IDS.has(id);
         item.classList.remove('rail-locked');
         const lk = item.querySelector('.rail-lock');
         if (lk) lk.remove();
         return;
       }
-      item.hidden = false;
+      // A professional must not see a student-only terminal in their rail.
+      item.hidden = id === 'practice';
       if (id === 'overview') { item.classList.remove('rail-locked'); return; }
       let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
       item.classList.toggle('rail-locked', !!isLocked);
@@ -1320,6 +1364,10 @@
       ensureBeginnerWatermark();
       return;
     }
+    if (uxMode === 'professional' && page === 'practice') {
+      location.replace('index.html');
+      return;
+    }
     if (!isOwner && page && locked.has(page)) {
       renderLockGate(auth.unlock_message || 'Раздел доступен после активации подписки, промокода или доступа владельца.', auth.free_preview);
     } else if (demoTier && (page === 'backtest' || page === 'practice')) {
@@ -1330,13 +1378,13 @@
     user = user || {};
     if (String(user.ux_mode || '').toLowerCase() !== 'beginner') return false;
     const page = document.body.dataset.page;
-    if (!page || page === 'practice') return false;
+    if (!page || STUDENT_NAV_IDS.has(page)) return false;
     location.replace('practice-trading.html');
     return true;
   }
   function ensureBeginnerWatermark() {
     if (qs('#beginner-watermark')) return;
-    const bar = el(`<div id="beginner-watermark" class="demo-watermark beginner-watermark" role="status">Режим «Новичок» · виртуальные деньги · учебный контур <button type="button" class="btn sm" id="beginner-upgrade-cta">Стать профессионалом</button></div>`);
+    const bar = el(`<div id="beginner-watermark" class="demo-watermark beginner-watermark" role="status">Режим «Студент» · виртуальные деньги · учебный контур <button type="button" class="btn sm" id="beginner-upgrade-cta">Перейти в профессиональный</button></div>`);
     document.body.appendChild(bar);
     const btn = qs('#beginner-upgrade-cta', bar);
     if (btn) btn.onclick = () => openCabinet('profile');
@@ -1359,7 +1407,7 @@
       <div class="lock-gate-actions">
         <button class="btn primary" id="lock-gate-plans">Промокод или донат</button>
       </div>
-      ${freePreview ? '<div class="lock-gate-hint">Ознакомительный режим: открыты Обзор, Демо-бэктест, Учебная торговля, Новости и Документы.</div>' : ''}
+      ${freePreview ? '<div class="lock-gate-hint">Ознакомительный профессиональный режим: открыты Обзор, Новости и Документы.</div>' : ''}
     </div></div>`);
     host.appendChild(gate);
     const p = qs('#lock-gate-plans', gate);
@@ -1556,12 +1604,12 @@
       ? '<span class="badge trial">★ Золотая звезда · Основатель</span>'
       : (sub.plan_id ? `<span class="badge ${(sub.status === 'active' || sub.status === 'promo_grant' || sub.status === 'founder') ? 'live' : 'archived'}">${esc(sub.status || '')}</span>` : '');
     const expires = sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : '');
-    const modeLabel = uxMode === 'beginner' ? 'Новичок' : (uxMode === 'professional' ? 'Профессионал' : 'не выбран');
+    const modeLabel = uxMode === 'beginner' ? 'Студент' : (uxMode === 'professional' ? 'Профессионал' : 'не выбран');
     const modeCard = isOwner
       ? `<div class="cab-card"><h4>Режим интерфейса</h4><div class="cab-kv"><span class="k">Режим</span><span class="v"><strong>Профессионал</strong> <span class="badge live">владелец</span></span></div><div class="cab-sub">Владелец всегда в режиме «Профессионал». Для проверки новичка используйте Staging → impersonation.</div></div>`
       : `<div class="cab-card"><h4>Режим интерфейса</h4>
           <div class="cab-kv"><span class="k">Сейчас</span><span class="v"><strong>${esc(modeLabel)}</strong></span></div>
-          <p class="cab-sub">Новичок — только учебная торговля. Профессионал — стратегии, ИИ, Community и NT по тарифу.</p>
+          <p class="cab-sub">Студент — отдельный учебный терминал и Community. Профессионал — стратегии, ИИ, NinjaTrader и документы по тарифу; Community остаётся общим.</p>
           <div class="flex gap-sm wrap" id="cab-ux-actions">
             <button type="button" class="btn ${uxMode === 'beginner' ? 'ghost' : 'primary'} sm" data-set-ux="professional" ${uxMode === 'professional' ? 'disabled' : ''}>Стать профессионалом</button>
             <button type="button" class="btn ${uxMode === 'professional' ? 'ghost' : 'primary'} sm" data-set-ux="beginner" ${uxMode === 'beginner' ? 'disabled' : ''}>Режим новичка</button>
@@ -1578,7 +1626,10 @@
         ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
       </div>
       ${ntCard}
-      <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${activeFeatures.map(f => `<span class="chip-tag">${esc(f.label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
+      <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${(uxMode === 'beginner'
+        ? ['Учебный терминал', 'Community']
+        : activeFeatures.map(f => f.label)
+      ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
   }
 
   async function renderNinjaInto(node, me) {
@@ -1987,13 +2038,11 @@
             <input id="cab-donate-custom" type="number" min="1" step="1" placeholder="Своя сумма, $" style="width:140px">
             <button type="button" class="btn ghost" id="cab-donate-custom-go" ${paypal ? '' : 'disabled'}>PayPal</button>
           </div>
-          <label class="access-request" style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;cursor:pointer">
-            <input type="checkbox" id="cab-donate-request" checked style="margin-top:3px">
-            <span>Запросить доступ после доната — владелец проверит платёж и откроет тариф</span>
-          </label>
+          <p class="cab-sub" style="margin-top:14px">Сначала завершите оплату в PayPal, затем отправьте заявку. Владелец вручную сверит платёж и откроет тариф.</p>
           <div class="dchart-actions" style="justify-content:flex-start;margin-top:10px">
-            <button type="button" class="btn ghost" id="cab-donate-paid">Я поддержал — запросить доступ</button>
+            <button type="button" class="btn ghost" id="cab-donate-paid" ${paypal ? '' : 'disabled'}>Я поддержал — запросить доступ</button>
           </div>
+          ${paypal ? '' : '<div class="cab-sub">PayPal владельца ещё не настроен, поэтому запрос доступа после доната сейчас недоступен.</div>'}
           <div class="cab-sub" id="cab-donate-msg"></div>
         </div>
       </div>`;
@@ -2007,7 +2056,6 @@
       bindExternalLinks(node);
 
       const setDonateMsg = (text) => { const m = qs('#cab-donate-msg', node); if (m) m.textContent = text || ''; };
-      const wantAccess = () => !!(qs('#cab-donate-request', node) && qs('#cab-donate-request', node).checked);
       const openPay = (url) => { if (url) try { window.open(url, '_blank', 'noopener'); } catch (e) { location.href = url; } };
       const requestAccess = async (planId, amount, btn) => {
         if (!planId) { toast('Не удалось определить тариф доната'); return; }
@@ -2023,12 +2071,9 @@
 
       qsa('[data-donate-tier]', node).forEach(b => b.onclick = async () => {
         const url = b.dataset.donateUrl || '';
-        const planId = b.dataset.donateTier || '';
-        const amount = b.dataset.donateAmount || '';
-        if (url) openPay(url);
-        if (wantAccess()) await requestAccess(planId, amount, b);
-        else if (url) setDonateMsg('Откройте PayPal и оплатите. Чтобы получить доступ — включите галочку и нажмите «Я поддержал».');
-        else toast('PayPal владельца ещё не настроен');
+        if (!url) { toast('PayPal владельца ещё не настроен'); return; }
+        openPay(url);
+        setDonateMsg('Откройте PayPal и завершите оплату. Затем вернитесь сюда и нажмите «Я поддержал — запросить доступ».');
       });
 
       const customGo = qs('#cab-donate-custom-go', node);
@@ -2037,15 +2082,14 @@
         if (!(raw >= 1)) { toast('Укажите сумму от $1'); return; }
         const amount = Math.round(raw * 100) / 100;
         const url = paypal ? paypalFor(paypal, amount) : '';
-        const tier = donationPlanForAmount(tiers, amount);
-        if (url) openPay(url);
-        if (wantAccess() && tier) await requestAccess(tier.plan_id, amount, customGo);
-        else if (url) setDonateMsg('Откройте PayPal и оплатите. Чтобы получить доступ — включите галочку и нажмите «Я поддержал».');
-        else toast('PayPal владельца ещё не настроен');
+        if (!url) { toast('PayPal владельца ещё не настроен'); return; }
+        openPay(url);
+        setDonateMsg('Откройте PayPal и завершите оплату. Затем вернитесь сюда и нажмите «Я поддержал — запросить доступ».');
       };
 
       const paidBtn = qs('#cab-donate-paid', node);
       if (paidBtn) paidBtn.onclick = async () => {
+        if (!paypal) { toast('PayPal владельца ещё не настроен'); return; }
         const customRaw = Number((qs('#cab-donate-custom', node) || {}).value || 0);
         let tier = null;
         let amount = 0;
@@ -2347,7 +2391,7 @@
         const mode = btn.dataset.setUx;
         const msg = qs('#cab-ux-msg', cb);
         if (mode === 'beginner') {
-          const ok = confirm('Перейти в режим «Новичок»? Стратегии, ИИ, Community и NinjaTrader будут скрыты.');
+          const ok = confirm('Перейти в режим «Студент»? Стратегии, ИИ и NinjaTrader будут скрыты; Community останется доступным.');
           if (!ok) return;
         } else if (mode === 'professional') {
           const ok = confirm('Перейти в режим «Профессионал»? Откроются разделы по вашему тарифу (стратегии, ИИ, NT и др.).');
@@ -2368,7 +2412,7 @@
             ux_mode: out.ux_mode || mode,
           });
           applyNavAccess(CURRENT_AUTH);
-          toast(mode === 'beginner' ? 'Режим «Новичок»' : 'Режим «Профессионал»');
+          toast(mode === 'beginner' ? 'Режим «Студент»' : 'Режим «Профессионал»');
           if (mode === 'beginner') {
             closeDrawer();
             if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
@@ -4959,6 +5003,12 @@
     }
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  function requireSignIn() {
+    if (!isGuest()) return false;
+    renderWelcomeAccess({ asOverlay: true });
+    return true;
+  }
+
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

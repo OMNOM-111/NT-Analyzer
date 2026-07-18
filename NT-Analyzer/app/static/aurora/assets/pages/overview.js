@@ -160,9 +160,14 @@ function ovRhythmFallback(data, mode) {
   return Object.keys(grouped).sort().map(key => ({ key, label: key, pnl: Math.round(grouped[key] * 100) / 100 }));
 }
 
+function renderKpiLoading(box) {
+  const labels = ['Баланс счёта', 'Торговый P&L · месяц', 'Торговый P&L · год', 'Макс. просадка · год', 'Комиссия · год', 'Контур портфеля / AI'];
+  box.innerHTML = labels.map(label => `<div class="kpi kpi-loading" aria-busy="true"><div class="kpi-top"><span class="kpi-label">${label}</span><span class="kpi-ic"><span class="spinner"></span></span></div><div class="kpi-val sm">Загрузка…</div><div class="kpi-foot">Получаем актуальные данные</div></div>`).join('');
+}
+
 async function renderLive() {
   const kpiBox = UI.qs('#kpis');
-  UI.renderLoading(kpiBox, 'Загрузка счетов и метрик...');
+  if (!kpiBox.querySelector('.kpi-loading')) renderKpiLoading(kpiBox);
 
   let accountDoc = null;
   try { accountDoc = await API.http.runtimeAccounts({ signal: UI.signal() }); } catch (_) { accountDoc = null; }
@@ -173,27 +178,37 @@ async function renderLive() {
   const accountName = selectedAccount && selectedAccount.account_name;
   if (selectedAccount && (!preferred || preferred.account_name !== accountName)) UI.setSelectedAccount(accountName, false);
 
+  // AI summary may involve checking a local model runtime. It must enrich the
+  // overview, not hold back the account and trading data which are available
+  // independently.  Give it a short first-paint budget and refresh its two
+  // cards when the slower answer arrives.
+  const aiSummaryTask = API.http.aiSummary({}, { signal: UI.signal() }).catch(() => null);
+  const aiFirstPaint = Promise.race([
+    aiSummaryTask,
+    new Promise(resolve => window.setTimeout(() => resolve(null), 700)),
+  ]);
+  // The overview is useful as soon as its trading summary is ready. Account
+  // history, reports and news enrich lower panels, but must never block the
+  // first row of actionable metrics.
   const settled = await Promise.allSettled([
     API.http.performance({ period: 'month', account: accountName }, { signal: UI.signal() }),
     API.http.performance({ period: 'year', account: accountName }, { signal: UI.signal() }),
     API.http.performance({ period: 'today', account: accountName }, { signal: UI.signal() }),
+    API.http.coverage({}, { signal: UI.signal() }),
+    API.http.health({}, { signal: UI.signal() }),
+  ]);
+  const optionalTask = Promise.allSettled([
     API.http.runtimeAccountHistory({ account: accountName, limit: 500 }, { signal: UI.signal() }),
     API.http.reports({ limit: 6 }, { signal: UI.signal() }),
-    API.http.coverage({}, { signal: UI.signal() }),
-    API.http.aiSummary({}, { signal: UI.signal() }),
-    API.http.health({}, { signal: UI.signal() }),
     API.http.news({ limit: 5 }, { signal: UI.signal() }),
   ]);
   const value = index => settled[index].status === 'fulfilled' ? settled[index].value : null;
   const month = value(0);
   const year = value(1);
   const today = value(2);
-  const history = value(3);
-  const reports = value(4);
-  const coverage = value(5);
-  const ai = value(6);
-  const health = value(7);
-  const news = value(8);
+  const coverage = value(3);
+  const health = value(4);
+  const ai = await aiFirstPaint;
   const guest = !!(window.UI && UI.isGuest && UI.isGuest());
   const firstFail = settled.find(row => row.status === 'rejected');
   const authBlocked = firstFail && firstFail.reason && (firstFail.reason.status === 401 || firstFail.reason.status === 403
@@ -220,12 +235,28 @@ async function renderLive() {
   renderNorthStar();
   wireEquity(month, year, accountName);
   renderToday(today);
-  renderAccountOverview(accounts, selectedAccount, history);
+  renderAccountOverview(accounts, selectedAccount, null);
   wireRhythm(year);
   renderTopStrategies(month);
-  renderReports(reports);
-  renderNews(news);
   renderSystems(selectedAccount, month, coverage, ai, health);
+
+  optionalTask.then(optional => {
+    if (!document.documentElement.contains(kpiBox)) return;
+    const optionalValue = index => optional[index].status === 'fulfilled' ? optional[index].value : null;
+    renderAccountOverview(accounts, selectedAccount, optionalValue(0));
+    renderReports(optionalValue(1));
+    renderNews(optionalValue(2));
+  });
+
+  if (!ai) {
+    aiSummaryTask.then(lateAi => {
+      // A navigation can dispose this page while the optional answer is in
+      // flight.  Never update a detached overview.
+      if (!lateAi || !document.documentElement.contains(kpiBox)) return;
+      renderKpis(kpiBox, selectedAccount, month, year, coverage, lateAi);
+      renderSystems(selectedAccount, month, coverage, lateAi, health);
+    });
+  }
 }
 
 async function renderNorthStar() {

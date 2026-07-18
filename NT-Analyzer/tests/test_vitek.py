@@ -1262,7 +1262,13 @@ def test_vitek_ui_and_background_install_contracts() -> None:
     assert "aiOrchestratorMessage" in victor
     assert "Поручить Виктору разобраться" in js and "Поручить Виктору разобраться" in ai_lab
     for page in aurora.glob("*.html"):
-        assert "assets/victor.js" in page.read_text(encoding="utf-8"), page.name
+        content = page.read_text(encoding="utf-8")
+        # The root mode choice must load before the professional Aurora shell;
+        # it intentionally has no owner/Orchestrator assistant surface.
+        if page.name == "mode-entry.html":
+            assert "assets/victor.js" not in content
+        else:
+            assert "assets/victor.js" in content, page.name
     assert 'id="vitek-agents"' in html
     assert "Временные окна стратегий" in html
     assert "vitekIncidentDecision" in js

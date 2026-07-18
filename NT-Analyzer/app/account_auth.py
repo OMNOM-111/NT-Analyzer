@@ -17,6 +17,7 @@ Staging-only helpers: virtual users, test-auth sessions, owner impersonation
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import html
@@ -66,6 +67,14 @@ _LOCK = threading.RLock()
 _RATE_LOCK = threading.Lock()
 _LOGIN_RATE: Dict[str, Deque[float]] = defaultdict(deque)
 _UNREADABLE_STORE_SUFFIX = ".unreadable"
+# Decrypting the DPAPI account store is comparatively expensive on Windows.
+# A first-page load makes several authenticated requests in parallel, so each
+# one used to decrypt the same immutable file and contend on ``_LOCK``. Keep
+# only a copy of the current file version in this process. The cache key
+# includes the full path and stat marker, so a write or outside replacement
+# cannot leak stale access or revoked-session state.
+_DOC_CACHE_KEY: Optional[Tuple[str, int, int]] = None
+_DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
 
 
 class AccountAuthError(RuntimeError):
@@ -81,6 +90,32 @@ def _root() -> Path:
 
 def _store_path() -> Path:
     return runtime_env.data_path("integrations", "accounts.dpapi", project_root=_root())
+
+
+def _doc_cache_key(path: Path) -> Optional[Tuple[str, int, int]]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _clear_doc_cache() -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    with _LOCK:
+        _DOC_CACHE_KEY = None
+        _DOC_CACHE_DOC = None
+
+
+def _cache_doc(path: Path, doc: Dict[str, Any]) -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    key = _doc_cache_key(path)
+    if key is None:
+        _clear_doc_cache()
+        return
+    with _LOCK:
+        _DOC_CACHE_KEY = key
+        _DOC_CACHE_DOC = copy.deepcopy(doc)
 
 
 def _remote_config_path() -> Path:
@@ -130,6 +165,7 @@ def _quarantine_unreadable_store(path: Path, reason: str) -> None:
     ``accounts.dpapi`` should not brick the login flow; it is preserved under a
     timestamped name and the new machine can create its own protected store.
     """
+    _clear_doc_cache()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = path.with_name(f"{path.name}{_UNREADABLE_STORE_SUFFIX}-{stamp}.bak")
     try:
@@ -163,8 +199,15 @@ def _quarantine_unreadable_store(path: Path, reason: str) -> None:
 
 def _read_doc() -> Dict[str, Any]:
     path = _store_path()
-    if not path.is_file():
+    cache_key = _doc_cache_key(path)
+    if cache_key is None:
+        _clear_doc_cache()
         return _default_doc()
+    with _LOCK:
+        if _DOC_CACHE_KEY == cache_key and _DOC_CACHE_DOC is not None:
+            # Callers may amend the returned document before an explicit
+            # _write_doc. Never expose the cache object itself.
+            return copy.deepcopy(_DOC_CACHE_DOC)
     try:
         raw = path.read_bytes()
         if not raw.startswith(_MAGIC):
@@ -185,7 +228,9 @@ def _read_doc() -> Dict[str, Any]:
     for key in ("users", "challenges", "sessions"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
-    return _migrate_doc(doc)
+    doc = _migrate_doc(doc)
+    _cache_doc(path, doc)
+    return doc
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
@@ -210,6 +255,9 @@ def _write_doc(doc: Dict[str, Any]) -> None:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        # Keep cache semantics identical to a subsequent _read_doc: legacy
+        # v1 records receive the in-memory v2 UX migration before use.
+        _cache_doc(path, _migrate_doc(copy.deepcopy(doc)))
     except OSError as exc:
         try:
             tmp.unlink(missing_ok=True)
@@ -319,7 +367,7 @@ def needs_ux_mode_choice(user: Optional[Dict[str, Any]]) -> bool:
 
 
 def set_ux_mode(user_id: Any, mode: str, *, confirm_downgrade: bool = False) -> Dict[str, Any]:
-    """Set beginner/professional. Downgrade to beginner requires confirm_downgrade."""
+    """Set student/professional. Downgrade to the student terminal requires confirmation."""
     uid = int(user_id or 0)
     clean = str(mode or "").strip().lower()
     if clean not in UX_MODES:
@@ -336,7 +384,7 @@ def set_ux_mode(user_id: Any, mode: str, *, confirm_downgrade: bool = False) -> 
         prev = str(user.get("ux_mode") or "").strip().lower()
         if prev == "professional" and clean == "beginner" and not confirm_downgrade:
             raise AccountAuthError(
-                "Переход в режим «Новичок» скроет стратегии, ИИ, Community и NinjaTrader. "
+                "Переход в режим «Студент» скроет стратегии, ИИ и NinjaTrader. "
                 "Подтвердите действие явно.",
                 409,
                 code="ux_mode_confirm_required",

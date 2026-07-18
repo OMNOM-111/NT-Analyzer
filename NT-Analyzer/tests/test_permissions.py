@@ -19,7 +19,8 @@ def _entitlement(plan_id: str) -> dict:
 def test_owner_has_all_capabilities() -> None:
     perm = permissions.resolve({"is_owner": True})
     assert all(perm["capabilities"].values())
-    assert all(perm["nav"].values())
+    assert all(value for key, value in perm["nav"].items() if key != "practice")
+    assert perm["nav"]["practice"] is False
     assert perm["free_preview"] is False
     assert perm["locked_nav"] == []
     assert perm["plan_id"] == "founder"
@@ -29,7 +30,7 @@ def test_free_preview_when_no_entitlement() -> None:
     perm = permissions.resolve({"is_owner": False, "ux_mode": "professional"}, {})
     assert perm["free_preview"] is True
     assert perm["plan_id"] == permissions.FREE_PREVIEW_PLAN_ID
-    # Free Preview: news, docs, demo backtest, practice trading.
+    # Free Preview professional rail: news, docs and demo backtest.
     assert perm["nav"]["news"] is True
     assert perm["nav"]["docs"] is True
     assert perm["nav"]["backtest"] is True
@@ -82,7 +83,7 @@ def test_required_capability_prefix_match() -> None:
     assert permissions.required_capability("/api/batches") == "backtesting"
     assert permissions.required_capability("/api/reports") == "backtesting"
     assert permissions.required_capability("/api/practice/account") == "practice_trading"
-    assert permissions.required_capability("/api/micro-live/trade") == "micro_live"
+    assert permissions.required_capability("/api/micro-live/trade") is None
     assert permissions.required_capability("/api/ops/runtime/command") == "paper_commands"
     assert permissions.required_capability("/api/ops/runtime/positions") == "live_read"
     assert permissions.required_capability("/api/ops/runtime/accounts") == "personal_nt"
@@ -113,9 +114,12 @@ def test_enforce_allows_with_capability() -> None:
 
 
 def test_beginner_may_read_market_bars_for_charts() -> None:
-    ctx = {"is_owner": False, "user": {"ux_mode": "beginner"}, "capabilities": {"practice_trading": True}}
+    ctx = {"is_owner": False, "user": {"ux_mode": "beginner"}, "capabilities": {"practice_trading": True, "community": True}}
     permissions.enforce("/api/ops/runtime/bars", ctx)
     permissions.enforce("/api/ops/runtime/bars/batch", ctx)
+    permissions.enforce("/api/community/feed", ctx)
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/governance/summary", ctx)
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/ops/runtime/command", ctx)
     for path in (
@@ -142,3 +146,9 @@ def test_professional_free_preview_cannot_bypass_paid_routes() -> None:
             permissions.enforce(path, ctx)
     permissions.enforce("/api/news", ctx)
     permissions.enforce("/api/governance/summary", ctx)
+
+
+def test_professional_cannot_use_student_practice_api() -> None:
+    ctx = {"is_owner": False, "user": {"ux_mode": "professional"}, "capabilities": {"practice_trading": True}}
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/practice/account", ctx)

@@ -5,6 +5,14 @@ Branch: `codex/stratforge-release-20260716`
 Release base commit: `73e005e038f91b5766193004705a891ee204be0d`
 Acceptance status: **BLOCKED — not approved for production release**
 
+Current product-contour addendum (2026-07-18): see
+[PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md).
+It supersedes the former Micro/Scaled Live product path: the current code has a
+real pre-shell Student/Professional entry, removes Micro Live entirely and has
+isolated staging visual evidence for guest, Student, Community and Professional
+rails. Exact TopStep parity and credentialed external acceptance remain separate
+from that code/UI PASS.
+
 This is a complete audit of the requested scope, not a declaration that the release is done. The code and automated staging gates below pass, but the mandatory real-browser, real-Google, real-Telegram, NinjaTrader Strategy Analyzer, payment-provider and broker scenarios cannot be truthfully signed off in the current environment. The task explicitly requires missing-credential items to remain `BLOCKED`.
 
 ## 1. Results for the nine directions

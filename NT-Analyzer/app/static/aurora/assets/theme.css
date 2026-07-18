@@ -2219,9 +2219,33 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 .auth-form { display: grid; gap: 12px; }
 .auth-wait { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 58px; color: var(--tx-2); font-size: 13px; }
 .auth-security { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--tx-3); font-size: 10.5px; line-height: 1.6; text-align: center; }
+.mode-entry-page { min-height: 100vh; margin: 0; background: radial-gradient(900px 560px at 50% 0%, rgba(31,201,255,.13), transparent 70%), var(--bg); }
+.mode-entry { min-height: 100vh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom)); }
+.mode-entry-card { width: min(960px, 100%); padding: clamp(24px, 4vw, 46px); border: 1px solid var(--line-2); border-radius: 24px; background: color-mix(in srgb, var(--bg-2) 94%, transparent); box-shadow: var(--sh-2); backdrop-filter: blur(18px); }
+.mode-entry-brand { display: flex; align-items: center; gap: 12px; color: var(--tx); }
+.mode-entry-brand img { width: 36px; height: 36px; border-radius: 10px; }
+.mode-entry-brand strong, .mode-entry-brand span { display: block; }
+.mode-entry-brand span, .mode-entry-kicker, .mode-entry-lead, .mode-entry-status { color: var(--tx-2); }
+.mode-entry-brand span { margin-top: 2px; font-size: 12px; }
+.mode-entry-kicker { margin: 28px 0 6px; font-size: 13px; }
+.mode-entry-card h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); letter-spacing: -.03em; }
+.mode-entry-lead { max-width: 720px; margin: 12px 0 0; line-height: 1.55; }
+.mode-entry-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+.mode-entry-option { min-height: 255px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 22px; text-align: left; color: var(--tx); border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--bg-3) 78%, transparent); transition: border-color .16s ease, transform .16s ease, background .16s ease; }
+.mode-entry-option:hover, .mode-entry-option:focus-visible, .mode-entry-option.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, var(--bg-3)); transform: translateY(-2px); outline: none; }
+.mode-entry-option:disabled { opacity: .6; cursor: wait; transform: none; }
+.mode-entry-option-tag { color: var(--accent); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
+.mode-entry-option strong { font-size: 20px; }
+.mode-entry-option > span:not(.mode-entry-option-tag), .mode-entry-option small { color: var(--tx-2); line-height: 1.5; }
+.mode-entry-option small { margin-top: auto; font-size: 12px; }
+.mode-entry-status { min-height: 22px; margin: 16px 0 0; font-size: 13px; }
 @media (max-width: 520px) {
   .auth-screen { place-items: end center; padding-left: 0; padding-right: 0; }
   .auth-card { border-radius: 22px 22px 0 0; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); }
+  .mode-entry { align-items: end; padding-left: 0; padding-right: 0; }
+  .mode-entry-card { border-radius: 22px 22px 0 0; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); }
+  .mode-entry-options { grid-template-columns: 1fr; }
+  .mode-entry-option { min-height: 0; }
 }
 
 /* Free Preview: locked navigation + section unlock gate. */
@@ -2484,6 +2508,31 @@ html.demo-tier.guest-browse .panel { filter: none; }
 .practice-side { display: grid; gap: 14px; }
 .practice-ticket { grid-template-columns: 1fr 1fr; }
 .grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+/* Community is a peer workspace: threaded chat, transparent requests and
+   user-owned reports live here, never in the Orchestrator surface. */
+.community-workspace { display: grid; gap: 16px; }
+.community-main-grid { align-items: start; }
+.community-channels { flex-wrap: wrap; }
+.community-chat { max-height: 560px; overflow: auto; }
+.community-composer textarea { width: 100%; resize: vertical; }
+.community-composer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.community-composer-actions .spacer { flex: 1; }
+.community-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.community-pending-file, .community-attachment, .community-metrics span {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 3px 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--bg-3, #1a2436) 75%, transparent);
+  color: var(--tx-2); font-size: 11px;
+}
+.community-attachment { margin-top: 7px; text-decoration: none; }
+.community-attachment:hover { color: var(--accent, #7aa8ff); border-color: var(--accent, #7aa8ff); }
+.community-pending-file .btn { min-height: 20px; padding: 0 5px; }
+.community-message { align-items: flex-start; }
+.community-message-reply { margin-left: 22px; border-left: 2px solid color-mix(in srgb, var(--accent, #7aa8ff) 45%, transparent); padding-left: 10px; }
+.community-message-actions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 5px; }
+.community-reply-mark { margin-left: 6px; color: var(--accent, #7aa8ff); font-size: 11px; font-weight: 600; }
+.community-thread-state { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: color-mix(in srgb, var(--accent, #7aa8ff) 9%, transparent); font-size: 12px; }
+.community-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 @media (max-width: 1100px) {
   .practice-desk-grid { grid-template-columns: 1fr; }
   .grid.cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2495,6 +2544,7 @@ html.demo-tier.guest-browse .panel { filter: none; }
   .practice-market-state { grid-template-columns: repeat(3, 1fr); }
   .practice-market-source { grid-column: 1 / -1; }
   .practice-market-state > button { grid-column: 1 / -1; width: 100%; }
+  .community-message-reply { margin-left: 10px; }
 }
 
 /* Mobile bottom-nav gets a light glass treatment so the ambient reads behind */

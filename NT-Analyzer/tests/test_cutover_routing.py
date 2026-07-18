@@ -66,9 +66,10 @@ def test_aurora_page_controllers_call_real_endpoints():
 
 def test_server_routes_aurora_primary_and_legacy():
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
-    # Aurora is the primary UI served from app/static/aurora/.
-    assert '"aurora/index.html" if rel == "/" else "aurora" + rel' in server, \
-        "server must serve the Aurora UI for /ui/ and new pages"
+    # The explicit mode choice is the root before either Aurora contour; the
+    # professional shell remains available at /ui/index.html.
+    assert '"aurora/mode-entry.html" if rel == "/" else "aurora" + rel' in server, \
+        "server must serve the mode entry at /ui/ and Aurora pages below it"
     # Classic UI preserved under /ui/legacy/.
     assert 'rel == "/legacy" or rel.startswith("/legacy/")' in server, \
         "server must serve the legacy UI under /ui/legacy/"

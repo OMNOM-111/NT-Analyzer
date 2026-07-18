@@ -12,6 +12,7 @@
   let lastLiveClose = {};
   let latestSeries = {};
   let chartRequestId = 0;
+  let marketPolling = false;
 
   function money(v) { return UI.money(Number(v || 0), { sign: true, dec: 2 }); }
   function activeSymbol() {
@@ -19,6 +20,62 @@
   }
   function activeLayout() {
     return Number(UI.qs('#layout-seg .active')?.dataset.layout || 1) || 1;
+  }
+
+  function isGuestPreview() {
+    return !!(UI && typeof UI.isGuest === 'function' && UI.isGuest());
+  }
+
+  function applyGuestPracticeLock() {
+    const guest = isGuestPreview();
+    document.body.classList.toggle('practice-guest-locked', guest);
+    UI.qsa('#practice-onboard button, #practice-onboard input').forEach(el => {
+      el.disabled = guest;
+      el.setAttribute('aria-disabled', guest ? 'true' : 'false');
+    });
+    const message = UI.qs('#p-onboard-msg');
+    if (guest && message) message.textContent = 'Войдите через Telegram, чтобы создать и сохранить свой учебный счёт.';
+  }
+
+  function currentMarket(symbol) {
+    const rows = (state && state.markets && typeof state.markets === 'object') ? state.markets : {};
+    const row = rows[String(symbol || '').toUpperCase()];
+    return row && typeof row === 'object' ? row : null;
+  }
+
+  function marketIsTradable(symbol) {
+    return !!currentMarket(symbol)?.tradable;
+  }
+
+  function updateTicketAvailability() {
+    const account = (state && state.account) || {};
+    const symbol = activeSymbol();
+    const market = currentMarket(symbol);
+    const ready = !!(market && market.tradable);
+    const locked = !!account.locked;
+    const positions = Array.isArray(state?.positions) ? state.positions : [];
+    const reason = market?.reason || 'Нет актуальной подтверждённой котировки.';
+    const guest = isGuestPreview();
+    const setDisabled = (id, disabled) => {
+      const el = UI.qs(id);
+      if (el) el.disabled = !!disabled;
+    };
+    setDisabled('#p-buy', guest || !hasAccount || locked || !ready);
+    setDisabled('#p-sell', guest || !hasAccount || locked || !ready);
+    setDisabled('#p-close', guest || !hasAccount || locked || !ready || !positions.length);
+    const note = UI.qs('#p-order-state');
+    if (note) {
+      note.textContent = guest
+        ? 'Войдите через Telegram, чтобы открыть виртуальный счёт и отправлять учебные ордера.'
+        : (!hasAccount
+          ? 'Сначала создайте учебный счёт.'
+          : (locked
+            ? 'Торговля остановлена риск-лимитом.'
+            : (ready
+              ? 'Котировка подтверждена сервером. Все сделки остаются виртуальными.'
+              : `Ордеры и закрытие позиции заблокированы: ${reason}`)));
+      note.classList.toggle('warn', (guest || !ready) && hasAccount && !locked);
+    }
   }
 
   function showOnboard(msg) {
@@ -32,6 +89,7 @@
       const el = UI.qs('#p-onboard-msg');
       if (el) el.textContent = msg;
     }
+    applyGuestPracticeLock();
   }
 
   function showDesk() {
@@ -56,6 +114,7 @@
     UI.qsa('#p-symbol-seg button').forEach(b => {
       b.classList.toggle('active', b.dataset.symbol === s);
     });
+    updateTicketAvailability();
   }
 
   function firstSeries(payload) {
@@ -108,6 +167,7 @@
   function setMarketState(series, symbol) {
     const root = UI.qs('#p-market-state');
     const srcEl = UI.qs('#p-chart-src');
+    const executionMarket = !!(series && Object.prototype.hasOwnProperty.call(series, 'tradable'));
     const bars = Array.isArray(series?.bars) ? series.bars : [];
     const close = markFromBars(bars);
     const quote = series?.quote || {};
@@ -116,23 +176,26 @@
     const recovery = series?.gap_recovery || {};
     const loading = series?.status === 'loading';
     const failed = series?.status === 'error';
-    const empty = !bars.length;
+    const tradable = !!series?.tradable;
+    const empty = executionMarket ? !tradable : !bars.length;
     const stale = !!freshness.stale || series?.status === 'external_stale' || series?.status === 'failover_stale';
-    const stateName = loading ? 'loading' : (failed ? 'error' : (empty ? 'empty' : (stale ? 'stale' : 'ready')));
+    const stateName = loading ? 'loading' : (failed ? 'error' : (empty ? 'unavailable' : (stale ? 'stale' : 'ready')));
     if (root) root.dataset.state = stateName;
     const set = (id, text) => { const el = UI.qs(id); if (el) el.textContent = text; };
     set('#p-bid', price(quote.bid));
     set('#p-ask', price(quote.ask));
-    set('#p-last', price(quote.last || close));
+    set('#p-last', price(quote.last || series?.price || close));
     const provider = sourceLabel(series || {});
-    set('#p-source-state', loading ? 'Загрузка…' : (failed ? ('Ошибка: ' + (series.error || 'нет ответа')) : (empty ? 'Нет доступных баров' : provider)));
+    const unavailable = series?.reason || 'Нет подтверждённой котировки';
+    set('#p-source-state', loading ? 'Загрузка…' : (failed ? ('Ошибка: ' + (series.error || 'нет ответа')) : (empty ? unavailable : provider)));
     const timing = freshness.data_as_of_utc || source.updated_at_utc || '';
     const flags = [];
     if (quote.bid_ask_estimated) flags.push('bid/ask ориентировочные');
     if (stale) flags.push('данные неактуальны');
     if (recovery.attempted && recovery.provider_available === false) flags.push('failover недоступен');
     set('#p-source-time', [timing ? ageLabel(freshness.age_sec ?? source.age_sec) : 'timestamp отсутствует', ...flags].join(' · '));
-    if (srcEl) srcEl.textContent = empty ? 'котировки недоступны' : `${provider} · ${symbol} · ${TF}`;
+    if (srcEl) srcEl.textContent = empty ? 'котировки не подтверждены · исполнение остановлено' : `${provider} · ${symbol} · ${TF}`;
+    updateTicketAvailability();
   }
 
   async function renderCharts(layout) {
@@ -188,23 +251,36 @@
       }
       charts.push({ el: pane, engine, symbol: sym, series });
     }
+    // Chart history is informative.  The ticket uses only the independent
+    // market state returned by /api/practice/tick, so a cached chart cannot
+    // accidentally enable a fill.
+    const market = currentMarket(base);
+    if (market) setMarketState(market, base);
   }
 
   function renderRisk(a) {
     const body = UI.qs('#p-risk-body');
     const risk = UI.qs('#p-risk');
     if (!a) return;
+    const status = String(a.account_status || (a.locked ? 'daily_locked' : 'active'));
+    const reason = {
+      daily_loss: 'дневной лимит убытка',
+      max_drawdown: 'максимальная просадка',
+      account_depleted: 'виртуальный баланс исчерпан',
+    }[a.lock_reason] || a.lock_reason || '';
+    const statusText = status === 'failed'
+      ? 'счёт завершён · откройте новый'
+      : (status === 'daily_locked' ? 'пауза до следующего UTC-дня' : 'лимиты активны');
     if (risk) {
-      risk.textContent = a.locked
-        ? ('LOCK: ' + (a.lock_reason || ''))
-        : 'лимиты активны';
+      risk.textContent = a.locked ? (reason || statusText) : statusText;
     }
     if (body) {
       body.innerHTML = `
         <div class="cab-kv"><span class="k">Daily loss</span><span class="v">${money(-Math.abs(a.daily_loss_limit || 0))}</span></div>
         <div class="cab-kv"><span class="k">Max DD</span><span class="v">${money(-Math.abs(a.max_drawdown || 0))}</span></div>
         <div class="cab-kv"><span class="k">Pos limit</span><span class="v">${UI.esc(String(a.position_limit || 4))}</span></div>
-        <div class="cab-kv"><span class="k">Статус</span><span class="v">${a.locked ? '<span class="badge archived">заблокирован</span>' : '<span class="badge live">можно торговать</span>'}</span></div>`;
+        <div class="cab-kv"><span class="k">Статус</span><span class="v">${status === 'failed' ? '<span class="badge archived">счёт завершён</span>' : (a.locked ? '<span class="badge pending">дневная пауза</span>' : '<span class="badge live">можно торговать</span>')}</span></div>
+        ${a.locked ? `<div class="finance-note">${UI.esc(reason || statusText)}.${a.requires_new_account ? ' Создайте новый виртуальный счёт через кнопку ниже.' : ''}</div>` : ''}`;
     }
   }
 
@@ -226,6 +302,8 @@
       ].map(([k, v]) => `<div class="kpi"><div class="kpi-label">${k}</div><div class="kpi-value">${v}</div></div>`).join('');
     }
     renderRisk(a);
+    const reset = UI.qs('#p-reset');
+    if (reset) reset.textContent = a.requires_new_account ? 'Открыть новый виртуальный счёт' : 'Сбросить счёт и внести заново';
     const positions = doc.positions || [];
     UI.qs('#p-positions').innerHTML = positions.length
       ? positions.map(p => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(p.side)} ${UI.esc(p.symbol)} ×${p.quantity}</div><div class="row-sub">avg ${p.avg_price} · mark ${p.mark || '—'} · uPnL ${money(p.unrealized_pnl)} · SL ${p.stop_loss || '—'} · TP ${p.take_profit || '—'}</div></div><button class="btn ghost sm p-close-one" data-position-id="${UI.esc(p.position_id || '')}" type="button">Закрыть</button></div>`).join('')
@@ -254,6 +332,7 @@
         finally { btn.disabled = false; }
       };
     });
+    updateTicketAvailability();
   }
 
   async function refreshReport() {
@@ -267,11 +346,16 @@
   }
 
   async function refresh() {
+    if (isGuestPreview()) {
+      showOnboard('Войдите через Telegram, чтобы создать и сохранить свой учебный счёт.');
+      return;
+    }
     try {
       const doc = await API.http.practiceAccount();
       render(doc);
       await renderCharts(activeLayout());
       await refreshReport();
+      await refreshMarket();
     } catch (e) {
       if (e.status === 404) {
         showOnboard('');
@@ -283,6 +367,7 @@
   }
 
   async function createFromDeposit() {
+    if (UI.requireSignIn && UI.requireSignIn()) return;
     const input = UI.qs('#p-deposit');
     const msg = UI.qs('#p-onboard-msg');
     const deposit = Number(input && input.value);
@@ -305,6 +390,7 @@
       render(doc);
       await renderCharts(activeLayout());
       await refreshReport();
+      await refreshMarket();
     } catch (e) {
       if (msg) msg.textContent = e.message || String(e);
       UI.reportError(e);
@@ -331,16 +417,38 @@
       }
       setMarketState(series, sym);
     } catch (e) { /* keep sim */ }
+    await refreshMarket();
+  }
+
+  async function refreshMarket() {
+    if (isGuestPreview() || !hasAccount || marketPolling) return null;
+    marketPolling = true;
+    const sym = activeSymbol();
     try {
-      // The backend deliberately ignores client price and resolves the newest
-      // trusted bridge/failover close itself before updating the virtual mark.
-      const body = { symbol: sym };
-      const doc = await API.http.practiceTick(body);
+      // The backend ignores all client prices and returns its own live/fresh
+      // verdict.  It can therefore fail closed while the chart still shows
+      // historical context.
+      const doc = await API.http.practiceTick({ symbol: sym });
       render(doc);
-    } catch (e) { /* ignore while no account */ }
+      const market = currentMarket(sym);
+      if (market) setMarketState(market, sym);
+      return doc;
+    } catch (e) {
+      const market = { tradable: false, status: 'error', reason: e.message || String(e), quote: {}, source: {}, freshness: {} };
+      setMarketState(market, sym);
+      return null;
+    } finally {
+      marketPolling = false;
+    }
   }
 
   async function submitOrder(side) {
+    if (UI.requireSignIn && UI.requireSignIn()) return;
+    if (!marketIsTradable(activeSymbol())) {
+      updateTicketAvailability();
+      UI.toast('Нет актуальной подтверждённой котировки — учебный ордер не отправлен');
+      return;
+    }
     const buy = UI.qs('#p-buy');
     const sell = UI.qs('#p-sell');
     if (buy) buy.disabled = true;
@@ -370,9 +478,11 @@
   UI.ready(async () => {
     // Start on onboard until account confirmed — never flash ticket first.
     showOnboard('');
+    applyGuestPracticeLock();
 
     UI.qsa('#p-deposit-presets [data-deposit]').forEach(btn => {
       btn.onclick = () => {
+        if (UI.requireSignIn && UI.requireSignIn()) return;
         const v = Number(btn.dataset.deposit);
         const input = UI.qs('#p-deposit');
         if (input) input.value = String(v);
@@ -389,7 +499,12 @@
     const resetBtn = UI.qs('#p-reset');
     if (resetBtn) {
       resetBtn.onclick = async () => {
-        if (!confirm('Сбросить учебный счёт? Потребуется снова внести виртуальную сумму.')) return;
+        if (UI.requireSignIn && UI.requireSignIn()) return;
+        const failed = !!(state && state.account && state.account.requires_new_account);
+        const prompt = failed
+          ? 'Этот учебный счёт завершён. Открыть новый виртуальный счёт с новой суммой?'
+          : 'Сбросить учебный счёт? Потребуется снова внести виртуальную сумму.';
+        if (!confirm(prompt)) return;
         resetBtn.disabled = true;
         try {
           await API.http.practiceReset();
@@ -402,7 +517,10 @@
     }
 
     const retryData = UI.qs('#p-retry-data');
-    if (retryData) retryData.onclick = () => renderCharts(activeLayout());
+    if (retryData) retryData.onclick = async () => {
+      await renderCharts(activeLayout());
+      await refreshMarket();
+    };
 
     UI.qsa('#layout-seg button').forEach(b => {
       b.onclick = async () => {
@@ -443,6 +561,12 @@
     const closeBtn = UI.qs('#p-close');
     if (closeBtn) {
       closeBtn.onclick = async () => {
+        if (UI.requireSignIn && UI.requireSignIn()) return;
+        if (!marketIsTradable(activeSymbol())) {
+          updateTicketAvailability();
+          UI.toast('Нет актуальной подтверждённой котировки — позиция не закрыта');
+          return;
+        }
         try {
           const doc = await API.http.practiceClose({});
           UI.toast('Позиция закрыта');
@@ -452,8 +576,11 @@
       };
     }
 
+    const orderType = UI.qs('#p-type');
+    if (orderType) orderType.onchange = () => updateTicketAvailability();
+
     await refresh();
     if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(tickLoop, 4000);
+    if (!isGuestPreview()) pollTimer = setInterval(tickLoop, 4000);
   });
 })();

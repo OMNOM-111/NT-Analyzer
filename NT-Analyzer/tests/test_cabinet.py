@@ -156,7 +156,11 @@ def test_cabinet_endpoints_over_http(cabinet_store, monkeypatch) -> None:
 
         owner_me = _request(base, "/api/auth/me", token=owner_token)
         assert owner_me["is_owner"] is True
-        assert all(owner_me["features"].values())
+        # The owner is always professional; the Student-only virtual terminal
+        # must not reappear in a professional rail just because this is the
+        # founder account.
+        assert owner_me["features"]["practice"] is False
+        assert all(value for name, value in owner_me["features"].items() if name != "practice")
 
         refreshed = _request(base, "/api/auth/avatar/refresh", method="POST", token=user_token, csrf=user_csrf, body={})
         assert refreshed["ok"] is True and refreshed["user"]["has_avatar"] is True
@@ -645,7 +649,8 @@ def test_disabled_desktop_auth_never_grants_owner_to_remote(cabinet_store, monke
         me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: owner_init})
         assert me["is_owner"] is True
         assert me["user"]["email"] == "owner@example.com"
-        assert all(me["features"].values())
+        assert me["features"]["practice"] is False
+        assert all(value for name, value in me["features"].items() if name != "practice")
 
         # A local desktop request with NO Telegram auth is now also rejected
         # (mandatory verification for everyone, no local bypass).

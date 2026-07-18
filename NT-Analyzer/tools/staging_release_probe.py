@@ -122,7 +122,7 @@ def main() -> int:
         sys.path.insert(0, str(project_root))
     from app import (  # pylint: disable=import-outside-toplevel
         account_auth, community, demo_backtest, durable, jobqueue, local_worker,
-        micro_live, practice_trading, runtime_env, server as server_mod,
+        runtime_env, server as server_mod,
         telegram_remote, workspaces,
     )
     from app.ai_lab import ai_ratings, chief_agent
@@ -163,8 +163,7 @@ def main() -> int:
         for row in accounts_doc.get("users") or []:
             if int(row.get("user_id") or 0) in ids:
                 row["permission_overrides"] = {
-                    "practice_trading": True, "community": True,
-                    "demo_backtest": True, "micro_live": True, "ai_lab": True,
+                    "community": True, "demo_backtest": True, "ai_lab": True,
                 }
         account_auth._write_doc(accounts_doc)
 
@@ -174,12 +173,6 @@ def main() -> int:
 
     def seed_user(row: dict[str, Any]) -> dict[str, Any]:
         uid, workspace_id = row["user_id"], row["workspace_id"]
-        practice_trading.create_account(uid, deposit=25000, workspace_id=workspace_id)
-        practice_trading.place_order(
-            uid, symbol="MNQ", side="buy", quantity=1, order_type="market",
-            workspace_id=workspace_id,
-        )
-        practice_trading.close_position(uid, workspace_id=workspace_id)
         first = community.post_message(
             uid, text=f"probe message {uid}", display_name=f"Probe {uid}",
             workspace_id=workspace_id, idempotency_key=f"seed-{uid}",
@@ -187,12 +180,6 @@ def main() -> int:
         duplicate = community.post_message(
             uid, text=f"probe message {uid}", display_name=f"Probe {uid}",
             workspace_id=workspace_id, idempotency_key=f"seed-{uid}",
-        )
-        micro_live.ensure_account(uid, workspace_id=workspace_id)
-        micro_live.accept_warnings(uid, workspace_id=workspace_id)
-        trade = micro_live.place_scaled_trade(
-            uid, symbol="MNQ", side="buy", notional_full=100,
-            workspace_id=workspace_id,
         )
         demo = demo_backtest.create_demo_backtest(
             uid, scenario_id="mnq_orb_90d", workspace_id=workspace_id,
@@ -229,7 +216,6 @@ def main() -> int:
         return {
             "user_id": uid,
             "community_deduplicated": bool(duplicate.get("deduplicated")),
-            "micro_simulated": bool((trade.get("trade") or {}).get("simulated")),
             "first_message_id": (first.get("message") or {}).get("message_id"),
         }
 
@@ -257,7 +243,7 @@ def main() -> int:
 
     def poll_user(row: dict[str, Any]) -> int:
         requests = 0
-        paths = ("/api/auth/me", "/api/practice/account", "/api/community/feed")
+        paths = ("/api/auth/me", "/api/community/feed")
         while time.monotonic() < stop_at:
             for path in paths:
                 status, payload, elapsed = _http_json(base, path, row["init_data"])
@@ -270,10 +256,6 @@ def main() -> int:
                             f"error={str(payload.get('error') or '')[:160]}"
                         )
                 requests += 1
-            practice_trading.tick_marks(
-                row["user_id"], symbol="MNQ", price=20000 + (row["user_id"] % 10),
-                workspace_id=row["workspace_id"],
-            )
         return requests
 
     with ThreadPoolExecutor(max_workers=user_count) as pool:
@@ -306,7 +288,7 @@ def main() -> int:
     thread2 = threading.Thread(target=server2.serve_forever, daemon=True)
     thread2.start()
     base2 = f"http://{server2.server_address[0]}:{server2.server_address[1]}"
-    restart_status, _, _ = _http_json(base2, "/api/practice/account", users[0]["init_data"])
+    restart_status, _, _ = _http_json(base2, "/api/community/feed", users[0]["init_data"])
     restart_time = time.perf_counter() - restart_started
     server2.shutdown()
     server2.server_close()
@@ -314,8 +296,7 @@ def main() -> int:
 
     isolation_ok = True
     isolation_details: list[str] = []
-    for index, row in enumerate(users):
-        other = users[(index + 1) % len(users)]
+    for row in users:
         feed = community.feed(workspace_id=row["workspace_id"], limit=200)
         foreign_ids = {
             int(message.get("user_id") or 0)
@@ -325,14 +306,6 @@ def main() -> int:
         if foreign_ids:
             isolation_ok = False
             isolation_details.append(f"workspace={row['workspace_id']} foreign_users={sorted(foreign_ids)}")
-        try:
-            practice_trading.get_account(row["user_id"], workspace_id=other["workspace_id"])
-        except practice_trading.PracticeTradingError as exc:
-            if exc.status != 404:
-                isolation_ok = False
-        else:
-            isolation_ok = False
-            isolation_details.append(f"practice cross-read user={row['user_id']}")
         if not jobqueue.job_in_scope(
             demo_jobs.get(row["user_id"], ""),
             workspace_id=row["workspace_id"], user_id=row["user_id"],
@@ -363,7 +336,6 @@ def main() -> int:
             and prod_unchanged and restart_status == 200
             and recovery_result.get("status") == "succeeded"
             and all(row.get("community_deduplicated") for row in seed_results)
-            and all(row.get("micro_simulated") for row in seed_results)
         ),
         "staging_data_root": str(stage_root),
         "production_guard": str(production_guard),
@@ -387,12 +359,11 @@ def main() -> int:
         "five_xx": five_xx,
         "sqlite_lock_errors": sqlite_lock_errors,
         "queue_depth": worker_counts,
-        "telegram_login_requests": sum(request_counts) // 3,
+        "telegram_login_requests": sum(request_counts) // 2,
         "telegram_duplicates": 0,
         "community_dedupe_confirmed": sum(
             1 for row in seed_results if row.get("community_deduplicated")
         ),
-        "simulated_micro_fills": sum(1 for row in seed_results if row.get("micro_simulated")),
         "durable_ai_messages": sum(
             1 for row in users
             if (durable.get_worker_job(

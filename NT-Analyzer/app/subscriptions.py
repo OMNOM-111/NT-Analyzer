@@ -8,6 +8,7 @@ card data and send only provider ids / statuses back to this layer.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -26,6 +27,11 @@ from . import runtime_env, secure_store
 
 _MAGIC = b"STRATFORGE-ENTITLEMENTS-DPAPI-1\n"
 _LOCK = threading.RLock()
+# Multiple authenticated endpoint checks resolve the same entitlement document
+# during one screen load. Cache only the exact on-disk version and return deep
+# copies so callers cannot mutate privilege state without an explicit write.
+_DOC_CACHE_KEY: Optional[Tuple[str, int, int]] = None
+_DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
 
 # Canonical subscription privilege catalog. Owner edits the plan matrix over
 # these ids; each plan enables a subset. Ordered for display.
@@ -42,7 +48,6 @@ PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "paper_commands",  "label": "Paper/Demo команды"},
     {"id": "practice_trading","label": "Учебная торговля (виртуальные деньги)"},
     {"id": "community",       "label": "Сообщество пользователей"},
-    {"id": "micro_live",      "label": "Micro Live (реальные деньги × scale)"},
     {"id": "live_read",       "label": "Live-чтение счёта"},
     {"id": "live_commands",   "label": "Live-управление"},
 )
@@ -167,6 +172,32 @@ def _store_path() -> Path:
     return runtime_env.data_path("integrations", "entitlements.dpapi", project_root=_root())
 
 
+def _doc_cache_key(path: Path) -> Optional[Tuple[str, int, int]]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _clear_doc_cache() -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    with _LOCK:
+        _DOC_CACHE_KEY = None
+        _DOC_CACHE_DOC = None
+
+
+def _cache_doc(path: Path, doc: Dict[str, Any]) -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    key = _doc_cache_key(path)
+    if key is None:
+        _clear_doc_cache()
+        return
+    with _LOCK:
+        _DOC_CACHE_KEY = key
+        _DOC_CACHE_DOC = copy.deepcopy(doc)
+
+
 def _audit_path() -> Path:
     return runtime_env.data_path("audit", "subscriptions.jsonl", project_root=_root())
 
@@ -181,8 +212,13 @@ def _default_doc() -> Dict[str, Any]:
 
 def _read_doc() -> Dict[str, Any]:
     path = _store_path()
-    if not path.is_file():
+    cache_key = _doc_cache_key(path)
+    if cache_key is None:
+        _clear_doc_cache()
         return _default_doc()
+    with _LOCK:
+        if _DOC_CACHE_KEY == cache_key and _DOC_CACHE_DOC is not None:
+            return copy.deepcopy(_DOC_CACHE_DOC)
     try:
         raw = path.read_bytes()
         if not raw.startswith(_MAGIC):
@@ -208,6 +244,7 @@ def _read_doc() -> Dict[str, Any]:
         doc["paypal"] = {}
     if not isinstance(doc.get("payment_requests"), list):
         doc["payment_requests"] = []
+    _cache_doc(path, doc)
     return doc
 
 
@@ -246,6 +283,7 @@ def _write_doc(doc: Dict[str, Any]) -> None:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        _cache_doc(path, doc)
     except OSError as exc:
         try:
             tmp.unlink(missing_ok=True)
@@ -751,6 +789,12 @@ def create_payment_request(user_id: Any, plan_id: Any, *, note: str = "") -> Dic
     }
     with _LOCK:
         doc = _read_doc()
+        payment = doc.get("payment_config") if isinstance(doc.get("payment_config"), dict) else {}
+        if not payment.get("enabled") or not str(payment.get("paypal_me") or "").strip():
+            raise SubscriptionError(
+                "PayPal владельца ещё не настроен; заявку после оплаты отправить нельзя.",
+                409,
+            )
         existing = next((row for row in doc["payment_requests"]
                          if int(row.get("user_id") or 0) == uid and str(row.get("plan_id")) == pid
                          and row.get("status") == "pending"), None)

@@ -125,6 +125,12 @@ def test_market_phase_handles_weekend_and_daily_maintenance_in_pt():
 def test_every_aurora_page_loads_domain_adapter_before_ui():
     for page in AURORA.glob("*.html"):
         html = page.read_text(encoding="utf-8")
+        # The mode picker deliberately precedes the Aurora application shell;
+        # it only needs auth API + its focused controller, not domain/UI code.
+        if page.name == "mode-entry.html":
+            assert 'src="assets/pages/mode-entry.js' in html
+            assert 'src="assets/ui.js' not in html
+            continue
         assert 'src="assets/domain.js' in html, page.name
         assert html.index('src="assets/domain.js') < html.index('src="assets/ui.js'), page.name
 
@@ -136,7 +142,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260718-lifecycle3"}, versions
+    assert set(versions.values()) == {"20260718-contours2"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -146,7 +152,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260718-lifecycle3"}, versions
+    assert set(versions.values()) == {"20260718-contours2"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():

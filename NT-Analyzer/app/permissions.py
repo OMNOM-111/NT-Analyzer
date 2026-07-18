@@ -34,8 +34,10 @@ FREE_PREVIEW_PLAN_ID = "free_preview"
 CAPABILITIES = subscriptions.PLAN_FEATURES  # tuple of {"id","label","hint"?}
 CAPABILITY_IDS = tuple(c["id"] for c in CAPABILITIES)
 
-# Aurora left-nav sections (ui.js NAV ids). "overview" is always available.
-NAV_SECTIONS = ("overview", "backtest", "trading", "practice", "micro_live", "desktop", "performance",
+# Aurora left-nav sections (ui.js NAV ids).  The student terminal and the
+# professional command centre intentionally have different rails; ``practice``
+# is therefore never a professional navigation destination.
+NAV_SECTIONS = ("overview", "backtest", "trading", "practice", "desktop", "performance",
                 "strategies", "ai", "agents", "news", "community", "topstep", "docs")
 
 # Which nav sections each subscription capability unlocks. A section is open
@@ -51,7 +53,6 @@ CAPABILITY_NAV: Dict[str, tuple] = {
     "documents":        ("docs",),
     "paper_commands":   ("trading",),
     "practice_trading": ("practice",),
-    "micro_live":       ("micro_live",),
     "community":        ("community",),
     "live_read":        ("performance",),
     "live_commands":    (),
@@ -109,22 +110,20 @@ ROUTE_CAPABILITY = (
     ("/api/ops/live/", "live_commands"),
     ("/api/community/", "community"),
     ("/api/practice/", "practice_trading"),
-    ("/api/micro-live/", "micro_live"),
 )
 
-# Beginner UX (Phase E): only practice trading contour. Everything else is
-# soft-denied even if a subscription would otherwise grant it.
-BEGINNER_NAV_ALLOWED = frozenset({"practice"})
-BEGINNER_CAPS_ALLOWED = frozenset({"practice_trading"})
+# Student UX: a separate virtual-prop terminal plus the common Community.
+# Governance documents are part of the professional command centre; showing
+# them to a learner leaked AI/strategy operations into the education contour.
+BEGINNER_NAV_ALLOWED = frozenset({"practice", "community"})
+BEGINNER_CAPS_ALLOWED = frozenset({"practice_trading", "community"})
 BEGINNER_DENIED_PREFIXES = (
-    "/api/community/",
     "/api/ai-lab/",
     "/api/ai-agents",
     "/api/demo-backtests",
     "/api/batches",
     "/api/reports",
     "/api/report-favorites",
-    "/api/micro-live/",
     "/api/ops/",
     "/api/strategies",
     "/api/strategy-families",
@@ -135,7 +134,7 @@ BEGINNER_DENIED_PREFIXES = (
     "/api/bridge/",
     "/api/workspaces/",
     "/api/news",
-    "/api/documents",
+    "/api/governance/",
     "/api/jobs",
     "/api/topstep",
     "/api/vitek/",
@@ -186,6 +185,9 @@ def resolve(user: Optional[Dict[str, Any]],
     if user.get("is_owner"):
         caps = {cid: True for cid in CAPABILITY_IDS}
         nav = {nid: True for nid in NAV_SECTIONS}
+        # The owner is a professional by definition; the student terminal is
+        # not part of the professional rail even for the owner.
+        nav["practice"] = False
         return {
             "is_owner": True, "plan_id": "founder", "free_preview": False,
             "capabilities": caps, "nav": nav, "locked_nav": [],
@@ -237,6 +239,11 @@ def resolve(user: Optional[Dict[str, Any]],
     if ux_mode == "beginner":
         caps = {cid: (cid in BEGINNER_CAPS_ALLOWED) for cid in CAPABILITY_IDS}
         nav = {nid: (nid in BEGINNER_NAV_ALLOWED) for nid in NAV_SECTIONS}
+    else:
+        # Practice Trading is a separate student product, not an optional
+        # professional tab.  Keep the capability matrix backwards-compatible
+        # for stored plans but never advertise the rail destination here.
+        nav["practice"] = False
 
     locked = [nid for nid in NAV_SECTIONS if not nav.get(nid)]
     if ux_mode != "beginner":
@@ -298,10 +305,13 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         if p.startswith("/api/auth/"):
             return
         raise PermissionError(
-            "Сначала выберите режим: «Новичок» или «Профессионал».", 403)
+            "Сначала выберите режим: «Студент» или «Профессионал».", 403)
+    if ux_mode == "professional" and p.startswith("/api/practice/"):
+        raise PermissionError(
+            "Учебный терминал доступен только в режиме «Студент».", 403)
     if ux_mode == "beginner" and beginner_path_denied(p):
         raise PermissionError(
-            "Режим «Новичок»: раздел недоступен. Переключитесь в «Профессионал» в кабинете.",
+            "Режим «Студент»: раздел недоступен. Переключитесь в «Профессионал» в кабинете.",
             403)
     if ux_mode == "beginner" and p.startswith("/api/ops/runtime/bars"):
         # Practice charts use market observation only; all other runtime data

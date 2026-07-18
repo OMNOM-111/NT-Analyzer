@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <title>Выбор режима — StratForge AI</title>
+  <link rel="stylesheet" href="assets/theme.css?v=20260718-contours2">
+  <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
+</head>
+<body class="mode-entry-page">
+  <main class="mode-entry" aria-labelledby="mode-entry-title">
+    <section class="mode-entry-card">
+      <div class="mode-entry-brand">
+        <img src="brand/stratforge-mark.png" alt="StratForge AI">
+        <div><strong>StratForge AI</strong><span>Выберите рабочий контур</span></div>
+      </div>
+      <p class="mode-entry-kicker" id="mode-entry-state">Подготавливаю безопасный вход…</p>
+      <h1 id="mode-entry-title">Какой режим открыть?</h1>
+      <p class="mode-entry-lead" id="mode-entry-lead">Сначала выбирается контур, затем открывается соответствующий интерфейс. Реальные деньги и NinjaTrader в учебный режим не попадают.</p>
+      <div class="mode-entry-options" id="mode-entry-options" aria-live="polite">
+        <button type="button" class="mode-entry-option" data-mode="beginner">
+          <span class="mode-entry-option-tag">Студент</span>
+          <strong>Учебный prop-терминал</strong>
+          <span>Виртуальный счёт, графики, ордера, P&amp;L, лимиты и блокировка счёта. Community доступен для обмена учебными материалами.</span>
+          <small>Денежные средства и сделки — только виртуальные.</small>
+        </button>
+        <button type="button" class="mode-entry-option" data-mode="professional">
+          <span class="mode-entry-option-tag">Профессионал</span>
+          <strong>StratForge command center</strong>
+          <span>Обзор, бэктесты, торговля, рабочий стол, финансы, стратегии, AI, новости, Community, TopStep и документы.</span>
+          <small>Учебный терминал в этом rail не показывается.</small>
+        </button>
+      </div>
+      <p class="mode-entry-status" id="mode-entry-status" role="status"></p>
+    </section>
+  </main>
+  <script src="assets/api.js?v=20260718-contours2"></script>
+  <script src="assets/pages/mode-entry.js?v=20260718-contours2"></script>
+</body>
+</html>

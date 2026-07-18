@@ -111,7 +111,6 @@ if __package__ is None or __package__ == "":
     from app import demo_backtest  # type: ignore[no-redef]
     from app import practice_trading  # type: ignore[no-redef]
     from app import community  # type: ignore[no-redef]
-    from app import micro_live  # type: ignore[no-redef]
     from app.ai_lab import ai_ratings as ai_ratings  # type: ignore[no-redef]
 else:
     from . import jobqueue
@@ -181,7 +180,6 @@ else:
     from . import demo_backtest
     from . import practice_trading
     from . import community
-    from . import micro_live
     from .ai_lab import ai_ratings as ai_ratings
 
 _local_secrets.apply()
@@ -262,7 +260,6 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/support/")
         or path.startswith("/api/practice/")
         or path.startswith("/api/community/")
-        or path.startswith("/api/micro-live/")
         or path.startswith("/api/auth/nt-confirm/")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
@@ -581,6 +578,72 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         ):
             _market_payload_cache_put(cache_key, out)
     return out
+
+
+def _practice_market_quote(instrument: str, *, workspace_id: str = "") -> Dict[str, Any]:
+    """Build the only quote allowed to fill an educational virtual order.
+
+    The browser never supplies a price.  This intentionally shares the same
+    server-side market payload used by charts, then requires an explicitly
+    live and fresh source before marking it as tradable.  Historical/offline
+    bars may still be shown to the student, but cannot silently become a
+    virtual fill price.
+    """
+    requested = " ".join(str(instrument or "").strip().upper().split()) or "MNQ"
+    try:
+        series = _market_bars_payload(
+            requested, "1m", 4, register=True, max_points=4,
+            workspace_id=str(workspace_id or ""),
+        )
+    except Exception as exc:  # Fail closed: market availability is never an order error/500.
+        return {
+            "symbol": requested.split()[0], "tradable": False,
+            "status": "error", "reason": f"Не удалось подтвердить котировку: {str(exc)[:180]}",
+            "quote": {}, "source": {}, "freshness": {},
+        }
+
+    bars = series.get("bars") if isinstance(series.get("bars"), list) else []
+    latest = bars[-1] if bars and isinstance(bars[-1], dict) else {}
+    try:
+        last = float(latest.get("c", latest.get("close")))
+    except (TypeError, ValueError):
+        last = 0.0
+    if not math.isfinite(last) or last <= 0:
+        last = 0.0
+    freshness = dict(series.get("freshness") or {}) if isinstance(series.get("freshness"), dict) else {}
+    if not freshness and bars:
+        freshness = market_data_failover.series_freshness(bars, "1m")
+    source = dict(series.get("source") or {}) if isinstance(series.get("source"), dict) else {}
+    quote = dict(series.get("quote") or {}) if isinstance(series.get("quote"), dict) else {}
+    if last and not quote.get("last"):
+        quote["last"] = last
+    live = bool(series.get("live"))
+    fresh = bool(freshness.get("fresh"))
+    blocked = bool(series.get("market_data_available") is False or series.get("execution_blocked"))
+    tradable = bool(last and live and fresh and not blocked)
+    status = str(series.get("status") or ("ready" if tradable else "unavailable"))[:80]
+    if tradable:
+        reason = ""
+    elif not last:
+        reason = "Нет подтверждённого последнего значения котировки."
+    elif blocked:
+        reason = "Рыночный контур сейчас OFFLINE или доступен только исторический источник."
+    elif not fresh:
+        reason = "Последняя котировка устарела; виртуальное исполнение остановлено."
+    else:
+        reason = "Источник котировки не подтверждён как live; виртуальное исполнение остановлено."
+    return {
+        "symbol": requested.split()[0],
+        "tradable": tradable,
+        "status": "ready" if tradable else status,
+        "reason": reason,
+        # Do not pass stale ``last`` as the fill price.  It remains in quote
+        # solely for transparent display with the unavailable status.
+        "price": last if tradable else 0.0,
+        "quote": quote,
+        "source": source,
+        "freshness": freshness,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2224,6 +2287,30 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
+        if path.startswith("/api/community/attachment/"):
+            context = getattr(self, "_remote_context", None) or {}
+            attachment_id = path.rsplit("/", 1)[-1]
+            try:
+                row = community.attachment(
+                    attachment_id,
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
+                payload = row["path"].read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", row.get("mime_type") or "application/octet-stream")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "private, max-age=300")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                filename = urllib.parse.quote(str(row.get("name") or "image"))
+                self.send_header("Content-Disposition", "inline; filename*=UTF-8''" + filename)
+                self.end_headers()
+                self.wfile.write(payload)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            except OSError:
+                self._err(HTTPStatus.NOT_FOUND, "Файл вложения недоступен.")
+            return
+
         if path == "/" or path == "":
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", "/ui/")
@@ -2261,10 +2348,10 @@ class Handler(BaseHTTPRequestHandler):
                 "/", "/index.html", "/backtesting.html", "/trading.html",
                 "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
                 "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
-                "/micro-live.html",
+                "/mode-entry.html",
             }
             if rel in _new_pages or rel.startswith("/assets/"):
-                self._serve_static("aurora/index.html" if rel == "/" else "aurora" + rel)
+                self._serve_static("aurora/mode-entry.html" if rel == "/" else "aurora" + rel)
                 return
             # Fallback: any other path resolves against the static root (legacy-named files).
             self._serve_static(rel)
@@ -2686,22 +2773,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
-        if path == "/api/micro-live/account":
-            try:
-                actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
-                context = getattr(self, "_remote_context", None) or {}
-                caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
-                if not (context.get("is_owner") or caps.get("micro_live")):
-                    self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
-                    return
-                self._json(HTTPStatus.OK, micro_live.ensure_account(
-                    actor,
-                    workspace_id=str(context.get("workspace_id") or ""),
-                ))
-            except micro_live.MicroLiveError as exc:
-                self._err(exc.status, str(exc))
-            return
-
         if path == "/api/ai-lab/ratings":
             context = getattr(self, "_remote_context", None) or {}
             if not context.get("is_owner"):
@@ -2717,21 +2788,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, community.feed(
                 limit=(qs.get("limit") or ["50"])[0],
                 workspace_id=str(context.get("workspace_id") or ""),
+                channel_id=(qs.get("channel") or [""])[0],
             ))
-            return
-
-        if path == "/api/practice/reset":
-            if not self._check_local_post():
-                return
-            context = getattr(self, "_remote_context", None) or {}
-            try:
-                out = practice_trading.reset_account(
-                    context.get("user_id"),
-                    workspace_id=str(context.get("workspace_id") or ""),
-                )
-                self._json(HTTPStatus.OK, out)
-            except practice_trading.PracticeTradingError as exc:
-                self._err(exc.status, str(exc))
             return
 
         if path == "/api/community/ratings":
@@ -5463,60 +5521,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
-        if path == "/api/micro-live/accept-warnings":
+        if path == "/api/practice/reset":
             if not self._check_local_post():
                 return
             context = getattr(self, "_remote_context", None) or {}
-            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
-            if not (context.get("is_owner") or caps.get("micro_live")):
-                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
-                return
             try:
-                self._json(HTTPStatus.OK, micro_live.accept_warnings(
+                out = practice_trading.reset_account(
                     context.get("user_id"),
                     workspace_id=str(context.get("workspace_id") or ""),
-                ))
-            except micro_live.MicroLiveError as exc:
-                self._err(exc.status, str(exc))
-            return
-
-        if path == "/api/micro-live/deposit":
-            if not self._check_local_post():
-                return
-            body = self._read_body() or {}
-            context = getattr(self, "_remote_context", None) or {}
-            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
-            if not (context.get("is_owner") or caps.get("micro_live")):
-                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
-                return
-            try:
-                self._json(HTTPStatus.OK, micro_live.deposit(
-                    context.get("user_id"),
-                    body.get("amount"),
-                    workspace_id=str(context.get("workspace_id") or ""),
-                ))
-            except micro_live.MicroLiveError as exc:
-                self._err(exc.status, str(exc))
-            return
-
-        if path == "/api/micro-live/trade":
-            if not self._check_local_post():
-                return
-            body = self._read_body() or {}
-            context = getattr(self, "_remote_context", None) or {}
-            caps = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
-            if not (context.get("is_owner") or caps.get("micro_live")):
-                self._err(HTTPStatus.FORBIDDEN, "Micro Live недоступен на текущем плане.")
-                return
-            try:
-                self._json(HTTPStatus.OK, micro_live.place_scaled_trade(
-                    context.get("user_id"),
-                    symbol=str(body.get("symbol") or "MNQ"),
-                    side=str(body.get("side") or "buy"),
-                    notional_full=body.get("notional_full", 100),
-                    workspace_id=str(context.get("workspace_id") or ""),
-                ))
-            except micro_live.MicroLiveError as exc:
+                )
+                self._json(HTTPStatus.OK, out)
+            except practice_trading.PracticeTradingError as exc:
                 self._err(exc.status, str(exc))
             return
 
@@ -5533,6 +5548,9 @@ class Handler(BaseHTTPRequestHandler):
                     display_name=str(user.get("first_name") or user.get("username") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    channel_id=str(body.get("channel_id") or "general"),
+                    thread_root_id=str(body.get("thread_root_id") or ""),
+                    attachments=body.get("attachments"),
                 )
                 try:
                     out["telegram_mirror"] = bool(not out.get("deduplicated") and
@@ -5545,6 +5563,50 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except Exception:
                     out["telegram_mirror"] = False
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/share-report":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            try:
+                out = community.share_report(
+                    context.get("user_id"),
+                    title=str(body.get("title") or ""),
+                    summary=str(body.get("summary") or ""),
+                    metrics=body.get("metrics") if isinstance(body.get("metrics"), dict) else {},
+                    display_name=str(user.get("first_name") or user.get("username") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    channel_id=str(body.get("channel_id") or "reports"),
+                    attachments=body.get("attachments"),
+                )
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/request":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            try:
+                out = community.create_request(
+                    context.get("user_id"),
+                    title=str(body.get("title") or ""),
+                    request_type=str(body.get("request_type") or "report"),
+                    recipient_user_id=body.get("recipient_user_id"),
+                    notes=str(body.get("notes") or ""),
+                    display_name=str(user.get("first_name") or user.get("username") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    channel_id=str(body.get("channel_id") or "reports"),
+                )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))
@@ -5656,12 +5718,18 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if runtime_override:
                     with ops_runtime.runtime_dir_override(runtime_override):
-                        trusted_price = market_data.latest_close(symbol)
+                        market = _practice_market_quote(
+                            symbol,
+                            workspace_id=str(context.get("workspace_id") or ""),
+                        )
                 else:
-                    trusted_price = market_data.latest_close(symbol)
+                    market = _practice_market_quote(
+                        symbol,
+                        workspace_id=str(context.get("workspace_id") or ""),
+                    )
                 out = practice_trading.tick_marks(
                     context.get("user_id"), symbol=symbol,
-                    price=trusted_price,
+                    price=float(market.get("price") or 0), market=market,
                     workspace_id=str(context.get("workspace_id") or ""),
                 )
                 self._json(HTTPStatus.OK, out)

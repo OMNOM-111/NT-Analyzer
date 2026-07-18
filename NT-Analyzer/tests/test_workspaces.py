@@ -57,6 +57,19 @@ def test_personal_runtime_storage_never_falls_back_to_owner_when_offline(workspa
     assert "data\\runtime" not in storage
 
 
+def test_runtime_stub_without_workspace_is_safe_and_never_raises() -> None:
+    context = {"active_workspace": {}}
+    accounts = workspaces.runtime_stub("/api/ops/runtime/accounts", {}, context)
+    assert accounts and accounts["source"] == "workspace_required"
+    assert accounts["accounts"] == []
+    history = workspaces.runtime_stub("/api/ops/runtime/account-history", {"limit": ["500"]}, context)
+    assert history and history["source"] == "workspace_required"
+    assert history["accounts"] == []
+    assert history["workspace_id"] == ""
+    instruments = workspaces.runtime_stub("/api/ops/runtime/instruments", {}, context)
+    assert instruments and instruments["instruments"] == []
+
+
 def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: str) -> None:
     account_auth._write_doc({
         "version": 1,

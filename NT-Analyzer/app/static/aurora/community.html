@@ -5,41 +5,83 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Сообщество — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260718-lifecycle3">
+<link rel="stylesheet" href="assets/theme.css?v=20260718-contours2">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="community" data-title="Сообщество" data-kicker="Чат пользователей · не Orchestrator">
-  <div class="grid cols-2">
-    <section class="panel">
-      <div class="panel-h"><h2>Общий чат</h2><span class="sub">отдельный контур от ИИ-оркестратора</span></div>
-      <div class="panel-b col gap-lg">
-        <div class="list" id="c-chat" style="max-height:420px;overflow:auto"></div>
-        <div class="flex gap-sm">
-          <input id="c-text" placeholder="Сообщение в community…" style="flex:1">
-          <button class="btn primary" id="c-send" type="button">Отправить</button>
-        </div>
+<body data-page="community" data-title="Сообщество" data-kicker="Рабочее пространство пользователей · не Orchestrator">
+  <div class="community-workspace">
+    <section class="panel community-channel-panel">
+      <div class="panel-h"><h2>Пространство сообщества</h2><span class="sub">Обсуждения, отчёты, скриншоты и запросы — отдельно от ИИ-оркестратора</span></div>
+      <div class="panel-b">
+        <div class="seg community-channels" id="c-channels" role="group" aria-label="Каналы Community"></div>
       </div>
     </section>
-    <section class="panel">
-      <div class="panel-h"><h2>Стратегии и рейтинги</h2><span class="sub">доходность · просадка · копирования</span></div>
-      <div class="panel-b col gap-lg">
-        <div class="composer">
-          <div class="field"><label>Название</label><input id="c-title" placeholder="Моя стратегия"></div>
-          <div class="field"><label>Net profit</label><input id="c-net" type="number" value="1200"></div>
-          <div class="field"><label>Max DD</label><input id="c-dd" type="number" value="-400"></div>
-          <div class="field"><label>Заметка</label><input id="c-notes" placeholder="кратко"></div>
+
+    <div class="grid cols-2 community-main-grid">
+      <section class="panel">
+        <div class="panel-h"><h2 id="c-channel-title">Общий чат</h2><span class="sub" id="c-channel-hint">Обсуждение внутри сообщества</span></div>
+        <div class="panel-b col gap-lg">
+          <div class="community-thread-state" id="c-thread-state" hidden></div>
+          <div class="list community-chat" id="c-chat"></div>
+          <div class="composer community-composer">
+            <textarea id="c-text" rows="3" maxlength="4000" placeholder="Сообщение в Community…"></textarea>
+            <div class="community-composer-actions">
+              <label class="btn ghost sm" for="c-files">Скриншот</label>
+              <input id="c-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              <span class="sub">PNG/JPEG/WebP · до 2 МБ каждый</span>
+              <div class="spacer"></div>
+              <button class="btn primary" id="c-send" type="button">Отправить</button>
+            </div>
+            <div class="community-attachments" id="c-attachments"></div>
+          </div>
         </div>
-        <button class="btn" id="c-publish" type="button">Опубликовать стратегию</button>
-        <div class="list" id="c-strategies"></div>
-        <div class="list" id="c-ratings"></div>
-      </div>
-    </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-h"><h2>Отчёты и запросы</h2><span class="sub">Передавайте данные в контексте рабочего диалога</span></div>
+        <div class="panel-b col gap-lg">
+          <div class="composer community-report-composer">
+            <div class="field"><label>Отчёт</label><input id="c-report-title" maxlength="140" placeholder="Например: Итоги недели MNQ"></div>
+            <div class="field"><label>Краткое описание</label><textarea id="c-report-summary" rows="2" maxlength="4000" placeholder="Что важно увидеть команде?"></textarea></div>
+            <div class="form-row"><div class="field"><label>P&amp;L</label><input id="c-report-pnl" type="number" step="0.01" placeholder="0"></div><div class="field"><label>Max DD</label><input id="c-report-dd" type="number" step="0.01" placeholder="0"></div></div>
+            <button class="btn" id="c-share-report" type="button">Поделиться отчётом</button>
+          </div>
+          <div class="composer community-request-composer">
+            <div class="field"><label>Запрос участникам</label><input id="c-request-title" maxlength="180" placeholder="Нужен скрин входа по MNQ"></div>
+            <div class="form-row"><div class="field"><label>Что запросить</label><select id="c-request-type"><option value="report">Отчёт</option><option value="data">Данные</option><option value="screenshot">Скриншот</option></select></div><div class="field"><label>Кому (ID, необязательно)</label><input id="c-request-user" type="number" min="1" placeholder="Всем"></div></div>
+            <button class="btn ghost" id="c-create-request" type="button">Создать запрос</button>
+          </div>
+          <div class="list" id="c-reports"></div>
+          <div class="list" id="c-requests"></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid cols-2 community-main-grid">
+      <section class="panel">
+        <div class="panel-h"><h2>Стратегии и рейтинги</h2><span class="sub">Доходность · просадка · запрос на импорт</span></div>
+        <div class="panel-b col gap-lg">
+          <div class="composer">
+            <div class="field"><label>Название</label><input id="c-title" placeholder="Моя стратегия"></div>
+            <div class="field"><label>Net profit</label><input id="c-net" type="number" value="1200"></div>
+            <div class="field"><label>Max DD</label><input id="c-dd" type="number" value="-400"></div>
+            <div class="field"><label>Заметка</label><input id="c-notes" placeholder="кратко"></div>
+          </div>
+          <button class="btn" id="c-publish" type="button">Опубликовать стратегию</button>
+          <div class="list" id="c-strategies"></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>Рейтинг</h2><span class="sub">Risk-adjusted результат и запросы на копирование</span></div>
+        <div class="panel-b"><div class="list" id="c-ratings"></div></div>
+      </section>
+    </div>
   </div>
-<script src="assets/api.js?v=20260718-lifecycle3"></script>
+<script src="assets/api.js?v=20260718-contours2"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260715-inbox6"></script>
-<script src="assets/victor.js?v=20260718-lifecycle3"></script>
-<script src="assets/pages/community.js?v=20260715-community1"></script>
+<script src="assets/ui.js?v=20260718-contours4"></script>
+<script src="assets/victor.js?v=20260718-contours2"></script>
+<script src="assets/pages/community.js?v=20260718-contours2"></script>
 </body>
 </html>

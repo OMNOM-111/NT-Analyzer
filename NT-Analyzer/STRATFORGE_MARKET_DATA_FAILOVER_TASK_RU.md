@@ -6,6 +6,12 @@
 Статус кода: **реализовано и проверено**
 Статус production release в целом: **BLOCKED внешней/ручной матрицей, см. release audit**
 
+> Обновление продуктовой границы 2026-07-18: Micro Live удалён из продукта и
+> исходников. Для текущей Student-практики котировка не только отображается, но
+> и служит fail-closed разрешением на виртуальное исполнение: offline/stale
+> данные не могут открыть или закрыть виртуальную позицию. Полный статус
+> режимов приведён в `docs/PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md`.
+
 ## 1. Фактическая цепочка до исправления
 
 До этой работы durable chart queue не создавала независимого источника. Она только переносила выполнение того же запроса за пределы HTTP handler.
@@ -86,14 +92,18 @@ UI / API bars request
 - balance/equity/day PnL/unrealized/virtual buying power/position capacity;
 - позиции закрываются адресно, рабочие ордера отменяются адресно;
 - reset действительно удаляет выбранный workspace practice account;
-- UI не передаёт цену исполнения как доверенную: server получает trusted close через NinjaTrader или независимый failover;
-- Practice по-прежнему не пишет ни в live, ни в Micro Live, ни в NT command queues.
+- UI не передаёт цену исполнения как доверенную: сервер сам получает market
+  state тем же контуром, что и график, и разрешает виртуальное исполнение
+  только при `live + fresh`;
+- offline/stale/cache-only цена может быть показана для диагностики, но не может
+  открыть/закрыть позицию, заполнить limit или вызвать SL/TP;
+- Practice по-прежнему не пишет ни в live, ни в NT command queues.
 
-## 6. Micro Live и TopStep
+## 6. TopStep и удалённый Micro Live
 
-- Micro Live production UI больше не изображает готовый реальный продукт: без проверенных payment/broker adapters он `coming_soon`, `available=false`, `real_money=false`;
-- staging остаётся simulator без внешних денег/orders;
-- существующие production backend gates требуют verified provider/broker result и явные owner flags;
+- Micro Live был историческим экспериментом, не утверждённым третьим режимом.
+  Он удалён из Python, Aurora, API, navigation и active runtime path; его нельзя
+  использовать для Practice или для реальных денег.
 - TopStep помечен `safe_scaffold`, `available=false`, `live_actions_enabled=false`;
 - прямые browser live-команды отсутствуют.
 
@@ -125,7 +135,7 @@ NinjaTrader PID 29124 был остановлен; backend остался дос
 
 - `tests/test_market_data_failover.py`: independent NT-off chain, ordered provider failover, gap fill, collision priority, no invented bars;
 - `tests/test_market_data.py`: corrupt snapshot recovery и root error-row exclusion;
-- Practice/Micro/TopStep DOM/API contracts;
+- Practice/TopStep DOM/API contracts;
 - полный pytest и остальные release gates перечислены в `docs/STRATFORGE_RELEASE_AUDIT_2026-07-15.md`.
 
 ## 9. Что остаётся внешним BLOCKER
@@ -134,6 +144,7 @@ NinjaTrader PID 29124 был остановлен; backend остался дос
 2. Yahoo fallback задержан и предназначен только для непрерывности графика/research, не для live execution.
 3. Нужен ручной visual/mobile/role E2E в пользовательском Chrome; встроенный Codex browser исключён, потому что его инициализация уже вызвала restart Codex Desktop.
 4. Нужен ручной NinjaTrader Strategy Analyzer comparison.
-5. Payment/broker sandbox adapters и отдельное письменное разрешение нужны до любых Micro Live money/order tests.
+5. Payment/broker sandbox adapters и отдельное письменное разрешение нужны до
+   любых будущих real-money интеграций; Micro Live не является такой функцией.
 
 Эти пункты не отменяют завершённость failover-кода, но не позволяют объявить весь production release принятым.

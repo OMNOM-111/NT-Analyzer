@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, google_auth, permissions, practice_trading, runtime_env, subscriptions, test_auth, workspaces
+from app import account_auth, community, google_auth, permissions, practice_trading, runtime_env, subscriptions, test_auth, workspaces
 from app import server as server_mod
 from app import telegram_service
 
@@ -25,6 +25,7 @@ def ux_store(tmp_path, monkeypatch):
     monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(google_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(practice_trading, "_root", lambda: tmp_path)
+    monkeypatch.setattr(community, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(account_auth.secure_store, "_protect", lambda b: b)
@@ -117,6 +118,7 @@ def test_owner_always_professional(ux_store) -> None:
     perm = permissions.resolve({"is_owner": True, "ux_mode": "beginner"})
     assert perm["ux_mode"] == "professional"
     assert perm["nav"]["strategies"] is True
+    assert perm["nav"]["practice"] is False
 
 
 def test_beginner_nav_and_caps() -> None:
@@ -124,14 +126,14 @@ def test_beginner_nav_and_caps() -> None:
     assert perm["nav"]["practice"] is True
     assert perm["nav"]["strategies"] is False
     assert perm["nav"]["ai"] is False
-    assert perm["nav"]["community"] is False
+    assert perm["nav"]["community"] is True
     assert perm["nav"]["news"] is False
     assert perm["nav"]["docs"] is False
-    assert perm["nav"]["micro_live"] is False
+    assert "micro_live" not in perm["nav"]
     assert perm["nav"]["overview"] is False
     assert perm["capabilities"]["practice_trading"] is True
     assert perm["capabilities"]["ai_lab"] is False
-    assert perm["capabilities"]["community"] is False
+    assert perm["capabilities"]["community"] is True
 
 
 def test_ux_pending_locks_everything() -> None:
@@ -183,17 +185,26 @@ def test_api_beginner_deny_and_practice_ok(http_server, ux_store) -> None:
         account_auth._write_doc(doc)
 
     status, _ = _request(http_server, "/api/community/feed", token=token)
-    assert status == 403
+    assert status == 200
     status, _ = _request(http_server, "/api/ai-lab/summary", token=token)
     assert status == 403
     status, _ = _request(http_server, "/api/news", token=token)
     assert status == 403
-    status, _ = _request(http_server, "/api/micro-live/account", token=token)
+    status, _ = _request(http_server, "/api/governance/documents", token=token)
     assert status == 403
+    status, _ = _request(http_server, "/api/micro-live/account", token=token)
+    assert status == 404
     status, body = _request(http_server, "/api/practice/account", token=token)
     assert status == 200
     acct = body.get("account") if isinstance(body.get("account"), dict) else body
     assert float(acct.get("balance") or 0) >= 10000
+    status, body = _request(
+        http_server, "/api/practice/reset", token=token, csrf=csrf, method="POST", body={},
+    )
+    assert status == 200, body
+    assert body.get("deleted") is True
+    status, _ = _request(http_server, "/api/practice/account", token=token)
+    assert status == 404
 
 
 def test_api_set_ux_mode(http_server, ux_store) -> None:
@@ -231,9 +242,21 @@ def test_ui_contracts_ux_mode_markers() -> None:
     assert "authUxMode" in api
     assert "ux-mode-gate" in ui
     assert "maybeRedirectBeginnerHome" in ui
+    assert "mode-entry.html" in ui
+    assert "STUDENT_NAV_IDS" in ui
+    assert "applyStudentShell" in ui
+    assert "startDesktopCommandBridge();" in ui
+    student_scope = ui.split("if (!studentShell) {", 1)[1].split("// Student can still", 1)[0]
+    assert "startDesktopCommandBridge();" in student_scope
+    assert "wireSystemStatus();" in student_scope
+    victor = (root / "app" / "static" / "aurora" / "assets" / "victor.js").read_text(encoding="utf-8")
+    assert "mode === 'beginner'" in victor
+    assert "auth.is_owner || auth.role === 'owner'" in victor
+    assert "micro-live.html" not in ui
     assert "data-set-ux" in ui
     css = (root / "app" / "static" / "aurora" / "assets" / "theme.css").read_text(encoding="utf-8")
     assert "ux-mode-choice" in css
+    assert "mode-entry-option" in css
     assert "@media (max-width: 720px)" in css
 
 
@@ -259,17 +282,56 @@ def test_practice_wallet_first_dom_contract() -> None:
     assert "gap_recovery" in js
     assert "freshness" in js
     assert "bid_ask_estimated" in js
+    assert "marketIsTradable" in js
+    assert "p-order-state" in html
+    assert "applyGuestPracticeLock" in js
+    assert "requireSignIn" in js
     assert "body.price = price" not in js
     server = (root / "app" / "server.py").read_text(encoding="utf-8")
     practice_tick = server.split('if path == "/api/practice/tick":', 1)[1].split(
         'if path == "/api/demo-backtests":', 1,
     )[0]
-    assert "market_data.latest_close" in practice_tick
+    assert "_practice_market_quote(" in practice_tick
+    assert "market=market" in practice_tick
+    assert "market_data.latest_close" not in practice_tick
     assert 'body.get("price"' not in practice_tick
     # Ticket lives only inside desk — onboard must not embed Buy/MNQ as first step.
     onboard = html.split('id="practice-onboard"', 1)[1].split('id="practice-desk"', 1)[0]
     assert "p-buy" not in onboard
     assert "Buy / Long" not in onboard
+
+
+def test_guest_practice_preview_has_no_create_action() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    practice = (root / "app" / "static" / "aurora" / "assets" / "pages" / "practice.js").read_text(encoding="utf-8")
+    assert "function requireSignIn()" in ui
+    assert "renderWelcomeAccess({ asOverlay: true })" in ui
+    assert "practice-guest-locked" in practice
+    assert "#practice-onboard button, #practice-onboard input" in practice
+    assert "if (isGuestPreview()) {" in practice
+
+
+def test_mode_entry_is_a_real_root_page() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    entry = (root / "app" / "static" / "aurora" / "mode-entry.html").read_text(encoding="utf-8")
+    script = (root / "app" / "static" / "aurora" / "assets" / "pages" / "mode-entry.js").read_text(encoding="utf-8")
+    assert 'data-mode="beginner"' in entry
+    assert 'data-mode="professional"' in entry
+    assert "authUxMode" in script
+    assert "practice-trading.html" in script
+    assert "index.html" in script
+
+
+def test_payment_request_ui_requires_a_configured_paypal() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert 'id="cab-donate-paid" ${paypal ? \'\' : \'disabled\'}' in ui
+    assert "if (!paypal) { toast('PayPal владельца ещё не настроен'); return; }" in ui
+    assert "if (wantAccess()) await requestAccess" not in ui
 
 
 def test_practice_wallet_flow_beginner(ux_store) -> None:

@@ -2,6 +2,15 @@
 
 Last checkpoint: 2026-07-18 04:15 PT
 
+> **Supersession, 2026-07-18:** this is a historical run-state record. Its
+> mentions of Micro Live as a `coming_soon` simulator describe the then-current
+> code, not the current product. The mode cleanup removed Micro Live completely,
+> placed the Student/Professional choice before the Aurora shell, and passed an
+> isolated staging visual check of guest, Student, reset/deposit, safe-offline
+> ticket, Community and Professional rail. See
+> [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md)
+> for the authoritative current product boundary.
+
 ## Git
 
 - Active branch: `codex/stratforge-release-20260716`
