@@ -4,10 +4,11 @@
 наведение / набор ответа = проигрывание.
 
 В чате **StratForge Orchestrator** наведение на аватар ответа дополнительно
-озвучивает текст сообщения голосом **профиля этого сотрудника** (OpenAI Speech
-или browser fallback). Настройка: страница AI Agents → «Голоса сотрудников».
-Канон: [NT-Analyzer/docs/AGENTS.md](../NT-Analyzer/docs/AGENTS.md)
-§ «Озвучка сообщения».
+озвучивает текст сообщения голосом **профиля этого сотрудника** (Azure
+`gpt-4o-mini-tts` / OpenAI Speech или browser fallback). Настройка: страница
+AI Agents → «Голоса сотрудников». Канон:
+[NT-Analyzer/docs/AGENTS.md](../NT-Analyzer/docs/AGENTS.md)
+§ «Озвучка сообщения» (обновлено 2026-07-16: Azure Speech-агент).
 
 Исходники: папка `Agents/` в корне репозитория.
 

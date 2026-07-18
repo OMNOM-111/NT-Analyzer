@@ -20,11 +20,13 @@
 ```
 Владелец
   └─ Виктор (Витёк) — правая рука, собеседник по умолчанию
-       └─ Управляющий — координация и сильная модель
-            ├─ Секретарь / Заместитель — ярусы силы модели (не отдельные люди)
+       └─ Управляющий — организация исполнения
+            ├─ Заместитель — альтернативная управленческая позиция (+ ярус `standard`)
+            ├─ Секретарь — скорость и порядок (+ ярус `light`)
             └─ специалисты: Марина · Толик · Никита · Иван
 ```
 
+Личности, манера и голоса: [AGENT_PERSONAS.md](AGENT_PERSONAS.md).
 `StratForge Orchestrator` — название **технического шлюза** (`chief_agent.handle_message`),
 а не отдельный начальник над Витьком. Подробности маршрутизации:
 [CHIEF_AI_AGENT.md](CHIEF_AI_AGENT.md). Поведение Витька, события, отдых, API:
@@ -97,23 +99,32 @@ UI: `app/static/aurora/assets/agents/<id>/speaking.webm`.
 | Debounce | ~350 ms |
 | Mouseleave / закрытие чата | сразу stop |
 | TTS-модели | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` (instructions только у mini-tts) |
-| Ключ | `NTA_OPENAI_API_KEY` или OpenAI-агент из AI Agents (не в карточке голоса) |
+| Ключ | Порядок: `NTA_OPENAI_API_KEY` → OpenAI-агент → **Azure-агент с моделью Speech** (`gpt-4o-mini-tts` / `tts-1`, можно оставить `enabled=false` чтобы чат не брал её) → прочие Azure chat (угадывание деплоя на том же ресурсе) |
+| Без ключа | badge `browser fallback` — onyx/nova **не** применяются; только системный speechSynthesis |
+| Azure body | в JSON обязательно поле `model` (даже если deployment уже в URL) |
 | Кэш | `data/runtime/tts-cache/` — ключ = agent+provider+model+voice+speed+style+instructions+language+text |
 | Fallback | нет ключа / ошибка провайдера / provider=browser → `speechSynthesis` |
 | Pitch | OpenAI не поддерживает — в UI не показывается как рабочий |
+| CSP | `media-src 'self' blob:` обязателен — иначе браузер блокирует `blob:` MP3 и пишет `Failed to load because no supported source was found` |
 
-Стандартные голоса (обоснование выбора):
+**2026-07-16 — Azure `gpt-4o-mini-tts`:** добавлен агент `AGT-B8F24346E288`
+(`tratforge-openai-1.openai.azure.com` … `/audio/speech`). Резолвер TTS предпочитает
+Speech-модели даже при `disabled` (чтобы роутер чата их не выбирал). Live-проверка:
+статус `TTS готов: Azure gpt-4o-mini-tts`, synthesize Виктора/Марины → `audio/mpeg`.
+Chat-ключи (GPT-4.1, Gemini, gpt-5-mini без TTS-деплоя) по-прежнему не дают голос.
 
-| id | Пол | Voice | Характер |
-| --- | --- | --- | --- |
-| `vitek` | муж | onyx | глубокий уверенный |
-| `manager` | муж | sage | строгий руководитель |
-| `deputy` | муж | fable | спокойный профессионал |
-| `secretary` | жен | coral | яркий помощник |
-| `marina` | жен | nova | мягкий точный |
-| `tolik` | муж | echo | спокойный аналитик |
-| `nikita` | муж | ash | энергичный |
-| `ivan` | муж | alloy | ясный практичный |
+Стандартные голоса (обоснование: [AGENT_PERSONAS.md](AGENT_PERSONAS.md)):
+
+| id | Пол | Voice | Speed | Характер |
+| --- | --- | --- | --- | --- |
+| `vitek` | муж | onyx | 0.98 | тёплый уверенный «правая рука» |
+| `manager` | муж | sage | 0.90 | строгий операционный директор |
+| `deputy` | муж | fable | 0.96 | дипломатичный советник |
+| `secretary` | жен | coral | 1.06 | быстрый дружелюбный помощник |
+| `marina` | жен | nova | 0.93 | сдержанный финансовый контролёр |
+| `tolik` | муж | echo | 0.97 | увлечённый скептичный исследователь |
+| `nikita` | муж | ash | 1.02 | спокойный новостной брифинг |
+| `ivan` | муж | alloy | 1.02 | короткий технический оператор |
 
 Модуль: `app/ai_lab/agent_tts.py`.
 

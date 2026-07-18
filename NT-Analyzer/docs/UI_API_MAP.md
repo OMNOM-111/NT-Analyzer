@@ -47,14 +47,20 @@ Orchestrator — единым внутренним шлюзом. Единств�
   их не видит.
 - `POST /api/ai-lab/orchestrator/speak` озвучивает текст ответа агента при
   наведении на аватар в чате. Успех → `audio/mpeg` (профиль голоса агента →
-  OpenAI Speech); без ключа / ошибка → JSON `{ fallback: "browser" }`.
+  OpenAI Speech **или** Azure Foundry `gpt-4o-mini-tts` / `tts-1`); без
+  рабочего Speech-бэкенда / ошибка → JSON `{ fallback: "browser" }`.
+  Credentials: `NTA_OPENAI_API_KEY`, OpenAI-агент, либо Azure-агент с моделью
+  Speech (в т.ч. `enabled=false`, чтобы не участвовать в chat-routing).
   Кэш учитывает agent+model+voice+speed+style+language+text.
 - Голоса сотрудников: `GET /api/ai-lab/domain-agents/voices`,
   `GET/POST /api/ai-lab/domain-agents/{id}/voice`,
   `POST .../voice/reset`, `POST .../voice/preview`,
-  `GET /api/ai-lab/tts/catalog`. UI: страница AI Agents → «Голоса сотрудников».
+  `GET /api/ai-lab/tts/catalog`, `POST /api/ai-lab/tts/openai-key`.
+  UI: страница AI Agents → «Голоса сотрудников».
   Канон: [AGENTS.md](AGENTS.md) § озвучка. Хранение:
   `data/integrations/agent_voices.json` (без секретов).
+  **2026-07-16:** подключён Azure Student `gpt-4o-mini-tts`
+  (`AGT-B8F24346E288`); chat-модели (GPT-4.1 / Gemini / gpt-5-mini) ≠ TTS.
 - Сохранённая категория поручения определяет профильный handler: runtime остаётся
   у Виктора, финансы у Марины, lifecycle стратегии у Толика. GPT-5 mini может
   понять свободную речь, но не может перевести финансовое поручение в график.

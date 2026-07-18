@@ -61,6 +61,15 @@ if __package__ is None or __package__ == "":
     from app import workspaces  # type: ignore[no-redef]
     from app import market_data  # type: ignore[no-redef]
     from app import market_data_failover  # type: ignore[no-redef]
+    from app import market_data_baseline  # type: ignore[no-redef]
+    from app import market_data_ipc  # type: ignore[no-redef]
+    from app import market_data_router  # type: ignore[no-redef]
+    from app import market_data_gap_recovery  # type: ignore[no-redef]
+    from app import market_data_ws_http  # type: ignore[no-redef]
+    from app import market_data_cache_keys  # type: ignore[no-redef]
+    from app import market_data_subscriptions  # type: ignore[no-redef]
+    from app import market_data_live_supervisor  # type: ignore[no-redef]
+    from app import data_platform  # type: ignore[no-redef]
     from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
     from app import ops  # type: ignore[no-redef]
@@ -122,6 +131,15 @@ else:
     from . import workspaces
     from . import market_data
     from . import market_data_failover
+    from . import market_data_baseline
+    from . import market_data_ipc
+    from . import market_data_router
+    from . import market_data_gap_recovery
+    from . import market_data_ws_http
+    from . import market_data_cache_keys
+    from . import market_data_subscriptions
+    from . import market_data_live_supervisor
+    from . import data_platform
     from . import secure_store as _secure_store
     from . import marginrefresh
     from . import ops
@@ -212,7 +230,8 @@ def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None
 # blocks injected inline script while inline style attributes remain allowed.
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+    "script-src 'self'; connect-src 'self'; media-src 'self' blob:; "
+    "base-uri 'none'; form-action 'self'; "
     "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
 
@@ -305,18 +324,35 @@ def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
 
 def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
     source = payload.get("source") if isinstance(payload.get("source"), dict) else None
-    if not source:
-        return payload
-    updated = source.get("updated_at_utc")
-    if not updated:
-        return payload
+    if source:
+        updated = source.get("updated_at_utc")
+        if updated:
+            try:
+                dt = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+            except ValueError:
+                pass
+    # Never serve a cached LIVE payload while NinjaTrader is offline and no
+    # credentialed live backup is active.
     try:
-        dt = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
-    except ValueError:
-        pass
+        heartbeat = ops_runtime.read_heartbeat()
+        primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+    except Exception:
+        primary_healthy = True
+    if not primary_healthy and payload.get("live"):
+        return market_data_failover.mark_offline_snapshot(
+            payload,
+            reason="cached_payload_while_ninjatrader_offline",
+            last_source=str((payload.get("source") or {}).get("provider")
+                            or (payload.get("source") or {}).get("kind")
+                            or "cache"),
+            backup_providers_available=0,
+        )
+    if payload.get("status") == "offline" or (payload.get("freshness") or {}).get("offline"):
+        payload["live"] = False
+        payload["price_marker_live"] = False
     return payload
 
 
@@ -346,6 +382,24 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          alerts_index: Optional[Dict[str, Any]] = None,
                          max_points: int = 0,
                          workspace_id: str = "") -> Dict[str, Any]:
+    with market_data_baseline.StageTimer(
+        "backend.bars_payload_ms",
+        instrument=str(instrument or ""),
+        timeframe=str(timeframe or ""),
+    ):
+        return _market_bars_payload_impl(
+            instrument, timeframe, limit, range_days, from_date, to_date,
+            register, snapshot_index, alerts_index, max_points, workspace_id,
+        )
+
+
+def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
+                              range_days: int = 0, from_date: str = "",
+                              to_date: str = "", register: bool = True,
+                              snapshot_index: Optional[Dict[str, Any]] = None,
+                              alerts_index: Optional[Dict[str, Any]] = None,
+                              max_points: int = 0,
+                              workspace_id: str = "") -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
     if register:
@@ -368,19 +422,32 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
     )
     cached = _market_payload_cache_get(cache_key)
     if cached is not None:
+        market_data_baseline.mark("backend.bars_payload_cache_hit")
         return cached
     if snapshot_index is not None:
         runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
     else:
-        runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
+        with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
+            runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
     heartbeat = ops_runtime.read_heartbeat()
     primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
-    unified = market_data_failover.apply_failover(
-        runtime_bars, resolved_instrument, timeframe, limit,
-        primary_healthy=primary_healthy,
-    )
-    if unified and unified.get("bars"):
+    with market_data_baseline.StageTimer("backend.failover_ms"):
+        unified = market_data_failover.apply_failover(
+            runtime_bars, resolved_instrument, timeframe, limit,
+            primary_healthy=primary_healthy,
+        )
+    if unified and (unified.get("bars") or unified.get("status") == "offline"):
         out = unified
+        # Prefer richer historical artifact when offline payload has no bars yet.
+        if not out.get("bars") and not primary_healthy:
+            hist = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+            if hist.get("bars"):
+                out = market_data_failover.mark_offline_snapshot(
+                    hist,
+                    reason="ninjatrader_offline_historical_cache",
+                    last_source="historical_artifact",
+                    backup_providers_available=0,
+                )
     else:
         out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
         out["status"] = "historical_fallback" if out.get("bars") else (
@@ -402,6 +469,13 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
             "unresolved_gaps": 0,
             "primary_healthy": primary_healthy,
         }
+        if not primary_healthy:
+            out = market_data_failover.mark_offline_snapshot(
+                out,
+                reason="ninjatrader_offline_historical_fallback",
+                last_source="historical_artifact" if out.get("bars") else "none",
+                backup_providers_available=0,
+            )
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     try:
@@ -432,8 +506,76 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         out = market_data.downsample_series_payload(out, max_points) or out
     out["requested_instrument"] = requested_instrument
     out["resolved_instrument"] = resolved_instrument
-    if out.get("bars") and (out.get("source") or {}).get("kind") == "ninjatrader_runtime":
-        _market_payload_cache_put(cache_key, out)
+    # Data-plane labels: chart source must not silently become execution authority.
+    src_kind = str((out.get("source") or {}).get("kind") or (out.get("source") or {}).get("provider") or "")
+    out["chart_source"] = src_kind or "ninjatrader_runtime"
+    out["strategy_source"] = "ninjatrader"
+    out["execution_source"] = "ninjatrader"
+    out["data_planes"] = {
+        "display": out["chart_source"],
+        "strategy": out["strategy_source"],
+        "execution": out["execution_source"],
+        "note": "Chart source is never an automatic execution authority",
+    }
+    try:
+        md_cache_key = market_data_cache_keys.market_cache_key(
+            provider=out["chart_source"] or "ninjatrader",
+            exchange="CME",
+            exact_contract=resolved_instrument,
+            channel="trades",
+            sharing_scope="workspace" if workspace_id else "global",
+            workspace_id=workspace_id,
+            timeframe=str(timeframe or "5m"),
+            source_epoch=int((out.get("source") or {}).get("source_epoch") or 0),
+        )
+        plat = data_platform.get_platform()
+        cached = plat.cache.get(md_cache_key)
+        cache_hit = cached is not None
+        if not cache_hit and out.get("bars"):
+            plat.cache.set(
+                md_cache_key,
+                {"bars_len": len(out.get("bars") or []), "ts": out.get("updated_at_utc")},
+                ttl_sec=30,
+            )
+        snap = market_data_subscriptions.get_subscription_registry().snapshot()
+        existing = next(
+            (
+                row for row in (snap.get("subscriptions") or [])
+                if row.get("exact_contract") == resolved_instrument
+            ),
+            None,
+        )
+        age = None
+        try:
+            age = float((out.get("freshness") or {}).get("age_sec"))
+        except (TypeError, ValueError):
+            age = None
+        out["diagnostics"] = market_data_cache_keys.diagnostics_for_series(
+            requested_symbol=requested_instrument,
+            exact_contract=resolved_instrument,
+            timeframe=str(timeframe or "5m"),
+            provider=out["chart_source"],
+            bars=out.get("bars") or [],
+            cache_key=md_cache_key,
+            cache_level="L2" if cache_hit else ("L1" if out.get("bars") else "MISS"),
+            cache_hit=cache_hit,
+            transport="http",
+            ws_state="n/a",
+            subscription_id=str((existing or {}).get("subscription_id") or ""),
+            source_epoch=int((out.get("source") or {}).get("source_epoch") or 0),
+            subscriber_count=int((existing or {}).get("refcount") or 0),
+            last_event_age_sec=age,
+            raw_provider_symbol=resolved_instrument,
+        )
+    except Exception as exc:
+        out["diagnostics"] = {"error": str(exc)[:200]}
+    if out.get("bars"):
+        # Cache healthy LIVE primary; also cache explicit OFFLINE snapshots so a
+        # 36-chart grid does not recompute the same offline payload 36×.
+        if out.get("status") == "offline" or (
+            primary_healthy and out.get("live") and (out.get("source") or {}).get("kind") == "ninjatrader_runtime"
+        ):
+            _market_payload_cache_put(cache_key, out)
     return out
 
 
@@ -632,11 +774,18 @@ def _build_scc_strategies() -> Dict[str, Any]:
         if str(r.get("strategy_class") or "") in rejected_classes and r.get("enabled")
     ]
 
+    try:
+        from . import market_data_ipc
+        ipc_metrics = market_data_ipc.metrics()
+    except Exception:
+        ipc_metrics = {}
+
     return {
         "strategies":       active_strategies,
         "rejected_running": rejected_running,
         "rejected_classes": sorted(rejected_classes),
         "heartbeat":        hb,
+        "ipc":              ipc_metrics,
         "nt_strat_dir":     str(_NT_STRATEGIES_DIR),
         "nt_strat_dir_ok":  _NT_STRATEGIES_DIR.is_dir(),
     }
@@ -1492,9 +1641,11 @@ class Handler(BaseHTTPRequestHandler):
                 "reason": result.get("reason") or "unavailable",
                 "agent_id": result.get("agent_id"),
                 "voice": result.get("voice"),
+                "voice_gender": result.get("voice_gender") or "neutral",
                 "language": result.get("language") or "ru-RU",
                 "speed": result.get("speed") or 1.0,
                 "fallback_voice": result.get("fallback_voice") or "ru-RU",
+                "hint_ru": result.get("hint_ru") or "",
             }, headers=headers)
             return
         audio = result.get("audio") or b""
@@ -2044,6 +2195,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/runtime/env":
             # Public enough for UI banners; no secrets.
             self._json(HTTPStatus.OK, runtime_env.status())
+            return
+
+        if path == "/ws/market-data":
+            # Same-origin browser WebSocket (Cloudflare / Mini App safe).
+            # Reuse charts_realtime capability gate.
+            if not self._authorize_api("/api/ops/runtime/bars"):
+                return
+            market_data_ws_http.handle_websocket_upgrade(self)
             return
 
         if path.startswith("/api/") and not self._authorize_api(path):
@@ -3292,7 +3451,59 @@ class Handler(BaseHTTPRequestHandler):
                 "running": bool(jobqueue.ninjatrader_running()),
                 "heartbeat": ops_runtime.read_heartbeat(),
             }
+            try:
+                status["ipc"] = market_data_ipc.metrics()
+                status["baseline"] = {
+                    "stages": market_data_baseline.snapshot().get("stages") or [],
+                }
+            except Exception as exc:
+                status["ipc"] = {"error": str(exc)[:200]}
+            try:
+                status["live_sources"] = market_data_live_supervisor.status()
+            except Exception as exc:
+                status["live_sources"] = {"error": str(exc)[:200]}
             self._json(HTTPStatus.OK, status)
+            return True
+
+        if path == "/api/ops/runtime/market-data/live-sources":
+            self._json(HTTPStatus.OK, market_data_live_supervisor.status())
+            return True
+
+        if path == "/api/ops/runtime/market-data/baseline":
+            self._json(HTTPStatus.OK, market_data_baseline.snapshot())
+            return True
+
+        if path == "/api/ops/runtime/market-data/ipc":
+            self._json(HTTPStatus.OK, {
+                "metrics": market_data_ipc.metrics(),
+                "recent_events": market_data_ipc.recent_events(50),
+            })
+            return True
+
+        if path == "/api/ops/runtime/market-data/router":
+            self._json(HTTPStatus.OK, market_data_router.get_router().status())
+            return True
+
+        if path == "/api/ops/runtime/market-data/gaps":
+            self._json(HTTPStatus.OK, market_data_gap_recovery.get_worker().status())
+            return True
+
+        if path == "/api/ops/runtime/market-data/diagnostics":
+            plat = data_platform.get_platform()
+            self._json(HTTPStatus.OK, {
+                "status": "IMPLEMENTATION_PARTIAL",
+                "platform_mode": plat.mode,
+                "cache": plat.cache.stats() if hasattr(plat.cache, "stats") else {},
+                "ipc": market_data_ipc.metrics(),
+                "browser_ws": market_data_ws_http.metrics(),
+                "subscriptions": market_data_subscriptions.get_subscription_registry().snapshot(),
+                "router": market_data_router.get_router().status(),
+                "gaps": market_data_gap_recovery.get_worker().status(),
+                "transports": {
+                    "bridge_ipc": "127.0.0.1 only",
+                    "browser_ws": "same-origin /ws/market-data",
+                },
+            })
             return True
 
         if path == "/api/ops/runtime/bars":
@@ -3435,7 +3646,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "catalog": ai_agent_tts.tts_catalog(),
                     "presets": ai_agent_tts.list_presets(),
-                    "key_configured": bool(ai_agent_tts.resolve_api_key()),
+                    **ai_agent_tts.tts_status(),
                 })
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"tts catalog failed: {e}")
@@ -4079,7 +4290,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = ai_bootstrap.start(
                     timeout_sec=max(30, min(900, int(body.get("timeout_sec", 300)))),
-                    start_ninjatrader=bool(body.get("start_ninjatrader", True)),
+                    # Default OFF: launching NT before login causes account lockouts.
+                    start_ninjatrader=bool(body.get("start_ninjatrader", False)),
                     start_lm_studio=bool(body.get("start_lm_studio", True)),
                     start_lm_server=bool(body.get("start_lm_server", True)),
                     load_models=bool(body.get("load_models", False)),
@@ -4128,6 +4340,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_failed")
             except Exception as e:
                 self._err(HTTPStatus.BAD_GATEWAY, f"TTS failed: {e}", code="tts_failed")
+            return
+
+        if path == "/api/ai-lab/tts/openai-key":
+            if not self._require_owner_actor():
+                return
+            try:
+                action = str(body.get("action") or "save").strip().lower()
+                if action in {"clear", "delete", "remove"}:
+                    out = ai_agent_tts.clear_openai_tts_key()
+                else:
+                    out = ai_agent_tts.configure_openai_tts_key(str(body.get("api_key") or body.get("key") or ""))
+                self._json(HTTPStatus.OK, out)
+            except ai_agent_tts.AgentTtsError as e:
+                self._err(HTTPStatus.BAD_REQUEST, str(e), code="tts_key_failed")
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"tts key failed: {e}")
             return
 
         # Staff voice profiles: POST save / reset / preview
@@ -6570,6 +6798,29 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] headless chart scheduler started (every 1 sec)")
     except Exception as e:
         print(f"[nta-backend] headless chart scheduler NOT started: {e}")
+    try:
+        ipc = market_data_ipc.start_server()
+        print(
+            f"[nta-backend] market-data IPC listening on 127.0.0.1:{ipc.port} "
+            f"(token_fp={market_data_ipc.token_fingerprint(market_data_ipc.auth_token())})"
+        )
+    except Exception as e:
+        print(f"[nta-backend] market-data IPC NOT started: {e}")
+    try:
+        market_data_gap_recovery.start_background_worker(interval_sec=2.0)
+        print("[nta-backend] market-data gap recovery worker started")
+    except Exception as e:
+        print(f"[nta-backend] market-data gap recovery NOT started: {e}")
+    try:
+        live_st = market_data_live_supervisor.start()
+        print(
+            "[nta-backend] market-data live sources: "
+            f"credentialed={live_st.get('credentialed_providers')} "
+            f"connected={live_st.get('live_providers_connected')} "
+            f"blocked={live_st.get('production_blocked')}"
+        )
+    except Exception as e:
+        print(f"[nta-backend] market-data live sources NOT started: {e}")
     sys.stdout.flush()
     try:
         server.serve_forever()
@@ -6581,6 +6832,18 @@ def run(port: Optional[int] = None) -> None:
         local_worker.stop_background_worker()
         telegram_service.stop_background_notifier()
         market_data.stop_chart_worker()
+        try:
+            market_data_gap_recovery.stop_background_worker()
+        except Exception:
+            pass
+        try:
+            market_data_ipc.stop_server()
+        except Exception:
+            pass
+        try:
+            market_data_live_supervisor.stop()
+        except Exception:
+            pass
         server.server_close()
 
 

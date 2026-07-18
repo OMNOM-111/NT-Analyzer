@@ -163,6 +163,42 @@ namespace NTAnalyzerBridge.Runtime
 
             try
             {
+                if (command == "resubscribe_market_data")
+                {
+                    try
+                    {
+                        var exporter = BridgeAddOn.Instance != null ? BridgeAddOn.Instance.MarketDataExporter : null;
+                        if (exporter != null)
+                        {
+                            exporter.ForceResubscribe();
+                            return WriteResult(cid, "success", "resubscribe triggered", "");
+                        }
+                        return WriteResult(cid, "rejected", "exporter not running", "");
+                    }
+                    catch (Exception ex)
+                    {
+                        return WriteResult(cid, "error", ex.Message, "");
+                    }
+                }
+
+                if (command == "resubscribe_instrument")
+                {
+                    try
+                    {
+                        var exporter = BridgeAddOn.Instance != null ? BridgeAddOn.Instance.MarketDataExporter : null;
+                        if (exporter != null)
+                        {
+                            exporter.ResubscribeInstrument(instrument);
+                            return WriteResult(cid, "success", "resubscribe instrument triggered: " + instrument, "");
+                        }
+                        return WriteResult(cid, "rejected", "exporter not running", "");
+                    }
+                    catch (Exception ex)
+                    {
+                        return WriteResult(cid, "error", ex.Message, "");
+                    }
+                }
+
                 if (command != "enable_strategy" &&
                     command != "disable_strategy" &&
                     command != "reconnect_account")

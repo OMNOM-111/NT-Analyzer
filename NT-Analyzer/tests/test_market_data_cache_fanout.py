@@ -38,6 +38,31 @@ def test_series_hash_differs_for_different_prices() -> None:
     assert market_data_cache_keys.series_hash(rty) == market_data_cache_keys.series_hash(m2k)
 
 
+def test_cache_keys_isolate_workspaces_and_private_accounts() -> None:
+    common = {
+        "provider": "topstep_live",
+        "exchange": "CME",
+        "exact_contract": "MNQ 09-26",
+        "channel": "trades",
+        "timeframe": "1m",
+    }
+    ws_a = market_data_cache_keys.market_cache_key(
+        **common, sharing_scope="workspace", workspace_id="ws-a",
+    )
+    ws_b = market_data_cache_keys.market_cache_key(
+        **common, sharing_scope="workspace", workspace_id="ws-b",
+    )
+    private_a = market_data_cache_keys.market_cache_key(
+        **common, sharing_scope="private", workspace_id="ws-a",
+        user_id="user-1", account_id="account-1",
+    )
+    private_b = market_data_cache_keys.market_cache_key(
+        **common, sharing_scope="private", workspace_id="ws-a",
+        user_id="user-1", account_id="account-2",
+    )
+    assert len({ws_a, ws_b, private_a, private_b}) == 4
+
+
 def test_subscription_refcount_fan_in() -> None:
     market_data_subscriptions.reset_subscription_registry_for_tests()
     reg = market_data_subscriptions.get_subscription_registry()

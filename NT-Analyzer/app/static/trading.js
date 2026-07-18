@@ -2905,9 +2905,35 @@
     const hb = await heartbeatPromise;
     STATE.bridgeOnline = !!(hb && hb.fresh);
     setChip("chip-backend", "Backend: онлайн", "ok");
-    setChip("chip-runtime",
-      "NT runtime: " + (STATE.bridgeOnline ? "онлайн" : "offline"),
-      STATE.bridgeOnline ? "ok" : "bad");
+
+    const stateStr = hb.state || (STATE.bridgeOnline ? "LIVE" : "STALE");
+    let ntClass = "bad";
+    if (stateStr === "LIVE" || stateStr === "RECEIVING_EVENTS") {
+      ntClass = "ok";
+    } else if (stateStr === "STALE" || stateStr === "SUBSCRIBED" || stateStr === "AUTHENTICATED" || stateStr === "TRANSPORT_CONNECTED" || stateStr === "PROCESS_UP") {
+      ntClass = "warn";
+    }
+    setChip("chip-runtime", "NT runtime: " + stateStr, ntClass);
+
+    const el = $("chip-runtime");
+    if (el) {
+      if (hb.present) {
+        const tooltip = [
+          `Состояние: ${stateStr}`,
+          `NinjaTrader: ${hb.present ? 'Запущен' : 'Остановлен'}`,
+          `NT версия: ${hb.ninja_version || '—'}`,
+          `Exporter версия: v${hb.exporter_version || '—'}`,
+          `Последний heartbeat (UTC): ${hb.timestamp_utc || '—'}`,
+          `Последний тик (UTC): ${hb.last_tick_at || '—'}`,
+          `Активные подписки (кол-во): ${hb.subscription_count || 0}`,
+          `Активные контракты: ${(hb.active_contracts || []).join(', ') || '—'}`,
+          `Кол-во реконнектов: ${hb.reconnect_count || 0}`,
+        ].join("\n");
+        el.title = tooltip;
+      } else {
+        el.removeAttribute("title");
+      }
+    }
 
     const [all, reg] = await Promise.all([strategiesPromise, profilesPromise, displayPrefsPromise, historyPromise, startDatesPromise])
       .then(([allResp, regResp]) => [allResp, regResp]);

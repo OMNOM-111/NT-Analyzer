@@ -24,6 +24,8 @@ namespace NTAnalyzerBridge
     /// </summary>
     public sealed class BridgeAddOn : AddOnBase
     {
+        public static BridgeAddOn Instance { get; private set; }
+
         private BridgeConfig _cfg;
         private StrategyLoader _strategyLoader;
         private JobQueueWatcher _watcher;
@@ -33,12 +35,15 @@ namespace NTAnalyzerBridge
         private RuntimeMarketDataExporter _marketDataExporter;
         private RuntimeCommandProcessor _commandProcessor;
 
+        internal RuntimeMarketDataExporter MarketDataExporter { get { return _marketDataExporter; } }
+
         protected override void OnStateChange()
         {
             if (State == NinjaTrader.NinjaScript.State.SetDefaults)
             {
                 Name        = "NTAnalyzerBridge";
                 Description = "NT-Analyzer file-queue bridge (Variant 1 Strategy Analyzer)";
+                Instance    = this;
             }
             else if (State == NinjaTrader.NinjaScript.State.Configure)
             {

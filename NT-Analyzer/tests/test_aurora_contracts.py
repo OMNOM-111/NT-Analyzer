@@ -638,3 +638,28 @@ def test_command_language_covers_every_desktop_instrument():
     block = js[start:js.index("];", start) + 2]
     desktop_roots = set(re.findall(r"\['([A-Z0-9]+)'", block))
     assert desktop_roots <= set(command_language.INSTRUMENT_ROOTS)
+
+
+def test_heartbeat_and_ipc_contracts():
+    from app import runtime as ops_runtime
+    from app import market_data_ipc
+
+    # 1. Verify read_heartbeat payload contract
+    hb = ops_runtime.read_heartbeat()
+    expected_hb_keys = {
+        "present", "fresh", "age_sec", "timestamp_utc", "ninja_version",
+        "machine", "exporter_version", "state", "last_tick_at",
+        "subscription_count", "active_contracts", "reconnect_count"
+    }
+    for key in expected_hb_keys:
+        assert key in hb, f"Missing key {key} in heartbeat response"
+
+    # 2. Verify market_data_ipc.metrics() payload contract
+    ipc = market_data_ipc.metrics()
+    expected_ipc_keys = {
+        "last_tick_at", "subscription_count", "active_contracts",
+        "event_rate", "dropped", "reconnect_count", "active_generation",
+        "rejected_auth", "rejected_protocol"
+    }
+    for key in expected_ipc_keys:
+        assert key in ipc, f"Missing key {key} in IPC metrics"

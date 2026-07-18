@@ -24,6 +24,7 @@ from .io_utils import append_jsonl, read_json
 
 DEFAULT_TIMEOUT_SEC = int(os.environ.get("AI_LAB_BOOTSTRAP_TIMEOUT_SEC", "300"))
 POLL_SEC = float(os.environ.get("AI_LAB_BOOTSTRAP_POLL_SEC", "3"))
+AUTOSTART_NT_ENV = "NTA_ALLOW_AUTOSTART_NINJATRADER"
 
 _LOADED_MODEL_LOCK = threading.Lock()
 _LOADED_MODEL: Optional[str] = None
@@ -250,6 +251,17 @@ def auto_stop_server_enabled() -> bool:
     }
 
 
+def ninjatrader_autostart_allowed() -> bool:
+    """Return the explicit owner opt-in for launching NinjaTrader.exe.
+
+    Keeping this default-off avoids opening the login dialog unexpectedly after
+    a reboot, which can contribute to account lockouts.
+    """
+    return os.environ.get(AUTOSTART_NT_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def ensure_server(timeout_sec: int = 90) -> Dict[str, Any]:
     """Start LM Studio server if needed, without loading any model."""
     h = lm_studio.health(timeout=5)
@@ -349,6 +361,7 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
         "lazy_mode_enabled": lazy_mode_enabled(),
         "auto_unload_enabled": auto_unload_enabled(),
         "auto_stop_server_enabled": auto_stop_server_enabled(),
+        "ninjatrader_autostart_allowed": ninjatrader_autostart_allowed(),
         "reuse_loaded_model_enabled": lm_studio.reuse_loaded_model_enabled(),
         "unload_after_request_enabled": lm_studio.unload_after_request_enabled(),
         "config_path": str(config_path()),
@@ -356,6 +369,7 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
             "ninjatrader": {
                 "running": nt_running,
                 "exe": _ninjatrader_exe(),
+                "autostart_allowed": ninjatrader_autostart_allowed(),
             },
             "bridge_deployment": bridge_deployment_status(),
             "lm_studio_process": {
@@ -375,7 +389,7 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
 def start(
     *,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
-    start_ninjatrader: bool = True,
+    start_ninjatrader: bool = False,
     start_lm_studio: bool = True,
     start_lm_server: bool = True,
     load_models: bool = False,
@@ -395,12 +409,25 @@ def start(
         "component": "bridge_deployment",
         **_deploy_bridge_if_safe(nt_running),
     })
-    if start_ninjatrader:
+    if start_ninjatrader and not ninjatrader_autostart_allowed():
+        steps.append({
+            "component": "ninjatrader",
+            "ok": False,
+            "status": "manual_login_required",
+            "message": f"Set {AUTOSTART_NT_ENV}=1 only for an intentional local launch",
+        })
+    elif start_ninjatrader:
         if nt_running is True:
             steps.append({"component": "ninjatrader", "ok": True, "status": "already_running"})
         else:
             res = _start_process(_ninjatrader_exe(), "NinjaTrader")
             steps.append({"component": "ninjatrader", **res})
+    else:
+        steps.append({
+            "component": "ninjatrader",
+            "ok": True,
+            "status": "already_running" if nt_running is True else "skipped_default_off",
+        })
 
     lm_proc = _tasklist_contains("lm studio")
     if start_lm_studio:

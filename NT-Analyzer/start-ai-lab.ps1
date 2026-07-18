@@ -4,7 +4,11 @@
 
 .DESCRIPTION
     Best-effort startup for the local research stack:
-    NinjaTrader -> LM Studio server -> StratForge AI UI.
+    LM Studio server -> StratForge AI UI.
+
+    NinjaTrader is NOT started by default (prevents login lockouts after reboot).
+    Pass -StartNinjaTrader only when you intentionally want the process launched;
+    you must still sign in to NinjaTrader manually.
 
     Configure custom paths via environment variables or ai_lab/bootstrap.json:
       NINJATRADER_EXE, LM_STUDIO_EXE, LMS_CLI
@@ -13,7 +17,10 @@
 param(
     [int]$Port = 8765,
     [switch]$NoBrowser,
-    [switch]$SkipDependencyStart
+    [switch]$SkipDependencyStart,
+    # Dangerous after reboot: opens NT login dialog and can lock the account.
+    # Opt-in only, and still requires NTA_ALLOW_AUTOSTART_NINJATRADER=1 in Python paths.
+    [switch]$StartNinjaTrader
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,7 +124,12 @@ $lmExe = Resolve-FirstExisting @(
 $lms = Resolve-LmsCli $cfg
 
 if (-not $SkipDependencyStart) {
-    Start-IfMissing 'NinjaTrader' 'ninjatrader' $ntExe
+    if ($StartNinjaTrader) {
+        Write-Host '[StratForge AI Lab] StartNinjaTrader requested — launching NT (owner must sign in manually).' -ForegroundColor Yellow
+        Start-IfMissing 'NinjaTrader' 'ninjatrader' $ntExe
+    } else {
+        Write-Host '[StratForge AI Lab] NinjaTrader auto-start skipped (default). Start NT yourself after login.' -ForegroundColor Cyan
+    }
     Start-IfMissing 'LM Studio' 'lm studio' $lmExe
     Start-Sleep -Seconds 3
 

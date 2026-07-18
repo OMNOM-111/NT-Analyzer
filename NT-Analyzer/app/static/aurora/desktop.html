@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Рабочий стол — StratForge AI</title>
 <link rel="stylesheet" href="assets/theme.css?v=20260715-inbox6">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
@@ -14,7 +14,16 @@
   body[data-page="desktop"] .tb-kicker,body[data-page="desktop"] .tb-h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dsk{flex:1;min-height:560px;display:flex;flex-direction:column;position:relative;overflow:hidden}
   .main.workspace-focus{width:100vw;height:100vh;min-height:100vh;background:var(--bg-1)}
-  .dsk.focus-mode .dsk-bar{display:none}
+  .dsk-md-offline-banner{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;
+    padding:10px 14px;margin:0;border-bottom:1px solid rgba(255,80,80,.45);
+    background:linear-gradient(90deg,rgba(120,20,20,.92),rgba(60,10,10,.88));
+    color:#ffe8e8;font-size:12.5px;line-height:1.35;z-index:50;position:sticky;top:0}
+  .dsk-md-offline-banner[hidden]{display:none!important}
+  .dsk-md-offline-banner strong{font-size:13px;letter-spacing:.02em;color:#fff}
+  .dsk-md-offline-banner span{opacity:.92;color:#ffd0d0}
+  .dwin-src.err .dot{background:#ff5a5a!important;box-shadow:0 0 0 2px rgba(255,90,90,.25)}
+  .dwin-src.wait .dot{background:#f0c040!important}
+
   .dsk-focus-exit{display:none;position:absolute;right:12px;top:12px;z-index:100;width:34px;height:34px;border-radius:9px;
     border:1px solid rgba(255,255,255,.18);background:rgba(11,16,24,.78);color:var(--tx);cursor:pointer;font-size:18px;backdrop-filter:blur(8px)}
   .dsk.focus-mode .dsk-focus-exit{display:block}
@@ -305,7 +314,7 @@
 <script src="assets/api.js?v=20260716-release1"></script>
 <script src="assets/domain.js?v=20260630-news6"></script>
 <script src="assets/ambient.js?v=20260707-gpu1"></script>
-<script src="assets/ui.js?v=20260715-inbox6"></script>
+<script src="assets/ui.js?v=20260716-tts-csp1"></script>
 <script src="assets/victor.js?v=20260715-inbox6"></script>
 <script src="assets/chart-engine.js?v=20260710-tpl2"></script>
 <script src="assets/desktop-template.js?v=20260710-tpl2"></script>

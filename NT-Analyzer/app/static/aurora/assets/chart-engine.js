@@ -257,10 +257,20 @@
       this._raf = null;
       this.paneHeights = Object.assign({}, opts.paneHeights || {});  // index → height px
       this.aspect = opts.aspect || 'auto';  // 'auto' | 'square' | 'wide'
+      // When false, last-price tag must not look like a live quote.
+      this.livePriceEnabled = opts.livePriceEnabled !== false;
 
       this._build();
       this._wire();
       this._empty();
+    }
+
+    setLivePriceEnabled(on) {
+      const next = !!on;
+      if (this.livePriceEnabled === next) return this;
+      this.livePriceEnabled = next;
+      this._schedule();
+      return this;
     }
 
     // ---- DOM scaffold -------------------------------------------------------
@@ -620,9 +630,14 @@
         this.view.count = Math.max(this.minBars, this.bars.length);
       }
       if (this.view.count < this.minBars) this.view.count = this.minBars;
-      if (!this.bars.length) this._empty('Ожидание данных NinjaTrader…');
+      if (!this.bars.length) this._empty(this._emptyMessage || 'OFFLINE · нет данных');
       else this.emptyEl.classList.remove('show');
       this._schedule();
+      return this;
+    }
+    setEmptyMessage(msg) {
+      this._emptyMessage = msg || '';
+      if (!this.bars.length) this._empty(this._emptyMessage || 'OFFLINE · нет данных');
       return this;
     }
     appendBar(bar) {
@@ -921,14 +936,17 @@
         ctx.stroke();
       });
 
-      // last price marker line + tag
+      // last price marker line + tag (muted when not LIVE)
       const lastBar = this.bars[end - 1];
       if (lastBar) {
         const y = yOf(lastBar.c);
         const up = lastBar.c >= lastBar.o;
-        ctx.strokeStyle = withA(up ? P.up : P.down, 0.5); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+        const live = this.livePriceEnabled !== false;
+        const tagColor = live ? (up ? P.up : P.down) : '#6b7280';
+        ctx.strokeStyle = withA(tagColor, live ? 0.5 : 0.35); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
-        this._axisTag(ctx, P, plotW, y, L.axisW, fmtPrice(lastBar.c), up ? P.up : P.down);
+        const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · OFF`);
+        this._axisTag(ctx, P, plotW, y, L.axisW, label, tagColor);
       }
 
       this._geometry = { start, end, vis, barW, plotW, yOf, lo, hi, main, rows: L.rows, xOf, priceBottom: L.priceBottom };

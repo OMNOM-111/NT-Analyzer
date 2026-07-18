@@ -53,9 +53,511 @@ _METRICS: Dict[str, Any] = {
     "last_reject_reason": "",
     "transport": "",
     "connections": 0,
+    "last_heartbeat_utc": "",
 }
 _AUDIT: Deque[Dict[str, Any]] = deque(maxlen=500)
 _LISTENERS: List[Callable[[Dict[str, Any]], None]] = []
+
+_ACTIVE_GENERATION: Optional[str] = None
+_GENERATION_HAS_EVENTS: bool = False
+_STATE_STALE: bool = False
+_WATCHDOG_THREAD: Optional[threading.Thread] = None
+_WATCHDOG_STOP = threading.Event()
+_LAST_RATE_MEASUREMENT = {"ts": 0.0, "events": 0, "rate": 0.0}
+
+_INSTRUMENT_LAST_EVENT_UTC: Dict[str, str] = {}
+_RECOVERY_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
+
+
+def get_instrument_category(symbol: str) -> str:
+    symbol = symbol.strip().upper().split()[0]
+    # Strip month/year numbers (e.g. MNQU6 -> MNQ)
+    # Check prefixes:
+    if any(symbol.startswith(x) for x in ["MNQ", "NQ", "MES", "ES", "RTY", "MYM", "YM"]):
+        return "equity_indices"
+    if any(symbol.startswith(x) for x in ["CL", "MCL", "NG", "HO", "RB"]):
+        return "energy"
+    if any(symbol.startswith(x) for x in ["MGC", "GC", "SI", "PL", "PA"]):
+        return "metals"
+    if any(symbol.startswith(x) for x in ["ZS", "ZC", "ZW", "ZM", "ZL", "ZO", "ZR"]):
+        return "agriculture"
+    if any(symbol.startswith(x) for x in ["ZT", "ZF", "ZN", "ZB", "UB"]):
+        return "rates"
+    if any(symbol.startswith(x) for x in ["6E", "M6E", "6A", "6B", "6J", "6C", "6S", "6N"]):
+        return "currencies"
+    return "equity_indices"
+
+
+from zoneinfo import ZoneInfo
+from datetime import date
+
+class SessionCalendar:
+    def __init__(self, overrides: Optional[Dict[str, Any]] = None):
+        self.overrides = overrides or {}
+
+    def get_observed_holidays(self, year: int) -> set[date]:
+        holidays = set()
+
+        # New Year (Jan 1)
+        ny = date(year, 1, 1)
+        holidays.add(self._observe_holiday(ny))
+
+        # MLK (3rd Monday in Jan)
+        mlk = self._nth_weekday_of_month(year, 1, 0, 3) # 0 = Monday
+        holidays.add(mlk)
+
+        # Presidents Day (3rd Monday in Feb)
+        pres = self._nth_weekday_of_month(year, 2, 0, 3)
+        holidays.add(pres)
+
+        # Good Friday
+        gf = self._good_friday(year)
+        if gf:
+            holidays.add(gf)
+
+        # Memorial Day (last Monday in May)
+        mem = self._last_weekday_of_month(year, 5, 0)
+        holidays.add(mem)
+
+        # Juneteenth (June 19)
+        june = date(year, 6, 19)
+        holidays.add(self._observe_holiday(june))
+
+        # Independence Day (July 4)
+        ind = date(year, 7, 4)
+        holidays.add(self._observe_holiday(ind))
+
+        # Labor Day (1st Monday in Sep)
+        lab = self._nth_weekday_of_month(year, 9, 0, 1)
+        holidays.add(lab)
+
+        # Thanksgiving (4th Thursday in Nov)
+        th = self._nth_weekday_of_month(year, 11, 3, 4) # 3 = Thursday
+        holidays.add(th)
+
+        # Christmas (Dec 25)
+        xm = date(year, 12, 25)
+        holidays.add(self._observe_holiday(xm))
+
+        for h_str in self.overrides.get("custom_holidays", []):
+            try:
+                holidays.add(date.fromisoformat(h_str))
+            except ValueError:
+                pass
+
+        return holidays
+
+    def _observe_holiday(self, d: date) -> date:
+        wd = d.weekday()
+        if wd == 5:
+            return d - timedelta(days=1)
+        elif wd == 6:
+            return d + timedelta(days=1)
+        return d
+
+    def _nth_weekday_of_month(self, year: int, month: int, weekday: int, n: int) -> date:
+        first_day = date(year, month, 1)
+        first_wd = first_day.weekday()
+        diff = (weekday - first_wd + 7) % 7
+        target = 1 + diff + (n - 1) * 7
+        return date(year, month, target)
+
+    def _last_weekday_of_month(self, year: int, month: int, weekday: int) -> date:
+        if month == 12:
+            next_month = date(year + 1, 1, 1)
+        else:
+            next_month = date(year, month + 1, 1)
+        last_day = next_month - timedelta(days=1)
+        last_wd = last_day.weekday()
+        diff = (last_wd - weekday + 7) % 7
+        return last_day - timedelta(days=diff)
+
+    def _good_friday(self, year: int) -> Optional[date]:
+        a = year % 19
+        b = year // 100
+        c = year % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day = ((h + l - 7 * m + 114) % 31) + 1
+        easter = date(year, month, day)
+        return easter - timedelta(days=2)
+
+    def is_session_open(self, symbol: str, dt_utc: datetime) -> bool:
+        category = get_instrument_category(symbol)
+        chicago_tz = ZoneInfo("America/Chicago")
+        dt_local = dt_utc.astimezone(chicago_tz)
+
+        holidays = self.get_observed_holidays(dt_local.year)
+        if dt_local.date() in holidays:
+            return False
+
+        wd = dt_local.weekday()
+        time_val = dt_local.hour * 60 + dt_local.minute
+
+        # July 3rd early close at 12:15 CT
+        if dt_local.month == 7 and dt_local.day == 3:
+            if time_val >= 12 * 60 + 15:
+                return False
+        # Christmas Eve early close at 12:15 CT
+        if dt_local.month == 12 and dt_local.day == 24:
+            if time_val >= 12 * 60 + 15:
+                return False
+        # Black Friday early close at 12:15 CT
+        thanksgiving = self._nth_weekday_of_month(dt_local.year, 11, 3, 4)
+        black_friday = thanksgiving + timedelta(days=1)
+        if dt_local.date() == black_friday:
+            if time_val >= 12 * 60 + 15:
+                return False
+
+        if category == "agriculture":
+            if wd == 4:
+                if time_val >= 13 * 60 + 20:
+                    return False
+            elif wd == 5:
+                return False
+            elif wd == 6:
+                if time_val < 19 * 60:
+                    return False
+            if 7 * 60 + 45 <= time_val < 8 * 60 + 30:
+                return False
+            if 13 * 60 + 20 <= time_val < 19 * 60:
+                return False
+            return True
+
+        elif category in {"rates", "currencies"}:
+            if wd == 4:
+                if time_val >= 16 * 60:
+                    return False
+            elif wd == 5:
+                return False
+            elif wd == 6:
+                if time_val < 17 * 60:
+                    return False
+            if 16 * 60 <= time_val < 17 * 60:
+                return False
+            return True
+
+        else: # equity_indices, energy, metals
+            if wd == 4:
+                if time_val >= 17 * 60:
+                    return False
+            elif wd == 5:
+                return False
+            elif wd == 6:
+                if time_val < 17 * 60:
+                    return False
+            if 16 * 60 <= time_val < 17 * 60:
+                return False
+            return True
+
+_CALENDAR = SessionCalendar()
+
+def is_holiday(dt: datetime) -> bool:
+    chicago_tz = ZoneInfo("America/Chicago")
+    dt_local = dt.astimezone(chicago_tz)
+    holidays = _CALENDAR.get_observed_holidays(dt_local.year)
+    return dt_local.date() in holidays
+
+def is_session_open(category: str, local_dt: datetime) -> bool:
+    chicago_tz = ZoneInfo("America/Chicago")
+    if local_dt.tzinfo is None:
+        local_dt = local_dt.replace(tzinfo=chicago_tz)
+    dt_utc = local_dt.astimezone(timezone.utc)
+    dummy_symbol = "MES"
+    if category == "agriculture":
+        dummy_symbol = "ZS"
+    elif category in {"rates", "currencies"}:
+        dummy_symbol = "ZN"
+    return _CALENDAR.is_session_open(dummy_symbol, dt_utc)
+
+def is_instrument_session_open(symbol: str) -> bool:
+    now_utc = datetime.now(timezone.utc)
+    return _CALENDAR.is_session_open(symbol, now_utc)
+
+def is_market_open() -> bool:
+    try:
+        req_path = _runtime_dir() / "market_data_requests.json"
+        if req_path.is_file():
+            with req_path.open("r", encoding="utf-8-sig") as fh:
+                reqs = json.load(fh).get("requests", [])
+            active_symbols = [r.get("instrument") for r in reqs if r.get("instrument")]
+            if active_symbols:
+                now_utc = datetime.now(timezone.utc)
+                return any(_CALENDAR.is_session_open(sym, now_utc) for sym in active_symbols)
+    except Exception:
+        pass
+    now_utc = datetime.now(timezone.utc)
+    return _CALENDAR.is_session_open("MES", now_utc)
+
+
+def check_instrument_stale(symbol: str, last_event_utc: Optional[str]) -> bool:
+    if not last_event_utc:
+        return True
+    try:
+        dt = datetime.fromisoformat(last_event_utc.replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - dt).total_seconds()
+    except Exception:
+        return True
+
+    cat = get_instrument_category(symbol)
+    if cat == "equity_indices":
+        limit = 20.0
+    elif cat in {"energy", "metals"}:
+        limit = 60.0
+    elif cat == "currencies":
+        limit = 90.0
+    elif cat == "rates":
+        limit = 90.0
+    elif cat == "agriculture":
+        limit = 180.0
+    else:
+        limit = 60.0
+
+    return age > limit
+
+
+def send_bridge_command(command_name: str, **kwargs: Any) -> None:
+    path = _runtime_dir() / "commands.jsonl"
+    cmd_id = uuid.uuid4().hex
+    row = {
+        "command_id": cmd_id,
+        "command": command_name,
+        "timestamp_utc": _iso(),
+    }
+    row.update(kwargs)
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        _audit("watchdog_command_sent", command_id=cmd_id, command=command_name)
+    except OSError:
+        pass
+
+
+def read_bridge_metrics() -> Dict[str, Any]:
+    path = _runtime_dir() / "market_data_ipc_bridge_metrics.json"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+_SERIES_STATES: Dict[str, str] = {}
+
+def get_detailed_state() -> str:
+    """Derive connection state according to the state machine hierarchy.
+    Returns: DISCONNECTED | PROCESS_UP | TRANSPORT_CONNECTED | AUTHENTICATED | SUBSCRIBED | RECEIVING_EVENTS | LIVE | DEGRADED | STALE | SESSION_CLOSED
+    """
+    from . import jobqueue
+
+    nt_running = bool(jobqueue.ninjatrader_running())
+    if not nt_running:
+        return "DISCONNECTED"
+
+    bm = read_bridge_metrics()
+
+    with _LOCK:
+        connections = int(_METRICS.get("connections") or 0)
+        last_event_str = _METRICS.get("last_event_utc")
+        has_events = _GENERATION_HAS_EVENTS
+        series_states = dict(_SERIES_STATES)
+
+    if connections <= 0:
+        return "PROCESS_UP"
+
+    sub_count = bm.get("subscription_count", 0)
+    if sub_count <= 0:
+        return "AUTHENTICATED"
+
+    if not has_events:
+        if not is_market_open():
+            return "SESSION_CLOSED"
+        return "SUBSCRIBED"
+
+    if series_states:
+        states_set = set(series_states.values())
+        if states_set == {"SESSION_CLOSED"}:
+            return "SESSION_CLOSED"
+        if "STALE" in states_set:
+            active_states = {s for s in states_set if s != "SESSION_CLOSED"}
+            if active_states == {"STALE"}:
+                return "STALE"
+            else:
+                return "DEGRADED"
+        if "LIVE" in states_set:
+            return "LIVE"
+        if "RECEIVING_EVENTS" in states_set:
+            return "RECEIVING_EVENTS"
+        if "SUBSCRIBED" in states_set:
+            return "SUBSCRIBED"
+
+    if not is_market_open():
+        return "SESSION_CLOSED"
+
+    if last_event_str:
+        try:
+            dt = datetime.fromisoformat(last_event_str.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - dt).total_seconds()
+        except Exception:
+            age = 99999.0
+    else:
+        age = 99999.0
+
+    if age > 30.0:
+        return "STALE"
+
+    if age <= 15.0:
+        return "LIVE"
+
+    return "RECEIVING_EVENTS"
+
+
+def start_watchdog() -> None:
+    global _WATCHDOG_THREAD
+    with _LOCK:
+        if _WATCHDOG_THREAD is not None and _WATCHDOG_THREAD.is_alive():
+            return
+        _WATCHDOG_STOP.clear()
+        _WATCHDOG_THREAD = threading.Thread(target=_watchdog_loop, name="md-ipc-watchdog", daemon=True)
+        _WATCHDOG_THREAD.start()
+        _audit("watchdog_start")
+
+
+def stop_watchdog() -> None:
+    global _WATCHDOG_THREAD
+    _WATCHDOG_STOP.set()
+    if _WATCHDOG_THREAD is not None and _WATCHDOG_THREAD.is_alive():
+        _WATCHDOG_THREAD.join(timeout=2.0)
+    _WATCHDOG_THREAD = None
+    _audit("watchdog_stop")
+
+
+def _watchdog_loop() -> None:
+    global _STATE_STALE
+    while not _WATCHDOG_STOP.wait(5.0):
+        try:
+            req_path = _runtime_dir() / "market_data_requests.json"
+            if not req_path.is_file():
+                continue
+            try:
+                with req_path.open("r", encoding="utf-8-sig") as fh:
+                    reqs = json.load(fh).get("requests", [])
+            except Exception:
+                reqs = []
+
+            if not reqs:
+                with _LOCK:
+                    _SERIES_STATES.clear()
+                _STATE_STALE = False
+                continue
+
+            with _LOCK:
+                connections = int(_METRICS.get("connections") or 0)
+
+            if connections <= 0:
+                with _LOCK:
+                    _SERIES_STATES.clear()
+                _STATE_STALE = False
+                continue
+
+            any_stale = False
+            now_mono = time.monotonic()
+
+            # Temporary dict to collect series states in this iteration
+            iter_states = {}
+
+            for r in reqs:
+                inst = r.get("instrument")
+                if not inst:
+                    continue
+                inst_norm = " ".join(inst.strip().upper().split())
+
+                # Check session awareness
+                session_open = is_instrument_session_open(inst_norm)
+
+                # Get last event time
+                with _LOCK:
+                    last_evt = _INSTRUMENT_LAST_EVENT_UTC.get(inst_norm)
+
+                inst_state = "SESSION_CLOSED"
+                if session_open:
+                    stale = check_instrument_stale(inst_norm, last_evt)
+                    if not last_evt:
+                        inst_state = "SUBSCRIBED"
+                    elif stale:
+                        inst_state = "STALE"
+                    else:
+                        try:
+                            dt = datetime.fromisoformat(last_evt.replace("Z", "+00:00"))
+                            age = (datetime.now(timezone.utc) - dt).total_seconds()
+                        except Exception:
+                            age = 99999.0
+                        inst_state = "LIVE" if age <= 15.0 else "RECEIVING_EVENTS"
+                else:
+                    stale = False
+
+                iter_states[inst_norm] = inst_state
+
+                if session_open and stale:
+                    any_stale = True
+                    if inst_norm not in _RECOVERY_ATTEMPTS:
+                        _RECOVERY_ATTEMPTS[inst_norm] = {
+                            "first_stale_at": now_mono,
+                            "last_resubscribe_at": 0.0,
+                            "last_reconnect_at": 0.0,
+                            "consecutive_failures": 0,
+                            "cooldown_until": 0.0,
+                            "last_success_at": 0.0,
+                        }
+                    rec = _RECOVERY_ATTEMPTS[inst_norm]
+
+                    if now_mono >= rec["cooldown_until"]:
+                        failures = rec["consecutive_failures"]
+
+                        if failures >= 5:
+                            # Severe stale state, enter long backoff to prevent loops
+                            rec["cooldown_until"] = now_mono + 300.0  # 5 minutes
+                            _audit("watchdog_recovery_max_failures_backoff", instrument=inst_norm, failures=failures)
+                        elif failures > 0 and failures % 2 == 0:
+                            # Reconnect full client (Stage 2)
+                            send_bridge_command("resubscribe_market_data")
+                            rec["last_reconnect_at"] = now_mono
+                            rec["consecutive_failures"] += 1
+                            rec["cooldown_until"] = now_mono + 120.0  # 2 minutes cooldown
+                            _audit("watchdog_recovery_stage2_reconnect", instrument=inst_norm, failures=failures)
+                        else:
+                            # Resubscribe specific instrument (Stage 1)
+                            send_bridge_command("resubscribe_instrument", instrument=inst)
+                            rec["last_resubscribe_at"] = now_mono
+                            rec["consecutive_failures"] += 1
+                            rec["cooldown_until"] = now_mono + 45.0  # 45 seconds cooldown
+                            _audit("watchdog_recovery_stage1_resubscribe", instrument=inst_norm, failures=failures)
+                else:
+                    if inst_norm in _RECOVERY_ATTEMPTS:
+                        rec = _RECOVERY_ATTEMPTS[inst_norm]
+                        rec["last_success_at"] = now_mono
+                        rec["consecutive_failures"] = 0
+                        rec["cooldown_until"] = 0.0
+                        del _RECOVERY_ATTEMPTS[inst_norm]
+
+            with _LOCK:
+                _SERIES_STATES.clear()
+                _SERIES_STATES.update(iter_states)
+
+            _STATE_STALE = any_stale
+
+        except Exception as ex:
+            _audit("watchdog_error", error=str(ex))
 
 
 def _root() -> Path:
@@ -224,6 +726,7 @@ def normalize_bridge_event(raw: Dict[str, Any], *, connection_id: str, connectio
 
 
 def ingest_event(event: Dict[str, Any]) -> bool:
+    global _GENERATION_HAS_EVENTS
     with _LOCK:
         capacity = int(_METRICS.get("queue_capacity") or DEFAULT_QUEUE_CAPACITY)
         if len(_RING) >= capacity:
@@ -234,6 +737,14 @@ def ingest_event(event: Dict[str, Any]) -> bool:
         _METRICS["events_in"] = int(_METRICS.get("events_in") or 0) + 1
         _METRICS["queue_depth"] = len(_RING)
         _METRICS["last_event_utc"] = event.get("ts_receive") or _iso()
+        if event.get("connection_id") == _ACTIVE_GENERATION:
+            _GENERATION_HAS_EVENTS = True
+
+        symbol = event.get("instrument")
+        if symbol:
+            symbol_norm = " ".join(symbol.strip().upper().split())
+            _INSTRUMENT_LAST_EVENT_UTC[symbol_norm] = event.get("ts_receive") or _iso()
+
         listeners = list(_LISTENERS)
     for callback in listeners:
         try:
@@ -246,11 +757,6 @@ def ingest_event(event: Dict[str, Any]) -> bool:
         bar_updates = get_router().ingest_primary("default", event) or []
     except Exception:
         bar_updates = []
-    try:
-        from . import market_data_ws
-        market_data_ws.broadcast_event(event, bar_updates)
-    except Exception:
-        pass
     try:
         from . import market_data_ws_http
         market_data_ws_http.broadcast({
@@ -278,11 +784,38 @@ def recent_events(limit: int = 100) -> List[Dict[str, Any]]:
 
 
 def metrics() -> Dict[str, Any]:
+    global _LAST_RATE_MEASUREMENT
+    bm = read_bridge_metrics()
+    now = time.monotonic()
     with _LOCK:
+        events = _METRICS.get("events_in", 0)
+    prev_ts = _LAST_RATE_MEASUREMENT["ts"]
+    prev_events = _LAST_RATE_MEASUREMENT["events"]
+    if prev_ts > 0 and now - prev_ts >= 1.0:
+        rate = (events - prev_events) / (now - prev_ts)
+        _LAST_RATE_MEASUREMENT = {"ts": now, "events": events, "rate": round(rate, 1)}
+    elif prev_ts == 0:
+        _LAST_RATE_MEASUREMENT = {"ts": now, "events": events, "rate": 0.0}
+
+    with _LOCK:
+        series_states = dict(_SERIES_STATES)
         out = dict(_METRICS)
         out["queue_depth"] = len(_RING)
         out["token_fp"] = token_fingerprint(auth_token())
         out["audit_tail"] = list(_AUDIT)[-20:]
+        out["active_generation"] = _ACTIVE_GENERATION
+        out["generation_has_events"] = _GENERATION_HAS_EVENTS
+        out["watchdog_stale"] = _STATE_STALE
+        out["reconnect_count"] = bm.get("reconnects", 0)
+        out["bridge_connected"] = bm.get("connected", False)
+        out["subscription_count"] = bm.get("subscription_count", 0)
+        out["active_contracts"] = bm.get("active_contracts", [])
+        out["last_tick_at"] = bm.get("last_tick_at_utc", "")
+        out["bridge_queue"] = bm.get("queue", {})
+        out["event_rate"] = _LAST_RATE_MEASUREMENT["rate"]
+        out["state"] = get_detailed_state()
+        out["provider_state"] = get_detailed_state()
+        out["series_states"] = series_states
     return out
 
 
@@ -317,6 +850,10 @@ class IpcServer:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
+        # Port 0 asks Windows for an available ephemeral port.  Persist the
+        # selected value so local benchmarks/tests can connect without relying
+        # on a fixed port that may be reserved or occupied on the host.
+        self.port = int(self._sock.getsockname()[1])
         self._sock.listen(16)
         self._sock.settimeout(0.5)
         with _LOCK:
@@ -388,9 +925,12 @@ class IpcServer:
                     pass
                 return
             connection_id = meta["connection_id"]
+            global _ACTIVE_GENERATION, _GENERATION_HAS_EVENTS
             with _LOCK:
                 _METRICS["accepted"] += 1
                 _METRICS["connections"] += 1
+                _ACTIVE_GENERATION = connection_id
+                _GENERATION_HAS_EVENTS = False
             welcome = {
                 "type": "welcome",
                 "protocol_version": PROTOCOL_VERSION,
@@ -415,6 +955,7 @@ class IpcServer:
                     last_heartbeat = time.monotonic()
                     with _LOCK:
                         _METRICS["heartbeats"] += 1
+                        _METRICS["last_heartbeat_utc"] = _iso()
                     client.sendall(encode_frame({
                         "type": "heartbeat_ack",
                         "server_time_utc": _iso(),
@@ -475,6 +1016,7 @@ def start_server(port: Optional[int] = None) -> IpcServer:
         server = IpcServer(port=bind_port)
         server.start()
         _SERVER = server
+        start_watchdog()
         return server
 
 
@@ -485,6 +1027,7 @@ def stop_server() -> None:
         _SERVER = None
     if server is not None:
         server.stop()
+    stop_watchdog()
 
 
 def reset_runtime_state() -> None:
@@ -571,9 +1114,9 @@ def benchmark_transports(iterations: int = 200, payload_bytes: int = 128) -> Dic
     estimates relative cost of JSON framing.
     """
     ensure_auth_token()
-    port = 18766
-    server = IpcServer(port=port, token=auth_token())
+    server = IpcServer(port=0, token=auth_token())
     server.start()
+    port = server.port
     time.sleep(0.05)
     body = "x" * max(16, payload_bytes)
     results: Dict[str, Any] = {"iterations": iterations, "payload_bytes": payload_bytes, "transports": {}}

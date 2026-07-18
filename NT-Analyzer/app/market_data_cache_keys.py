@@ -16,6 +16,10 @@ def market_cache_key(
     exchange: str,
     exact_contract: str,
     channel: str,
+    sharing_scope: str = "global",
+    workspace_id: str = "",
+    user_id: str = "",
+    account_id: str = "",
     timeframe: str = "",
     session_template: str = "cme_equity_eth",
     adjustment_mode: str = "raw",
@@ -27,9 +31,23 @@ def market_cache_key(
 
     Exact contract is mandatory — roots alone are insufficient.
     """
+    scope = str(sharing_scope or "global").strip().lower()
+    if scope not in {"global", "workspace", "private"}:
+        raise ValueError(f"unsupported market-data sharing scope: {scope}")
+    workspace = str(workspace_id or "").strip()
+    user = str(user_id or "").strip()
+    account = str(account_id or "").strip()
+    if scope == "workspace" and not workspace:
+        raise ValueError("workspace_id is required for workspace cache scope")
+    if scope == "private" and not (workspace and user and account):
+        raise ValueError("workspace_id, user_id and account_id are required for private cache scope")
     parts = [
         "md",
         schema_version,
+        scope,
+        workspace if scope in {"workspace", "private"} else "-",
+        user if scope == "private" else "-",
+        account if scope == "private" else "-",
         str(provider or "unknown").strip().lower(),
         str(exchange or "CME").strip().upper(),
         str(exact_contract or "").strip().upper(),
@@ -40,7 +58,7 @@ def market_cache_key(
         str(bar_engine_version or BAR_ENGINE_VERSION).strip().lower(),
         f"epoch{int(source_epoch or 0)}",
     ]
-    if not parts[4]:
+    if not parts[8]:
         raise ValueError("exact_contract is required for market cache keys")
     return ":".join(parts)
 

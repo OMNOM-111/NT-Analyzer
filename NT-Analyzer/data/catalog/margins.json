@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-07-16T16:08:45Z",
+  "fetched_at_utc": "2026-07-17T16:08:48Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",

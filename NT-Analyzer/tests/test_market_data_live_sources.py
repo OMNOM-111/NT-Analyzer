@@ -20,7 +20,7 @@ def test_databento_without_key_is_entitlement_missing(monkeypatch) -> None:
     assert health["runtime_state"] == "ENTITLEMENT_MISSING"
     caps = adapter.capabilities()
     assert caps["REALTIME_PRODUCTION"] is False
-    assert caps["capability"] in {"ENTITLEMENT_MISSING", "DEPENDENCY_MISSING"}
+    assert caps["capability"] in {"ENTITLEMENT_MISSING", "DEPENDENCY_MISSING", "OPTIONAL_ENTERPRISE_PROVIDER"}
 
 
 def test_yahoo_not_in_live_adapters() -> None:
@@ -693,7 +693,132 @@ def test_databento_slow_reader_gap(monkeypatch) -> None:
     assert worker._queue[0]["exact_contract"] == "MNQ 09-26"
 
 
+def test_topstepx_projectx_connector(monkeypatch) -> None:
+    # 1. Setup credentials
+    monkeypatch.setenv("NTA_ENABLE_TOPSTEPX_LIVE", "1")
+    monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "test_owner")
+    monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-api-key-here")
 
+    # 2. Mock requests POST responses
+    class MockResponse:
+        def __init__(self, json_data, status_code=200):
+            self.json_data = json_data
+            self.status_code = status_code
 
+        def json(self):
+            return self.json_data
 
+        def raise_for_status(self):
+            if self.status_code != 200:
+                raise Exception("HTTP Error")
 
+    def mock_post(url, json, *args, **kwargs):
+        if "loginKey" in url:
+            return MockResponse({"success": True, "token": "mocked_jwt_token_xyz"})
+        elif "search" in url:
+            return MockResponse({
+                "contracts": [
+                    {"id": "CON.F.US.MNQ.U26", "name": "MNQU6", "symbolId": "F.US.MNQ"}
+                ]
+            })
+        elif "retrieveBars" in url:
+            return MockResponse({
+                "bars": [
+                    {"time": "2026-07-16T14:00:00Z", "open": 20000.0, "high": 20050.0, "low": 19990.0, "close": 20010.0, "volume": 100}
+                ]
+            })
+        return MockResponse({}, 404)
+
+    import requests
+    monkeypatch.setattr(requests, "post", mock_post)
+
+    # Mock websockets connect
+    class MockWebSocket:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+            self.recv_count = 0
+
+        async def send(self, msg: str) -> None:
+            self.sent.append(msg)
+
+        async def recv(self) -> str:
+            # Simulate SignalR protocol handshake reply on first recv
+            self.recv_count += 1
+            if self.recv_count == 1:
+                return '{}'
+            # Subsequent recvs block or return ping or market data
+            import asyncio
+            await asyncio.sleep(10.0)
+            return '{"type":6}'
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class MockWebsocketsModule:
+        def __init__(self):
+            self.client = MockWebSocket()
+
+        def connect(self, url, *args, **kwargs):
+            class AsyncContext:
+                def __init__(self, client):
+                    self.client = client
+                async def __aenter__(self):
+                    return self.client
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    await self.client.close()
+            return AsyncContext(self.client)
+
+    mock_ws_mod = MockWebsocketsModule()
+    import sys
+    sys.modules["websockets"] = mock_ws_mod
+
+    # 3. Instantiate and test TopstepXProjectXAdapter
+    adapter = la.TopstepXProjectXAdapter()
+    assert adapter.credentials_present() is True
+
+    health = adapter.connect()
+    assert health["runtime_state"] == "CONNECTING"
+    assert adapter._token == "mocked_jwt_token_xyz"
+
+    # Wait for websocket thread loop to initialize and authenticate
+    import time
+    for _ in range(20):
+        if adapter._runtime_state == "AUTHENTICATED":
+            break
+        time.sleep(0.1)
+
+    assert adapter._runtime_state == "AUTHENTICATED"
+
+    # Subscribe to MNQ 09-26
+    sub_id = adapter.subscribe("MNQ 09-26", "trades")
+    assert sub_id == "topstep:MNQ 09-26:trades"
+
+    # Trigger incoming WebSocket Quote message
+    events = []
+    adapter.set_sink(lambda e: events.append(e))
+
+    # Trigger OnQuote manually via _on_ws_message
+    quote_arg = {"symbol": "MNQU6", "bestBid": 20010.0, "bestAsk": 20012.0, "volume": 5, "timestamp": "2026-07-16T14:00:00Z"}
+    adapter._on_ws_message("GatewayQuote", ["CON.F.US.MNQ.U26", quote_arg])
+
+    assert adapter._runtime_state == "LIVE"
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["type"] == "quote"
+    assert ev["exact_contract"] == "MNQ 09-26"
+    assert ev["price"] == 20010.0
+    assert ev["volume"] == 5
+
+    # Official ProjectX SignalR target and string contract id are used.
+    for _ in range(20):
+        if any("SubscribeContractTrades" in msg for msg in mock_ws_mod.client.sent):
+            break
+        time.sleep(0.05)
+    assert any("SubscribeContractQuotes" in msg for msg in mock_ws_mod.client.sent)
+    assert any("CON.F.US.MNQ.U26" in msg for msg in mock_ws_mod.client.sent)
+
+    # Test backfill / retrieveBars
+    bars = adapter.backfill("MNQ 09-26", "1m", 10)
+    assert len(bars) == 1
+    assert bars[0]["c"] == 20010.0

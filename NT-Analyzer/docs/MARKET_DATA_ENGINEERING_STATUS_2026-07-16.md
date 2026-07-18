@@ -6,7 +6,7 @@ Branch: `codex/stratforge-release-20260716`
 ## Status (authoritative)
 
 ```text
-CORE IMPLEMENTATION COMPLETED
+IMPLEMENTATION PARTIAL (AUTOMATED GATES PASS)
 DEPLOYMENT, VISUAL VERIFICATION, CACHE ARCHITECTURE WIRING,
 100-USER LOAD TEST AND ACCEPTANCE TESTING PENDING
 PRODUCTION FAILOVER BLOCKED
@@ -44,21 +44,33 @@ PRODUCTION FAILOVER BLOCKED
 
 `test_market_data_cache_fanout.py` + prior market-data suites — green in this session.
 
-### Bridge deploy attempt
+### Bridge deployment
 
-- Backup created: `NTAnalyzerBridge.dll.bak-20260716-212004`
-- **Copy failed**: file locked by running NinjaTrader (PID present)
-- Release build size 187904 vs installed 187392 → **DEPLOYED = pending NT restart + copy**
+- 2026-07-17: Release build completed with 0 warnings / 0 errors.
+- Installed while NinjaTrader was stopped; installed SHA-256 matches the Release
+  build: `24F7DCBEC968BA4C6E13914A663564EE30A5F1AE068B6E0A59138F58288C514F`.
+- Recoverable backup: `NTAnalyzerBridge.dll.bak-audit-20260717-220228`.
+- File deployment is complete; live callback/IPC acceptance still requires an
+  owner-controlled NinjaTrader start and therefore remains **BLOCKED**.
 
 ## Still pending for ACCEPTANCE
 
-1. Restart NinjaTrader → install new DLL → verify IPC metrics file
-2. Restart backend with new `/ws/market-data` route
-3. Hard-refresh Desktop → confirm title shows `WS` / `LIVE` / age / hash (not only `NinjaTrader`)
-4. Owner diagnostics panel UI (API exists; dedicated panel chrome still thin)
-5. Redis + PostgreSQL production instances + `NTA_REQUIRE_*=1`
-6. 100-user load report
-7. Live Databento entitlement → shadow parity → PRODUCTION FAILOVER
+1. Start NinjaTrader manually → verify live callback, IPC metrics and reconnect.
+2. Restart backend with new `/ws/market-data` route.
+3. Hard-refresh Desktop → confirm title shows `WS` / `LIVE` / age / hash.
+4. Owner diagnostics panel visual acceptance.
+5. Redis + PostgreSQL production instances + `NTA_REQUIRE_*=1`.
+6. 100-user load report.
+7. Credentialed provider acceptance → shadow parity → production failover.
+
+## 2026-07-17 audit evidence
+
+- `python -m pytest -q` → **682 passed**.
+- `python -m tests` → **13/13 suites passed**.
+- Bridge Release build → **0 warnings, 0 errors**.
+- Python compile, JavaScript syntax, JSON parsing and `git diff --check` passed.
+- TopstepX remains opt-in/experimental; official ProjectX contract IDs and
+  SignalR targets are covered by mocks, not credentialed production acceptance.
 
 ## External blockers
 

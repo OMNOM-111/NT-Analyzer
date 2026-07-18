@@ -10,5 +10,15 @@
   "rd_variant_fallback_allowed": false,
   "runtime_reconnect_connection_name": "",
   "enable_path_a_optimizer_runbacktest": false,
-  "enable_verbose_diagnostics": false
+  "enable_verbose_diagnostics": false,
+  "market_data_ipc": {
+    "enabled": true,
+    "transport": "tcp",
+    "host": "127.0.0.1",
+    "port": 18765,
+    "pipe_name": "\\\\.\\pipe\\stratforge-market-data",
+    "ws_url": "ws://127.0.0.1:18765/bridge/market-events",
+    "queue_capacity": 8192,
+    "source_epoch": 1
+  }
 }

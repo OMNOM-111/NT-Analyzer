@@ -30,10 +30,13 @@ namespace NTAnalyzerBridge.Runtime
         private readonly object _gate = new object();
         private readonly Dictionary<string, Subscription> _subscriptions =
             new Dictionary<string, Subscription>(StringComparer.OrdinalIgnoreCase);
+        private readonly MarketDataEventQueue _eventQueue = new MarketDataEventQueue(8192);
+        private MarketDataIpcClient _ipcClient;
         private int _running;
         private int _snapshotQueued;
         private volatile bool _started;
         private DateTime _lastSnapshotWriteUtc = DateTime.MinValue;
+        private string _lastIpcConnectionId = "";
 
         private sealed class Subscription
         {
@@ -74,6 +77,18 @@ namespace NTAnalyzerBridge.Runtime
         {
             BridgeLog.Info("RuntimeMarketDataExporter: started");
             _started = true;
+            try
+            {
+                // IPC writer is optional at boot: if the backend token/server is
+                // not ready yet the client reconnects. File snapshot fallback
+                // remains active regardless.
+                _ipcClient = new MarketDataIpcClient(_eventQueue, _runtimeDir);
+                _ipcClient.Start();
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("RuntimeMarketDataExporter: IPC client not started: " + ex.Message);
+            }
             _timer.Change(0, TickMs);
         }
 
@@ -82,6 +97,8 @@ namespace NTAnalyzerBridge.Runtime
             _started = false;
             try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
             try { _timer.Dispose(); } catch { }
+            try { if (_ipcClient != null) _ipcClient.Stop(); } catch { }
+            _ipcClient = null;
             List<Subscription> rows;
             lock (_gate)
             {
@@ -89,7 +106,7 @@ namespace NTAnalyzerBridge.Runtime
                 _subscriptions.Clear();
             }
             foreach (var row in rows) DisposeSubscription(row);
-            BridgeLog.Info("RuntimeMarketDataExporter: stopped");
+            BridgeLog.Info("RuntimeMarketDataExporter: stopped queue=" + _eventQueue.MetricsJson());
         }
 
         private void OnTick(object state)
@@ -97,6 +114,7 @@ namespace NTAnalyzerBridge.Runtime
             if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
             try
             {
+                CheckIpcReconnect();
                 SyncRequests();
                 CaptureMarketDataPoll();
                 RequestSnapshotWrite();
@@ -183,6 +201,113 @@ namespace NTAnalyzerBridge.Runtime
             }
             foreach (var sub in removed) DisposeSubscription(sub);
             foreach (var sub in added) StartSubscription(sub);
+
+            if (_ipcClient != null)
+            {
+                lock (_gate)
+                {
+                    _ipcClient.SubscriptionCount = _subscriptions.Count;
+                    var contracts = _subscriptions.Values.Select(s => "\"" + s.Instrument + "\"").ToList();
+                    _ipcClient.ActiveContracts = "[" + string.Join(",", contracts) + "]";
+                }
+            }
+        }
+
+        private void CheckIpcReconnect()
+        {
+            if (_ipcClient == null) return;
+            string currentId = _ipcClient.ConnectionId;
+            bool connected = _ipcClient.IsConnected;
+            if (connected && !string.IsNullOrEmpty(currentId) && !string.Equals(_lastIpcConnectionId, currentId, StringComparison.Ordinal))
+            {
+                BridgeLog.Info("RuntimeMarketDataExporter: IPC reconnect detected. Resetting subscriptions. Old ID=" + _lastIpcConnectionId + ", New ID=" + currentId);
+                _lastIpcConnectionId = currentId;
+
+                List<Subscription> rows;
+                lock (_gate)
+                {
+                    rows = _subscriptions.Values.ToList();
+                    _subscriptions.Clear();
+                }
+                foreach (var row in rows) DisposeSubscription(row);
+            }
+        }
+
+        public void ForceResubscribe()
+        {
+            BridgeLog.Info("RuntimeMarketDataExporter: ForceResubscribe requested.");
+            lock (_gate)
+            {
+                _lastIpcConnectionId = "";
+            }
+            if (_ipcClient != null)
+            {
+                _ipcClient.ForceReconnect();
+            }
+        }
+
+        public void ResubscribeInstrument(string instrument)
+        {
+            if (string.IsNullOrEmpty(instrument)) return;
+            BridgeLog.Info("RuntimeMarketDataExporter: ResubscribeInstrument requested for " + instrument);
+
+            Subscription oldSub = null;
+            string keyToRecreate = null;
+
+            lock (_gate)
+            {
+                foreach (var pair in _subscriptions)
+                {
+                    if (string.Equals(pair.Value.Instrument, instrument, StringComparison.OrdinalIgnoreCase))
+                    {
+                        keyToRecreate = pair.Key;
+                        oldSub = pair.Value;
+                        break;
+                    }
+                }
+                if (keyToRecreate != null)
+                {
+                    _subscriptions.Remove(keyToRecreate);
+                }
+            }
+
+            if (oldSub != null && keyToRecreate != null)
+            {
+                BridgeLog.Info("RuntimeMarketDataExporter: Recreating subscription for " + instrument + " (Key: " + keyToRecreate + ")");
+                DisposeSubscription(oldSub);
+
+                Subscription newSub = new Subscription
+                {
+                    Key = oldSub.Key,
+                    Instrument = oldSub.Instrument,
+                    Timeframe = oldSub.Timeframe,
+                    Limit = oldSub.Limit,
+                    RangeDays = oldSub.RangeDays,
+                    FromDate = oldSub.FromDate,
+                    ToDate = oldSub.ToDate,
+                    RequestedAtUtc = oldSub.RequestedAtUtc,
+                    UpdatedAtUtc = DateTime.UtcNow,
+                    Status = "starting"
+                };
+
+                StartSubscription(newSub);
+
+                lock (_gate)
+                {
+                    if (_subscriptions.TryGetValue(keyToRecreate, out var duplicate))
+                    {
+                        BridgeLog.Warn("RuntimeMarketDataExporter: Duplicate subscription detected for key " + keyToRecreate + " during resubscribe. Disposing existing.");
+                        DisposeSubscription(duplicate);
+                        _subscriptions.Remove(keyToRecreate);
+                    }
+                    _subscriptions.Add(keyToRecreate, newSub);
+                    BridgeLog.Info("RuntimeMarketDataExporter: Atomically added new subscription for " + keyToRecreate + ". Dict count=" + _subscriptions.Count);
+                }
+            }
+            else
+            {
+                BridgeLog.Warn("RuntimeMarketDataExporter: Subscription not found for " + instrument);
+            }
         }
 
         private void StartSubscription(Subscription sub)
@@ -296,7 +421,66 @@ namespace NTAnalyzerBridge.Runtime
             RequestSnapshotWrite();
         }
 
+        /// <summary>
+        /// MarketData callback path: ONLY read Last/Bid/Ask/Volume, minimal
+        /// normalize, timestamp, bounded non-blocking enqueue, return.
+        /// No file I/O, HTTP, large serialization, or candle building here.
+        /// </summary>
         private void CaptureMarketData(Subscription sub, MarketDataEventArgs args)
+        {
+            if (sub == null || args == null) return;
+            string eventType = null;
+            if (args.MarketDataType == MarketDataType.Last) eventType = "trade";
+            else if (args.MarketDataType == MarketDataType.Bid) eventType = "bid";
+            else if (args.MarketDataType == MarketDataType.Ask) eventType = "ask";
+            else return;
+
+            double price = args.Price;
+            if (double.IsNaN(price) || double.IsInfinity(price) || price < 0) return;
+            if (eventType == "trade" && price <= 0) return;
+
+            // MarketDataEventArgs does not expose a reliable exchange timestamp
+            // across NT builds; record receive/enqueue time and never invent
+            // exchange_sequence.
+            DateTime tsEventUtc = DateTime.UtcNow;
+
+            long volume = 0;
+            try { volume = Convert.ToInt64(args.Volume); } catch { volume = 0; }
+
+            double bid = 0, ask = 0;
+            try
+            {
+                if (sub.MarketData != null)
+                {
+                    if (sub.MarketData.Bid != null) bid = sub.MarketData.Bid.Price;
+                    if (sub.MarketData.Ask != null) ask = sub.MarketData.Ask.Price;
+                }
+            }
+            catch { }
+
+            var tick = new MarketDataTick
+            {
+                EventType = eventType,
+                Instrument = sub.Instrument,
+                SubscriptionId = sub.Key,
+                Price = price,
+                Bid = bid,
+                Ask = ask,
+                Volume = volume,
+                TsEventUtc = tsEventUtc,
+                TsEnqueuedUtc = DateTime.UtcNow,
+                GeneratedSequence = _eventQueue.NextGeneratedSequence(),
+                ExchangeSequence = null, // never invent exchange sequence
+                ProviderSequence = null,
+            };
+            _eventQueue.TryEnqueue(tick);
+        }
+
+        /// <summary>
+        /// Timer-path compatibility: refresh last bar close for market_bars.json
+        /// fallback. Intentionally NOT used from the MarketData callback.
+        /// </summary>
+        private void ApplyLastToBarsFallback(Subscription sub, MarketDataEventArgs args)
         {
             if (sub == null || args == null || args.MarketDataType != MarketDataType.Last) return;
             double price = args.Price;
@@ -330,7 +514,8 @@ namespace NTAnalyzerBridge.Runtime
                 try
                 {
                     if (sub.MarketData == null) continue;
-                    CaptureMarketData(sub, sub.MarketData.Last);
+                    // File-snapshot fallback only (not the IPC callback path).
+                    ApplyLastToBarsFallback(sub, sub.MarketData.Last);
                 }
                 catch { }
             }

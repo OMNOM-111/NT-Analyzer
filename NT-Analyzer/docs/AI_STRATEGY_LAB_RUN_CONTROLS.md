@@ -92,7 +92,15 @@
 В UI есть кнопка **«Подготовить среду»**. Она вызывает:
 
 - `GET /api/ai-lab/bootstrap/status`;
-- `POST /api/ai-lab/bootstrap/start`.
+- `POST /api/ai-lab/bootstrap/start` (**без** автозапуска NinjaTrader).
+
+`NinjaTrader.exe` по умолчанию **не** стартует из bootstrap / reconnect / runner /
+`start-ai-lab.ps1`. Это защита от lockout логина после reboot. Opt-in только:
+
+```powershell
+$env:NTA_ALLOW_AUTOSTART_NINJATRADER = "1"
+# и явно start_ninjatrader=true в API, либо start-ai-lab.ps1 -StartNinjaTrader
+```
 
 Автоподготовка внутри кнопки «Запустить» включается только явно:
 

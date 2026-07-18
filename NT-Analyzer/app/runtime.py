@@ -1058,14 +1058,41 @@ def _now_utc() -> datetime:
 
 def read_heartbeat() -> Dict[str, Any]:
     raw = _read_json(_path("heartbeat.json"), default=None)
+
+    from . import market_data_ipc
+    ipc_metrics = {}
+    try:
+        ipc_metrics = market_data_ipc.metrics()
+        detailed_state = ipc_metrics.get("state", "DISCONNECTED")
+    except Exception:
+        detailed_state = "DISCONNECTED"
+
     if not raw or not isinstance(raw, dict):
-        return {"present": False, "fresh": False, "age_sec": None}
+        return {
+            "present": False,
+            "fresh": False,
+            "age_sec": None,
+            "timestamp_utc": None,
+            "ninja_version": None,
+            "machine": None,
+            "exporter_version": None,
+            "state": detailed_state,
+            "last_tick_at": ipc_metrics.get("last_tick_at", ""),
+            "subscription_count": ipc_metrics.get("subscription_count", 0),
+            "active_contracts": ipc_metrics.get("active_contracts", []),
+            "reconnect_count": ipc_metrics.get("reconnect_count", 0),
+        }
+
     ts = _parse_iso(raw.get("timestamp_utc"))
     age = None
     fresh = False
     if ts is not None:
         age = (_now_utc() - ts).total_seconds()
         fresh = age <= HEARTBEAT_MAX_AGE_SEC and age >= -5  # allow tiny clock skew
+
+    if detailed_state == "STALE":
+        fresh = False
+
     return {
         "present": True,
         "fresh": bool(fresh),
@@ -1074,6 +1101,11 @@ def read_heartbeat() -> Dict[str, Any]:
         "ninja_version": raw.get("ninja_version"),
         "machine": raw.get("machine"),
         "exporter_version": raw.get("exporter_version"),
+        "state": detailed_state,
+        "last_tick_at": ipc_metrics.get("last_tick_at", ""),
+        "subscription_count": ipc_metrics.get("subscription_count", 0),
+        "active_contracts": ipc_metrics.get("active_contracts", []),
+        "reconnect_count": ipc_metrics.get("reconnect_count", 0),
     }
 
 

@@ -29,7 +29,7 @@ source_epoch / data_revision
 Example:
 
 ```text
-md:v1:ninjatrader:CME:MNQ 09-26:trades:5m:cme_equity_eth:raw:be1:epoch3
+md:v1:global:-:-:-:ninjatrader:CME:MNQ 09-26:trades:5m:cme_equity_eth:raw:be1:epoch3
 ```
 
 ### Separated namespaces

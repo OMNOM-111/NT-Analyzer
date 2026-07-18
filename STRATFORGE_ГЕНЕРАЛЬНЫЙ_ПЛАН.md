@@ -602,3 +602,53 @@ Staging → Virtual user → Войти как пользователь → пр
 ---
 
 *Конец документа. Это единственный главный файл-задание для разработчиков. Статус и приёмочные пометки повторно сверены с кодом и автоматическими воротами 16.07.2026; полный release-аудит: `NT-Analyzer/docs/STRATFORGE_RELEASE_AUDIT_2026-07-15.md`.*
+# Market-data contour (2026-07-16 addendum)
+
+## Current status
+
+IMPLEMENTATION PARTIAL (AUTOMATED GATES PASS) /
+DEPLOYMENT, VISUAL VERIFICATION, CACHE ARCHITECTURE,
+100-USER LOAD TEST AND ACCEPTANCE TESTING PENDING /
+PRODUCTION FAILOVER BLOCKED
+
+Do not use ENGINEERING COMPLETE until deployed + visual acceptance.
+
+## Platform standard
+
+- Production: PostgreSQL (SoR) + Redis (shared cache/fan-out/locks)
+- Local/offline: SQLite + in-memory fallback only
+- Browser WS: same-origin `/ws/market-data` (never Bridge 127.0.0.1 for remote users)
+- Bridge IPC: localhost-only secured channel
+
+## Docs
+
+See NT-Analyzer/docs:
+
+- DATA_PLATFORM_ARCHITECTURE.md
+- MARKET_DATA_CACHE_AND_FANOUT.md
+- MARKET_DATA_100_USER_LOAD_PLAN.md
+- MARKET_DATA_VISUAL_ACCEPTANCE.md
+- POSTGRESQL_REDIS_MIGRATION_PLAN.md
+- MARKET_DATA_RESILIENCE_PLAN.md
+- MARKET_DATA_ENGINEERING_STATUS_2026-07-16.md
+
+## Next implementation order
+
+1. Data-platform interfaces + memory/Redis/PG adapters
+2. Same-origin WSS on main backend
+3. SubscriptionRegistry fan-in
+4. Stop 350ms full-series poll when WS healthy
+5. Visible diagnostics on Desktop
+6. Cache-key / series-hash tests
+7. Bridge DLL deploy + acceptance checklist
+8. 100-user load harness (synthetic) then real
+
+
+
+## Market Data Pivot: Bring Your Own Market Data (BYOMD)
+
+To ensure StratForge is free for the first 100 users, centralized enterprise feeds (Databento, dxFeed, CQG enterprise, etc.) are NOT required for the MVP and are disabled by default. Users connect their own feeds (NinjaTrader Local Bridge, TopstepX/ProjectX, Rithmic, CQG/Tradovate).
+- **UserMarketDataEntitlement** manages per-user credentials, scopes, and expiration.
+- **Cache Isolation:** Cache keys are isolated per user/workspace to comply with redistribution regulations.
+- **Demo/Replay Mode:** Free demo/replay mode is active for users without credentials.
+- See [MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md](NT-Analyzer/docs/MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md) for technical details.

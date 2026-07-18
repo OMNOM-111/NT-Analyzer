@@ -161,7 +161,7 @@ def test_generated_sequence_not_promoted_to_exchange() -> None:
 
 
 def test_ipc_transport_benchmark_selects_tcp(ipc_runtime: Path) -> None:
-    # Use a dedicated port inside benchmark helper (18766).
+    # The benchmark asks the OS for a free ephemeral port.
     market_data_ipc.reset_runtime_state()
     result = market_data_ipc.benchmark_transports(iterations=50, payload_bytes=64)
     assert result["selected_default"] == "tcp"
@@ -172,3 +172,36 @@ def test_ipc_transport_benchmark_selects_tcp(ipc_runtime: Path) -> None:
 def test_non_localhost_bind_rejected() -> None:
     with pytest.raises(ValueError):
         market_data_ipc.IpcServer(host="0.0.0.0", port=18774, token="x")
+
+
+def test_csharp_exporter_static_checks() -> None:
+    bridge_dir = Path(__file__).resolve().parent.parent / "bridge" / "src" / "Runtime"
+    exporter_path = bridge_dir / "RuntimeMarketDataExporter.cs"
+    assert exporter_path.is_file()
+    text = exporter_path.read_text(encoding="utf-8")
+
+    # 1. Verify CheckIpcReconnect null check order
+    # it must have "if (_ipcClient == null) return;" before calling "_ipcClient.ConnectionId"
+    check_func_idx = text.find("void CheckIpcReconnect()")
+    assert check_func_idx != -1
+
+    # Extract the CheckIpcReconnect method content
+    method_text = text[check_func_idx:check_func_idx+1000]
+
+    null_check_idx = method_text.find("if (_ipcClient == null)")
+    conn_id_idx = method_text.find("_ipcClient.ConnectionId")
+
+    assert null_check_idx != -1, "null check not found in CheckIpcReconnect"
+    assert conn_id_idx != -1, "ConnectionId read not found in CheckIpcReconnect"
+    assert null_check_idx < conn_id_idx, "Null check must be executed before ConnectionId read"
+
+    # 2. Verify ResubscribeInstrument removes the old subscription, disposes it, and atomically adds new one
+    resub_idx = text.find("void ResubscribeInstrument(string instrument)")
+    assert resub_idx != -1
+    resub_method = text[resub_idx:resub_idx+2500]
+
+    assert "_subscriptions.Remove(keyToRecreate)" in resub_method
+    assert "DisposeSubscription(oldSub)" in resub_method
+    assert "Subscription newSub = new Subscription" in resub_method
+    assert "StartSubscription(newSub)" in resub_method
+    assert "_subscriptions.Add(keyToRecreate, newSub)" in resub_method

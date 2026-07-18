@@ -33,6 +33,15 @@ Last checkpoint: 2026-07-16 09:30 PT
 11. Repaired Practice Trading data states/controls/reset/cancel/close, made Micro Live production UI fail-closed/coming-soon, and confirmed TopStep as safe scaffold.
 12. Re-ran pytest, legacy suites, static release scan, worker crash/HTTP probes, staging probe and Bridge Release build. Exact final evidence is recorded in the release audit.
 13. Found and fixed a pre-existing subscription test that lacked its temp-store fixture and could touch production DPAPI data. Added unique temp names plus bounded Windows sharing retries, backed up the encrypted store, removed only five rows proven to be created during this session, and restored the prior entitlement state.
+14. **2026-07-16 PT ~10:45 — Azure TTS:** wired `AGT-B8F24346E288` (`gpt-4o-mini-tts` on `tratforge-openai-1`) into `agent_tts.resolve_tts_credentials` (prefer Speech models even if chat-disabled; require `model` in Azure speech JSON; passthrough `/audio/speech` base_url). Live synthesize vitek/marina → MP3. Docs: `AGENTS.md`, `UI_API_MAP.md`, `Agents/README.md`.
+15. **2026-07-16 PT ~13:20 — TTS preview CSP:** browser error `Failed to load because no supported source was found` on «Прослушать голос» was CSP blocking `blob:` MP3 (`default-src 'self'` without `media-src`). Added `media-src 'self' blob:` to `STATIC_CSP` + all Aurora page meta tags; hardened preview/avatar audio blob typing.
+16. **2026-07-16 PT ~19:15 — NinjaTrader autostart off:** blocked default `NinjaTrader.exe` launch from bootstrap/reconnect/runner/AI Lab UI/`start-ai-lab.ps1` (login lockout after reboot). Opt-in only via `NTA_ALLOW_AUTOSTART_NINJATRADER=1` + explicit flag.
+17. **2026-07-17 PT — tail audit:** implemented the missing bootstrap env gate,
+    corrected ProjectX SignalR targets/contract IDs, removed duplicate browser WS,
+    added scoped cache keys, fixed IPC benchmark port allocation, reconciled BYOMD
+    documentation, and installed the hash-matched Bridge DLL. Automated evidence:
+    682 pytest tests and 13/13 legacy suites pass; production acceptance remains
+    blocked on owner-controlled live/visual/credential/load scenarios.
 
 ## Branch preservation audit
 

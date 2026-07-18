@@ -1782,7 +1782,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start_ninjatrader: true,
+          start_ninjatrader: false,
           start_lm_studio: true,
           start_lm_server: true,
           load_models: false,

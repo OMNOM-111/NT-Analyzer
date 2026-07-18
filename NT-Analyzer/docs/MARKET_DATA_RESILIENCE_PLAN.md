@@ -1,6 +1,6 @@
 ---
 name: Market Data Resilience
-overview: "CORE IMPLEMENTATION COMPLETED / DEPLOYMENT+VISUAL+CACHE+100-USER+ACCEPTANCE PENDING / PRODUCTION FAILOVER BLOCKED. Same-origin browser WSS; PostgreSQL+Redis production standard; localhost Bridge IPC only. Never claim ENGINEERING COMPLETE until deployed and visually accepted."
+overview: "IMPLEMENTATION PARTIAL; AUTOMATED GATES PASS / LIVE VISUAL+100-USER+ACCEPTANCE PENDING / PRODUCTION FAILOVER BLOCKED. Same-origin browser WSS; PostgreSQL+Redis production standard; localhost Bridge IPC only. Never claim ENGINEERING COMPLETE until live and visually accepted."
 todos:
   - id: phase0-baseline
     content: "Phase 0: baseline instrumentation + docs/MARKET_DATA_BASELINE_2026-07-16.md"
@@ -47,7 +47,7 @@ isProject: false
 ### Текущий рабочий статус (2026-07-16)
 
 ```text
-CORE IMPLEMENTATION COMPLETED
+IMPLEMENTATION PARTIAL (AUTOMATED GATES PASS)
 DEPLOYMENT, VISUAL VERIFICATION, CACHE ARCHITECTURE,
 100-USER LOAD TEST AND ACCEPTANCE TESTING PENDING
 PRODUCTION FAILOVER BLOCKED

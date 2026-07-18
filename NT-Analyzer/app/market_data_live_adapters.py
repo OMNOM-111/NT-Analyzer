@@ -267,14 +267,12 @@ class DatabentoLiveAdapter(LiveMarketDataAdapter):
             "dependency_installed": deps_ok,
             "replay_intraday_24h": True,
             "schemas": ["trades", "mbp-1", "tbbo"],
-            "note": "Production real Databento client. Shadow-only until parity pass + failover promotion.",
+            "note": "OPTIONAL_ENTERPRISE_PROVIDER | DISABLED_BY_DEFAULT | NOT_REQUIRED_FOR_MVP | NO PURCHASE APPROVED",
         })
         if not deps_ok:
             caps["capability"] = "DEPENDENCY_MISSING"
-        elif not self.credentials_present():
-            caps["capability"] = "ENTITLEMENT_MISSING"
         else:
-            caps["capability"] = "REALTIME_PRODUCTION"
+            caps["capability"] = "OPTIONAL_ENTERPRISE_PROVIDER"
         return caps
 
     def health(self) -> Dict[str, Any]:
@@ -564,6 +562,325 @@ class DatabentoLiveAdapter(LiveMarketDataAdapter):
             self._emit(event)
         except Exception as exc:
             self._last_error = f"record_parse: {type(exc).__name__}: {exc}"
+
+
+class TopstepXProjectXAdapter(LiveMarketDataAdapter):
+    """Experimental, opt-in TopstepX / ProjectX market-data client.
+
+    Topstep currently requires API traffic to originate from the trader's
+    personal device.  Keep this adapter disabled unless the owner explicitly
+    enables the local connector and completes credentialed acceptance.
+    """
+
+    name = "topstep_live"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._token = ""
+        self._token_expires_at = 0.0
+        self._loop = None
+        self._ws_client = None
+        self._contract_id_map = {}
+        self._contract_symbol_map = {}
+        self._session_refresh_thread = None
+
+    def implementation_state(self) -> str:
+        if self._runtime_state == "LIVE":
+            return "CONNECTED"
+        return "EXPERIMENTAL_UNVERIFIED"
+
+    @staticmethod
+    def enabled() -> bool:
+        return str(os.environ.get("NTA_ENABLE_TOPSTEPX_LIVE") or "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+
+    def credentials_present(self) -> bool:
+        username = str(os.environ.get("NTA_TOPSTEPX_USERNAME") or "").strip()
+        api_key = str(os.environ.get("NTA_TOPSTEPX_API_KEY") or "").strip()
+        return bool(username and api_key and not is_mock_key(api_key, "topstep"))
+
+    def connect(self) -> Dict[str, Any]:
+        if not self.enabled():
+            self._runtime_state = "DISABLED"
+            self._last_error = "NTA_ENABLE_TOPSTEPX_LIVE is not enabled"
+            return self.health()
+        if not self.credentials_present():
+            self._runtime_state = "ENTITLEMENT_MISSING"
+            self._last_error = "NTA_TOPSTEPX_USERNAME or NTA_TOPSTEPX_API_KEY missing"
+            return self.health()
+
+        username = str(os.environ.get("NTA_TOPSTEPX_USERNAME") or "").strip()
+        api_key = str(os.environ.get("NTA_TOPSTEPX_API_KEY") or "").strip()
+
+        import requests
+        try:
+            self._runtime_state = "CONNECTING"
+            resp = requests.post(
+                "https://api.topstepx.com/api/Auth/loginKey",
+                json={"userName": username, "apiKey": api_key},
+                headers={"Content-Type": "application/json"},
+                timeout=10.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get("success") or not data.get("token"):
+                raise ValueError(f"Auth response unsuccessful: {data.get('errorMessage') or 'no token returned'}")
+
+            self._token = str(data["token"])
+            import time
+            self._token_expires_at = time.time() + 24 * 3600
+            self._last_error = ""
+        except Exception as exc:
+            self._runtime_state = "AUTH_FAILED"
+            self._last_error = f"TopstepX login failed: {exc}"
+            return self.health()
+
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
+        self._thread.start()
+
+        return self.health()
+
+    def _run_async_loop(self) -> None:
+        import asyncio
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._websocket_worker())
+
+    async def _websocket_worker(self) -> None:
+        import websockets
+        import json
+        import asyncio
+
+        url = f"wss://rtc.topstepx.com/hubs/market?access_token={self._token}"
+        try:
+            async with websockets.connect(url) as ws:
+                self._ws_client = ws
+                await ws.send(json.dumps({"protocol": "json", "version": 1}) + "\x1e")
+                handshake_resp = await ws.recv()
+
+                self._runtime_state = "AUTHENTICATED"
+                self._connected_at = _iso()
+
+                for sub in list(self._subs.values()):
+                    await self._subscribe_ws(ws, sub["raw_symbol"])
+
+                while not self._stop.is_set():
+                    try:
+                        raw_data = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                        parts = raw_data.split("\x1e")
+                        for part in parts:
+                            if not part:
+                                continue
+                            msg = json.loads(part)
+                            if msg.get("type") == 6:
+                                await ws.send('{"type":6}\x1e')
+                                continue
+                            if msg.get("type") == 1:
+                                target = msg.get("target")
+                                args = msg.get("arguments", [])
+                                self._on_ws_message(target, args)
+                    except asyncio.TimeoutError:
+                        await ws.send('{"type":6}\x1e')
+                    except Exception as exc:
+                        self._last_error = f"WS receive error: {exc}"
+                        self._runtime_state = "DEGRADED"
+                        break
+        except Exception as exc:
+            self._last_error = f"WS connection failed: {exc}"
+            self._runtime_state = "ERROR"
+
+    def subscribe(self, exact_contract: str, channel: str = "trades") -> str:
+        contract = " ".join(str(exact_contract or "").strip().upper().split())
+        if not contract:
+            raise ValueError("exact_contract required")
+
+        raw_symbol = self._resolve_topstep_symbol(contract)
+        schema = "quotes" if channel in {"bid_ask", "quotes"} else "trades"
+        sub_id = f"topstep:{contract}:{schema}"
+
+        with self._lock:
+            self._subs[sub_id] = {
+                "exact_contract": contract,
+                "raw_symbol": raw_symbol,
+                "channel": channel,
+                "schema": schema,
+            }
+
+        if self._ws_client is not None and self._loop is not None:
+            import asyncio
+            asyncio.run_coroutine_threadsafe(self._subscribe_ws(self._ws_client, raw_symbol), self._loop)
+            self._runtime_state = "AUTHENTICATED"
+
+        return sub_id
+
+    async def _subscribe_ws(self, ws: Any, symbol: str) -> None:
+        import json
+        import uuid
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            raise ValueError(f"ProjectX contract id not resolved for {symbol}")
+        inv_id_quotes = f"sub_quotes_{uuid.uuid4().hex[:6]}"
+        inv_id_trades = f"sub_trades_{uuid.uuid4().hex[:6]}"
+
+        msg_quotes = {
+            "type": 1,
+            "invocationId": inv_id_quotes,
+            "target": "SubscribeContractQuotes",
+            "arguments": [contract_id]
+        }
+        await ws.send(json.dumps(msg_quotes) + "\x1e")
+
+        msg_trades = {
+            "type": 1,
+            "invocationId": inv_id_trades,
+            "target": "SubscribeContractTrades",
+            "arguments": [contract_id]
+        }
+        await ws.send(json.dumps(msg_trades) + "\x1e")
+
+    def _resolve_topstep_symbol(self, contract: str) -> str:
+        with self._lock:
+            if contract in self._contract_id_map:
+                return self._contract_id_map[contract]
+
+        import requests
+        root = contract.split(" ")[0]
+        try:
+            resp = requests.post(
+                "https://api.topstepx.com/api/Contract/search",
+                json={"searchText": root},
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=5.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = databento_raw_symbol(contract)
+            for item in data.get("contracts", data.get("available", [])):
+                provider_symbol = str(item.get("name") or item.get("symbol") or "").upper()
+                if provider_symbol == raw.upper():
+                    cid = str(item["id"])
+                    with self._lock:
+                        self._contract_id_map[contract] = raw
+                        self._contract_id_map[raw] = cid
+                        self._contract_symbol_map[cid] = contract
+                    return raw
+        except Exception:
+            pass
+        return databento_raw_symbol(contract)
+
+    def _on_ws_message(self, target: str, args: List[Any]) -> None:
+        # Official ProjectX callbacks are (contractId, data).  Accept the old
+        # single-dict shape too so recorded fixtures remain replayable.
+        rows: List[tuple[str, Dict[str, Any]]] = []
+        if len(args) >= 2 and isinstance(args[1], dict):
+            rows.append((str(args[0]), args[1]))
+        else:
+            rows.extend(("", arg) for arg in args if isinstance(arg, dict))
+        for contract_id, arg in rows:
+            if not arg:
+                continue
+            symbol = str(arg.get("symbol") or arg.get("symbolId") or "")
+            if not symbol:
+                continue
+            exact = self._contract_symbol_map.get(contract_id, "")
+            with self._lock:
+                if not exact:
+                    for sub in self._subs.values():
+                        if sub["raw_symbol"] == symbol:
+                            exact = sub["exact_contract"]
+                            break
+            if not exact:
+                continue
+
+            price = arg.get("price")
+            if price is None:
+                price = arg.get("lastPrice")
+            if price is None:
+                price = arg.get("bestBid")
+            if price is None:
+                price = arg.get("bestAsk")
+            size = arg.get("size")
+            if size is None:
+                size = arg.get("volume")
+
+            if self._runtime_state in {"CONNECTING", "AUTHENTICATED", "DEGRADED"}:
+                self._runtime_state = "LIVE"
+
+            reg = get_registry().resolve_exact(exact, allow_continuous=False) if exact else {}
+            target_lower = str(target or "").lower()
+            is_trade = target_lower in {"gatewaytrade", "ontrade", "trade", "trades"}
+
+            event = make_canonical_event(
+                event_type="trade" if is_trade else "quote",
+                provider=self.name,
+                raw_symbol=symbol,
+                exact_contract=str(reg.get("exact_contract") or reg.get("resolved") or exact),
+                canonical_symbol=str(reg.get("root") or ""),
+                price=float(price) if price is not None else None,
+                volume=float(size) if size is not None else None,
+                exchange_sequence=arg.get("sequence"),
+                provider_sequence=self._event_count + 1,
+                ts_event=arg.get("timestamp") or arg.get("lastUpdated") or arg.get("time") or _iso(),
+                ts_provider=_iso(),
+                quality={"topstep_live": True},
+                data_plane="analytics" if self._mode == "shadow" else "display",
+            )
+            self._emit(event)
+
+    def backfill(self, exact_contract: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
+        unit = 2
+        unit_num = 1
+        tf = str(timeframe).lower()
+        if "s" in tf:
+            unit = 1
+            unit_num = int(tf.replace("s", "") or 1)
+        elif "m" in tf:
+            unit = 2
+            unit_num = int(tf.replace("m", "") or 1)
+        elif "h" in tf:
+            unit = 3
+            unit_num = int(tf.replace("h", "") or 1)
+        elif "d" in tf:
+            unit = 4
+            unit_num = int(tf.replace("d", "") or 1)
+
+        raw_symbol = self._resolve_topstep_symbol(exact_contract)
+        cid = self._contract_id_map.get(raw_symbol)
+        if not cid:
+            return []
+
+        import requests
+        try:
+            resp = requests.post(
+                "https://api.topstepx.com/api/History/retrieveBars",
+                json={
+                    "contractId": cid,
+                    "unit": unit,
+                    "unitNumber": unit_num,
+                    "limit": min(limit, 20000),
+                    "live": True
+                },
+                headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"},
+                timeout=10.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            bars = []
+            for item in data.get("bars", []):
+                bars.append({
+                    "t": item.get("t") or item.get("time"),
+                    "o": float(item.get("o") or item.get("open", 0.0)),
+                    "h": float(item.get("h") or item.get("high", 0.0)),
+                    "l": float(item.get("l") or item.get("low", 0.0)),
+                    "c": float(item.get("c") or item.get("close", 0.0)),
+                    "v": float(item.get("v") or item.get("volume", 0.0)),
+                })
+            return bars
+        except Exception:
+            return []
 
 
 class DxFeedLiveAdapter(LiveMarketDataAdapter):
@@ -925,6 +1242,9 @@ def default_live_adapters() -> List[LiveMarketDataAdapter]:
         adapters.append(CmeWebsocketMockAdapter())
     else:
         adapters.append(CmeWebsocketReferenceAdapter())
+
+    # TopstepX (BYOMD user-owned connector adapter)
+    adapters.append(TopstepXProjectXAdapter())
 
     return adapters
 

@@ -59,6 +59,97 @@ UI.ready(async function () {
   const MIN_W = 260, MIN_H = 180;
   const ZOOM_MIN = 0.05, ZOOM_MAX = 2;
   const LIVE_POLL_MS = 350;
+  const HEALTH_POLL_MS = 5000;
+  const protocol = (window.location && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+  const MARKET_DATA_WS_URL = (window.location && window.location.host)
+    ? `${protocol}//${window.location.host}/ws/market-data`
+    : '';
+  let marketDataWs = null;
+  let marketDataWsOk = false;
+  let marketDataWsRetryAt = 0;
+  let marketDataWsBackoff = 1000;
+  let marketDataWsState = 'OFF';
+
+  function ensureMarketDataWs() {
+    if (!MARKET_DATA_WS_URL || typeof WebSocket === 'undefined') return;
+    if (marketDataWs && (marketDataWs.readyState === 0 || marketDataWs.readyState === 1)) return;
+    if (Date.now() < marketDataWsRetryAt) return;
+    try {
+      marketDataWsState = 'CONNECTING';
+      const ws = new WebSocket(MARKET_DATA_WS_URL);
+      marketDataWs = ws;
+      ws.addEventListener('open', () => {
+        marketDataWsOk = true;
+        marketDataWsState = 'CONNECTED';
+        marketDataWsBackoff = 1000;
+        for (const rec of wins.values()) {
+          const instrument = String((rec.model.config && rec.model.config.instrument) || '');
+          const timeframe = String((rec.model.config && rec.model.config.timeframe) || '5m');
+          if (!instrument) continue;
+          try {
+            ws.send(JSON.stringify({ type: 'subscribe', exact_contract: instrument, timeframe }));
+          } catch (e) { /* ignore */ }
+        }
+      });
+      ws.addEventListener('message', (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (!msg || !msg.type) return;
+        if (msg.type === 'welcome' || msg.type === 'subscribe_ack') {
+          marketDataWsOk = true;
+          marketDataWsState = 'CONNECTED';
+          return;
+        }
+        if (msg.type !== 'market_event') return;
+        const updates = Array.isArray(msg.bar_updates) ? msg.bar_updates : [];
+        const sources = msg.sources || {};
+        for (const rec of wins.values()) {
+          if (rec.model.minimized || !rec.chart) continue;
+          const instrument = String((rec.model.config && rec.model.config.instrument) || '').toUpperCase();
+          const tf = String((rec.model.config && rec.model.config.timeframe) || '').toLowerCase();
+          let touched = false;
+          for (const upd of updates) {
+            const bar = upd && (upd.bar || upd);
+            if (!bar) continue;
+            if (String(bar.exact_contract || '').toUpperCase() !== instrument) continue;
+            const barTf = String(bar.timeframe || '').toLowerCase();
+            if (barTf && barTf !== tf && tf !== '1d') continue;
+            touched = true;
+            try {
+              if (typeof rec.chart.updateLastBar === 'function') rec.chart.updateLastBar(bar);
+            } catch (e) { /* poll fallback */ }
+          }
+          if (touched || sources.chart_source) {
+            const src = sources.chart_source || 'ninjatrader';
+            // WS ticks only mark LIVE when document is not in offline mode.
+            if (document.documentElement.dataset.mdOffline === '1') {
+              setSrc(rec, 'err', `OFFLINE · ${src} · ${instrument} · WS blocked`);
+            } else {
+              setSrc(rec, 'live', `LIVE · ${src} · ${instrument} · WS · age now`);
+              rec._transport = 'WS';
+              rec.nextPollAt = Date.now() + HEALTH_POLL_MS;
+            }
+          }
+        }
+      });
+      ws.addEventListener('close', () => {
+        marketDataWsOk = false;
+        marketDataWsState = 'RECONNECTING';
+        marketDataWs = null;
+        marketDataWsRetryAt = Date.now() + marketDataWsBackoff;
+        marketDataWsBackoff = Math.min(15000, Math.round(marketDataWsBackoff * 1.7 + Math.random() * 300));
+      });
+      ws.addEventListener('error', () => {
+        marketDataWsOk = false;
+        marketDataWsState = 'ERROR';
+        try { ws.close(); } catch (e) { /* ignore */ }
+      });
+    } catch (e) {
+      marketDataWsRetryAt = Date.now() + marketDataWsBackoff;
+      marketDataWsBackoff = Math.min(15000, marketDataWsBackoff * 2);
+    }
+  }
+
   // Global chart template helpers live in desktop-template.js (pure, testable).
   const DT = window.DesktopTemplate;
   if (!DT) { toast('Не загружен модуль макета графика'); return; }
@@ -792,40 +883,99 @@ UI.ready(async function () {
     const bars = Array.isArray(payload.bars) ? payload.bars : [];
     const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
     const note = payload.note || '', live = !!payload.live, status = payload.status || '';
+    const source = payload.source || {};
+    const freshness = payload.freshness || {};
+    const offline = status === 'offline' || !!freshness.offline || !!payload.offline_banner
+      || String(source.runtime_state || '').toUpperCase() === 'OFFLINE';
+    const chartSource = source.active || source.provider || source.kind || source.name || 'unknown';
+    const strategySource = payload.strategy_source || 'ninjatrader';
+    const executionSource = payload.execution_source || 'ninjatrader';
+    const planes = `Chart:${chartSource} · Strategy:${strategySource} · Execution:${executionSource}`;
+    updateGlobalOfflineBanner(payload);
     if (bars.length) {
       const lastMs = payloadLastBarMs(bars);
       const staleBars = rec.lastBarMs != null && lastMs != null && lastMs < rec.lastBarMs - 1000;
-      if (staleBars) {
+      if (staleBars && !offline) {
         rec.rejectedPayloads = (rec.rejectedPayloads || 0) + 1;
         rec.nextPollAt = Date.now() + 500;
-        setSrc(rec, 'wait', `NinjaTrader · устаревший пакет пропущен · ${bars.length} баров`);
+        setSrc(rec, 'wait', `RECOVERING · устаревший пакет · ${planes}`);
         return;
       }
-      const updated = payload.source && payload.source.updated_at_utc || `${payload.status || ''}:${bars.length}:${bars[bars.length - 1] && (bars[bars.length - 1].t || bars[bars.length - 1].c)}`;
+      const updated = source.updated_at_utc || `${payload.status || ''}:${bars.length}:${bars[bars.length - 1] && (bars[bars.length - 1].t || bars[bars.length - 1].c)}`;
       if (updated !== rec.lastUpdated) { rec.chart.setData(bars); rec.lastUpdated = updated; }
       if (lastMs != null) rec.lastBarMs = lastMs;
       rec.rejectedPayloads = 0;
       rec.hasBars = true;
-      const age = sourceAgeSec(payload.source);
-      const fresh = age == null || age <= 8;
-      const freshness = age == null ? '' : ` · обновлено ${ageText(age)}`;
-      const label = live ? (fresh ? 'NinjaTrader · live' : 'NinjaTrader · задержка') : 'История NinjaTrader';
-      setSrc(rec, live && fresh ? 'live' : 'wait', `${label} · ${bars.length} баров${freshness}${note ? ' · ' + note : ''}`);
+      const age = sourceAgeSec(source) != null ? sourceAgeSec(source) : Number(freshness.age_sec);
+      const ageLabel = Number.isFinite(age) ? ` · age ${ageText(age)}` : '';
+      const asOf = freshness.data_as_of_utc || source.updated_at_utc || '';
+      const asOfLabel = asOf ? ` · last ${String(asOf).replace('T', ' ').slice(0, 19)}` : '';
+      const diag = payload.diagnostics || {};
+      const transport = marketDataWsOk ? 'WS' : 'HTTP';
+      const hashShort = diag.series_hash ? String(diag.series_hash).slice(0, 8) : '';
+      const contract = payload.resolved_instrument || (rec.model.config && rec.model.config.instrument) || '';
+      const extra = hashShort ? ` · #${hashShort}` : '';
+      let health = 'OFFLINE';
+      let css = 'err';
+      if (offline || payload.market_data_available === false) {
+        health = 'OFFLINE';
+        css = 'err';
+      } else if (live && freshness.fresh === true && !freshness.stale) {
+        health = 'LIVE';
+        css = 'live';
+      } else if (freshness.stale || status === 'external_stale' || status === 'failover_stale' || status === 'stale') {
+        health = 'STALE';
+        css = 'wait';
+      } else if (bars.length) {
+        health = 'DEGRADED';
+        css = 'wait';
+      }
+      // Hard rule: never green LIVE without explicit fresh live flag.
+      if (css === 'live' && (live !== true || freshness.fresh !== true || Number.isFinite(age) && age > 8)) {
+        health = Number.isFinite(age) && age > 8 ? 'STALE' : 'DEGRADED';
+        css = 'wait';
+      }
+      setSrc(rec, css, `${health} · ${chartSource} · ${contract} · ${transport}${ageLabel}${asOfLabel}${extra}${note ? ' · ' + note : ''}`);
+      rec._diagnostics = diag;
+      rec._transport = transport;
+      // Freeze price marker semantics for offline/stale.
+      if (rec.chart && rec.chart.setLivePriceEnabled) {
+        try { rec.chart.setLivePriceEnabled(css === 'live'); } catch (e) { /* optional */ }
+      }
     } else {
-      if (!rec.hasBars) rec.chart.setData([]);
-      setSrc(rec, 'err', 'Нет данных NinjaTrader' + (note ? ' · ' + note : ''));
+      if (!rec.hasBars) {
+        if (rec.chart && rec.chart.setEmptyMessage) {
+          rec.chart.setEmptyMessage(
+            offline
+              ? 'OFFLINE · нет данных в кэше · Live price unavailable'
+              : 'Нет данных'
+          );
+        }
+        rec.chart.setData([]);
+      }
+      const waitForever = status === 'waiting' || status === 'subscription_requested';
+      if (offline || !waitForever) {
+        setSrc(rec, 'err', `OFFLINE · ${planes}` + (note ? ' · ' + note : ''));
+      } else {
+        setSrc(rec, 'wait', `OFFLINE timeout · нет live-источника` + (note ? ' · ' + note : ''));
+      }
     }
-    rec.lastStatus = status || (live ? 'live' : 'waiting');
-    rec.nextPollAt = Date.now() + (live ? Math.max(100, LIVE_POLL_MS - 50) : rec.lastStatus === 'historical_fallback' ? 10000 : 2000);
-    if (rec.chart && rec.chart.setLoading && (bars.length || status === 'error')) rec.chart.setLoading(false);
-    // Persist pane heights lazily (they are updated by the user dragging the separator).
+    rec.lastStatus = offline ? 'offline' : (status || (live ? 'live' : 'waiting'));
+    rec.nextPollAt = Date.now() + (
+      offline ? 15000
+        : marketDataWsOk ? HEALTH_POLL_MS
+          : (live ? Math.max(100, LIVE_POLL_MS - 50) : rec.lastStatus === 'historical_fallback' ? 10000 : 2000)
+    );
+    // Never leave infinite loaders when we already decided offline/stale/empty.
+    if (rec.chart && rec.chart.setLoading) {
+      rec.chart.setLoading(false);
+    }
     if (rec.chart && rec.chart.getPaneHeights) {
       const ph = rec.chart.getPaneHeights();
       if (JSON.stringify(ph) !== JSON.stringify(rec.model.config.paneHeights || {})) {
         rec.model.config.paneHeights = ph; markDirty();
       }
     }
-    // Persist the draggable price-column width the same way.
     if (rec.chart && rec.chart.getAxisWidth) {
       const aw = Math.round(rec.chart.getAxisWidth());
       if (aw && aw !== Math.round((rec.model.config.style || {}).axisWidth || 62)) {
@@ -834,6 +984,37 @@ UI.ready(async function () {
       }
     }
     syncAlerts(rec, alerts);
+  }
+
+  function updateGlobalOfflineBanner(payload) {
+    let banner = qs('#dsk-md-offline-banner');
+    if (!banner && viewport) {
+      banner = el(`<div id="dsk-md-offline-banner" class="dsk-md-offline-banner" hidden></div>`);
+      viewport.insertBefore(banner, viewport.firstChild);
+    }
+    if (!banner) return;
+    const offline = payload && (
+      payload.status === 'offline'
+      || (payload.freshness && payload.freshness.offline)
+      || payload.offline_banner
+      || payload.market_data_available === false
+    );
+    // Show banner if ANY recent payload is offline, keep until a LIVE arrives.
+    if (offline) {
+      const ob = payload.offline_banner || {};
+      const age = ob.age_sec != null ? ageText(Number(ob.age_sec)) : '';
+      banner.hidden = false;
+      banner.innerHTML = `<strong>OFFLINE — LIVE MARKET DATA UNAVAILABLE</strong>`
+        + `<span>Last valid event: ${ob.last_valid_event || (payload.freshness && payload.freshness.data_as_of_utc) || 'unknown'}</span>`
+        + `<span>Age: ${age || 'n/a'}</span>`
+        + `<span>Last source: ${ob.last_source || 'NinjaTrader'}</span>`
+        + `<span>Backup live providers available: ${ob.backup_providers_available != null ? ob.backup_providers_available : 0}</span>`
+        + `<span>Strategies/execution must not use these prices as live.</span>`;
+      document.documentElement.dataset.mdOffline = '1';
+    } else if (payload && payload.live === true && payload.freshness && payload.freshness.fresh === true) {
+      banner.hidden = true;
+      delete document.documentElement.dataset.mdOffline;
+    }
   }
   function setSrc(rec, state, title) {
     const s = rec.srcEl; if (!s) return;
@@ -845,9 +1026,17 @@ UI.ready(async function () {
   // One consolidated request updates every due chart. The bridge publishes its
   // BarsRequest snapshots every tick/second, so live windows refresh without
   // multiplying HTTP traffic when a 36/64-chart grid is open.
+  // HTTP batch remains the fallback while WS incremental proves itself.
   UI.poll(async () => {
+    ensureMarketDataWs();
     const now = Date.now();
-    const recs = Array.from(wins.values()).filter(rec => !rec.model.minimized && !rec.inFlight && (!rec.nextPollAt || rec.nextPollAt <= now));
+    const recs = Array.from(wins.values()).filter(rec => {
+      if (rec.model.minimized || rec.inFlight) return false;
+      // With a healthy WS, slow HTTP fallback to reduce full-series re-sends.
+      const dueAt = rec.nextPollAt || 0;
+      if (marketDataWsOk && dueAt && (now - dueAt) < 1500 && rec.hasBars) return false;
+      return !rec.nextPollAt || rec.nextPollAt <= now;
+    });
     if (!recs.length) return;
     const batch = recs.map(rec => ({
       rec,

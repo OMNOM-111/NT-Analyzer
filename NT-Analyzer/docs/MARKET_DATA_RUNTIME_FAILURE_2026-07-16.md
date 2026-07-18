@@ -105,12 +105,12 @@ Build without install was previously incomplete; file is now installed. Full cal
 
 | Scenario | Expected | Actual | PASS/FAIL | Evidence |
 |---|---|---|---|---|
-| A: NT off, no Databento | Fast cache, all OFFLINE, no false LIVE, no Yahoo timeout storm | Headless: `status=offline`, `live=False`, bars retained, `skipped_delayed_providers`; 8 symbols ~1.4s after NT-process TTL cache | **PASS (headless)** | pytest + `_market_bars_payload` timing |
-| A UI | Global banner + muted markers + no infinite loader | Needs owner hard-refresh after backend restart | **PENDING UI** | Owner screenshot |
-| B: NT on | LIVE via Bridge IPC + WSS | Pending NT restart | **PENDING** | — |
-| C: NT kill mid-session | ≤2s OFFLINE/DEGRADED, no false LIVE | Logic fixed; UI proof pending | **PENDING UI** | — |
-| C + Databento | FAILOVER continues live | No key | **BLOCKED** | entitlement |
-| D: NT restore | Shadow + hysteresis before switchback | Not implemented | **FAIL/PENDING** | — |
+| A: NT off, no Databento | Fast cache, all OFFLINE, no false LIVE, no Yahoo timeout storm | Automated offline/failover contracts pass; real owner runtime scenario not repeated | **PASS automated / BLOCKED runtime** | pytest 682 |
+| A UI | Global banner + muted markers + no infinite loader | DOM/JS contracts pass; visual hard-refresh not run | **PASS contract / BLOCKED visual** | `test_aurora_contracts.py` |
+| B: NT on | LIVE via Bridge IPC + WSS | DLL installed and hash-matched; live callback not run | **BLOCKED runtime** | Release build + SHA-256 |
+| C: NT kill mid-session | ≤2s OFFLINE/DEGRADED, no false LIVE | State-machine contracts pass; controlled live kill not run | **PASS automated / BLOCKED runtime** | market-data tests |
+| C + credentialed backup | FAILOVER continues live | No accepted live entitlement | **BLOCKED credentials** | — |
+| D: NT restore | Shadow + hysteresis before switchback | Router logic covered; real restore/switchback not run | **PASS automated / BLOCKED runtime** | router tests |
 
 ## Evidence commands
 

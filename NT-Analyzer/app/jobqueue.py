@@ -4704,39 +4704,60 @@ def bridge_log_tail(lines: int = 40) -> List[str]:
         return []
 
 
-def ninjatrader_running() -> Optional[bool]:
+_NT_RUNNING_CACHE: Dict[str, Any] = {"value": None, "checked_at": 0.0}
+_NT_RUNNING_CACHE_LOCK = threading.Lock()
+_NT_RUNNING_CACHE_TTL_SEC = 2.0
+
+
+def ninjatrader_running(*, force: bool = False) -> Optional[bool]:
     """Best-effort cross-process check via tasklist (Windows only).
 
     Returns True/False on a confident match, or None ("unknown") when the
     detection itself failed (tasklist missing, timeout, OS not Windows).
     The case-insensitive substring scan also tolerates variations like
     "NinjaTrader 8.exe".
+
+    Result is cached briefly: market-bars batch paths call this once per
+    panel; spawning tasklist for every chart made Offline mode take ~1s/panel.
     """
+    now = time.time()
+    if not force:
+        with _NT_RUNNING_CACHE_LOCK:
+            cached_at = float(_NT_RUNNING_CACHE.get("checked_at") or 0.0)
+            if cached_at and (now - cached_at) < _NT_RUNNING_CACHE_TTL_SEC:
+                return _NT_RUNNING_CACHE.get("value")  # type: ignore[return-value]
+    value: Optional[bool]
     if not sys.platform.startswith("win"):
-        return None
-    try:
-        import subprocess
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        tasklist = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tasklist.exe"
-        out = subprocess.run(
-            [str(tasklist), "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=False,
-            timeout=4,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
-        )
-        if out.returncode != 0:
-            return None
-        stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
-        stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
-        haystack = stdout.lower() + "\n" + stderr.lower()
-        return "ninjatrader" in haystack
-    except Exception:
-        return None
+        value = None
+    else:
+        try:
+            import subprocess
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            tasklist = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tasklist.exe"
+            out = subprocess.run(
+                [str(tasklist), "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=False,
+                timeout=4,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            )
+            if out.returncode != 0:
+                value = None
+            else:
+                stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
+                stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
+                haystack = stdout.lower() + "\n" + stderr.lower()
+                value = "ninjatrader" in haystack
+        except Exception:
+            value = None
+    with _NT_RUNNING_CACHE_LOCK:
+        _NT_RUNNING_CACHE["value"] = value
+        _NT_RUNNING_CACHE["checked_at"] = time.time()
+    return value
 
 
 # ---------------------------------------------------------------------------

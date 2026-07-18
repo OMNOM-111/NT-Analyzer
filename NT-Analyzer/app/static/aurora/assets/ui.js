@@ -184,12 +184,22 @@
     utter.lang = String(options.language || options.fallback_voice || 'ru-RU');
     const speed = Number(options.speed);
     utter.rate = Number.isFinite(speed) && speed > 0 ? Math.max(0.5, Math.min(1.8, speed)) : 1.02;
+    if (options.voice_gender === 'female') utter.pitch = 1.15;
+    else if (options.voice_gender === 'male') utter.pitch = 0.85;
     AGENT_SPEAK.utter = utter;
     try {
       const voices = speechSynthesis.getVoices() || [];
       const lang = utter.lang.toLowerCase();
-      const match = voices.find(v => String(v.lang || '').toLowerCase().startsWith(lang.slice(0, 2)))
-        || voices.find(v => /ru/i.test(String(v.lang || '')));
+      const gender = String(options.voice_gender || '').toLowerCase();
+      const femaleRe = /female|жен|zira|irina|natalia|helena|katya|samantha|eva|anna/i;
+      const maleRe = /male|муж|david|paul|mark|yuri|dmitri|pavel|george|daniel/i;
+      const langPool = voices.filter(v => String(v.lang || '').toLowerCase().startsWith(lang.slice(0, 2)))
+        .concat(voices.filter(v => /ru/i.test(String(v.lang || ''))));
+      const pool = langPool.length ? langPool : voices;
+      let match = null;
+      if (gender === 'female') match = pool.find(v => femaleRe.test(`${v.name} ${v.voiceURI}`));
+      if (gender === 'male') match = pool.find(v => maleRe.test(`${v.name} ${v.voiceURI}`));
+      if (!match) match = pool.find(v => String(v.lang || '').toLowerCase().startsWith(lang.slice(0, 2))) || pool[0];
       if (match) utter.voice = match;
     } catch (e) { /* ignore */ }
     const done = () => {
@@ -200,8 +210,12 @@
     };
     utter.onend = done;
     utter.onerror = done;
-    try { speechSynthesis.speak(utter); }
-    catch (e) { done(); }
+    const start = () => { try { speechSynthesis.speak(utter); } catch (e) { done(); } };
+    if ((speechSynthesis.getVoices() || []).length) start();
+    else {
+      speechSynthesis.addEventListener('voiceschanged', start, { once: true });
+      setTimeout(start, 250);
+    }
   }
   async function agentSpeakPlayAudio(blob, text, face, gen, fallbackOpts) {
     if (gen !== AGENT_SPEAK.gen) return;
@@ -209,9 +223,12 @@
       agentSpeakBrowser(text, face, gen, fallbackOpts);
       return;
     }
-    const url = URL.createObjectURL(blob);
+    const typed = blob.type && /audio\//i.test(blob.type)
+      ? blob
+      : new Blob([await blob.arrayBuffer()], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(typed);
     AGENT_SPEAK.url = url;
-    const audio = new Audio(url);
+    const audio = new Audio();
     AGENT_SPEAK.audio = audio;
     const done = () => {
       if (gen !== AGENT_SPEAK.gen) return;
@@ -227,6 +244,7 @@
       AGENT_SPEAK.audio = null;
       agentSpeakBrowser(text, face, gen, fallbackOpts);
     };
+    audio.src = url;
     try { await audio.play(); }
     catch (e) { agentSpeakBrowser(text, face, gen, fallbackOpts); }
   }

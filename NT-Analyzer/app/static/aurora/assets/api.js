@@ -544,6 +544,8 @@
     domainAgentVoiceReset: (agentId) => send('/api/ai-lab/domain-agents/' + encodeURIComponent(agentId) + '/voice/reset', 'POST', {}),
     domainAgentVoicePreview: (agentId, voice) => orchestratorSpeakPreview(agentId, voice),
     ttsCatalog: (o) => getJSON('/api/ai-lab/tts/catalog', o),
+    ttsOpenAiKeySave: (apiKey) => send('/api/ai-lab/tts/openai-key', 'POST', { action: 'save', api_key: apiKey || '' }),
+    ttsOpenAiKeyClear: () => send('/api/ai-lab/tts/openai-key', 'POST', { action: 'clear' }),
     aiOrchestratorRateMessage: (conversationId, messageId, rating, comment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/rating', 'POST', { conversation_id: conversationId || 'default', rating, feedback_comment: comment || '', feedback_source: 'owner' }),
     aiOrchestratorFulfillMessage: (conversationId, messageId, fulfillment) => send('/api/ai-lab/orchestrator/message/' + encodeURIComponent(messageId) + '/fulfillment', 'POST', { conversation_id: conversationId || 'default', fulfillment: fulfillment || 'done', fulfillment_source: 'owner' }),
     aiOrchestratorConversations: (o) => getJSON('/api/ai-lab/orchestrator/conversations', o),
