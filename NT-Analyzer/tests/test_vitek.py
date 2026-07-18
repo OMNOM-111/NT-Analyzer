@@ -140,7 +140,7 @@ def test_day_week_plan_persists_and_creates_tasks(tmp_path, monkeypatch) -> None
 
 
 def test_scan_deduplicates_incidents_and_separates_quality_errors(tmp_path, monkeypatch) -> None:
-    from app import account_ledger, runtime
+    from app import account_ledger, market_data_ipc, runtime
     from app.ai_lab import domain_agents
 
     _isolate(monkeypatch, tmp_path)
@@ -156,6 +156,7 @@ def test_scan_deduplicates_incidents_and_separates_quality_errors(tmp_path, monk
     monkeypatch.setattr(runtime, "read_heartbeat", lambda: {"fresh": False, "age_sec": 99})
     monkeypatch.setattr(runtime, "read_strategies_raw", lambda: [{"enabled": True}])
     monkeypatch.setattr(runtime, "read_errors", lambda limit=20: [])
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: True)
     monkeypatch.setattr(domain_agents, "strategy_snapshot", lambda period="month": {
         "summary": {
             "technical_failures": 2, "quality_warnings": 4,
@@ -236,6 +237,18 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(vitek, "build_time_windows", lambda: {
         "ok": True, "timezone": vitek.LOCAL_TIMEZONE, "roots": [{"root": "MGC"}],
     })
+    monkeypatch.setattr(vitek, "reconcile_lifecycle", lambda *, apply=False: {
+        "ok": True, "mode": "apply" if apply else "preview", "action_count": 2,
+    })
+    monkeypatch.setattr(vitek, "record_client_telemetry", lambda body: {
+        "kind": str(body.get("kind") or ""), "correlation_id": str(body.get("correlation_id") or ""),
+    })
+    monkeypatch.setattr(vitek, "task_input_choices", lambda task_id: {
+        "ok": True, "task_id": task_id, "choices": [{"profile_id": "MGC-1"}],
+    })
+    monkeypatch.setattr(vitek, "answer_task", lambda task_id, answer: {
+        "task_id": task_id, "status": "planned", "input_answer": answer,
+    })
     with vitek._LOCK:
         doc = vitek._read()
         yes_incident, _ = vitek._record_incident(
@@ -266,6 +279,18 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
         assert code == 200 and current["mode"] == "free"
         code, windows = request("/api/vitek/time-windows")
         assert code == 200 and windows["roots"][0]["root"] == "MGC"
+        code, reconciliation = request("/api/vitek/reconciliation")
+        assert code == 200 and reconciliation["mode"] == "preview"
+        code, applied = request("/api/vitek/reconcile", body={"apply": True})
+        assert code == 200 and applied["mode"] == "apply"
+        code, choices = request("/api/vitek/tasks/T-HTTP-1/choices")
+        assert code == 200 and choices["task_id"] == "T-HTTP-1"
+        code, answered = request("/api/vitek/tasks/T-HTTP-1/answer", body={"answer": "MGC-1"})
+        assert code == 200 and answered["task"]["input_answer"] == "MGC-1"
+        code, telemetry = request("/api/vitek/client-events", body={
+            "kind": "frontend_error", "correlation_id": "CORR-HTTP-1",
+        })
+        assert code == 200 and telemetry["event"]["correlation_id"] == "CORR-HTTP-1"
         code, created = request("/api/vitek/plans", body={
             "scope": "day", "focus": "MGC", "goals": ["Проверить окно 06:00-10:00"],
         })
@@ -415,7 +440,10 @@ def test_event_queue_is_durable_deduplicated_and_wakes_worker(tmp_path, monkeypa
 
 
 def test_connection_outage_stays_single_and_uses_no_model(tmp_path, monkeypatch) -> None:
+    from app import market_data_ipc
+
     _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: True)
     monkeypatch.setattr(vitek, "_notify_event_result", lambda *args, **kwargs: False)
     event = {
         "event_id": "VE-OUTAGE", "event_type": "connection_lost",
@@ -670,7 +698,10 @@ def test_generic_owner_clarification_returns_to_same_agent_and_prompt(tmp_path, 
 
 
 def test_connection_event_and_scan_share_one_owner_incident(tmp_path, monkeypatch) -> None:
+    from app import market_data_ipc
+
     _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: True)
     monkeypatch.setattr(vitek, "_notify_incidents", lambda *args, **kwargs: False)
 
     vitek.emit_event("connection_lost", {"enabled_strategies": 1})
@@ -1394,6 +1425,143 @@ def test_running_events_are_requeued_after_backend_restart(tmp_path, monkeypatch
     assert recovered["status"] == "queued"
     assert "started_at_utc" not in recovered
     assert recovered["recovered_at_utc"]
+
+
+def test_incident_approval_is_idempotent_and_persists_scope(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    with vitek._LOCK:
+        doc = vitek._read()
+        incident, _ = vitek._record_incident(
+            doc, category="runtime_error", key="AUTH-1", severity="error",
+            title="Bridge error", details="evidence", recommendation="audit",
+        )
+        vitek._write(doc)
+
+    first = vitek.decide_incident(
+        incident["incident_id"], "create_task", authorized_by="owner-1",
+        authorization_scope=["audit"],
+    )
+    replay = vitek.decide_incident(
+        incident["incident_id"], "create_task", authorized_by="owner-1",
+        authorization_scope=["audit"],
+    )
+
+    assert replay["idempotent_replay"] is True
+    assert replay["decision_id"] == first["decision_id"]
+    assert replay["task"]["task_id"] == first["task"]["task_id"]
+    assert replay["conversation_id"] == first["conversation_id"]
+    assert first["authorization_status"] == "approved"
+    assert first["authorization_scope"] == ["audit"]
+    assert first["task"]["authorization_status"] == "approved"
+    assert first["task"]["authorization_scope"] == ["audit"]
+    assert len(vitek._read()["tasks"]) == 1
+
+
+def test_session_closed_skips_runtime_recovery_incident(tmp_path, monkeypatch) -> None:
+    from app import market_data_ipc
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: False)
+    result = vitek._analyze_system_event({
+        "event_id": "VE-CLOSED", "event_type": "strategy_disappeared",
+        "payload": {"name": "MNQ Test", "enabled": True},
+    })
+
+    assert result["session_state"] == "SESSION_CLOSED"
+    assert result["watchdog_recovery"] is False
+    assert result["skipped"] is True
+    assert vitek._read()["incidents"] == []
+
+
+def test_reconciliation_previews_then_preserves_history_on_apply(tmp_path, monkeypatch) -> None:
+    from app import market_data_ipc
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(market_data_ipc, "is_market_open", lambda: False)
+    with vitek._LOCK:
+        doc = vitek._read()
+        doc["tasks"] = [{
+            "task_id": "VT-CANON", "incident_id": "VI-RUNTIME", "status": "blocked",
+            "created_at_utc": "2026-07-17T01:00:00Z", "result": "blocked",
+        }, {
+            "task_id": "VT-DUP", "incident_id": "VI-RUNTIME", "status": "planned",
+            "created_at_utc": "2026-07-17T01:00:01Z", "result": "",
+        }, {
+            "task_id": "VT-DONE", "incident_id": "", "status": "completed",
+            "created_at_utc": "2026-07-17T01:00:02Z", "completed_at_utc": "2026-07-17T02:00:00Z",
+            "result": "verified report",
+        }]
+        doc["incidents"] = [{
+            "incident_id": "VI-RUNTIME", "status": "awaiting_decision",
+            "owner_decision_required": True, "context": {"event_type": "strategy_disappeared"},
+        }]
+        vitek._write(doc)
+
+    preview = vitek.reconcile_lifecycle(apply=False)
+    assert preview["counts"]["duplicate_task"] == 1
+    assert preview["counts"]["defer_session_closed"] == 1
+    assert preview["counts"]["backfill_result_id"] == 1
+    assert next(row for row in vitek._read()["tasks"] if row["task_id"] == "VT-DUP")["status"] == "planned"
+
+    applied = vitek.reconcile_lifecycle(apply=True)
+    state = vitek._read()
+    assert applied["history_preserved"] is True
+    assert next(row for row in state["tasks"] if row["task_id"] == "VT-DUP")["status"] == "duplicate"
+    assert next(row for row in state["tasks"] if row["task_id"] == "VT-DONE")["result_id"].startswith("VR-")
+    assert state["incidents"][0]["status"] == "deferred"
+    assert state["history"][-1]["action"] == "lifecycle_reconciled"
+
+
+def test_completed_task_requires_result_and_gets_result_id(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    task = vitek.add_task({"title": "Audit", "status": "planned", "auto_execute": False})
+    try:
+        vitek.update_task(task["task_id"], {"status": "completed"}, notify=False)
+    except vitek.VitekError as exc:
+        assert "проверяемого результата" in str(exc)
+    else:
+        raise AssertionError("completion without a result must fail")
+    completed = vitek.update_task(
+        task["task_id"], {"status": "completed", "result": "report saved"}, notify=False,
+    )
+    assert completed["result_id"].startswith("VR-")
+
+
+def test_waiting_task_offers_saved_strategies_and_resumes_exact_task(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "emit_event", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(jobqueue, "read_strategy_profiles", lambda: {"profiles": [{
+        "profile_id": "P-MNQ", "cell_id": "CELL-7", "name": "MNQ OOS",
+        "strategy_class": "MnqOos", "instrument": "MNQ 09-26",
+        "status": "paper_ready", "latest_experiment_id": "EXP-7",
+    }]})
+    task = vitek.add_task({
+        "title": "Проверь стратегию", "status": "waiting_review",
+        "auto_execute": False, "conversation_id": "C-CHOICE",
+    })
+
+    choices = vitek.task_input_choices(task["task_id"])
+    resumed = vitek.answer_task(task["task_id"], "Проверить CELL-7, только OOS.")
+
+    assert choices["allow_all_saved"] is True
+    assert choices["choices"][0]["cell_id"] == "CELL-7"
+    assert resumed["task_id"] == task["task_id"]
+    assert resumed["owner_answer"] == "Проверить CELL-7, только OOS."
+    assert resumed["status"] == "new"
+
+
+def test_frontend_telemetry_is_bounded_and_deduplicated(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch, tmp_path)
+    first = vitek.record_client_telemetry({
+        "kind": "frontend_error", "route": "/", "message": "boom", "stack": "trace",
+    })
+    replay = vitek.record_client_telemetry({
+        "kind": "frontend_error", "route": "/", "message": "boom", "stack": "trace",
+    })
+    assert replay["telemetry_id"] == first["telemetry_id"]
+    assert replay["deduplicated"] is True
+    assert vitek._read()["client_telemetry"][0]["occurrences"] == 2
 
 
 def test_startup_audit_resolves_stale_connection_question_when_heartbeat_is_fresh(tmp_path, monkeypatch) -> None:

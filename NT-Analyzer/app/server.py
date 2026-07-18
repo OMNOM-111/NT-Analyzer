@@ -2274,6 +2274,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, vitek.build_time_windows())
             return
 
+        if path == "/api/vitek/reconciliation":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            self._json(HTTPStatus.OK, vitek.reconcile_lifecycle(apply=False))
+            return
+
+        vitek_get_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+        if (
+            len(vitek_get_parts) == 5 and vitek_get_parts[:3] == ["api", "vitek", "tasks"]
+            and vitek_get_parts[4] == "choices"
+        ):
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            try:
+                self._json(HTTPStatus.OK, vitek.task_input_choices(vitek_get_parts[3]))
+            except vitek.VitekError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
         if path == "/api/notifications":
             context = getattr(self, "_remote_context", None) or {}
             if not context.get("is_owner"):
@@ -6273,6 +6296,11 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             if body is None:
                 return
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            conversation_scope = self._ai_conversation_scope()
             try:
                 vitek_parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
                 if path == "/api/vitek/scan":
@@ -6285,6 +6313,15 @@ class Handler(BaseHTTPRequestHandler):
                     )}
                 elif path == "/api/vitek/resume":
                     out = {"ok": True, "rest": vitek.resume()}
+                elif path == "/api/vitek/reconcile":
+                    out = vitek.reconcile_lifecycle(apply=bool(body.get("apply", False)))
+                elif path == "/api/vitek/client-events":
+                    out = {"ok": True, "event": vitek.record_client_telemetry(body)}
+                elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "tasks"]
+                      and vitek_parts[4] == "answer"):
+                    out = {"ok": True, "task": vitek.answer_task(
+                        vitek_parts[3], str(body.get("answer") or ""),
+                    )}
                 elif path == "/api/vitek/tasks":
                     out = {"ok": True, "task": vitek.add_task(body)}
                 elif path == "/api/vitek/events":
@@ -6302,7 +6339,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif (len(vitek_parts) == 5 and vitek_parts[:3] == ["api", "vitek", "incidents"]
                       and vitek_parts[4] == "decision"):
                     out = {"ok": True, "incident": vitek.decide_incident(
-                        vitek_parts[3], str(body.get("decision") or ""), note=str(body.get("note") or ""),
+                        vitek_parts[3], str(body.get("decision") or ""),
+                        note=str(body.get("note") or ""),
+                        authorized_by=str(context.get("user_id") or "owner"),
+                        authorization_scope=body.get("authorization_scope"),
+                        conversation_scope=conversation_scope,
                     )}
                 else:
                     self._err(HTTPStatus.NOT_FOUND, f"no Vitek route: {path}")

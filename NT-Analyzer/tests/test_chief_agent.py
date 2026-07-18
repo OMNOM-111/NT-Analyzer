@@ -2359,3 +2359,44 @@ def test_internal_task_execution_does_not_forge_owner_message(tmp_path, monkeypa
     assert result["model"] == "deterministic dispatcher"
     assert after == before
     assert all("Покажи статус" not in str(row.get("content") or "") for row in after)
+
+
+def test_internal_task_uses_persisted_authorization_after_owner_message_changes(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_direct_plan", lambda instruction: {
+        "reply": "Проверяю сохранённые результаты.", "confidence": 1.0, "doubts": [],
+        "actions": [{"name": "audit_backtests", "arguments": {}}],
+    })
+    captured = []
+
+    def fake_execute(action, owner_message="", conversation_id="default", *, context_authorized=False, scope=None):
+        captured.append({"name": action["name"], "authorized": context_authorized})
+        return {"name": action["name"], "status": "completed", "summary": "audit complete"}
+
+    monkeypatch.setattr(chief_agent, "_execute_action", fake_execute)
+    result = chief_agent.execute_internal_task({
+        "title": "Проверь сохранённые стратегии", "assigned_agent": "tolik",
+        "authorization_status": "approved", "authorization_scope": ["audit"],
+    }, conversation_id="C-AUTH", agent="tolik")
+
+    assert result["ok"] is True
+    assert captured == [{"name": "audit_backtests", "authorized": True}]
+
+
+def test_internal_strategy_task_cannot_be_replaced_by_unrequested_lm_studio_recovery(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_direct_plan", lambda instruction: {
+        "reply": "Нужно восстановить LM Studio.", "confidence": 1.0, "doubts": [],
+        "actions": [{"name": "ensure_local_models", "arguments": {}}],
+    })
+    captured = []
+    monkeypatch.setattr(chief_agent, "_execute_action", lambda *args, **kwargs: captured.append(args) or {
+        "name": "ensure_local_models", "status": "completed",
+    })
+
+    chief_agent.execute_internal_task(
+        {"title": "Проверь стратегию MNQ", "assigned_agent": "tolik"},
+        conversation_id="C-NO-LM-SCOPE", agent="tolik",
+    )
+
+    assert captured == []

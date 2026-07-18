@@ -26,9 +26,9 @@ UI.ready(async function () {
     } catch (e) { box.textContent = 'Аналитическая сводка временно недоступна: ' + (e.message || e); }
   }
 
-  const ACTIVE_TASKS = new Set(['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked']);
+  const ACTIVE_TASKS = new Set(['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'waiting_for_input', 'blocked', 'stalled']);
   const OPEN_INCIDENTS = new Set(['awaiting_decision', 'acknowledged', 'in_progress']);
-  const MODE_LABELS = { free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', resting: 'отдыхает' };
+  const MODE_LABELS = { free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', needs_attention: 'нужно внимание', resting: 'отдыхает' };
   const SEVERITY_LABELS = { critical: 'критично', error: 'ошибка', warning: 'предупреждение', task: 'задача', info: 'информация' };
 
   function renderVitek() {
@@ -46,7 +46,7 @@ UI.ready(async function () {
     UI.qs('#vitek-kpis').innerHTML = [
       { label: 'Режим', val: MODE_LABELS[mode] || mode, cls: mode === 'awaiting_decision' ? 'warn' : mode === 'free' ? 'pos' : 'info', icon: 'ai', foot: 'дежурный контроль' },
       { label: 'Нужен ваш ответ', val: incidents.length, cls: incidents.length ? 'warn' : 'pos', icon: 'alert', foot: 'только важные решения' },
-      { label: 'Задачи', val: tasks.length, cls: tasks.length ? 'info' : 'pos', icon: 'check', foot: 'активные' },
+      { label: 'Выполняются / в очереди', val: Number(vitekDoc.task_counts && vitekDoc.task_counts.running || 0), cls: Number(vitekDoc.task_counts && vitekDoc.task_counts.running || 0) ? 'info' : 'pos', icon: 'check', foot: `ждут: ${Number(vitekDoc.task_counts && vitekDoc.task_counts.waiting_for_input || 0)} · blocked: ${Number(vitekDoc.task_counts && vitekDoc.task_counts.blocked_total || 0)}` },
       { label: 'Фоновый запуск', val: background.installed ? 'установлен' : 'не установлен', cls: background.installed ? 'pos' : 'warn', icon: 'status', foot: background.current_process_background ? 'сейчас работает фоном' : 'watchdog при входе в Windows' },
       { label: 'Агенты работают', val: agents.filter(row => row.working).length, cls: agents.some(row => row.working) ? 'info' : 'pos', icon: 'telegram', foot: `параллельно до ${Number(eventEngine.parallel_limit || 6)}` },
     ].map(k => `<div class="kpi ${k.cls}"><div class="kpi-top"><span class="kpi-label">${k.label}</span><span class="kpi-ic">${UI.icon(k.icon)}</span></div><div class="kpi-val sm">${UI.esc(String(k.val))}</div><div class="kpi-foot">${UI.esc(k.foot)}</div></div>`).join('');
@@ -55,16 +55,16 @@ UI.ready(async function () {
       const goals = active && Array.isArray(plan.goals) ? plan.goals : [];
       return `<div class="kpi ${active ? 'info' : ''}"><div class="kpi-top"><span class="kpi-label">План на ${label}</span><button class="btn sm ghost vitek-plan" data-scope="${scope}">${active ? 'Изменить' : 'Задать'}</button></div><div class="kpi-val sm">${UI.esc(active && plan.focus ? plan.focus : 'не задан')}</div><div class="kpi-foot">${goals.length ? UI.esc(goals.join(' · ')) : 'Витёк создаст задачи по каждой цели'}</div></div>`;
     }).join('');
-    UI.qs('#vitek-incidents').innerHTML = incidents.length ? incidents.slice(0, 12).map(row => { const brief = row.owner_brief || {}; return `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(brief.fact || 'Нужно ваше решение.')}</div><div class="row-sub">${UI.esc(brief.recommendation || '')}</div><div style="margin-top:7px"><strong>${UI.esc(brief.question || 'Продолжать?')}</strong></div><div class="flex wrap gap-sm" style="margin-top:7px"><button class="btn sm primary vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="create_task">Да</button><button class="btn sm ghost vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="ignore">Нет</button></div></div></div>`; }).join('') : '<div class="empty-state">Вопросов, требующих вашего решения, нет.</div>';
-    UI.qs('#vitek-tasks').innerHTML = tasks.length ? tasks.slice(0, 12).map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.owner_title || row.title || 'Задача без названия')}</div><div class="row-sub">${row.assigned_agent ? `В работе у: ${UI.esc(({tolik:'Толик',marina:'Марина',nikita:'Никита',ivan:'Иван',orchestrator:'Управляющий'})[row.assigned_agent] || row.assigned_agent)}` : 'Управляющий назначает исполнителя'}${row.due_at_utc ? ` · срок ${new Date(row.due_at_utc).toLocaleString('ru-RU')}` : ''}</div></div><button class="btn sm vitek-task-complete" data-id="${UI.esc(row.task_id)}">Готово</button></div>`).join('') : '<div class="empty-state">Активных задач нет.</div>';
+    UI.qs('#vitek-incidents').innerHTML = incidents.length ? incidents.slice(0, 12).map(row => { const brief = row.owner_brief || {}; return `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(brief.fact || 'Нужно ваше решение.')}</div><div class="row-sub">${UI.esc(brief.recommendation || '')}</div><div class="row-sub mono">${UI.esc(row.incident_id)} · ${UI.esc(row.severity || 'warning')} · повторов ${Number(row.occurrences || 1)}</div><details style="margin-top:7px"><summary>Подробнее и доказательства</summary><div class="row-sub" style="white-space:pre-wrap;margin-top:6px">${UI.esc(row.details || 'Доказательства не сохранены.')}</div></details><div style="margin-top:7px"><strong>${UI.esc(brief.question || 'Продолжать?')}</strong></div><div class="row-sub">Разрешение: только проверка; исправление, restart и live-включение согласуются отдельно.</div><div class="flex wrap gap-sm" style="margin-top:7px"><button class="btn sm primary vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="create_task">Да — проверить</button><button class="btn sm ghost vitek-decision" data-id="${UI.esc(row.incident_id)}" data-decision="ignore">Нет</button></div></div></div>`; }).join('') : '<div class="empty-state">Вопросов, требующих вашего решения, нет.</div>';
+    UI.qs('#vitek-tasks').innerHTML = tasks.length ? tasks.slice(0, 12).map(row => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(row.owner_title || row.title || 'Задача без названия')}</div><div class="row-sub mono">${UI.esc(row.task_id || '')} · ${UI.esc(row.canonical_status || row.status || '')}</div><div class="row-sub">${row.assigned_agent ? `Исполнитель: ${UI.esc(({tolik:'Толик',marina:'Марина',nikita:'Никита',ivan:'Иван',orchestrator:'Управляющий'})[row.assigned_agent] || row.assigned_agent)}` : 'Управляющий назначает исполнителя'}${row.due_at_utc ? ` · срок ${new Date(row.due_at_utc).toLocaleString('ru-RU')}` : ''}</div></div><button class="btn sm ghost vitek-task-cancel" data-id="${UI.esc(row.task_id)}" data-incident-id="${UI.esc(row.incident_id || '')}">Отменить</button></div>`).join('') : '<div class="empty-state">Активных задач нет.</div>';
     UI.qs('#vitek-rest').hidden = mode === 'resting';
     UI.qs('#vitek-resume').hidden = mode !== 'resting';
     UI.qsa('.vitek-decision').forEach(button => { button.onclick = async () => {
       try { await API.http.vitekIncidentDecision(button.dataset.id, button.dataset.decision, 'Решение принято в приложении'); UI.toast('Решение передано Витьку'); await loadVitek(); }
       catch (error) { UI.reportError(error); }
     }; });
-    UI.qsa('.vitek-task-complete').forEach(button => { button.onclick = async () => {
-      try { await API.http.vitekUpdateTask(button.dataset.id, { status: 'completed', result: 'Отмечено выполненным владельцем в приложении' }); UI.toast('Задача завершена'); await loadVitek(); }
+    UI.qsa('.vitek-task-cancel').forEach(button => { button.onclick = async () => {
+      try { if (button.dataset.incidentId) await API.http.vitekIncidentDecision(button.dataset.incidentId, 'ignore', 'Владелец отменил ранее выданное разрешение.'); else await API.http.vitekUpdateTask(button.dataset.id, { status: 'cancelled', result: 'Отменено владельцем.' }); UI.toast('Поручение отменено, история сохранена'); await loadVitek(); }
       catch (error) { UI.reportError(error); }
     }; });
     UI.qsa('.vitek-plan').forEach(button => { button.onclick = async () => {

@@ -4192,16 +4192,48 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
                 "confidence": 0.0, "doubts": [], "actions": [],
             }
     raw_actions = [row for row in (plan.get("actions") or []) if isinstance(row, dict)]
+    if not any(token in instruction.lower() for token in ("lm studio", "лм студ", "локальн", "local model")):
+        # Infrastructure recovery may support a task, but it may not replace a
+        # strategy/account assignment that never mentioned LM Studio.
+        raw_actions = [row for row in raw_actions if str(row.get("name") or "") != "ensure_local_models"]
     if float(plan.get("confidence") or 0) < 0.45:
         raw_actions = []
-    context_authorized = bool(
+    continuation_authorized = bool(
         isinstance(task.get("approved_continuation"), dict)
         and task["approved_continuation"].get("status") == "approved"
     )
+
+    def persisted_authorization_allows(action_name: str) -> bool:
+        if str(task.get("authorization_status") or "") != "approved":
+            return False
+        raw_scopes = task.get("authorization_scope") or []
+        if not isinstance(raw_scopes, (list, tuple, set)):
+            raw_scopes = re.split(r"[,\s]+", str(raw_scopes))
+        scopes = {str(value or "").strip().lower() for value in raw_scopes}
+        required = {
+            "audit_backtests": "audit", "start_backtest": "audit",
+            "generate_report": "audit", "deliver_report": "audit",
+            "request_performance_report": "audit", "request_accounting_report": "audit",
+            "request_strategy_report": "audit", "request_news_report": "audit",
+            "chart_snapshot": "audit", "chart_open": "audit",
+            "update_research": "safe_fix", "create_cells": "safe_fix",
+            "comment_strategy": "safe_fix", "save_rule": "safe_fix",
+            "chart_draw": "safe_fix", "chart_clear": "safe_fix",
+            "reconnect_runtime_connection": "restart",
+            "pause_research": "restart", "resume_research": "restart",
+            "stop_research": "restart", "schedule_research_stop": "restart",
+            "propose_strategy_control": "live_enable",
+        }.get(str(action_name or ""))
+        return bool(required and required in scopes)
+
     action_results = [
         _execute_action(
             row, instruction, cid,
-            context_authorized=context_authorized, scope=scope,
+            context_authorized=(
+                continuation_authorized
+                or persisted_authorization_allows(str(row.get("name") or ""))
+            ),
+            scope=scope,
         )
         for row in raw_actions[:5]
     ]
@@ -4211,8 +4243,20 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
         reply = "\n\n".join([reply, *summaries]) if reply else "\n\n".join(summaries)
     failures = [row for row in action_results if row.get("status") in {"error", "blocked"}]
     if failures:
-        reasons = [str(row.get("error") or row.get("reason") or "неизвестная ошибка") for row in failures]
-        reply = (reply + "\n\nНе выполнено: " + "; ".join(reasons) + ".").strip()
+        reasons = []
+        for row in failures:
+            reason = str(row.get("error") or row.get("reason") or "неизвестная ошибка")
+            label = _ACTION_LABELS_RU.get(str(row.get("name") or ""), "запрошенное действие")
+            if reason == "current_message_does_not_authorize_action":
+                reason = f"для действия «{label}» нет сохранённого разрешения нужного уровня"
+            elif reason == "workspace_role_read_only":
+                reason = "активная рабочая область доступна только для просмотра"
+            elif reason == "capability_not_allowed":
+                reason = f"действие «{label}» запрещено правилами безопасности"
+            reasons.append(reason)
+        # A model draft may say that work started before the backend guard has
+        # returned.  On a terminal guard result discard that draft completely.
+        reply = "Поручение не запущено: " + "; ".join(dict.fromkeys(reasons)) + "."
     return {
         "ok": not bool(failures), "reply": reply,
         "model": model, "provider": provider, "complexity": complexity,

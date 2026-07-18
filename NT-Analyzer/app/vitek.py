@@ -28,15 +28,23 @@ ROLE = "правая рука руководителя"
 FORMAL_ROLE = "личный помощник и правая рука руководителя"
 INTERNAL_ROLE = "руководитель аппарата и дежурный контролёр"
 LOCAL_TIMEZONE = "America/Los_Angeles"
+PROCESS_INSTANCE_ID = "VP-" + uuid.uuid4().hex[:12].upper()
+PROCESS_STARTED_AT_UTC = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 SESSION_START_MINUTE = 15 * 60
 SESSION_END_MINUTE = (24 + 14) * 60
 APPROVED_PROFILE_STATUSES = {"ready", "paper_ready"}
 ACTIVE_TASK_STATUSES = {
-    "new", "awaiting_decision", "planned", "in_progress", "waiting_review", "blocked",
+    "new", "awaiting_decision", "planned", "in_progress", "waiting_review", "waiting_for_input", "blocked", "stalled",
 }
+RUNNING_TASK_STATUSES = {"new", "planned", "in_progress"}
+WAITING_TASK_STATUSES = {"awaiting_decision", "waiting_review", "waiting_for_input"}
 OPEN_INCIDENT_STATUSES = {"awaiting_decision", "acknowledged", "in_progress"}
-TASK_STATUSES = ACTIVE_TASK_STATUSES | {"completed", "cancelled", "deferred"}
+TASK_STATUSES = ACTIVE_TASK_STATUSES | {
+    "completed", "failed", "cancelled", "deferred", "obsolete", "superseded", "duplicate", "archived",
+}
 INCIDENT_DECISIONS = {"create_task", "acknowledge", "resolve", "ignore"}
+AUTHORIZATION_STATUSES = {"pending", "approved", "rejected", "revoked"}
+AUTHORIZATION_SCOPES = {"audit", "safe_fix", "restart", "live_enable"}
 SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "task": 3, "info": 4}
 OWNER_DECISION_CATEGORIES = {
     "runtime_connection", "strategy_lifecycle", "financial_integrity",
@@ -56,6 +64,8 @@ _WAKE = threading.Event()
 _AGENT_RUN_LOCK = threading.RLock()
 _ACTIVE_AGENT_RUNS: Dict[str, Dict[str, Any]] = {}
 MAX_PARALLEL_AGENTS = 6
+INCIDENT_DECISION_TTL_DAYS = 7
+TERMINAL_TASK_ARCHIVE_DAYS = 30
 AGENT_LABELS = {
     "vitek": "Витёк", "manager": "Управляющий", "marina": "Марина",
     "tolik": "Толик", "nikita": "Никита", "ivan": "Иван",
@@ -137,9 +147,24 @@ def _parse_time(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _authorization_scopes(value: Any, *, default: Optional[Iterable[str]] = None) -> List[str]:
+    raw = value if isinstance(value, (list, tuple, set)) else re.split(r"[,\s]+", str(value or ""))
+    scopes: List[str] = []
+    for item in raw or list(default or []):
+        scope = str(item or "").strip().lower()
+        if scope in AUTHORIZATION_SCOPES and scope not in scopes:
+            scopes.append(scope)
+    return scopes
+
+
+def _decision_id(incident_id: str, version: int, decision: str) -> str:
+    material = f"{incident_id}|{int(version)}|{decision}".encode("utf-8")
+    return "VD-" + hashlib.sha256(material).hexdigest()[:16].upper()
+
+
 def _default_state() -> Dict[str, Any]:
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "name": NAME,
         "role": ROLE,
         "tasks": [],
@@ -150,6 +175,7 @@ def _default_state() -> Dict[str, Any]:
         "event_revision": 0,
         "bridge_event_cursor": 0,
         "history": [],
+        "client_telemetry": [],
         "rest": {"active": False, "until_utc": "", "reason": ""},
         "last_activity_state": "unknown",
         "last_prompted_incident_id": "",
@@ -160,6 +186,7 @@ def _default_state() -> Dict[str, Any]:
         },
         "last_scan_at_utc": "",
         "last_scan_error": "",
+        "last_recovery": {},
     }
 
 
@@ -177,15 +204,30 @@ def _read() -> Dict[str, Any]:
     stored = _read_json(_state_path())
     doc = _default_state()
     doc.update(stored)
-    doc["schema_version"] = max(4, int(doc.get("schema_version") or 0))
-    for key in ("tasks", "incidents", "history", "events", "event_history"):
+    doc["schema_version"] = max(5, int(doc.get("schema_version") or 0))
+    for key in ("tasks", "incidents", "history", "events", "event_history", "client_telemetry"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
     for incident in doc.get("incidents") or []:
-        if isinstance(incident, dict) and "owner_decision_required" not in incident:
+        if not isinstance(incident, dict):
+            continue
+        if "owner_decision_required" not in incident:
             incident["owner_decision_required"] = _requires_owner_decision(
                 str(incident.get("category") or ""), incident.get("context") if isinstance(incident.get("context"), dict) else None,
             )
+        incident.setdefault("incident_version", 1)
+        incident.setdefault("dedupe_key", str(incident.get("fingerprint") or incident.get("incident_id") or ""))
+        incident.setdefault("authorization_status", (
+            "approved" if incident.get("decision") == "create_task" else
+            "rejected" if incident.get("decision") == "ignore" else "pending"
+        ))
+        incident.setdefault("authorization_scope", ["audit"] if incident.get("decision") == "create_task" else [])
+    for task in doc.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        task.setdefault("mission_id", str(task.get("task_id") or ""))
+        task.setdefault("authorization_status", "pending")
+        task.setdefault("authorization_scope", [])
     if not isinstance(doc.get("rest"), dict):
         doc["rest"] = {"active": False, "until_utc": "", "reason": ""}
     if not isinstance(doc.get("plans"), dict):
@@ -219,6 +261,39 @@ def _append_history(doc: Dict[str, Any], action: str, **payload: Any) -> None:
     doc["history"] = rows[-500:]
 
 
+def record_client_telemetry(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist bounded frontend crash/reconnect evidence for owner diagnostics."""
+    kind = str(payload.get("kind") or "frontend_event").strip().lower()[:60]
+    if kind not in {"frontend_error", "unhandled_rejection", "connection_lost", "connection_restored"}:
+        raise VitekError("Неизвестный тип frontend telemetry.")
+    row = {
+        "telemetry_id": "VFT-" + uuid.uuid4().hex[:12].upper(),
+        "kind": kind, "at_utc": _now(),
+        "route": str(payload.get("route") or "")[:500],
+        "message": str(payload.get("message") or "")[:2000],
+        "stack": str(payload.get("stack") or "")[:6000],
+        "correlation_id": str(payload.get("correlation_id") or "")[:120],
+        "app_version": str(payload.get("app_version") or "")[:120],
+        "backend_instance_id": str(payload.get("backend_instance_id") or "")[:80],
+    }
+    with _LOCK:
+        doc = _read()
+        signature = hashlib.sha256(
+            f"{kind}|{row['route']}|{row['message']}|{row['stack'][:500]}".encode("utf-8")
+        ).hexdigest()[:20]
+        previous = next((item for item in reversed(doc.get("client_telemetry") or [])
+                         if item.get("signature") == signature), None)
+        if previous is not None:
+            previous["last_seen_at_utc"] = row["at_utc"]
+            previous["occurrences"] = int(previous.get("occurrences") or 1) + 1
+            _write(doc)
+            return {**dict(previous), "deduplicated": True}
+        row.update({"signature": signature, "occurrences": 1})
+        doc["client_telemetry"] = [*list(doc.get("client_telemetry") or []), row][-200:]
+        _write(doc)
+    return row
+
+
 def _rest_state(doc: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, Any]:
     current = now or _now_dt()
     rest = dict(doc.get("rest") or {})
@@ -232,12 +307,27 @@ def _rest_state(doc: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[
 
 
 def _task_counts(tasks: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+    rows = list(tasks)
     counts: Dict[str, int] = {}
-    for row in tasks:
+    for row in rows:
         key = str(row.get("status") or "new")
         counts[key] = counts.get(key, 0) + 1
-    counts["active"] = sum(1 for row in tasks if str(row.get("status") or "new") in ACTIVE_TASK_STATUSES)
+    counts["running"] = sum(1 for row in rows if str(row.get("status") or "new") in RUNNING_TASK_STATUSES)
+    counts["waiting_for_input"] = sum(1 for row in rows if str(row.get("status") or "") in WAITING_TASK_STATUSES)
+    counts["blocked_total"] = sum(1 for row in rows if str(row.get("status") or "") == "blocked")
+    # ``active`` remains for API compatibility, but no longer counts blocked or
+    # waiting work as if an agent were executing it.
+    counts["active"] = counts["running"]
     return counts
+
+
+def _canonical_task_status(task: Dict[str, Any]) -> str:
+    value = str(task.get("status") or "new")
+    return {
+        "new": "queued", "planned": "queued", "awaiting_decision": "waiting_for_input",
+        "waiting_review": "waiting_for_input", "in_progress": "running",
+        "deferred": "blocked",
+    }.get(value, value)
 
 
 def _incident_counts(incidents: Iterable[Dict[str, Any]]) -> Dict[str, int]:
@@ -307,6 +397,187 @@ def _deduplicate_active_incident_tasks() -> int:
         return changed
 
 
+def reconcile_lifecycle(*, apply: bool = False, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Preview or apply safe lifecycle repairs without deleting audit history."""
+    current = (now or _now_dt()).astimezone(timezone.utc)
+    with _LOCK:
+        doc = _read()
+        tasks = [row for row in doc.get("tasks") or [] if isinstance(row, dict)]
+        incidents = [row for row in doc.get("incidents") or [] if isinstance(row, dict)]
+        actions: List[Dict[str, Any]] = []
+
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for task in tasks:
+            incident_id = str(task.get("incident_id") or "")
+            if incident_id and str(task.get("status") or "") in ACTIVE_TASK_STATUSES:
+                grouped.setdefault(incident_id, []).append(task)
+        for incident_id, rows in grouped.items():
+            if len(rows) < 2:
+                continue
+            rows.sort(key=lambda row: (
+                0 if str(row.get("status") or "") == "in_progress" else 1,
+                str(row.get("created_at_utc") or ""),
+            ))
+            canonical = rows[0]
+            for duplicate in rows[1:]:
+                actions.append({
+                    "kind": "duplicate_task", "task_id": duplicate.get("task_id"),
+                    "incident_id": incident_id, "canonical_task_id": canonical.get("task_id"),
+                })
+                if apply:
+                    duplicate.update({
+                        "status": "duplicate", "duplicate_of": canonical.get("task_id"),
+                        "archived_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+
+        incident_ids = {str(row.get("incident_id") or "") for row in incidents}
+        task_ids = {str(row.get("task_id") or "") for row in tasks}
+        for task in tasks:
+            status_value = str(task.get("status") or "")
+            linked_incident = str(task.get("incident_id") or "")
+            if linked_incident and linked_incident not in incident_ids:
+                actions.append({"kind": "orphan_task", "task_id": task.get("task_id"), "incident_id": linked_incident})
+            if status_value == "in_progress":
+                heartbeat = _parse_time(task.get("execution_heartbeat_at_utc") or task.get("updated_at_utc"))
+                has_external_work = bool(
+                    task.get("execution_mission_id") or task.get("execution_job_ids")
+                    or task.get("execution_command_id")
+                )
+                if heartbeat and not has_external_work and (current - heartbeat).total_seconds() > 30 * 60:
+                    actions.append({"kind": "stalled_task", "task_id": task.get("task_id"), "last_heartbeat_at_utc": heartbeat.isoformat()})
+                    if apply:
+                        task.update({
+                            "status": "stalled", "blocking_reason": "heartbeat_missing",
+                            "stalled_at_utc": _now(), "updated_at_utc": _now(),
+                        })
+            result_text = str(task.get("result") or "")
+            created_at = _parse_time(task.get("created_at_utc"))
+            if status_value == "blocked" and "current_message_does_not_authorize_action" in result_text:
+                actions.append({"kind": "retire_legacy_guard_failure", "task_id": task.get("task_id")})
+                if apply:
+                    task.update({
+                        "status": "failed", "blocking_reason": "legacy_authorization_not_persisted",
+                        "failed_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+                status_value = "failed"
+            if (
+                status_value == "waiting_review"
+                and "не вернул проверяемый план" in result_text.lower()
+            ):
+                actions.append({"kind": "retire_executor_plan_failure", "task_id": task.get("task_id")})
+                if apply:
+                    task.update({
+                        "status": "failed", "blocking_reason": "executor_plan_missing",
+                        "failed_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+                status_value = "failed"
+            if (
+                status_value == "planned" and not bool(task.get("auto_execute")) and created_at
+                and (current - created_at).total_seconds() > 30 * 60
+            ):
+                actions.append({"kind": "obsolete_unactivated_task", "task_id": task.get("task_id")})
+                if apply:
+                    task.update({
+                        "status": "obsolete", "obsolete_reason": "activation_not_confirmed",
+                        "obsolete_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+                status_value = "obsolete"
+            if (
+                status_value in {"new", "planned"} and bool(task.get("auto_execute")) and created_at
+                and (current - created_at).total_seconds() > 24 * 3600
+                and not task.get("execution_job_ids") and not task.get("execution_mission_id")
+            ):
+                actions.append({"kind": "obsolete_stale_queued_task", "task_id": task.get("task_id")})
+                if apply:
+                    task.update({
+                        "status": "obsolete", "obsolete_reason": "queued_ttl_expired",
+                        "obsolete_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+                status_value = "obsolete"
+            if status_value == "blocked" and not task.get("blocking_reason"):
+                actions.append({"kind": "missing_blocking_reason", "task_id": task.get("task_id")})
+                if apply:
+                    task["blocking_reason"] = str(task.get("execution_error") or "execution_blocked")[:500]
+            if status_value == "completed" and not task.get("result_id"):
+                if str(task.get("result") or "").strip():
+                    actions.append({"kind": "backfill_result_id", "task_id": task.get("task_id")})
+                    if apply:
+                        material = f"{task.get('task_id')}|{task.get('result')}|{task.get('completed_at_utc')}"
+                        task["result_id"] = "VR-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper()
+                else:
+                    actions.append({"kind": "completed_without_result", "task_id": task.get("task_id")})
+                    if apply:
+                        task.update({
+                            "status": "blocked", "blocking_reason": "completion_requires_verifiable_result",
+                            "updated_at_utc": _now(),
+                        })
+                    status_value = "blocked"
+            terminal_at = _parse_time(
+                task.get("completed_at_utc") or task.get("failed_at_utc")
+                or task.get("cancelled_at_utc") or task.get("updated_at_utc")
+            )
+            if (
+                status_value in {"completed", "failed", "cancelled", "obsolete", "superseded", "duplicate"}
+                and terminal_at and (current - terminal_at).total_seconds() > TERMINAL_TASK_ARCHIVE_DAYS * 86400
+            ):
+                actions.append({"kind": "archive_terminal_task", "task_id": task.get("task_id"), "previous_status": status_value})
+                if apply:
+                    task.update({
+                        "status": "archived", "archived_from_status": status_value,
+                        "archived_at_utc": _now(), "updated_at_utc": _now(),
+                    })
+
+        try:
+            from . import market_data_ipc
+            session_open = bool(market_data_ipc.is_market_open())
+        except Exception:
+            session_open = True
+        for incident in incidents:
+            linked_task_id = str(incident.get("task_id") or "")
+            if linked_task_id and linked_task_id not in task_ids:
+                actions.append({"kind": "ghost_task_link", "incident_id": incident.get("incident_id"), "task_id": linked_task_id})
+                if apply:
+                    incident["task_id"] = ""
+            context = incident.get("context") if isinstance(incident.get("context"), dict) else {}
+            event_type = str(context.get("event_type") or "")
+            first_seen = _parse_time(incident.get("first_seen_at_utc"))
+            if (
+                str(incident.get("status") or "") == "awaiting_decision" and first_seen
+                and (current - first_seen).total_seconds() > INCIDENT_DECISION_TTL_DAYS * 86400
+            ):
+                actions.append({"kind": "obsolete_expired_incident", "incident_id": incident.get("incident_id")})
+                if apply:
+                    incident.update({
+                        "status": "obsolete", "owner_decision_required": False,
+                        "obsolete_reason": "decision_ttl_expired", "obsolete_at_utc": _now(),
+                    })
+                continue
+            if (
+                not session_open and event_type in {"strategy_stopped", "strategy_disappeared"}
+                and str(incident.get("status") or "") in OPEN_INCIDENT_STATUSES
+            ):
+                actions.append({"kind": "defer_session_closed", "incident_id": incident.get("incident_id")})
+                if apply:
+                    incident.update({
+                        "status": "deferred", "owner_decision_required": False,
+                        "deferred_reason": "SESSION_CLOSED", "deferred_at_utc": _now(),
+                    })
+
+        counts: Dict[str, int] = {}
+        for action in actions:
+            kind = str(action.get("kind") or "unknown")
+            counts[kind] = counts.get(kind, 0) + 1
+        if apply and actions:
+            _append_history(doc, "lifecycle_reconciled", action_count=len(actions), counts=counts)
+            _write(doc)
+        return {
+            "ok": True, "mode": "apply" if apply else "preview",
+            "generated_at_utc": _now(), "market_session_state": "OPEN" if session_open else "SESSION_CLOSED",
+            "action_count": len(actions), "counts": counts, "actions": actions[:500],
+            "history_preserved": True,
+        }
+
+
 def _background_status() -> Dict[str, Any]:
     marker = _read_json(_service_marker_path())
     return {
@@ -361,6 +632,7 @@ def status() -> Dict[str, Any]:
         tasks = [dict(row) for row in doc.get("tasks") or [] if isinstance(row, dict)]
         for task in tasks:
             task["owner_title"] = _executive_task_title(task)
+            task["canonical_status"] = _canonical_task_status(task)
         local_now = _now_dt().astimezone(ZoneInfo(LOCAL_TIMEZONE))
         explicit_day = plans.get("day") if isinstance(plans.get("day"), dict) else {}
         if explicit_day.get("status") != "active":
@@ -370,16 +642,25 @@ def status() -> Dict[str, Any]:
                 if created and created.astimezone(ZoneInfo(LOCAL_TIMEZONE)).date() == local_now.date():
                     today_tasks.append(task)
             if today_tasks:
-                active_today = [row for row in today_tasks if str(row.get("status") or "") in ACTIVE_TASK_STATUSES]
+                running_today = [row for row in today_tasks if str(row.get("status") or "") in RUNNING_TASK_STATUSES]
+                attention_today = [row for row in today_tasks if str(row.get("status") or "") in WAITING_TASK_STATUSES | {"blocked", "stalled"}]
+                grouped_titles: Dict[str, int] = {}
+                for row in today_tasks:
+                    title = _executive_task_title(row)
+                    grouped_titles[title] = grouped_titles.get(title, 0) + 1
+                goals = [
+                    f"{title} · {count}" if count > 1 else title
+                    for title, count in list(grouped_titles.items())[:12]
+                ]
                 plans["day"] = {
                     "plan_id": "auto-day-" + local_now.date().isoformat(),
                     "scope": "day", "scope_label": "сегодня", "status": "active",
                     "auto_generated": True,
                     "focus": (
-                        f"Выполнить поручения на сегодня: {len(active_today)} в работе"
-                        if active_today else f"Поручения на сегодня завершены: {len(today_tasks)}"
+                        f"В очереди/работе: {len(running_today)}; требуют внимания: {len(attention_today)}"
+                        if running_today or attention_today else f"Поручения на сегодня завершены: {len(today_tasks)}"
                     ),
-                    "goals": [_executive_task_title(row) for row in today_tasks[:12]],
+                    "goals": goals,
                     "task_ids": [str(row.get("task_id") or "") for row in today_tasks],
                     "created_at_utc": min(str(row.get("created_at_utc") or "") for row in today_tasks),
                 }
@@ -389,15 +670,23 @@ def status() -> Dict[str, Any]:
                 incident["owner_brief"] = _owner_incident_brief(incident)
         task_counts = _task_counts(tasks)
         incident_counts = _incident_counts(incidents)
+        try:
+            from . import market_data_ipc
+            market_session_state = "OPEN" if market_data_ipc.is_market_open() else "SESSION_CLOSED"
+        except Exception:
+            market_session_state = "UNKNOWN"
         if rest.get("active"):
             mode = "resting"
             message = f"Отдыхаю до {rest.get('until_utc') or 'отмены'}. Критические события контролирую."
         elif incident_counts.get("awaiting_owner"):
             mode = "awaiting_decision"
             message = "Есть вопрос, по которому мне нужно ваше решение."
-        elif task_counts.get("active"):
+        elif task_counts.get("running"):
             mode = "busy"
             message = "Выполняю и контролирую активные задачи."
+        elif task_counts.get("waiting_for_input") or task_counts.get("blocked_total"):
+            mode = "needs_attention"
+            message = "Активного выполнения нет; есть поручения, ожидающие решения или устранения препятствия."
         else:
             mode = "free"
             message = "Активных задач нет. Я свободен."
@@ -417,11 +706,11 @@ def status() -> Dict[str, Any]:
             run = active_runs.get(agent_id) or {}
             task = task_by_agent.get(agent_id) or {}
             task_state = str(task.get("status") or "")
-            working = bool(run) or task_state in {"new", "planned", "in_progress"}
+            working = bool(run) or task_state in RUNNING_TASK_STATUSES
             activity_state = (
                 "working" if working else
-                "waiting_owner" if task_state == "waiting_review" else
-                "blocked" if task_state == "blocked" else "free"
+                "waiting_owner" if task_state in WAITING_TASK_STATUSES else
+                "blocked" if task_state in {"blocked", "stalled"} else "free"
             )
             agent_rows.append({
                 "agent_id": agent_id, "name": label,
@@ -441,7 +730,17 @@ def status() -> Dict[str, Any]:
             "mode": mode,
             "message": message,
             "timezone": LOCAL_TIMEZONE,
+            "market_session_state": market_session_state,
             "worker_alive": bool(_WORKER and _WORKER.is_alive()),
+            "backend_instance": {
+                "instance_id": PROCESS_INSTANCE_ID,
+                "started_at_utc": PROCESS_STARTED_AT_UTC,
+            },
+            "last_recovery": dict(doc.get("last_recovery") or {}),
+            "client_telemetry": {
+                "events": len(doc.get("client_telemetry") or []),
+                "last": dict((doc.get("client_telemetry") or [{}])[-1]) if doc.get("client_telemetry") else {},
+            },
             "event_engine": {
                 "mode": "event_driven",
                 "queued": sum(1 for row in doc.get("events") or [] if row.get("status") == "queued"),
@@ -1043,11 +1342,14 @@ def _task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
+    expected_lease_owner = str(changes.pop("_expected_lease_owner", "") or "")
     with _LOCK:
         doc = _read()
         task = next((row for row in doc.get("tasks") or [] if row.get("task_id") == task_id), None)
         if task is None:
             raise VitekError(f"Задача {task_id} не найдена.")
+        if expected_lease_owner and str(task.get("worker_lease_owner") or "") != expected_lease_owner:
+            return dict(task)
         if task.get("status") in {"completed", "cancelled"} and changes.get("execution_event_id"):
             # A connection-restored/cancel decision may retire a task while its
             # old worker thread is still returning. Never let that stale result
@@ -1055,6 +1357,32 @@ def _set_task_execution(task_id: str, **changes: Any) -> Dict[str, Any]:
             return dict(task)
         task.update(changes)
         task["updated_at_utc"] = _now()
+        if task.get("status") in {"completed", "failed", "cancelled", "blocked", "waiting_review", "waiting_for_input"}:
+            task["current_stage"] = _canonical_task_status(task)
+            progress = dict(task.get("progress") or {})
+            progress["stage"] = task["current_stage"]
+            if task.get("status") == "completed":
+                progress.update({"completed_steps": max(1, int(progress.get("total_steps") or 1)), "total_steps": max(1, int(progress.get("total_steps") or 1))})
+            task["progress"] = progress
+            task.pop("worker_lease_owner", None)
+            task.pop("worker_lease_expires_at_utc", None)
+        if task.get("status") == "completed":
+            evidence = any((
+                str(task.get("result") or "").strip(),
+                task.get("execution_confirmation"),
+                task.get("execution_job_summaries"),
+                task.get("execution_mission_status") == "completed",
+            ))
+            if not evidence:
+                task["status"] = "waiting_review"
+                task["blocking_reason"] = "completion_requires_verifiable_result"
+            else:
+                result_material = json.dumps({
+                    "task_id": task_id, "result": task.get("result"),
+                    "confirmation": task.get("execution_confirmation"),
+                    "jobs": task.get("execution_job_states"),
+                }, ensure_ascii=False, sort_keys=True, default=str)
+                task["result_id"] = "VR-" + hashlib.sha256(result_material.encode("utf-8")).hexdigest()[:16].upper()
         if task.get("status") == "completed" and not task.get("completed_at_utc"):
             task["completed_at_utc"] = _now()
         if str(task.get("status") or "") in {"completed", "cancelled", "blocked"}:
@@ -1369,6 +1697,7 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     due = _parse_time(payload.get("due_at_utc"))
     task = {
         "task_id": "VT-" + uuid.uuid4().hex[:10].upper(),
+        "mission_id": "VM-" + uuid.uuid4().hex[:12].upper(),
         "created_at_utc": _now(),
         "updated_at_utc": _now(),
         "title": title[:500],
@@ -1380,6 +1709,7 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "assignee": str(payload.get("assignee") or NAME)[:100],
         "source": str(payload.get("source") or "app")[:40],
         "incident_id": str(payload.get("incident_id") or "")[:80],
+        "decision_id": str(payload.get("decision_id") or "")[:80],
         "plan_id": str(payload.get("plan_id") or "")[:80],
         "conversation_id": re.sub(r"[^A-Za-z0-9_-]", "", str(payload.get("conversation_id") or ""))[:64],
         "conversation_scope": _clean_conversation_scope(payload.get("conversation_scope")),
@@ -1387,8 +1717,14 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "budget": _clean_task_budget(payload.get("budget"), payload),
         "control": _clean_task_control(payload.get("control"), payload),
         "auto_execute": payload.get("auto_execute", True) not in {False, 0, "0", "false", "no"},
+        "authorization_status": str(payload.get("authorization_status") or "pending").strip().lower(),
+        "authorization_scope": _authorization_scopes(payload.get("authorization_scope")),
+        "authorized_by": str(payload.get("authorized_by") or "")[:120],
+        "authorized_at_utc": str(payload.get("authorized_at_utc") or "")[:40],
         "result": "",
     }
+    if task["authorization_status"] not in AUTHORIZATION_STATUSES:
+        raise VitekError("Неизвестный статус разрешения задачи.")
     with _LOCK:
         doc = _read()
         # One incident has one active task.  UI double-clicks, a repeated
@@ -1483,6 +1819,11 @@ def update_task(task_id: str, changes: Dict[str, Any], *, notify: bool = True) -
                            ("assignee", 100), ("result", 4000), ("category", 80)):
             if key in changes:
                 task[key] = str(changes.get(key) or "")[:limit]
+        if task.get("status") == "completed":
+            if not str(task.get("result") or "").strip():
+                raise VitekError("Завершение требует проверяемого результата.")
+            material = f"{wanted}|{task.get('result')}|{task.get('completed_at_utc')}"
+            task["result_id"] = "VR-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper()
         if "due_at_utc" in changes:
             due = _parse_time(changes.get("due_at_utc"))
             task["due_at_utc"] = due.isoformat(timespec="seconds").replace("+00:00", "Z") if due else ""
@@ -1582,6 +1923,8 @@ def _record_incident(doc: Dict[str, Any], *, category: str, key: str, severity: 
         incident = {
             "incident_id": incident_id,
             "fingerprint": f"{category}|{key}",
+            "dedupe_key": f"{category}|{key}",
+            "incident_version": 1,
             "category": category,
             "severity": severity if severity in SEVERITY_ORDER else "warning",
             "title": str(title)[:500],
@@ -1595,6 +1938,8 @@ def _record_incident(doc: Dict[str, Any], *, category: str, key: str, severity: 
             "source": "automatic",
             "decision": "",
             "owner_decision_required": _requires_owner_decision(category, context),
+            "authorization_status": "pending",
+            "authorization_scope": [],
         }
         incidents.append(incident)
         created = True
@@ -1628,26 +1973,74 @@ def _record_incident(doc: Dict[str, Any], *, category: str, key: str, severity: 
             # updates the existing task instead of reopening a duplicate
             # global yes/no card.
             incident["status"] = "in_progress"
-        elif incident.get("status") == "resolved" and previous_material != current_material:
-            incident.update({"status": "awaiting_decision", "decision": "", "reopened_at_utc": now})
+        elif (
+            incident.get("status") == "deferred"
+            or (incident.get("status") == "resolved" and previous_material != current_material)
+        ):
+            incident.update({
+                "status": "awaiting_decision", "decision": "", "reopened_at_utc": now,
+                "incident_version": int(incident.get("incident_version") or 1) + 1,
+                "authorization_status": "pending", "authorization_scope": [],
+                "decision_id": "",
+            })
             created = True
     doc["incidents"] = incidents[-1000:]
     return incident, created
 
 
-def decide_incident(incident_id: str, decision: str, *, note: str = "") -> Dict[str, Any]:
+def decide_incident(incident_id: str, decision: str, *, note: str = "",
+                    authorized_by: str = "owner",
+                    authorization_scope: Any = None,
+                    conversation_scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     wanted = str(incident_id or "").strip().upper()
     action = str(decision or "").strip().lower()
     if action not in INCIDENT_DECISIONS:
         raise VitekError("Решение: create_task, acknowledge, resolve или ignore.")
+    scopes = _authorization_scopes(
+        authorization_scope, default=["audit"] if action == "create_task" else [],
+    )
     with _LOCK:
         doc = _read()
         incident = next((row for row in doc.get("incidents") or [] if str(row.get("incident_id") or "").upper() == wanted), None)
         if incident is None:
             raise VitekError(f"Инцидент {wanted} не найден.")
+        existing_task = next((
+            row for row in doc.get("tasks") or []
+            if str(row.get("incident_id") or "") == wanted
+            and str(row.get("status") or "") in ACTIVE_TASK_STATUSES
+        ), None)
+        same_decision = str(incident.get("decision") or "") == action
+        recover_missing_task = bool(same_decision and action == "create_task" and existing_task is None)
+        if recover_missing_task:
+            scopes = _authorization_scopes(incident.get("authorization_scope")) or scopes
+        if same_decision and not recover_missing_task:
+            replay = dict(incident)
+            replay["idempotent_replay"] = True
+            if existing_task is not None:
+                replay["task"] = dict(existing_task)
+                replay["conversation_id"] = str(existing_task.get("conversation_id") or "")
+            return replay
+
+        previous_action = str(incident.get("decision") or "")
+        if previous_action and not recover_missing_task:
+            incident["incident_version"] = int(incident.get("incident_version") or 1) + 1
+        version = int(incident.get("incident_version") or 1)
+        decision_id = str(incident.get("decision_id") or "") if recover_missing_task else ""
+        decision_id = decision_id or _decision_id(wanted, version, action)
+        decided_at = str(incident.get("decided_at_utc") or "") if recover_missing_task else ""
+        decided_at = decided_at or _now()
         incident["decision"] = action
+        incident["decision_id"] = decision_id
         incident["decision_note"] = str(note or "")[:2000]
-        incident["decided_at_utc"] = _now()
+        incident["decided_at_utc"] = decided_at
+        incident["decision_by"] = str(authorized_by or "owner")[:120]
+        incident["authorization_status"] = (
+            "approved" if action == "create_task" else
+            "rejected" if action == "ignore" else "revoked"
+        )
+        incident["authorization_scope"] = scopes if action == "create_task" else []
+        incident["authorized_by"] = str(authorized_by or "owner")[:120] if action == "create_task" else ""
+        incident["authorized_at_utc"] = decided_at if action == "create_task" else ""
         incident["status"] = {
             "create_task": "in_progress", "acknowledge": "acknowledged",
             "resolve": "resolved", "ignore": "ignored",
@@ -1658,6 +2051,7 @@ def decide_incident(incident_id: str, decision: str, *, note: str = "") -> Dict[
                 awaiting.pop(key, None)
         task_payload = None
         if action == "create_task":
+            conversation_id = "C-" + hashlib.sha256(f"vitek:{wanted}".encode("utf-8")).hexdigest()[:12].upper()
             task_payload = {
                 "title": incident.get("title") or f"Разобрать {wanted}",
                 "description": "\n".join(filter(None, [
@@ -1668,18 +2062,46 @@ def decide_incident(incident_id: str, decision: str, *, note: str = "") -> Dict[
                 "category": incident.get("category") or "incident",
                 "priority": "critical" if incident.get("severity") == "critical" else "high" if incident.get("severity") == "error" else "normal",
                 "status": "planned", "source": "vitek_incident", "incident_id": wanted,
+                "decision_id": decision_id, "conversation_id": conversation_id,
+                "conversation_scope": _clean_conversation_scope(conversation_scope),
+                "authorization_status": "approved", "authorization_scope": scopes,
+                "authorized_by": str(authorized_by or "owner")[:120],
+                "authorized_at_utc": decided_at,
             }
+            incident["chat_thread_id"] = conversation_id
+        elif existing_task is not None and previous_action == "create_task":
+            existing_task.update({
+                "status": "cancelled", "cancel_reason": f"owner_decision_changed_to_{action}",
+                "cancelled_at_utc": decided_at, "updated_at_utc": decided_at,
+                "authorization_status": "revoked", "authorization_scope": [],
+            })
         _append_history(doc, "incident_decided", incident_id=wanted, decision=action)
         _write(doc)
         result = dict(incident)
+        if recover_missing_task:
+            result["recovered_missing_task"] = True
     if task_payload:
+        try:
+            from .ai_lab import chief_agent
+            if conversation_scope is not None:
+                chief_agent.create_conversation(
+                    f"Виктор · {str(task_payload.get('title') or '')}"[:120],
+                    conversation_id=str(task_payload.get("conversation_id") or ""),
+                    scope=conversation_scope,
+                )
+        except Exception:
+            # The deterministic conversation id makes a later retry converge;
+            # the durable task and owner authorization must not be lost.
+            pass
         task = add_task(task_payload)
         result["task"] = task
+        result["conversation_id"] = str(task.get("conversation_id") or "")
         with _LOCK:
             doc = _read()
             incident = next((row for row in doc.get("incidents") or [] if row.get("incident_id") == wanted), None)
             if incident is not None:
                 incident["task_id"] = task["task_id"]
+                incident["mission_id"] = task.get("mission_id")
                 _write(doc)
     _maybe_notify_idle()
     return result
@@ -1922,10 +2344,17 @@ def _owner_incident_brief(incident: Dict[str, Any]) -> Dict[str, str]:
                 "question": "Разрешаете начать восстановление?",
             }
         if event_type in {"strategy_stopped", "strategy_disappeared", "parameter_mismatch"}:
+            strategy = str(payload.get("name") or payload.get("strategy_id") or payload.get("strategy_key") or "не указана")
+            instrument = str(payload.get("instrument") or "не указан")
+            account = str(payload.get("account") or "не указан")
+            observed_state = str(payload.get("state") or "неизвестно")
             return {
-                "fact": "Обнаружил проблему в работе стратегии; её текущее состояние нельзя считать надёжным.",
-                "recommendation": "Толик проверит фактическое состояние и настройки, а Управляющий подготовит безопасное исправление без изменения утверждённых параметров.",
-                "question": "Запустить проверку и исправление?",
+                "fact": f"{strategy}: сигнал {event_type}, инструмент {instrument}, счёт {account}.",
+                "recommendation": (
+                    f"Зафиксированное runtime-состояние: {observed_state}. Толик проверит фактическое состояние, "
+                    "Bridge и сохранённые настройки; параметры стратегии автоматически не меняются."
+                ),
+                "question": "Запустить только проверку и подготовить доказательный отчёт?",
             }
         if event_type in {"runtime_error", "job_failed"}:
             return {
@@ -2058,9 +2487,15 @@ def _remember_owner_question(incident: Dict[str, Any], conversation_id: str = "d
         _write(doc)
 
 
-def _owner_question_reply(incident: Dict[str, Any], *, extra_count: int = 0) -> str:
+def _owner_question_reply(incident: Dict[str, Any], *, extra_count: int = 0,
+                          include_reference: bool = False) -> str:
     brief = _owner_incident_brief(incident)
     lines = [brief["fact"], brief["recommendation"]]
+    if include_reference:
+        lines.append(
+            f"Инцидент {incident.get('incident_id') or '—'} · важность {incident.get('severity') or 'warning'} · "
+            f"обнаружен {incident.get('first_seen_at_utc') or 'время не сохранено'}."
+        )
     if extra_count:
         lines.append(f"После этого у меня есть ещё {extra_count} вопрос{'а' if 2 <= extra_count <= 4 else 'ов'}; принесу их по одному, без технической свалки.")
     lines.append(brief["question"] + " Можно ответить просто «да» или «нет».")
@@ -2076,7 +2511,9 @@ def _notify_incidents(incidents: List[Dict[str, Any]], *, resting: bool) -> bool
         return False
     ordered = sorted(material, key=lambda item: SEVERITY_ORDER.get(str(item.get("severity") or "info"), 9))
     primary = ordered[0]
-    reply = _owner_question_reply(primary, extra_count=len(ordered) - 1)
+    reply = _owner_question_reply(
+        primary, extra_count=len(ordered) - 1, include_reference=True,
+    )
     _remember_owner_question(primary, "default")
     return _deliver_owner_alert(
         f"{NAME} · нужен ваш ответ", [reply],
@@ -2091,7 +2528,10 @@ def _maybe_notify_idle() -> bool:
     with _LOCK:
         doc = _read()
         rest = _rest_state(doc)
-        active_tasks = _task_counts(doc.get("tasks") or []).get("active", 0)
+        active_tasks = sum(
+            1 for row in doc.get("tasks") or []
+            if str(row.get("status") or "") in ACTIVE_TASK_STATUSES
+        )
         open_incidents = _incident_counts(doc.get("incidents") or []).get("open", 0)
         previous = str(doc.get("last_activity_state") or "unknown")
         current = "busy" if active_tasks or open_incidents else "idle"
@@ -2194,7 +2634,7 @@ def _maybe_notify_plan_prompt(*, resting: bool) -> bool:
 
 def scan(*, notify: bool = True) -> Dict[str, Any]:
     """Run one deterministic system audit and persist deduplicated incidents."""
-    from . import account_ledger, jobqueue, runtime, strategy_lifecycle
+    from . import account_ledger, jobqueue, market_data_ipc, runtime, strategy_lifecycle
     from .ai_lab import domain_agents
 
     now = _now_dt()
@@ -2203,6 +2643,7 @@ def scan(*, notify: bool = True) -> Dict[str, Any]:
     heartbeat = runtime.read_heartbeat()
     runtime_rows = runtime.read_strategies_raw()
     enabled_count = sum(1 for row in runtime_rows if row.get("enabled"))
+    market_session_open = bool(market_data_ipc.is_market_open())
     runtime_errors = runtime.read_errors(20)
     quality = domain_agents.strategy_snapshot(period="month")
     profiles = jobqueue.read_strategy_profiles().get("profiles") or []
@@ -2210,7 +2651,7 @@ def scan(*, notify: bool = True) -> Dict[str, Any]:
     ledger_integrity = account_ledger.audit_integrity("", repair_safe=False)
 
     findings: List[Dict[str, Any]] = []
-    if enabled_count and not bool(heartbeat.get("fresh")):
+    if market_session_open and enabled_count and not bool(heartbeat.get("fresh")):
         findings.append({
             "category": "runtime_connection", "key": "ninjatrader_bridge_lost", "severity": "critical",
             "title": "Потеряна связь с NinjaTrader при активных стратегиях",
@@ -2420,6 +2861,7 @@ def scan(*, notify: bool = True) -> Dict[str, Any]:
     plan_prompted = _maybe_notify_plan_prompt(resting=resting) if notify else False
     return {
         "ok": True, "checked_at_utc": _now(), "findings": len(findings),
+        "market_session_state": "OPEN" if market_session_open else "SESSION_CLOSED",
         "new_incidents": created, "pending_notifications": len(pending_notifications),
         "notified": notified, "plan_prompted": plan_prompted,
         "quality_summary": q_summary,
@@ -2465,8 +2907,8 @@ def _latest_waiting_task(conversation_id: str = "default") -> Optional[Dict[str,
             return None
         task_id = str(turn.get("task_id") or "")
         return next((dict(row) for row in doc.get("tasks") or []
-                     if str(row.get("task_id") or "") == task_id
-                     and str(row.get("status") or "") == "waiting_review"), None)
+                      if str(row.get("task_id") or "") == task_id
+                      and str(row.get("status") or "") in WAITING_TASK_STATUSES), None)
 
 
 def register_task_continuation(conversation_id: str, plan_summary: str, *,
@@ -2684,6 +3126,45 @@ def _apply_waiting_task_answer(task: Dict[str, Any], answer: str,
         dedupe_seconds=0,
     )
     return result
+
+
+def task_input_choices(task_id: str) -> Dict[str, Any]:
+    wanted = str(task_id or "").strip().upper()
+    task = _task_by_id(wanted)
+    if task is None:
+        raise VitekError(f"Задача {wanted} не найдена.")
+    if str(task.get("status") or "") not in WAITING_TASK_STATUSES:
+        raise VitekError("Поручение сейчас не ожидает уточнения владельца.")
+    from . import jobqueue
+    profiles = [row for row in (jobqueue.read_strategy_profiles().get("profiles") or []) if isinstance(row, dict)]
+    choices = []
+    for row in profiles[:500]:
+        choices.append({
+            "profile_id": str(row.get("profile_id") or ""),
+            "cell_id": str(row.get("cell_id") or ""),
+            "name": str(row.get("name") or row.get("strategy_class") or row.get("profile_id") or "Стратегия")[:240],
+            "strategy_class": str(row.get("strategy_class") or "")[:240],
+            "instrument": str(row.get("instrument") or "")[:120],
+            "status": str(row.get("status") or "")[:40],
+            "latest_experiment_id": str(row.get("latest_experiment_id") or row.get("experiment_id") or "")[:120],
+        })
+    return {
+        "ok": True, "task_id": wanted, "question": str(task.get("result") or "Уточните объект проверки."),
+        "choices": choices, "allow_all_saved": True,
+    }
+
+
+def answer_task(task_id: str, answer: str) -> Dict[str, Any]:
+    wanted = str(task_id or "").strip().upper()
+    task = _task_by_id(wanted)
+    if task is None:
+        raise VitekError(f"Задача {wanted} не найдена.")
+    clean = str(answer or "").strip()
+    if not clean:
+        raise VitekError("Укажите ответ или выберите стратегию.")
+    return _apply_waiting_task_answer(
+        task, clean, str(task.get("conversation_id") or "default"),
+    )
 
 
 def _extract_incident_id(text: str) -> str:
@@ -2921,19 +3402,22 @@ def handle_text_command(text: str, *, source: str = "orchestrator",
         return {"handled": True, "reply": "Принял. Ухожу на указанный срок, но действительно критическую ситуацию не пропущу.",
                 "kind": "rest", "action": {"name": "vitek_rest", "status": "completed"}}
     if (incident_id and any(token in low for token in ("создай задач", "делай", "выполняй"))) or (short_decision and low in {"да", "делай", "выполняй", "подтверждаю"}):
-        decide_incident(incident_id, "create_task")
+        decide_incident(incident_id, "create_task", conversation_scope=scope)
         return {"handled": True, "reply": "Принял. Передал работу Управляющему, нужных агентов он подключит сам. Я проконтролирую результат и доложу вам по существу.",
                 "kind": "incident_decision", "action": {"name": "vitek_create_incident_task", "status": "completed"}}
     if incident_id and any(token in low for token in ("решено", "исправлено", "resolve")):
-        decide_incident(incident_id, "resolve")
+        decide_incident(incident_id, "resolve", conversation_scope=scope)
         return {"handled": True, "reply": "Принял. Считаю вопрос решённым и сам проверю, что проблема не вернулась.",
                 "kind": "incident_decision", "action": {"name": "vitek_resolve_incident", "status": "completed"}}
     if incident_id and any(token in low for token in ("игнор", "не надо", "нет")):
-        decide_incident(incident_id, "ignore")
+        decide_incident(incident_id, "ignore", conversation_scope=scope)
         return {"handled": True, "reply": "Понял. Работу по этому вопросу не запускаю.",
                 "kind": "incident_decision", "action": {"name": "vitek_ignore_incident", "status": "completed"}}
     if latest and contextual_answer:
-        decide_incident(str(latest.get("incident_id") or ""), "create_task", note=raw)
+        decide_incident(
+            str(latest.get("incident_id") or ""), "create_task", note=raw,
+            conversation_scope=scope,
+        )
         return {
             "handled": True,
             "reply": "Понял ваше пояснение. Зафиксировал его, передал Управляющему и запустил работу. Вернусь только с результатом или действительно необходимым вопросом.",
@@ -3028,6 +3512,12 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
     claimed = _set_task_execution(
         task_id, status="in_progress", assigned_agent=route["agent"], assigned_role=route["role"],
         complexity=route["complexity"], execution_started_at_utc=_now(),
+        execution_heartbeat_at_utc=_now(), current_stage="executor_running",
+        worker_lease_owner=PROCESS_INSTANCE_ID,
+        worker_lease_expires_at_utc=(
+            _now_dt() + timedelta(minutes=10)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        progress={"completed_steps": 0, "total_steps": 1, "stage": "executor_running"},
         execution_event_id=event.get("event_id"),
         routing_model=intent.get("routing_model"),
         routing_provider=intent.get("routing_provider"),
@@ -3080,6 +3570,10 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         "execution_provider": str(response.get("provider") or ""),
         "execution_actions": actions[:10],
         "result": reply,
+        "execution_heartbeat_at_utc": _now(),
+        "current_stage": "executor_returned",
+        "progress": {"completed_steps": 1, "total_steps": 1, "stage": "executor_returned"},
+        "_expected_lease_owner": PROCESS_INSTANCE_ID,
     }
     mission_ids = [str(row.get("mission_id") or "") for row in actions if row.get("mission_id")]
     command_ids = [str(row.get("command_id") or "") for row in actions if row.get("command_id")]
@@ -3101,7 +3595,10 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
             notify_owner=False,
         )
     elif statuses & {"approval_required", "needs_input", "waiting_review"}:
-        updated = _set_task_execution(task_id, status="waiting_review", **common)
+        updated = _set_task_execution(
+            task_id, status="waiting_review",
+            blocking_reason="owner_input_required", **common,
+        )
         incident = _create_execution_incident(
             event=event, severity="warning", title=f"Нужно решение по задаче {task_id}",
             details=reply, recommendation="Подтвердите предложенное действие либо отмените его.",
@@ -3128,7 +3625,10 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
         updated = _set_task_execution(task_id, status="completed", **common)
         _maybe_notify_idle()
     else:
-        updated = _set_task_execution(task_id, status="waiting_review", **common)
+        updated = _set_task_execution(
+            task_id, status="waiting_review",
+            blocking_reason="executor_did_not_confirm_action", **common,
+        )
         incident = _create_execution_incident(
             event=event, severity="warning", title=f"Задача {task_id} требует уточнения",
             details=reply or "Исполнитель не подтвердил фактическое действие.",
@@ -3146,7 +3646,7 @@ def _execute_task_event(event: Dict[str, Any]) -> Dict[str, Any]:
             report = f"Готово: {owner_title}."
         elif state == "blocked":
             report = f"Пока не смог завершить поручение «{owner_title}»: нужен другой безопасный способ или ваше уточнение."
-        elif state == "waiting_review":
+        elif state in {"waiting_review", "waiting_for_input"}:
             report = f"По поручению «{owner_title}» нужен ваш короткий ответ, прежде чем продолжить."
         else:
             report = f"Поручение «{owner_title}» остаётся в работе. Следующий отчёт пришлю сюда."
@@ -3432,6 +3932,22 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
     route = dict(EVENT_AGENT_ROUTES.get(kind) or {
         "agent": "orchestrator", "role": "orchestrator", "complexity": "standard", "decision": False,
     })
+    if kind in {"strategy_stopped", "strategy_disappeared", "connection_lost"}:
+        try:
+            from . import market_data_ipc
+            session_open = bool(market_data_ipc.is_market_open())
+        except Exception:
+            session_open = True
+        if not session_open:
+            return {
+                "ok": True, "route": route, "model": "deterministic session guard",
+                "provider": "local", "session_state": "SESSION_CLOSED",
+                "skipped": True, "watchdog_recovery": False,
+                "content": (
+                    "Торговая сессия закрыта. Runtime-проверка не запускалась; "
+                    "офлайн-аудит сохранённых данных остаётся доступен."
+                ),
+            }
     if kind == "startup_audit":
         audit = scan(notify=True)
         from . import runtime
@@ -3442,11 +3958,15 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if kind == "scheduled_housekeeping":
         with _LOCK:
             rest = _rest_state(_read())
+        recovered_events = recover_interrupted_events()
+        reconciliation = reconcile_lifecycle(apply=True)
         idle = _maybe_notify_idle()
         plan = _maybe_notify_plan_prompt(resting=bool(rest.get("active")))
         return {"ok": True, "route": {"agent": NAME, "role": "controller", "complexity": "light"},
                 "model": "deterministic scheduler", "content": "Плановая служебная проверка выполнена.",
-                "idle_notified": idle, "plan_prompted": plan}
+                "idle_notified": idle, "plan_prompted": plan,
+                "recovered_events": recovered_events,
+                "reconciliation": reconciliation}
     if kind == "connection_restored":
         resolved_ids = _resolve_connection_incidents()
         result = {
@@ -3626,6 +4146,10 @@ def _claim_next_event(*, excluded_agents: Optional[set[str]] = None) -> Optional
             return None
         selected["status"] = "running"
         selected["started_at_utc"] = _now()
+        selected["lease_owner"] = PROCESS_INSTANCE_ID
+        selected["lease_expires_at_utc"] = (
+            now + timedelta(minutes=10)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
         selected["attempts"] = int(selected.get("attempts") or 0) + 1
         doc["event_revision"] = int(doc.get("event_revision") or 0) + 1
         _write(doc)
@@ -3645,13 +4169,23 @@ def recover_interrupted_events() -> int:
         for row in doc.get("events") or []:
             if not isinstance(row, dict) or row.get("status") != "running":
                 continue
+            lease_owner = str(row.get("lease_owner") or "")
+            lease_expires = _parse_time(row.get("lease_expires_at_utc"))
+            if lease_owner == PROCESS_INSTANCE_ID and lease_expires and lease_expires > _now_dt():
+                continue
             row["status"] = "queued"
             row["recovered_at_utc"] = _now()
             row["last_error"] = "Выполнение было прервано перезапуском; задача возвращена в очередь."
             row.pop("started_at_utc", None)
+            row.pop("lease_owner", None)
+            row.pop("lease_expires_at_utc", None)
             recovered += 1
         if recovered:
             doc["event_revision"] = int(doc.get("event_revision") or 0) + 1
+            doc["last_recovery"] = {
+                "at_utc": _now(), "recovered_events": recovered,
+                "outcome": "requeued", "instance_id": PROCESS_INSTANCE_ID,
+            }
             _append_history(doc, "events_recovered_after_restart", count=recovered)
             _write(doc)
     if recovered:
@@ -3667,6 +4201,11 @@ def _finish_event(event: Dict[str, Any], *, result: Optional[Dict[str, Any]] = N
         doc = _read()
         current = next((row for row in doc.get("events") or [] if row.get("event_id") == event.get("event_id")), None)
         if current is None:
+            return
+        if (
+            str(current.get("lease_owner") or "")
+            and str(current.get("lease_owner") or "") != str(event.get("lease_owner") or "")
+        ):
             return
         attempts = int(current.get("attempts") or 1)
         if error and attempts < 3:

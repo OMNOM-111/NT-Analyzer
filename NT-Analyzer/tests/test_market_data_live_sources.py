@@ -699,38 +699,25 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "test_owner")
     monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-api-key-here")
 
-    # 2. Mock requests POST responses
-    class MockResponse:
-        def __init__(self, json_data, status_code=200):
-            self.json_data = json_data
-            self.status_code = status_code
-
-        def json(self):
-            return self.json_data
-
-        def raise_for_status(self):
-            if self.status_code != 200:
-                raise Exception("HTTP Error")
-
-    def mock_post(url, json, *args, **kwargs):
+    # 2. Mock the stdlib JSON transport used by the adapter.
+    def mock_post(url, payload, *args, **kwargs):
         if "loginKey" in url:
-            return MockResponse({"success": True, "token": "mocked_jwt_token_xyz"})
+            return {"success": True, "token": "mocked_jwt_token_xyz"}
         elif "search" in url:
-            return MockResponse({
+            return {
                 "contracts": [
                     {"id": "CON.F.US.MNQ.U26", "name": "MNQU6", "symbolId": "F.US.MNQ"}
                 ]
-            })
+            }
         elif "retrieveBars" in url:
-            return MockResponse({
+            return {
                 "bars": [
                     {"time": "2026-07-16T14:00:00Z", "open": 20000.0, "high": 20050.0, "low": 19990.0, "close": 20010.0, "volume": 100}
                 ]
-            })
-        return MockResponse({}, 404)
+            }
+        raise RuntimeError("HTTP Error")
 
-    import requests
-    monkeypatch.setattr(requests, "post", mock_post)
+    monkeypatch.setattr(la, "_post_json", mock_post)
 
     # Mock websockets connect
     class MockWebSocket:

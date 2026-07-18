@@ -13,10 +13,12 @@
     marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван',
   };
   const MODE_LABELS = {
-    free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', resting: 'отдыхает',
+    free: 'свободен', busy: 'работает', awaiting_decision: 'ждёт решения', needs_attention: 'нужно внимание', resting: 'отдыхает',
   };
   let state = null;
   let loading = false;
+  let lastBackendInstance = '';
+  try { lastBackendInstance = sessionStorage.getItem('victor.backendInstance') || ''; } catch (_) { /* ignore */ }
 
   function esc(value) { return UI.esc(String(value == null ? '' : value)); }
   function pageContext() {
@@ -229,20 +231,75 @@
     };
   }
 
+  async function cleanupDrawer() {
+    const preview = await API.http.vitekReconciliation();
+    const counts = preview.counts || {};
+    const labels = {
+      duplicate_task: 'Дубли поручений', orphan_task: 'Поручения без инцидента',
+      ghost_task_link: 'Потерянные связи', stalled_task: 'Зависшие без heartbeat',
+      missing_blocking_reason: 'Блокировки без причины', backfill_result_id: 'Результаты без result_id',
+      completed_without_result: 'Ложные завершения', defer_session_closed: 'Live-вопросы при закрытой сессии',
+      retire_legacy_guard_failure: 'Старые отказы task guard', retire_executor_plan_failure: 'Исполнитель не вернул план',
+      obsolete_unactivated_task: 'Неактивированные поручения',
+      obsolete_stale_queued_task: 'Просроченные задачи в очереди', archive_terminal_task: 'Терминальные задачи к архивированию',
+      obsolete_expired_incident: 'Вопросы с истёкшим TTL',
+    };
+    const rows = Object.entries(counts).map(([key, value]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(labels[key] || key)}</div></div><span class="badge pending">${Number(value || 0)}</span></div>`).join('');
+    UI.drawer(
+      '<div class="tb-title"><span class="tb-kicker">Виктор · lifecycle manager</span><span class="tb-h1">Очистка поручений</span></div>',
+      `<div class="col gap-lg"><div class="finance-note">Режим preview ничего не удаляет. Применение архивирует и меняет статусы с сохранением полного audit trail.</div><div class="kpi ${preview.action_count ? 'warn' : 'pos'}"><div class="kpi-label">Найдено действий</div><div class="kpi-val sm">${Number(preview.action_count || 0)}</div><div class="kpi-foot">Сессия: ${esc(preview.market_session_state || 'UNKNOWN')}</div></div><div class="list">${rows || '<div class="empty-state">Lifecycle согласован; очистка не требуется.</div>'}</div><button class="btn primary" id="victor-cleanup-apply" ${preview.action_count ? '' : 'disabled'}>Применить безопасную очистку</button></div>`,
+    );
+    const apply = UI.qs('#victor-cleanup-apply');
+    if (apply) apply.onclick = async function () {
+      this.disabled = true; this.textContent = 'Сверяю и архивирую…';
+      try {
+        const result = await API.http.vitekReconcile(true);
+        UI.toast(`Очистка завершена: ${Number(result.action_count || 0)} действий, история сохранена`);
+        UI.closeDrawer();
+        await refresh();
+      } catch (error) { this.disabled = false; this.textContent = 'Применить безопасную очистку'; UI.reportError(error); }
+    };
+  }
+
+  async function taskAnswerDrawer(task) {
+    const doc = await API.http.vitekTaskChoices(task.task_id);
+    const choices = Array.isArray(doc.choices) ? doc.choices : [];
+    const options = [
+      '<option value="">Выберите стратегию…</option>',
+      '<option value="__all__">Проверить все сохранённые стратегии</option>',
+      ...choices.map((row, index) => `<option value="${index}">${esc([row.cell_id, row.name, row.instrument, row.latest_experiment_id].filter(Boolean).join(' · '))}</option>`),
+    ].join('');
+    UI.drawer(
+      '<div class="tb-title"><span class="tb-kicker">Виктор · уточнение поручения</span><span class="tb-h1">Что именно проверить</span></div>',
+      `<div class="col gap-lg"><div class="finance-note">${esc(doc.question || 'Выберите сохранённую стратегию или задайте уточнение.')}</div><label class="field"><span>Сохранённая стратегия</span><select id="victor-task-answer-choice">${options}</select></label><label class="field"><span>Дополнительное пояснение</span><textarea id="victor-task-answer-text" rows="4" maxlength="2000" placeholder="Например: только OOS за 2025 год"></textarea></label><button class="btn primary" id="victor-task-answer-submit">Продолжить это поручение</button></div>`,
+    );
+    UI.qs('#victor-task-answer-submit').onclick = async function () {
+      const choice = UI.qs('#victor-task-answer-choice').value;
+      const note = UI.qs('#victor-task-answer-text').value.trim();
+      let answer = note;
+      if (choice === '__all__') answer = ['Проверить все сохранённые стратегии.', note].filter(Boolean).join(' ');
+      else if (choice !== '') {
+        const row = choices[Number(choice)] || {};
+        answer = [`Проверить стратегию ${row.name || row.profile_id || ''}.`, row.cell_id ? `CELL ${row.cell_id}.` : '', row.strategy_class ? `Класс ${row.strategy_class}.` : '', row.instrument ? `Инструмент ${row.instrument}.` : '', row.latest_experiment_id ? `Последний эксперимент ${row.latest_experiment_id}.` : '', note].filter(Boolean).join(' ');
+      }
+      if (!answer) { UI.toast('Выберите стратегию или напишите пояснение'); return; }
+      this.disabled = true; this.textContent = 'Передаю ответ…';
+      try { await API.http.vitekAnswerTask(task.task_id, answer); UI.closeDrawer(); UI.toast('Ответ принят; поручение продолжено'); await refresh(); }
+      catch (error) { this.disabled = false; this.textContent = 'Продолжить это поручение'; UI.reportError(error); }
+    };
+  }
+
   async function acceptIncident(incident) {
-    const brief = incident.owner_brief || {};
-    const title = brief.fact || incident.title || 'Разобраться с ситуацией';
-    const result = await createAssignment({
-      title,
-      description: [brief.recommendation, brief.question].filter(Boolean).join('\n'),
-      category: incident.category || 'incident',
-      priority: incident.severity === 'critical' ? 'critical' : incident.severity === 'error' ? 'high' : 'normal',
-      source: 'victor_incident', incident_id: incident.incident_id,
-      context: { page: document.body.dataset.page || 'overview', entity_type: 'incident', entity_id: incident.incident_id, entity_label: title, url: location.pathname + location.search },
-    });
-    await API.http.vitekIncidentDecision(incident.incident_id, 'resolve', 'Поручение принято Виктором в отдельном диалоге.');
+    const response = await API.http.vitekIncidentDecision(
+      incident.incident_id, 'create_task',
+      'Владелец разрешил проверку. Исправление, restart и live-включение требуют отдельного разрешения.',
+      ['audit'],
+    );
+    const decided = response && response.incident || response || {};
+    const cid = String(decided.conversation_id || decided.task && decided.task.conversation_id || '');
     await refresh();
-    openChat(result.conversation_id);
+    UI.toast(decided.idempotent_replay ? 'Открываю уже созданное поручение' : 'Решение принято. Проверка поставлена в очередь');
+    if (cid) openChat(cid);
   }
 
   function taskHtml(task) {
@@ -256,10 +313,14 @@
     const provider = String(task.execution_provider || task.routing_provider || '');
     const modelLine = modelParts.length ? ` · ${esc(modelParts.join(' → '))}${provider ? ` (${esc(provider)})` : ''}` : '';
     const control = task.control && task.control.condition ? `<div class="row-sub">Контроль: ${esc(task.control.condition)}</div>` : '';
+    const statusLabels = { new: 'принято', planned: 'в очереди', in_progress: 'выполняется', waiting_review: 'ждёт ответа', waiting_for_input: 'ждёт ответа', blocked: 'заблокировано', stalled: 'нет heartbeat' };
+    const needsInput = ['waiting_review', 'waiting_for_input', 'awaiting_decision'].includes(task.status);
     return `<div class="row"><div class="row-main"><div class="row-title">${esc(task.owner_title || task.title || 'Поручение')}</div>
+      <div class="row-sub mono">${esc(task.task_id || '')}${task.mission_id ? ` · ${esc(task.mission_id)}` : ''} · ${esc(statusLabels[task.status] || task.status || 'неизвестно')}</div>
       <div class="row-sub">${esc(agent)}${modelLine}${task.due_at_utc ? ` · срок ${esc(fmtDate(task.due_at_utc))}` : ''}</div>
+      ${task.current_stage ? `<div class="row-sub">Этап: ${esc(task.current_stage)}${task.execution_heartbeat_at_utc ? ` · heartbeat ${esc(fmtDate(task.execution_heartbeat_at_utc))}` : ''}</div>` : ''}
       ${context.entity_label ? `<div class="row-sub">Связано с: ${esc(context.entity_label)}</div>` : ''}${control}</div>
-      <div class="flex wrap gap-sm">${task.conversation_id ? `<button class="btn sm ghost" data-victor-open-chat="${esc(task.conversation_id)}">Чат</button>` : ''}<button class="btn sm" data-victor-complete="${esc(task.task_id)}">Готово</button></div></div>`;
+      <div class="flex wrap gap-sm">${needsInput ? `<button class="btn sm primary" data-victor-answer-task="${esc(task.task_id)}">Уточнить</button>` : ''}${task.conversation_id ? `<button class="btn sm ghost" data-victor-open-chat="${esc(task.conversation_id)}">Чат</button>` : ''}<button class="btn sm ghost" data-victor-cancel-task="${esc(task.task_id)}" data-incident-id="${esc(task.incident_id || '')}">Отменить</button></div></div>`;
   }
 
   function centerSignature(doc) {
@@ -271,7 +332,7 @@
       .filter((row) => ['awaiting_decision', 'acknowledged', 'in_progress'].includes(row.status) && row.owner_decision_required)
       .map((row) => [row.incident_id, row.status, (row.owner_brief || {}).fact || '']);
     const tasks = (doc.tasks || [])
-      .filter((row) => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked'].includes(row.status))
+      .filter((row) => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'waiting_for_input', 'blocked', 'stalled'].includes(row.status))
       .map((row) => [row.task_id, row.status, row.assigned_agent || '', row.owner_title || row.title || '']);
     const plans = doc.plans || {};
     return JSON.stringify({
@@ -297,7 +358,7 @@
       return;
     }
     center.dataset.renderSig = sig;
-    const tasks = (doc.tasks || []).filter(row => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'blocked'].includes(row.status));
+    const tasks = (doc.tasks || []).filter(row => ['new', 'awaiting_decision', 'planned', 'in_progress', 'waiting_review', 'waiting_for_input', 'blocked', 'stalled'].includes(row.status));
     const incidents = (doc.incidents || []).filter(row => ['awaiting_decision', 'acknowledged', 'in_progress'].includes(row.status) && row.owner_decision_required);
     const agents = doc.agent_activity || [];
     const plans = doc.plans || {};
@@ -305,11 +366,11 @@
       <div class="grid cols-5">
         <div class="kpi ${doc.mode === 'free' ? 'pos' : 'info'}"><div class="kpi-label">Состояние</div><div class="kpi-val sm">${esc(MODE_LABELS[doc.mode] || doc.mode)}</div><div class="kpi-foot">личный контроль</div></div>
         <div class="kpi ${incidents.length ? 'warn' : 'pos'}"><div class="kpi-label">Нужен ваш ответ</div><div class="kpi-val sm">${incidents.length}</div><div class="kpi-foot">только важные решения</div></div>
-        <div class="kpi ${tasks.length ? 'info' : 'pos'}"><div class="kpi-label">Активные поручения</div><div class="kpi-val sm">${tasks.length}</div><div class="kpi-foot">под контролем Виктора</div></div>
+        <div class="kpi ${Number(doc.task_counts && doc.task_counts.running || 0) ? 'info' : 'pos'}"><div class="kpi-label">Выполняются / в очереди</div><div class="kpi-val sm">${Number(doc.task_counts && doc.task_counts.running || 0)}</div><div class="kpi-foot">ждут ответа: ${Number(doc.task_counts && doc.task_counts.waiting_for_input || 0)} · blocked: ${Number(doc.task_counts && doc.task_counts.blocked_total || 0)}</div></div>
         <div class="kpi ${agents.some(row => row.working) ? 'info' : 'pos'}"><div class="kpi-label">Команда работает</div><div class="kpi-val sm">${agents.filter(row => row.working).length}</div><div class="kpi-foot">до ${Number(doc.event_engine && doc.event_engine.parallel_limit || 6)} одновременно</div></div>
         <div class="kpi ${doc.background && doc.background.installed ? 'pos' : 'warn'}"><div class="kpi-label">Фоновый контроль</div><div class="kpi-val sm">${doc.background && doc.background.installed ? 'включён' : 'не установлен'}</div><div class="kpi-foot">событийный режим</div></div>
       </div>
-      <div class="finance-note"><strong>Виктор:</strong> ${esc(doc.message || 'Готов принять поручение.')}</div>
+      <div class="finance-note"><strong>Виктор:</strong> ${esc(doc.message || 'Готов принять поручение.')}<div class="row-sub">Торговая сессия: ${esc(doc.market_session_state || 'UNKNOWN')}${doc.last_recovery && doc.last_recovery.at_utc ? ` · восстановление ${esc(fmtDate(doc.last_recovery.at_utc))}: ${Number(doc.last_recovery.recovered_events || 0)} событий возвращено в очередь` : ''}</div></div>
       <div><h4 style="margin:0 0 8px">Команда сейчас</h4><div class="flex wrap gap-sm">${agents.map(row => {
         const stateLabel = row.working ? 'работает' : row.state === 'waiting_owner' ? 'ждёт ответа' : row.state === 'blocked' ? 'есть препятствие' : 'свободен';
         const model = row.model ? ` · ${row.model}${row.provider ? ` (${row.provider})` : ''}` : '';
@@ -324,7 +385,7 @@
       }).join('')}</div>
       <div class="split"><div><h4 style="margin:0 0 8px">Нужно ваше решение</h4><div class="list">${incidents.length ? incidents.slice(0, 12).map(row => {
         const brief = row.owner_brief || {};
-        return `<div class="row"><div class="row-main"><div class="row-title">${esc(brief.fact || 'Нужно ваше решение.')}</div><div class="row-sub">${esc(brief.recommendation || '')}</div><div style="margin-top:7px"><strong>${esc(brief.question || 'Поручить Виктору?')}</strong></div><div class="flex gap-sm" style="margin-top:8px"><button class="btn sm primary" data-victor-incident-yes="${esc(row.incident_id)}">Да</button><button class="btn sm ghost" data-victor-incident-no="${esc(row.incident_id)}">Нет</button></div></div></div>`;
+        return `<div class="row"><div class="row-main"><div class="row-title">${esc(brief.fact || 'Нужно ваше решение.')}</div><div class="row-sub">${esc(brief.recommendation || '')}</div><div class="row-sub mono">${esc(row.incident_id)} · ${esc(row.severity || 'warning')} · повторов ${Number(row.occurrences || 1)}</div><details style="margin-top:7px"><summary>Подробнее и доказательства</summary><div class="row-sub" style="white-space:pre-wrap;margin-top:6px">${esc(row.details || 'Доказательства не сохранены.')}</div></details><div style="margin-top:7px"><strong>${esc(brief.question || 'Поручить Виктору?')}</strong></div><div class="row-sub">Разрешение: только проверка. Исправление, restart и live-включение согласуются отдельно.</div><div class="flex gap-sm" style="margin-top:8px"><button class="btn sm primary" data-victor-incident-yes="${esc(row.incident_id)}">Да — проверить</button><button class="btn sm ghost" data-victor-incident-no="${esc(row.incident_id)}">Нет</button></div></div></div>`;
       }).join('') : '<div class="empty-state">Вопросов, требующих вашего решения, нет.</div>'}</div></div>
       <div><h4 style="margin:0 0 8px">Активные задачи</h4><div class="list">${tasks.length ? tasks.slice(0, 14).map(taskHtml).join('') : '<div class="empty-state">Активных задач нет.</div>'}</div></div></div>
     </div>`;
@@ -337,8 +398,38 @@
   async function refresh() {
     if (loading || !window.API || API.config.offline || (UI.isGuest && UI.isGuest())) return state;
     loading = true;
-    try { state = await API.http.vitekStatus(); renderCenter(state); return state; }
+    try {
+      const next = await API.http.vitekStatus();
+      const instance = String(next && next.backend_instance && next.backend_instance.instance_id || '');
+      if (instance && lastBackendInstance && instance !== lastBackendInstance) UI.toast('Backend был перезапущен. Состояние поручений восстановлено и сверено.');
+      if (instance) {
+        lastBackendInstance = instance;
+        try { sessionStorage.setItem('victor.backendInstance', instance); } catch (_) { /* ignore */ }
+      }
+      const currentRevision = Number(state && state.event_engine && state.event_engine.revision || 0);
+      const nextRevision = Number(next && next.event_engine && next.event_engine.revision || 0);
+      if (state && nextRevision < currentRevision) return state;
+      state = next; renderCenter(state); return state;
+    }
     finally { loading = false; }
+  }
+
+  function installClientTelemetry() {
+    if (window.__victorTelemetryInstalled) return;
+    window.__victorTelemetryInstalled = true;
+    const sendEvent = (kind, message, stack) => {
+      if (!window.API || !API.http || !API.http.vitekClientEvent) return;
+      const correlationId = window.crypto && crypto.randomUUID ? crypto.randomUUID() : `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      API.http.vitekClientEvent({
+        kind, message: String(message || '').slice(0, 2000), stack: String(stack || '').slice(0, 6000),
+        route: location.pathname + location.search, correlation_id: correlationId,
+        app_version: '20260718-lifecycle1', backend_instance_id: lastBackendInstance,
+      }).catch(() => {});
+    };
+    window.addEventListener('error', event => sendEvent('frontend_error', event.message, event.error && event.error.stack));
+    window.addEventListener('unhandledrejection', event => sendEvent('unhandled_rejection', event.reason && event.reason.message || event.reason, event.reason && event.reason.stack));
+    window.addEventListener('offline', () => sendEvent('connection_lost', 'Browser reported offline', ''));
+    window.addEventListener('online', () => sendEvent('connection_restored', 'Browser connection restored', ''));
   }
 
   function wireCenter() {
@@ -349,18 +440,30 @@
       if (!button) return;
       try {
         if (button.matches('[data-victor-new]')) return assignmentDrawer(pageContext());
+        if (button.matches('[data-victor-cleanup]')) return cleanupDrawer();
         if (button.matches('[data-victor-refresh]')) { button.disabled = true; await refresh(); button.disabled = false; return; }
         if (button.matches('[data-victor-plan]')) return planDrawer(button.dataset.victorPlan, state && state.plans && state.plans[button.dataset.victorPlan]);
         if (button.matches('[data-victor-open-chat]')) return openChat(button.dataset.victorOpenChat);
-        if (button.matches('[data-victor-complete]')) { await API.http.vitekUpdateTask(button.dataset.victorComplete, { status: 'completed', result: 'Отмечено выполненным владельцем.' }); await refresh(); return; }
+        if (button.matches('[data-victor-answer-task]')) {
+          const task = (state && state.tasks || []).find(row => row.task_id === button.dataset.victorAnswerTask);
+          if (!task) throw new Error('Поручение уже обновилось.');
+          return taskAnswerDrawer(task);
+        }
+        if (button.matches('[data-victor-cancel-task]')) {
+          button.disabled = true; button.textContent = 'Отменяю…';
+          if (button.dataset.incidentId) await API.http.vitekIncidentDecision(button.dataset.incidentId, 'ignore', 'Владелец отменил ранее выданное разрешение.');
+          else await API.http.vitekUpdateTask(button.dataset.victorCancelTask, { status: 'cancelled', result: 'Отменено владельцем.' });
+          await refresh(); UI.toast('Поручение отменено, история сохранена'); return;
+        }
         if (button.matches('[data-victor-incident-yes]')) {
-          button.disabled = true; button.textContent = 'Передаю…';
+          button.closest('.row').querySelectorAll('button').forEach(item => { item.disabled = true; });
+          button.textContent = 'Обрабатывается…';
           const doc = state || await refresh();
           const incident = (doc.incidents || []).find(row => row.incident_id === button.dataset.victorIncidentYes);
           if (!incident) throw new Error('Ситуация уже обновилась. Обновите список.');
           await acceptIncident(incident); return;
         }
-        if (button.matches('[data-victor-incident-no]')) { await API.http.vitekIncidentDecision(button.dataset.victorIncidentNo, 'ignore', 'Владелец отказался от запуска работы.'); await refresh(); return; }
+        if (button.matches('[data-victor-incident-no]')) { button.closest('.row').querySelectorAll('button').forEach(item => { item.disabled = true; }); button.textContent = 'Обрабатывается…'; await API.http.vitekIncidentDecision(button.dataset.victorIncidentNo, 'ignore', 'Владелец отказался от запуска работы.'); await refresh(); UI.toast('Отклонено. Работа не запущена'); return; }
         if (button.matches('[data-victor-rest]')) {
           const minutes = Number(window.prompt('На сколько минут дать Виктору отдых?', '60') || 0);
           if (minutes > 0) { await API.http.vitekRest({ duration_minutes: minutes, reason: 'Решение владельца в приложении' }); await refresh(); }
@@ -391,6 +494,7 @@
   }
 
   function init() {
+    installClientTelemetry();
     ensurePageAction();
     formalizeChat();
     wireCenter();
@@ -419,7 +523,8 @@
         const doc = await refresh() || state;
         const incident = doc && (doc.incidents || []).find(row => row.incident_id === decision.dataset.id);
         if (!incident) throw new Error('Ситуация уже обновилась.');
-        decision.disabled = true;
+        decision.closest('.row').querySelectorAll('button').forEach(item => { item.disabled = true; });
+        decision.textContent = 'Обрабатывается…';
         if (decision.dataset.decision === 'create_task') await acceptIncident(incident);
         else { await API.http.vitekIncidentDecision(incident.incident_id, 'ignore', 'Владелец отказался от запуска работы.'); await refresh(); }
       } catch (error) { decision.disabled = false; UI.reportError(error); }
@@ -429,6 +534,8 @@
   window.Victor = {
     openAssignment: assignmentDrawer,
     openPlan: planDrawer,
+    openCleanup: cleanupDrawer,
+    openTaskAnswer: taskAnswerDrawer,
     createAssignment,
     refresh,
     openChat,

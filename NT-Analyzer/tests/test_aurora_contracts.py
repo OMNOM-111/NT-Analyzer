@@ -136,7 +136,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260716-release1"}, versions
+    assert set(versions.values()) == {"20260718-lifecycle1"}, versions
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():

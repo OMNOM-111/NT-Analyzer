@@ -42,6 +42,13 @@ Last checkpoint: 2026-07-16 09:30 PT
     documentation, and installed the hash-matched Bridge DLL. Automated evidence:
     682 pytest tests and 13/13 legacy suites pass; production acceptance remains
     blocked on owner-controlled live/visual/credential/load scenarios.
+18. **2026-07-17 PT — orchestrator backlog 1–210:** mapped the owner's new issue
+    register to eight root causes; implemented durable scoped authorization,
+    idempotent decisions, canonical lifecycle state, `SESSION_CLOSED`, preview/apply
+    reconciliation, task/event leases, restart recovery and frontend telemetry.
+    Backed up the real Vitek store, applied 40 safe repairs with no record deletion,
+    and confirmed a zero-action second preview. Final evidence for this block:
+    690 pytest tests, 217 focused tests and 13/13 project suites pass.
 
 ## Branch preservation audit
 

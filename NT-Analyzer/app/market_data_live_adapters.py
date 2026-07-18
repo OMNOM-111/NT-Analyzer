@@ -14,6 +14,8 @@ import os
 import re
 import threading
 import time
+import json
+import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -32,6 +34,21 @@ _MONTH_CODE = {
 
 def _iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _post_json(url: str, payload: Dict[str, Any], *, headers: Optional[Dict[str, str]] = None,
+               timeout: float = 10.0) -> Dict[str, Any]:
+    """POST JSON without adding a third-party dependency to the stdlib backend."""
+    request = urllib.request.Request(
+        str(url), data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", **dict(headers or {})},
+    )
+    with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+        raw = response.read().decode("utf-8")
+    decoded = json.loads(raw or "{}")
+    if not isinstance(decoded, dict):
+        raise ValueError("JSON response must be an object")
+    return decoded
 
 
 def databento_raw_symbol(exact_contract: str) -> str:
@@ -613,17 +630,14 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         username = str(os.environ.get("NTA_TOPSTEPX_USERNAME") or "").strip()
         api_key = str(os.environ.get("NTA_TOPSTEPX_API_KEY") or "").strip()
 
-        import requests
         try:
             self._runtime_state = "CONNECTING"
-            resp = requests.post(
+            data = _post_json(
                 "https://api.topstepx.com/api/Auth/loginKey",
-                json={"userName": username, "apiKey": api_key},
+                {"userName": username, "apiKey": api_key},
                 headers={"Content-Type": "application/json"},
                 timeout=10.0
             )
-            resp.raise_for_status()
-            data = resp.json()
             if not data.get("success") or not data.get("token"):
                 raise ValueError(f"Auth response unsuccessful: {data.get('errorMessage') or 'no token returned'}")
 
@@ -745,17 +759,14 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             if contract in self._contract_id_map:
                 return self._contract_id_map[contract]
 
-        import requests
         root = contract.split(" ")[0]
         try:
-            resp = requests.post(
+            data = _post_json(
                 "https://api.topstepx.com/api/Contract/search",
-                json={"searchText": root},
+                {"searchText": root},
                 headers={"Authorization": f"Bearer {self._token}"},
                 timeout=5.0
             )
-            resp.raise_for_status()
-            data = resp.json()
             raw = databento_raw_symbol(contract)
             for item in data.get("contracts", data.get("available", [])):
                 provider_symbol = str(item.get("name") or item.get("symbol") or "").upper()
@@ -851,11 +862,10 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         if not cid:
             return []
 
-        import requests
         try:
-            resp = requests.post(
+            data = _post_json(
                 "https://api.topstepx.com/api/History/retrieveBars",
-                json={
+                {
                     "contractId": cid,
                     "unit": unit,
                     "unitNumber": unit_num,
@@ -865,8 +875,6 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"},
                 timeout=10.0
             )
-            resp.raise_for_status()
-            data = resp.json()
 
             bars = []
             for item in data.get("bars", []):

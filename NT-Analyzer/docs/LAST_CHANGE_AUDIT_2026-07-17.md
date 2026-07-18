@@ -50,13 +50,25 @@ commit subjects, run-state notes, tests and code boundaries:
    The artifact was removed and the canonical history restored.
 9. Trailing whitespace and a spurious EOF block made `git diff --check` fail.
    The changed files are clean now.
+10. The owner backlog 1–210 exposed eight repeated lifecycle failures around
+    durable authorization, idempotency, status truth, session guards, cleanup and
+    restart recovery. These are now mapped and addressed in
+    `docs/STRATFORGE_ORCHESTRATOR_BACKLOG_AUDIT_2026-07-17.md`.
+11. Five legacy tasks claimed work had started while the backend guard rejected
+    authorization; one task was never activated and one executor returned no
+    verifiable plan. A preview/apply reconciliation preserved all records and
+    retired those states honestly.
+12. The clean GitHub runner depended on undeclared third-party `requests` in the
+    TopstepX prototype. The adapter now uses Python stdlib HTTP and the dependency
+    mismatch is covered by tests.
 
 ## Verification evidence
 
 | Gate | Result |
 |---|---|
-| `python -m pytest -q` | **682 passed** in 170.53 s |
+| `python -m pytest -q` | **690 passed** in 156.65 s |
 | `python -m tests` | **13/13 suites passed** |
+| Focused Vitek / Chief Agent / market-data / Aurora | **217 passed** |
 | Focused market-data / entitlement / IPC | **35 passed** |
 | AI Lab bootstrap | **93/93 passed** |
 | Python changed-file compile | **PASS** |
@@ -66,6 +78,10 @@ commit subjects, run-state notes, tests and code boundaries:
 | `git diff --check` | **PASS** |
 | Secret-pattern review of added lines | placeholders/mocks only; no live credential found |
 | Bridge DLL install | **PASS**, build/install SHA-256 `24F7DC...C514F`; backup retained |
+
+The real Vitek store was backed up byte-for-byte, then 40 previewed lifecycle
+repairs were applied. The second preview returned 0 actions; no tasks or incidents
+were deleted.
 
 ## Not production-accepted
 
