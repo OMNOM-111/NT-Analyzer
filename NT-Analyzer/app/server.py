@@ -2358,15 +2358,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/health":
-            self._json(HTTPStatus.OK, {
+            payload = {
                 "ok": True,
-                "host": HOST,
-                "project_root": str(jobqueue.project_root()),
-                "jobs_dir": str(jobqueue.jobs_dir()),
+                "host": str(self.server.server_address[0]),
+                "deployment": runtime_env.public_status(),
                 "ninjatrader_running": jobqueue.ninjatrader_running(),
                 "worker": local_worker.status(),
                 "vitek": vitek.status(),
-            })
+            }
+            # Absolute local paths are useful to the private developer but
+            # should not be disclosed by a production health endpoint.
+            if runtime_env.is_development():
+                payload.update({
+                    "project_root": str(jobqueue.project_root()),
+                    "jobs_dir": str(jobqueue.jobs_dir()),
+                })
+            self._json(HTTPStatus.OK, payload)
             return
 
         if path == "/api/vitek/status":
@@ -6875,13 +6882,18 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------------------
 
-def _bind_or_pick_port(start_port: int = DEFAULT_PORT, attempts: int = 10) -> int:
-    """Return a free port on 127.0.0.1 starting from start_port."""
+def _bind_or_pick_port(
+    start_port: int = DEFAULT_PORT,
+    attempts: int = 10,
+    *,
+    host: str = HOST,
+) -> int:
+    """Return a free port on the validated bind host."""
     for off in range(attempts):
         port = start_port + off
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind((HOST, port))
+                s.bind((host, port))
                 return port
             except OSError:
                 continue
@@ -6890,17 +6902,27 @@ def _bind_or_pick_port(start_port: int = DEFAULT_PORT, attempts: int = 10) -> in
 
 def run(port: Optional[int] = None) -> None:
     try:
-        runtime_env.assert_production_safe()
+        deployment = runtime_env.assert_startup_safe()
     except runtime_env.RuntimeEnvError as exc:
         print(f"[nta-backend] FATAL: {exc}")
         raise SystemExit(2) from exc
     env = runtime_env.status()
-    print(f"[nta-backend] app_env={env['app_env']} test_auth={env['test_auth_enabled']} impersonation={env['impersonation_enabled']}")
-    bind_port = port or _bind_or_pick_port(DEFAULT_PORT)
-    server = ThreadingHTTPServer((HOST, bind_port), Handler)
+    print(
+        "[nta-backend] "
+        f"environment={deployment.environment} "
+        f"profile={deployment.runtime_profile} "
+        f"instance={deployment.instance_id} "
+        f"role={deployment.deployment_role} "
+        f"build={deployment.build_version} "
+        f"test_auth={env['test_auth_enabled']} "
+        f"impersonation={env['impersonation_enabled']}"
+    )
+    bind_host = deployment.bind_host
+    bind_port = port or _bind_or_pick_port(DEFAULT_PORT, host=bind_host)
+    server = ThreadingHTTPServer((bind_host, bind_port), Handler)
     server.daemon_threads = True
-    print(f"[nta-backend] listening on http://{HOST}:{bind_port}/")
-    print(f"[nta-backend] UI:           http://{HOST}:{bind_port}/ui/")
+    print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
+    print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
     print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
     # Start the AI Lab stale-experiment sweeper on a daemon thread.

@@ -29,6 +29,39 @@ $projectRoot = $scriptDir
 Set-Location $projectRoot
 if (-not $UiPath.StartsWith('/')) { $UiPath = '/' + $UiPath }
 
+# This launcher is intentionally Development-only.  It preserves the existing
+# local data directory while reserving a distinct unused production root, so a
+# future production profile cannot be selected by an omitted variable.
+if (-not $env:STRATFORGE_ENV) { $env:STRATFORGE_ENV = 'development' }
+if ($env:STRATFORGE_ENV -notin @('development', 'dev', 'local')) {
+    Write-Host "ERROR: start.ps1 is Development-only; STRATFORGE_ENV=$($env:STRATFORGE_ENV)" -ForegroundColor Red
+    exit 2
+}
+if (-not $env:STRATFORGE_INSTANCE_ID) {
+    $env:STRATFORGE_INSTANCE_ID = "stratforge-dev-$($env:COMPUTERNAME)"
+}
+if (-not $env:STRATFORGE_DEPLOYMENT_ROLE) { $env:STRATFORGE_DEPLOYMENT_ROLE = 'all-in-one' }
+if (-not $env:STRATFORGE_CONFIG_PROFILE) { $env:STRATFORGE_CONFIG_PROFILE = 'local-development' }
+if (-not $env:STRATFORGE_BUILD_VERSION) { $env:STRATFORGE_BUILD_VERSION = 'development' }
+if (-not $env:STRATFORGE_REGION) { $env:STRATFORGE_REGION = 'local' }
+if (-not $env:STRATFORGE_BIND_HOST) { $env:STRATFORGE_BIND_HOST = '127.0.0.1' }
+if (-not $env:STRATFORGE_ALLOWED_HOSTS) { $env:STRATFORGE_ALLOWED_HOSTS = '127.0.0.1,localhost' }
+if (-not $env:STRATFORGE_DEVELOPMENT_DATA_ROOT) {
+    $env:STRATFORGE_DEVELOPMENT_DATA_ROOT = (Join-Path $projectRoot 'data')
+}
+if (-not $env:STRATFORGE_DATA_ROOT) {
+    $env:STRATFORGE_DATA_ROOT = (Join-Path $projectRoot 'data\production')
+}
+if (-not $env:STRATFORGE_DATABASE_ID) { $env:STRATFORGE_DATABASE_ID = 'development-sqlite' }
+if (-not $env:STRATFORGE_QUEUE_ID) { $env:STRATFORGE_QUEUE_ID = 'development-local-worker' }
+if (-not $env:STRATFORGE_OBJECT_STORAGE_ID) { $env:STRATFORGE_OBJECT_STORAGE_ID = 'development-files' }
+if (-not $env:STRATFORGE_TELEGRAM_BOT_ID) { $env:STRATFORGE_TELEGRAM_BOT_ID = 'development-local' }
+if (-not $env:STRATFORGE_COOKIE_NAMESPACE) { $env:STRATFORGE_COOKIE_NAMESPACE = 'sf-dev' }
+if (-not $env:STRATFORGE_SIGNING_KEY_ID) { $env:STRATFORGE_SIGNING_KEY_ID = 'development-local' }
+if (-not $env:STRATFORGE_LOG_NAMESPACE) { $env:STRATFORGE_LOG_NAMESPACE = 'development' }
+if (-not $env:STRATFORGE_LIVE_TRADING_ALLOWED) { $env:STRATFORGE_LIVE_TRADING_ALLOWED = '0' }
+if (-not $env:STRATFORGE_REAL_PAYMENTS_ALLOWED) { $env:STRATFORGE_REAL_PAYMENTS_ALLOWED = '0' }
+
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {
     Write-Host "ERROR: backend entrypoint not found at: $serverScript" -ForegroundColor Red

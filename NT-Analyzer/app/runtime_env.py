@@ -1,22 +1,42 @@
-"""Application environment: production vs staging safety gates.
+"""Typed StratForge deployment environment and startup safety gates.
 
-StratForge uses ``NTA_APP_ENV`` (or legacy ``NTA_ENV``):
-  - ``production`` (default) — real Telegram, real payments, no test-auth
-  - ``staging`` — isolated QA; virtual users / impersonation / fake OAuth allowed
+There are two deployable environments:
 
-Never enable test-auth or impersonation in production. Startup must call
-``assert_production_safe()`` before serving traffic.
+development
+    Private Windows development. Local SQLite/JSON/DPAPI and test-only
+    features may be enabled explicitly.
+
+production
+    The central multi-user service. Startup is fail-closed and requires
+    explicit resource identities.
+
+The historical staging value remains accepted as a compatibility QA profile,
+but maps to the development deployment boundary and is not a third deployment
+target.
+
+Library calls retain the historical production fallback so imports and older
+tests remain compatible. The real server entrypoint must call
+assert_startup_safe(), which rejects an implicit environment.
 """
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 import os
 from pathlib import Path
-from typing import Any, Dict
+import re
+import socket
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 
+DEVELOPMENT = "development"
 PRODUCTION = "production"
-STAGING = "staging"
-_VALID = {PRODUCTION, STAGING}
+STAGING = "staging"  # Legacy isolated-QA profile; deploys as DEVELOPMENT.
+_VALID = {DEVELOPMENT, PRODUCTION, STAGING}
+_ENV_KEYS = ("STRATFORGE_ENV", "NTA_APP_ENV", "NTA_ENV")
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
+_PRODUCTION_ROLES = {
+    "all-in-one", "api", "worker", "telegram", "connector-control",
+}
 
 
 class RuntimeEnvError(RuntimeError):
@@ -25,68 +45,171 @@ class RuntimeEnvError(RuntimeError):
         self.status = int(status)
 
 
-def app_env() -> str:
-    raw = (
-        str(os.environ.get("NTA_APP_ENV") or os.environ.get("NTA_ENV") or PRODUCTION)
-        .strip()
-        .lower()
-    )
+@dataclass(frozen=True)
+class DeploymentConfig:
+    environment: str
+    runtime_profile: str
+    environment_explicit: bool
+    instance_id: str
+    deployment_role: str
+    config_profile: str
+    build_version: str
+    region: str
+    bind_host: str
+    allowed_hosts: Tuple[str, ...]
+    data_root: str
+    database_id: str
+    queue_id: str
+    object_storage_id: str
+    telegram_bot_id: str
+    cookie_namespace: str
+    signing_key_id: str
+    log_namespace: str
+    live_trading_allowed: bool
+    real_payments_allowed: bool
+
+    def as_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def public_dict(self) -> Dict[str, Any]:
+        return {
+            "environment": self.environment,
+            "runtime_profile": self.runtime_profile,
+            "instance_id": self.instance_id,
+            "deployment_role": self.deployment_role,
+            "config_profile": self.config_profile,
+            "build_version": self.build_version,
+            "region": self.region,
+            "live_trading_allowed": self.live_trading_allowed,
+            "real_payments_allowed": self.real_payments_allowed,
+        }
+
+
+def _normalize_env(value: Any) -> str:
+    raw = str(value or "").strip().lower()
     if raw in ("prod", "live"):
         return PRODUCTION
-    if raw in ("stage", "qa", "test", "dev", "development"):
+    if raw in ("dev", "local"):
+        return DEVELOPMENT
+    if raw in ("stage", "qa", "test"):
         return STAGING
     if raw in _VALID:
         return raw
-    raise RuntimeEnvError(f"Неизвестное NTA_APP_ENV={raw!r}.", 503)
+    raise RuntimeEnvError(f"Неизвестное окружение StratForge={raw!r}.", 503)
+
+
+def _configured_environments() -> Tuple[Tuple[str, str], ...]:
+    values = []
+    for key in _ENV_KEYS:
+        raw = str(os.environ.get(key) or "").strip()
+        if raw:
+            values.append((key, _normalize_env(raw)))
+    if not values:
+        return ()
+    deployment_values = {
+        PRODUCTION if value == PRODUCTION else DEVELOPMENT
+        for _, value in values
+    }
+    if len(deployment_values) != 1:
+        visible = ", ".join(f"{key}={value}" for key, value in values)
+        raise RuntimeEnvError(
+            f"Конфликт переменных окружения StratForge: {visible}.", 503,
+        )
+    return tuple(values)
+
+
+def environment_explicit() -> bool:
+    return bool(_configured_environments())
+
+
+def app_env() -> str:
+    """Return the selected runtime profile.
+
+    Staging is returned for a legacy staging input so older status consumers
+    remain compatible. Use deployment_environment() for the actual
+    two-environment boundary.
+    """
+    values = _configured_environments()
+    if not values:
+        return PRODUCTION
+    priority = {key: index for index, key in enumerate(_ENV_KEYS)}
+    return min(values, key=lambda item: priority[item[0]])[1]
+
+
+def deployment_environment() -> str:
+    return PRODUCTION if app_env() == PRODUCTION else DEVELOPMENT
+
+
+def is_development() -> bool:
+    return deployment_environment() == DEVELOPMENT
 
 
 def is_staging() -> bool:
-    return app_env() == STAGING
+    """Compatibility name for the isolated non-production boundary."""
+    return is_development()
 
 
 def is_production() -> bool:
-    return app_env() == PRODUCTION
+    return deployment_environment() == PRODUCTION
+
+
+def _optional_bool(name: str) -> Optional[bool]:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return None
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeEnvError(f"{name} должен быть true/false или 1/0.", 503)
+
+
+def _compatible_bool(primary: str, legacy: str) -> bool:
+    preferred = _optional_bool(primary)
+    old = _optional_bool(legacy)
+    if preferred is not None and old is not None and preferred != old:
+        raise RuntimeEnvError(f"Конфликт {primary} и {legacy}.", 503)
+    if preferred is not None:
+        return preferred
+    return bool(old)
 
 
 def test_auth_enabled() -> bool:
-    """Test auth may run only on staging AND with an explicit opt-in flag."""
-    if not is_staging():
+    """Test auth may run only in development with explicit opt-in."""
+    if not is_development():
         return False
     return str(os.environ.get("NTA_ENABLE_TEST_AUTH") or "").strip() == "1"
 
 
 def impersonation_enabled() -> bool:
-    """Owner impersonation is staging-only (same safety bar as test auth)."""
-    if not is_staging():
+    """Owner impersonation is development-only."""
+    if not is_development():
         return False
-    # Default on for staging so "войти как" works without a second flag;
-    # can be forced off with NTA_ENABLE_IMPERSONATION=0.
-    flag = str(os.environ.get("NTA_ENABLE_IMPERSONATION") or "1").strip().lower()
+    # Preserve the historical staging default while new development starts
+    # fail-closed unless it opts in.
+    default = "1" if app_env() == STAGING else "0"
+    flag = str(os.environ.get("NTA_ENABLE_IMPERSONATION") or default).strip().lower()
     return flag not in {"0", "false", "no", "off"}
 
 
 def allow_real_payments() -> bool:
-    """Return whether production payment-provider calls are explicitly enabled.
-
-    Staging is deliberately fail-closed: a staging process cannot opt into real
-    payments through an environment typo.  Production also defaults to off and
-    requires the owner-only deployment flag.
-    """
-    if is_staging():
+    if not is_production():
         return False
-    return str(os.environ.get("NTA_ALLOW_REAL_PAYMENTS") or "").strip() == "1"
+    return _compatible_bool(
+        "STRATFORGE_REAL_PAYMENTS_ALLOWED", "NTA_ALLOW_REAL_PAYMENTS",
+    )
 
 
 def allow_live_orders() -> bool:
-    """Return whether production broker order submission is explicitly enabled."""
-    if is_staging():
+    if not is_production():
         return False
-    return str(os.environ.get("NTA_ALLOW_LIVE_ORDERS") or "").strip() == "1"
+    return _compatible_bool(
+        "STRATFORGE_LIVE_TRADING_ALLOWED", "NTA_ALLOW_LIVE_ORDERS",
+    )
 
 
 def rate_limits_disabled() -> bool:
-    """Allow deterministic load tests to bypass limiters only in staging."""
-    return is_staging() and str(
+    return is_development() and str(
         os.environ.get("NTA_DISABLE_RATE_LIMIT") or ""
     ).strip() == "1"
 
@@ -98,34 +221,45 @@ def _resolved_root(raw: str, project_root: Path) -> Path:
     return path.resolve()
 
 
-def data_root(project_root: Any = None) -> Path:
-    """Return the environment-specific application data directory.
+def _first_value(names: Iterable[str]) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
 
-    Production preserves the historical ``<project>/data`` location.  Staging
-    defaults to ``<project>/data/staging`` and rejects the production directory,
-    so changing only ``NTA_APP_ENV`` is sufficient to prevent simulated fills
-    from landing in production stores.  Deployments may point at a separate
-    volume with ``NTA_DATA_ROOT`` (production) or ``NTA_STAGING_DATA_ROOT``.
-    """
+
+def data_root(project_root: Any = None) -> Path:
+    """Return the isolated data directory for the selected environment."""
     base = Path(project_root or Path(__file__).resolve().parent.parent).resolve()
     production_root = _resolved_root(
-        str(os.environ.get("NTA_DATA_ROOT") or (base / "data")), base,
+        _first_value(("STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT"))
+        or str(base / "data"),
+        base,
     )
-    if not is_staging():
+    if is_production():
         return production_root
-    staging_raw = str(os.environ.get("NTA_STAGING_DATA_ROOT") or "").strip()
-    staging_root = _resolved_root(staging_raw or str(base / "data" / "staging"), base)
-    if staging_root == production_root:
+
+    development_raw = _first_value((
+        "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
+    ))
+    legacy_default = base / "data" / "staging"
+    development_default = (
+        legacy_default if app_env() == STAGING else base / "data" / "development"
+    )
+    development_root = _resolved_root(
+        development_raw or str(development_default), base,
+    )
+    if development_root == production_root:
         raise RuntimeEnvError(
-            "Staging data root совпадает с production data root. "
-            "Задайте отдельный NTA_STAGING_DATA_ROOT.",
+            "Development data root совпадает с production data root. "
+            "Задайте отдельный STRATFORGE_DEVELOPMENT_DATA_ROOT.",
             503,
         )
-    return staging_root
+    return development_root
 
 
 def data_path(*parts: Any, project_root: Any = None) -> Path:
-    """Resolve a path inside the active environment's isolated data root."""
     path = data_root(project_root)
     for part in parts:
         path = path / str(part)
@@ -133,15 +267,176 @@ def data_path(*parts: Any, project_root: Any = None) -> Path:
 
 
 def allow_owner_telegram_mirror() -> bool:
-    """Staging must not write into production owner Telegram chats by default."""
-    if is_staging():
-        return str(os.environ.get("NTA_STAGING_ALLOW_OWNER_TELEGRAM") or "").strip() == "1"
+    if is_development():
+        return str(
+            os.environ.get("NTA_STAGING_ALLOW_OWNER_TELEGRAM") or ""
+        ).strip() == "1"
     return True
 
 
+def _safe_identifier(name: str, default: str, *, required: bool) -> str:
+    configured = str(os.environ.get(name) or "").strip()
+    if required and not configured:
+        raise RuntimeEnvError(f"{name} обязателен в production.", 503)
+    value = configured or str(default or "").strip()
+    if not value:
+        return ""
+    if not _ID_RE.fullmatch(value):
+        raise RuntimeEnvError(
+            f"{name} содержит недопустимые символы или слишком длинный.", 503,
+        )
+    return value
+
+
+def _allowed_hosts(*, required: bool) -> Tuple[str, ...]:
+    raw = str(os.environ.get("STRATFORGE_ALLOWED_HOSTS") or "").strip()
+    if not raw:
+        if required:
+            raise RuntimeEnvError(
+                "STRATFORGE_ALLOWED_HOSTS обязателен в production.", 503,
+            )
+        return ("127.0.0.1", "localhost")
+    hosts = []
+    for item in raw.split(","):
+        host = item.strip().lower().rstrip(".")
+        if not host:
+            continue
+        if (
+            "*" in host or "://" in host or "/" in host
+            or host in {"0.0.0.0", "::"}
+        ):
+            raise RuntimeEnvError(
+                f"Недопустимый host в STRATFORGE_ALLOWED_HOSTS: {host!r}.", 503,
+            )
+        if host not in hosts:
+            hosts.append(host)
+    if not hosts:
+        raise RuntimeEnvError("STRATFORGE_ALLOWED_HOSTS пуст.", 503)
+    if required and any(host in {"127.0.0.1", "localhost", "::1"} for host in hosts):
+        raise RuntimeEnvError(
+            "Production allowed-hosts не должен содержать localhost.", 503,
+        )
+    return tuple(hosts)
+
+
+def deployment_config(*, strict: bool = False) -> DeploymentConfig:
+    environment = deployment_environment()
+    production_required = strict and environment == PRODUCTION
+    if production_required:
+        if not str(os.environ.get("STRATFORGE_DATA_ROOT") or "").strip():
+            raise RuntimeEnvError(
+                "STRATFORGE_DATA_ROOT обязателен в production.", 503,
+            )
+        for flag_name in (
+            "STRATFORGE_LIVE_TRADING_ALLOWED",
+            "STRATFORGE_REAL_PAYMENTS_ALLOWED",
+        ):
+            if _optional_bool(flag_name) is None:
+                raise RuntimeEnvError(
+                    f"{flag_name} должен быть задан явно в production.", 503,
+                )
+    hostname = re.sub(r"[^A-Za-z0-9.-]+", "-", socket.gethostname()).strip("-")
+    bind_host = str(
+        os.environ.get("STRATFORGE_BIND_HOST")
+        or ("127.0.0.1" if environment == DEVELOPMENT else "")
+    ).strip()
+    if production_required and not bind_host:
+        raise RuntimeEnvError("STRATFORGE_BIND_HOST обязателен в production.", 503)
+    if bind_host in {"0.0.0.0", "::"} and _optional_bool(
+        "STRATFORGE_PRIVATE_BIND_CONFIRMED"
+    ) is not True:
+        raise RuntimeEnvError(
+            "Bind на все интерфейсы требует "
+            "STRATFORGE_PRIVATE_BIND_CONFIRMED=1 и внешнего firewall/reverse proxy.",
+            503,
+        )
+
+    config = DeploymentConfig(
+        environment=environment,
+        runtime_profile=app_env(),
+        environment_explicit=environment_explicit(),
+        instance_id=_safe_identifier(
+            "STRATFORGE_INSTANCE_ID",
+            f"stratforge-dev-{hostname or 'local'}",
+            required=production_required,
+        ),
+        deployment_role=_safe_identifier(
+            "STRATFORGE_DEPLOYMENT_ROLE",
+            "all-in-one",
+            required=production_required,
+        ),
+        config_profile=_safe_identifier(
+            "STRATFORGE_CONFIG_PROFILE",
+            "local-development",
+            required=production_required,
+        ),
+        build_version=_safe_identifier(
+            "STRATFORGE_BUILD_VERSION",
+            "development",
+            required=production_required,
+        ),
+        region=_safe_identifier(
+            "STRATFORGE_REGION",
+            "local",
+            required=production_required,
+        ),
+        bind_host=bind_host or "127.0.0.1",
+        allowed_hosts=_allowed_hosts(required=production_required),
+        data_root=str(data_root()),
+        database_id=_safe_identifier(
+            "STRATFORGE_DATABASE_ID",
+            "development-sqlite",
+            required=production_required,
+        ),
+        queue_id=_safe_identifier(
+            "STRATFORGE_QUEUE_ID",
+            "development-local-worker",
+            required=production_required,
+        ),
+        object_storage_id=_safe_identifier(
+            "STRATFORGE_OBJECT_STORAGE_ID",
+            "development-files",
+            required=production_required,
+        ),
+        telegram_bot_id=_safe_identifier(
+            "STRATFORGE_TELEGRAM_BOT_ID",
+            "development-disabled",
+            required=production_required,
+        ),
+        cookie_namespace=_safe_identifier(
+            "STRATFORGE_COOKIE_NAMESPACE",
+            "sf-dev",
+            required=production_required,
+        ),
+        signing_key_id=_safe_identifier(
+            "STRATFORGE_SIGNING_KEY_ID",
+            "development-local",
+            required=production_required,
+        ),
+        log_namespace=_safe_identifier(
+            "STRATFORGE_LOG_NAMESPACE",
+            "development",
+            required=production_required,
+        ),
+        live_trading_allowed=allow_live_orders(),
+        real_payments_allowed=allow_real_payments(),
+    )
+    if config.deployment_role not in _PRODUCTION_ROLES:
+        raise RuntimeEnvError(
+            "STRATFORGE_DEPLOYMENT_ROLE должен быть одним из: "
+            + ", ".join(sorted(_PRODUCTION_ROLES)),
+            503,
+        )
+    return config
+
+
 def status() -> Dict[str, Any]:
+    config = deployment_config(strict=False)
     return {
         "app_env": app_env(),
+        "deployment_environment": config.environment,
+        "environment_explicit": config.environment_explicit,
+        "is_development": is_development(),
         "is_staging": is_staging(),
         "is_production": is_production(),
         "test_auth_enabled": test_auth_enabled(),
@@ -151,40 +446,57 @@ def status() -> Dict[str, Any]:
         "rate_limits_disabled": rate_limits_disabled(),
         "allow_owner_telegram_mirror": allow_owner_telegram_mirror(),
         "data_root": str(data_root()),
+        "deployment": config.as_dict(),
     }
 
 
+def public_status() -> Dict[str, Any]:
+    return deployment_config(strict=False).public_dict()
+
+
 def assert_production_safe() -> None:
-    """Hard-fail startup if dangerous staging features leak into production."""
-    env = app_env()
-    if env == PRODUCTION:
+    """Retained compatibility gate for tests and library callers."""
+    if is_production():
         if str(os.environ.get("NTA_ENABLE_TEST_AUTH") or "").strip() == "1":
             raise RuntimeEnvError(
-                "NTA_ENABLE_TEST_AUTH=1 запрещён в production (NTA_APP_ENV=production).",
-                503,
+                "NTA_ENABLE_TEST_AUTH=1 запрещён в production.", 503,
             )
         if str(os.environ.get("NTA_ENABLE_IMPERSONATION") or "").strip().lower() in {
             "1", "true", "yes", "on",
         }:
             raise RuntimeEnvError(
-                "NTA_ENABLE_IMPERSONATION запрещён в production.",
-                503,
+                "NTA_ENABLE_IMPERSONATION запрещён в production.", 503,
             )
         if str(os.environ.get("NTA_DISABLE_RATE_LIMIT") or "").strip() == "1":
             raise RuntimeEnvError(
-                "NTA_DISABLE_RATE_LIMIT=1 запрещён в production.",
-                503,
+                "NTA_DISABLE_RATE_LIMIT=1 запрещён в production.", 503,
             )
         return
-    # Resolve eagerly so a staging deployment cannot start on the production
-    # data directory and fail only after its first write.
     data_root()
 
 
-def require_staging(feature: str = "эта функция") -> None:
-    if not is_staging():
+def assert_startup_safe() -> DeploymentConfig:
+    """Fail-closed validation used by the real backend entrypoint."""
+    if not environment_explicit():
         raise RuntimeEnvError(
-            f"{feature} доступна только в staging (NTA_APP_ENV=staging).",
+            "Окружение не задано. Установите STRATFORGE_ENV=development "
+            "или STRATFORGE_ENV=production.",
+            503,
+        )
+    assert_production_safe()
+    if is_production() and str(
+        os.environ.get("NTA_TEST_BYPASS_AUTH") or ""
+    ).strip() == "1":
+        raise RuntimeEnvError(
+            "NTA_TEST_BYPASS_AUTH=1 запрещён в production startup.", 503,
+        )
+    return deployment_config(strict=True)
+
+
+def require_staging(feature: str = "эта функция") -> None:
+    if not is_development():
+        raise RuntimeEnvError(
+            f"{feature} доступна только в development/staging QA.",
             403,
         )
 
@@ -193,7 +505,8 @@ def require_test_auth() -> None:
     require_staging("Test auth")
     if not test_auth_enabled():
         raise RuntimeEnvError(
-            "Test auth выключен. Установите NTA_ENABLE_TEST_AUTH=1 на staging.",
+            "Test auth выключен. Установите NTA_ENABLE_TEST_AUTH=1 "
+            "в development.",
             403,
         )
 
