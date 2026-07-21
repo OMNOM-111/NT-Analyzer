@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -106,6 +107,8 @@ if __package__ is None or __package__ == "":
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
     from app import runtime_env  # type: ignore[no-redef]
+    from app import edge_security  # type: ignore[no-redef]
+    from app import service_readiness  # type: ignore[no-redef]
     from app import google_auth  # type: ignore[no-redef]
     from app import test_auth  # type: ignore[no-redef]
     from app import demo_backtest  # type: ignore[no-redef]
@@ -175,6 +178,8 @@ else:
     from . import local_secrets as _local_secrets
     from . import news_refresh
     from . import runtime_env
+    from . import edge_security
+    from . import service_readiness
     from . import google_auth
     from . import test_auth
     from . import demo_backtest
@@ -2211,6 +2216,35 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
 
+    def _check_deployment_edge(self) -> bool:
+        """Enforce the real server's host/proxy contract before routing.
+
+        Legacy unit tests construct a bare ThreadingHTTPServer directly.  The
+        executable entrypoint attaches the validated deployment config, which
+        is the signal to enable this fail-closed production boundary.
+        """
+        deployment = getattr(self.server, "deployment_config", None)
+        if deployment is None:
+            return True
+        decision = edge_security.evaluate_request(
+            deployment,
+            peer_ip=(self.client_address or ("", 0))[0],
+            host=self.headers.get("Host") or "",
+            forwarded_host=self.headers.get("X-Forwarded-Host") or "",
+            forwarded_proto=self.headers.get("X-Forwarded-Proto") or "",
+            forwarded_for=self.headers.get("X-Forwarded-For") or "",
+        )
+        if decision.allowed:
+            return True
+        self.close_connection = True
+        status = (
+            HTTPStatus.MISDIRECTED_REQUEST
+            if decision.code == "invalid_host"
+            else HTTPStatus.FORBIDDEN
+        )
+        self._err(status, "request rejected by deployment edge policy", code=decision.code)
+        return False
+
     def do_GET(self) -> None:  # noqa: N802
         self._response_started = False
         self._remote_attempt = False
@@ -2219,6 +2253,8 @@ class Handler(BaseHTTPRequestHandler):
         self._remote_error = ""
         self._extra_headers = []
         try:
+            if not self._check_deployment_edge():
+                return
             self._route_get()
         except Exception:
             self._handle_unexpected("GET")
@@ -2231,6 +2267,8 @@ class Handler(BaseHTTPRequestHandler):
         self._remote_error = ""
         self._extra_headers = []
         try:
+            if not self._check_deployment_edge():
+                return
             self._route_post()
         except Exception:
             self._handle_unexpected("POST")
@@ -2243,6 +2281,8 @@ class Handler(BaseHTTPRequestHandler):
         self._remote_error = ""
         self._extra_headers = []
         try:
+            if not self._check_deployment_edge():
+                return
             self._route_delete()
         except Exception:
             self._handle_unexpected("DELETE")
@@ -2251,6 +2291,30 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
         qs = urllib.parse.parse_qs(url.query)
+
+        if path in {"/api/live", "/api/health/live"}:
+            deployment = getattr(self.server, "deployment_config", None)
+            if deployment is None:
+                deployment = runtime_env.deployment_config()
+            self._json(
+                HTTPStatus.OK,
+                service_readiness.liveness_payload(deployment),
+            )
+            return
+
+        if path in {"/api/ready", "/api/health/ready"}:
+            deployment = getattr(self.server, "deployment_config", None)
+            if deployment is None:
+                deployment = runtime_env.deployment_config()
+            payload = service_readiness.readiness_payload(
+                deployment,
+                probes=getattr(self.server, "readiness_probes", {}),
+            )
+            self._json(
+                HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
+                payload,
+            )
+            return
 
         if path == "/api/auth/status":
             self._auth_status()
@@ -2273,7 +2337,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/runtime/env":
             # Public enough for UI banners; no secrets.
-            self._json(HTTPStatus.OK, runtime_env.status())
+            self._json(
+                HTTPStatus.OK,
+                runtime_env.status() if runtime_env.is_development()
+                else runtime_env.public_status(),
+            )
             return
 
         if path == "/ws/market-data":
@@ -6921,6 +6989,8 @@ def run(port: Optional[int] = None) -> None:
     bind_port = port or _bind_or_pick_port(DEFAULT_PORT, host=bind_host)
     server = ThreadingHTTPServer((bind_host, bind_port), Handler)
     server.daemon_threads = True
+    server.deployment_config = deployment  # type: ignore[attr-defined]
+    server.readiness_probes = {}  # type: ignore[attr-defined]
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
@@ -6985,11 +7055,29 @@ def run(port: Optional[int] = None) -> None:
     except Exception as e:
         print(f"[nta-backend] market-data live sources NOT started: {e}")
     sys.stdout.flush()
+    prior_signal_handlers = {}
+
+    def _graceful_stop(signum, _frame):
+        print(f"[nta-backend] shutdown signal={signum}")
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    if threading.current_thread() is threading.main_thread():
+        for stop_signal in (signal.SIGTERM, signal.SIGINT):
+            try:
+                prior_signal_handlers[stop_signal] = signal.getsignal(stop_signal)
+                signal.signal(stop_signal, _graceful_stop)
+            except (AttributeError, OSError, ValueError):
+                pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("[nta-backend] shutting down")
     finally:
+        for stop_signal, prior_handler in prior_signal_handlers.items():
+            try:
+                signal.signal(stop_signal, prior_handler)
+            except (OSError, ValueError):
+                pass
         ai_chief_agent.stop_background_worker()
         vitek.stop_background_worker()
         local_worker.stop_background_worker()

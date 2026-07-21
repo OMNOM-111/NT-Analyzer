@@ -18,6 +18,10 @@ _ENV_KEYS = (
     "STRATFORGE_REGION",
     "STRATFORGE_BIND_HOST",
     "STRATFORGE_ALLOWED_HOSTS",
+    "STRATFORGE_PUBLIC_ORIGIN",
+    "STRATFORGE_EDGE_MODE",
+    "STRATFORGE_TRUSTED_PROXY_IPS",
+    "STRATFORGE_READINESS_MIN_FREE_MB",
     "STRATFORGE_DATA_ROOT",
     "NTA_DATA_ROOT",
     "STRATFORGE_DEVELOPMENT_DATA_ROOT",
@@ -57,6 +61,9 @@ def _production_config(monkeypatch, tmp_path: Path) -> None:
         "STRATFORGE_REGION": "primary",
         "STRATFORGE_BIND_HOST": "127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS": "app.stratforges.com",
+        "STRATFORGE_PUBLIC_ORIGIN": "https://app.stratforges.com",
+        "STRATFORGE_EDGE_MODE": "cloudflare-tunnel",
+        "STRATFORGE_TRUSTED_PROXY_IPS": "127.0.0.1,::1",
         "STRATFORGE_DATA_ROOT": str(tmp_path / "production"),
         "STRATFORGE_DATABASE_ID": "postgres-primary",
         "STRATFORGE_QUEUE_ID": "production-jobs",
@@ -95,6 +102,8 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.environment_explicit is True
     assert Path(config.data_root) == development.resolve()
     assert config.allowed_hosts == ("127.0.0.1", "localhost")
+    assert config.public_origin == "http://127.0.0.1"
+    assert config.edge_mode == "direct-local"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
     assert runtime_env.impersonation_enabled() is False
@@ -152,6 +161,10 @@ def test_production_startup_requires_the_complete_resource_matrix(
     assert config.environment == "production"
     assert config.instance_id == "stratforge-prod-01"
     assert config.allowed_hosts == ("app.stratforges.com",)
+    assert config.public_origin == "https://app.stratforges.com"
+    assert config.edge_mode == "cloudflare-tunnel"
+    assert config.trusted_proxy_ips == ("127.0.0.1", "::1")
+    assert config.readiness_min_free_mb == 4096
     assert config.database_id == "postgres-primary"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
@@ -179,6 +192,46 @@ def test_production_rejects_wildcard_hosts_and_unconfirmed_all_interface_bind(
 
     monkeypatch.setenv("STRATFORGE_PRIVATE_BIND_CONFIRMED", "1")
     assert runtime_env.assert_startup_safe().bind_host == "0.0.0.0"
+
+
+def test_production_requires_exact_https_canonical_origin(
+    tmp_path, monkeypatch,
+) -> None:
+    _production_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATFORGE_PUBLIC_ORIGIN", "http://app.stratforges.com")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="https"):
+        runtime_env.assert_startup_safe()
+
+    monkeypatch.setenv("STRATFORGE_PUBLIC_ORIGIN", "https://app.stratforges.com/path")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="origin"):
+        runtime_env.assert_startup_safe()
+
+    monkeypatch.setenv("STRATFORGE_PUBLIC_ORIGIN", "https://app.stratforges.com")
+    monkeypatch.setenv(
+        "STRATFORGE_ALLOWED_HOSTS",
+        "app.stratforges.com,www.stratforges.com",
+    )
+    with pytest.raises(runtime_env.RuntimeEnvError, match="canonical host"):
+        runtime_env.assert_startup_safe()
+
+
+def test_production_requires_nonlocal_edge_and_exact_proxy_ips(
+    tmp_path, monkeypatch,
+) -> None:
+    _production_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATFORGE_EDGE_MODE", "direct-local")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="direct-local"):
+        runtime_env.assert_startup_safe()
+
+    monkeypatch.setenv("STRATFORGE_EDGE_MODE", "cloudflare-tunnel")
+    monkeypatch.setenv("STRATFORGE_TRUSTED_PROXY_IPS", "127.0.0.0/8")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="точные IP"):
+        runtime_env.assert_startup_safe()
+
+    monkeypatch.setenv("STRATFORGE_TRUSTED_PROXY_IPS", "127.0.0.1")
+    monkeypatch.setenv("STRATFORGE_READINESS_MIN_FREE_MB", "zero")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="целым числом"):
+        runtime_env.assert_startup_safe()
 
 
 def test_production_rejects_conflicting_live_and_payment_flags(

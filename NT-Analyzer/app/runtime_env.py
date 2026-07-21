@@ -21,11 +21,13 @@ assert_startup_safe(), which rejects an implicit environment.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import ipaddress
 import os
 from pathlib import Path
 import re
 import socket
 from typing import Any, Dict, Iterable, Optional, Tuple
+import urllib.parse
 
 
 DEVELOPMENT = "development"
@@ -37,6 +39,7 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 _PRODUCTION_ROLES = {
     "all-in-one", "api", "worker", "telegram", "connector-control",
 }
+_EDGE_MODES = {"direct-local", "cloudflare-tunnel", "reverse-proxy"}
 
 
 class RuntimeEnvError(RuntimeError):
@@ -57,6 +60,10 @@ class DeploymentConfig:
     region: str
     bind_host: str
     allowed_hosts: Tuple[str, ...]
+    public_origin: str
+    edge_mode: str
+    trusted_proxy_ips: Tuple[str, ...]
+    readiness_min_free_mb: int
     data_root: str
     database_id: str
     queue_id: str
@@ -80,6 +87,7 @@ class DeploymentConfig:
             "config_profile": self.config_profile,
             "build_version": self.build_version,
             "region": self.region,
+            "public_origin": self.public_origin,
             "live_trading_allowed": self.live_trading_allowed,
             "real_payments_allowed": self.real_payments_allowed,
         }
@@ -319,6 +327,117 @@ def _allowed_hosts(*, required: bool) -> Tuple[str, ...]:
     return tuple(hosts)
 
 
+def _public_origin(*, required: bool, allowed_hosts: Tuple[str, ...]) -> str:
+    raw = str(os.environ.get("STRATFORGE_PUBLIC_ORIGIN") or "").strip()
+    if not raw:
+        if required:
+            raise RuntimeEnvError(
+                "STRATFORGE_PUBLIC_ORIGIN обязателен в production.", 503,
+            )
+        return "http://127.0.0.1"
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except (TypeError, ValueError) as exc:
+        raise RuntimeEnvError(
+            "STRATFORGE_PUBLIC_ORIGIN содержит некорректный URL.", 503,
+        ) from exc
+    hostname = str(parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise RuntimeEnvError(
+            "STRATFORGE_PUBLIC_ORIGIN должен быть origin без path/query/credentials.",
+            503,
+        )
+    if required and parsed.scheme != "https":
+        raise RuntimeEnvError(
+            "Production STRATFORGE_PUBLIC_ORIGIN должен использовать https.", 503,
+        )
+    if required and port not in {None, 443}:
+        raise RuntimeEnvError(
+            "Production public origin должен использовать стандартный TLS port 443.",
+            503,
+        )
+    if hostname not in allowed_hosts:
+        raise RuntimeEnvError(
+            "Host STRATFORGE_PUBLIC_ORIGIN отсутствует в STRATFORGE_ALLOWED_HOSTS.",
+            503,
+        )
+    if required and allowed_hosts != (hostname,):
+        raise RuntimeEnvError(
+            "Production принимает только один canonical host, совпадающий с public origin.",
+            503,
+        )
+    normalized_port = f":{port}" if port and port not in {80, 443} else ""
+    return f"{parsed.scheme}://{hostname}{normalized_port}"
+
+
+def _edge_mode(*, required: bool) -> str:
+    raw = str(os.environ.get("STRATFORGE_EDGE_MODE") or "").strip().lower()
+    if not raw:
+        if required:
+            raise RuntimeEnvError("STRATFORGE_EDGE_MODE обязателен в production.", 503)
+        return "direct-local"
+    if raw not in _EDGE_MODES:
+        raise RuntimeEnvError(
+            "STRATFORGE_EDGE_MODE должен быть одним из: "
+            + ", ".join(sorted(_EDGE_MODES)),
+            503,
+        )
+    if required and raw == "direct-local":
+        raise RuntimeEnvError(
+            "Production не может использовать direct-local edge mode.", 503,
+        )
+    return raw
+
+
+def _trusted_proxy_ips(*, required: bool) -> Tuple[str, ...]:
+    raw = str(os.environ.get("STRATFORGE_TRUSTED_PROXY_IPS") or "").strip()
+    if not raw:
+        if required:
+            raise RuntimeEnvError(
+                "STRATFORGE_TRUSTED_PROXY_IPS обязателен в production.", 503,
+            )
+        return ("127.0.0.1", "::1")
+    values = []
+    for item in raw.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            normalized = str(ipaddress.ip_address(value))
+        except ValueError as exc:
+            raise RuntimeEnvError(
+                "STRATFORGE_TRUSTED_PROXY_IPS принимает только точные IP, не CIDR.",
+                503,
+            ) from exc
+        if normalized not in values:
+            values.append(normalized)
+    if not values:
+        raise RuntimeEnvError("STRATFORGE_TRUSTED_PROXY_IPS пуст.", 503)
+    return tuple(values)
+
+
+def _positive_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = str(os.environ.get(name) or str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeEnvError(f"{name} должен быть целым числом.", 503) from exc
+    if value < minimum or value > maximum:
+        raise RuntimeEnvError(
+            f"{name} должен быть в диапазоне {minimum}..{maximum}.", 503,
+        )
+    return value
+
+
 def deployment_config(*, strict: bool = False) -> DeploymentConfig:
     environment = deployment_environment()
     production_required = strict and environment == PRODUCTION
@@ -351,6 +470,7 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
             503,
         )
 
+    allowed_hosts = _allowed_hosts(required=production_required)
     config = DeploymentConfig(
         environment=environment,
         runtime_profile=app_env(),
@@ -381,7 +501,18 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
             required=production_required,
         ),
         bind_host=bind_host or "127.0.0.1",
-        allowed_hosts=_allowed_hosts(required=production_required),
+        allowed_hosts=allowed_hosts,
+        public_origin=_public_origin(
+            required=production_required, allowed_hosts=allowed_hosts,
+        ),
+        edge_mode=_edge_mode(required=production_required),
+        trusted_proxy_ips=_trusted_proxy_ips(required=production_required),
+        readiness_min_free_mb=_positive_int(
+            "STRATFORGE_READINESS_MIN_FREE_MB",
+            4096 if environment == PRODUCTION else 128,
+            minimum=1,
+            maximum=1048576,
+        ),
         data_root=str(data_root()),
         database_id=_safe_identifier(
             "STRATFORGE_DATABASE_ID",
