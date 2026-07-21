@@ -1,7 +1,7 @@
 # NTAnalyzerBridge
 
 C# NinjaTrader 8 AddOn, который работает внутри NinjaTrader runtime и связывает
-NinjaTrader с локальным NT-Analyzer.
+NinjaTrader либо с локальным NT-Analyzer, либо с Production Connector.
 
 ## Назначение
 
@@ -16,6 +16,12 @@ Bridge не принимает произвольный C# код из job. Ис
 которые уже скомпилированы в `NinjaTrader.Custom.dll` и найдены через whitelist.
 Production всегда подключает `StrategyAnalyzerRunner`; незавершённого
 fallback-runner в сборке нет.
+
+В режиме `production_connector` AddOn не читает repository jobs и не требует
+`project_root`. Он открывает только outbound HTTPS к canonical origin,
+генерирует P-256 device key в DPAPI CurrentUser, выполняет signed
+challenge/hello, heartbeat и bounded long-poll. Broker credentials серверу не
+передаются; live commands выключены. Контракт: `../docs/CONNECTOR_PROTOCOL_V1.md`.
 
 ## Сборка
 
@@ -78,6 +84,12 @@ dotnet build bridge\NTAnalyzerBridge.csproj -c Debug `
   NinjaTrader пользователя писал в изолированный контур.
 - `poll_interval_ms` — частота проверки очереди;
 - `heartbeat_interval_ms` — частота heartbeat running job.
+
+Для сторонней Production-установки используются `mode: production_connector`
+и блок `production_connector`: HTTPS origin, protocol/package versions,
+одноразовый enrollment code, DPAPI state directory и poll policy. Local jobs и
+абсолютный путь репозитория для этого режима не нужны. Code расходуется при
+первом enrollment; постоянная identity хранится только локально под DPAPI.
 
 ## Runtime outputs
 

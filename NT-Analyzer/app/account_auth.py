@@ -508,6 +508,8 @@ def path_requires_nt_dual_auth(path: str, method: str = "POST") -> bool:
         return True
     if p.startswith("/api/bridge/connections/"):
         return True
+    if p.startswith("/api/bridge/commands"):
+        return True
     if p.startswith("/api/ops/live/"):
         return True
     if p.startswith("/api/profiles/ninjatrader/"):

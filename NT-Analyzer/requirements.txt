@@ -15,6 +15,10 @@
 # so Pacific-time conversions (metrics / performance / runtime) are correct.
 tzdata>=2024.1
 
+# Connector Protocol device identity and signed hello verification. Release
+# builds pin the major range; protocol tests cover C# P-256 raw r||s and DER.
+cryptography>=49.0.0,<50
+
 # Optional live market-data vendor clients (install when credentials exist):
 #   python -m pip install databento
 # Without this package + NTA_DATABENTO_API_KEY, Databento Live stays PRODUCTION BLOCKED.

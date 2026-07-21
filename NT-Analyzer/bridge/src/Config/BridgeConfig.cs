@@ -4,6 +4,33 @@ using Newtonsoft.Json;
 
 namespace NTAnalyzerBridge.Config
 {
+    internal sealed class ProductionConnectorConfig
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = true;
+
+        [JsonProperty("server_origin")]
+        public string ServerOrigin { get; set; } = "https://app.stratforges.com";
+
+        [JsonProperty("protocol_version")]
+        public string ProtocolVersion { get; set; } = "1.0";
+
+        [JsonProperty("connector_version")]
+        public string ConnectorVersion { get; set; } = "0.2.0";
+
+        [JsonProperty("enrollment_code")]
+        public string EnrollmentCode { get; set; } = "";
+
+        [JsonProperty("state_dir")]
+        public string StateDir { get; set; } = "";
+
+        [JsonProperty("heartbeat_interval_ms")]
+        public int HeartbeatIntervalMs { get; set; } = 15000;
+
+        [JsonProperty("command_poll_seconds")]
+        public int CommandPollSeconds { get; set; } = 15;
+    }
+
     /// <summary>
     /// Strongly-typed bridge configuration loaded from
     /// %USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\NTAnalyzerBridge.config.json
@@ -13,6 +40,12 @@ namespace NTAnalyzerBridge.Config
     /// </summary>
     internal sealed class BridgeConfig
     {
+        [JsonProperty("schema_version")]
+        public int SchemaVersion { get; set; } = 1;
+
+        [JsonProperty("mode")]
+        public string Mode { get; set; } = "local_development";
+
         [JsonProperty("project_root")]
         public string ProjectRoot { get; set; }
 
@@ -42,6 +75,9 @@ namespace NTAnalyzerBridge.Config
 
         [JsonProperty("runtime_reconnect_connection_name")]
         public string RuntimeReconnectConnectionName { get; set; } = "";
+
+        [JsonProperty("production_connector")]
+        public ProductionConnectorConfig ProductionConnector { get; set; }
 
         /// <summary>
         /// R&amp;D toggle for the private static
@@ -80,6 +116,12 @@ namespace NTAnalyzerBridge.Config
                 "NTAnalyzerBridge.config.json");
         }
 
+        public static string DefaultNinjaTraderUserDir()
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            return Path.Combine(documents, "NinjaTrader 8");
+        }
+
         public static BridgeConfig LoadOrNull(string path, out string error)
         {
             error = null;
@@ -97,20 +139,67 @@ namespace NTAnalyzerBridge.Config
                     error = "config file is empty or invalid JSON: " + path;
                     return null;
                 }
-                if (string.IsNullOrWhiteSpace(cfg.ProjectRoot))
-                {
-                    error = "config: 'project_root' is required";
-                    return null;
-                }
-                if (!Directory.Exists(cfg.ProjectRoot))
-                {
-                    error = "config: 'project_root' does not exist: " + cfg.ProjectRoot;
-                    return null;
-                }
                 if (string.IsNullOrWhiteSpace(cfg.NinjaTraderUserDir))
                 {
-                    error = "config: 'ninjatrader_user_dir' is required";
-                    return null;
+                    cfg.NinjaTraderUserDir = DefaultNinjaTraderUserDir();
+                }
+                if (cfg.IsProductionConnector)
+                {
+                    if (cfg.ProductionConnector == null || !cfg.ProductionConnector.Enabled)
+                    {
+                        error = "config: production_connector must be enabled";
+                        return null;
+                    }
+                    if (!string.Equals(cfg.ProductionConnector.ProtocolVersion, "1.0", StringComparison.Ordinal))
+                    {
+                        error = "config: unsupported production_connector.protocol_version";
+                        return null;
+                    }
+                    Uri endpoint;
+                    if (!Uri.TryCreate(cfg.ProductionConnector.ServerOrigin, UriKind.Absolute, out endpoint) ||
+                        !string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                        endpoint.PathAndQuery != "/" || !string.IsNullOrEmpty(endpoint.UserInfo))
+                    {
+                        error = "config: production_connector.server_origin must be an HTTPS origin without path or credentials";
+                        return null;
+                    }
+                    cfg.ProductionConnector.ServerOrigin = endpoint.GetLeftPart(UriPartial.Authority);
+                    if (string.IsNullOrWhiteSpace(cfg.ProductionConnector.StateDir))
+                    {
+                        cfg.ProductionConnector.StateDir = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "StratForge", "Connector");
+                    }
+                    if (cfg.ProductionConnector.HeartbeatIntervalMs < 5000 ||
+                        cfg.ProductionConnector.HeartbeatIntervalMs > 60000)
+                    {
+                        error = "config: production_connector.heartbeat_interval_ms must be 5000..60000";
+                        return null;
+                    }
+                    if (cfg.ProductionConnector.CommandPollSeconds < 1 ||
+                        cfg.ProductionConnector.CommandPollSeconds > 20)
+                    {
+                        error = "config: production_connector.command_poll_seconds must be 1..20";
+                        return null;
+                    }
+                }
+                else
+                {
+                    if (!string.Equals(cfg.Mode, "local_development", StringComparison.Ordinal))
+                    {
+                        error = "config: mode must be local_development or production_connector";
+                        return null;
+                    }
+                    if (string.IsNullOrWhiteSpace(cfg.ProjectRoot))
+                    {
+                        error = "config: 'project_root' is required in local_development mode";
+                        return null;
+                    }
+                    if (!Directory.Exists(cfg.ProjectRoot))
+                    {
+                        error = "config: 'project_root' does not exist: " + cfg.ProjectRoot;
+                        return null;
+                    }
                 }
                 return cfg;
             }
@@ -125,12 +214,26 @@ namespace NTAnalyzerBridge.Config
         {
             if (string.IsNullOrWhiteSpace(path))
                 return null;
-            return Path.IsPathRooted(path) ? path : Path.Combine(ProjectRoot, path);
+            if (Path.IsPathRooted(path)) return path;
+            return string.IsNullOrWhiteSpace(ProjectRoot) ? null : Path.Combine(ProjectRoot, path);
         }
+
+        public bool IsProductionConnector =>
+            string.Equals(Mode, "production_connector", StringComparison.Ordinal);
 
         // Convenience accessors for queue layout.
         public string JobsDir       => ResolveProjectPath(JobsDirOverride) ?? Path.Combine(ProjectRoot, "jobs");
-        public string RuntimeDataDir => ResolveProjectPath(RuntimeDataDirOverride) ?? Path.Combine(ProjectRoot, "data", "runtime");
+        public string RuntimeDataDir
+        {
+            get
+            {
+                string configured = ResolveProjectPath(RuntimeDataDirOverride);
+                if (!string.IsNullOrWhiteSpace(configured)) return configured;
+                if (IsProductionConnector && ProductionConnector != null)
+                    return Path.Combine(ProductionConnector.StateDir, "spool");
+                return Path.Combine(ProjectRoot, "data", "runtime");
+            }
+        }
         public string PendingDir    => Path.Combine(JobsDir, "pending");
         public string PendingStaging=> Path.Combine(PendingDir, ".staging");
         public string RunningDir    => Path.Combine(JobsDir, "running");

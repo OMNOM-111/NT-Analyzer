@@ -41,6 +41,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Test harnesses live below bridge/tests but must never be compiled into
+         the NinjaTrader AddOn through SDK-style recursive source globs. -->
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="NinjaTrader.Core">
       <HintPath>$(NinjaTraderInstallDir)\NinjaTrader.Core.dll</HintPath>
       <Private>false</Private>
@@ -58,6 +64,7 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
     <Reference Include="WindowsBase" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />

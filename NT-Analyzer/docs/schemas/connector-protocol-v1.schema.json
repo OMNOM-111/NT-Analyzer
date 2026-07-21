@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://app.stratforges.com/schemas/connector-protocol-v1.schema.json",
+  "title": "StratForge Connector Protocol 1.0",
+  "type": "object",
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^SHA256:[0-9a-f]{64}$"
+    },
+    "base64url32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "extensions": {
+      "type": "object"
+    },
+    "publicKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kty", "crv", "x", "y"],
+      "properties": {
+        "kty": { "const": "EC" },
+        "crv": { "const": "P-256" },
+        "x": { "$ref": "#/$defs/base64url32" },
+        "y": { "$ref": "#/$defs/base64url32" }
+      }
+    },
+    "enroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "public_key", "connector_version", "nt_version", "ninja_instance_id"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[2-9A-HJ-NP-Z]{4}(-?[2-9A-HJ-NP-Z]{4}){3}$" },
+        "public_key": { "$ref": "#/$defs/publicKey" },
+        "connector_version": { "type": "string", "maxLength": 32 },
+        "nt_version": { "type": "string", "maxLength": 32 },
+        "machine_label": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "ninja_instance_id": { "$ref": "#/$defs/safeId" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "installation_id", "public_key_fingerprint", "client_nonce", "requested_at", "signature"],
+      "properties": {
+        "protocol_version": { "const": "1.0" },
+        "installation_id": { "$ref": "#/$defs/safeId" },
+        "public_key_fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "client_nonce": { "$ref": "#/$defs/base64url32" },
+        "requested_at": { "type": "string", "format": "date-time" },
+        "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{80,128}$" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "connector_version", "nt_version", "installation_id", "workspace_id", "nonce", "public_key_fingerprint", "ninja_instance_id", "signature"],
+      "properties": {
+        "protocol_version": { "const": "1.0" },
+        "connector_version": { "type": "string", "maxLength": 32 },
+        "nt_version": { "type": "string", "maxLength": 32 },
+        "installation_id": { "$ref": "#/$defs/safeId" },
+        "workspace_id": { "$ref": "#/$defs/safeId" },
+        "nonce": { "$ref": "#/$defs/base64url32" },
+        "public_key_fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "ninja_instance_id": { "$ref": "#/$defs/safeId" },
+        "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{80,128}$" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connector_sequence"],
+      "properties": {
+        "connector_sequence": { "type": "integer", "minimum": 1 },
+        "ninja_instance_id": { "$ref": "#/$defs/safeId" },
+        "connector_time": { "type": "string", "format": "date-time" },
+        "account_labels": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 128 } },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "workspace_id", "connection_id", "capability", "idempotency_key", "issued_at_utc", "expires_at_utc", "payload"],
+      "properties": {
+        "command_id": { "$ref": "#/$defs/safeId" },
+        "workspace_id": { "$ref": "#/$defs/safeId" },
+        "connection_id": { "$ref": "#/$defs/safeId" },
+        "installation_id": { "$ref": "#/$defs/safeId" },
+        "capability": { "enum": ["telemetry", "accounts_read", "paper_commands", "live_read", "live_commands"] },
+        "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "issued_at_utc": { "type": "string", "format": "date-time" },
+        "expires_at_utc": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" },
+        "delivery_attempts": { "type": "integer", "minimum": 0 },
+        "finished_at_utc": { "type": ["string", "null"] },
+        "payload": { "type": "object" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "idempotency_key", "status", "connector_sequence", "safe_result", "error_class"],
+      "properties": {
+        "command_id": { "$ref": "#/$defs/safeId" },
+        "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "status": { "enum": ["accepted", "running", "completed", "failed", "rejected"] },
+        "connector_sequence": { "type": "integer", "minimum": 1 },
+        "safe_result": {},
+        "error_class": { "type": "string", "maxLength": 80 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/enroll" },
+    { "$ref": "#/$defs/challenge" },
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/heartbeat" },
+    { "$ref": "#/$defs/command" },
+    { "$ref": "#/$defs/result" }
+  ]
+}

@@ -82,9 +82,9 @@ namespace NTAnalyzerBridge.Runtime
         public RuntimeCommandProcessor(BridgeConfig cfg)
         {
             _cfg = cfg ?? throw new ArgumentNullException(nameof(cfg));
-            if (string.IsNullOrEmpty(cfg.ProjectRoot))
-                throw new ArgumentNullException(nameof(cfg.ProjectRoot));
             _runtimeDir   = cfg.RuntimeDataDir;
+            if (string.IsNullOrEmpty(_runtimeDir))
+                throw new ArgumentNullException(nameof(cfg.RuntimeDataDir));
             _commandsPath = Path.Combine(_runtimeDir, "commands.jsonl");
             _resultsPath  = Path.Combine(_runtimeDir, "command_results.jsonl");
             Directory.CreateDirectory(_runtimeDir);

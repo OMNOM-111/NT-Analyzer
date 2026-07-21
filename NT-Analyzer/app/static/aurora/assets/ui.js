@@ -1638,7 +1638,8 @@
       const [ws, setup] = await Promise.all([API.http.workspaces(), API.http.bridgeSetup()]);
       const active = ws.active_workspace || {};
       const rows = ws.workspaces || [];
-      if (me && me.is_owner) {
+      const connectorMode = setup.transport === 'production_connector';
+      if (me && me.is_owner && !connectorMode) {
         node.innerHTML = `<div class="cab-kv"><span class="k">Статус</span><span class="v"><span class="badge live">Подключён ваш NinjaTrader</span></span></div><div class="cab-sub">Полный доступ владельца: все реальные счета и все возможности интерфейса.</div>`;
         return;
       }
@@ -1651,17 +1652,37 @@
         ? `<div class="cab-kv"><span class="k">Область</span><span class="v"><select id="nt-area">${rows.map(r => `<option value="${esc(r.workspace_id)}" ${r.workspace_id === active.workspace_id ? 'selected' : ''}>${esc(r.uses_owner_runtime ? 'Наблюдение за владельцем' : (r.display_name || 'Мой NinjaTrader'))}</option>`).join('')}</select></span></div>`
         : '';
       let inner = dualNote + areaSwitch;
-      if (active.uses_owner_runtime) {
+      if (active.uses_owner_runtime && !connectorMode) {
         inner += `<div class="cab-sub">Сейчас вы наблюдаете за реальным аккаунтом владельца (только просмотр). Наблюдение не требует Google.</div>`;
         inner += canPersonal
           ? `<div class="dchart-actions"><button class="btn primary" id="nt-connect">Подключить свой NinjaTrader</button></div>`
           : `<div class="cab-sub">Свой NinjaTrader доступен на тарифах «Стандарт» и выше.</div>`;
       } else {
         const conns = setup.connections || [];
-        inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${conns.length ? '<span class="badge live">подключён</span>' : '<span class="badge pending">ожидает подключения</span>'}</span></div>`;
+        const onlineCount = conns.filter(c => c.status === 'online').length;
+        const stateLabel = { online: 'онлайн', pending: 'ожидает подписи', offline: 'офлайн', revoked: 'отозван' };
+        const stateBadge = { online: 'live', pending: 'pending', offline: 'archived', revoked: 'failed' };
+        inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${onlineCount ? `<span class="badge live">онлайн · ${onlineCount}</span>` : (conns.length ? '<span class="badge pending">нет активной сессии</span>' : '<span class="badge pending">не подключён</span>')}</span></div>`;
+        if (connectorMode) {
+          inner += conns.length ? `<div class="nt-connections">${conns.map(c => {
+            const status = String(c.status || 'offline');
+            const fingerprint = String(c.public_key_fingerprint || '');
+            const version = [c.connector_version, c.nt_version && ('NT ' + c.nt_version)].filter(Boolean).join(' · ');
+            const details = [
+              version,
+              c.last_heartbeat_utc ? ('heartbeat ' + c.last_heartbeat_utc) : '',
+              (c.account_labels || []).join(', '),
+            ].filter(Boolean).map(v => esc(v)).join(' · ');
+            return `<div class="cab-kv nt-connection"><span class="k"><strong>${esc(c.machine_label || 'NinjaTrader')}</strong><br><span class="mono" title="${esc(fingerprint)}">${esc(fingerprint ? fingerprint.slice(0, 22) + '…' : '')}</span></span><span class="v"><span class="badge ${stateBadge[status] || 'archived'}">${esc(stateLabel[status] || status)}</span>${details ? `<div class="cab-sub">${details}</div>` : ''}${status !== 'revoked' ? `<button class="btn sm danger" data-nt-revoke="${esc(c.connection_id || '')}">Отозвать</button>` : ''}</span></div>`;
+          }).join('')}</div>` : '<div class="cab-sub">Установок пока нет. Код одноразовый и действует 10 минут.</div>';
+          const installer = setup.installer || {};
+          inner += installer.download_url
+            ? `<div class="dchart-actions"><a class="btn primary" href="${esc(installer.download_url)}">Скачать StratForge Connector</a></div>`
+            : `<div class="finance-note">${esc(installer.message || 'Установщик Connector ещё не опубликован.')}</div>`;
+        }
         inner += `<ol class="nt-steps">${(setup.steps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>`;
         if (setup.runtime_data_dir) inner += `<div class="cab-kv"><span class="k">runtime_data_dir</span><span class="v mono nt-path">${esc(setup.runtime_data_dir)}</span></div>`;
-        inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-copycfg">Скопировать конфиг</button><button class="btn primary" id="nt-pair">Получить код подключения</button><button class="btn ghost" id="nt-observe">Вернуться к наблюдению</button></div>`;
+        inner += `<div class="dchart-actions">${connectorMode ? '' : '<button class="btn ghost" id="nt-copycfg">Скопировать конфиг</button>'}<button class="btn primary" id="nt-pair">Получить код подключения</button>${me.is_owner ? '' : '<button class="btn ghost" id="nt-observe">Вернуться к наблюдению</button>'}</div>`;
       }
       if (!me.is_owner && (!googleOk || !tgOk)) {
         inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-dual">Пройти Google + Telegram для NT</button></div>`;
@@ -1686,13 +1707,20 @@
         pair.disabled = true;
         try {
           if (!(await ensureNtDualAuth(me))) return;
-          const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер' });
+          const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер', transport: connectorMode ? 'production_connector' : 'local_development' });
           showCode(out && out.code, 'Код подключения');
         } catch (e) { reportError(e); }
         finally { pair.disabled = false; }
       };
       const copycfg = qs('#nt-copycfg', node);
       if (copycfg) copycfg.onclick = () => { try { navigator.clipboard.writeText(JSON.stringify(setup.config_template || {}, null, 2)); toast('Конфиг NinjaTrader скопирован'); } catch (e) { reportError(e); } };
+      node.querySelectorAll('[data-nt-revoke]').forEach(btn => btn.onclick = async () => {
+        const id = btn.getAttribute('data-nt-revoke');
+        if (!id || !confirm('Отозвать эту установку NinjaTrader? Текущая сессия и ожидающие команды будут остановлены.')) return;
+        btn.disabled = true;
+        try { await API.http.bridgeConnectionRevoke(id); toast('Установка отозвана'); await renderNinjaInto(node, me); }
+        catch (e) { reportError(e); btn.disabled = false; }
+      });
       const observe = qs('#nt-observe', node);
       if (observe) observe.onclick = async () => { const ownerWs = (rows.find(r => r.uses_owner_runtime) || {}).workspace_id; if (!ownerWs) return; try { await API.http.workspaceSelect(ownerWs); toast('Вернулись к наблюдению'); location.reload(); } catch (e) { reportError(e); } };
     } catch (e) { renderError(node, e, () => renderNinjaInto(node, me)); }

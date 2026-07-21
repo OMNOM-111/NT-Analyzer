@@ -1,6 +1,7 @@
 using System;
 using NinjaTrader.NinjaScript;
 using NTAnalyzerBridge.Config;
+using NTAnalyzerBridge.Connector;
 using NTAnalyzerBridge.Execution;
 using NTAnalyzerBridge.JobQueue;
 using NTAnalyzerBridge.Reporting;
@@ -34,6 +35,7 @@ namespace NTAnalyzerBridge
         private RuntimeTelemetryExporter _runtimeExporter;
         private RuntimeMarketDataExporter _marketDataExporter;
         private RuntimeCommandProcessor _commandProcessor;
+        private ConnectorClient _connectorClient;
 
         internal RuntimeMarketDataExporter MarketDataExporter { get { return _marketDataExporter; } }
 
@@ -72,6 +74,11 @@ namespace NTAnalyzerBridge
 
                 BridgeLog.Configure(_cfg.NinjaTraderUserDir);
                 BridgeLog.Info("config loaded from " + configPath);
+                if (_cfg.IsProductionConnector)
+                {
+                    StartProductionConnector();
+                    return;
+                }
                 BridgeLog.Info("project_root=" + _cfg.ProjectRoot);
                 BridgeLog.Info("jobs_dir=" + _cfg.JobsDir);
 
@@ -170,8 +177,34 @@ namespace NTAnalyzerBridge
             }
         }
 
+        private void StartProductionConnector()
+        {
+            BridgeLog.Info("mode=production_connector; local repository/job watcher disabled");
+            BridgeLog.Info("connector_origin=" + _cfg.ProductionConnector.ServerOrigin);
+            BridgeLog.Info("runtime_spool=" + _cfg.RuntimeDataDir);
+
+            // Local telemetry remains the source for account/strategy state,
+            // but the spool is private to the Windows installation and is not
+            // a server-shared filesystem boundary.
+            _runtimeExporter = new RuntimeTelemetryExporter("", _cfg.RuntimeDataDir);
+            _runtimeExporter.Start();
+
+            // The existing processor is paper-only and idempotent. Remote
+            // commands reach it through the private local spool after the
+            // Connector validates workspace, capability, expiry and ids.
+            _commandProcessor = new RuntimeCommandProcessor(_cfg);
+            _commandProcessor.Start();
+
+            _connectorClient = new ConnectorClient(_cfg);
+            _connectorClient.Start();
+        }
+
         private void StopBridge()
         {
+            try { _connectorClient?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: connector.Stop failed", ex); }
+            finally { _connectorClient = null; }
+
             try { _commandProcessor?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: command.Stop failed", ex); }
             finally { _commandProcessor = null; }

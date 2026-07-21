@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -109,6 +110,7 @@ if __package__ is None or __package__ == "":
     from app import runtime_env  # type: ignore[no-redef]
     from app import edge_security  # type: ignore[no-redef]
     from app import service_readiness  # type: ignore[no-redef]
+    from app import connector_protocol  # type: ignore[no-redef]
     from app import google_auth  # type: ignore[no-redef]
     from app import test_auth  # type: ignore[no-redef]
     from app import demo_backtest  # type: ignore[no-redef]
@@ -180,6 +182,7 @@ else:
     from . import runtime_env
     from . import edge_security
     from . import service_readiness
+    from . import connector_protocol
     from . import google_auth
     from . import test_auth
     from . import demo_backtest
@@ -278,6 +281,12 @@ _BILLING_PROMO_POSTS = {
 _API_RATE_LOCK = threading.Lock()
 _API_RATE: Dict[Tuple[str, str, str], Any] = defaultdict(deque)
 _API_RATE_LIMITS = {"read": 600, "write": 120, "owner": 60, "auth": 45}
+_CONNECTOR_RATE: Dict[Tuple[str, str], Any] = defaultdict(deque)
+_CONNECTOR_RATE_LIMITS = {
+    "enrollment": 30,
+    "session": 60,
+    "runtime": 300,
+}
 
 
 def _do_restart_server() -> None:
@@ -996,6 +1005,38 @@ class Handler(BaseHTTPRequestHandler):
         forwarded = str(self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
         return tunnel_ip, forwarded
 
+    def _connector_bearer_token(self) -> str:
+        raw = str(self.headers.get("Authorization") or "").strip()
+        match = re.fullmatch(r"Bearer ([A-Za-z0-9_-]{40,160})", raw)
+        return str(match.group(1)) if match else ""
+
+    def _check_connector_rate_limit(self, path: str) -> bool:
+        if path.endswith("/enroll"):
+            rate_class = "enrollment"
+        elif path.endswith("/challenge") or path.endswith("/hello"):
+            rate_class = "session"
+        else:
+            rate_class = "runtime"
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client = forwarded_ip or tunnel_ip or "unknown"
+        now = time.monotonic()
+        key = (client, rate_class)
+        limit = _CONNECTOR_RATE_LIMITS[rate_class]
+        with _API_RATE_LOCK:
+            bucket = _CONNECTOR_RATE[key]
+            while bucket and bucket[0] <= now - 60:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                self._extra_headers.append(("Retry-After", "60"))
+                self._err(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "Connector rate limit exceeded.",
+                    code="connector_rate_limited",
+                )
+                return False
+            bucket.append(now)
+        return True
+
     def _cookie_value(self, name: str) -> str:
         try:
             cookie = SimpleCookie()
@@ -1364,6 +1405,54 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json")
             return False
         return True
+
+    def _connector_public_post(self, path: str) -> None:
+        routes = {
+            "/api/connector/v1/enroll",
+            "/api/connector/v1/challenge",
+            "/api/connector/v1/hello",
+            "/api/connector/v1/heartbeat",
+            "/api/connector/v1/commands/poll",
+            "/api/connector/v1/commands/result",
+        }
+        if path not in routes:
+            self._err(HTTPStatus.NOT_FOUND, "no connector route", code="connector_route_not_found")
+            return
+        if not self._check_json_content_type() or not self._check_connector_rate_limit(path):
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Connector body must be an object.", code="invalid_connector_body")
+            return
+        self._extra_headers.extend([
+            ("Cache-Control", "no-store"),
+            ("Pragma", "no-cache"),
+        ])
+        try:
+            if path.endswith("/enroll"):
+                out = connector_protocol.enroll_device(body)
+            elif path.endswith("/challenge"):
+                out = connector_protocol.issue_challenge(body)
+            elif path.endswith("/hello"):
+                out = connector_protocol.signed_hello(body)
+            elif path.endswith("/heartbeat"):
+                out = connector_protocol.heartbeat(self._connector_bearer_token(), body)
+            elif path.endswith("/commands/poll"):
+                out = connector_protocol.poll_commands(
+                    self._connector_bearer_token(),
+                    connector_sequence=body.get("connector_sequence"),
+                    wait_seconds=body.get("wait_seconds") or 0,
+                    limit=body.get("limit") or 10,
+                )
+            else:
+                out = connector_protocol.submit_result(
+                    self._connector_bearer_token(), body,
+                )
+            self._json(HTTPStatus.OK, out)
+        except connector_protocol.ConnectorProtocolError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
 
     def _check_public_auth_origin(self) -> bool:
         if not self._check_json_content_type():
@@ -3089,9 +3178,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bridge/setup":
             context = getattr(self, "_remote_context", None) or {}
             try:
-                self._json(HTTPStatus.OK, workspaces.bridge_setup(context.get("user_id")))
-            except workspaces.WorkspaceError as exc:
-                self._err(exc.status, str(exc))
+                use_connector = (
+                    runtime_env.environment_explicit() and runtime_env.is_production()
+                ) or str((qs.get("transport") or [""])[0]) == "production_connector"
+                out = (
+                    connector_protocol.setup_payload(
+                        context.get("user_id"),
+                        workspace_id=str((qs.get("workspace_id") or [""])[0]),
+                    )
+                    if use_connector
+                    else workspaces.bridge_setup(context.get("user_id"))
+                )
+                self._json(HTTPStatus.OK, out)
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/workspaces":
@@ -3106,9 +3206,33 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bridge/connections":
             context = getattr(self, "_remote_context", None) or {}
             try:
-                self._json(HTTPStatus.OK, workspaces.list_connections(context.get("user_id")))
-            except workspaces.WorkspaceError as exc:
-                self._err(exc.status, str(exc))
+                use_connector = (
+                    runtime_env.environment_explicit() and runtime_env.is_production()
+                ) or str((qs.get("transport") or [""])[0]) == "production_connector"
+                out = (
+                    connector_protocol.list_installations(
+                        context.get("user_id"),
+                        workspace_id=str((qs.get("workspace_id") or [""])[0]),
+                    )
+                    if use_connector
+                    else workspaces.list_connections(context.get("user_id"))
+                )
+                self._json(HTTPStatus.OK, out)
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path.startswith("/api/bridge/commands/"):
+            context = getattr(self, "_remote_context", None) or {}
+            command_id = urllib.parse.unquote(path.rsplit("/", 1)[-1])
+            try:
+                self._json(HTTPStatus.OK, connector_protocol.command_status(
+                    context.get("user_id"),
+                    workspace_id=str((qs.get("workspace_id") or [""])[0]),
+                    command_id=command_id,
+                ))
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/owner/vouchers":
@@ -5467,6 +5591,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.FORBIDDEN, str(exc))
             return
 
+        # Connector nodes authenticate with one-time enrollment or their own
+        # short-lived device session, never with a browser/Telegram cookie.
+        if path.startswith("/api/connector/v1/"):
+            self._connector_public_post(path)
+            return
+
         if not self._authorize_api(path):
             return
 
@@ -6145,13 +6275,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             context = getattr(self, "_remote_context", None) or {}
             try:
-                out = workspaces.start_bridge_pairing(
-                    context.get("user_id"), workspace_id=str(body.get("workspace_id") or ""),
-                    machine_label=str(body.get("machine_label") or ""),
+                use_connector = (
+                    runtime_env.environment_explicit() and runtime_env.is_production()
+                ) or str(body.get("transport") or "") == "production_connector"
+                out = (
+                    connector_protocol.start_enrollment(
+                        context.get("user_id"),
+                        workspace_id=str(body.get("workspace_id") or ""),
+                        machine_label=str(body.get("machine_label") or ""),
+                        capabilities=body.get("capabilities") or [],
+                    )
+                    if use_connector
+                    else workspaces.start_bridge_pairing(
+                        context.get("user_id"),
+                        workspace_id=str(body.get("workspace_id") or ""),
+                        machine_label=str(body.get("machine_label") or ""),
+                    )
                 )
                 self._json(HTTPStatus.OK, out)
-            except workspaces.WorkspaceError as exc:
-                self._err(exc.status, str(exc))
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/bridge/pair/complete":
@@ -6162,14 +6305,46 @@ class Handler(BaseHTTPRequestHandler):
                 return
             context = getattr(self, "_remote_context", None) or {}
             try:
+                if runtime_env.environment_explicit() and runtime_env.is_production():
+                    raise connector_protocol.ConnectorProtocolError(
+                        "Production pairing завершается только device enroll + signed hello.",
+                        HTTPStatus.GONE,
+                        "legacy_pairing_disabled",
+                    )
                 out = workspaces.complete_bridge_pairing(
                     context.get("user_id"), code=body.get("code"), device_id=str(body.get("device_id") or ""),
                     bridge_instance_id=str(body.get("bridge_instance_id") or ""),
                     machine_label=str(body.get("machine_label") or ""), capabilities=body.get("capabilities") or [],
                 )
                 self._json(HTTPStatus.OK, out)
-            except workspaces.WorkspaceError as exc:
-                self._err(exc.status, str(exc))
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/bridge/commands":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                out = connector_protocol.queue_command(
+                    context.get("user_id"),
+                    workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                    connection_id=body.get("connection_id"),
+                    capability=body.get("capability"),
+                    idempotency_key=(
+                        body.get("idempotency_key")
+                        or self.headers.get("Idempotency-Key")
+                        or ""
+                    ),
+                    payload=body.get("payload") or {},
+                    expires_in_sec=body.get("expires_in_sec") or 120,
+                )
+                self._json(HTTPStatus.ACCEPTED, out)
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path.startswith("/api/bridge/connections/"):
@@ -6180,9 +6355,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.NOT_FOUND, f"no bridge route: {path}"); return
             context = getattr(self, "_remote_context", None) or {}
             try:
-                self._json(HTTPStatus.OK, workspaces.revoke_connection(context.get("user_id"), parts_bridge[3]))
-            except workspaces.WorkspaceError as exc:
-                self._err(exc.status, str(exc))
+                body = self._read_body() or {}
+                use_connector = (
+                    runtime_env.environment_explicit() and runtime_env.is_production()
+                ) or str(body.get("transport") or "") == "production_connector"
+                out = (
+                    connector_protocol.revoke_installation(
+                        context.get("user_id"),
+                        parts_bridge[3],
+                        workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                    )
+                    if use_connector
+                    else workspaces.revoke_connection(context.get("user_id"), parts_bridge[3])
+                )
+                self._json(HTTPStatus.OK, out)
+            except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/owner/vouchers":
@@ -6990,7 +7178,9 @@ def run(port: Optional[int] = None) -> None:
     server = ThreadingHTTPServer((bind_host, bind_port), Handler)
     server.daemon_threads = True
     server.deployment_config = deployment  # type: ignore[attr-defined]
-    server.readiness_probes = {}  # type: ignore[attr-defined]
+    server.readiness_probes = {  # type: ignore[attr-defined]
+        "connector_control": connector_protocol.readiness_status,
+    }
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")

@@ -433,6 +433,28 @@ def _require_workspace_writer(member: Dict[str, Any]) -> None:
         raise WorkspaceError("В этой рабочей области доступно только чтение.", 403)
 
 
+def require_workspace_access(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    """Return one authorized workspace without exposing the encrypted document."""
+    user = int(user_id or 0)
+    with _LOCK:
+        doc = _read_doc()
+        row, member = _active_workspace_doc(doc, user, workspace_id)
+        if row.get("status") != "active":
+            raise WorkspaceError("Рабочая область неактивна.", 403)
+        return _public_workspace(row, member)
+
+
+def require_workspace_writer(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    user = int(user_id or 0)
+    with _LOCK:
+        doc = _read_doc()
+        row, member = _active_workspace_doc(doc, user, workspace_id)
+        if row.get("status") != "active":
+            raise WorkspaceError("Рабочая область неактивна.", 403)
+        _require_workspace_writer(member)
+        return _public_workspace(row, member)
+
+
 def start_bridge_pairing(user_id: Any, *, workspace_id: str = "", machine_label: str = "") -> Dict[str, Any]:
     user = int(user_id or 0)
     with _LOCK:

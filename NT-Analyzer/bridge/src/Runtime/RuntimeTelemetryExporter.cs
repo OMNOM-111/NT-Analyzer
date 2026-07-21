@@ -46,10 +46,12 @@ namespace NTAnalyzerBridge.Runtime
 
         public RuntimeTelemetryExporter(string projectRoot, string runtimeDir = null)
         {
-            if (string.IsNullOrEmpty(projectRoot))
-                throw new ArgumentNullException(nameof(projectRoot));
-            _projectRoot = projectRoot;
-            _runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? Path.Combine(projectRoot, "data", "runtime") : runtimeDir;
+            if (string.IsNullOrWhiteSpace(projectRoot) && string.IsNullOrWhiteSpace(runtimeDir))
+                throw new ArgumentNullException(nameof(runtimeDir));
+            _projectRoot = projectRoot ?? "";
+            _runtimeDir = string.IsNullOrWhiteSpace(runtimeDir)
+                ? Path.Combine(projectRoot, "data", "runtime")
+                : runtimeDir;
             Directory.CreateDirectory(_runtimeDir);
             LoadKnownExecutionIds();
             _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
@@ -1267,6 +1269,8 @@ namespace NTAnalyzerBridge.Runtime
             string id = "";
             try
             {
+                if (string.IsNullOrWhiteSpace(_projectRoot))
+                    return "";
                 string path = Path.Combine(_projectRoot, "data", "ops", "cycles.json");
                 if (File.Exists(path))
                 {

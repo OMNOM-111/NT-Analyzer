@@ -1,4 +1,6 @@
 {
+  "schema_version": 2,
+  "mode": "local_development",
   "project_root": "C:\\Path\\To\\NT-Analyzer",
   "ninjatrader_user_dir": "C:\\Path\\To\\NinjaTrader 8",
   "jobs_dir": "D:\\Documents\\NT-Analyzer-artifacts\\jobs",
@@ -11,6 +13,16 @@
   "runtime_reconnect_connection_name": "",
   "enable_path_a_optimizer_runbacktest": false,
   "enable_verbose_diagnostics": false,
+  "production_connector": {
+    "enabled": false,
+    "server_origin": "https://app.stratforges.com",
+    "protocol_version": "1.0",
+    "connector_version": "0.2.0",
+    "enrollment_code": "",
+    "state_dir": "%LOCALAPPDATA%\\StratForge\\Connector",
+    "heartbeat_interval_ms": 15000,
+    "command_poll_seconds": 15
+  },
   "market_data_ipc": {
     "enabled": true,
     "transport": "tcp",
