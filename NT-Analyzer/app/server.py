@@ -7161,8 +7161,17 @@ def _bind_or_pick_port(
 def run(port: Optional[int] = None) -> None:
     try:
         deployment = runtime_env.assert_startup_safe()
+        if deployment.environment == "production":
+            from . import storage_router
+            storage_router.assert_production_storage_safe()
     except runtime_env.RuntimeEnvError as exc:
         print(f"[nta-backend] FATAL: {exc}")
+        raise SystemExit(2) from exc
+    except Exception as exc:
+        from .production_storage import StorageError
+        if not isinstance(exc, StorageError):
+            raise
+        print(f"[nta-backend] FATAL: Production storage configuration invalid ({exc.code}).")
         raise SystemExit(2) from exc
     env = runtime_env.status()
     print(
@@ -7184,6 +7193,13 @@ def run(port: Optional[int] = None) -> None:
         "connector_control": connector_protocol.readiness_status,
         "connector_releases": connector_releases.readiness_status,
     }
+    if deployment.environment == "production":
+        from . import storage_router
+        from .production_storage.artifacts import object_storage_readiness
+        server.readiness_probes.update({  # type: ignore[attr-defined]
+            "database": storage_router.database_readiness,
+            "object_storage": object_storage_readiness,
+        })
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")

@@ -46,8 +46,8 @@ if (-not $python) {
 # tail, restart count and crash-loop safe mode. The scheduled installation uses
 # a direct Python action; this PowerShell path is only a manual compatibility UI.
 if ($python -eq 'py') {
-    & $python -3 -m app.backend_supervisor --port $Port --retry-seconds $RetrySeconds
+    & $python -3 -m app.backend_supervisor --development-profile --port $Port --retry-seconds $RetrySeconds
 } else {
-    & $python -m app.backend_supervisor --port $Port --retry-seconds $RetrySeconds
+    & $python -m app.backend_supervisor --development-profile --port $Port --retry-seconds $RetrySeconds
 }
 exit $LASTEXITCODE

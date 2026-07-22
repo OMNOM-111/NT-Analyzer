@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from app import backend_supervisor
 
@@ -69,5 +72,45 @@ def test_windows_forced_exit_keeps_exact_code_and_reason(tmp_path, monkeypatch) 
 def test_scheduled_task_installs_supervisor_as_direct_action() -> None:
     script = (Path(__file__).resolve().parents[1] / "tools" / "install-vitek-background.ps1").read_text(encoding="utf-8")
     assert "-m app.backend_supervisor" in script
+    assert "--development-profile" in script
     assert "New-ScheduledTaskAction -Execute $python" in script
     assert "-File `\"$escapedLauncher`\"" not in script
+
+
+def test_development_profile_is_explicit_and_versioned(tmp_path, monkeypatch) -> None:
+    (tmp_path / "VERSION.json").write_text(
+        json.dumps({
+            "version": "1.2.3-dev.4",
+            "build_date": "2026-07-21",
+            "channel": "development",
+            "status": "in_development",
+        }),
+        encoding="utf-8",
+    )
+    for name in tuple(os.environ):
+        if name.startswith("STRATFORGE_") or name in {"NT_ANALYZER_ROOT", "NTA_VITEK_BACKGROUND"}:
+            monkeypatch.delenv(name, raising=False)
+
+    values = backend_supervisor.configure_development_profile(
+        tmp_path, public_origin="https://app.example.test", apply_environment=False,
+    )
+
+    assert values["STRATFORGE_ENV"] == "development"
+    assert values["STRATFORGE_BUILD_VERSION"] == "1.2.3-dev.4"
+    assert values["STRATFORGE_ALLOWED_HOSTS"] == "127.0.0.1,localhost,app.example.test"
+    assert values["STRATFORGE_PUBLIC_ORIGIN"] == "https://app.example.test"
+    assert values["STRATFORGE_LIVE_TRADING_ALLOWED"] == "0"
+    assert values["STRATFORGE_REAL_PAYMENTS_ALLOWED"] == "0"
+
+
+def test_development_profile_rejects_stable_version(tmp_path) -> None:
+    (tmp_path / "VERSION.json").write_text(
+        json.dumps({
+            "version": "1.2.3", "build_date": "2026-07-21",
+            "channel": "stable", "status": "ready",
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="channel=development"):
+        backend_supervisor.configure_development_profile(tmp_path)

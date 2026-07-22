@@ -16,7 +16,8 @@ from typing import Dict, Iterable, Iterator, Mapping
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import runtime_env
+from app import runtime_env, storage_router
+from app.production_storage import StorageError, reset_for_tests
 
 
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -63,6 +64,14 @@ def _check(name: str, ok: bool, code: str) -> Dict[str, object]:
     return {"name": name, "ok": bool(ok), "code": str(code)}
 
 
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def run_preflight(
     *,
     app_root: Path,
@@ -88,12 +97,32 @@ def run_preflight(
             ))
 
     with temporary_environment(env_values):
+        reset_for_tests()
         try:
             config = runtime_env.assert_startup_safe()
             checks.append(_check("typed_config", True, "ok"))
         except runtime_env.RuntimeEnvError:
             checks.append(_check("typed_config", False, "rejected"))
             return {"ok": False, "checks": checks}
+
+        if config.environment == runtime_env.PRODUCTION:
+            try:
+                storage_router.assert_production_storage_safe()
+                checks.append(_check("production_storage_config", True, "ok"))
+            except StorageError:
+                checks.append(_check("production_storage_config", False, "rejected"))
+
+            artifact_raw = str(os.environ.get("STRATFORGE_ARTIFACT_ROOT") or "").strip()
+            artifact_root = Path(artifact_raw).expanduser().resolve() if artifact_raw else None
+            artifact_ready = bool(
+                artifact_root
+                and artifact_root.is_dir()
+                and os.access(str(artifact_root), os.R_OK | os.W_OK | os.X_OK)
+            )
+            checks.append(_check(
+                "artifact_storage_root", artifact_ready,
+                "ok" if artifact_ready else "missing_or_not_writable",
+            ))
 
         linux = platform.system().lower() == "linux"
         checks.append(_check(
@@ -115,6 +144,20 @@ def run_preflight(
             "release_data_separation", separated,
             "ok" if separated else "data_inside_release",
         ))
+        if config.environment == runtime_env.PRODUCTION:
+            artifact_raw = str(os.environ.get("STRATFORGE_ARTIFACT_ROOT") or "").strip()
+            artifact_root = Path(artifact_raw).expanduser().resolve() if artifact_raw else root
+            artifact_separated = (
+                artifact_root != root
+                and not _is_within(artifact_root, root)
+                and artifact_root != data_root
+                and not _is_within(artifact_root, data_root)
+                and not _is_within(data_root, artifact_root)
+            )
+            checks.append(_check(
+                "artifact_storage_separation", artifact_separated,
+                "ok" if artifact_separated else "artifact_root_not_isolated",
+            ))
 
         loopback_bind = config.bind_host in {"127.0.0.1", "::1"}
         edge_safe = config.edge_mode == "cloudflare-tunnel" and loopback_bind
@@ -129,6 +172,7 @@ def run_preflight(
                 f"binary_{binary}", found, "ok" if found else "missing",
             ))
 
+    reset_for_tests()
     return {"ok": all(bool(item["ok"]) for item in checks), "checks": checks}
 
 

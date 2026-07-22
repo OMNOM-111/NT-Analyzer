@@ -28,6 +28,10 @@ def _environment(root: Path) -> str:
         "STRATFORGE_COOKIE_NAMESPACE=sf-prod",
         "STRATFORGE_SIGNING_KEY_ID=production-key-v1",
         "STRATFORGE_LOG_NAMESPACE=production",
+        "STRATFORGE_STORAGE_MODE=postgresql",
+        "STRATFORGE_DATABASE_URL=postgresql://stratforge_app@db.internal/stratforge?sslmode=verify-full",
+        f"STRATFORGE_ARTIFACT_ROOT={root.parent / 'objects'}",
+        "STRATFORGE_ARTIFACT_MIN_FREE_BYTES=1",
         "STRATFORGE_LIVE_TRADING_ALLOWED=0",
         "STRATFORGE_REAL_PAYMENTS_ALLOWED=0",
     )) + "\n"
@@ -55,6 +59,7 @@ def test_preflight_passes_a_complete_isolated_layout(tmp_path: Path, monkeypatch
     (app_root / "requirements.txt").write_text("", encoding="utf-8")
     data_root = tmp_path / "state"
     data_root.mkdir()
+    (tmp_path / "objects").mkdir()
     env_file = tmp_path / "production.env"
     env_file.write_text(_environment(data_root), encoding="utf-8")
 
@@ -77,6 +82,7 @@ def test_preflight_rejects_data_inside_release_and_bad_config(tmp_path: Path, mo
     (app_root / "requirements.txt").write_text("", encoding="utf-8")
     data_root = app_root / "data"
     data_root.mkdir()
+    (app_root / "objects").mkdir()
     env_file = tmp_path / "production.env"
     env_file.write_text(_environment(data_root), encoding="utf-8")
 
@@ -111,6 +117,9 @@ def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
 
     assert "app.stratforges.com" in env_template
     assert "STRATFORGE_LIVE_TRADING_ALLOWED=0" in env_template
+    assert "STRATFORGE_STORAGE_MODE=postgresql" in env_template
+    assert "STRATFORGE_DATABASE_URL=__FROM_PROTECTED_SECRET_PROVIDER__" in env_template
+    assert "STRATFORGE_ARTIFACT_ROOT=" in env_template
     assert "token=" not in env_template.lower()
     assert "password=" not in env_template.lower()
     assert "127.0.0.1:18765" in tunnel

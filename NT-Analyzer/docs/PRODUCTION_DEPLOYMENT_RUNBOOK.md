@@ -49,7 +49,8 @@ Cloudflare. Порт 18765 не открывается в firewall/router/securi
    ограничен политикой администратора.
 7. Известно, кто владеет Cloudflare zone, Named Tunnel, DNS change и rollback.
 8. Выделены Production PostgreSQL и backup target; известны RPO/RTO и путь
-   фактического restore. Это закрывается реализацией Stage 6.
+   фактического restore. Операционные команды и fail-closed policy описаны в
+   `docs/PRODUCTION_STORAGE_RUNBOOK.md`; provider-side подтверждение обязательно.
 9. Выделено artifact storage вне release directory; определены quota,
    retention и encryption at rest.
 10. Windows VM имеет стабильный исходящий HTTPS маршрут, NinjaTrader 8,
@@ -149,6 +150,9 @@ HTTPS smoke, затем остановить неисправный Production t
 credential можно только после завершения окна rollback.
 
 ## Backup и restore contract
+
+Точная процедура schema/owner migration, quota, retention, combined backup и
+isolated restore находится в `docs/PRODUCTION_STORAGE_RUNBOOK.md`.
 
 Перед каждым изменением schema/release:
 

@@ -24,6 +24,7 @@ CRASH_WINDOW_SECONDS = 10 * 60
 SAFE_MODE_SECONDS = 15 * 60
 CRASH_THRESHOLD = 3
 MAX_BACKOFF_SECONDS = 60
+DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN = "https://app.stratforges.com"
 
 
 def _now_dt() -> datetime:
@@ -45,6 +46,72 @@ def _parse_time(value: Any) -> Optional[datetime]:
 def _project_root() -> Path:
     configured = str(os.environ.get("NT_ANALYZER_ROOT") or "").strip()
     return Path(configured).resolve() if configured else Path(__file__).resolve().parents[1]
+
+
+def configure_development_profile(
+    root: Optional[Path] = None,
+    *,
+    public_origin: str = DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN,
+    apply_environment: bool = True,
+) -> Dict[str, str]:
+    """Install the explicit local-development environment for Task Scheduler.
+
+    Scheduled tasks do not preserve the launching terminal's environment.  The
+    profile is opt-in so a Production supervisor can never inherit these values
+    by accident.
+    """
+    project_root = Path(root or _project_root()).resolve()
+    version_path = project_root / "VERSION.json"
+    try:
+        version = json.loads(version_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"VERSION.json is missing or invalid: {exc}") from exc
+    if not isinstance(version, dict) or (
+        str(version.get("channel") or "") != "development"
+        or str(version.get("status") or "") != "in_development"
+    ):
+        raise RuntimeError(
+            "Persistent local launcher requires VERSION.json "
+            "channel=development and status=in_development."
+        )
+    from urllib.parse import urlparse
+
+    parsed = urlparse(str(public_origin or "").strip())
+    if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
+        raise RuntimeError("Development public origin must be an HTTPS origin without a path.")
+    hostname = parsed.hostname.lower()
+    computer = str(os.environ.get("COMPUTERNAME") or "local").strip() or "local"
+    values = {
+        "STRATFORGE_ENV": "development",
+        "STRATFORGE_INSTANCE_ID": f"stratforge-dev-{computer}",
+        "STRATFORGE_DEPLOYMENT_ROLE": "all-in-one",
+        "STRATFORGE_CONFIG_PROFILE": "local-development",
+        "STRATFORGE_BUILD_VERSION": str(version.get("version") or ""),
+        "STRATFORGE_BUILD_DATE": str(version.get("build_date") or ""),
+        "STRATFORGE_RELEASE_CHANNEL": "development",
+        "STRATFORGE_REGION": "local",
+        "STRATFORGE_BIND_HOST": "127.0.0.1",
+        "STRATFORGE_ALLOWED_HOSTS": f"127.0.0.1,localhost,{hostname}",
+        "STRATFORGE_PUBLIC_ORIGIN": f"https://{hostname}",
+        "STRATFORGE_DEVELOPMENT_DATA_ROOT": str(project_root / "data"),
+        "STRATFORGE_DATA_ROOT": str(project_root / ".stratforge-production-data-disabled"),
+        "STRATFORGE_DATABASE_ID": "development-sqlite",
+        "STRATFORGE_QUEUE_ID": "development-local-worker",
+        "STRATFORGE_OBJECT_STORAGE_ID": "development-files",
+        "STRATFORGE_TELEGRAM_BOT_ID": "development-local",
+        "STRATFORGE_COOKIE_NAMESPACE": "sf-dev",
+        "STRATFORGE_SIGNING_KEY_ID": "development-local",
+        "STRATFORGE_LOG_NAMESPACE": "development",
+        "STRATFORGE_LIVE_TRADING_ALLOWED": "0",
+        "STRATFORGE_REAL_PAYMENTS_ALLOWED": "0",
+        "NT_ANALYZER_ROOT": str(project_root),
+        "NTA_VITEK_BACKGROUND": "1",
+    }
+    if not values["STRATFORGE_BUILD_VERSION"] or not values["STRATFORGE_BUILD_DATE"]:
+        raise RuntimeError("VERSION.json must define version and build_date.")
+    if apply_environment:
+        os.environ.update(values)
+    return values
 
 
 def state_path() -> Path:
@@ -295,7 +362,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--retry-seconds", type=int, default=10)
     parser.add_argument("--max-starts", type=int, default=0,
                         help="0 keeps supervising; positive values are intended for tests")
+    parser.add_argument(
+        "--development-profile", action="store_true",
+        help="load the explicit local Development profile before starting",
+    )
+    parser.add_argument(
+        "--development-public-origin",
+        default=DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN,
+        help="canonical HTTPS origin allowed by the Development background task",
+    )
     args = parser.parse_args(argv)
+    if args.development_profile:
+        configure_development_profile(public_origin=args.development_public_origin)
     return supervise(
         port=max(1, min(65535, args.port)),
         retry_seconds=max(1, args.retry_seconds), max_starts=max(0, args.max_starts),

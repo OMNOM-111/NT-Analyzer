@@ -107,6 +107,26 @@ def _default_doc() -> Dict[str, Any]:
 
 
 def _read_doc() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            doc = storage_router.read_document("connectors", _default_doc())
+        except StorageError as exc:
+            raise ConnectorProtocolError(
+                f"Production Connector repository unavailable ({exc.code}).",
+                503, exc.code,
+            ) from None
+        if not isinstance(doc, dict):
+            raise ConnectorProtocolError(
+                "Production Connector repository returned invalid data.",
+                500, "store_corrupt",
+            )
+        for name in ("enrollments", "installations", "sessions", "commands", "results"):
+            if not isinstance(doc.get(name), list):
+                doc[name] = []
+        doc["schema_version"] = 1
+        return doc
     path = _store_path()
     if not path.is_file():
         return _default_doc()
@@ -142,6 +162,17 @@ def _read_doc() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.write_document("connectors", doc)
+            return
+        except StorageError as exc:
+            raise ConnectorProtocolError(
+                f"Production Connector repository write denied ({exc.code}).",
+                503, exc.code,
+            ) from None
     if not secure_store.available():
         raise ConnectorProtocolError(
             "Encrypted Connector repository недоступен.",
@@ -184,6 +215,17 @@ def _write_doc(doc: Dict[str, Any]) -> None:
 
 
 def _audit(event: str, **values: Any) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.append_audit("connector_protocol", event, values)
+            return
+        except StorageError as exc:
+            raise ConnectorProtocolError(
+                f"Production Connector audit unavailable ({exc.code}).",
+                503, exc.code,
+            ) from None
     row = {
         "timestamp_utc": _now_iso(),
         "source": "connector_protocol",
@@ -1568,7 +1610,7 @@ def revoke_installation(
 
 
 def readiness_status() -> Dict[str, Any]:
-    if not secure_store.available():
+    if not (runtime_env.is_production() and runtime_env.environment_explicit()) and not secure_store.available():
         return {"ok": False, "code": "connector_repository_unavailable"}
     try:
         with _LOCK:

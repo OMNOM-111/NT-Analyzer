@@ -198,6 +198,22 @@ def _quarantine_unreadable_store(path: Path, reason: str) -> None:
 
 
 def _read_doc() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            doc = storage_router.read_document("auth", _default_doc())
+        except StorageError as exc:
+            raise AccountAuthError(
+                f"Production account repository unavailable ({exc.code}).",
+                503, code=exc.code,
+            ) from None
+        if not isinstance(doc, dict):
+            raise AccountAuthError("Production account repository returned invalid data.", 500)
+        for key in ("users", "challenges", "sessions"):
+            if not isinstance(doc.get(key), list):
+                doc[key] = []
+        return _migrate_doc(doc)
     path = _store_path()
     cache_key = _doc_cache_key(path)
     if cache_key is None:
@@ -234,6 +250,18 @@ def _read_doc() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.write_document("auth", doc)
+            _clear_doc_cache()
+            return
+        except StorageError as exc:
+            raise AccountAuthError(
+                f"Production account repository write denied ({exc.code}).",
+                503, code=exc.code,
+            ) from None
     if not secure_store.available():
         raise AccountAuthError("Windows DPAPI недоступен; аккаунты не могут быть сохранены.", 503)
     path = _store_path()
@@ -301,6 +329,9 @@ def set_auth_required(enabled: bool) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        return storage_router.storage_status()
     return {
         "available": secure_store.available(),
         "backend": secure_store.backend_name(),
@@ -2009,6 +2040,24 @@ def revoke_session(token: str) -> None:
 
 def _audit(event: str, *, user_id: int = 0, owner_id: int = 0, ip: str = "",
            extra: Optional[Dict[str, Any]] = None) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        values: Dict[str, Any] = {
+            "user_id": int(user_id or 0),
+            "owner_id": int(owner_id or 0),
+            "ip": str(ip or "")[:120],
+        }
+        if extra:
+            values.update(extra)
+        try:
+            storage_router.append_audit("telegram_account_auth", event, values)
+            return
+        except StorageError as exc:
+            raise AccountAuthError(
+                f"Production account audit unavailable ({exc.code}).",
+                503, code=exc.code,
+            ) from None
     row = {"timestamp": _now_iso(), "source": "telegram_account_auth", "event": event,
            "user_id": user_id or None, "owner_id": owner_id or None, "ip": str(ip or "")}
     if extra:

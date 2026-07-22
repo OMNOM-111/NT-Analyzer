@@ -57,6 +57,23 @@ def _default_doc() -> Dict[str, Any]:
 
 
 def _read_doc() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            doc = storage_router.read_document("workspaces", _default_doc())
+        except StorageError as exc:
+            raise WorkspaceError(
+                f"Production workspace repository unavailable ({exc.code}).", 503,
+            ) from None
+        if not isinstance(doc, dict):
+            raise WorkspaceError("Production workspace repository returned invalid data.", 500)
+        for key in ("workspaces", "memberships", "connections", "pairings"):
+            if not isinstance(doc.get(key), list):
+                doc[key] = []
+        if not isinstance(doc.get("active_workspaces"), dict):
+            doc["active_workspaces"] = {}
+        return doc
     path = _store_path()
     if not path.is_file():
         return _default_doc()
@@ -83,6 +100,16 @@ def _read_doc() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.write_document("workspaces", doc)
+            return
+        except StorageError as exc:
+            raise WorkspaceError(
+                f"Production workspace repository write denied ({exc.code}).", 503,
+            ) from None
     if not secure_store.available():
         raise WorkspaceError("Windows DPAPI недоступен; рабочие области не могут быть сохранены.", 503)
     path = _store_path()
@@ -113,10 +140,23 @@ def _write_doc(doc: Dict[str, Any]) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        return storage_router.storage_status()
     return {"available": secure_store.available(), "backend": secure_store.backend_name(), "encrypted": _store_path().is_file()}
 
 
 def _audit(event: str, **values: Any) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.append_audit("workspace_registry", event, values)
+            return
+        except StorageError as exc:
+            raise WorkspaceError(
+                f"Production workspace audit unavailable ({exc.code}).", 503,
+            ) from None
     row = {"timestamp": _now_iso(), "source": "workspace_registry", "event": event, **values}
     path = _audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +224,8 @@ def _ensure_membership(doc: Dict[str, Any], *, workspace_id: str, user_id: int, 
 
 
 def _ensure_tenant_dirs(workspace_id: str) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        return
     base = _tenant_root(workspace_id)
     for name in ("runtime", "ops", "portfolio", "reports", "statements"):
         (base / name).mkdir(parents=True, exist_ok=True)
@@ -567,6 +609,28 @@ def bridge_setup(user_id: Any) -> Dict[str, Any]:
             "steps": [], "config_template": {},
         }
     workspace_id = str(row["workspace_id"])
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        origin = runtime_env.deployment_config(strict=False).public_origin
+        return {
+            "ok": True,
+            "owner_runtime": False,
+            "workspace": workspace,
+            "connections": [_public_connection(conn) for conn in connections],
+            "runtime_data_dir": "",
+            "install_command": "StratForgeConnectorSetup.exe",
+            "config_file": "managed-by-stratforge-connector",
+            "config_template": {
+                "server_url": origin,
+                "workspace_id": workspace_id,
+                "protocol_version": "1.0",
+            },
+            "steps": [
+                "Скачайте подписанный установщик StratForge Connector из приложения.",
+                "Закройте NinjaTrader и запустите установщик; локальные пути вводить не нужно.",
+                "Введите одноразовый код подключения из приложения.",
+                "Запустите NinjaTrader и дождитесь подтверждённого heartbeat.",
+            ],
+        }
     runtime_dir = str(_tenant_root(workspace_id) / "runtime")
     return {
         "ok": True,
@@ -621,6 +685,15 @@ def _default_ledger() -> Dict[str, Any]:
 
 
 def _read_ledger(workspace_id: str) -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            return storage_router.read_workspace_ledger(workspace_id, _default_ledger())
+        except StorageError as exc:
+            raise WorkspaceError(
+                f"Production workspace ledger unavailable ({exc.code}).", 503,
+            ) from None
     path = _ledger_path(workspace_id)
     if not path.is_file():
         return _default_ledger()
@@ -634,6 +707,17 @@ def _read_ledger(workspace_id: str) -> Dict[str, Any]:
 
 
 def _write_ledger(workspace_id: str, doc: Dict[str, Any]) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        doc["updated_at_utc"] = _now_iso()
+        try:
+            storage_router.write_workspace_ledger(workspace_id, doc)
+            return
+        except StorageError as exc:
+            raise WorkspaceError(
+                f"Production workspace ledger write denied ({exc.code}).", 503,
+            ) from None
     path = _ledger_path(workspace_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc["updated_at_utc"] = _now_iso()
@@ -761,6 +845,10 @@ def uses_owner_runtime(context: Dict[str, Any]) -> bool:
 
 
 def runtime_dir_for_context(context: Dict[str, Any]) -> str:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        # Production Connectors use the signed HTTP protocol. A server path is
+        # never returned to or trusted from a Connector client.
+        return ""
     active = (context or {}).get("active_workspace") if isinstance(context, dict) else {}
     if not isinstance(active, dict) or not active or active.get("uses_owner_runtime"):
         return ""
@@ -794,6 +882,8 @@ def runtime_storage_dir_for_context(context: Dict[str, Any]) -> str:
     must never fall back to the owner's global ``data/runtime`` directory just
     because its bridge is temporarily offline.
     """
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        return ""
     active = (context or {}).get("active_workspace") if isinstance(context, dict) else {}
     if not isinstance(active, dict) or not active or active.get("uses_owner_runtime"):
         return ""

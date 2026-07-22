@@ -155,6 +155,21 @@ def test_development_and_production_roots_cannot_collide(
     with pytest.raises(runtime_env.RuntimeEnvError, match="совпадает"):
         runtime_env.assert_startup_safe()
 
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "nested"))
+    monkeypatch.setenv(
+        "STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "nested" / "development"),
+    )
+    with pytest.raises(runtime_env.RuntimeEnvError, match="вложен"):
+        runtime_env.assert_startup_safe()
+
+
+def test_staging_implicit_roots_keep_legacy_data_path_isolated(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+
+    assert runtime_env.data_root(tmp_path) == (tmp_path / "data" / "staging").resolve()
+
 
 def test_production_startup_requires_the_complete_resource_matrix(
     tmp_path, monkeypatch,

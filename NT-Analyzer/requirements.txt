@@ -19,6 +19,10 @@ tzdata>=2024.1
 # builds pin the major range; protocol tests cover C# P-256 raw r||s and DER.
 cryptography>=49.0.0,<50
 
+# Authoritative Production state. Development continues to use local
+# DPAPI/files/SQLite unless an isolated PostgreSQL test profile is selected.
+psycopg[binary]>=3.2.0,<4
+
 # Optional live market-data vendor clients (install when credentials exist):
 #   python -m pip install databento
 # Without this package + NTA_DATABENTO_API_KEY, Databento Live stays PRODUCTION BLOCKED.

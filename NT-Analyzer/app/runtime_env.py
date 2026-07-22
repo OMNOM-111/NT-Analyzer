@@ -302,6 +302,14 @@ def _resolved_root(raw: str, project_root: Path) -> Path:
     return path.resolve()
 
 
+def _root_contains(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 def _first_value(names: Iterable[str]) -> str:
     for name in names:
         value = str(os.environ.get(name) or "").strip()
@@ -313,12 +321,18 @@ def _first_value(names: Iterable[str]) -> str:
 def data_root(project_root: Any = None) -> Path:
     """Return the isolated data directory for the selected environment."""
     base = Path(project_root or Path(__file__).resolve().parent.parent).resolve()
+    production = is_production()
+    production_raw = _first_value(("STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT"))
+    production_default = (
+        base / "data"
+        if production
+        else base / ".stratforge-production-data-disabled"
+    )
     production_root = _resolved_root(
-        _first_value(("STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT"))
-        or str(base / "data"),
+        production_raw or str(production_default),
         base,
     )
-    if is_production():
+    if production:
         return production_root
 
     development_raw = _first_value((
@@ -331,9 +345,13 @@ def data_root(project_root: Any = None) -> Path:
     development_root = _resolved_root(
         development_raw or str(development_default), base,
     )
-    if development_root == production_root:
+    if (
+        development_root == production_root
+        or _root_contains(development_root, production_root)
+        or _root_contains(production_root, development_root)
+    ):
         raise RuntimeEnvError(
-            "Development data root совпадает с production data root. "
+            "Development data root совпадает с production data root или вложен в него. "
             "Задайте отдельный STRATFORGE_DEVELOPMENT_DATA_ROOT.",
             503,
         )

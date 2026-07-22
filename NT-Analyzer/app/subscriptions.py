@@ -211,6 +211,29 @@ def _default_doc() -> Dict[str, Any]:
 
 
 def _read_doc() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            doc = storage_router.read_document("entitlements", _default_doc())
+        except StorageError as exc:
+            raise SubscriptionError(
+                f"Production entitlement repository unavailable ({exc.code}).", 503,
+            ) from None
+        if not isinstance(doc, dict):
+            raise SubscriptionError("Production entitlement repository returned invalid data.", 500)
+        for key in ("vouchers", "entitlements"):
+            if not isinstance(doc.get(key), list):
+                doc[key] = []
+        if not isinstance(doc.get("plan_overrides"), dict):
+            doc["plan_overrides"] = {}
+        if not isinstance(doc.get("payment_config"), dict):
+            doc["payment_config"] = {}
+        if not isinstance(doc.get("paypal"), dict):
+            doc["paypal"] = {}
+        if not isinstance(doc.get("payment_requests"), list):
+            doc["payment_requests"] = []
+        return doc
     path = _store_path()
     cache_key = _doc_cache_key(path)
     if cache_key is None:
@@ -249,6 +272,17 @@ def _read_doc() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.write_document("entitlements", doc)
+            _clear_doc_cache()
+            return
+        except StorageError as exc:
+            raise SubscriptionError(
+                f"Production entitlement repository write denied ({exc.code}).", 503,
+            ) from None
     if not secure_store.available():
         raise SubscriptionError("Windows DPAPI недоступен; подписки не могут быть сохранены.", 503)
     path = _store_path()
@@ -293,6 +327,9 @@ def _write_doc(doc: Dict[str, Any]) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        return storage_router.storage_status()
     return {
         "available": secure_store.available(),
         "backend": secure_store.backend_name(),
@@ -1054,6 +1091,16 @@ def _entitlement_expiry(duration_days: int) -> str:
 
 
 def _audit(event: str, **values: Any) -> None:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            storage_router.append_audit("subscription_entitlements", event, values)
+            return
+        except StorageError as exc:
+            raise SubscriptionError(
+                f"Production subscription audit unavailable ({exc.code}).", 503,
+            ) from None
     row = {"timestamp": _now_iso(), "source": "subscription_entitlements", "event": event, **values}
     path = _audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)

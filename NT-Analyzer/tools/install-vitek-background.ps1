@@ -26,7 +26,7 @@ if (-not $python -or -not (Test-Path -LiteralPath $python)) {
     throw 'Python 3 executable not found; Vitek supervisor was not installed.'
 }
 
-$arguments = "-m app.backend_supervisor --port $Port --retry-seconds 10"
+$arguments = "-m app.backend_supervisor --development-profile --port $Port --retry-seconds 10"
 $action = New-ScheduledTaskAction -Execute $python -Argument $arguments -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet `
