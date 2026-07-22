@@ -19,6 +19,24 @@
     "extensions": {
       "type": "object"
     },
+    "updateOffer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "version", "channel", "archive_url", "archive_sha256", "manifest_sha256", "protocol_version", "apply_policy", "major_approved", "health_timeout_sec", "published_at_utc"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "version": { "type": "string", "maxLength": 64 },
+        "channel": { "enum": ["stable", "canary"] },
+        "archive_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "archive_sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" },
+        "manifest_sha256": { "type": "string", "pattern": "^[0-9A-F]{64}$" },
+        "protocol_version": { "const": "1.0" },
+        "apply_policy": { "enum": ["safe_restart", "manual"] },
+        "major_approved": { "type": "boolean" },
+        "health_timeout_sec": { "type": "integer", "minimum": 300, "maximum": 3600 },
+        "published_at_utc": { "type": "string" }
+      }
+    },
     "publicKey": {
       "type": "object",
       "additionalProperties": false,

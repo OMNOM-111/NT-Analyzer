@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 using Microsoft.Win32;
 using Newtonsoft.Json;
@@ -275,7 +276,7 @@ namespace StratForge.Connector.Setup
             JObject original, string name, string source, string backup)
         {
             bool existed = File.Exists(source);
-            if (existed) File.Copy(source, backup, true);
+            if (existed) RetryIo(delegate { File.Copy(source, backup, true); });
             original[name] = new JObject
             {
                 ["existed"] = existed,
@@ -300,10 +301,7 @@ namespace StratForge.Connector.Setup
                         StringComparison.OrdinalIgnoreCase))
                     throw new CryptographicException("Restored rollback hash mismatch: " + name);
             }
-            else if (File.Exists(target))
-            {
-                File.Delete(target);
-            }
+            else if (File.Exists(target)) RetryIo(delegate { File.Delete(target); });
         }
 
         private static JObject CreateOperationBackup(
@@ -321,7 +319,7 @@ namespace StratForge.Connector.Setup
             JObject operation, string name, string source, string backup)
         {
             bool existed = File.Exists(source);
-            if (existed) File.Copy(source, backup, true);
+            if (existed) RetryIo(delegate { File.Copy(source, backup, true); });
             operation[name] = new JObject
             {
                 ["existed"] = existed,
@@ -341,8 +339,7 @@ namespace StratForge.Connector.Setup
             if (row == null) throw new InvalidDataException("Operation rollback metadata is missing.");
             if ((bool?)row["existed"] == true)
                 AtomicCopy((string)row["backup_path"], target);
-            else if (File.Exists(target))
-                File.Delete(target);
+            else if (File.Exists(target)) RetryIo(delegate { File.Delete(target); });
         }
 
         private static string CacheVerifiedRelease(VerifiedRelease release, string stateDir)
@@ -423,6 +420,20 @@ namespace StratForge.Connector.Setup
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "StratForge", "Connector")
                 : Path.GetFullPath(options.StateRoot);
+            // Updater receives the already-resolved per-installation state_dir
+            // from strict Connector config.  Accept it only when its existing
+            // installation record proves it belongs to this NinjaTrader path;
+            // first-time Setup still derives an isolated installation root.
+            JObject direct = ReadObject(Path.Combine(root, "install-record.json"));
+            if (direct != null)
+            {
+                string recordedNinja = Path.GetFullPath(
+                    (string)direct["ninja_user_dir"] ?? "");
+                if (!string.Equals(recordedNinja, ninjaDir, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        "Connector state belongs to a different NinjaTrader user directory.");
+                return root;
+            }
             using (SHA256 sha = SHA256.Create())
             {
                 byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(ninjaDir.ToUpperInvariant()));
@@ -454,15 +465,21 @@ namespace StratForge.Connector.Setup
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target));
             string temporary = target + ".stratforge-new";
-            if (File.Exists(temporary)) File.Delete(temporary);
-            File.Copy(source, temporary, true);
+            RetryIo(delegate
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+                File.Copy(source, temporary, true);
+            });
             if (!string.Equals(
                     ReleaseManifestVerifier.Sha256(source),
                     ReleaseManifestVerifier.Sha256(temporary),
                     StringComparison.OrdinalIgnoreCase))
                 throw new CryptographicException("Staged payload hash mismatch.");
-            if (File.Exists(target)) File.Replace(temporary, target, null);
-            else File.Move(temporary, target);
+            RetryIo(delegate
+            {
+                if (File.Exists(target)) File.Replace(temporary, target, null);
+                else File.Move(temporary, target);
+            });
         }
 
         private static void AtomicWriteText(string target, string value)
@@ -474,16 +491,43 @@ namespace StratForge.Connector.Setup
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target));
             string temporary = target + ".stratforge-new";
-            if (File.Exists(temporary)) File.Delete(temporary);
-            File.WriteAllBytes(temporary, value);
-            if (File.Exists(target)) File.Replace(temporary, target, null);
-            else File.Move(temporary, target);
+            RetryIo(delegate
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+                File.WriteAllBytes(temporary, value);
+            });
+            RetryIo(delegate
+            {
+                if (File.Exists(target)) File.Replace(temporary, target, null);
+                else File.Move(temporary, target);
+            });
         }
 
         private static void CopyExact(string source, string target)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target));
-            File.Copy(source, target, true);
+            RetryIo(delegate { File.Copy(source, target, true); });
+        }
+
+        private static void RetryIo(Action action)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    action();
+                    return;
+                }
+                catch (IOException exc)
+                {
+                    if (IsNinjaTraderRunning())
+                        throw new InvalidOperationException(
+                            "NinjaTrader started while Connector files were being changed; " +
+                            "the operation was stopped for a safe restart.", exc);
+                    if (attempt >= 4) throw;
+                    Thread.Sleep(250 * attempt);
+                }
+            }
         }
 
         private static JObject ReadObject(string path)

@@ -15,6 +15,8 @@ _ENV_KEYS = (
     "STRATFORGE_DEPLOYMENT_ROLE",
     "STRATFORGE_CONFIG_PROFILE",
     "STRATFORGE_BUILD_VERSION",
+    "STRATFORGE_BUILD_DATE",
+    "STRATFORGE_RELEASE_CHANNEL",
     "STRATFORGE_REGION",
     "STRATFORGE_BIND_HOST",
     "STRATFORGE_ALLOWED_HOSTS",
@@ -57,7 +59,9 @@ def _production_config(monkeypatch, tmp_path: Path) -> None:
         "STRATFORGE_INSTANCE_ID": "stratforge-prod-01",
         "STRATFORGE_DEPLOYMENT_ROLE": "all-in-one",
         "STRATFORGE_CONFIG_PROFILE": "production-primary",
-        "STRATFORGE_BUILD_VERSION": "2026.07.21-test",
+        "STRATFORGE_BUILD_VERSION": "1.0.0-test",
+        "STRATFORGE_BUILD_DATE": "2026-07-21",
+        "STRATFORGE_RELEASE_CHANNEL": "stable",
         "STRATFORGE_REGION": "primary",
         "STRATFORGE_BIND_HOST": "127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS": "app.stratforges.com",
@@ -106,6 +110,9 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.edge_mode == "direct-local"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
+    assert config.build_version == "0.9.0-dev.1"
+    assert config.release_channel == "development"
+    assert config.release_status == "in_development"
     assert runtime_env.impersonation_enabled() is False
 
 
@@ -166,6 +173,10 @@ def test_production_startup_requires_the_complete_resource_matrix(
     assert config.trusted_proxy_ips == ("127.0.0.1", "::1")
     assert config.readiness_min_free_mb == 4096
     assert config.database_id == "postgres-primary"
+    assert config.build_version == "1.0.0-test"
+    assert config.build_date == "2026-07-21"
+    assert config.release_channel == "stable"
+    assert config.release_status == "ready"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
 
@@ -257,6 +268,54 @@ def test_public_deployment_status_contains_no_paths_or_resource_ids(
 
     assert public["environment"] == "production"
     assert public["instance_id"] == "stratforge-prod-01"
+    assert public["build_version"] == "1.0.0-test"
+    assert public["build_date"] == "2026-07-21"
+    assert public["release_channel"] == "stable"
     assert "data_root" not in public
     assert "database_id" not in public
     assert "signing_key_id" not in public
+
+
+def test_release_identity_cannot_mislabel_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "prod"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "dev"))
+    monkeypatch.setenv("STRATFORGE_BUILD_VERSION", "1.0.0")
+    monkeypatch.setenv("STRATFORGE_BUILD_DATE", "2026-07-21")
+    monkeypatch.setenv("STRATFORGE_RELEASE_CHANNEL", "stable")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="Development"):
+        runtime_env.assert_startup_safe()
+
+    _production_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATFORGE_RELEASE_CHANNEL", "development")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="Production"):
+        runtime_env.assert_startup_safe()
+
+
+def test_release_identity_rejects_invalid_semver(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "prod"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "dev"))
+    monkeypatch.setenv("STRATFORGE_BUILD_VERSION", "0.9.0-dev.01")
+    monkeypatch.setenv("STRATFORGE_BUILD_DATE", "2026-07-21")
+    monkeypatch.setenv("STRATFORGE_RELEASE_CHANNEL", "development")
+    with pytest.raises(runtime_env.RuntimeEnvError, match="SemVer"):
+        runtime_env.assert_startup_safe()
+
+
+def test_run_mode_launchers_are_unambiguous() -> None:
+    root = Path(__file__).resolve().parents[1]
+    start = (root / "start.ps1").read_text(encoding="utf-8")
+    open_server = (root / "open-server.ps1").read_text(encoding="utf-8")
+    guide = (root / "README-RUN-MODES.md").read_text(encoding="utf-8")
+
+    assert (root / "START-DEVELOPMENT.cmd").is_file()
+    assert (root / "OPEN-SERVER.cmd").is_file()
+    assert not (root / "OPEN-STABLE.cmd").exists()
+    assert "$env:STRATFORGE_RELEASE_CHANNEL = 'development'" in start
+    assert "VERSION.json channel=development" in start
+    assert "/api/runtime/env" in open_server
+    assert "this is not the stable release" in open_server
+    assert "START-DEVELOPMENT.cmd" in guide
+    assert "OPEN-SERVER.cmd" in guide
+    assert "РАЗРАБОТКА" in guide and "ПРЕДРЕЛИЗ" in guide and "СТАБИЛЬНАЯ" in guide

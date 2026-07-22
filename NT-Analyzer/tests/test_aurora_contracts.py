@@ -152,7 +152,32 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260718-contours2"}, versions
+    assert set(versions.values()) == {"20260721-build-identity1"}, versions
+
+
+def test_build_identity_is_visible_and_never_guessed_client_side():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    entry = (AURORA / "mode-entry.html").read_text(encoding="utf-8")
+    entry_js = (AURORA / "assets" / "pages" / "mode-entry.js").read_text(
+        encoding="utf-8"
+    )
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+
+    assert 'id="app-release-badge" data-release-badge' in ui
+    assert 'id="app-build-meta" data-build-meta' in ui
+    assert "development: { short: 'DEV', full: 'РАЗРАБОТКА'" in ui
+    assert "canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ'" in ui
+    assert "stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ'" in ui
+    assert "deployment.release_channel || ''" in ui
+    assert "environment === 'development' ? 'development'" not in ui
+    assert "v${version} · от ${visibleDate}" in ui
+    assert 'id="mode-entry-release-badge"' in entry
+    assert 'id="mode-entry-build-meta"' in entry
+    assert "API.http.runtimeEnv" in entry_js
+    assert "never guess a channel" in entry_js
+    assert ".rail-release-badge.dev" in theme
+    assert ".rail-release-badge.canary" in theme
+    assert ".rail-release-badge.stable" in theme
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():

@@ -54,7 +54,10 @@ namespace StratForge.Connector.Setup
 
             string rootPrefix = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (JObject row in (manifest["files"] as JArray ?? new JArray()).OfType<JObject>())
+            JArray fileRows = manifest["files"] as JArray ?? new JArray();
+            if (fileRows.Count == 0 || fileRows.Count > 100)
+                throw new InvalidDataException("Manifest file count is invalid.");
+            foreach (JObject row in fileRows.OfType<JObject>())
             {
                 string relative = ((string)row["path"] ?? "").Replace('/', Path.DirectorySeparatorChar);
                 if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))
@@ -71,6 +74,16 @@ namespace StratForge.Connector.Setup
                 string actualHash = Sha256(full);
                 if (!FixedEquals(expectedHash, actualHash))
                     throw new CryptographicException("Release payload hash mismatch: " + relative);
+            }
+            foreach (string full in Directory.EnumerateFiles(
+                root, "*", SearchOption.AllDirectories).Select(Path.GetFullPath))
+            {
+                string name = Path.GetFileName(full);
+                if (string.Equals(name, "manifest.json", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "manifest.sig", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!seen.Contains(full))
+                    throw new InvalidDataException("Release contains a file absent from manifest.");
             }
             return new VerifiedRelease
             {

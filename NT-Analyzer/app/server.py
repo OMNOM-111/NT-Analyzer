@@ -111,6 +111,7 @@ if __package__ is None or __package__ == "":
     from app import edge_security  # type: ignore[no-redef]
     from app import service_readiness  # type: ignore[no-redef]
     from app import connector_protocol  # type: ignore[no-redef]
+    from app import connector_releases  # type: ignore[no-redef]
     from app import google_auth  # type: ignore[no-redef]
     from app import test_auth  # type: ignore[no-redef]
     from app import demo_backtest  # type: ignore[no-redef]
@@ -183,6 +184,7 @@ else:
     from . import edge_security
     from . import service_readiness
     from . import connector_protocol
+    from . import connector_releases
     from . import google_auth
     from . import test_auth
     from . import demo_backtest
@@ -7180,6 +7182,7 @@ def run(port: Optional[int] = None) -> None:
     server.deployment_config = deployment  # type: ignore[attr-defined]
     server.readiness_probes = {  # type: ignore[attr-defined]
         "connector_control": connector_protocol.readiness_status,
+        "connector_releases": connector_releases.readiness_status,
     }
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")

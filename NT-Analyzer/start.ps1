@@ -42,7 +42,25 @@ if (-not $env:STRATFORGE_INSTANCE_ID) {
 }
 if (-not $env:STRATFORGE_DEPLOYMENT_ROLE) { $env:STRATFORGE_DEPLOYMENT_ROLE = 'all-in-one' }
 if (-not $env:STRATFORGE_CONFIG_PROFILE) { $env:STRATFORGE_CONFIG_PROFILE = 'local-development' }
-if (-not $env:STRATFORGE_BUILD_VERSION) { $env:STRATFORGE_BUILD_VERSION = 'development' }
+$versionFile = Join-Path $projectRoot 'VERSION.json'
+if (-not (Test-Path -LiteralPath $versionFile)) {
+    Write-Host "ERROR: project version file not found: $versionFile" -ForegroundColor Red
+    exit 2
+}
+try { $projectVersion = Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 | ConvertFrom-Json }
+catch {
+    Write-Host "ERROR: VERSION.json is invalid: $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
+if ([string]$projectVersion.channel -ne 'development' -or [string]$projectVersion.status -ne 'in_development') {
+    Write-Host 'ERROR: the local launcher requires VERSION.json channel=development and status=in_development.' -ForegroundColor Red
+    exit 2
+}
+# Never inherit a stable/canary identity from another terminal.  This launcher
+# is the one authoritative way to start the checked-out Development build.
+$env:STRATFORGE_BUILD_VERSION = [string]$projectVersion.version
+$env:STRATFORGE_BUILD_DATE = [string]$projectVersion.build_date
+$env:STRATFORGE_RELEASE_CHANNEL = 'development'
 if (-not $env:STRATFORGE_REGION) { $env:STRATFORGE_REGION = 'local' }
 if (-not $env:STRATFORGE_BIND_HOST) { $env:STRATFORGE_BIND_HOST = '127.0.0.1' }
 if (-not $env:STRATFORGE_ALLOWED_HOSTS) { $env:STRATFORGE_ALLOWED_HOSTS = '127.0.0.1,localhost' }
@@ -84,6 +102,8 @@ if (-not $pyCmd) {
 
 Write-Host '[StratForge AI] starting backend...' -ForegroundColor Cyan
 Write-Host "[StratForge AI] project_root: $projectRoot"
+Write-Host "[StratForge AI] v$($env:STRATFORGE_BUILD_VERSION) | DEVELOPMENT | from $($env:STRATFORGE_BUILD_DATE)" -ForegroundColor Yellow
+Write-Host '[StratForge AI] This launcher never starts the stable Production service.' -ForegroundColor Yellow
 
 $env:PYTHONUNBUFFERED = '1'
 $env:NT_ANALYZER_ROOT = $projectRoot

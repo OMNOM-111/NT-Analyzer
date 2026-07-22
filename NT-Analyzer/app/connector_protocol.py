@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-from . import runtime_env, secure_store, workspaces
+from . import connector_releases, runtime_env, secure_store, workspaces
 
 
 PROTOCOL_VERSION = "1.0"
@@ -400,8 +400,20 @@ def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
         "last_heartbeat_utc",
         "revoked_at_utc",
         "update_state",
+        "update_reason",
+        "release_channel",
         "account_labels",
     )}
+
+
+def _apply_release_policy(installation: Dict[str, Any]) -> Dict[str, Any]:
+    decision = connector_releases.resolve_update(installation)
+    installation["update_state"] = str(decision.get("state") or "blocked")
+    installation["update_reason"] = str(
+        decision.get("reason") or "release_policy_error"
+    )
+    installation["release_channel"] = str(decision.get("channel") or "")
+    return decision
 
 
 def _refresh_states(doc: Dict[str, Any], now: float) -> bool:
@@ -591,6 +603,7 @@ def enroll_device(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "public_key": public_jwk,
             "public_key_fingerprint": fingerprint,
             "connector_version": connector_version,
+            "protocol_version": PROTOCOL_VERSION,
             "nt_version": nt_version,
             "ninja_instance_id": ninja_instance_id,
             "created_at_utc": _now_iso(now),
@@ -599,6 +612,8 @@ def enroll_device(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "last_heartbeat_at": 0,
             "revoked_at_utc": "",
             "update_state": "compatible",
+            "update_reason": "pending_first_hello",
+            "release_channel": "",
             "account_labels": [],
         }
         nonce = _issue_challenge(installation, now)
@@ -819,12 +834,22 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "last_heartbeat_at": now,
             "challenge_used_at_utc": _now_iso(now),
         })
+        release_decision = _apply_release_policy(installation)
         _write_doc(doc)
     _audit(
         "signed_hello_accepted",
         workspace_id=installation["workspace_id"],
         installation_id=installation_id,
         session_id=session["session_id"],
+    )
+    _audit(
+        "release_policy_evaluated",
+        workspace_id=installation["workspace_id"],
+        installation_id=installation_id,
+        connector_version=connector_version,
+        update_state=release_decision["state"],
+        update_reason=release_decision["reason"],
+        release_channel=release_decision["channel"],
     )
     return {
         "ok": True,
@@ -838,7 +863,10 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "workspace_id": installation["workspace_id"],
         "connection_id": installation["connection_id"],
         "allowed_capabilities": list(installation["capabilities"]),
-        "update_state": installation.get("update_state") or "compatible",
+        "update_state": release_decision["state"],
+        "update_reason": release_decision["reason"],
+        "release_channel": release_decision["channel"],
+        "update_offer": copy.deepcopy(release_decision.get("offer") or {}),
     }
 
 
@@ -936,7 +964,27 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
             "last_heartbeat_at": now,
             "account_labels": labels,
         })
+        previous_release = (
+            installation.get("update_state"),
+            installation.get("update_reason"),
+            installation.get("release_channel"),
+        )
+        release_decision = _apply_release_policy(installation)
         _write_doc(doc)
+    current_release = (
+        release_decision["state"],
+        release_decision["reason"],
+        release_decision["channel"],
+    )
+    if previous_release != current_release:
+        _audit(
+            "release_policy_changed",
+            workspace_id=installation["workspace_id"],
+            installation_id=installation["installation_id"],
+            update_state=release_decision["state"],
+            update_reason=release_decision["reason"],
+            release_channel=release_decision["channel"],
+        )
     return {
         "ok": True,
         "state": "online",
@@ -944,7 +992,10 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
         "server_time": _now_iso(now),
         "session_expires_at": _now_iso(session["expires_at"]),
         "heartbeat_interval_sec": HEARTBEAT_INTERVAL_SEC,
-        "update_state": installation.get("update_state") or "compatible",
+        "update_state": release_decision["state"],
+        "update_reason": release_decision["reason"],
+        "release_channel": release_decision["channel"],
+        "update_offer": copy.deepcopy(release_decision.get("offer") or {}),
     }
 
 
@@ -1091,6 +1142,17 @@ def queue_command(
             raise ConnectorProtocolError(
                 "Connector connection отозвана.", 403, "installation_revoked",
             )
+        release_decision = _apply_release_policy(installation)
+        if (
+            cap in {"paper_commands", "live_commands"}
+            and release_decision["state"] == "blocked"
+        ):
+            _write_doc(doc)
+            raise ConnectorProtocolError(
+                "Connector version заблокирована release policy.",
+                426,
+                "connector_update_required",
+            )
         if cap not in set(installation.get("capabilities") or []):
             raise ConnectorProtocolError(
                 "Capability не выдана этой installation.",
@@ -1183,6 +1245,20 @@ def poll_commands(
             doc = _read_doc()
             changed = _refresh_states(doc, now)
             session, installation = _authenticate_session(doc, token, now)
+            release_decision = _apply_release_policy(installation)
+            if release_decision["state"] == "blocked":
+                for command in doc["commands"]:
+                    if (
+                        str(command.get("installation_id") or "")
+                        == str(installation.get("installation_id") or "")
+                        and command.get("status") not in TERMINAL_COMMAND_STATES
+                        and command.get("capability")
+                        in {"paper_commands", "live_commands"}
+                    ):
+                        command["status"] = "rejected"
+                        command["finished_at_utc"] = _now_iso(now)
+                        command["release_rejection"] = release_decision["reason"]
+                        changed = True
             candidates = [
                 row for row in doc["commands"]
                 if str(row.get("installation_id") or "") == str(
@@ -1388,6 +1464,18 @@ def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             "message": (
                 "Установщик реализован и проверен локально. Production download "
                 "будет опубликован после Authenticode и immutable release gate."
+            ),
+        },
+        "updater": {
+            "state": "implemented_local_release_gate",
+            "policy": "safe_restart",
+            "channels": ["stable", "canary"],
+            "post_update_health": "signed_hello_and_heartbeat",
+            "rollback": "one_shot_last_known_good",
+            "message": (
+                "Внешний updater проверяет подпись и SHA-256, ждёт закрытия "
+                "NinjaTrader и автоматически возвращает last-known-good при "
+                "неуспешном post-update heartbeat."
             ),
         },
         "steps": [

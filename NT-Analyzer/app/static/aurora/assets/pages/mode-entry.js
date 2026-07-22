@@ -8,6 +8,43 @@
   let auth = null;
   let currentMode = '';
 
+  function applyBuildIdentity(payload) {
+    const source = payload || {};
+    const deployment = source.deployment && typeof source.deployment === 'object'
+      ? source.deployment : source;
+    const channel = String(deployment.release_channel || '').toLowerCase();
+    const version = String(deployment.build_version || '').trim();
+    const buildDate = String(deployment.build_date || '').trim();
+    const labels = {
+      development: { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev' },
+      canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ', cls: 'canary' },
+      stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ', cls: 'stable' },
+    };
+    if (!version || !buildDate || !labels[channel]) return;
+    const label = labels[channel];
+    const parts = buildDate.split('-');
+    const visibleDate = parts.length === 3
+      ? `${parts[2]}.${parts[1]}.${parts[0]}` : buildDate;
+    const badge = document.getElementById('mode-entry-release-badge');
+    const meta = document.getElementById('mode-entry-build-meta');
+    if (badge) {
+      badge.className = `rail-release-badge ${label.cls}`;
+      badge.textContent = label.short;
+      badge.title = label.full;
+    }
+    if (meta) {
+      meta.textContent = `v${version} · от ${visibleDate}`;
+      meta.title = `${label.full}: версия ${version}, сборка от ${visibleDate}`;
+    }
+    document.documentElement.dataset.releaseChannel = channel;
+    document.title = `[${label.short}] Выбор режима — StratForge AI`;
+  }
+
+  async function loadBuildIdentity() {
+    try { applyBuildIdentity(await window.API.http.runtimeEnv({ retries: 0 })); }
+    catch (e) { /* Keep the unresolved marker visible; never guess a channel. */ }
+  }
+
   function label(mode) { return mode === 'beginner' ? 'Студент' : 'Профессионал'; }
   function destination(mode) { return mode === 'beginner' ? 'practice-trading.html' : 'index.html'; }
   function saveGuestChoice(mode) {
@@ -82,6 +119,7 @@
     if (lead) lead.textContent = 'Выберите, какой интерфейс посмотреть. Для сохранения виртуального счёта и доступа к данным потребуется вход через Telegram.';
   }
   options.forEach(btn => btn.addEventListener('click', () => choose(String(btn.dataset.mode || ''))));
+  loadBuildIdentity();
   (async function start() {
     try {
       const result = await window.API.authReady;

@@ -417,6 +417,58 @@ def test_heartbeat_masks_accounts_and_rejects_instance_change(connector_store) -
     assert mismatch.value.code == "instance_mismatch"
 
 
+def test_blocked_connector_version_cannot_queue_unsafe_commands(
+    connector_store, monkeypatch, tmp_path: Path,
+) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    release = {
+        "version": "0.2.1-test",
+        "archive_url": "https://releases.stratforges.com/connector-test.zip",
+        "archive_sha256": "A" * 64,
+        "manifest_sha256": "B" * 64,
+        "protocol_version": "1.0",
+        "minimum_version": "0.2.0-test",
+        "blocked_versions": ["0.2.0-test"],
+        "major_approved": False,
+        "health_timeout_sec": 900,
+        "published_at_utc": "2026-07-21T00:00:00Z",
+    }
+    catalog = tmp_path / "connector-releases.json"
+    catalog.write_text(json.dumps({
+        "schema_version": 1,
+        "channels": {"stable": release, "canary": release},
+        "canary_installation_ids": [],
+    }), encoding="utf-8")
+    monkeypatch.setenv("STRATFORGE_CONNECTOR_RELEASE_CATALOG", str(catalog))
+
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    assert welcome["update_state"] == "blocked"
+    assert welcome["update_reason"] == "version_revoked"
+    assert welcome["update_offer"]["version"] == "0.2.1-test"
+
+    telemetry = connector_protocol.queue_command(
+        42,
+        workspace_id=workspace["workspace_id"],
+        connection_id=welcome["connection_id"],
+        capability="telemetry",
+        idempotency_key="blocked-safe-telemetry-01",
+        payload={"command": "ping"},
+    )
+    assert telemetry["command"]["status"] == "queued"
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as unsafe:
+        connector_protocol.queue_command(
+            42,
+            workspace_id=workspace["workspace_id"],
+            connection_id=welcome["connection_id"],
+            capability="paper_commands",
+            idempotency_key="blocked-paper-command-01",
+            payload={"command": "disable_strategy"},
+        )
+    assert unsafe.value.status == 426
+    assert unsafe.value.code == "connector_update_required"
+
+
 def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) -> None:
     workspace = connector_store[42]
     private, jwk = _device_key()

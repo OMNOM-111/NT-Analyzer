@@ -310,7 +310,18 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .rail-logo::after { content: ""; position: absolute; inset: 0; border-radius: 13px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03); }
 .rail-logo-mark { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 6px 16px rgba(31, 201, 255, 0.18)); }
 .rail-brand-tx { display: flex; flex-direction: column; min-width: 0; }
+.rail-brand-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .rail-brand-name { font-size: 14px; font-weight: 800; letter-spacing: -.2px; color: var(--tx); white-space: nowrap; }
+.rail-release-badge {
+  display: inline-flex; align-items: center; min-height: 15px; padding: 1px 5px;
+  border-radius: 999px; font-size: 7.5px; line-height: 1; font-weight: 900;
+  letter-spacing: .45px; border: 1px solid var(--line-2); color: var(--tx-2);
+  background: var(--bg-3); white-space: nowrap;
+}
+.rail-release-badge.dev { color: #b9a7ff; border-color: rgba(139, 112, 255, .38); background: rgba(109, 78, 220, .16); }
+.rail-release-badge.canary { color: #ffd18a; border-color: rgba(255, 173, 66, .38); background: rgba(196, 112, 20, .16); }
+.rail-release-badge.stable { color: #86ecc0; border-color: rgba(54, 211, 153, .34); background: rgba(35, 153, 111, .14); }
+.rail-brand-version { margin-top: 1px; font-size: 8.5px; line-height: 1.2; color: var(--tx-3); font-weight: 650; white-space: nowrap; }
 .rail-brand-sub { font-size: 10.5px; color: var(--tx-3); font-weight: 600; white-space: nowrap; }
 .rail-nav { display: flex; flex-direction: column; gap: 3px; width: 100%; flex: 1; }
 .rail-item {
@@ -347,7 +358,10 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
   border-bottom: 1px solid var(--line);
 }
 .tb-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tb-kicker-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tb-kicker { font-size: 10.5px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--tx-3); font-weight: 700; }
+.tb-release-badge, .tb-build-meta { display: none; }
+.tb-build-meta { color: var(--tx-3); font-size: 8.5px; font-weight: 650; white-space: nowrap; }
 .tb-h1 { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
 .tb-search-wrap { position: relative; flex: 1; min-width: 180px; max-width: 380px; margin-left: 10px; }
 .tb-search {
@@ -1105,6 +1119,8 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 /* Topbar trims early (independent of the rail) so the sticky header never overflows */
 @media (max-width: 900px) {
   .tb-kicker { display: none; }
+  .tb-release-badge { display: inline-flex; }
+  .tb-build-meta { display: inline; }
   .chip-market { display: none; }
   .tb-datetime { display: none; }
   .chip-account { max-width: 140px; }
@@ -2225,6 +2241,9 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 .mode-entry-brand { display: flex; align-items: center; gap: 12px; color: var(--tx); }
 .mode-entry-brand img { width: 36px; height: 36px; border-radius: 10px; }
 .mode-entry-brand strong, .mode-entry-brand span { display: block; }
+.mode-entry-brand-title { display: flex; align-items: center; gap: 7px; }
+.mode-entry-brand-title .rail-release-badge { display: inline-flex; margin-top: 0; font-size: 7.5px; }
+.mode-entry-build-meta { display: block; margin-top: 2px; color: var(--tx-3); font-size: 10px; font-weight: 650; line-height: 1.25; }
 .mode-entry-brand span, .mode-entry-kicker, .mode-entry-lead, .mode-entry-status { color: var(--tx-2); }
 .mode-entry-brand span { margin-top: 2px; font-size: 12px; }
 .mode-entry-kicker { margin: 28px 0 6px; font-size: 13px; }

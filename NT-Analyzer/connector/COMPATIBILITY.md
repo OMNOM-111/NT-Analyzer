@@ -7,6 +7,7 @@
 | Runtime | .NET Framework 4.8 | required by NinjaTrader and targeted by all Connector binaries |
 | Protocol | StratForge Connector 1.0 | Python/C# signed hello and challenge interop PASS |
 | Transport | outbound TLS 1.2 HTTPS to `app.stratforges.com` | local protocol harness PASS; public Production route pending |
+| Update | external safe-restart updater, stable/canary | N→N+1, interrupted package, running NT, health rollback probes PASS |
 
 macOS is not supported because NinjaTrader 8 is a Windows application. Windows
 Server/VM use is supported only when NinjaTrader itself is installed and licensed

@@ -61,6 +61,8 @@ namespace NTAnalyzerBridge.Connector
         private string _pendingNonce = "";
         private long _sequence;
         private string _updateState = "unknown";
+        private string _updateReason = "unknown";
+        private DateTime _nextUpdaterCheckUtc = DateTime.MinValue;
 
         public ConnectorClient(BridgeConfig cfg)
         {
@@ -91,6 +93,7 @@ namespace NTAnalyzerBridge.Connector
         public void Start()
         {
             if (_thread != null) return;
+            ConnectorUpdaterLauncher.TryStart(_cfg);
             _thread = new Thread(Run)
             {
                 IsBackground = true,
@@ -243,6 +246,9 @@ namespace NTAnalyzerBridge.Connector
                 }
             }
             _updateState = (string)welcome["update_state"] ?? "unknown";
+            _updateReason = (string)welcome["update_reason"] ?? "unknown";
+            ConnectorUpdaterLauncher.StoreOffer(
+                _stateDir, welcome["update_offer"] as JObject);
             BridgeLog.Info("ConnectorClient: signed hello accepted; state=online update=" + _updateState);
         }
 
@@ -329,6 +335,20 @@ namespace NTAnalyzerBridge.Connector
             JObject response = PostJson(
                 "api/connector/v1/heartbeat", heartbeat, _sessionToken);
             _updateState = (string)response["update_state"] ?? _updateState;
+            _updateReason = (string)response["update_reason"] ?? _updateReason;
+            ConnectorUpdaterLauncher.StoreOffer(
+                _stateDir, response["update_offer"] as JObject);
+            ConnectorUpdaterLauncher.RecordHealth(
+                _stateDir,
+                _connector.ConnectorVersion,
+                _updateState,
+                _updateReason,
+                _state.InstallationId);
+            if (DateTime.UtcNow >= _nextUpdaterCheckUtc)
+            {
+                ConnectorUpdaterLauncher.TryStart(_cfg);
+                ScheduleNextUpdaterCheck();
+            }
         }
 
         private void PollCommands()
@@ -374,7 +394,8 @@ namespace NTAnalyzerBridge.Connector
                     "command expired before execution", "expired_before_execution");
                 return;
             }
-            if (_updateState == "blocked")
+            if (_updateState == "blocked" &&
+                (capability == "paper_commands" || capability == "live_commands"))
             {
                 ReportResult(commandId, idempotencyKey, "rejected",
                     "connector version blocked", "connector_update_required");
@@ -533,6 +554,18 @@ namespace NTAnalyzerBridge.Connector
             }
             json.Append('}');
             return Encoding.UTF8.GetBytes(json.ToString());
+        }
+
+        private void ScheduleNextUpdaterCheck()
+        {
+            // Periodic checks use a 6..24 hour jitter window so a release does
+            // not cause every Connector to hit the control plane at once.
+            byte[] bytes = new byte[4];
+            using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+                random.GetBytes(bytes);
+            uint sample = BitConverter.ToUInt32(bytes, 0);
+            int jitterMinutes = (int)(sample % (18 * 60 + 1));
+            _nextUpdaterCheckUtc = DateTime.UtcNow.AddMinutes(6 * 60 + jitterMinutes);
         }
 
         private long NextSequence()

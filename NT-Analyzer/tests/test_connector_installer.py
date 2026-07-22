@@ -33,11 +33,34 @@ def test_installer_is_standalone_strict_and_transactional() -> None:
     assert "dotnet" not in engine.lower()
     assert "RestoreOperationBackup" in engine
     assert "DataProtectionScope.CurrentUser" in engine
+    assert "RetryIo" in engine
+    assert "NinjaTrader started while Connector files were being changed" in engine
     assert 'connector.Remove("enrollment_code")' in engine
     assert '["enrollment_code"] =' not in engine
     assert "VerifyData" in verifier
     assert "unsafe file path" in verifier
     assert "payload hash mismatch" in verifier
+    assert "absent from manifest" in verifier
+
+
+def test_external_updater_has_safe_restart_health_and_one_shot_rollback() -> None:
+    root = Path(__file__).resolve().parent.parent
+    project = (root / "connector" / "updater" / "StratForge.Connector.Updater.csproj").read_text(
+        encoding="utf-8",
+    )
+    engine = (root / "connector" / "updater" / "UpdaterEngine.cs").read_text(
+        encoding="utf-8",
+    )
+    launcher = (root / "bridge" / "src" / "Connector" / "ConnectorUpdaterLauncher.cs").read_text(
+        encoding="utf-8",
+    )
+    assert "net48" in project
+    assert "WaitForNinjaTraderClosed" in engine
+    assert "CreateLastKnownGood" in engine
+    assert "rollback_attempted" in engine
+    assert "Update archive symlinks are forbidden" in engine
+    assert "RecordHealth" in launcher
+    assert "ProcessWindowStyle.Hidden" in launcher
 
 
 def test_setup_payload_reports_real_release_gate(monkeypatch, tmp_path: Path) -> None:

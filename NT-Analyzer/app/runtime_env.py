@@ -21,7 +21,9 @@ assert_startup_safe(), which rejects an implicit environment.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import date
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
@@ -40,6 +42,12 @@ _PRODUCTION_ROLES = {
     "all-in-one", "api", "worker", "telegram", "connector-control",
 }
 _EDGE_MODES = {"direct-local", "cloudflare-tunnel", "reverse-proxy"}
+_RELEASE_CHANNELS = {"development", "canary", "stable"}
+_SEMVER_RE = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class RuntimeEnvError(RuntimeError):
@@ -57,6 +65,9 @@ class DeploymentConfig:
     deployment_role: str
     config_profile: str
     build_version: str
+    build_date: str
+    release_channel: str
+    release_status: str
     region: str
     bind_host: str
     allowed_hosts: Tuple[str, ...]
@@ -86,11 +97,73 @@ class DeploymentConfig:
             "deployment_role": self.deployment_role,
             "config_profile": self.config_profile,
             "build_version": self.build_version,
+            "build_date": self.build_date,
+            "release_channel": self.release_channel,
+            "release_status": self.release_status,
             "region": self.region,
             "public_origin": self.public_origin,
             "live_trading_allowed": self.live_trading_allowed,
             "real_payments_allowed": self.real_payments_allowed,
         }
+
+
+def _project_version_metadata() -> Dict[str, str]:
+    path = Path(__file__).resolve().parent.parent / "VERSION.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeEnvError("VERSION.json отсутствует или повреждён.", 503) from exc
+    if not isinstance(raw, dict) or int(raw.get("schema_version") or 0) != 1:
+        raise RuntimeEnvError("VERSION.json имеет неподдерживаемую схему.", 503)
+    allowed = {"schema_version", "version", "channel", "status", "build_date"}
+    if set(raw) - allowed:
+        raise RuntimeEnvError("VERSION.json содержит неизвестные поля.", 503)
+    return {name: str(raw.get(name) or "").strip() for name in allowed if name != "schema_version"}
+
+
+def _release_identity(
+    environment: str, *, required: bool,
+) -> Tuple[str, str, str, str]:
+    defaults = _project_version_metadata()
+    version = str(os.environ.get("STRATFORGE_BUILD_VERSION") or "").strip()
+    channel = str(os.environ.get("STRATFORGE_RELEASE_CHANNEL") or "").strip().lower()
+    build_date = str(os.environ.get("STRATFORGE_BUILD_DATE") or "").strip()
+    if environment == DEVELOPMENT or not required:
+        version = version or defaults.get("version", "")
+        channel = channel or defaults.get("channel", "development")
+        build_date = build_date or defaults.get("build_date", "")
+    elif required and (not version or not channel or not build_date):
+        raise RuntimeEnvError(
+            "STRATFORGE_BUILD_VERSION, STRATFORGE_RELEASE_CHANNEL и "
+            "STRATFORGE_BUILD_DATE обязательны в production.",
+            503,
+        )
+    version_match = _SEMVER_RE.fullmatch(version)
+    prerelease = (version_match.group(4) or "") if version_match else ""
+    if not version_match or any(
+        item.isdigit() and len(item) > 1 and item.startswith("0")
+        for item in prerelease.split(".") if item
+    ):
+        raise RuntimeEnvError("STRATFORGE_BUILD_VERSION должен быть SemVer.", 503)
+    if channel not in _RELEASE_CHANNELS:
+        raise RuntimeEnvError(
+            "STRATFORGE_RELEASE_CHANNEL должен быть development, canary или stable.",
+            503,
+        )
+    if environment == DEVELOPMENT and channel != "development":
+        raise RuntimeEnvError("Development может иметь только release channel=development.", 503)
+    if environment == PRODUCTION and required and channel not in {"stable", "canary"}:
+        raise RuntimeEnvError("Production не может выдавать себя за development build.", 503)
+    try:
+        date.fromisoformat(build_date)
+    except ValueError:
+        raise RuntimeEnvError("STRATFORGE_BUILD_DATE должен быть YYYY-MM-DD.", 503) from None
+    status = {
+        "development": "in_development",
+        "canary": "pre_release",
+        "stable": "ready",
+    }[channel]
+    return version, build_date, channel, status
 
 
 def _normalize_env(value: Any) -> str:
@@ -471,6 +544,9 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
         )
 
     allowed_hosts = _allowed_hosts(required=production_required)
+    build_version, build_date, release_channel, release_status = _release_identity(
+        environment, required=production_required,
+    )
     config = DeploymentConfig(
         environment=environment,
         runtime_profile=app_env(),
@@ -490,11 +566,10 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
             "local-development",
             required=production_required,
         ),
-        build_version=_safe_identifier(
-            "STRATFORGE_BUILD_VERSION",
-            "development",
-            required=production_required,
-        ),
+        build_version=build_version,
+        build_date=build_date,
+        release_channel=release_channel,
+        release_status=release_status,
         region=_safe_identifier(
             "STRATFORGE_REGION",
             "local",

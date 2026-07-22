@@ -321,6 +321,9 @@ def test_mode_entry_is_a_real_root_page() -> None:
     assert 'data-mode="beginner"' in entry
     assert 'data-mode="professional"' in entry
     assert "authUxMode" in script
+    assert "API.http.runtimeEnv" in script
+    assert 'id="mode-entry-release-badge"' in entry
+    assert 'id="mode-entry-build-meta"' in entry
     assert "practice-trading.html" in script
     assert "index.html" in script
 

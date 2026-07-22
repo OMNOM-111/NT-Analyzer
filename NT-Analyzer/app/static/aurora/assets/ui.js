@@ -58,6 +58,48 @@
   const APP_NAME = 'StratForge AI';
   const APP_KICKER = 'StratForge AI · NTA Edition';
   let CURRENT_AUTH = null;
+  let BUILD_IDENTITY = null;
+
+  function applyBuildIdentity(payload) {
+    const source = payload || {};
+    const deployment = source.deployment && typeof source.deployment === 'object'
+      ? source.deployment : source;
+    const environment = String(deployment.environment || source.deployment_environment || '').toLowerCase();
+    const channel = String(deployment.release_channel || '').toLowerCase();
+    const version = String(deployment.build_version || '').trim();
+    const buildDate = String(deployment.build_date || '').trim();
+    if (!version || !buildDate || !['development', 'canary', 'stable'].includes(channel)) return;
+    const labels = {
+      development: { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev' },
+      canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ', cls: 'canary' },
+      stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ', cls: 'stable' },
+    };
+    const label = labels[channel];
+    const dateParts = buildDate.split('-');
+    const visibleDate = dateParts.length === 3
+      ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : buildDate;
+    BUILD_IDENTITY = { environment, channel, version, buildDate, label };
+    document.documentElement.dataset.releaseChannel = channel;
+    qsa('[data-release-badge]').forEach(badge => {
+      badge.classList.remove('pending', 'dev', 'canary', 'stable');
+      badge.classList.add(label.cls);
+      badge.textContent = label.short;
+      badge.title = `${label.full} — ${environment === 'development' ? 'локальная версия для доработки' : 'серверный релиз'}`;
+    });
+    qsa('[data-build-meta]').forEach(meta => {
+      meta.textContent = `v${version} · от ${visibleDate}`;
+      meta.title = `${label.full}: версия ${version}, сборка от ${visibleDate}`;
+    });
+    const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|STABLE)\]\s*/, '');
+    document.title = `[${label.short}] ${baseTitle}`;
+  }
+
+  async function refreshBuildIdentity(seed) {
+    if (seed) applyBuildIdentity(seed);
+    if (BUILD_IDENTITY || !(window.API && API.http && API.http.runtimeEnv)) return;
+    try { applyBuildIdentity(await API.http.runtimeEnv({ retries: 0 })); }
+    catch (e) { /* Version marker remains visibly unresolved instead of guessing. */ }
+  }
 
   // ---- app theme (auto / dark / light) ---------------------------------------
   const THEME_KEY = 'app.theme';
@@ -757,7 +799,7 @@
     const rail = el(`<nav class="rail">
       <a class="rail-brand" href="index.html" title="${APP_NAME}">
         <span class="rail-logo"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}"></span>
-        <span class="rail-brand-tx"><span class="rail-brand-name">${APP_NAME}</span><span class="rail-brand-sub">Strategy command center</span></span>
+        <span class="rail-brand-tx"><span class="rail-brand-name-row"><span class="rail-brand-name">${APP_NAME}</span><span class="rail-release-badge pending" id="app-release-badge" data-release-badge>…</span></span><span class="rail-brand-version" id="app-build-meta" data-build-meta>версия определяется…</span><span class="rail-brand-sub">Strategy command center</span></span>
       </a>
       <div class="rail-nav">
         ${NAV.map(n => `<a class="rail-item ${n.id === page ? 'active' : ''}" href="${n.href}" title="${n.label}" data-nav="${n.id}">${icon(n.icon)}<span class="lb">${n.label}</span></a>`).join('')}
@@ -766,7 +808,7 @@
     </nav>`);
 
     const topbar = el(`<header class="topbar">
-      <div class="tb-title"><span class="tb-kicker">${kicker}</span><span class="tb-h1">${title}</span></div>
+      <div class="tb-title"><span class="tb-kicker-row"><span class="tb-kicker">${kicker}</span><span class="rail-release-badge pending tb-release-badge" data-release-badge>…</span><span class="tb-build-meta" data-build-meta>версия определяется…</span></span><span class="tb-h1">${title}</span></div>
       <div class="tb-search-wrap">
         <label class="tb-search">${icon('search')}<input type="search" id="global-search" autocomplete="off" placeholder="Поиск стратегий, отчётов, инструментов…"></label>
         <div class="search-results" id="search-results" hidden></div>
@@ -806,6 +848,8 @@
     app.appendChild(rail);
     app.appendChild(main);
     document.body.appendChild(app);
+
+    refreshBuildIdentity();
 
     wireDelegatedActions();
     wireA11y();
@@ -1668,8 +1712,15 @@
             const status = String(c.status || 'offline');
             const fingerprint = String(c.public_key_fingerprint || '');
             const version = [c.connector_version, c.nt_version && ('NT ' + c.nt_version)].filter(Boolean).join(' · ');
+            const updateLabel = {
+              compatible: 'версия актуальна',
+              update_available: 'обновление подготовится при безопасном перезапуске',
+              blocked: 'обновление обязательно — команды исполнения заблокированы',
+            }[String(c.update_state || '')] || '';
             const details = [
               version,
+              c.release_channel ? ('канал ' + c.release_channel) : '',
+              updateLabel,
               c.last_heartbeat_utc ? ('heartbeat ' + c.last_heartbeat_utc) : '',
               (c.account_labels || []).join(', '),
             ].filter(Boolean).map(v => esc(v)).join(' · ');

@@ -26,7 +26,8 @@ from app import secure_store
 
 _SEMVER = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 _DEV_KEY_MAGIC = b"STRATFORGE-DEV-RELEASE-KEY-DPAPI-1\n"
 
@@ -143,7 +144,11 @@ def _git_state(root: Path) -> tuple[str, bool]:
 def build(args: argparse.Namespace) -> dict:
     root = Path(__file__).resolve().parent.parent
     match = _SEMVER.fullmatch(args.version)
-    if not match:
+    prerelease = (match.group(4) or "") if match else ""
+    if not match or any(
+        item.isdigit() and len(item) > 1 and item.startswith("0")
+        for item in prerelease.split(".") if item
+    ):
         raise RuntimeError("--version must be semantic versioning")
     if args.channel not in {"stable", "canary"}:
         raise RuntimeError("--channel must be stable or canary")
@@ -183,11 +188,24 @@ def build(args: argparse.Namespace) -> dict:
         f"-p:FileVersion={assembly_version}",
         f"-p:ReleaseTrustSource={trust_source}",
     ], cwd=root)
+    _run([
+        "dotnet", "build", str(root / "connector" / "updater" / "StratForge.Connector.Updater.csproj"),
+        "-c", "Release",
+        f"-p:Version={args.version}",
+        f"-p:AssemblyVersion={assembly_version}",
+        f"-p:FileVersion={assembly_version}",
+        f"-p:ReleaseTrustSource={trust_source}",
+    ], cwd=root)
 
     bridge_dll = root / "bridge" / "bin" / "Release" / "NTAnalyzerBridge.dll"
     setup_dir = root / "connector" / "installer" / "bin" / "Release"
+    updater_dir = root / "connector" / "updater" / "bin" / "Release"
     shutil.copy2(bridge_dll, payload / "NTAnalyzerBridge.dll")
     shutil.copy2(setup_dir / "StratForge.Connector.Setup.exe", bundle / "StratForge.Connector.Setup.exe")
+    shutil.copy2(
+        updater_dir / "StratForge.Connector.Updater.exe",
+        bundle / "StratForge.Connector.Updater.exe",
+    )
     shutil.copy2(setup_dir / "Newtonsoft.Json.dll", bundle / "Newtonsoft.Json.dll")
     shutil.copy2(root / "connector" / "COMPATIBILITY.md", bundle / "COMPATIBILITY.md")
     (bundle / "INSTALL.cmd").write_text(
@@ -215,6 +233,7 @@ def build(args: argparse.Namespace) -> dict:
     if args.production:
         _authenticode_sign([
             bundle / "StratForge.Connector.Setup.exe",
+            bundle / "StratForge.Connector.Updater.exe",
             payload / "NTAnalyzerBridge.dll",
         ])
 
