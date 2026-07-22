@@ -157,6 +157,7 @@ def test_enrollment_stays_pending_until_valid_signed_hello(connector_store) -> N
     private, _, started, pending = _enroll(workspace["workspace_id"])
 
     assert pending["state"] == "pending"
+    assert started["pairing_uri"].startswith("stratforge-connector://enroll?code=")
     listed = connector_protocol.list_installations(
         42, workspace_id=workspace["workspace_id"],
     )

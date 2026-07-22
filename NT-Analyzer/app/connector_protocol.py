@@ -500,7 +500,7 @@ def start_enrollment(
         "enrollment_id": enrollment["enrollment_id"],
         "code": code,
         "expires_in_sec": ENROLLMENT_TTL_SEC,
-        "pairing_uri": "stratforge://connector/enroll?" + urllib.parse.urlencode({
+        "pairing_uri": "stratforge-connector://enroll?" + urllib.parse.urlencode({
             "code": code,
             "protocol": PROTOCOL_VERSION,
         }),
@@ -1381,9 +1381,14 @@ def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             "result": "/api/connector/v1/commands/result",
         },
         "installer": {
-            "state": "pending_stage_4",
+            "state": "blocked_release_gate",
             "download_url": "",
-            "message": "Signed installer будет опубликован после Stage 4 release gate.",
+            "package_format": "verified_windows_zip",
+            "manifest_signature": "ECDSA_P256_SHA256",
+            "message": (
+                "Установщик реализован и проверен локально. Production download "
+                "будет опубликован после Authenticode и immutable release gate."
+            ),
         },
         "steps": [
             "Получите одноразовый код подключения для активной рабочей области.",

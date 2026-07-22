@@ -22,6 +22,8 @@ internal static class Program
             "NTAnalyzerBridge.Connector.ConnectorDeviceIdentity", true);
         Type clientType = bridge.GetType(
             "NTAnalyzerBridge.Connector.ConnectorClient", true);
+        Type configType = bridge.GetType(
+            "NTAnalyzerBridge.Config.BridgeConfig", true);
         object identity = identityType.GetMethod(
             "LoadOrCreate", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
             .Invoke(null, new object[] { stateDir });
@@ -67,6 +69,35 @@ internal static class Program
             challenge["signature"] = (string)identityType.GetMethod(
                 "SignBase64Url", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Invoke(identity, new object[] { challengeMessage });
+            JObject validConfig = new JObject
+            {
+                ["schema_version"] = 3,
+                ["mode"] = "production_connector",
+                ["ninjatrader_user_dir"] = stateDir,
+                ["runtime_data_dir"] = Path.Combine(stateDir, "spool"),
+                ["production_connector"] = new JObject
+                {
+                    ["enabled"] = true,
+                    ["server_origin"] = "https://app.stratforges.com",
+                    ["protocol_version"] = "1.0",
+                    ["connector_version"] = "0.4.0-probe",
+                    ["enrollment_credential_ref"] = "dpapi:bootstrap-v1",
+                    ["state_dir"] = stateDir,
+                    ["heartbeat_interval_ms"] = 15000,
+                    ["command_poll_seconds"] = 15,
+                    ["release_channel"] = "stable",
+                    ["update_policy"] = "safe_restart",
+                },
+            };
+            bool validConfigAccepted = LoadConfig(configType, stateDir, "valid.json", validConfig);
+            JObject unknownConfig = (JObject)validConfig.DeepClone();
+            unknownConfig["production_connector"]["unexpected_network_field"] = true;
+            bool unknownConfigRejected = !LoadConfig(
+                configType, stateDir, "unknown.json", unknownConfig);
+            JObject plaintextConfig = (JObject)validConfig.DeepClone();
+            plaintextConfig["production_connector"]["enrollment_code"] = "23456789ABCDEFGH";
+            bool plaintextCodeRejected = !LoadConfig(
+                configType, stateDir, "plaintext.json", plaintextConfig);
             JObject output = new JObject
             {
                 ["public_key"] = publicKey,
@@ -75,6 +106,12 @@ internal static class Program
                 ["hello"] = hello,
                 ["challenge_message_base64"] = Convert.ToBase64String(challengeMessage),
                 ["challenge"] = challenge,
+                ["config_contract"] = new JObject
+                {
+                    ["schema3_without_project_root"] = validConfigAccepted,
+                    ["unknown_production_field_rejected"] = unknownConfigRejected,
+                    ["plaintext_enrollment_code_rejected"] = plaintextCodeRejected,
+                },
             };
             Console.WriteLine(output.ToString(Formatting.None));
             return 0;
@@ -84,5 +121,17 @@ internal static class Program
             IDisposable disposable = identity as IDisposable;
             if (disposable != null) disposable.Dispose();
         }
+    }
+
+    private static bool LoadConfig(
+        Type configType, string stateDir, string name, JObject value)
+    {
+        string path = Path.Combine(stateDir, name);
+        File.WriteAllText(path, value.ToString(Formatting.None));
+        object[] arguments = new object[] { path, null };
+        object loaded = configType.GetMethod(
+            "LoadOrNull", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, arguments);
+        return loaded != null && string.IsNullOrWhiteSpace(arguments[1] as string);
     }
 }

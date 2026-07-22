@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace NTAnalyzerBridge.Config
 {
@@ -21,6 +23,9 @@ namespace NTAnalyzerBridge.Config
         [JsonProperty("enrollment_code")]
         public string EnrollmentCode { get; set; } = "";
 
+        [JsonProperty("enrollment_credential_ref")]
+        public string EnrollmentCredentialRef { get; set; } = "";
+
         [JsonProperty("state_dir")]
         public string StateDir { get; set; } = "";
 
@@ -29,6 +34,15 @@ namespace NTAnalyzerBridge.Config
 
         [JsonProperty("command_poll_seconds")]
         public int CommandPollSeconds { get; set; } = 15;
+
+        [JsonProperty("release_channel")]
+        public string ReleaseChannel { get; set; } = "stable";
+
+        [JsonProperty("update_policy")]
+        public string UpdatePolicy { get; set; } = "safe_restart";
+
+        [JsonProperty("extensions")]
+        public JObject Extensions { get; set; }
     }
 
     /// <summary>
@@ -78,6 +92,9 @@ namespace NTAnalyzerBridge.Config
 
         [JsonProperty("production_connector")]
         public ProductionConnectorConfig ProductionConnector { get; set; }
+
+        [JsonProperty("extensions")]
+        public JObject Extensions { get; set; }
 
         /// <summary>
         /// R&amp;D toggle for the private static
@@ -133,6 +150,7 @@ namespace NTAnalyzerBridge.Config
                     return null;
                 }
                 string json = File.ReadAllText(path);
+                JObject raw = JObject.Parse(json);
                 var cfg = JsonConvert.DeserializeObject<BridgeConfig>(json);
                 if (cfg == null)
                 {
@@ -145,6 +163,12 @@ namespace NTAnalyzerBridge.Config
                 }
                 if (cfg.IsProductionConnector)
                 {
+                    ValidateProductionFields(raw);
+                    if (cfg.SchemaVersion < 2 || cfg.SchemaVersion > 3)
+                    {
+                        error = "config: production_connector requires schema_version 2 or 3";
+                        return null;
+                    }
                     if (cfg.ProductionConnector == null || !cfg.ProductionConnector.Enabled)
                     {
                         error = "config: production_connector must be enabled";
@@ -182,6 +206,33 @@ namespace NTAnalyzerBridge.Config
                         error = "config: production_connector.command_poll_seconds must be 1..20";
                         return null;
                     }
+                    if (cfg.SchemaVersion >= 3 &&
+                        !string.IsNullOrWhiteSpace(cfg.ProductionConnector.EnrollmentCode))
+                    {
+                        error = "config: schema_version 3 stores enrollment in DPAPI, not enrollment_code";
+                        return null;
+                    }
+                    if (!string.IsNullOrWhiteSpace(cfg.ProductionConnector.EnrollmentCredentialRef) &&
+                        !string.Equals(
+                            cfg.ProductionConnector.EnrollmentCredentialRef,
+                            "dpapi:bootstrap-v1",
+                            StringComparison.Ordinal))
+                    {
+                        error = "config: unsupported production_connector.enrollment_credential_ref";
+                        return null;
+                    }
+                    if (cfg.ProductionConnector.ReleaseChannel != "stable" &&
+                        cfg.ProductionConnector.ReleaseChannel != "canary")
+                    {
+                        error = "config: production_connector.release_channel must be stable or canary";
+                        return null;
+                    }
+                    if (cfg.ProductionConnector.UpdatePolicy != "safe_restart" &&
+                        cfg.ProductionConnector.UpdatePolicy != "manual")
+                    {
+                        error = "config: production_connector.update_policy must be safe_restart or manual";
+                        return null;
+                    }
                 }
                 else
                 {
@@ -216,6 +267,40 @@ namespace NTAnalyzerBridge.Config
                 return null;
             if (Path.IsPathRooted(path)) return path;
             return string.IsNullOrWhiteSpace(ProjectRoot) ? null : Path.Combine(ProjectRoot, path);
+        }
+
+        private static void ValidateProductionFields(JObject raw)
+        {
+            HashSet<string> top = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "schema_version", "mode", "project_root", "ninjatrader_user_dir",
+                "jobs_dir", "runtime_data_dir", "poll_interval_ms",
+                "heartbeat_interval_ms", "heartbeat_ttl_ms", "rd_variant_preferred",
+                "rd_variant_fallback_allowed", "runtime_reconnect_connection_name",
+                "production_connector", "enable_path_a_optimizer_runbacktest",
+                "enable_verbose_diagnostics", "market_data_ipc", "extensions",
+            };
+            foreach (JProperty property in raw.Properties())
+            {
+                if (!top.Contains(property.Name))
+                    throw new JsonSerializationException(
+                        "unknown production config field: " + property.Name);
+            }
+            JObject connector = raw["production_connector"] as JObject;
+            if (connector == null) return;
+            HashSet<string> fields = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "enabled", "server_origin", "protocol_version", "connector_version",
+                "enrollment_code", "enrollment_credential_ref", "state_dir",
+                "heartbeat_interval_ms", "command_poll_seconds", "release_channel",
+                "update_policy", "extensions",
+            };
+            foreach (JProperty property in connector.Properties())
+            {
+                if (!fields.Contains(property.Name))
+                    throw new JsonSerializationException(
+                        "unknown production_connector field: " + property.Name);
+            }
         }
 
         public bool IsProductionConnector =>

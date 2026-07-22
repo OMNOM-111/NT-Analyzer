@@ -1709,6 +1709,9 @@
           if (!(await ensureNtDualAuth(me))) return;
           const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер', transport: connectorMode ? 'production_connector' : 'local_development' });
           showCode(out && out.code, 'Код подключения');
+          if (connectorMode && out && out.pairing_uri && confirm('Код скопирован. Открыть установленный StratForge Connector?')) {
+            location.href = out.pairing_uri;
+          }
         } catch (e) { reportError(e); }
         finally { pair.disabled = false; }
       };

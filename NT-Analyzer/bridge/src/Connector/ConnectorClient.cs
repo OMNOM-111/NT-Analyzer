@@ -51,6 +51,8 @@ namespace NTAnalyzerBridge.Connector
         private readonly HashSet<string> _queuedCommandIds =
             new HashSet<string>(StringComparer.Ordinal);
         private readonly CancellationTokenSource _cancel = new CancellationTokenSource();
+        private static readonly byte[] BootstrapEntropy =
+            Encoding.UTF8.GetBytes("StratForge.Connector.Bootstrap.v1");
 
         private Thread _thread;
         private ConnectorDeviceIdentity _identity;
@@ -246,9 +248,9 @@ namespace NTAnalyzerBridge.Connector
 
         private void Enroll()
         {
-            string enrollmentCode = (_connector.EnrollmentCode ?? "").Trim();
+            string enrollmentCode = ResolveEnrollmentCode();
             if (string.IsNullOrWhiteSpace(enrollmentCode))
-                throw new InvalidOperationException("production_connector enrollment_code is required for first start");
+                throw new InvalidOperationException("production_connector enrollment credential is required for first start");
             JObject enrolled = PostJson("api/connector/v1/enroll", new JObject
             {
                 ["code"] = enrollmentCode,
@@ -272,7 +274,47 @@ namespace NTAnalyzerBridge.Connector
             if (!string.Equals(_state.PublicKeyFingerprint, _identity.Fingerprint(), StringComparison.Ordinal))
                 throw new InvalidOperationException("Connector enrollment fingerprint mismatch");
             ConnectorStateStore.Save(_stateDir, _state);
+            DeleteConsumedBootstrap();
             BridgeLog.Info("ConnectorClient: one-time enrollment consumed; state=pending");
+        }
+
+        private string ResolveEnrollmentCode()
+        {
+            string legacy = (_connector.EnrollmentCode ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(legacy)) return legacy;
+            if (!string.Equals(
+                    _connector.EnrollmentCredentialRef,
+                    "dpapi:bootstrap-v1",
+                    StringComparison.Ordinal))
+                return "";
+            string path = Path.Combine(_stateDir, "bootstrap.dpapi");
+            if (!File.Exists(path)) return "";
+            byte[] encrypted = File.ReadAllBytes(path);
+            byte[] plaintext = ProtectedData.Unprotect(
+                encrypted, BootstrapEntropy, DataProtectionScope.CurrentUser);
+            try
+            {
+                return Encoding.UTF8.GetString(plaintext).Trim();
+            }
+            finally
+            {
+                Array.Clear(plaintext, 0, plaintext.Length);
+            }
+        }
+
+        private void DeleteConsumedBootstrap()
+        {
+            if (!string.Equals(
+                    _connector.EnrollmentCredentialRef,
+                    "dpapi:bootstrap-v1",
+                    StringComparison.Ordinal))
+                return;
+            string path = Path.Combine(_stateDir, "bootstrap.dpapi");
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("ConnectorClient: consumed bootstrap cleanup failed: " + ex.GetType().Name);
+            }
         }
 
         private void SendHeartbeat()

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mode": "local_development",
   "project_root": "C:\\Path\\To\\NT-Analyzer",
   "ninjatrader_user_dir": "C:\\Path\\To\\NinjaTrader 8",
@@ -18,10 +18,12 @@
     "server_origin": "https://app.stratforges.com",
     "protocol_version": "1.0",
     "connector_version": "0.2.0",
-    "enrollment_code": "",
+    "enrollment_credential_ref": "dpapi:bootstrap-v1",
     "state_dir": "%LOCALAPPDATA%\\StratForge\\Connector",
     "heartbeat_interval_ms": 15000,
-    "command_poll_seconds": 15
+    "command_poll_seconds": 15,
+    "release_channel": "stable",
+    "update_policy": "safe_restart"
   },
   "market_data_ipc": {
     "enabled": true,

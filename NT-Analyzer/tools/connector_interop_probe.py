@@ -70,6 +70,14 @@ def main() -> int:
         connector_protocol._verify_signature(
             vector["public_key"], challenge["signature"], challenge_canonical,
         )
+        config_contract = vector["config_contract"]
+        if not all(config_contract.values()):
+            print(json.dumps({
+                "ok": False,
+                "step": "production_config_contract",
+                "checks": config_contract,
+            }))
+            return 2
     print(json.dumps({
         "ok": True,
         "curve": "P-256",
@@ -77,6 +85,7 @@ def main() -> int:
         "csharp_python_signature_interop": True,
         "challenge_proof_interop": True,
         "dpapi_key_reload": True,
+        "strict_production_config": True,
     }, sort_keys=True))
     return 0
 
