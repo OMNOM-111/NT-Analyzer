@@ -79,7 +79,9 @@ if __package__ is None or __package__ == "":
     from app import account_ledger  # type: ignore[no-redef]
     from app import portfolio_registry  # type: ignore[no-redef]
     from app import runtime as ops_runtime  # type: ignore[no-redef]
-    from app import local_worker  # type: ignore[no-redef]
+    from app import worker_router as local_worker  # type: ignore[no-redef]
+    from app import api_admission  # type: ignore[no-redef]
+    from app import production_workers  # type: ignore[no-redef]
     from app import vitek  # type: ignore[no-redef]
     from app import in_app_notifications  # type: ignore[no-redef]
     from app.ai_lab import read_model as ai_read_model  # type: ignore[no-redef]
@@ -152,7 +154,9 @@ else:
     from . import account_ledger
     from . import portfolio_registry
     from . import runtime as ops_runtime
-    from . import local_worker
+    from . import worker_router as local_worker
+    from . import api_admission
+    from . import production_workers
     from . import vitek
     from . import in_app_notifications
     from .ai_lab import read_model as ai_read_model
@@ -956,6 +960,30 @@ class Handler(BaseHTTPRequestHandler):
             payload["code"] = str(code)
         self._json(status, payload, headers=headers)
 
+    def _worker_queue_err(self, exc: BaseException) -> None:
+        """Map queue/storage failures to stable, retry-aware HTTP responses."""
+        headers: Dict[str, str] = {}
+        message = str(exc) or "worker queue request failed"
+        code = str(getattr(exc, "code", "") or "production_queue_error")
+        if isinstance(exc, production_workers.QueueQuotaExceeded):
+            status = HTTPStatus.TOO_MANY_REQUESTS
+            headers["Retry-After"] = "1"
+        elif isinstance(exc, production_workers.QueuePayloadTooLarge):
+            status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+        elif isinstance(exc, production_workers.QueueIdempotencyConflict):
+            status = HTTPStatus.CONFLICT
+        elif isinstance(exc, production_workers.StorageUnavailableError):
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+            headers["Retry-After"] = "5"
+            message = "worker queue is temporarily unavailable"
+        elif isinstance(exc, production_workers.ProductionQueueError):
+            status = HTTPStatus.BAD_REQUEST
+        else:
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+            headers["Retry-After"] = "5"
+            message = "worker queue is temporarily unavailable"
+        self._err(status, message, headers=headers or None, code=code)
+
     def _bytes(self, status: int, data: bytes, content_type: str,
                download_name: Optional[str] = None,
                headers: Optional[Dict[str, str]] = None) -> None:
@@ -988,9 +1016,13 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if n <= 0:
             return {}
-        if n > 1 * 1024 * 1024:
+        max_body = int(getattr(self.server, "max_body_bytes", 1 * 1024 * 1024))
+        if n > max_body:
             self._err(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body too large")
             return None
+        recorder = getattr(self.server, "record_payload", None)
+        if callable(recorder):
+            recorder(n)
         raw = self.rfile.read(n)
         try:
             body = json.loads(raw.decode("utf-8"))
@@ -1021,9 +1053,30 @@ class Handler(BaseHTTPRequestHandler):
             rate_class = "runtime"
         tunnel_ip, forwarded_ip = self._request_ips()
         client = forwarded_ip or tunnel_ip or "unknown"
+        limit = _CONNECTOR_RATE_LIMITS[rate_class]
+        if runtime_env.is_production() and runtime_env.environment_explicit():
+            try:
+                decision = production_workers.consume_rate_limit(
+                    f"connector:{client}", f"connector.{rate_class}", limit=limit,
+                )
+            except production_workers.StorageError:
+                self._err(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "Connector admission storage is unavailable.",
+                    code="connector_rate_limit_unavailable",
+                )
+                return False
+            if not decision["allowed"]:
+                self._extra_headers.append(("Retry-After", str(decision["retry_after"])))
+                self._err(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "Connector rate limit exceeded.",
+                    code="connector_rate_limited",
+                )
+                return False
+            return True
         now = time.monotonic()
         key = (client, rate_class)
-        limit = _CONNECTOR_RATE_LIMITS[rate_class]
         with _API_RATE_LOCK:
             bucket = _CONNECTOR_RATE[key]
             while bucket and bucket[0] <= now - 60:
@@ -1163,6 +1216,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             context["capabilities"] = dict(resolved.get("capabilities") or {})
             context["ux_mode"] = str(resolved.get("ux_mode") or "")
+        context["_permissions"] = resolved
         return context
 
     def _data_scope(self) -> Dict[str, Any]:
@@ -1237,6 +1291,28 @@ class Handler(BaseHTTPRequestHandler):
         user_id = str(context.get("user_id") or "anonymous")
         key = (user_id, str(tunnel_ip or ""), action)
         now = time.time()
+        if runtime_env.is_production() and runtime_env.environment_explicit():
+            try:
+                decision = production_workers.consume_rate_limit(
+                    f"user:{user_id}|origin:{tunnel_ip or 'unknown'}",
+                    f"api.{action}",
+                    limit=limit,
+                )
+            except production_workers.StorageError:
+                self._err(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "Request admission storage is unavailable.",
+                    code="api_rate_limit_unavailable",
+                )
+                return False
+            if not decision["allowed"]:
+                self._err(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "Слишком много запросов. Повторите позже.",
+                    headers={"Retry-After": str(decision["retry_after"])},
+                )
+                return False
+            return True
         with _API_RATE_LOCK:
             q = _API_RATE[key]
             while q and q[0] <= now - 60:
@@ -1292,8 +1368,15 @@ class Handler(BaseHTTPRequestHandler):
                     ):
                         if key in browser_session:
                             self._remote_context[key] = browser_session[key]
-                account = account_auth.find_active_user(self._remote_context.get("user_id")) or {}
-                self._remote_context["is_owner"] = bool(account.get("is_owner"))
+                account: Dict[str, Any] = {}
+                if (
+                    "is_owner" not in self._remote_context
+                    or not isinstance(self._remote_context.get("user"), dict)
+                ):
+                    account = account_auth.find_active_user(
+                        self._remote_context.get("user_id"),
+                    ) or {}
+                    self._remote_context["is_owner"] = bool(account.get("is_owner"))
                 # Populate the public profile so /api/auth/me and other handlers
                 # that read context["user"] (name, e-mail, avatar, features) work
                 # over the Telegram Mini App, exactly like the desktop session path.
@@ -1693,10 +1776,10 @@ class Handler(BaseHTTPRequestHandler):
             except subscriptions.SubscriptionError:
                 subscription = {}
         else:
-            try:
-                subscription = subscriptions.active_entitlement(uid)
-            except subscriptions.SubscriptionError:
-                subscription = entitlements[0] if entitlements else {}
+            subscription = next(
+                (row for row in entitlements if row.get("active")),
+                entitlements[0] if entitlements else {},
+            )
         active = context.get("active_workspace") or {}
         membership = context.get("active_membership") or {}
         # The owner is NOT a learner: their contour is the real NinjaTrader with
@@ -1706,7 +1789,14 @@ class Handler(BaseHTTPRequestHandler):
         # into concrete capabilities and navigation. The client gates the rail and
         # locks premium sections from this single source of truth.
         permission_user = {**user, "is_owner": True} if is_owner else user
-        perm = permissions.resolve(permission_user, None if is_owner else subscription)
+        perm = (
+            context.get("_permissions")
+            if isinstance(context.get("_permissions"), dict) else {}
+        )
+        if not perm:
+            perm = permissions.resolve(
+                permission_user, None if is_owner else subscription,
+            )
         nav_features = perm["nav"]
         if isinstance(user, dict):
             user = {**user, "features": nav_features}
@@ -2523,6 +2613,10 @@ class Handler(BaseHTTPRequestHandler):
                 "deployment": runtime_env.public_status(),
                 "ninjatrader_running": jobqueue.ninjatrader_running(),
                 "worker": local_worker.status(),
+                "admission": (
+                    self.server.admission_metrics()
+                    if callable(getattr(self.server, "admission_metrics", None)) else {}
+                ),
                 "vitek": vitek.status(),
             }
             # Absolute local paths are useful to the private developer but
@@ -2592,11 +2686,17 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 100
             status_filter = str((qs.get("status") or [""])[0] or "")
-            self._json(HTTPStatus.OK, local_worker.list_jobs(
-                status=status_filter,
-                limit=limit,
-                workspace_id=str(context.get("workspace_id") or ""),
-            ))
+            try:
+                out = local_worker.list_jobs(
+                    status=status_filter,
+                    limit=limit,
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    user_id=context.get("user_id") or 0,
+                )
+            except production_workers.StorageError as exc:
+                self._worker_queue_err(exc)
+                return
+            self._json(HTTPStatus.OK, out)
             return
 
         if path == "/api/strategies":
@@ -6137,19 +6237,31 @@ class Handler(BaseHTTPRequestHandler):
                         timeout_sec=int(body.get("timeout_sec") or 300),
                         user_id=context.get("user_id") or "",
                         workspace_id=str(context.get("workspace_id") or ""),
+                        idempotency_key=str(
+                            self.headers.get("Idempotency-Key")
+                            or body.get("idempotency_key") or ""
+                        ),
                     )
                     self._json(HTTPStatus.ACCEPTED, {"ok": True, "job": out})
                 except (TypeError, ValueError) as exc:
-                    self._err(HTTPStatus.BAD_REQUEST, str(exc))
+                    self._err(HTTPStatus.BAD_REQUEST, str(exc), code="invalid_worker_request")
+                except production_workers.StorageError as exc:
+                    self._worker_queue_err(exc)
                 return
             parts_worker = [urllib.parse.unquote(p) for p in path.split("/") if p]
             if len(parts_worker) != 5:
                 self._err(HTTPStatus.NOT_FOUND, f"no worker route: {path}")
                 return
-            self._json(HTTPStatus.OK, local_worker.cancel(
-                parts_worker[3],
-                workspace_id=str(context.get("workspace_id") or ""),
-            ))
+            try:
+                out = local_worker.cancel(
+                    parts_worker[3],
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    user_id=context.get("user_id") or 0,
+                )
+            except production_workers.StorageError as exc:
+                self._worker_queue_err(exc)
+                return
+            self._json(HTTPStatus.OK, out)
             return
 
         if path.startswith("/api/auth/users/"):
@@ -7158,6 +7270,39 @@ def _bind_or_pick_port(
     raise RuntimeError(f"no free port in {start_port}..{start_port+attempts-1}")
 
 
+def create_http_server(
+    deployment: runtime_env.DeploymentConfig,
+    *,
+    bind_port: int,
+) -> api_admission.BoundedThreadingHTTPServer:
+    """Build the same bounded HTTP contour used by the executable entrypoint.
+
+    Keeping this construction in one place prevents integration/load probes
+    from accidentally bypassing admission control or the deployment edge
+    policy by instantiating a bare ``ThreadingHTTPServer``.
+    """
+    server = api_admission.BoundedThreadingHTTPServer(
+        (deployment.bind_host, int(bind_port)), Handler,
+        max_inflight=deployment.api_max_inflight,
+        backlog=deployment.api_backlog,
+        max_body_bytes=deployment.api_max_body_bytes,
+    )
+    server.deployment_config = deployment  # type: ignore[attr-defined]
+    server.readiness_probes = {  # type: ignore[attr-defined]
+        "connector_control": connector_protocol.readiness_status,
+        "connector_releases": connector_releases.readiness_status,
+    }
+    if deployment.environment == runtime_env.PRODUCTION:
+        from . import storage_router
+        from .production_storage.artifacts import object_storage_readiness
+        server.readiness_probes.update({  # type: ignore[attr-defined]
+            "database": storage_router.database_readiness,
+            "object_storage": object_storage_readiness,
+            "queue": production_workers.readiness_status,
+        })
+    return server
+
+
 def run(port: Optional[int] = None) -> None:
     try:
         deployment = runtime_env.assert_startup_safe()
@@ -7174,6 +7319,12 @@ def run(port: Optional[int] = None) -> None:
         print(f"[nta-backend] FATAL: Production storage configuration invalid ({exc.code}).")
         raise SystemExit(2) from exc
     env = runtime_env.status()
+    if (
+        deployment.environment == runtime_env.PRODUCTION
+        and deployment.deployment_role not in {"api", "all-in-one"}
+    ):
+        print("[nta-backend] FATAL: HTTP server requires deployment role api/all-in-one.")
+        raise SystemExit(2)
     print(
         "[nta-backend] "
         f"environment={deployment.environment} "
@@ -7186,20 +7337,7 @@ def run(port: Optional[int] = None) -> None:
     )
     bind_host = deployment.bind_host
     bind_port = port or _bind_or_pick_port(DEFAULT_PORT, host=bind_host)
-    server = ThreadingHTTPServer((bind_host, bind_port), Handler)
-    server.daemon_threads = True
-    server.deployment_config = deployment  # type: ignore[attr-defined]
-    server.readiness_probes = {  # type: ignore[attr-defined]
-        "connector_control": connector_protocol.readiness_status,
-        "connector_releases": connector_releases.readiness_status,
-    }
-    if deployment.environment == "production":
-        from . import storage_router
-        from .production_storage.artifacts import object_storage_readiness
-        server.readiness_probes.update({  # type: ignore[attr-defined]
-            "database": storage_router.database_readiness,
-            "object_storage": object_storage_readiness,
-        })
+    server = create_http_server(deployment, bind_port=bind_port)
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
@@ -7215,11 +7353,14 @@ def run(port: Optional[int] = None) -> None:
         print("[nta-backend] news refresher started (live every 15 min)")
     except Exception as e:
         print(f"[nta-backend] news refresher NOT started: {e}")
-    try:
-        local_worker.start_background_worker(interval_sec=2.0)
-        print("[nta-backend] local worker process started")
-    except Exception as e:
-        print(f"[nta-backend] local worker process NOT started: {e}")
+    if deployment.environment == runtime_env.PRODUCTION:
+        print("[nta-backend] Production workers are owned by stratforge-worker.service")
+    else:
+        try:
+            local_worker.start_background_worker(interval_sec=2.0)
+            print("[nta-backend] local worker process started")
+        except Exception as e:
+            print(f"[nta-backend] local worker process NOT started: {e}")
     try:
         telegram_service.start_background_notifier(interval_sec=30)
         print("[nta-backend] Telegram notifier started (every 30 sec)")

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date
+from functools import lru_cache
 import ipaddress
 import json
 import os
@@ -33,6 +34,7 @@ import urllib.parse
 
 
 DEVELOPMENT = "development"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PRODUCTION = "production"
 STAGING = "staging"  # Legacy isolated-QA profile; deploys as DEVELOPMENT.
 _VALID = {DEVELOPMENT, PRODUCTION, STAGING}
@@ -75,6 +77,11 @@ class DeploymentConfig:
     edge_mode: str
     trusted_proxy_ips: Tuple[str, ...]
     readiness_min_free_mb: int
+    api_max_inflight: int
+    api_backlog: int
+    api_max_body_bytes: int
+    worker_poll_ms: int
+    worker_shutdown_grace_sec: int
     data_root: str
     database_id: str
     queue_id: str
@@ -318,11 +325,15 @@ def _first_value(names: Iterable[str]) -> str:
     return ""
 
 
-def data_root(project_root: Any = None) -> Path:
-    """Return the isolated data directory for the selected environment."""
-    base = Path(project_root or Path(__file__).resolve().parent.parent).resolve()
-    production = is_production()
-    production_raw = _first_value(("STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT"))
+@lru_cache(maxsize=128)
+def _data_root_cached(
+    base_text: str,
+    production: bool,
+    profile: str,
+    production_raw: str,
+    development_raw: str,
+) -> Path:
+    base = Path(base_text).resolve()
     production_default = (
         base / "data"
         if production
@@ -335,12 +346,9 @@ def data_root(project_root: Any = None) -> Path:
     if production:
         return production_root
 
-    development_raw = _first_value((
-        "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
-    ))
     legacy_default = base / "data" / "staging"
     development_default = (
-        legacy_default if app_env() == STAGING else base / "data" / "development"
+        legacy_default if profile == STAGING else base / "data" / "development"
     )
     development_root = _resolved_root(
         development_raw or str(development_default), base,
@@ -356,6 +364,24 @@ def data_root(project_root: Any = None) -> Path:
             503,
         )
     return development_root
+
+
+def data_root(project_root: Any = None) -> Path:
+    """Return the isolated data directory for the selected environment.
+
+    Root resolution performs Windows canonical-path syscalls and is used by
+    every authenticated repository lookup.  Cache only by the complete set of
+    environment/path inputs so tests and explicit profile switches remain
+    isolated while steady-state requests avoid thousands of duplicate calls.
+    """
+    base = Path(project_root) if project_root is not None else _PROJECT_ROOT
+    production_raw = _first_value(("STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT"))
+    development_raw = _first_value((
+        "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
+    ))
+    return _data_root_cached(
+        str(base), is_production(), app_env(), production_raw, development_raw,
+    )
 
 
 def data_path(*parts: Any, project_root: Any = None) -> Path:
@@ -606,6 +632,26 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
             minimum=1,
             maximum=1048576,
         ),
+        api_max_inflight=_positive_int(
+            "STRATFORGE_API_MAX_INFLIGHT", 48,
+            minimum=1, maximum=1024,
+        ),
+        api_backlog=_positive_int(
+            "STRATFORGE_API_BACKLOG", 128 if environment == PRODUCTION else 96,
+            minimum=1, maximum=4096,
+        ),
+        api_max_body_bytes=_positive_int(
+            "STRATFORGE_API_MAX_BODY_BYTES", 1048576,
+            minimum=1024, maximum=8388608,
+        ),
+        worker_poll_ms=_positive_int(
+            "STRATFORGE_WORKER_POLL_MS", 250,
+            minimum=50, maximum=10000,
+        ),
+        worker_shutdown_grace_sec=_positive_int(
+            "STRATFORGE_WORKER_SHUTDOWN_GRACE_SEC", 60,
+            minimum=1, maximum=600,
+        ),
         data_root=str(data_root()),
         database_id=_safe_identifier(
             "STRATFORGE_DATABASE_ID",
@@ -649,6 +695,11 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
         raise RuntimeEnvError(
             "STRATFORGE_DEPLOYMENT_ROLE должен быть одним из: "
             + ", ".join(sorted(_PRODUCTION_ROLES)),
+            503,
+        )
+    if config.api_backlog < config.api_max_inflight:
+        raise RuntimeEnvError(
+            "STRATFORGE_API_BACKLOG не может быть меньше STRATFORGE_API_MAX_INFLIGHT.",
             503,
         )
     return config

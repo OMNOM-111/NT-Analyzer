@@ -63,6 +63,7 @@ FEATURES: Dict[str, Dict[str, Any]] = {
     "personal_nt": {"label": "Свой NinjaTrader", "default": True},
 }
 _MAGIC = b"STRATFORGE-ACCOUNTS-DPAPI-1\n"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.RLock()
 _RATE_LOCK = threading.Lock()
 _LOGIN_RATE: Dict[str, Deque[float]] = defaultdict(deque)
@@ -85,7 +86,7 @@ class AccountAuthError(RuntimeError):
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return _PROJECT_ROOT
 
 
 def _store_path() -> Path:
@@ -97,7 +98,8 @@ def _doc_cache_key(path: Path) -> Optional[Tuple[str, int, int]]:
         stat = path.stat()
     except OSError:
         return None
-    return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+    identity = path if path.is_absolute() else path.resolve()
+    return (str(identity), int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _clear_doc_cache() -> None:
@@ -247,6 +249,26 @@ def _read_doc() -> Dict[str, Any]:
     doc = _migrate_doc(doc)
     _cache_doc(path, doc)
     return doc
+
+
+def _read_doc_reference() -> Dict[str, Any]:
+    """Internal read-only view of the current local cache.
+
+    Mutation paths keep using ``_read_doc`` and therefore receive an isolated
+    deep copy.  Lookup paths may inspect this object only while ``_LOCK`` is
+    held and must copy the selected row before returning it.
+    """
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        return _read_doc()
+    path = _store_path()
+    key = _doc_cache_key(path)
+    with _LOCK:
+        if key is not None and _DOC_CACHE_KEY == key and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        loaded = _read_doc()
+        if key is not None and _DOC_CACHE_KEY == _doc_cache_key(path) and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        return loaded
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
@@ -993,7 +1015,7 @@ def find_active_user(user_id: Any) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         return None
     with _LOCK:
-        doc = _read_doc()
+        doc = _read_doc_reference()
         user = _user(doc, uid)
         if not user or user.get("status") != "active":
             return None
@@ -1001,7 +1023,7 @@ def find_active_user(user_id: Any) -> Optional[Dict[str, Any]]:
         # NTA_TELEGRAM_CHAT_ID via ensure_owner, so they must never be locked out
         # of their own app just because a profile field is blank.
         if user.get("is_owner") or _profile_complete(user):
-            return dict(user)
+            return copy.deepcopy(user)
         return None
 
 

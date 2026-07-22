@@ -146,6 +146,7 @@ def main() -> int:
                         devices.append(future.result())
                     except Exception as exc:  # pragma: no cover - probe reporting
                         errors.append(type(exc).__name__)
+
             with ThreadPoolExecutor(max_workers=10) as pool:
                 command_ms = []
                 for future in [pool.submit(_command_cycle, row) for row in devices]:
@@ -153,6 +154,48 @@ def main() -> int:
                         command_ms.append(future.result())
                     except Exception as exc:  # pragma: no cover - probe reporting
                         errors.append(type(exc).__name__)
+
+            # A Connector that stalls beyond command TTL must never receive a
+            # stale command. Replaying the same request must resolve to the
+            # original expired row rather than create a second side effect.
+            slow = devices[1]
+            slow_payload = {"command": "snapshot_accounts"}
+            slow_queued = connector_protocol.queue_command(
+                slow["user_id"],
+                workspace_id=slow["workspace_id"],
+                connection_id=slow["welcome"]["connection_id"],
+                capability="accounts_read",
+                idempotency_key="slow-connector-expiry-0001",
+                payload=slow_payload,
+                expires_in_sec=5,
+            )["command"]
+            slow_started = time.perf_counter()
+            time.sleep(5.2)
+            slow_polled = connector_protocol.poll_commands(
+                slow["welcome"]["session_token"],
+                connector_sequence=3,
+                wait_seconds=0,
+            )
+            slow_status = connector_protocol.command_status(
+                slow["user_id"],
+                workspace_id=slow["workspace_id"],
+                command_id=slow_queued["command_id"],
+            )["command"]
+            slow_replay = connector_protocol.queue_command(
+                slow["user_id"],
+                workspace_id=slow["workspace_id"],
+                connection_id=slow["welcome"]["connection_id"],
+                capability="accounts_read",
+                idempotency_key="slow-connector-expiry-0001",
+                payload=slow_payload,
+                expires_in_sec=5,
+            )["command"]
+            slow_connector_ok = bool(
+                not slow_polled["commands"]
+                and slow_status["status"] == "expired"
+                and slow_replay["command_id"] == slow_queued["command_id"]
+                and slow_replay.get("idempotent_replay") is True
+            )
 
             cross_workspace_denied = False
             try:
@@ -180,12 +223,20 @@ def main() -> int:
             connect_ms = [row["connect_ms"] for row in devices]
             report = {
                 "ok": not errors and len(devices) == 10 and len(command_ms) == 10
-                and cross_workspace_denied and revoked_session_denied,
+                and cross_workspace_denied and revoked_session_denied
+                and slow_connector_ok,
                 "profiles": 10,
                 "completed_command_cycles": len(command_ms),
                 "errors": errors,
                 "cross_workspace_denied": cross_workspace_denied,
                 "revoked_session_denied": revoked_session_denied,
+                "slow_connector": {
+                    "delay_ms": round((time.perf_counter() - slow_started) * 1000, 2),
+                    "expired_not_delivered": not slow_polled["commands"],
+                    "status": slow_status["status"],
+                    "idempotent_replay": bool(slow_replay.get("idempotent_replay")),
+                    "same_command_id": slow_replay["command_id"] == slow_queued["command_id"],
+                },
                 "connect_ms": {
                     "p50": round(statistics.median(connect_ms), 2),
                     "p95": round(_percentile(connect_ms, 0.95), 2),

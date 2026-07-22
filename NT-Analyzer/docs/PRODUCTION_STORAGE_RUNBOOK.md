@@ -180,7 +180,7 @@ window: убрать traffic, остановить application writers и под
 операционную проверку.
 
 ~~~bash
-systemctl --user stop stratforge.service
+systemctl --user stop cloudflared.service stratforge.service stratforge-worker.service
 read -r -s -p 'Backup DSN: ' STRATFORGE_BACKUP_DATABASE_URL
 export STRATFORGE_BACKUP_DATABASE_URL
 export STRATFORGE_PG_BIN='/usr/lib/postgresql/17/bin'

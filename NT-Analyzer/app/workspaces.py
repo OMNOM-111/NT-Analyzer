@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -18,7 +19,10 @@ from . import runtime_env, secure_store
 
 
 _MAGIC = b"STRATFORGE-WORKSPACES-DPAPI-1\n"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.RLock()
+_DOC_CACHE_KEY: Optional[tuple[str, int, int]] = None
+_DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
 PAIRING_TTL_SEC = 10 * 60
 WORKSPACE_ROLES = {"owner", "admin", "operator", "viewer", "developer"}
 WRITE_ROLES = {"owner", "admin", "operator", "developer"}
@@ -32,7 +36,7 @@ class WorkspaceError(RuntimeError):
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return _PROJECT_ROOT
 
 
 def _store_path() -> Path:
@@ -56,6 +60,33 @@ def _default_doc() -> Dict[str, Any]:
     return {"version": 1, "workspaces": [], "memberships": [], "active_workspaces": {}, "connections": [], "pairings": []}
 
 
+def _doc_cache_key(path: Path) -> Optional[tuple[str, int, int]]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    identity = path if path.is_absolute() else path.resolve()
+    return (str(identity), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _clear_doc_cache() -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    with _LOCK:
+        _DOC_CACHE_KEY = None
+        _DOC_CACHE_DOC = None
+
+
+def _cache_doc(path: Path, doc: Dict[str, Any]) -> None:
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    key = _doc_cache_key(path)
+    if key is None:
+        _clear_doc_cache()
+        return
+    with _LOCK:
+        _DOC_CACHE_KEY = key
+        _DOC_CACHE_DOC = copy.deepcopy(doc)
+
+
 def _read_doc() -> Dict[str, Any]:
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import storage_router
@@ -75,8 +106,13 @@ def _read_doc() -> Dict[str, Any]:
             doc["active_workspaces"] = {}
         return doc
     path = _store_path()
-    if not path.is_file():
+    cache_key = _doc_cache_key(path)
+    if cache_key is None:
+        _clear_doc_cache()
         return _default_doc()
+    with _LOCK:
+        if _DOC_CACHE_KEY == cache_key and _DOC_CACHE_DOC is not None:
+            return copy.deepcopy(_DOC_CACHE_DOC)
     try:
         raw = path.read_bytes()
         if not raw.startswith(_MAGIC):
@@ -96,7 +132,23 @@ def _read_doc() -> Dict[str, Any]:
             doc[key] = []
     if not isinstance(doc.get("active_workspaces"), dict):
         doc["active_workspaces"] = {}
+    _cache_doc(path, doc)
     return doc
+
+
+def _read_doc_reference() -> Dict[str, Any]:
+    """Return an internal read-only cache view while the caller holds _LOCK."""
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        return _read_doc()
+    path = _store_path()
+    key = _doc_cache_key(path)
+    with _LOCK:
+        if key is not None and _DOC_CACHE_KEY == key and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        loaded = _read_doc()
+        if key is not None and _DOC_CACHE_KEY == _doc_cache_key(path) and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        return loaded
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
@@ -105,6 +157,7 @@ def _write_doc(doc: Dict[str, Any]) -> None:
         from .production_storage import StorageError
         try:
             storage_router.write_document("workspaces", doc)
+            _clear_doc_cache()
             return
         except StorageError as exc:
             raise WorkspaceError(
@@ -131,6 +184,7 @@ def _write_doc(doc: Dict[str, Any]) -> None:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        _cache_doc(path, doc)
     except OSError as exc:
         try:
             tmp.unlink(missing_ok=True)
@@ -383,9 +437,45 @@ def context_for_user(user_id: Any, *, is_owner: bool = False, owner_id: Any = 0)
     owner = int(owner_id or 0)
     if user <= 0:
         return {"workspaces": [], "active_workspace": {}, "active_membership": {}, "storage": storage_status()}
-    ensure_training_membership(user, owner)
+    initialized_workspace_id = ""
     with _LOCK:
-        doc = _read_doc()
+        doc = _read_doc_reference()
+        changed = False
+        if owner > 0:
+            initialized_workspace_id = _owner_workspace_id(owner)
+            existing_owner_workspace = _workspace(doc, initialized_workspace_id)
+            existing_membership = _membership(doc, initialized_workspace_id, user)
+            expected_role = "owner" if user == owner else "viewer"
+            initialization_required = bool(
+                existing_owner_workspace is None
+                or existing_owner_workspace.get("display_name") in (
+                    "Учебный аккаунт владельца", "", None,
+                )
+                or existing_owner_workspace.get("entitlement_id") in (
+                    "owner_unlimited", "", None,
+                )
+                or existing_membership is None
+                or str(existing_membership.get("role") or "") != expected_role
+                or not doc["active_workspaces"].get(str(user))
+            )
+            if initialization_required:
+                # Never amend the shared cache object. Mutation continues on a
+                # private snapshot and becomes visible only after atomic write.
+                doc = copy.deepcopy(doc)
+                owner_workspace, changed = _ensure_owner_workspace_doc(doc, owner)
+                initialized_workspace_id = str(owner_workspace["workspace_id"])
+                changed = _ensure_membership(
+                    doc,
+                    workspace_id=initialized_workspace_id,
+                    user_id=user,
+                    role=expected_role,
+                    created_by=owner,
+                ) or changed
+                if not doc["active_workspaces"].get(str(user)):
+                    doc["active_workspaces"][str(user)] = initialized_workspace_id
+                    changed = True
+        if changed:
+            _write_doc(doc)
         memberships = _memberships(doc, user)
         visible: list[Dict[str, Any]] = []
         for member in memberships:
@@ -398,10 +488,14 @@ def context_for_user(user_id: Any, *, is_owner: bool = False, owner_id: Any = 0)
         if not active_id and visible:
             personal = next((row for row in visible if row.get("kind") == "personal"), None)
             active_id = str((personal or visible[0]).get("workspace_id") or "")
-            doc["active_workspaces"][str(user)] = active_id
-            _write_doc(doc)
+            updated_doc = copy.deepcopy(doc)
+            updated_doc["active_workspaces"][str(user)] = active_id
+            _write_doc(updated_doc)
+            doc = updated_doc
         active = next((row for row in visible if row.get("workspace_id") == active_id), {})
         active_member = active.get("membership") if isinstance(active.get("membership"), dict) else {}
+    if initialized_workspace_id and changed:
+        _ensure_tenant_dirs(initialized_workspace_id)
     return {
         "workspaces": visible,
         "active_workspace": active,

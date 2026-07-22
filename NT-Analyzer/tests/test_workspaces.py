@@ -41,6 +41,41 @@ def _json_request(base: str, path: str, *, method: str = "GET", body: dict | Non
         return json.loads(response.read().decode("utf-8"))
 
 
+def test_workspace_dpapi_cache_is_copy_isolated_and_write_through(
+    workspace_store, monkeypatch,
+) -> None:
+    workspaces._clear_doc_cache()
+    workspaces._write_doc({
+        "version": 1,
+        "workspaces": [{"workspace_id": "ws_cache_TEST1234", "status": "active"}],
+        "memberships": [],
+        "active_workspaces": {},
+        "connections": [],
+        "pairings": [],
+    })
+    workspaces._clear_doc_cache()
+    original_unprotect = secure_store._unprotect
+    decrypts = []
+
+    def counting_unprotect(value):
+        decrypts.append(True)
+        return original_unprotect(value)
+
+    monkeypatch.setattr(secure_store, "_unprotect", counting_unprotect)
+    first = workspaces._read_doc()
+    second = workspaces._read_doc()
+    assert len(decrypts) == 1
+    first["workspaces"][0]["status"] = "tampered"
+    assert second["workspaces"][0]["status"] == "active"
+    assert workspaces._read_doc()["workspaces"][0]["status"] == "active"
+
+    updated = workspaces._read_doc()
+    updated["workspaces"][0]["status"] = "revoked"
+    workspaces._write_doc(updated)
+    assert workspaces._read_doc()["workspaces"][0]["status"] == "revoked"
+    assert len(decrypts) == 1
+
+
 def test_personal_runtime_storage_never_falls_back_to_owner_when_offline(workspace_store) -> None:
     context = {
         "active_workspace": {

@@ -115,8 +115,8 @@ def _seed(client: PostgresClient) -> dict[str, str]:
 
 def test_migration_is_applied_and_checksum_stable() -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["latest_version"] == 1
-    assert plan["applied_versions"] == [1]
+    assert plan["latest_version"] == 2
+    assert plan["applied_versions"] == [1, 2]
     assert plan["pending"] == []
     assert len(plan["migration_set_sha256"]) == 64
 

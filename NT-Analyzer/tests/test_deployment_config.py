@@ -24,6 +24,11 @@ _ENV_KEYS = (
     "STRATFORGE_EDGE_MODE",
     "STRATFORGE_TRUSTED_PROXY_IPS",
     "STRATFORGE_READINESS_MIN_FREE_MB",
+    "STRATFORGE_API_MAX_INFLIGHT",
+    "STRATFORGE_API_BACKLOG",
+    "STRATFORGE_API_MAX_BODY_BYTES",
+    "STRATFORGE_WORKER_POLL_MS",
+    "STRATFORGE_WORKER_SHUTDOWN_GRACE_SEC",
     "STRATFORGE_DATA_ROOT",
     "NTA_DATA_ROOT",
     "STRATFORGE_DEVELOPMENT_DATA_ROOT",
@@ -105,6 +110,9 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.runtime_profile == "development"
     assert config.environment_explicit is True
     assert Path(config.data_root) == development.resolve()
+    assert config.api_max_inflight == 48
+    assert config.api_backlog == 96
+    assert config.api_max_body_bytes == 1048576
     assert config.allowed_hosts == ("127.0.0.1", "localhost")
     assert config.public_origin == "http://127.0.0.1"
     assert config.edge_mode == "direct-local"
@@ -169,6 +177,18 @@ def test_staging_implicit_roots_keep_legacy_data_path_isolated(
     monkeypatch.setenv("NTA_APP_ENV", "staging")
 
     assert runtime_env.data_root(tmp_path) == (tmp_path / "data" / "staging").resolve()
+
+
+def test_api_admission_backlog_cannot_be_smaller_than_inflight(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "dev"))
+    monkeypatch.setenv("STRATFORGE_API_MAX_INFLIGHT", "32")
+    monkeypatch.setenv("STRATFORGE_API_BACKLOG", "16")
+
+    with pytest.raises(runtime_env.RuntimeEnvError, match="API_BACKLOG"):
+        runtime_env.assert_startup_safe()
 
 
 def test_production_startup_requires_the_complete_resource_matrix(

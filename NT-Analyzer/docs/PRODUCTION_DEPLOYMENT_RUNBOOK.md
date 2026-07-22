@@ -87,7 +87,9 @@ Release и persistent state никогда не вложены друг в др�
 3. Установить mode 0600.
 4. Скопировать `deploy/production/cloudflared.yml.example`; подставить UUID и
    home path. Credential JSON передать защищённым out-of-band способом.
-5. Установить оба unit-файла в `~/.config/systemd/user/`.
+5. Установить три unit-файла — `stratforge.service`,
+   `stratforge-worker.service`, `cloudflared.service` — в
+   `~/.config/systemd/user/`.
 6. Выполнить preflight из release virtualenv:
 
 ~~~bash
@@ -102,7 +104,7 @@ Preflight печатает только имена проверок и коды,
 
 ~~~bash
 systemctl --user daemon-reload
-systemctl --user enable --now stratforge.service
+systemctl --user enable --now stratforge-worker.service stratforge.service
 curl --fail --silent \
   -H 'Host: app.stratforges.com' \
   -H 'X-Forwarded-Host: app.stratforges.com' \
@@ -198,7 +200,7 @@ NinjaTrader. Private admin RDP/PowerShell разрешены лишь через
 ## Emergency rollback
 
 1. Убрать Production tunnel из DNS route либо вернуть предыдущий tunnel.
-2. `systemctl --user stop cloudflared.service stratforge.service`.
+2. `systemctl --user stop cloudflared.service stratforge.service stratforge-worker.service`.
 3. Не удалять database/state/artifacts.
 4. Вернуть `current` на `previous` только после проверки manifest/signature.
 5. Если была migration, восстановить совместимый snapshot в отдельную цель;

@@ -51,6 +51,7 @@ SELF_SERVICE_WRITE_PATHS = {
 }
 
 _LOCK = threading.RLock()
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _RATE_LOCK = threading.Lock()
 _RATE: Dict[Tuple[int, str, str], Deque[float]] = defaultdict(deque)
 
@@ -63,7 +64,7 @@ class RemoteAccessError(RuntimeError):
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return _PROJECT_ROOT
 
 
 def _access_path() -> Path:
@@ -514,10 +515,11 @@ def authorize(raw: str, bot_token: str, *, method: str, path: str, tunnel_ip: st
             raise RemoteAccessError("Удалённый доступ выключен владельцем.", 403, context)
         account = account_auth.find_active_user(uid)
         user = account
+        encrypted_store = account_auth.storage_status().get("encrypted")
         # One-time compatibility before the encrypted account store is
         # bootstrapped. Once it exists, the legacy JSON whitelist is never an
         # authority again.
-        if user is None and not account_auth.storage_status().get("encrypted"):
+        if user is None and not encrypted_store:
             user = next((row for row in doc["users"] if int(row.get("user_id") or 0) == uid), None)
         if not user or user.get("status") != "active":
             raise RemoteAccessError("Пользователь не входит в whitelist.", 403, context)
@@ -525,11 +527,17 @@ def authorize(raw: str, bot_token: str, *, method: str, path: str, tunnel_ip: st
         if role == "owner":
             role = "full_control"
         context["role"] = role
+        context["is_owner"] = bool(user.get("is_owner"))
         context["username"] = str(tg_user.get("username") or user.get("username") or "")
-        public_user = _public_user(user)
+        public_user = (
+            account_auth._public_user(
+                user, include_contact=True, include_avatar=True,
+            )
+            if account is not None else _public_user(user)
+        )
         # Entries in the legacy remote-access whitelist predate the UX-mode
         # selector.  They are existing professional users, not new registrations.
-        if not account_auth.storage_status().get("encrypted") and not public_user.get("ux_mode"):
+        if not encrypted_store and not public_user.get("ux_mode"):
             public_user["ux_mode"] = "professional"
         context["user"] = public_user
     if (method.upper() not in {"GET", "HEAD"} and role != "full_control" and path not in SELF_SERVICE_WRITE_PATHS

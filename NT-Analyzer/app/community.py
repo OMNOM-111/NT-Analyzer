@@ -29,6 +29,7 @@ class CommunityError(RuntimeError):
 
 
 _LOCK = threading.RLock()
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _MAX_MSG = 4000
 _MAX_ATTACHMENTS = 3
 _MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
@@ -53,7 +54,7 @@ def _empty_doc() -> Dict[str, Any]:
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return _PROJECT_ROOT
 
 
 def _store_path() -> Path:

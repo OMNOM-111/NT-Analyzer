@@ -26,6 +26,7 @@ from . import runtime_env, secure_store
 
 
 _MAGIC = b"STRATFORGE-ENTITLEMENTS-DPAPI-1\n"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.RLock()
 # Multiple authenticated endpoint checks resolve the same entitlement document
 # during one screen load. Cache only the exact on-disk version and return deep
@@ -165,7 +166,7 @@ class SubscriptionError(RuntimeError):
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return _PROJECT_ROOT
 
 
 def _store_path() -> Path:
@@ -177,7 +178,8 @@ def _doc_cache_key(path: Path) -> Optional[Tuple[str, int, int]]:
         stat = path.stat()
     except OSError:
         return None
-    return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+    identity = path if path.is_absolute() else path.resolve()
+    return (str(identity), int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _clear_doc_cache() -> None:
@@ -271,6 +273,29 @@ def _read_doc() -> Dict[str, Any]:
     return doc
 
 
+def _read_doc_reference() -> Dict[str, Any]:
+    """Return an internal read-only cache view while the caller holds _LOCK."""
+    global _DOC_CACHE_KEY, _DOC_CACHE_DOC
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        return _read_doc()
+    path = _store_path()
+    key = _doc_cache_key(path)
+    with _LOCK:
+        if key is None:
+            absent_key = (str(path), 0, 0)
+            if _DOC_CACHE_KEY == absent_key and _DOC_CACHE_DOC is not None:
+                return _DOC_CACHE_DOC
+            _DOC_CACHE_KEY = absent_key
+            _DOC_CACHE_DOC = _default_doc()
+            return _DOC_CACHE_DOC
+        if key is not None and _DOC_CACHE_KEY == key and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        loaded = _read_doc()
+        if key is not None and _DOC_CACHE_KEY == _doc_cache_key(path) and _DOC_CACHE_DOC is not None:
+            return _DOC_CACHE_DOC
+        return loaded
+
+
 def _write_doc(doc: Dict[str, Any]) -> None:
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import storage_router
@@ -356,7 +381,7 @@ def _effective_plan(plan_id: str, overrides: Optional[Dict[str, Any]] = None) ->
 
 def list_plans() -> Dict[str, Any]:
     with _LOCK:
-        overrides = _read_doc().get("plan_overrides") or {}
+        overrides = _read_doc_reference().get("plan_overrides") or {}
     plans = [_effective_plan(pid, overrides) for pid in PLANS]
     return {
         "plans": plans,
@@ -368,7 +393,7 @@ def list_plans() -> Dict[str, Any]:
 def effective_plan(plan_id: str) -> Dict[str, Any]:
     """Public: the plan with owner per-plan overrides applied (or {} if unknown)."""
     with _LOCK:
-        overrides = _read_doc().get("plan_overrides") or {}
+        overrides = _read_doc_reference().get("plan_overrides") or {}
     return _effective_plan(str(plan_id or ""), overrides)
 
 
@@ -478,7 +503,7 @@ def payments_active() -> bool:
     if PAYMENTS_ENABLED:
         return True
     with _LOCK:
-        config = _read_doc().get("payment_config") or {}
+        config = _read_doc_reference().get("payment_config") or {}
     if not config.get("enabled"):
         return False
     return bool(str(config.get("paypal_me") or "").strip()
@@ -521,7 +546,7 @@ def donation_options() -> Dict[str, Any]:
 
 def owner_entitlement() -> Dict[str, Any]:
     with _LOCK:
-        overrides = _read_doc().get("plan_overrides") or {}
+        overrides = _read_doc_reference().get("plan_overrides") or {}
     return {
         "entitlement_id": "founder", "user_id": None, "workspace_id": "",
         "plan_id": "founder", "plan": _effective_plan("founder", overrides),
@@ -1346,7 +1371,7 @@ def entitlements_for_user(user_id: Any) -> Dict[str, Any]:
     if user <= 0:
         return {"entitlements": [], "storage": storage_status()}
     with _LOCK:
-        doc = _read_doc()
+        doc = _read_doc_reference()
         overrides = doc.get("plan_overrides") or {}
         rows = [row for row in doc["entitlements"] if int(row.get("user_id") or 0) == user]
         rows.sort(key=lambda row: str(row.get("created_at_utc") or ""), reverse=True)

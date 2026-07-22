@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import threading
 import uuid
 from contextlib import contextmanager
@@ -498,10 +499,14 @@ class DocumentRepository:
                   document=EXCLUDED.document,updated_at=clock_timestamp(),revision=sf_commands.revision+1
                 """,
                 (key, str(row.get("workspace_id") or ""), str(row.get("installation_id") or "") or None,
-                 _int(row.get("user_id") or row.get("queued_by_user_id")),
-                 str(row.get("command_type") or row.get("type") or "connector_command")[:100],
+                 _int(row.get("user_id") or row.get("queued_by_user_id")
+                      or row.get("issued_by_user_id")),
+                 str(row.get("command_type") or row.get("type")
+                     or (row.get("payload") or {}).get("command")
+                     or "connector_command")[:100],
                  _status(status, {"queued","leased","completed","failed","rejected","expired","cancelled","review"}, "queued"),
-                 bool(row.get("dangerous") or row.get("requires_live")),
+                 bool(row.get("dangerous") or row.get("requires_live")
+                      or row.get("capability") in {"paper_commands", "live_commands"}),
                  str(row.get("idempotency_key") or f"legacy:{key}")[:160], _jsonb(row),
                  _timestamp(row.get("created_at_utc"))),
             )
@@ -642,22 +647,53 @@ class CommandRepository:
         workspace_id = str(row.get("workspace_id") or "")
         if not command_id or workspace_id != scope.workspace_id:
             raise StorageConstraintError("Command scope does not match workspace.")
+        idempotency_key = str(row.get("idempotency_key") or f"cmd:{command_id}")
+        request_hash = str(row.get("envelope_hash") or _stable_key("request", row))
         with self.client.transaction(scope) as conn:
+            existing = conn.execute(
+                """SELECT document FROM sf_commands
+                   WHERE workspace_id=%s AND idempotency_key=%s""",
+                (workspace_id, idempotency_key),
+            ).fetchone()
+            if existing:
+                saved = dict(existing["document"])
+                existing_hash = str(saved.get("envelope_hash") or _stable_key("request", saved))
+                if not secrets.compare_digest(existing_hash, request_hash):
+                    raise StorageConflictError(
+                        "Command idempotency key was used with a different envelope."
+                    )
+                saved["idempotent_replay"] = True
+                return saved
             saved = conn.execute(
                 """
                 INSERT INTO sf_commands(command_id,workspace_id,installation_id,user_id,command_type,
                   status,dangerous,idempotency_key,document)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT(command_id) DO UPDATE SET status=EXCLUDED.status,
-                  document=EXCLUDED.document,updated_at=clock_timestamp(),revision=sf_commands.revision+1
+                ON CONFLICT(workspace_id,idempotency_key) DO NOTHING
                 RETURNING document
                 """,
                 (command_id, workspace_id, str(row.get("installation_id") or "") or None,
                  _int(row.get("user_id")), str(row.get("command_type") or "command"),
                  _status(row.get("status"), {"queued","leased","completed","failed","rejected","expired","cancelled","review"}, "queued"),
-                 bool(row.get("dangerous")), str(row.get("idempotency_key") or f"cmd:{command_id}"),
+                 bool(row.get("dangerous")), idempotency_key,
                  _jsonb(dict(row))),
             ).fetchone()
+            if not saved:
+                raced = conn.execute(
+                    """SELECT document FROM sf_commands
+                       WHERE workspace_id=%s AND idempotency_key=%s""",
+                    (workspace_id, idempotency_key),
+                ).fetchone()
+                replay = dict(raced["document"])
+                replay_hash = str(
+                    replay.get("envelope_hash") or _stable_key("request", replay)
+                )
+                if not secrets.compare_digest(replay_hash, request_hash):
+                    raise StorageConflictError(
+                        "Concurrent command idempotency conflict."
+                    )
+                replay["idempotent_replay"] = True
+                return replay
         return dict(saved["document"])
 
     def get(self, command_id: str, *, scope: Scope) -> Optional[Dict[str, Any]]:

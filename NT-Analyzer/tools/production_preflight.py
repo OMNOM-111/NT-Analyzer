@@ -131,10 +131,26 @@ def run_preflight(
         ))
 
         root = app_root.resolve()
-        app_files_ok = (root / "app" / "server.py").is_file() and (
-            root / "requirements.txt"
-        ).is_file()
+        app_files_ok = all(path.is_file() for path in (
+            root / "app" / "server.py",
+            root / "app" / "api_admission.py",
+            root / "app" / "production_workers.py",
+            root / "app" / "production_storage" / "migrations" / "0002_worker_scaling.sql",
+            root / "deploy" / "production" / "stratforge-worker.service",
+            root / "requirements.txt",
+        ))
         checks.append(_check("application_release", app_files_ok, "ok" if app_files_ok else "incomplete"))
+        bounded_runtime = (
+            1 <= config.api_max_inflight <= 1024
+            and config.api_max_inflight <= config.api_backlog
+            and 1024 <= config.api_max_body_bytes <= 8388608
+            and 50 <= config.worker_poll_ms <= 10000
+            and 1 <= config.worker_shutdown_grace_sec <= 600
+        )
+        checks.append(_check(
+            "bounded_api_worker_config", bounded_runtime,
+            "ok" if bounded_runtime else "invalid_capacity_contract",
+        ))
 
         data_root = Path(config.data_root).resolve()
         data_ok = data_root.is_dir()

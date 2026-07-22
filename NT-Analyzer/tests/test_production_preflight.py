@@ -51,12 +51,24 @@ def _clear_legacy_flags(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def _make_release(app_root: Path) -> None:
+    for relative in (
+        "app/server.py",
+        "app/api_admission.py",
+        "app/production_workers.py",
+        "app/production_storage/migrations/0002_worker_scaling.sql",
+        "deploy/production/stratforge-worker.service",
+        "requirements.txt",
+    ):
+        path = app_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+
 def test_preflight_passes_a_complete_isolated_layout(tmp_path: Path, monkeypatch) -> None:
     _clear_legacy_flags(monkeypatch)
     app_root = tmp_path / "release"
-    (app_root / "app").mkdir(parents=True)
-    (app_root / "app" / "server.py").write_text("", encoding="utf-8")
-    (app_root / "requirements.txt").write_text("", encoding="utf-8")
+    _make_release(app_root)
     data_root = tmp_path / "state"
     data_root.mkdir()
     (tmp_path / "objects").mkdir()
@@ -77,9 +89,7 @@ def test_preflight_passes_a_complete_isolated_layout(tmp_path: Path, monkeypatch
 def test_preflight_rejects_data_inside_release_and_bad_config(tmp_path: Path, monkeypatch) -> None:
     _clear_legacy_flags(monkeypatch)
     app_root = tmp_path / "release"
-    (app_root / "app").mkdir(parents=True)
-    (app_root / "app" / "server.py").write_text("", encoding="utf-8")
-    (app_root / "requirements.txt").write_text("", encoding="utf-8")
+    _make_release(app_root)
     data_root = app_root / "data"
     data_root.mkdir()
     (app_root / "objects").mkdir()

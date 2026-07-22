@@ -16,10 +16,13 @@ Canonical topology:
 
 `Cloudflare edge -> outbound Named Tunnel -> 127.0.0.1:18765 -> StratForge`
 
-Install the two units as user services under `~/.config/systemd/user/`, place
+Install all three units (`stratforge.service`, `stratforge-worker.service`,
+`cloudflared.service`) under `~/.config/systemd/user/`, place
 the protected configuration under `~/.config/stratforge/`, and follow
 `docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md` plus
-`docs/PRODUCTION_STORAGE_RUNBOOK.md`. The service preflight validates the
+`docs/PRODUCTION_STORAGE_RUNBOOK.md` and
+`docs/PRODUCTION_WORKER_RUNBOOK.md`. Apply the checksum-confirmed schema before
+starting API/workers. The service preflight validates the
 PostgreSQL runtime role/TLS contract and an isolated writable artifact root;
 temporary database reachability remains a readiness check. Do not expose port 18765, RDP,
 NinjaTrader IPC, a Windows share, debug routes or metrics to the Internet.
