@@ -173,24 +173,34 @@ def build(args: argparse.Namespace) -> dict:
     major, minor, patch = match.group(1), match.group(2), match.group(3)
     assembly_version = f"{major}.{minor}.{patch}.0"
 
+    bridge_project = root / "bridge" / "NTAnalyzerBridge.csproj"
+    setup_project = root / "connector" / "installer" / "StratForge.Connector.Setup.csproj"
+    updater_project = root / "connector" / "updater" / "StratForge.Connector.Updater.csproj"
+    # A release must build from a genuinely clean checkout, where obj/ and the
+    # net48 reference-assembly package cache have not been primed by an earlier
+    # developer build. Restore explicitly, then keep every compilation locked
+    # to that resolved graph with --no-restore.
+    for project in (bridge_project, setup_project, updater_project):
+        _run(["dotnet", "restore", str(project), "--nologo"], cwd=root)
+
     _run([
-        "dotnet", "build", str(root / "bridge" / "NTAnalyzerBridge.csproj"),
+        "dotnet", "build", str(bridge_project),
         "-c", "Release", "--no-restore",
         f"-p:Version={args.version}",
         f"-p:AssemblyVersion={assembly_version}",
         f"-p:FileVersion={assembly_version}",
     ], cwd=root)
     _run([
-        "dotnet", "build", str(root / "connector" / "installer" / "StratForge.Connector.Setup.csproj"),
-        "-c", "Release",
+        "dotnet", "build", str(setup_project),
+        "-c", "Release", "--no-restore",
         f"-p:Version={args.version}",
         f"-p:AssemblyVersion={assembly_version}",
         f"-p:FileVersion={assembly_version}",
         f"-p:ReleaseTrustSource={trust_source}",
     ], cwd=root)
     _run([
-        "dotnet", "build", str(root / "connector" / "updater" / "StratForge.Connector.Updater.csproj"),
-        "-c", "Release",
+        "dotnet", "build", str(updater_project),
+        "-c", "Release", "--no-restore",
         f"-p:Version={args.version}",
         f"-p:AssemblyVersion={assembly_version}",
         f"-p:FileVersion={assembly_version}",

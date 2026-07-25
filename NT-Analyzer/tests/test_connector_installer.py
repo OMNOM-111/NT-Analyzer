@@ -43,6 +43,14 @@ def test_installer_is_standalone_strict_and_transactional() -> None:
     assert "absent from manifest" in verifier
 
 
+def test_release_builder_restores_clean_checkout_before_release_build() -> None:
+    source = Path(build_connector_release.__file__).read_text(encoding="utf-8")
+    restore = source.index('"dotnet", "restore"')
+    first_build = source.index('"dotnet", "build"')
+    assert restore < first_build
+    assert '"-c", "Release", "--no-restore"' in source
+
+
 def test_external_updater_has_safe_restart_health_and_one_shot_rollback() -> None:
     root = Path(__file__).resolve().parent.parent
     project = (root / "connector" / "updater" / "StratForge.Connector.Updater.csproj").read_text(
