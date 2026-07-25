@@ -16,6 +16,7 @@ import re
 import threading
 import urllib.error
 import urllib.request
+import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -687,8 +688,9 @@ def ensure_defaults_migrated() -> Dict[str, Any]:
 # Cache & synthesis
 # ---------------------------------------------------------------------------
 
-def _cache_key(*, text: str, profile: Dict[str, Any]) -> str:
+def _cache_key(*, text: str, profile: Dict[str, Any], workspace_id: str = "") -> str:
     payload = "\n".join([
+        str(workspace_id or ""),
         str(profile.get("agent_id") or ""),
         str(profile.get("tts_provider") or ""),
         str(profile.get("tts_model") or ""),
@@ -792,16 +794,80 @@ def _browser_fallback(profile: Dict[str, Any], *, reason: str, chars: int) -> Di
     }
 
 
+def _production_scope(scope: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Resolve TTS attribution without trusting a caller-supplied data path."""
+    from . import universal_llm
+
+    if scope is None:
+        return universal_llm.require_valid_production_scope()
+    active = scope.get("active_workspace") if isinstance(scope.get("active_workspace"), dict) else {}
+    context = {
+        "user_id": scope.get("user_id"),
+        "user_name": scope.get("display_name"),
+        "workspace_id": scope.get("workspace_id") or active.get("workspace_id"),
+        "conversation_id": scope.get("conversation_id") or "default",
+        "request_source": "agent_tts",
+    }
+    with universal_llm.usage_scope(context):
+        return universal_llm.require_valid_production_scope()
+
+
+def _record_production_tts_usage(
+    request_id: str,
+    production_scope: Optional[Dict[str, Any]],
+    *,
+    agent_id: str,
+    model: str,
+    status: str,
+    input_tokens: int,
+    cost_usd: float,
+    prompt_sha256: str,
+    chars: int,
+) -> bool:
+    if production_scope is None:
+        return True
+    from .. import ai_budgets
+
+    try:
+        result = ai_budgets.record_usage(
+            request_id,
+            production_scope["workspace_id"],
+            production_scope["user_id"],
+            "openai",
+            model,
+            "tts",
+            "agent_speech",
+            status,
+            max(0, int(input_tokens)),
+            0,
+            max(0.0, float(cost_usd)),
+            prompt_sha256,
+            document={
+                "adapter": "openai_audio_speech",
+                "agent_id": str(agent_id or "")[:80],
+                "characters": max(0, int(chars)),
+            },
+        )
+    except Exception:
+        return False
+    return bool(result.get("ok"))
+
+
 def synthesize(
     text: str,
     *,
     agent_id: str = "vitek",
     message_id: str = "",
     profile_override: Optional[Dict[str, Any]] = None,
+    scope: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Return MP3 bytes or a browser-fallback signal using the agent voice profile."""
     del message_id
     cleaned = prepare_text(text)
+    try:
+        production_scope = _production_scope(scope)
+    except Exception as exc:
+        raise AgentTtsError(str(exc)) from exc
     aid = normalize_agent_id(agent_id)
     if isinstance(profile_override, dict) and profile_override:
         profile = normalize_profile(profile_override, agent_id=aid)
@@ -824,9 +890,31 @@ def synthesize(
     profile = dict(profile)
     profile["tts_model"] = model
 
-    key = _cache_key(text=cleaned, profile=profile)
+    key = _cache_key(
+        text=cleaned,
+        profile=profile,
+        workspace_id=str((production_scope or {}).get("workspace_id") or ""),
+    )
+    request_id = f"REQ-{uuid.uuid4().hex[:16].upper()}"
+    prompt_sha256 = key
+    estimated_input_tokens = max(1, (len(cleaned) + 2) // 3)
+    # Reserve conservatively across the supported speech models. The durable
+    # budget is a hard upper bound, not an optimistic invoice estimate.
+    estimated_cost = round(len(cleaned) * 0.00004, 8)
     cached = _read_cache(key)
     if cached:
+        if not _record_production_tts_usage(
+            request_id,
+            production_scope,
+            agent_id=aid,
+            model=model,
+            status="cache_hit",
+            input_tokens=0,
+            cost_usd=0.0,
+            prompt_sha256=prompt_sha256,
+            chars=len(cleaned),
+        ):
+            raise AgentTtsError("Production AI usage storage is unavailable.")
         return {
             "audio": cached,
             "content_type": "audio/mpeg",
@@ -841,10 +929,83 @@ def synthesize(
             "language": profile.get("language"),
         }
 
+    durable_reserved = False
+    durable_recorded = False
+    if production_scope is not None:
+        from .. import ai_budgets
+
+        try:
+            admitted = ai_budgets.reserve(
+                request_id,
+                production_scope["workspace_id"],
+                production_scope["user_id"],
+                "openai",
+                model,
+                "tts",
+                estimated_cost,
+                prompt_sha256,
+            )
+        except Exception:
+            admitted = {"ok": False, "code": "storage_unavailable"}
+        if not admitted.get("ok"):
+            durable_recorded = _record_production_tts_usage(
+                request_id,
+                production_scope,
+                agent_id=aid,
+                model=model,
+                status="blocked",
+                input_tokens=0,
+                cost_usd=0.0,
+                prompt_sha256=prompt_sha256,
+                chars=len(cleaned),
+            )
+            code = str(admitted.get("code") or "storage_unavailable")
+            if not durable_recorded:
+                code = "storage_unavailable"
+            raise AgentTtsError("Production AI budget denied: " + code)
+        durable_reserved = True
+
     try:
-        audio = _openai_speech(text=cleaned, profile=profile, api_key=api_key)
-    except AgentTtsError as exc:
-        return _browser_fallback(profile, reason=f"provider_error:{exc}", chars=len(cleaned))
+        try:
+            audio = _openai_speech(text=cleaned, profile=profile, api_key=api_key)
+        except AgentTtsError as exc:
+            durable_recorded = _record_production_tts_usage(
+                request_id,
+                production_scope,
+                agent_id=aid,
+                model=model,
+                status="error",
+                input_tokens=estimated_input_tokens,
+                cost_usd=estimated_cost,
+                prompt_sha256=prompt_sha256,
+                chars=len(cleaned),
+            )
+            if production_scope is not None and not durable_recorded:
+                raise AgentTtsError("Production AI usage storage is unavailable.") from None
+            return _browser_fallback(profile, reason=f"provider_error:{exc}", chars=len(cleaned))
+
+        durable_recorded = _record_production_tts_usage(
+            request_id,
+            production_scope,
+            agent_id=aid,
+            model=model,
+            status="success",
+            input_tokens=estimated_input_tokens,
+            cost_usd=estimated_cost,
+            prompt_sha256=prompt_sha256,
+            chars=len(cleaned),
+        )
+        if production_scope is not None and not durable_recorded:
+            raise AgentTtsError("Production AI usage storage is unavailable.")
+    finally:
+        if production_scope is not None and durable_reserved and not durable_recorded:
+            try:
+                from .. import ai_budgets
+                ai_budgets.cancel_reservation(
+                    request_id, production_scope["workspace_id"],
+                )
+            except Exception:
+                pass
 
     _write_cache(key, audio)
     return {
@@ -862,10 +1023,13 @@ def synthesize(
     }
 
 
-def preview_speech(agent_id: str, *, profile_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def preview_speech(agent_id: str, *, profile_override: Optional[Dict[str, Any]] = None,
+                   scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     aid = normalize_agent_id(agent_id)
     phrase = PREVIEW_PHRASES.get(aid, PREVIEW_PHRASES["vitek"])
-    return synthesize(phrase, agent_id=aid, profile_override=profile_override)
+    return synthesize(
+        phrase, agent_id=aid, profile_override=profile_override, scope=scope,
+    )
 
 
 def speak_result_headers(result: Dict[str, Any]) -> Dict[str, str]:

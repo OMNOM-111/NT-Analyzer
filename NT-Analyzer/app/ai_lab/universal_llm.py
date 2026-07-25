@@ -66,6 +66,11 @@ def current_participation() -> List[Dict[str, Any]]:
     return list(steps) if isinstance(steps, list) else []
 
 
+def current_usage_context() -> Dict[str, Any]:
+    """Return a copy of the active attribution context for legacy adapters."""
+    return dict(_USAGE_CONTEXT.get() or {})
+
+
 def note_participation(step: Dict[str, Any]) -> None:
     """Append one non-LLM participant (domain agent handoff) to the turn chain."""
     steps = _PARTICIPATION_STEPS.get()
@@ -124,6 +129,75 @@ class ProviderResponseError(UniversalLLMError):
     def __init__(self, message: str, usage: Dict[str, Any]):
         super().__init__(message)
         self.usage = dict(usage or {})
+
+
+class _ProductionUsageStorageUnavailable(UniversalLLMError):
+    """Durable usage could not be written after an external provider call."""
+
+
+def _production_budget_scope() -> Optional[Dict[str, Any]]:
+    from .. import runtime_env
+    from ..production_storage import Scope
+
+    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+        return None
+    context = dict(_USAGE_CONTEXT.get() or {})
+    workspace_id = str(context.get("workspace_id") or "").strip()
+    try:
+        user_id = int(context.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    if not workspace_id or user_id <= 0:
+        raise BudgetExceeded("Production AI request requires a user and workspace scope.")
+    try:
+        scope = Scope.workspace_scope(workspace_id)
+    except ValueError as exc:
+        raise BudgetExceeded("Production AI request requires a valid workspace scope.") from exc
+    return {"workspace_id": scope.workspace_id, "user_id": user_id}
+
+
+def require_valid_production_scope() -> Optional[Dict[str, Any]]:
+    """Validate the active usage scope before a background caller invokes AI.
+
+    Development returns ``None``. Explicit Production returns the normalized
+    user/workspace pair or raises before provider traffic can begin.
+    """
+    return _production_budget_scope()
+
+
+def _record_production_usage(
+    request_id: str,
+    agent: Dict[str, Any],
+    *,
+    request_role: str,
+    purpose: str,
+    status: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    prompt_sha256: str,
+    scope: Optional[Dict[str, Any]],
+) -> bool:
+    if scope is None:
+        return True
+    from .. import ai_budgets
+
+    try:
+        result = ai_budgets.record_usage(
+            request_id, scope["workspace_id"], scope["user_id"],
+            str(agent.get("provider") or ""), str(agent.get("model") or ""),
+            str(request_role or agent.get("role") or "general"),
+            str(purpose or "agent_request"), status,
+            max(0, int(input_tokens)), max(0, int(output_tokens)),
+            max(0.0, float(cost_usd)), prompt_sha256,
+            document={
+                "agent_id": str(agent.get("id") or ""),
+                "endpoint_type": str(agent.get("endpoint_type") or ""),
+            },
+        )
+    except Exception:
+        return False
+    return bool(result.get("ok"))
 
 
 def _now() -> str:
@@ -712,17 +786,35 @@ def invoke_agent(
     estimate_info = estimate_request_cost(agent_id, clean_prompt, system_prompt=system_prompt, max_output_tokens=max_output)
     request_id = f"REQ-{uuid.uuid4().hex[:16].upper()}"
     started = time.time()
+    production_scope = _production_budget_scope()
+    prompt_sha256 = hashlib.sha256(
+        (system_prompt + "\n" + clean_prompt).encode("utf-8")
+    ).hexdigest()
+    cache_workspace_id = (
+        production_scope["workspace_id"]
+        if production_scope is not None
+        else str((_USAGE_CONTEXT.get() or {}).get("workspace_id") or "")
+    )
     cache_key = ""
     if resolved_type == "chat" and _response_cache_allowed(purpose, cache_mode):
         cache_key = response_cache.make_key(
             agent_id=agent_id, model=str(agent.get("model") or ""),
             system_prompt=system_prompt, prompt=clean_prompt,
             max_output_tokens=max_output,
+            workspace_id=cache_workspace_id,
         )
         cached_result = response_cache.get(cache_key)
         if cached_result:
-            saved_input = int(cached_result.get("source_input_tokens") or estimate_info["estimated_input_tokens"])
-            saved_output = int(cached_result.get("source_output_tokens") or 0)
+            saved_input = int(
+                cached_result.get("source_input_tokens")
+                or cached_result.get("input_tokens")
+                or estimate_info["estimated_input_tokens"]
+            )
+            saved_output = int(
+                cached_result.get("source_output_tokens")
+                or cached_result.get("output_tokens")
+                or 0
+            )
             actual_model = str(cached_result.get("actual_model") or agent.get("model") or "")
             row = {
                 "timestamp_utc": _now(), "request_id": request_id,
@@ -742,6 +834,12 @@ def invoke_agent(
                 "status": "success", "elapsed_sec": round(time.time() - started, 3), "error": None,
             }
             _record_usage(row)
+            if not _record_production_usage(
+                request_id, agent, request_role=request_role, purpose=purpose,
+                status="cache_hit", input_tokens=0, output_tokens=0, cost_usd=0.0,
+                prompt_sha256=prompt_sha256, scope=production_scope,
+            ):
+                raise BudgetExceeded("Production AI usage storage is unavailable.")
             return {
                 "ok": True, "status": "success", "request_id": request_id,
                 "agent_id": agent_id, "agent_name": agent["name"],
@@ -756,6 +854,31 @@ def invoke_agent(
             }
     estimate = float(estimate_info["estimated_max_cost_usd"])
     reservation_id = _reserve(agent, estimate, allow_disabled=allow_disabled)
+    durable_reserved = False
+    if production_scope is not None:
+        from .. import ai_budgets
+
+        try:
+            durable_reservation = ai_budgets.reserve(
+                request_id, production_scope["workspace_id"], production_scope["user_id"],
+                str(agent.get("provider") or ""), str(agent.get("model") or ""),
+                str(request_role or agent.get("role") or "general"), estimate,
+                prompt_sha256,
+            )
+        except Exception:
+            durable_reservation = {"ok": False, "code": "storage_unavailable"}
+        if not durable_reservation.get("ok"):
+            _release(reservation_id)
+            recorded = _record_production_usage(
+                request_id, agent, request_role=request_role, purpose=purpose,
+                status="blocked", input_tokens=0, output_tokens=0, cost_usd=0.0,
+                prompt_sha256=prompt_sha256, scope=production_scope,
+            )
+            code = str(durable_reservation.get("code") or "storage_unavailable")
+            if not recorded:
+                code = "storage_unavailable"
+            raise BudgetExceeded("Production AI budget denied: " + code)
+        durable_reserved = True
     with _BUDGET_LOCK:
         _RESERVATIONS[reservation_id].update({
             "request_id": request_id,
@@ -770,6 +893,8 @@ def invoke_agent(
         })
     api_key = ""
     usage: Dict[str, Any] = {}
+    durable_usage_recorded = False
+    provider_attempted = False
     try:
         api_key = agent_registry.get_api_key(agent_id)
         # Stream only when a caller explicitly wants live reasoning/content
@@ -781,6 +906,7 @@ def invoke_agent(
             and resolved_type == "chat"
             and not _uses_responses_api(_endpoint(agent))
         )
+        provider_attempted = True
         if agent.get("provider") == "gemini":
             response_text, usage = _gemini(agent, api_key, clean_prompt, system_prompt, max_output, timeout)
         elif want_stream:
@@ -830,6 +956,14 @@ def invoke_agent(
             "elapsed_sec": round(time.time() - started, 3), "error": None,
         }
         _record_usage(row)
+        durable_usage_recorded = _record_production_usage(
+            request_id, agent, request_role=request_role, purpose=purpose,
+            status="success", input_tokens=input_tokens, output_tokens=output_tokens,
+            cost_usd=row["cost_usd"], prompt_sha256=prompt_sha256,
+            scope=production_scope,
+        )
+        if not durable_usage_recorded:
+            raise _ProductionUsageStorageUnavailable()
         if cache_key:
             response_cache.set(cache_key, {
                 "response": response_text, "actual_model": actual_model,
@@ -857,10 +991,15 @@ def invoke_agent(
             "pricing_basis": row["pricing_basis"], "elapsed_sec": row["elapsed_sec"],
             "application_cache_hit": False,
         }
+    except _ProductionUsageStorageUnavailable:
+        raise UniversalLLMError("Production AI usage storage is unavailable.") from None
     except (UniversalLLMError, agent_registry.AgentRegistryError) as exc:
         error = _safe_error(exc, api_key)
         failure_usage = getattr(exc, "usage", {}) if isinstance(exc, ProviderResponseError) else {}
-        input_tokens = int(failure_usage.get("input_tokens") or 0)
+        input_tokens = int(
+            failure_usage.get("input_tokens")
+            or (estimate_info["estimated_input_tokens"] if provider_attempted else 0)
+        )
         cached_tokens = int(failure_usage.get("cached_input_tokens") or 0)
         output_tokens = int(failure_usage.get("output_tokens") or 0)
         failure_cost = _cost(agent, input_tokens, output_tokens, cached_tokens)
@@ -882,9 +1021,25 @@ def invoke_agent(
             "elapsed_sec": round(time.time() - started, 3), "error": error,
         }
         _record_usage(row)
+        durable_usage_recorded = _record_production_usage(
+            request_id, agent, request_role=request_role, purpose=purpose,
+            status="error", input_tokens=input_tokens, output_tokens=output_tokens,
+            cost_usd=row["cost_usd"], prompt_sha256=prompt_sha256,
+            scope=production_scope,
+        )
+        if production_scope is not None and not durable_usage_recorded:
+            error = "Production AI usage storage is unavailable."
         raise UniversalLLMError(error) from None
     finally:
         _release(reservation_id)
+        if production_scope is not None and durable_reserved and not durable_usage_recorded:
+            try:
+                from .. import ai_budgets
+                ai_budgets.cancel_reservation(
+                    request_id, production_scope["workspace_id"],
+                )
+            except Exception:
+                pass
 
 
 def test_connection(agent_id: str, prompt: str = "") -> Dict[str, Any]:

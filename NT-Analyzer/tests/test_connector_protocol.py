@@ -152,6 +152,23 @@ def _http_json(base: str, path: str, body: dict, *, token: str = ""):
         return response.status, dict(response.headers), json.loads(response.read())
 
 
+def _market_data_payload(connector_sequence: int, source_sequence: int = 1) -> dict:
+    return {
+        "connector_sequence": connector_sequence,
+        "source_sequence": source_sequence,
+        "bars": [{
+            "timestamp": "2026-07-22T12:00:00Z",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 1000,
+            "exact_contract": "MNQ 09-26",
+            "timeframe": "1m",
+        }],
+    }
+
+
 def test_enrollment_stays_pending_until_valid_signed_hello(connector_store) -> None:
     workspace = connector_store[42]
     private, _, started, pending = _enroll(workspace["workspace_id"])
@@ -251,12 +268,44 @@ def test_contract_schema_and_production_ui_states_are_versioned() -> None:
     assert schema["$defs"]["hello"]["properties"]["protocol_version"]["const"] == "1.0"
     assert schema["$defs"]["challenge"]["additionalProperties"] is False
     assert schema["$defs"]["result"]["additionalProperties"] is False
+    assert schema["$defs"]["marketData"]["properties"]["bars"]["maxItems"] == 64
     ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(
         encoding="utf-8",
     )
     assert "data-nt-revoke" in ui
     assert "ожидает подписи" in ui
     assert "connectorMode" in ui
+
+
+def test_csharp_connector_exposes_bounded_market_data_upload_hook() -> None:
+    root = Path(__file__).resolve().parent.parent
+    client = (root / "bridge" / "src" / "Connector" / "ConnectorClient.cs").read_text(
+        encoding="utf-8",
+    )
+    addon = (root / "bridge" / "src" / "BridgeAddOn.cs").read_text(encoding="utf-8")
+    state = (root / "bridge" / "src" / "Connector" / "ConnectorStateStore.cs").read_text(
+        encoding="utf-8",
+    )
+    exporter = (root / "bridge" / "src" / "Connector" / "ProductionMarketDataExporter.cs").read_text(
+        encoding="utf-8",
+    )
+    config = (root / "bridge" / "src" / "Config" / "BridgeConfig.cs").read_text(
+        encoding="utf-8",
+    )
+    example = json.loads((
+        root / "bridge" / "NTAnalyzerBridge.config.example.json"
+    ).read_text(encoding="utf-8"))
+    assert "QueueMarketDataBatch" in client
+    assert '"api/connector/v1/market-data"' in client
+    assert "MaxMarketDataBarsPerBatch = 64" in client
+    assert "market_data_source_sequence" in state
+    assert "QueueProductionMarketData" in addon
+    assert "new ProductionMarketDataExporter" in addon
+    assert "MaxBarsPerBatch = 64" in exporter
+    assert "Thread(SenderLoop)" in exporter
+    assert "MarketDataIpcClient" not in exporter
+    assert "market_data_streams" in config
+    assert example["production_connector"]["market_data_streams"] == []
 
 
 def test_forged_workspace_and_fingerprint_are_rejected(connector_store) -> None:
@@ -417,6 +466,58 @@ def test_heartbeat_masks_accounts_and_rejects_instance_change(connector_store) -
     assert mismatch.value.code == "instance_mismatch"
 
 
+def test_market_data_is_session_bound_idempotent_and_persists_bars(connector_store) -> None:
+    from app import market_data_ingestion
+
+    market_data_ingestion.reset_for_tests()
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    token = welcome["session_token"]
+
+    first = connector_protocol.ingest_market_data(token, _market_data_payload(1))
+    assert first["ok"] is True
+    assert first["items"] == 1
+    snapshot = market_data_ingestion.latest_snapshot(
+        workspace["workspace_id"], pending["installation_id"], "MNQ 09-26", "1m",
+    )
+    assert snapshot["document"]["bars"][0]["close"] == 100.5
+
+    replay = connector_protocol.ingest_market_data(token, _market_data_payload(2))
+    assert replay["idempotent_replay"] is True
+    changed = _market_data_payload(3)
+    changed["bars"][0]["close"] = 100.25
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as conflict:
+        connector_protocol.ingest_market_data(token, changed)
+    assert conflict.value.code == "source_sequence_conflict"
+
+
+def test_market_data_requires_telemetry_capability(connector_store) -> None:
+    workspace = connector_store[42]
+    private, jwk = _device_key()
+    started = connector_protocol.start_enrollment(
+        42,
+        workspace_id=workspace["workspace_id"],
+        machine_label="No telemetry",
+        capabilities=["accounts_read"],
+    )
+    pending = connector_protocol.enroll_device({
+        "code": started["code"],
+        "public_key": jwk,
+        "connector_version": "0.2.0-test",
+        "nt_version": "8.1.6.3",
+        "machine_label": "No telemetry",
+        "ninja_instance_id": "nt_no_telemetry_01",
+    })
+    welcome = connector_protocol.signed_hello(_hello(
+        private, pending, overrides={"ninja_instance_id": "nt_no_telemetry_01"},
+    ))
+
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as denied:
+        connector_protocol.ingest_market_data(welcome["session_token"], _market_data_payload(1))
+    assert denied.value.code == "market_data_capability_denied"
+
+
 def test_blocked_connector_version_cannot_queue_unsafe_commands(
     connector_store, monkeypatch, tmp_path: Path,
 ) -> None:
@@ -525,6 +626,15 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
         assert hello_headers["Cache-Control"] == "no-store"
         token = welcome["session_token"]
 
+        _, market_headers, market = _http_json(
+            base,
+            "/api/connector/v1/market-data",
+            _market_data_payload(1),
+            token=token,
+        )
+        assert market["items"] == 1
+        assert market_headers["Cache-Control"] == "no-store"
+
         queued = connector_protocol.queue_command(
             42,
             workspace_id=workspace["workspace_id"],
@@ -537,7 +647,7 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
         _, _, polled = _http_json(
             base,
             "/api/connector/v1/commands/poll",
-            {"connector_sequence": 1, "wait_seconds": 1},
+            {"connector_sequence": 2, "wait_seconds": 1},
             token=token,
         )
         assert polled["commands"][0]["command_id"] == queued["command"]["command_id"]
@@ -548,7 +658,7 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
                 "command_id": queued["command"]["command_id"],
                 "idempotency_key": "http-command-0001",
                 "status": "completed",
-                "connector_sequence": 2,
+                "connector_sequence": 3,
                 "safe_result": {"message": "pong"},
                 "error_class": "",
             },
@@ -560,7 +670,7 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
             _http_json(
                 base,
                 "/api/connector/v1/heartbeat",
-                {"connector_sequence": 3, "ninja_instance_id": "nt_http_instance_01"},
+                {"connector_sequence": 4, "ninja_instance_id": "nt_http_instance_01"},
             )
         assert missing_token.value.code == 401
         assert json.loads(missing_token.value.read())["code"] == "invalid_session"

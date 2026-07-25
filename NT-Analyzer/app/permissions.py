@@ -62,6 +62,7 @@ CAPABILITY_NAV: Dict[str, tuple] = {
 # Nav sections not tied to any subscription capability. Locked for non-owners
 # unless the owner grants them explicitly per user (feature_overrides).
 _OWNER_ONLY_NAV = ("topstep",)
+_STRICT_OWNER_ONLY_NAV = ("agents",)
 
 # Shown on a locked section in Free Preview.
 UNLOCK_MESSAGE = (
@@ -229,11 +230,13 @@ def resolve(user: Optional[Dict[str, Any]],
         if nid == "overview":
             continue
         enabled = any(caps.get(cid) for cid, sections in CAPABILITY_NAV.items() if nid in sections)
-        if nid in _OWNER_ONLY_NAV:
+        if nid in _OWNER_ONLY_NAV or nid in _STRICT_OWNER_ONLY_NAV:
             enabled = False
         section_override = nav_ov.get(nid)
         if isinstance(section_override, bool):
             enabled = section_override
+        if nid in _STRICT_OWNER_ONLY_NAV:
+            enabled = False
         nav[nid] = enabled
 
     if ux_mode == "beginner":

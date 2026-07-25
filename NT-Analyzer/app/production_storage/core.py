@@ -70,6 +70,10 @@ class Scope:
     def global_service_scope(cls) -> "Scope":
         return cls(global_service=True)
 
+    @classmethod
+    def workspace_scope(cls, workspace_id: str) -> "Scope":
+        return cls(workspace_id=str(workspace_id))
+
 
 def _psycopg() -> Any:
     try:

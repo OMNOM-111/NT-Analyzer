@@ -123,3 +123,14 @@ def assert_production_storage_safe() -> None:
     # orchestration can observe it; every authoritative request still fails
     # closed because repositories never fall back to local files.
     get_client(production=True)
+
+
+def signing_key_readiness() -> Dict[str, Any]:
+    """Check whether the Production signing key is configured.
+
+    The actual key value is never included in the readiness payload.
+    """
+    key = str(os.environ.get("STRATFORGE_SIGNING_KEY") or "").strip()
+    if len(key) >= 32:
+        return {"ok": True, "code": "ok"}
+    return {"ok": False, "code": "signing_key_missing_or_short"}

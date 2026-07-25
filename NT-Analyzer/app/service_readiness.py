@@ -13,6 +13,7 @@ PRODUCTION_COMPONENTS = (
     "object_storage",
     "signing_key",
     "connector_control",
+    "telegram_consumer",
 )
 
 

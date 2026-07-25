@@ -121,6 +121,85 @@ def test_provider_error_falls_back_quietly(isolated_voices, monkeypatch):
     assert "provider_error" in str(result.get("reason") or "")
 
 
+def test_production_tts_is_budgeted_and_cache_is_workspace_scoped(
+    isolated_voices, monkeypatch,
+):
+    from app import ai_budgets, runtime_env
+
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    provider_calls = []
+    reservations = []
+    records = []
+
+    def fake_speech(**kwargs: Any) -> bytes:
+        provider_calls.append(kwargs["text"])
+        return b"ID3" + (b"tenant-safe-audio-" * 8)
+
+    monkeypatch.setattr(agent_tts, "_openai_speech", fake_speech)
+    monkeypatch.setattr(
+        ai_budgets,
+        "reserve",
+        lambda *args, **kwargs: reservations.append((args, kwargs))
+        or {"ok": True, "reservation_id": "air_test"},
+    )
+    monkeypatch.setattr(
+        ai_budgets,
+        "record_usage",
+        lambda *args, **kwargs: records.append((args, kwargs)) or {"ok": True},
+    )
+
+    scope_a = {"user_id": 42, "workspace_id": "ws_personal_ALPHA1234"}
+    scope_b = {"user_id": 84, "workspace_id": "ws_personal_BETA12345"}
+    first = agent_tts.synthesize("Одинаковый текст.", agent_id="marina", scope=scope_a)
+    second = agent_tts.synthesize("Одинаковый текст.", agent_id="marina", scope=scope_a)
+    third = agent_tts.synthesize("Одинаковый текст.", agent_id="marina", scope=scope_b)
+
+    assert [first["cached"], second["cached"], third["cached"]] == [False, True, False]
+    assert len(provider_calls) == 2
+    assert [row[0][1] for row in reservations] == [
+        "ws_personal_ALPHA1234", "ws_personal_BETA12345",
+    ]
+    assert [row[0][7] for row in records] == ["success", "cache_hit", "success"]
+    assert [row[0][1] for row in records] == [
+        "ws_personal_ALPHA1234", "ws_personal_ALPHA1234", "ws_personal_BETA12345",
+    ]
+
+
+def test_production_tts_budget_denial_blocks_before_provider(
+    isolated_voices, monkeypatch,
+):
+    from app import ai_budgets, runtime_env
+
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    provider_calls = []
+    records = []
+    monkeypatch.setattr(
+        ai_budgets, "reserve",
+        lambda *_args, **_kwargs: {"ok": False, "code": "daily_budget_exceeded"},
+    )
+    monkeypatch.setattr(
+        ai_budgets, "record_usage",
+        lambda *args, **kwargs: records.append((args, kwargs)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        agent_tts, "_openai_speech",
+        lambda **_kwargs: provider_calls.append(True) or b"unreachable",
+    )
+
+    with pytest.raises(agent_tts.AgentTtsError, match="daily_budget_exceeded"):
+        agent_tts.synthesize(
+            "Бюджет должен сработать до сети.",
+            scope={"user_id": 42, "workspace_id": "ws_personal_ALPHA1234"},
+        )
+
+    assert provider_calls == []
+    assert records[-1][0][7] == "blocked"
+
+
 def test_profiles_contain_no_secrets(isolated_voices):
     agent_tts.set_voice_profile("nikita", {
         "voice": "ash",

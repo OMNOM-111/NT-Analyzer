@@ -303,6 +303,7 @@
     supportCommandAck: (clientId, commandId, status, error) => send('/api/support/commands/ack', 'POST', { client_id: clientId, command_id: commandId, status: status || 'done', error: error || '' }),
     supportScreenshotRespond: (body) => send('/api/support/screenshots/respond', 'POST', body || {}),
     ownerSupportMonitoring: (o) => getJSON('/api/owner/support/monitoring', o),
+    ownerOperations: (o) => getJSON('/api/owner/operations', o),
     ownerSupportUser: (id, o) => getJSON('/api/owner/support/users/' + encodeURIComponent(id), o),
     ownerSupportScreenshotRequest: (id, note, targetClientId) => send('/api/owner/support/users/' + encodeURIComponent(id) + '/screenshot', 'POST', { note: note || '', target_client_id: targetClientId || '' }),
     ownerSupportReload: (id, body) => send('/api/owner/support/users/' + encodeURIComponent(id) + '/reload', 'POST', body || {}),

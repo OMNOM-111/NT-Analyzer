@@ -30,7 +30,7 @@ fingerprint и SHA-256 hash короткоживущего session token.
    `POST /api/connector/v1/hello`. Только после проверки key fingerprint,
    workspace binding, одноразового nonce и signature состояние становится
    `online`.
-5. Сервер выдаёт opaque session token на 15 минут. Heartbeat/poll/result требуют
+5. Сервер выдаёт opaque session token на 15 минут. Heartbeat/market-data/poll/result требуют
    bearer token и монотонный `connector_sequence`. Reconnect создаёт новую
    подписанную сессию и supersede предыдущую.
 
@@ -59,6 +59,7 @@ release gate; default — telemetry/accounts read, paper добавляется 
 | `/api/connector/v1/challenge` | device signature | новый one-time server nonce |
 | `/api/connector/v1/hello` | device signature + nonce | short-lived session |
 | `/api/connector/v1/heartbeat` | bearer + sequence | last-seen и masked account labels |
+| `/api/connector/v1/market-data` | bearer + telemetry capability + sequence | bounded OHLCV batch, связанный с authenticated installation/workspace |
 | `/api/connector/v1/commands/poll` | bearer + sequence | bounded HTTPS long-poll |
 | `/api/connector/v1/commands/result` | bearer + sequence | idempotent ack/result |
 
@@ -70,6 +71,28 @@ CSRF и NinjaTrader dual-auth для write operations.
 `docs/schemas/connector-protocol-v1.schema.json`. Unknown top-level message
 fields отклоняются; расширения допускаются только внутри versioned
 `extensions` object.
+
+`market-data` принимает от 1 до 64 OHLCV bars и не принимает workspace,
+installation или account identity из payload. Сервер получает эти значения
+только из bearer session, проверяет telemetry capability, `connector_sequence`,
+монотонный `source_sequence`, контракт/timeframe, UTC timestamp и OHLC range.
+Повтор того же source sequence с тем же batch является idempotent; с другим
+body отклоняется. Snapshot хранит только этот ограниченный batch и fan-out
+идёт лишь в активные subscriptions той же workspace.
+
+## Production bar source
+
+Connector reads production bar streams only from the explicit
+`production_connector.market_data_streams` allowlist in the protected Windows
+Connector configuration. Each entry has `exact_contract` and `timeframe`; an
+empty list disables the exporter. The exporter captures a rolling maximum of
+64 bars per configured stream, moves JSON construction and Connector queueing
+to its sender thread, and uploads through the signed Connector session.
+
+It never reads `market_data_requests.json`, starts `MarketDataIpcClient`, or
+uses local IPC in `production_connector` mode. Dynamic server-driven stream
+selection is not part of Connector protocol v1 and must be introduced as a
+separately authenticated protocol change.
 
 ## Command safety
 

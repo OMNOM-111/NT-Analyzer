@@ -22,6 +22,7 @@
     "state_dir": "%LOCALAPPDATA%\\StratForge\\Connector",
     "heartbeat_interval_ms": 15000,
     "command_poll_seconds": 15,
+    "market_data_streams": [],
     "release_channel": "stable",
     "update_policy": "safe_restart"
   },

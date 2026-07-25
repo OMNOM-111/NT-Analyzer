@@ -892,6 +892,7 @@ def enqueue(
 def enqueue_ai_message(
     message: str, *, request_id: str, conversation_id: str, agent: str,
     scope: Dict[str, Any], mirror_to_telegram: bool = True,
+    source: str = "app",
     timeout_sec: int = 600,
 ) -> Dict[str, Any]:
     user_id = int(scope.get("user_id") or 0)
@@ -904,7 +905,7 @@ def enqueue_ai_message(
         "request_id": request_key,
         "conversation_id": str(conversation_id or "default")[:160],
         "agent": str(agent or "")[:80],
-        "source": "app",
+        "source": str(source or "app")[:40],
         "mirror_to_telegram": bool(mirror_to_telegram),
         "scope": dict(scope or {}),
     }
@@ -1037,6 +1038,161 @@ def run_once(worker_class: str, *, worker_id: str = "") -> Optional[Dict[str, An
         lease_thread.join(timeout=1.0)
 
 
+class BackgroundAICoordinator:
+    """Own the singleton legacy schedulers from the Production worker role.
+
+    These schedulers still coordinate durable/local research state, but they
+    must never run in every API process.  A PostgreSQL lease makes one worker
+    instance authoritative and stops provider-facing threads if the lease is
+    lost.
+    """
+
+    LEASE_NAME = "background-ai-coordinator"
+
+    def __init__(self, client: PostgresClient) -> None:
+        self.client = client
+        host = os.uname().nodename if hasattr(os, "uname") else "host"
+        self.owner_id = f"{host}:{os.getpid()}:background-ai"[:160]
+        self.lease_token = ""
+        self.stop_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.emitter = None
+        self.active = False
+
+    def _acquire(self, *, ttl_sec: int = 30) -> bool:
+        token = str(uuid.uuid4())
+        with self.client.transaction(Scope.global_service_scope()) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO sf_service_leases(
+                  lease_name,owner_id,lease_token,leased_until
+                ) VALUES(%s,%s,%s::uuid,
+                         clock_timestamp()+(%s*interval '1 second'))
+                ON CONFLICT(lease_name) DO UPDATE SET
+                  owner_id=EXCLUDED.owner_id,lease_token=EXCLUDED.lease_token,
+                  leased_until=EXCLUDED.leased_until,
+                  heartbeat_at=clock_timestamp()
+                WHERE sf_service_leases.leased_until < clock_timestamp()
+                   OR sf_service_leases.owner_id=EXCLUDED.owner_id
+                RETURNING lease_token
+                """,
+                (self.LEASE_NAME, self.owner_id, token, int(ttl_sec)),
+            ).fetchone()
+        if not row:
+            return False
+        self.lease_token = str(row["lease_token"])
+        return True
+
+    def _renew(self, *, ttl_sec: int = 30) -> bool:
+        with self.client.transaction(Scope.global_service_scope()) as conn:
+            row = conn.execute(
+                """
+                UPDATE sf_service_leases SET
+                  leased_until=clock_timestamp()+(%s*interval '1 second'),
+                  heartbeat_at=clock_timestamp()
+                WHERE lease_name=%s AND owner_id=%s
+                  AND lease_token=%s::uuid
+                  AND leased_until >= clock_timestamp()
+                RETURNING lease_name
+                """,
+                (
+                    int(ttl_sec), self.LEASE_NAME, self.owner_id,
+                    self.lease_token,
+                ),
+            ).fetchone()
+        return bool(row)
+
+    def _release(self) -> None:
+        if not self.lease_token:
+            return
+        with self.client.transaction(Scope.global_service_scope()) as conn:
+            conn.execute(
+                """DELETE FROM sf_service_leases
+                   WHERE lease_name=%s AND owner_id=%s
+                     AND lease_token=%s::uuid""",
+                (self.LEASE_NAME, self.owner_id, self.lease_token),
+            )
+
+    @staticmethod
+    def _stop_components() -> None:
+        from . import news_refresh, vitek
+        from .ai_lab import chief_agent, stale_sweep
+
+        chief_agent.stop_background_worker()
+        vitek.stop_background_worker()
+        news_refresh.stop_background_refresher()
+        stale_sweep.stop_background_sweeper()
+
+    def _lease_loop(self) -> None:
+        from . import observability
+
+        while not self.stop_event.wait(10.0):
+            try:
+                if self._renew(ttl_sec=30):
+                    continue
+            except StorageError:
+                pass
+            observability.event(
+                "background_ai", "coordinator_lease_lost",
+                severity="critical",
+                payload={"owner": "worker", "action": "provider_threads_stopped"},
+            )
+            self.active = False
+            self.stop_event.set()
+            self._stop_components()
+            return
+
+    def start(self) -> bool:
+        if self.active:
+            return True
+        if not self._acquire(ttl_sec=30):
+            return False
+        from . import news_refresh, observability, vitek
+        from .ai_lab import chief_agent, stale_sweep
+
+        try:
+            stale_sweep.start_background_sweeper(interval_sec=1800, ttl_hours=6.0)
+            news_refresh.start_background_refresher()
+            chief_agent.start_background_worker(interval_sec=30)
+            vitek.start_background_worker(interval_sec=1)
+            self.stop_event.clear()
+            self.active = True
+            self.emitter = observability.HeartbeatEmitter(
+                "background_ai", interval_sec=10,
+                details=lambda: {"lease": "active", "scoped_ai": True},
+            )
+            self.emitter.start()
+            self.thread = threading.Thread(
+                target=self._lease_loop,
+                name="sf-background-ai-lease", daemon=True,
+            )
+            self.thread.start()
+            return True
+        except Exception:
+            self._stop_components()
+            try:
+                self._release()
+            except StorageError:
+                pass
+            self.lease_token = ""
+            self.active = False
+            raise
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self._stop_components()
+        if self.thread and self.thread is not threading.current_thread():
+            self.thread.join(timeout=12.0)
+        if self.emitter:
+            self.emitter.stop()
+        try:
+            self._release()
+        except StorageError:
+            pass
+        self.lease_token = ""
+        self.active = False
+
+
 class WorkerService:
     def __init__(self, classes: Iterable[str], *, poll_ms: int = 250) -> None:
         selected = list(dict.fromkeys(str(value).strip() for value in classes if str(value).strip()))
@@ -1046,6 +1202,7 @@ class WorkerService:
         self.poll_sec = max(0.05, min(10.0, int(poll_ms or 250) / 1000.0))
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
+        self.background_coordinator: Optional[BackgroundAICoordinator] = None
 
     def _loop(self, worker_class: str, slot: int) -> None:
         worker_id = f"{os.uname().nodename if hasattr(os, 'uname') else 'host'}:{os.getpid()}:{worker_class}:{slot}"
@@ -1061,6 +1218,17 @@ class WorkerService:
 
     def start(self) -> int:
         configs = get_queue().class_configs()
+        from . import runtime_env
+
+        if (
+            "maintenance" in self.classes
+            and runtime_env.is_production()
+            and runtime_env.environment_explicit()
+        ):
+            self.background_coordinator = BackgroundAICoordinator(
+                get_queue().client,
+            )
+            self.background_coordinator.start()
         for worker_class in self.classes:
             config = configs[worker_class]
             requested_name = "STRATFORGE_WORKER_CONCURRENCY_" + worker_class.upper()
@@ -1077,6 +1245,8 @@ class WorkerService:
 
     def stop(self, *, grace_sec: int = 60) -> bool:
         self.stop_event.set()
+        if self.background_coordinator:
+            self.background_coordinator.stop()
         deadline = time.monotonic() + max(1, min(600, int(grace_sec or 60)))
         for thread in self.threads:
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
@@ -1092,7 +1262,39 @@ def readiness_status() -> Dict[str, Any]:
         metrics = queue.metrics()
         if int(metrics["leases"]["expired"]) > 0:
             return {"ok": False, "code": "worker_lease_expired"}
-        return {"ok": True, "code": "ok"}
+        with queue.client.transaction(
+            Scope.global_service_scope(), read_only=True,
+        ) as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT ON (service_role)
+                         service_role,status,heartbeat_at,
+                         EXTRACT(EPOCH FROM (
+                           clock_timestamp()-heartbeat_at
+                         )) AS age_sec
+                   FROM sf_service_heartbeats
+                   WHERE service_role IN ('worker','background_ai')
+                   ORDER BY service_role,heartbeat_at DESC"""
+            ).fetchall()
+        services = {
+            str(row["service_role"]): {
+                "status": str(row["status"]),
+                "age_sec": max(0.0, float(row.get("age_sec") or 0.0)),
+            }
+            for row in rows
+        }
+        for role in ("worker", "background_ai"):
+            state = services.get(role)
+            if state is None:
+                return {
+                    "ok": False, "code": f"{role}_heartbeat_missing",
+                    "services": services,
+                }
+            if state["status"] != "healthy" or state["age_sec"] > 45.0:
+                return {
+                    "ok": False, "code": f"{role}_heartbeat_stale",
+                    "services": services,
+                }
+        return {"ok": True, "code": "ok", "services": services}
     except StorageError:
         return {"ok": False, "code": "queue_unavailable"}
     except Exception:
@@ -1104,8 +1306,8 @@ def status() -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "backend": "postgresql",
         "authoritative": True,
-        "process_alive": False,
-        "supervisor_alive": False,
+        "process_alive": bool(ready.get("ok")),
+        "supervisor_alive": bool(ready.get("ok")),
         "max_concurrency": sum(
             row["max_concurrency"] for row in DEFAULT_WORKER_CLASSES.values()
         ),
@@ -1128,7 +1330,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    from . import runtime_env, storage_router
+    from . import observability, runtime_env, storage_router
 
     args = _parser().parse_args(argv)
     config = runtime_env.assert_startup_safe()
@@ -1149,10 +1351,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             signal.signal(stop_signal, request_stop)
         except (AttributeError, OSError, ValueError):
             pass
+    emitter = observability.HeartbeatEmitter(
+        "worker", interval_sec=10,
+        details=lambda: get_queue().metrics(),
+    )
     count = service.start()
+    emitter.start()
     print(f"[stratforge-worker] started threads={count} classes={','.join(classes)}")
-    while not stopped.wait(1.0):
-        pass
+    try:
+        while not stopped.wait(1.0):
+            pass
+    finally:
+        emitter.stop()
     graceful = service.stop(grace_sec=args.shutdown_grace_sec)
     print(f"[stratforge-worker] stopped graceful={str(graceful).lower()}")
     return 0 if graceful else 3

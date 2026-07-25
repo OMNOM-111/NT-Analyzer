@@ -64,6 +64,15 @@ def worker_store():
                     _jsonb({"workspace_id": workspace_id, "owner_user_id": user_id}),
                 ),
             )
+            conn.execute(
+                """INSERT INTO sf_workspace_memberships(
+                     workspace_id,user_id,role,document
+                   ) VALUES(%s,%s,'owner',%s)""",
+                (
+                    workspace_id, user_id,
+                    _jsonb({"workspace_id": workspace_id, "user_id": user_id, "role": "owner"}),
+                ),
+            )
     client = PostgresClient(APP_URL, production=False)
     queue = production_workers.ProductionQueue(client)
     queue.ensure_defaults()
@@ -102,7 +111,7 @@ def _enqueue(store, index: int, key: str, **kwargs):
 
 def test_worker_migration_and_class_contract(worker_store) -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["applied_versions"] == [1, 2]
+    assert plan["applied_versions"] == [1, 2, 3, 4]
     assert plan["pending"] == []
     configs = worker_store["queue"].class_configs()
     assert set(configs) == set(production_workers.DEFAULT_WORKER_CLASSES)

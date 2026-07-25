@@ -52,6 +52,18 @@ def test_plan_capabilities_map_to_nav() -> None:
     assert perm["capabilities"]["live_commands"] is False
 
 
+def test_ai_provider_control_plane_is_owner_only() -> None:
+    pro = permissions.resolve(
+        {"is_owner": False, "ux_mode": "professional", "feature_overrides": {"agents": True}},
+        _entitlement("pro"),
+    )
+    owner = permissions.resolve({"is_owner": True})
+
+    assert pro["capabilities"]["ai_pro_models"] is True
+    assert pro["nav"]["agents"] is False
+    assert owner["nav"]["agents"] is True
+
+
 def test_user_permission_override_grants_capability() -> None:
     user = {"is_owner": False, "ux_mode": "professional", "permission_overrides": {"ai_lab": True}}
     perm = permissions.resolve(user, _entitlement("basic"))

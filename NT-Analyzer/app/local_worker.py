@@ -93,6 +93,7 @@ def enqueue_ai_message(
     agent: str,
     scope: Dict[str, Any],
     mirror_to_telegram: bool = True,
+    source: str = "app",
     timeout_sec: int = 600,
 ) -> Dict[str, Any]:
     """Idempotently queue one workspace-bound interactive AI turn."""
@@ -115,7 +116,7 @@ def enqueue_ai_message(
         "request_id": rid,
         "conversation_id": str(conversation_id or "default")[:160],
         "agent": str(agent or "")[:80],
-        "source": "app",
+        "source": str(source or "app")[:40],
         "mirror_to_telegram": bool(mirror_to_telegram),
         "scope": clean_scope,
     }
@@ -144,8 +145,16 @@ def enqueue_chart_batch(requests: list[Dict[str, Any]], *, scope: Dict[str, Any]
     workspace_id = str(clean_scope.get("workspace_id") or "").strip()
     if not user_id or not workspace_id:
         raise ValueError("chart worker job requires user_id and workspace_id")
-    from . import market_data
-    source_signature = market_data.snapshot_source_signature()
+    from . import market_data, runtime_env
+    production_mode = bool(
+        runtime_env.is_production() and runtime_env.environment_explicit()
+    )
+    if production_mode:
+        from . import market_data_ingestion
+        remote_index = market_data_ingestion.workspace_snapshot_index(workspace_id)
+        source_signature = str(remote_index.get("source_signature") or "remote-empty")
+    else:
+        source_signature = market_data.snapshot_source_signature()
     identity = json.dumps(
         {"workspace_id": workspace_id, "requests": requests,
          "source_signature": source_signature},
@@ -231,7 +240,7 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
 
         result = chief_agent.handle_message(
             str(payload.get("message") or ""),
-            source="app",
+            source=str(payload.get("source") or "app")[:40],
             mirror_to_telegram=bool(payload.get("mirror_to_telegram", True)),
             conversation_id=str(payload.get("conversation_id") or "default"),
             agent=str(payload.get("agent") or ""),
@@ -247,12 +256,20 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
                 or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
             raise RuntimeError("chart worker scope does not match durable job ownership")
         rows = payload.get("requests") if isinstance(payload.get("requests"), list) else []
-        from . import market_data, runtime
+        from . import market_data, market_data_ingestion, runtime, runtime_env
         from . import server as server_mod
 
         def calculate() -> Dict[str, Any]:
-            snapshot_index = market_data.read_snapshot_index()
-            alerts_index = market_data.read_alerts_index()
+            production_mode = bool(
+                runtime_env.is_production() and runtime_env.environment_explicit()
+            )
+            workspace_id = str(job.get("workspace_id") or "")
+            snapshot_index = None if production_mode else market_data.read_snapshot_index()
+            alerts_index = None if production_mode else market_data.read_alerts_index()
+            connector_snapshot_index = (
+                market_data_ingestion.workspace_snapshot_index(workspace_id)
+                if production_mode else None
+            )
             series = []
             for row in rows[:64]:
                 if cancelled():
@@ -269,7 +286,8 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
                     snapshot_index=snapshot_index,
                     alerts_index=alerts_index,
                     max_points=int(row.get("max_points") or 0),
-                    workspace_id=str(job.get("workspace_id") or ""),
+                    workspace_id=workspace_id,
+                    connector_snapshot_index=connector_snapshot_index,
                 ))
             return {"series": series}
 

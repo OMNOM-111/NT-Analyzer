@@ -33,6 +33,9 @@ namespace NTAnalyzerBridge.Connector
 
         [JsonProperty("reported_command_ids")]
         public List<string> ReportedCommandIds { get; set; } = new List<string>();
+
+        [JsonProperty("market_data_source_sequence")]
+        public long MarketDataSourceSequence { get; set; }
     }
 
     internal static class ConnectorStateStore

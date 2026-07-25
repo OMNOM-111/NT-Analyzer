@@ -40,6 +40,9 @@ namespace NTAnalyzerBridge.Connector
     {
         public const string ClientVersion = "0.2.0";
         private static readonly object AppendLock = new object();
+        private const int MaxQueuedMarketDataBatches = 32;
+        private const int MaxMarketDataBarsPerBatch = 64;
+        private const int MaxMarketDataBatchBytes = 128 * 1024;
 
         private readonly BridgeConfig _cfg;
         private readonly ProductionConnectorConfig _connector;
@@ -50,6 +53,9 @@ namespace NTAnalyzerBridge.Connector
             new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<string> _queuedCommandIds =
             new HashSet<string>(StringComparer.Ordinal);
+        private readonly object _marketDataGate = new object();
+        private readonly Queue<PendingMarketDataBatch> _marketDataQueue =
+            new Queue<PendingMarketDataBatch>();
         private readonly CancellationTokenSource _cancel = new CancellationTokenSource();
         private static readonly byte[] BootstrapEntropy =
             Encoding.UTF8.GetBytes("StratForge.Connector.Bootstrap.v1");
@@ -63,6 +69,12 @@ namespace NTAnalyzerBridge.Connector
         private string _updateState = "unknown";
         private string _updateReason = "unknown";
         private DateTime _nextUpdaterCheckUtc = DateTime.MinValue;
+
+        private sealed class PendingMarketDataBatch
+        {
+            public JArray Bars;
+            public long SourceSequence;
+        }
 
         public ConnectorClient(BridgeConfig cfg)
         {
@@ -119,6 +131,37 @@ namespace NTAnalyzerBridge.Connector
             BridgeLog.Info("ConnectorClient: stopped");
         }
 
+        /// <summary>
+        /// Queue a normalized, bounded OHLCV batch for asynchronous Connector upload.
+        /// This method performs no HTTP or DPAPI work and is safe for a read-only
+        /// NinjaTrader data producer to call from a callback thread.
+        /// </summary>
+        public bool QueueMarketDataBatch(JArray bars)
+        {
+            if (bars == null || bars.Count < 1 || bars.Count > MaxMarketDataBarsPerBatch)
+                return false;
+            JArray copy = new JArray();
+            foreach (JToken token in bars)
+            {
+                JObject row = token as JObject;
+                if (row == null) return false;
+                copy.Add(row.DeepClone());
+            }
+            string serialized = copy.ToString(Formatting.None);
+            if (Encoding.UTF8.GetByteCount(serialized) > MaxMarketDataBatchBytes)
+                return false;
+            lock (_marketDataGate)
+            {
+                if (_marketDataQueue.Count >= MaxQueuedMarketDataBatches)
+                {
+                    _marketDataQueue.Dequeue();
+                    BridgeLog.Warn("ConnectorClient: dropped oldest queued market-data batch");
+                }
+                _marketDataQueue.Enqueue(new PendingMarketDataBatch { Bars = copy });
+            }
+            return true;
+        }
+
         private void Run()
         {
             int backoffSeconds = 2;
@@ -139,6 +182,7 @@ namespace NTAnalyzerBridge.Connector
                     {
                         EnsureSession();
                         SendHeartbeat();
+                        FlushMarketData();
                         PollCommands();
                         ReportRuntimeResults();
                         backoffSeconds = 2;
@@ -348,6 +392,57 @@ namespace NTAnalyzerBridge.Connector
             {
                 ConnectorUpdaterLauncher.TryStart(_cfg);
                 ScheduleNextUpdaterCheck();
+            }
+        }
+
+        private void FlushMarketData()
+        {
+            if (!_allowedCapabilities.Contains("telemetry")) return;
+            PendingMarketDataBatch batch;
+            lock (_marketDataGate)
+            {
+                if (_marketDataQueue.Count == 0) return;
+                batch = _marketDataQueue.Peek();
+            }
+            if (batch.SourceSequence < 1)
+            {
+                long next = _state == null ? 1 : _state.MarketDataSourceSequence + 1;
+                if (next < 1) throw new InvalidOperationException("market-data source sequence overflow");
+                batch.SourceSequence = next;
+                _state.MarketDataSourceSequence = next;
+                ConnectorStateStore.Save(_stateDir, _state);
+            }
+            try
+            {
+                PostJson("api/connector/v1/market-data", new JObject
+                {
+                    ["connector_sequence"] = NextSequence(),
+                    ["source_sequence"] = batch.SourceSequence,
+                    ["bars"] = batch.Bars.DeepClone(),
+                }, _sessionToken);
+            }
+            catch (ConnectorHttpException ex)
+            {
+                if (ex.ErrorCode == "invalid_market_data" ||
+                    ex.ErrorCode == "invalid_market_data_batch" ||
+                    ex.ErrorCode == "invalid_market_data_bar" ||
+                    ex.ErrorCode == "source_sequence_conflict" ||
+                    ex.ErrorCode == "source_sequence_replay")
+                {
+                    lock (_marketDataGate)
+                    {
+                        if (_marketDataQueue.Count > 0 && Object.ReferenceEquals(_marketDataQueue.Peek(), batch))
+                            _marketDataQueue.Dequeue();
+                    }
+                    BridgeLog.Warn("ConnectorClient: dropped rejected market-data batch (" + ex.ErrorCode + ")");
+                    return;
+                }
+                throw;
+            }
+            lock (_marketDataGate)
+            {
+                if (_marketDataQueue.Count > 0 && Object.ReferenceEquals(_marketDataQueue.Peek(), batch))
+                    _marketDataQueue.Dequeue();
             }
         }
 

@@ -106,8 +106,13 @@ def test_notify_writes_in_app_inbox(monkeypatch, tmp_path) -> None:
     )
     sent = []
 
-    def fake_send(text, *, silent=True, thread_id=None):
-        sent.append({"text": text, "silent": silent, "thread_id": thread_id})
+    def fake_send(text, *, silent=True, thread_id=None, dedupe_key=""):
+        sent.append({
+            "text": text,
+            "silent": silent,
+            "thread_id": thread_id,
+            "dedupe_key": dedupe_key,
+        })
         return True
 
     monkeypatch.setattr(telegram_service, "_send_raw", fake_send)
@@ -122,6 +127,7 @@ def test_notify_writes_in_app_inbox(monkeypatch, tmp_path) -> None:
     )
     assert ok is True
     assert sent
+    assert sent[0]["dedupe_key"] == "msg-test-1"
 
     listed = in_app_notifications.list_notices(unread_only=True)
     assert listed["unread_count"] == 1

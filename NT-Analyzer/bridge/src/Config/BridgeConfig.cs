@@ -1,11 +1,21 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace NTAnalyzerBridge.Config
 {
+    internal sealed class ProductionMarketDataStreamConfig
+    {
+        [JsonProperty("exact_contract")]
+        public string ExactContract { get; set; } = "";
+
+        [JsonProperty("timeframe")]
+        public string Timeframe { get; set; } = "";
+    }
+
     internal sealed class ProductionConnectorConfig
     {
         [JsonProperty("enabled")]
@@ -34,6 +44,9 @@ namespace NTAnalyzerBridge.Config
 
         [JsonProperty("command_poll_seconds")]
         public int CommandPollSeconds { get; set; } = 15;
+
+        [JsonProperty("market_data_streams")]
+        public List<ProductionMarketDataStreamConfig> MarketDataStreams { get; set; }
 
         [JsonProperty("release_channel")]
         public string ReleaseChannel { get; set; } = "stable";
@@ -206,6 +219,31 @@ namespace NTAnalyzerBridge.Config
                         error = "config: production_connector.command_poll_seconds must be 1..20";
                         return null;
                     }
+                    List<ProductionMarketDataStreamConfig> streams =
+                        cfg.ProductionConnector.MarketDataStreams ??
+                        new List<ProductionMarketDataStreamConfig>();
+                    if (streams.Count > 16)
+                    {
+                        error = "config: production_connector.market_data_streams exceeds 16 streams";
+                        return null;
+                    }
+                    var streamKeys = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (ProductionMarketDataStreamConfig stream in streams)
+                    {
+                        string contract;
+                        string timeframe;
+                        if (stream == null ||
+                            !TryNormalizeMarketDataContract(stream.ExactContract, out contract) ||
+                            !TryNormalizeMarketDataTimeframe(stream.Timeframe, out timeframe) ||
+                            !streamKeys.Add(contract + "|" + timeframe))
+                        {
+                            error = "config: invalid or duplicate production market-data stream";
+                            return null;
+                        }
+                        stream.ExactContract = contract;
+                        stream.Timeframe = timeframe;
+                    }
+                    cfg.ProductionConnector.MarketDataStreams = streams;
                     if (cfg.SchemaVersion >= 3 &&
                         !string.IsNullOrWhiteSpace(cfg.ProductionConnector.EnrollmentCode))
                     {
@@ -261,6 +299,45 @@ namespace NTAnalyzerBridge.Config
             }
         }
 
+        private static bool TryNormalizeMarketDataContract(string value, out string normalized)
+        {
+            normalized = (value ?? "").Trim().ToUpperInvariant();
+            if (normalized.Length < 1 || normalized.Length > 40) return false;
+            foreach (char character in normalized)
+            {
+                bool allowed = (character >= 'A' && character <= 'Z') ||
+                    (character >= '0' && character <= '9') || character == '.' ||
+                    character == '_' || character == '-' || character == ' ';
+                if (!allowed) return false;
+            }
+            return true;
+        }
+
+        private static bool TryNormalizeMarketDataTimeframe(string value, out string normalized)
+        {
+            string raw = (value ?? "").Trim().ToLowerInvariant();
+            normalized = "";
+            if (raw == "1d")
+            {
+                normalized = "1D";
+                return true;
+            }
+            if (raw.Length < 2) return false;
+            char unit = raw[raw.Length - 1];
+            int amount;
+            if (!int.TryParse(
+                    raw.Substring(0, raw.Length - 1),
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out amount))
+                return false;
+            if ((unit != 'm' || amount < 1 || amount > 240) &&
+                (unit != 'h' || amount < 1 || amount > 24))
+                return false;
+            normalized = amount.ToString(CultureInfo.InvariantCulture) + unit;
+            return true;
+        }
+
         private string ResolveProjectPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -293,13 +370,38 @@ namespace NTAnalyzerBridge.Config
                 "enabled", "server_origin", "protocol_version", "connector_version",
                 "enrollment_code", "enrollment_credential_ref", "state_dir",
                 "heartbeat_interval_ms", "command_poll_seconds", "release_channel",
-                "update_policy", "extensions",
+                "update_policy", "market_data_streams", "extensions",
             };
             foreach (JProperty property in connector.Properties())
             {
                 if (!fields.Contains(property.Name))
                     throw new JsonSerializationException(
                         "unknown production_connector field: " + property.Name);
+            }
+            JToken rawStreams;
+            if (!connector.TryGetValue("market_data_streams", out rawStreams)) return;
+            JArray streams = rawStreams as JArray;
+            if (streams == null)
+                throw new JsonSerializationException(
+                    "production_connector.market_data_streams must be an array");
+            HashSet<string> streamFields = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "exact_contract", "timeframe",
+            };
+            foreach (JToken token in streams)
+            {
+                JObject stream = token as JObject;
+                if (stream == null || stream["exact_contract"] == null || stream["timeframe"] == null ||
+                    stream["exact_contract"].Type != JTokenType.String ||
+                    stream["timeframe"].Type != JTokenType.String)
+                    throw new JsonSerializationException(
+                        "production market-data stream requires string exact_contract and timeframe");
+                foreach (JProperty property in stream.Properties())
+                {
+                    if (!streamFields.Contains(property.Name))
+                        throw new JsonSerializationException(
+                            "unknown production market-data stream field: " + property.Name);
+                }
             }
         }
 

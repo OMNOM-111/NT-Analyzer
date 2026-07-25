@@ -107,6 +107,20 @@ class Probe:
                         _jsonb({"workspace_id": workspace_id, "load_test": True}),
                     ),
                 )
+                conn.execute(
+                    """INSERT INTO sf_workspace_memberships(
+                         workspace_id,user_id,role,document
+                       ) VALUES(%s,%s,'owner',%s)""",
+                    (
+                        workspace_id, user_id,
+                        _jsonb({
+                            "workspace_id": workspace_id,
+                            "user_id": user_id,
+                            "role": "owner",
+                            "load_test": True,
+                        }),
+                    ),
+                )
 
     def reset_jobs(self) -> None:
         with self.psycopg.connect(self.admin_url, autocommit=True) as conn:

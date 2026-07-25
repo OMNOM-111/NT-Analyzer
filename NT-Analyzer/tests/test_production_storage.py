@@ -55,6 +55,12 @@ def clean_database(tmp_path: Path, monkeypatch):
               sf_workspace_memberships, sf_active_workspaces, sf_workspace_ledgers,
               sf_connections, sf_entitlements, sf_connector_sessions,
               sf_commands, sf_connector_installations, sf_jobs, sf_audit_events,
+                            sf_worker_classes, sf_workspace_queue_quotas, sf_queue_workspace_state,
+                            sf_job_attempts, sf_rate_limit_buckets, sf_idempotency_keys,
+                            sf_service_leases, sf_service_heartbeats, sf_telegram_updates,
+                            sf_telegram_outbox, sf_telegram_bot_state, sf_ai_workspace_budgets,
+                            sf_ai_reservations, sf_ai_usage_events, sf_market_data_subscriptions,
+                            sf_market_data_snapshots, sf_market_data_ingest_batches, sf_operational_events,
               sf_storage_quotas, sf_artifacts, sf_migration_runs, sf_workspaces,
               sf_users RESTART IDENTITY CASCADE
             """
@@ -115,8 +121,8 @@ def _seed(client: PostgresClient) -> dict[str, str]:
 
 def test_migration_is_applied_and_checksum_stable() -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["latest_version"] == 2
-    assert plan["applied_versions"] == [1, 2]
+    assert plan["latest_version"] == 4
+    assert plan["applied_versions"] == [1, 2, 3, 4]
     assert plan["pending"] == []
     assert len(plan["migration_set_sha256"]) == 64
 

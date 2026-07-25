@@ -121,6 +121,7 @@ def start_background_sweeper(interval_sec: int = 1800, ttl_hours: float = 6.0) -
     global _BG_THREAD
     if _BG_THREAD is not None and _BG_THREAD.is_alive():
         return
+    _BG_STOP.clear()
 
     def _loop() -> None:
         # Run once immediately.
@@ -136,3 +137,14 @@ def start_background_sweeper(interval_sec: int = 1800, ttl_hours: float = 6.0) -
 
     _BG_THREAD = threading.Thread(target=_loop, name="ai-lab-stale-sweeper", daemon=True)
     _BG_THREAD.start()
+
+
+def stop_background_sweeper() -> None:
+    """Stop the supervised sweeper without waiting for its full interval."""
+    global _BG_THREAD
+    _BG_STOP.set()
+    current = _BG_THREAD
+    if current and current is not threading.current_thread():
+        current.join(timeout=5.0)
+    if current is None or not current.is_alive():
+        _BG_THREAD = None

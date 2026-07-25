@@ -51,6 +51,7 @@ if __package__ is None or __package__ == "":
     from app import integrations  # type: ignore[no-redef]
     from app import telegram_service  # type: ignore[no-redef]
     from app import telegram_remote  # type: ignore[no-redef]
+    from app import production_telegram  # type: ignore[no-redef]
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
@@ -112,6 +113,10 @@ if __package__ is None or __package__ == "":
     from app import runtime_env  # type: ignore[no-redef]
     from app import edge_security  # type: ignore[no-redef]
     from app import service_readiness  # type: ignore[no-redef]
+    from app import observability  # type: ignore[no-redef]
+    from app import ai_budgets  # type: ignore[no-redef]
+    from app import audit_events  # type: ignore[no-redef]
+    from app import market_data_ingestion  # type: ignore[no-redef]
     from app import connector_protocol  # type: ignore[no-redef]
     from app import connector_releases  # type: ignore[no-redef]
     from app import google_auth  # type: ignore[no-redef]
@@ -126,6 +131,7 @@ else:
     from . import integrations
     from . import telegram_service
     from . import telegram_remote
+    from . import production_telegram
     from . import tunnel_manager
     from . import account_auth
     from . import subscriptions
@@ -187,6 +193,10 @@ else:
     from . import runtime_env
     from . import edge_security
     from . import service_readiness
+    from . import observability
+    from . import ai_budgets
+    from . import audit_events
+    from . import market_data_ingestion
     from . import connector_protocol
     from . import connector_releases
     from . import google_auth
@@ -280,6 +290,26 @@ def _is_self_service_post(path: str) -> bool:
     )
 
 
+_OWNER_ONLY_API_PREFIXES = (
+    "/api/telegram/",
+    "/api/auth/users",
+    "/api/owner/",
+    "/api/worker/",
+    "/api/vitek/",
+    "/api/notifications",
+    # Provider credentials, global routing policy and aggregate AI usage are
+    # operator control-plane data.  A tenant entitlement may use AI through
+    # scoped application routes, but must not inspect or mutate this registry.
+    "/api/ai-agents",
+    "/api/ai-lab/cloud-agents",
+)
+
+
+def _is_owner_only_api_path(path: str) -> bool:
+    value = str(path or "")
+    return value == "/api/server/restart" or value.startswith(_OWNER_ONLY_API_PREFIXES)
+
+
 _BILLING_PROMO_POSTS = {
     "/api/billing/promo/preview",
     "/api/billing/promo/redeem",
@@ -355,6 +385,51 @@ def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
                 source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
             except ValueError:
                 pass
+    # Remote Connector data has its own authenticated source clock and must
+    # not be invalidated by the API host's local NinjaTrader process state.
+    # Re-evaluate its bounded freshness window on every cache read so a payload
+    # cannot remain LIVE after the Windows VM stops sending bars.
+    if source and source.get("kind") == "connector_remote":
+        now = datetime.now(timezone.utc)
+        stale_after = None
+        try:
+            stale_after = datetime.fromisoformat(
+                str(source.get("stale_after_utc") or "").replace("Z", "+00:00")
+            )
+            if stale_after.tzinfo is None:
+                stale_after = None
+        except ValueError:
+            stale_after = None
+        fresh = bool(stale_after and now <= stale_after.astimezone(timezone.utc))
+        freshness = dict(payload.get("freshness") or {})
+        freshness.update({
+            "fresh": fresh,
+            "stale": not fresh,
+            "offline": not fresh,
+            "live_eligible": fresh,
+        })
+        payload["freshness"] = freshness
+        source.update({
+            "fresh": fresh,
+            "live_eligible": fresh,
+            "runtime_state": "LIVE" if fresh else "OFFLINE",
+        })
+        if not fresh:
+            return market_data_failover.mark_offline_snapshot(
+                payload,
+                reason="connector_remote_snapshot_expired",
+                last_source="ninjatrader_connector",
+                backup_providers_available=0,
+            )
+        payload.update({
+            "live": True,
+            "status": "live",
+            "market_data_available": True,
+            "strategy_blocked": False,
+            "execution_blocked": False,
+            "price_marker_live": True,
+        })
+        return payload
     # Never serve a cached LIVE payload while NinjaTrader is offline and no
     # credentialed live backup is active.
     try:
@@ -402,7 +477,8 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          snapshot_index: Optional[Dict[str, Any]] = None,
                          alerts_index: Optional[Dict[str, Any]] = None,
                          max_points: int = 0,
-                         workspace_id: str = "") -> Dict[str, Any]:
+                         workspace_id: str = "",
+                         connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     with market_data_baseline.StageTimer(
         "backend.bars_payload_ms",
         instrument=str(instrument or ""),
@@ -411,6 +487,7 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         return _market_bars_payload_impl(
             instrument, timeframe, limit, range_days, from_date, to_date,
             register, snapshot_index, alerts_index, max_points, workspace_id,
+            connector_snapshot_index,
         )
 
 
@@ -420,10 +497,21 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                               snapshot_index: Optional[Dict[str, Any]] = None,
                               alerts_index: Optional[Dict[str, Any]] = None,
                               max_points: int = 0,
-                              workspace_id: str = "") -> Dict[str, Any]:
+                              workspace_id: str = "",
+                              connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
-    if register:
+    production_mode = bool(runtime_env.is_production() and runtime_env.environment_explicit())
+    remote_bars = None
+    if workspace_id:
+        remote_bars = market_data_ingestion.workspace_series(
+            str(workspace_id), resolved_instrument, str(timeframe or "5m"), limit,
+            snapshot_index=connector_snapshot_index,
+        )
+    # Local request files are Development transport only.  Production charts
+    # consume authenticated Connector HTTPS snapshots and never use localhost
+    # IPC/shared request files as an implicit cross-host control plane.
+    if register and not production_mode:
         market_data.register_request(resolved_instrument, timeframe, limit, range_days, from_date, to_date)
     try:
         max_points = max(0, min(20000, int(max_points or 0)))
@@ -438,65 +526,99 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         str(from_date or "")[:10],
         str(to_date or "")[:10],
         max_points,
-        market_data.snapshot_source_signature(),
-        market_data.alerts_source_signature(),
+        "" if production_mode else market_data.snapshot_source_signature(),
+        "" if production_mode else market_data.alerts_source_signature(),
+        str((connector_snapshot_index or {}).get("source_signature") or ""),
+        str(((remote_bars or {}).get("source") or {}).get("source_signature") or ""),
+        int(((remote_bars or {}).get("source") or {}).get("source_sequence") or 0),
     )
     cached = _market_payload_cache_get(cache_key)
     if cached is not None:
         market_data_baseline.mark("backend.bars_payload_cache_hit")
         return cached
-    if snapshot_index is not None:
-        runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
-    else:
-        with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
-            runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
-    heartbeat = ops_runtime.read_heartbeat()
-    primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
-    with market_data_baseline.StageTimer("backend.failover_ms"):
-        unified = market_data_failover.apply_failover(
-            runtime_bars, resolved_instrument, timeframe, limit,
-            primary_healthy=primary_healthy,
+    if remote_bars:
+        primary_healthy = bool(
+            remote_bars.get("live")
+            and ((remote_bars.get("freshness") or {}).get("fresh"))
         )
-    if unified and (unified.get("bars") or unified.get("status") == "offline"):
-        out = unified
-        # Prefer richer historical artifact when offline payload has no bars yet.
-        if not out.get("bars") and not primary_healthy:
-            hist = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-            if hist.get("bars"):
+        out = remote_bars if primary_healthy else market_data_failover.mark_offline_snapshot(
+            remote_bars,
+            reason="connector_remote_snapshot_stale",
+            last_source="ninjatrader_connector",
+            backup_providers_available=0,
+        )
+    elif production_mode:
+        primary_healthy = False
+        out = market_data_failover.mark_offline_snapshot(
+            {
+                "instrument": resolved_instrument,
+                "bars": [],
+                "total": 0,
+                "requested_timeframe": str(timeframe or "5m"),
+                "matched_timeframe": str(timeframe or "5m"),
+                "source": {
+                    "kind": "connector_remote",
+                    "provider": "ninjatrader",
+                    "transport": "connector_https",
+                },
+            },
+            reason="no_workspace_connector_snapshot",
+            last_source="none",
+            backup_providers_available=0,
+        )
+    else:
+        if snapshot_index is not None:
+            runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
+        else:
+            with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
+                runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
+        heartbeat = ops_runtime.read_heartbeat()
+        primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+        with market_data_baseline.StageTimer("backend.failover_ms"):
+            unified = market_data_failover.apply_failover(
+                runtime_bars, resolved_instrument, timeframe, limit,
+                primary_healthy=primary_healthy,
+            )
+        if unified and (unified.get("bars") or unified.get("status") == "offline"):
+            out = unified
+            # Prefer richer historical artifact when offline payload has no bars yet.
+            if not out.get("bars") and not primary_healthy:
+                hist = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+                if hist.get("bars"):
+                    out = market_data_failover.mark_offline_snapshot(
+                        hist,
+                        reason="ninjatrader_offline_historical_cache",
+                        last_source="historical_artifact",
+                        backup_providers_available=0,
+                    )
+        else:
+            out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+            out["status"] = "historical_fallback" if out.get("bars") else (
+                (runtime_bars or {}).get("status") or "waiting")
+            out["bridge"] = {
+                "status": (runtime_bars or {}).get("status") or "subscription_requested",
+                "error": (runtime_bars or {}).get("error") or "",
+            }
+            if not out.get("bars"):
+                detail = out["bridge"]["error"]
+                out["note"] = detail or (
+                    "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
+                    "актуальность контракта и установленную версию Bridge.")
+            out["gap_recovery"] = {
+                "attempted": True,
+                "provider_available": False,
+                "mode": "historical_artifact" if out.get("bars") else "unavailable",
+                "recovered_bars": 0,
+                "unresolved_gaps": 0,
+                "primary_healthy": primary_healthy,
+            }
+            if not primary_healthy:
                 out = market_data_failover.mark_offline_snapshot(
-                    hist,
-                    reason="ninjatrader_offline_historical_cache",
-                    last_source="historical_artifact",
+                    out,
+                    reason="ninjatrader_offline_historical_fallback",
+                    last_source="historical_artifact" if out.get("bars") else "none",
                     backup_providers_available=0,
                 )
-    else:
-        out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-        out["status"] = "historical_fallback" if out.get("bars") else (
-            (runtime_bars or {}).get("status") or "waiting")
-        out["bridge"] = {
-            "status": (runtime_bars or {}).get("status") or "subscription_requested",
-            "error": (runtime_bars or {}).get("error") or "",
-        }
-        if not out.get("bars"):
-            detail = out["bridge"]["error"]
-            out["note"] = detail or (
-                "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
-                "актуальность контракта и установленную версию Bridge.")
-        out["gap_recovery"] = {
-            "attempted": True,
-            "provider_available": False,
-            "mode": "historical_artifact" if out.get("bars") else "unavailable",
-            "recovered_bars": 0,
-            "unresolved_gaps": 0,
-            "primary_healthy": primary_healthy,
-        }
-        if not primary_healthy:
-            out = market_data_failover.mark_offline_snapshot(
-                out,
-                reason="ninjatrader_offline_historical_fallback",
-                last_source="historical_artifact" if out.get("bars") else "none",
-                backup_providers_available=0,
-            )
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     try:
@@ -520,6 +642,9 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     if alerts_index is not None:
         symbol = " ".join(str(instrument or "").strip().upper().split())
         out["alerts"] = list(alerts_index.get(symbol, []))
+    elif production_mode:
+        # Development price-alert JSON is not a Production tenant store.
+        out["alerts"] = []
     else:
         out["alerts"] = market_data.list_alerts(
             instrument=instrument, include_inactive=True)["alerts"]
@@ -547,7 +672,11 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             sharing_scope="workspace" if workspace_id else "global",
             workspace_id=workspace_id,
             timeframe=str(timeframe or "5m"),
-            source_epoch=int((out.get("source") or {}).get("source_epoch") or 0),
+            source_epoch=int(
+                (out.get("source") or {}).get("source_epoch")
+                or (out.get("source") or {}).get("source_sequence")
+                or 0
+            ),
         )
         plat = data_platform.get_platform()
         cached = plat.cache.get(md_cache_key)
@@ -558,14 +687,16 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                 {"bars_len": len(out.get("bars") or []), "ts": out.get("updated_at_utc")},
                 ttl_sec=30,
             )
-        snap = market_data_subscriptions.get_subscription_registry().snapshot()
-        existing = next(
-            (
-                row for row in (snap.get("subscriptions") or [])
-                if row.get("exact_contract") == resolved_instrument
-            ),
-            None,
-        )
+        existing = None
+        if not production_mode:
+            snap = market_data_subscriptions.get_subscription_registry().snapshot()
+            existing = next(
+                (
+                    row for row in (snap.get("subscriptions") or [])
+                    if row.get("exact_contract") == resolved_instrument
+                ),
+                None,
+            )
         age = None
         try:
             age = float((out.get("freshness") or {}).get("age_sec"))
@@ -583,7 +714,11 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             transport="http",
             ws_state="n/a",
             subscription_id=str((existing or {}).get("subscription_id") or ""),
-            source_epoch=int((out.get("source") or {}).get("source_epoch") or 0),
+            source_epoch=int(
+                (out.get("source") or {}).get("source_epoch")
+                or (out.get("source") or {}).get("source_sequence")
+                or 0
+            ),
             subscriber_count=int((existing or {}).get("refcount") or 0),
             last_event_age_sec=age,
             raw_provider_symbol=resolved_instrument,
@@ -594,7 +729,10 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         # Cache healthy LIVE primary; also cache explicit OFFLINE snapshots so a
         # 36-chart grid does not recompute the same offline payload 36×.
         if out.get("status") == "offline" or (
-            primary_healthy and out.get("live") and (out.get("source") or {}).get("kind") == "ninjatrader_runtime"
+            primary_healthy
+            and out.get("live")
+            and (out.get("source") or {}).get("kind")
+            in {"ninjatrader_runtime", "connector_remote"}
         ):
             _market_payload_cache_put(cache_key, out)
     return out
@@ -892,10 +1030,26 @@ CONTENT_TYPES = {
 class Handler(BaseHTTPRequestHandler):
     server_version = "NTAnalyzer/0.1"
 
+    def send_response(self, code: int, message: Optional[str] = None) -> None:
+        self._response_status = int(code)
+        super().send_response(code, message)
+
     # silence default access log
     def log_message(self, fmt: str, *args: Any) -> None:
         if os.environ.get("NTA_BACKEND_VERBOSE"):
             super().log_message(fmt, *args)
+
+    def _begin_request_observation(self) -> None:
+        self._request_started_mono = time.monotonic()
+        self._response_status = 500
+
+    def _finish_request_observation(self, method: str) -> None:
+        started = float(getattr(self, "_request_started_mono", time.monotonic()))
+        observability.record_http(
+            method, str(getattr(self, "path", "/")),
+            int(getattr(self, "_response_status", 500)),
+            (time.monotonic() - started) * 1000.0,
+        )
 
     # ------------- helpers -------------------------------------------------
 
@@ -1399,10 +1553,11 @@ class Handler(BaseHTTPRequestHandler):
                 if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
-                if (path.startswith("/api/auth/users") or path.startswith("/api/owner/")
-                        or path.startswith("/api/worker/") or path.startswith("/api/vitek/")
-                        or path.startswith("/api/notifications")) and not self._remote_context["is_owner"]:
-                    raise telegram_remote.RemoteAccessError("Управление пользователями разрешено только владельцу.", 403, self._remote_context)
+                if _is_owner_only_api_path(path) and not self._remote_context["is_owner"]:
+                    raise telegram_remote.RemoteAccessError(
+                        "Это действие разрешено только владельцу.", 403,
+                        self._remote_context,
+                    )
                 try:
                     self._remote_context["_request_method"] = method
                     permissions.enforce(path, self._remote_context)
@@ -1445,11 +1600,7 @@ class Handler(BaseHTTPRequestHandler):
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
-        owner_only = (path.startswith("/api/telegram/") or path.startswith("/api/auth/users")
-                      or path.startswith("/api/owner/") or path.startswith("/api/worker/")
-                      or path.startswith("/api/vitek/") or path.startswith("/api/notifications")
-                      or path == "/api/server/restart")
-        if owner_only and not context.get("is_owner"):
+        if _is_owner_only_api_path(path) and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
         try:
@@ -1497,6 +1648,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/connector/v1/challenge",
             "/api/connector/v1/hello",
             "/api/connector/v1/heartbeat",
+            "/api/connector/v1/market-data",
             "/api/connector/v1/commands/poll",
             "/api/connector/v1/commands/result",
         }
@@ -1524,6 +1676,10 @@ class Handler(BaseHTTPRequestHandler):
                 out = connector_protocol.signed_hello(body)
             elif path.endswith("/heartbeat"):
                 out = connector_protocol.heartbeat(self._connector_bearer_token(), body)
+            elif path.endswith("/market-data"):
+                out = connector_protocol.ingest_market_data(
+                    self._connector_bearer_token(), body,
+                )
             elif path.endswith("/commands/poll"):
                 out = connector_protocol.poll_commands(
                     self._connector_bearer_token(),
@@ -1588,7 +1744,23 @@ class Handler(BaseHTTPRequestHandler):
         display = " ".join(
             str(user.get(key) or "").strip() for key in ("first_name", "last_name")
         ).strip() or str(user.get("username") or "")
-        if not context.get("user_id") or not active.get("workspace_id"):
+        if not context.get("user_id"):
+            if (
+                context.get("is_owner")
+                and str(context.get("source") or "") == "local"
+                and not (
+                    runtime_env.is_production()
+                    and runtime_env.environment_explicit()
+                )
+            ):
+                # A Development desktop may exist before Telegram owner
+                # bootstrap. Keep its historical unscoped local path, while
+                # explicit Production remains fail-closed.
+                return {}
+            raise ai_chief_agent.ChiefAgentError(
+                "Для AI-чата нужна активная рабочая область пользователя."
+            )
+        if not active.get("workspace_id"):
             raise ai_chief_agent.ChiefAgentError("Для AI-чата нужна активная рабочая область пользователя.")
         workspace_context = context.get("workspace_context") if isinstance(context.get("workspace_context"), dict) else {
             "active_workspace": active,
@@ -2427,6 +2599,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self) -> None:  # noqa: N802
+        self._begin_request_observation()
         self._response_started = False
         self._remote_attempt = False
         self._remote_audited = False
@@ -2439,8 +2612,11 @@ class Handler(BaseHTTPRequestHandler):
             self._route_get()
         except Exception:
             self._handle_unexpected("GET")
+        finally:
+            self._finish_request_observation("GET")
 
     def do_POST(self) -> None:  # noqa: N802
+        self._begin_request_observation()
         self._response_started = False
         self._remote_attempt = False
         self._remote_audited = False
@@ -2453,8 +2629,11 @@ class Handler(BaseHTTPRequestHandler):
             self._route_post()
         except Exception:
             self._handle_unexpected("POST")
+        finally:
+            self._finish_request_observation("POST")
 
     def do_DELETE(self) -> None:  # noqa: N802
+        self._begin_request_observation()
         self._response_started = False
         self._remote_attempt = False
         self._remote_audited = False
@@ -2467,6 +2646,8 @@ class Handler(BaseHTTPRequestHandler):
             self._route_delete()
         except Exception:
             self._handle_unexpected("DELETE")
+        finally:
+            self._finish_request_observation("DELETE")
 
     def _route_get(self) -> None:
         url = urllib.parse.urlparse(self.path)
@@ -3014,7 +3195,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/telegram/status":
-            self._json(HTTPStatus.OK, telegram_service.status())
+            status = telegram_service.status()
+            if runtime_env.is_production() and runtime_env.environment_explicit():
+                try:
+                    status["production_queue"] = production_telegram.get_queue().status()
+                except production_telegram.StorageError as exc:
+                    status["production_queue"] = {"ok": False, "code": exc.code}
+            self._json(HTTPStatus.OK, status)
             return
 
         if path == "/api/practice/account":
@@ -3322,6 +3509,36 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, out)
             except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
                 self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/owner/operations":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
+                return
+            payload = observability.dashboard()
+            payload["worker"] = (
+                production_workers.status()
+                if runtime_env.is_production()
+                and runtime_env.environment_explicit()
+                else local_worker.status()
+            )
+            try:
+                payload["telegram"] = (
+                    production_telegram.get_queue().status()
+                    if runtime_env.is_production() and runtime_env.environment_explicit()
+                    else telegram_service.status()
+                )
+            except production_telegram.StorageError as exc:
+                payload["telegram"] = {"ok": False, "code": exc.code}
+            try:
+                payload["connector"] = connector_protocol.list_installations(
+                    context.get("user_id"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
+            except connector_protocol.ConnectorProtocolError as exc:
+                payload["connector"] = {"ok": False, "code": exc.code}
+            self._json(HTTPStatus.OK, payload)
             return
 
         if path.startswith("/api/bridge/commands/"):
@@ -3933,9 +4150,10 @@ class Handler(BaseHTTPRequestHandler):
                     int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
                 if effective_points > 10000:
-                    market_data.register_request(
-                        instrument, timeframe, limit, range_days, from_date, to_date,
-                    )
+                    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+                        market_data.register_request(
+                            instrument, timeframe, limit, range_days, from_date, to_date,
+                        )
                     queued = self._run_large_chart_batch([{
                         "instrument": instrument, "timeframe": timeframe,
                         "limit": limit, "range_days": range_days,
@@ -3954,7 +4172,8 @@ class Handler(BaseHTTPRequestHandler):
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
                 return True
-            market_data.evaluate_alerts()
+            if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+                market_data.evaluate_alerts()
             self._json(HTTPStatus.OK, payload)
             return True
 
@@ -4210,12 +4429,15 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path == "/api/ai-lab/current":
-            self._json(HTTPStatus.OK, {"current": ai_runner.current()})
+            self._json(
+                HTTPStatus.OK,
+                {"current": ai_runner.current(scope=self._ai_conversation_scope())},
+            )
             return True
 
         if path == "/api/ai-lab/run/status":
             try:
-                status = ai_runner.run_status()
+                status = ai_runner.run_status(scope=self._ai_conversation_scope())
                 self._json(HTTPStatus.OK, {"ok": True, "run": status})
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run status failed: {e}")
@@ -4223,7 +4445,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in {"/api/ai-lab/chief-agent", "/api/ai-lab/orchestrator"}:
             try:
-                self._json(HTTPStatus.OK, ai_chief_agent.status())
+                self._json(
+                    HTTPStatus.OK,
+                    ai_chief_agent.status(scope=self._ai_conversation_scope()),
+                )
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"orchestrator status failed: {e}")
             return True
@@ -4724,12 +4949,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # Same workspace gate as chat history — TTS is part of the
                 # Orchestrator surface, not a public anonymous endpoint.
-                self._ai_conversation_scope()
+                scope = self._ai_conversation_scope()
                 result = ai_agent_tts.synthesize(
                     str(body.get("text") or body.get("message") or ""),
                     agent_id=str(body.get("agent_id") or body.get("agent") or "vitek"),
                     message_id=str(body.get("message_id") or ""),
                     profile_override=body.get("voice") if isinstance(body.get("voice"), dict) else None,
+                    scope=scope,
                 )
                 self._respond_tts(result)
             except ai_chief_agent.ChiefAgentError as e:
@@ -4777,7 +5003,11 @@ class Handler(BaseHTTPRequestHandler):
                         override = body.get("voice") if isinstance(body.get("voice"), dict) else body
                         if not isinstance(override, dict):
                             override = None
-                        result = ai_agent_tts.preview_speech(agent_id, profile_override=override)
+                        result = ai_agent_tts.preview_speech(
+                            agent_id,
+                            profile_override=override,
+                            scope=self._ai_conversation_scope(),
+                        )
                         self._respond_tts(result)
                     else:
                         self._err(HTTPStatus.NOT_FOUND, f"no route: {path}")
@@ -4913,21 +5143,37 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ai-lab/chief-agent/mission":
             try:
-                self._json(HTTPStatus.OK, {"ok": True, "mission": ai_chief_agent.start_mission(body)})
+                mission_body = {
+                    **body,
+                    "conversation_scope": self._ai_conversation_scope(),
+                }
+                self._json(
+                    HTTPStatus.OK,
+                    {"ok": True, "mission": ai_chief_agent.start_mission(mission_body)},
+                )
             except (ValueError, TypeError, ai_chief_agent.ChiefAgentError) as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
         if path == "/api/ai-lab/chief-agent/mission/state":
             try:
-                self._json(HTTPStatus.OK, {"ok": True, "mission": ai_chief_agent.set_mission_state(str(body.get("action") or ""))})
+                self._json(HTTPStatus.OK, {"ok": True, "mission": ai_chief_agent.set_mission_state(
+                    str(body.get("action") or ""), scope=self._ai_conversation_scope(),
+                )})
             except ai_chief_agent.ChiefAgentError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
 
         if path == "/api/ai-lab/chief-agent/tasks":
             try:
-                self._json(HTTPStatus.OK, {"ok": True, "task": ai_chief_agent.add_task(body)})
+                task_body = {
+                    **body,
+                    "conversation_scope": self._ai_conversation_scope(),
+                }
+                self._json(
+                    HTTPStatus.OK,
+                    {"ok": True, "task": ai_chief_agent.add_task(task_body)},
+                )
             except ai_chief_agent.ChiefAgentError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
             return
@@ -4945,6 +5191,7 @@ class Handler(BaseHTTPRequestHandler):
                 report = ai_chief_agent.audit_recent_backtests(
                     use_llm=bool(body.get("use_llm", True)),
                     send_telegram=bool(body.get("send_telegram", False)),
+                    scope=self._ai_conversation_scope(),
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "report": report})
             except (ai_chief_agent.ChiefAgentError, ai_agent_router.AgentRouterError) as e:
@@ -4957,6 +5204,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(body.get("action") or ""),
                     body.get("payload") if isinstance(body.get("payload"), dict) else {},
                     str(body.get("reason") or ""),
+                    scope=self._ai_conversation_scope(),
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "proposal": proposal})
             except ai_chief_agent.ChiefAgentError as e:
@@ -4964,9 +5212,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/chief-agent/proposals/decision":
+            if not self._require_owner_actor():
+                return
             try:
                 proposal = ai_chief_agent.decide_proposal(
-                    str(body.get("proposal_id") or ""), str(body.get("decision") or "")
+                    str(body.get("proposal_id") or ""),
+                    str(body.get("decision") or ""),
+                    scope=self._ai_conversation_scope(),
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "proposal": proposal})
             except (ai_chief_agent.ChiefAgentError, ops.OpsError) as e:
@@ -5041,6 +5293,14 @@ class Handler(BaseHTTPRequestHandler):
                     "smoke_timeout_sec": max(30, min(1800, int(body.get("smoke_timeout_sec", 180)))),
                     "min_signal_sanity": max(1, min(100, int(body.get("min_signal_sanity", 8)))),
                 }
+                conversation_scope = self._ai_conversation_scope()
+                args.update({
+                    "user_id": conversation_scope.get("user_id"),
+                    "user_name": conversation_scope.get("display_name"),
+                    "workspace_id": conversation_scope.get("workspace_id"),
+                    "conversation_id": str(body.get("conversation_id") or "default"),
+                    "conversation_scope": conversation_scope,
+                })
             except ai_research_catalog.ResearchCatalogError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
                 return
@@ -5058,6 +5318,11 @@ class Handler(BaseHTTPRequestHandler):
                                      "configured judge+coder models, or pass "
                                      "allow_template_fallback=true to proceed with the "
                                      "non-LLM template (research only).")})
+            except ai_runner.RunScopeRequired as e:
+                self._err(
+                    HTTPStatus.BAD_REQUEST, str(e),
+                    code="production_ai_scope_required",
+                )
             except ai_runner.RunnerBusy as e:
                 self._json(HTTPStatus.CONFLICT,
                            {"ok": False, "busy": True, "current": e.current})
@@ -5071,7 +5336,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, "experiment_id required")
                 return
             try:
-                self._json(HTTPStatus.OK, ai_runner.request_cancel(exp_id))
+                self._json(
+                    HTTPStatus.OK,
+                    ai_runner.request_cancel(
+                        exp_id, scope=self._ai_conversation_scope(),
+                    ),
+                )
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"cancel failed: {e}")
             return
@@ -5079,7 +5349,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai-lab/run/cancel":
             run_id = body.get("run_id")
             try:
-                self._json(HTTPStatus.OK, ai_runner.request_run_cancel(run_id))
+                self._json(
+                    HTTPStatus.OK,
+                    ai_runner.request_run_cancel(
+                        run_id, scope=self._ai_conversation_scope(),
+                    ),
+                )
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"run cancel failed: {e}")
             return
@@ -5137,7 +5412,12 @@ class Handler(BaseHTTPRequestHandler):
                 and parts[4] == "cancel"):
             exp_id = parts[3]
             try:
-                self._json(HTTPStatus.OK, ai_runner.request_cancel(exp_id))
+                self._json(
+                    HTTPStatus.OK,
+                    ai_runner.request_cancel(
+                        exp_id, scope=self._ai_conversation_scope(),
+                    ),
+                )
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"cancel failed: {e}")
             return
@@ -5283,7 +5563,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, "Не более 64 графиков в одном пакете."); return
             result = []
             try:
-                market_data.register_requests(row for row in rows if isinstance(row, dict))
+                production_mode = bool(
+                    runtime_env.is_production() and runtime_env.environment_explicit()
+                )
+                if not production_mode:
+                    market_data.register_requests(row for row in rows if isinstance(row, dict))
                 normalized_rows: list[Dict[str, Any]] = []
                 work_points = 0
                 oversized = False
@@ -5309,15 +5593,20 @@ class Handler(BaseHTTPRequestHandler):
                     queued = self._run_large_chart_batch(normalized_rows, context)
                     if queued is None:
                         return
-                    market_data.evaluate_alerts()
+                    if not production_mode:
+                        market_data.evaluate_alerts()
                     self._json(HTTPStatus.OK, {"series": queued})
                     return
                 # Read the bridge snapshot and alerts ONCE for the whole batch —
                 # a 64-chart grid must not re-parse market_bars.json/price_alerts.json
                 # once per instrument on every poll tick.
-                snapshot_index = market_data.read_snapshot_index()
-                alerts_index = market_data.read_alerts_index()
                 workspace_id = str(context.get("workspace_id") or "")
+                snapshot_index = None if production_mode else market_data.read_snapshot_index()
+                alerts_index = None if production_mode else market_data.read_alerts_index()
+                connector_snapshot_index = (
+                    market_data_ingestion.workspace_snapshot_index(workspace_id)
+                    if production_mode and workspace_id else None
+                )
                 batch_cache: Dict[Tuple[str, str, int, int, str, str, int], Dict[str, Any]] = {}
                 for row in rows:
                     if not isinstance(row, dict):
@@ -5337,10 +5626,12 @@ class Handler(BaseHTTPRequestHandler):
                             req_key[0], req_key[1], req_key[2], req_key[3], req_key[4], req_key[5],
                             register=False, snapshot_index=snapshot_index, alerts_index=alerts_index,
                             max_points=req_key[6], workspace_id=workspace_id,
+                            connector_snapshot_index=connector_snapshot_index,
                         )
                         batch_cache[req_key] = payload
                     result.append(payload)
-                market_data.evaluate_alerts()
+                if not production_mode:
+                    market_data.evaluate_alerts()
             except (market_data.MarketDataError, TypeError, ValueError) as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
             self._json(HTTPStatus.OK, {"series": result}); return
@@ -5684,12 +5975,23 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             try:
-                dispatch = telegram_service.process_webhook_update(
-                    body,
-                    str(self.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""),
+                supplied_secret = str(
+                    self.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+                )
+                dispatch = (
+                    production_telegram.accept_webhook(body, supplied_secret)
+                    if runtime_env.is_production() and runtime_env.environment_explicit()
+                    else telegram_service.process_webhook_update(body, supplied_secret)
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "handler": dispatch.get("handler")})
-            except telegram_service.TelegramServiceError as exc:
+            except production_telegram.StorageError as exc:
+                self._err(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "production Telegram storage is unavailable",
+                    code=getattr(exc, "code", "storage_unavailable"),
+                )
+            except (telegram_service.TelegramServiceError,
+                    production_telegram.TelegramPayloadRejected) as exc:
                 self._err(HTTPStatus.FORBIDDEN, str(exc))
             return
 
@@ -6799,7 +7101,10 @@ class Handler(BaseHTTPRequestHandler):
                         worker_id=str(body.get("worker_id") or ""),
                     )}
                 elif path == "/api/vitek/tasks":
-                    out = {"ok": True, "task": vitek.add_task(body)}
+                    out = {"ok": True, "task": vitek.add_task({
+                        **body,
+                        "conversation_scope": self._ai_conversation_scope(),
+                    })}
                 elif path == "/api/vitek/events":
                     out = vitek.emit_event(
                         str(body.get("event_type") or "app_event"),
@@ -6807,6 +7112,7 @@ class Handler(BaseHTTPRequestHandler):
                         source=str(body.get("source") or "app"),
                         severity=str(body.get("severity") or ""),
                         dedupe_key=str(body.get("dedupe_key") or ""),
+                        scope=self._ai_conversation_scope(),
                     )
                 elif path == "/api/vitek/plans":
                     out = {"ok": True, "plan": vitek.set_plan(body)}
@@ -6918,7 +7224,17 @@ class Handler(BaseHTTPRequestHandler):
                 elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "toggle":
                     out = {"agent": ai_agent_registry.set_enabled(parts[2], body.get("enabled"), reason="disabled_by_operator")}
                 elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "test":
-                    out = ai_universal_llm.test_connection(parts[2], str(body.get("prompt") or ""))
+                    scope = self._ai_conversation_scope()
+                    with ai_universal_llm.usage_scope({
+                        "user_id": scope.get("user_id"),
+                        "user_name": scope.get("display_name"),
+                        "workspace_id": scope.get("workspace_id"),
+                        "conversation_id": "agent_connection_test",
+                        "request_source": "agent_connection_test",
+                    }):
+                        out = ai_universal_llm.test_connection(
+                            parts[2], str(body.get("prompt") or ""),
+                        )
                 elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "sync-balance":
                     out = {"agent": ai_universal_llm.sync_credit_balance(parts[2])}
                 elif len(parts) == 4 and parts[:2] == ["api", "ai-agents"] and parts[3] == "delete":
@@ -7299,6 +7615,8 @@ def create_http_server(
             "database": storage_router.database_readiness,
             "object_storage": object_storage_readiness,
             "queue": production_workers.readiness_status,
+            "telegram_consumer": production_telegram.readiness_status,
+            "signing_key": storage_router.signing_key_readiness,
         })
     return server
 
@@ -7342,68 +7660,89 @@ def run(port: Optional[int] = None) -> None:
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
     print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
-    # Start the AI Lab stale-experiment sweeper on a daemon thread.
+    production_api = deployment.environment == runtime_env.PRODUCTION
+    _heartbeat_emitter: Optional[observability.HeartbeatEmitter] = None
     try:
-        ai_stale_sweep.start_background_sweeper(interval_sec=1800, ttl_hours=6.0)
-        print("[nta-backend] ai-lab stale sweeper started (TTL=6h, every 30 min)")
+        _heartbeat_emitter = observability.HeartbeatEmitter(
+            "api", interval_sec=10,
+            details=lambda: {
+                "admission": (
+                    server.admission_metrics()
+                    if callable(getattr(server, "admission_metrics", None)) else {}
+                ),
+            },
+        )
+        _heartbeat_emitter.start()
+        print("[nta-backend] observability heartbeat emitter started (every 10 sec)")
     except Exception as e:
-        print(f"[nta-backend] ai-lab stale sweeper NOT started: {e}")
-    try:
-        news_refresh.start_background_refresher()
-        print("[nta-backend] news refresher started (live every 15 min)")
-    except Exception as e:
-        print(f"[nta-backend] news refresher NOT started: {e}")
-    if deployment.environment == runtime_env.PRODUCTION:
-        print("[nta-backend] Production workers are owned by stratforge-worker.service")
+        print(f"[nta-backend] observability heartbeat NOT started: {e}")
+    if production_api:
+        print(
+            "[nta-backend] Production background work is owned by "
+            "stratforge-worker.service; Telegram by stratforge-telegram.service"
+        )
     else:
+        # Development intentionally keeps the local single-process helpers.
+        try:
+            ai_stale_sweep.start_background_sweeper(
+                interval_sec=1800, ttl_hours=6.0,
+            )
+            print("[nta-backend] ai-lab stale sweeper started (TTL=6h, every 30 min)")
+        except Exception as e:
+            print(f"[nta-backend] ai-lab stale sweeper NOT started: {e}")
+        try:
+            news_refresh.start_background_refresher()
+            print("[nta-backend] news refresher started (live every 15 min)")
+        except Exception as e:
+            print(f"[nta-backend] news refresher NOT started: {e}")
         try:
             local_worker.start_background_worker(interval_sec=2.0)
             print("[nta-backend] local worker process started")
         except Exception as e:
             print(f"[nta-backend] local worker process NOT started: {e}")
-    try:
-        telegram_service.start_background_notifier(interval_sec=30)
-        print("[nta-backend] Telegram notifier started (every 30 sec)")
-    except Exception as e:
-        print(f"[nta-backend] Telegram notifier NOT started: {e}")
-    try:
-        ai_chief_agent.start_background_worker(interval_sec=30)
-        print("[nta-backend] StratForge Orchestrator started (every 30 sec)")
-    except Exception as e:
-        print(f"[nta-backend] StratForge Orchestrator NOT started: {e}")
-    try:
-        vitek.start_background_worker(interval_sec=1)
-        print("[nta-backend] Vitek duty controller started (event-driven)")
-    except Exception as e:
-        print(f"[nta-backend] Vitek duty controller NOT started: {e}")
-    try:
-        market_data.start_chart_worker(interval_sec=1.0)
-        print("[nta-backend] headless chart scheduler started (every 1 sec)")
-    except Exception as e:
-        print(f"[nta-backend] headless chart scheduler NOT started: {e}")
-    try:
-        ipc = market_data_ipc.start_server()
-        print(
-            f"[nta-backend] market-data IPC listening on 127.0.0.1:{ipc.port} "
-            f"(token_fp={market_data_ipc.token_fingerprint(market_data_ipc.auth_token())})"
-        )
-    except Exception as e:
-        print(f"[nta-backend] market-data IPC NOT started: {e}")
-    try:
-        market_data_gap_recovery.start_background_worker(interval_sec=2.0)
-        print("[nta-backend] market-data gap recovery worker started")
-    except Exception as e:
-        print(f"[nta-backend] market-data gap recovery NOT started: {e}")
-    try:
-        live_st = market_data_live_supervisor.start()
-        print(
-            "[nta-backend] market-data live sources: "
-            f"credentialed={live_st.get('credentialed_providers')} "
-            f"connected={live_st.get('live_providers_connected')} "
-            f"blocked={live_st.get('production_blocked')}"
-        )
-    except Exception as e:
-        print(f"[nta-backend] market-data live sources NOT started: {e}")
+        try:
+            telegram_service.start_background_notifier(interval_sec=30)
+            print("[nta-backend] Telegram notifier started (every 30 sec)")
+        except Exception as e:
+            print(f"[nta-backend] Telegram notifier NOT started: {e}")
+        try:
+            ai_chief_agent.start_background_worker(interval_sec=30)
+            print("[nta-backend] StratForge Orchestrator started (every 30 sec)")
+        except Exception as e:
+            print(f"[nta-backend] StratForge Orchestrator NOT started: {e}")
+        try:
+            vitek.start_background_worker(interval_sec=1)
+            print("[nta-backend] Vitek duty controller started (event-driven)")
+        except Exception as e:
+            print(f"[nta-backend] Vitek duty controller NOT started: {e}")
+        try:
+            market_data.start_chart_worker(interval_sec=1.0)
+            print("[nta-backend] headless chart scheduler started (every 1 sec)")
+        except Exception as e:
+            print(f"[nta-backend] headless chart scheduler NOT started: {e}")
+        try:
+            ipc = market_data_ipc.start_server()
+            print(
+                f"[nta-backend] market-data IPC listening on 127.0.0.1:{ipc.port} "
+                f"(token_fp={market_data_ipc.token_fingerprint(market_data_ipc.auth_token())})"
+            )
+        except Exception as e:
+            print(f"[nta-backend] market-data IPC NOT started: {e}")
+        try:
+            market_data_gap_recovery.start_background_worker(interval_sec=2.0)
+            print("[nta-backend] market-data gap recovery worker started")
+        except Exception as e:
+            print(f"[nta-backend] market-data gap recovery NOT started: {e}")
+        try:
+            live_st = market_data_live_supervisor.start()
+            print(
+                "[nta-backend] market-data live sources: "
+                f"credentialed={live_st.get('credentialed_providers')} "
+                f"connected={live_st.get('live_providers_connected')} "
+                f"blocked={live_st.get('production_blocked')}"
+            )
+        except Exception as e:
+            print(f"[nta-backend] market-data live sources NOT started: {e}")
     sys.stdout.flush()
     prior_signal_handlers = {}
 
@@ -7428,6 +7767,10 @@ def run(port: Optional[int] = None) -> None:
                 signal.signal(stop_signal, prior_handler)
             except (OSError, ValueError):
                 pass
+        if _heartbeat_emitter:
+            _heartbeat_emitter.stop()
+        ai_stale_sweep.stop_background_sweeper()
+        news_refresh.stop_background_refresher()
         ai_chief_agent.stop_background_worker()
         vitek.stop_background_worker()
         local_worker.stop_background_worker()

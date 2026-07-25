@@ -62,6 +62,10 @@ class RunBlockedLMStudio(Exception):
         )
 
 
+class RunScopeRequired(Exception):
+    """Raised before a Production LLM pipeline can start without attribution."""
+
+
 _LOCK = threading.Lock()
 _CURRENT: Optional[Dict[str, Any]] = None
 _THREAD: Optional[threading.Thread] = None
@@ -76,6 +80,27 @@ _STRUCTURAL_BREAKER_CODES = {
     "STAGED_DESIGN_FAILED", "PIPELINE_EXCEPTION", "SMOKE_DATA_UNVERIFIED",
     "FULL_DATA_UNVERIFIED", "FULL_DATA_INSUFFICIENT", "BLOCKED_LM_STUDIO",
 }
+
+
+def _llm_usage_context(args: Dict[str, Any], source: str) -> Dict[str, Any]:
+    return {
+        "user_id": args.get("user_id"),
+        "user_name": args.get("user_name"),
+        "workspace_id": args.get("workspace_id"),
+        "conversation_id": args.get("conversation_id"),
+        "request_source": source,
+    }
+
+
+def _require_llm_scope(args: Dict[str, Any]) -> None:
+    """Reject unscoped Production AI work before bootstrapping a pipeline."""
+    from . import universal_llm
+
+    with universal_llm.usage_scope(_llm_usage_context(args, "research_runner_admission")):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded as exc:
+            raise RunScopeRequired(str(exc)) from exc
 
 
 def _failure_signature(exp: Dict[str, Any]) -> str:
@@ -119,13 +144,54 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def current() -> Optional[Dict[str, Any]]:
+def _scope_identity(scope: Optional[Dict[str, Any]]) -> tuple[str, int]:
+    if not isinstance(scope, dict):
+        return "", 0
+    active = scope.get("active_workspace") if isinstance(scope.get("active_workspace"), dict) else {}
+    workspace_id = str(scope.get("workspace_id") or active.get("workspace_id") or "").strip()
+    try:
+        user_id = int(scope.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    return workspace_id, user_id
+
+
+def _state_matches_scope(state: Dict[str, Any], scope: Optional[Dict[str, Any]]) -> bool:
+    """Apply tenant filtering only to explicitly scoped Production callers.
+
+    Internal coordinator calls intentionally pass ``None``. HTTP callers pass
+    their authenticated scope, so a busy run in another workspace is neither
+    visible nor cancellable through the public API.
+    """
+    if scope is None:
+        return True
+    from .. import runtime_env
+
+    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+        return True
+    workspace_id, user_id = _scope_identity(scope)
+    return bool(
+        workspace_id and user_id > 0
+        and str(state.get("workspace_id") or "") == workspace_id
+        and int(state.get("user_id") or 0) == user_id
+    )
+
+
+def _visible_busy_state(state: Dict[str, Any], scope: Dict[str, Any]) -> Dict[str, Any]:
+    if _state_matches_scope(state, scope):
+        return dict(state)
+    return {"status": "busy"}
+
+
+def current(scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Return running pipeline info, or None if idle.
 
     The returned dict is a shallow copy so callers can safely serialize it.
     """
     with _LOCK:
         if _CURRENT is None:
+            return None
+        if not _state_matches_scope(_CURRENT, scope):
             return None
         snap = _api_snap(_CURRENT)
         exp = registry.read_experiment(_CURRENT["experiment_id"])
@@ -160,9 +226,13 @@ def is_cancelled(experiment_id: Optional[str] = None) -> bool:
         return bool(ev and ev.is_set())
 
 
-def request_cancel(experiment_id: str) -> Dict[str, Any]:
+def request_cancel(experiment_id: str, *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     with _LOCK:
-        if _CURRENT is None or _CURRENT.get("experiment_id") != experiment_id:
+        if (
+            _CURRENT is None
+            or _CURRENT.get("experiment_id") != experiment_id
+            or not _state_matches_scope(_CURRENT, scope)
+        ):
             return {"ok": False, "cancelled": False, "reason": "not current"}
         ev = _CURRENT.get("cancel_event")
         if ev is None:
@@ -238,6 +308,12 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     # Keep legacy field populated so orchestrator.start_skeleton still serializes it.
     args["max_cells_per_run"] = strategy_count
 
+    # Every Production research run, including deterministic/template runs,
+    # must carry an authenticated user/workspace owner before any background
+    # state is created. Development remains backward compatible.
+    _require_llm_scope(args)
+    run_workspace_id, run_user_id = _scope_identity(args)
+
     # Reject a concurrent start before any LM Studio traffic.  The preflight
     # can take minutes on local models; running it for a request that cannot
     # start both delays the 409 response and competes with the active model
@@ -246,7 +322,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     with _LOCK:
         if _is_busy_locked():
             assert _CURRENT is not None
-            raise RunnerBusy(_CURRENT)
+            raise RunnerBusy(_visible_busy_state(_CURRENT, args))
 
     bootstrap_result: Dict[str, Any] = {"skipped": True}
     if (
@@ -293,7 +369,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     with _LOCK:
         if _is_busy_locked():
             assert _CURRENT is not None
-            raise RunnerBusy(dict(_CURRENT))
+            raise RunnerBusy(_visible_busy_state(_CURRENT, args))
 
         run_id = "RUN-" + uuid.uuid4().hex[:12]
         deadline = (
@@ -312,6 +388,9 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
             "started_at_utc": _now(),
             "cancel_event": cancel_event,
             "run_id": run_id,
+            "workspace_id": run_workspace_id[:96],
+            "user_id": run_user_id,
+            "conversation_id": str(args.get("conversation_id") or "default")[:64],
         }
         _RUN_STATE = {
             "run_id": run_id,
@@ -319,6 +398,9 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
             "research_id": str(args.get("research_id") or ""),
             "research_title": str(args.get("research_title") or ""),
             "research_family": str(args.get("research_family_key") or ""),
+            "workspace_id": run_workspace_id[:96],
+            "user_id": run_user_id,
+            "conversation_id": str(args.get("conversation_id") or "default")[:64],
             "strategy_count": strategy_count,
             "iterations_per_strategy": iterations_per_strategy,
             "iterations_unlimited": iterations_unlimited,
@@ -348,13 +430,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
 
         def _worker():
             from . import universal_llm
-            with universal_llm.usage_scope({
-                "user_id": args.get("user_id"),
-                "user_name": args.get("user_name"),
-                "workspace_id": args.get("workspace_id"),
-                "conversation_id": args.get("conversation_id"),
-                "request_source": "research_runner",
-            }):
+            with universal_llm.usage_scope(_llm_usage_context(args, "research_runner")):
                 _run_pipeline_worker(experiment_id, args, run_id)
 
         _THREAD = threading.Thread(
@@ -432,6 +508,19 @@ def _prepare_next_during_backtest(
     })
 
 
+def _prepare_next_with_usage_scope(
+    source_experiment_id: str,
+    args: Dict[str, Any],
+    holder: Dict[str, Any],
+    run_id: str,
+) -> None:
+    """Restore user/workspace attribution in the staged background thread."""
+    from . import universal_llm
+
+    with universal_llm.usage_scope(_llm_usage_context(args, "research_runner_staged")):
+        _prepare_next_during_backtest(source_experiment_id, args, holder, run_id)
+
+
 def _attach_staged_feedback(next_experiment: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
     committee = source.get("agent_committee") or {}
     optimizer = ((committee.get("reports") or {}).get("optimizer") or {})
@@ -492,7 +581,7 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
                     "max_cells_per_run": strategy_count,
                 })
                 staged_thread = threading.Thread(
-                    target=_prepare_next_during_backtest,
+                    target=_prepare_next_with_usage_scope,
                     args=(current_experiment_id, staged_args, staged_holder, run_id),
                     name=f"ai-lab-staged-{run_id}-{strategy_idx + 1}", daemon=True,
                 )
@@ -940,13 +1029,15 @@ def _is_run_cancelled() -> bool:
         return bool(ev and ev.is_set())
 
 
-def run_status() -> Optional[Dict[str, Any]]:
+def run_status(scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Return current run progress (outer/inner indices, deadline, etc.).
 
     Returns None if no run is active.
     """
     with _LOCK:
         if _RUN_STATE is None:
+            return None
+        if not _state_matches_scope(_RUN_STATE, scope):
             return None
         snap = _api_snap(_RUN_STATE)
         # Live mirror of current experiment status.
@@ -962,11 +1053,14 @@ def run_status() -> Optional[Dict[str, Any]]:
         return snap
 
 
-def request_run_cancel(run_id: Optional[str] = None) -> Dict[str, Any]:
+def request_run_cancel(run_id: Optional[str] = None, *,
+                       scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Cancel the whole run: stops outer loop, cancels current inner iteration."""
     with _LOCK:
         if _RUN_STATE is None:
             return {"ok": False, "reason": "no_active_run"}
+        if not _state_matches_scope(_RUN_STATE, scope):
+            return {"ok": False, "reason": "not_current"}
         if run_id and _RUN_STATE.get("run_id") != run_id:
             return {"ok": False, "reason": "not_current", "current_run_id": _RUN_STATE.get("run_id")}
         _RUN_STATE["cancelled"] = True

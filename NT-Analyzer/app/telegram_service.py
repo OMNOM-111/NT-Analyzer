@@ -164,6 +164,11 @@ def _remember_update_id(state: Dict[str, Any], update_id: int) -> None:
 def _enqueue_update(update: Dict[str, Any], *, transport: str,
                     handle_owner_commands: Optional[bool] = None) -> bool:
     update_id = int(update.get("update_id") or 0)
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import production_telegram
+        return production_telegram.get_queue().enqueue_update(
+            update, transport=str(transport or "webhook"),
+        )
     with _IO_LOCK:
         doc = _read_json(_update_inbox_path())
         rows = [row for row in (doc.get("items") or []) if isinstance(row, dict)]
@@ -316,6 +321,10 @@ def _run_queued_update(item: Dict[str, Any]) -> None:
 
 
 def _dispatch_update_inbox() -> int:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        # The independently supervised PostgreSQL consumer owns Production
+        # dispatch; the API process must never spawn a competing thread.
+        return 0
     claimed: List[Dict[str, Any]] = []
     with _WEBHOOK_RUN_LOCK:
         capacity = max(0, WEBHOOK_MAX_PARALLEL - len(_WEBHOOK_ACTIVE))
@@ -1107,8 +1116,10 @@ def list_topics() -> List[Dict[str, Any]]:
     return rows
 
 
-def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = None,
-              chat_id: Optional[str] = None) -> Dict[str, Any]:
+def _send_raw_direct(text: str, *, silent: bool = False,
+                     thread_id: Optional[int] = None,
+                     chat_id: Optional[str] = None,
+                     parse_mode: str = "HTML") -> Dict[str, Any]:
     target = str(chat_id or _primary_chat_id()).strip()
     if not target:
         raise TelegramServiceError("Чат Telegram не подключён.")
@@ -1118,7 +1129,7 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
     payload: Dict[str, Any] = {
         "chat_id": target,
         "text": message[:4096],
-        "parse_mode": "HTML",
+        "parse_mode": str(parse_mode or "HTML"),
         "link_preview_options": {"is_disabled": True},
         "disable_notification": bool(silent),
     }
@@ -1127,6 +1138,23 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
     result = _api_call("sendMessage", payload)
     _record_delivery(success=True)
     return dict(result) if isinstance(result, dict) else {"ok": True}
+
+
+def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = None,
+              chat_id: Optional[str] = None, dedupe_key: str = "",
+              parse_mode: str = "HTML") -> Dict[str, Any]:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import production_telegram
+        queued = production_telegram.enqueue_text(
+            text, silent=silent, thread_id=thread_id,
+            chat_id=str(chat_id or ""), dedupe_key=dedupe_key,
+            parse_mode=parse_mode,
+        )
+        return {**queued, "delivery": "production_outbox"}
+    return _send_raw_direct(
+        text, silent=silent, thread_id=thread_id,
+        chat_id=chat_id, parse_mode=parse_mode,
+    )
 
 
 def send_photo_bytes(chat_id: Any, blob: bytes, *, caption: str = "", filename: str = "invite.png") -> bool:
@@ -1403,7 +1431,10 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
     except Exception:
         pass
     try:
-        _send_raw("\n".join(body), silent=not urgent, thread_id=thread_id)
+        _send_raw(
+            "\n".join(body), silent=not urgent, thread_id=thread_id,
+            dedupe_key=str(dedupe_key or signature),
+        )
         return True
     except TelegramServiceError as exc:
         if not queue_on_failure:
@@ -1642,6 +1673,7 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
         _send_raw(
             rendered,
             silent=True, thread_id=thread_id,
+            dedupe_key=str(dedupe_key or signature),
         )
         return True
     except TelegramServiceError as exc:
@@ -1765,7 +1797,10 @@ def _flush_reply_outbox(limit: int = 10) -> Dict[str, int]:
 def _chief_command_reply(text: str, *, thread_id: Optional[int] = None,
                          dedupe_key: str = "") -> bool:
     try:
-        _send_raw(str(text or "")[:4000], thread_id=thread_id)
+        _send_raw(
+            str(text or "")[:4000], thread_id=thread_id,
+            dedupe_key=str(dedupe_key or ""),
+        )
         return True
     except TelegramServiceError:
         _enqueue_reply_outbox(
@@ -1864,7 +1899,8 @@ def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int =
 def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
                           thread_id: Optional[int] = None,
                           sender_user_id: int = 0,
-                          sender_name: str = "") -> Dict[str, Any]:
+                          sender_name: str = "",
+                          request_id: str = "") -> Dict[str, Any]:
     """Handle natural owner text through the allowlisted Orchestrator executor.
 
     ``conversation_id`` binds the incoming Telegram topic to an app chat so the
@@ -1895,9 +1931,37 @@ def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
             )
             if scope:
                 chief_agent.migrate_legacy_conversation_to_scope(target_conversation, scope)
+            if runtime_env.is_production() and runtime_env.environment_explicit():
+                if not scope:
+                    raise TelegramServiceError(
+                        "Production AI-запрос не привязан к пользователю "
+                        "и рабочей области."
+                    )
+                from . import production_workers
+
+                job = production_workers.enqueue_ai_message(
+                    clean,
+                    request_id=str(request_id or ""),
+                    conversation_id=target_conversation,
+                    agent="",
+                    scope=scope,
+                    mirror_to_telegram=True,
+                    source="telegram_async",
+                )
+                return {
+                    "ok": True,
+                    "queued": True,
+                    # The durable job owns the eventual single reply.  Mark the
+                    # ingress handled so the Telegram update can release its
+                    # lease without waiting for a provider call.
+                    "delivered": True,
+                    "conversation_id": target_conversation,
+                    "worker_job_id": str(job.get("job_id") or job.get("worker_job_id") or ""),
+                }
             result = chief_agent.handle_message(
                 clean, source="telegram", mirror_to_telegram=False,
                 conversation_id=target_conversation, scope=scope,
+                request_id=str(request_id or ""),
             )
             assistant = result.get("message") if isinstance(result.get("message"), dict) else {}
             if scope:
@@ -2044,6 +2108,7 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
         handled = _handle_chief_command(
             text, conversation_id=conversation_id, thread_id=thread_id,
             sender_user_id=sender_user_id, sender_name=sender_name,
+            request_id=f"telegram:{update_id}",
         ) or {}
         result.update({
             "handler": "chief_group", "consumed": True,
@@ -2056,6 +2121,7 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
     if private_id and chat_id_str == private_id and chat_type == "private":
         handled = _handle_chief_command(
             text, sender_user_id=sender_user_id, sender_name=sender_name,
+            request_id=f"telegram:{update_id}",
         ) or {}
         result.update({
             "handler": "chief_private", "consumed": True,
@@ -2190,7 +2256,13 @@ def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> N
                 continue
             try:
                 from .ai_lab import news_agent
-                news_agent.observe_items([item], send_telegram=True, use_llm=True)
+                news_agent.observe_items(
+                    [item], send_telegram=True,
+                    use_llm=not (
+                        runtime_env.is_production()
+                        and runtime_env.environment_explicit()
+                    ),
+                )
             except Exception:
                 pass
     state["seen_live_news"] = list(dict.fromkeys(list(seen_live) + current_live))[-200:]
@@ -2466,6 +2538,9 @@ def _command_worker_loop() -> None:
 
 
 def start_background_notifier(interval_sec: int = 30) -> bool:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        # Production Telegram is an independently supervised, leased service.
+        return False
     global _WORKER, _COMMAND_WORKER
     with _WORKER_LOCK:
         _STOP.clear()

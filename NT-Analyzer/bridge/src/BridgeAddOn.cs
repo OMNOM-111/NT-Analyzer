@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json.Linq;
 using NinjaTrader.NinjaScript;
 using NTAnalyzerBridge.Config;
 using NTAnalyzerBridge.Connector;
@@ -36,8 +37,15 @@ namespace NTAnalyzerBridge
         private RuntimeMarketDataExporter _marketDataExporter;
         private RuntimeCommandProcessor _commandProcessor;
         private ConnectorClient _connectorClient;
+        private ProductionMarketDataExporter _productionMarketDataExporter;
 
         internal RuntimeMarketDataExporter MarketDataExporter { get { return _marketDataExporter; } }
+
+        internal bool QueueProductionMarketData(JArray bars)
+        {
+            ConnectorClient client = _connectorClient;
+            return client != null && client.QueueMarketDataBatch(bars);
+        }
 
         protected override void OnStateChange()
         {
@@ -197,10 +205,27 @@ namespace NTAnalyzerBridge
 
             _connectorClient = new ConnectorClient(_cfg);
             _connectorClient.Start();
+
+            if (_cfg.ProductionConnector.MarketDataStreams != null &&
+                _cfg.ProductionConnector.MarketDataStreams.Count > 0)
+            {
+                _productionMarketDataExporter = new ProductionMarketDataExporter(
+                    _cfg.ProductionConnector.MarketDataStreams,
+                    QueueProductionMarketData);
+                _productionMarketDataExporter.Start();
+            }
+            else
+            {
+                BridgeLog.Info("production_connector market-data exporter disabled: no configured streams");
+            }
         }
 
         private void StopBridge()
         {
+            try { _productionMarketDataExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: productionMarketData.Stop failed", ex); }
+            finally { _productionMarketDataExporter = null; }
+
             try { _connectorClient?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: connector.Stop failed", ex); }
             finally { _connectorClient = null; }

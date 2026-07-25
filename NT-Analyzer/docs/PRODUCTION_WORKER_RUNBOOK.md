@@ -46,16 +46,19 @@ created time. Одновременные claim используют row locks/`S
 1. Создать combined backup и проверить его manifest.
 2. Проверить migration plan и применить только по подтверждённому
    `migration_set_sha256` согласно `PRODUCTION_STORAGE_RUNBOOK.md`.
-3. Установить `stratforge.service`, `stratforge-worker.service` и
-   `cloudflared.service` в `~/.config/systemd/user/`.
+3. Установить `stratforge.service`, `stratforge-worker.service`,
+  `stratforge-telegram.service`, `stratforge-operations.service`,
+  `stratforge-operations.timer` и `cloudflared.service` в
+  `~/.config/systemd/user/`.
 4. Выполнить preflight из нового immutable release.
 5. Запустить worker и API без внешнего traffic, проверить local readiness.
 6. Только затем запустить Cloudflare Tunnel.
 
 ~~~bash
 systemctl --user daemon-reload
-systemctl --user enable --now stratforge-worker.service stratforge.service
-systemctl --user status stratforge-worker.service stratforge.service --no-pager
+systemctl --user enable --now stratforge-worker.service stratforge.service stratforge-telegram.service
+systemctl --user enable --now stratforge-operations.timer
+systemctl --user status stratforge-worker.service stratforge.service stratforge-telegram.service --no-pager
 systemctl --user enable --now cloudflared.service
 ~~~
 

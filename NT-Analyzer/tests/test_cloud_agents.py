@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from app import local_secrets
+from app import ai_budgets, local_secrets, runtime_env
 from app import server as server_mod
-from app.ai_lab import cloud_agents, generator, lm_studio, orchestrator
+from app.ai_lab import cloud_agents, generator, lm_studio, orchestrator, universal_llm
 
 
 @pytest.fixture()
@@ -117,6 +117,115 @@ def test_budget_gate_blocks_before_provider_call(isolated_cloud, monkeypatch) ->
             max_tokens=1000,
         )
     assert called == []
+
+
+def test_production_cloud_fallback_requires_scope_before_provider(
+    isolated_cloud, monkeypatch,
+) -> None:
+    monkeypatch.setenv("NTA_DEEPSEEK_API_KEY", "ds-test-key-1234567890")
+    cloud_agents.update_settings({"fallback_enabled": True})
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    provider_calls = []
+    monkeypatch.setattr(
+        cloud_agents, "_deepseek_chat",
+        lambda *_args, **_kwargs: provider_calls.append(True) or ("ok", {}, {}),
+    )
+
+    with pytest.raises(cloud_agents.CloudAgentBlocked, match="workspace scope"):
+        cloud_agents.invoke(
+            "hypothesis_fallback",
+            [{"role": "user", "content": "unscoped"}],
+            fallback_reason="test",
+        )
+
+    assert provider_calls == []
+
+
+def test_production_cloud_fallback_uses_durable_workspace_budget(
+    isolated_cloud, monkeypatch,
+) -> None:
+    monkeypatch.setenv("NTA_DEEPSEEK_API_KEY", "ds-test-key-1234567890")
+    cloud_agents.update_settings({"fallback_enabled": True})
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    reservations = []
+    records = []
+    monkeypatch.setattr(
+        ai_budgets, "reserve",
+        lambda *args, **kwargs: reservations.append((args, kwargs))
+        or {"ok": True, "reservation_id": "air_cloud_test"},
+    )
+    monkeypatch.setattr(
+        ai_budgets, "record_usage",
+        lambda *args, **kwargs: records.append((args, kwargs)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        cloud_agents, "_deepseek_chat",
+        lambda *_args, **_kwargs: (
+            "tenant-safe result",
+            {"input_tokens": 12, "cached_input_tokens": 0, "output_tokens": 3},
+            {},
+        ),
+    )
+
+    with universal_llm.usage_scope({
+        "user_id": 42,
+        "workspace_id": "ws_personal_ALPHA1234",
+        "conversation_id": "conv-alpha",
+    }):
+        result = cloud_agents.invoke(
+            "hypothesis_fallback",
+            [{"role": "user", "content": "scoped"}],
+            fallback_reason="invalid_local_contract",
+            experiment_id="EXP-CLOUD-SCOPE",
+        )
+
+    assert result["content"] == "tenant-safe result"
+    assert reservations[0][0][1:3] == ("ws_personal_ALPHA1234", 42)
+    assert records[-1][0][1:3] == ("ws_personal_ALPHA1234", 42)
+    assert records[-1][0][7] == "success"
+
+
+def test_production_cloud_provider_error_is_conservatively_recorded(
+    isolated_cloud, monkeypatch,
+) -> None:
+    monkeypatch.setenv("NTA_DEEPSEEK_API_KEY", "ds-test-key-1234567890")
+    cloud_agents.update_settings({"fallback_enabled": True})
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    records = []
+    monkeypatch.setattr(
+        ai_budgets, "reserve",
+        lambda *_args, **_kwargs: {"ok": True, "reservation_id": "air_cloud_error"},
+    )
+    monkeypatch.setattr(
+        ai_budgets, "record_usage",
+        lambda *args, **kwargs: records.append((args, kwargs)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        cloud_agents, "_deepseek_chat",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            cloud_agents.CloudAgentsError("HTTP 429 provider rate limit")
+        ),
+    )
+
+    with universal_llm.usage_scope({
+        "user_id": 42,
+        "workspace_id": "ws_personal_ALPHA1234",
+    }):
+        with pytest.raises(cloud_agents.CloudAgentsError, match="429"):
+            cloud_agents.invoke(
+                "hypothesis_fallback",
+                [{"role": "user", "content": "provider failure"}],
+                fallback_reason="provider_test",
+                max_tokens=100,
+            )
+
+    error = records[-1][0]
+    assert error[7] == "error"
+    assert error[8] > 0
+    assert error[10] > 0
 
 
 def test_invalid_local_hypothesis_can_use_cloud_fallback(isolated_cloud, monkeypatch) -> None:

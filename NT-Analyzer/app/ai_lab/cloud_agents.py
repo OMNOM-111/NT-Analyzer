@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -800,9 +801,15 @@ def invoke(
     max_tokens: int = 2048,
     timeout: int = llm_timeouts.ANALYSIS,
 ) -> Dict[str, Any]:
-    """Run one budget-gated paid fallback request and append an audit row."""
+    """Run one paid fallback under both local and workspace budget gates."""
     if not isinstance(messages, list) or not messages:
         raise CloudAgentBlocked("Cloud-вызов требует непустой список сообщений.")
+    from . import universal_llm
+
+    try:
+        production_scope = universal_llm.require_valid_production_scope()
+    except universal_llm.BudgetExceeded as exc:
+        raise CloudAgentBlocked(str(exc)) from exc
     settings = load_settings()
     assignment = (settings.get("role_assignments") or {}).get(role) or {}
     model = str(assignment.get("model") or "")
@@ -816,10 +823,71 @@ def invoke(
     estimate = _cost(model_row, estimated_input, bounded_max_tokens, 0)
     reservation_id = _reserve_budget(role, run_id, estimate)
     started = time.time()
+    request_id = f"REQ-{uuid.uuid4().hex[:16].upper()}"
     prompt_hash = hashlib.sha256(
         json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    durable_reserved = False
+    durable_recorded = False
+    provider_attempted = False
+    billed_input = 0
+    billed_output = 0
+    billed_cost = 0.0
+
+    def record_durable(status: str) -> bool:
+        if production_scope is None:
+            return True
+        from .. import ai_budgets
+
+        try:
+            recorded = ai_budgets.record_usage(
+                request_id,
+                production_scope["workspace_id"],
+                production_scope["user_id"],
+                provider,
+                model,
+                str(role or "cloud_fallback")[:80],
+                str(purpose or role or "cloud_fallback")[:120],
+                status,
+                billed_input,
+                billed_output,
+                billed_cost,
+                prompt_hash,
+                document={
+                    "adapter": "legacy_cloud_fallback",
+                    "experiment_id": str(experiment_id or "")[:160],
+                },
+            )
+        except Exception:
+            return False
+        return bool(recorded.get("ok"))
+
     try:
+        if production_scope is not None:
+            from .. import ai_budgets
+
+            try:
+                admitted = ai_budgets.reserve(
+                    request_id,
+                    production_scope["workspace_id"],
+                    production_scope["user_id"],
+                    provider,
+                    model,
+                    str(role or "cloud_fallback")[:80],
+                    estimate,
+                    prompt_hash,
+                )
+            except Exception:
+                admitted = {"ok": False, "code": "storage_unavailable"}
+            if not admitted.get("ok"):
+                durable_recorded = record_durable("blocked")
+                code = str(admitted.get("code") or "storage_unavailable")
+                if not durable_recorded:
+                    code = "storage_unavailable"
+                raise CloudAgentBlocked("Production AI budget denied: " + code)
+            durable_reserved = True
+
+        provider_attempted = True
         if provider == "deepseek":
             content, usage, _raw = _deepseek_chat(
                 model, messages, temperature=temperature,
@@ -840,6 +908,9 @@ def invoke(
         # permitted output so the next call cannot spend an untracked balance.
         output_tokens = reported_output or bounded_max_tokens
         cost_usd = _cost(model_row, input_tokens, output_tokens, cached_tokens)
+        billed_input = input_tokens
+        billed_output = output_tokens
+        billed_cost = round(cost_usd, 8)
         row = {
             "timestamp_utc": _now(),
             "experiment_id": experiment_id,
@@ -855,7 +926,7 @@ def invoke(
             "cached_input_tokens": cached_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
-            "cost_usd": round(cost_usd, 8),
+            "cost_usd": billed_cost,
             "estimated_reservation_usd": round(estimate, 8),
             "elapsed_sec": round(time.time() - started, 3),
             "api_output_is_verdict": False,
@@ -863,6 +934,9 @@ def invoke(
             "error": None,
         }
         append_jsonl(_usage_path(), row)
+        durable_recorded = record_durable("success")
+        if not durable_recorded:
+            raise CloudAgentsError("Production AI usage storage is unavailable.")
         return {
             "content": content,
             "provider": provider,
@@ -876,6 +950,10 @@ def invoke(
     except CloudAgentBlocked:
         raise
     except CloudAgentsError as exc:
+        if provider_attempted and billed_input <= 0:
+            billed_input = estimated_input
+            billed_output = 0
+            billed_cost = round(_cost(model_row, billed_input, 0, 0), 8)
         row = {
             "timestamp_utc": _now(),
             "experiment_id": experiment_id,
@@ -887,11 +965,11 @@ def invoke(
             "status": "failed",
             "prompt_hash": prompt_hash,
             "prompt_chars": sum(len(str(item.get("content") or "")) for item in messages),
-            "input_tokens": 0,
+            "input_tokens": billed_input,
             "cached_input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "cost_usd": 0.0,
+            "output_tokens": billed_output,
+            "total_tokens": billed_input + billed_output,
+            "cost_usd": billed_cost,
             "estimated_reservation_usd": round(estimate, 8),
             "elapsed_sec": round(time.time() - started, 3),
             "api_output_is_verdict": False,
@@ -899,6 +977,20 @@ def invoke(
             "error": _safe_error(exc),
         }
         append_jsonl(_usage_path(), row)
+        if not durable_recorded:
+            durable_recorded = record_durable("error")
+        if production_scope is not None and not durable_recorded:
+            raise CloudAgentsError(
+                "Production AI usage storage is unavailable."
+            ) from None
         raise
     finally:
         _release_budget(reservation_id)
+        if production_scope is not None and durable_reserved and not durable_recorded:
+            try:
+                from .. import ai_budgets
+                ai_budgets.cancel_reservation(
+                    request_id, production_scope["workspace_id"],
+                )
+            except Exception:
+                pass

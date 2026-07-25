@@ -464,10 +464,24 @@ def _tasks_path() -> Path:
     return paths.REGISTRY_DIR / "chief_tasks.jsonl"
 
 
-def _reports_dir() -> Path:
+def _reports_dir(scope: Optional[Dict[str, Any]] = None) -> Path:
     path = paths.REGISTRY_DIR / "chief_reports"
+    if scope:
+        info = _normalize_conversation_scope(scope)
+        if info:
+            path = path / "workspaces" / str(info["workspace_id"])
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _report_output_dir(scope: Dict[str, Any]) -> Path:
+    """Compatibility shim for extensions that replaced the legacy no-arg hook."""
+    try:
+        return _reports_dir(scope)
+    except TypeError as exc:
+        if "positional argument" not in str(exc):
+            raise
+        return _reports_dir()
 
 
 def _conversation_path() -> Path:
@@ -524,6 +538,11 @@ def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dic
         "is_owner": bool(scope.get("is_owner")),
         "display_name": display_name,
     }
+
+
+def _explicit_production() -> bool:
+    from .. import runtime_env
+    return runtime_env.is_production() and runtime_env.environment_explicit()
 
 
 def _conversation_scope_key(scope: Optional[Dict[str, Any]] = None) -> str:
@@ -2142,8 +2161,13 @@ def classify_complexity(task: str, role: str = "general") -> str:
     return "standard"
 
 
-def _usage_stats(agent_id: str = "") -> Dict[str, Any]:
+def _usage_stats(agent_id: str = "", *, workspace_id: str = "") -> Dict[str, Any]:
     rows = agent_registry.usage_rows(agent_id=agent_id or None, limit=100_000)
+    if workspace_id:
+        rows = [
+            row for row in rows
+            if str(row.get("workspace_id") or "") == str(workspace_id)
+        ]
     success = [row for row in rows if row.get("status") == "success"]
     input_tokens = sum(int(row.get("input_tokens") or 0) for row in success)
     cached = sum(int(row.get("cached_input_tokens") or 0) for row in success)
@@ -2162,6 +2186,16 @@ def _usage_stats(agent_id: str = "") -> Dict[str, Any]:
         "output_tokens": output,
         "cost_usd": round(sum(float(row.get("cost_usd") or 0) for row in rows), 8),
     }
+
+
+def _workspace_usage_stats(workspace_id: str) -> Dict[str, Any]:
+    """Use the scoped ledger while retaining legacy monkeypatch compatibility."""
+    try:
+        return _usage_stats(workspace_id=workspace_id)
+    except TypeError as exc:
+        if "unexpected keyword argument 'workspace_id'" not in str(exc):
+            raise
+        return _usage_stats()
 
 
 def _read_tasks(limit: int = 200) -> List[Dict[str, Any]]:
@@ -2184,6 +2218,14 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not title:
         raise ChiefAgentError("Название задачи обязательно.")
     due = _parse_time(payload.get("due_at_utc"))
+    conversation_scope = _normalize_conversation_scope(
+        payload.get("conversation_scope")
+        if isinstance(payload.get("conversation_scope"), dict) else None
+    )
+    if _explicit_production() and not conversation_scope:
+        raise ChiefAgentError(
+            "Production task requires a user and workspace scope."
+        )
     rec = {
         "task_id": f"TASK-{uuid.uuid4().hex[:10].upper()}",
         "created_at_utc": _now(),
@@ -2195,6 +2237,13 @@ def add_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "source": str(payload.get("source") or "ui")[:40],
         "notified": False,
     }
+    if conversation_scope:
+        rec.update({
+            "conversation_scope": conversation_scope,
+            "conversation_scope_id": conversation_scope["scope_id"],
+            "workspace_id": conversation_scope["workspace_id"],
+            "user_id": conversation_scope["user_id"],
+        })
     append_jsonl(_tasks_path(), rec)
     return rec
 
@@ -2250,6 +2299,10 @@ def start_mission(payload: Dict[str, Any]) -> Dict[str, Any]:
     conversation_scope = _normalize_conversation_scope(
         payload.get("conversation_scope") if isinstance(payload.get("conversation_scope"), dict) else None
     )
+    if _explicit_production() and not conversation_scope:
+        raise ChiefAgentError(
+            "Production research mission requires a user and workspace scope."
+        )
     mission = {
         "mission_id": f"MISSION-{uuid.uuid4().hex[:10].upper()}",
         "control_revision": 1,
@@ -2274,7 +2327,9 @@ def start_mission(payload: Dict[str, Any]) -> Dict[str, Any]:
         "notification_policy": "result_only",
         "allow_local_models": allow_local_models,
         "paid_budget_usd": budget,
-        "paid_spend_at_start_usd": _usage_stats().get("cost_usd", 0.0),
+        "paid_spend_at_start_usd": _workspace_usage_stats(
+            str(conversation_scope.get("workspace_id") or ""),
+        ).get("cost_usd", 0.0),
         "cycles_started": 0,
         "last_cycle_at_utc": "",
         "last_error": "",
@@ -2296,12 +2351,27 @@ def start_mission(payload: Dict[str, Any]) -> Dict[str, Any]:
     return mission
 
 
-def set_mission_state(action: str) -> Dict[str, Any]:
+def set_mission_state(action: str, *,
+                      scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     with _LOCK:
         doc = _load()
         mission = dict(doc.get("mission") or {})
         if not mission:
             raise ChiefAgentError("Активная миссия не найдена.")
+        if _explicit_production():
+            requested_scope = _normalize_conversation_scope(scope)
+            stored_scope = _normalize_conversation_scope(
+                mission.get("conversation_scope")
+                if isinstance(mission.get("conversation_scope"), dict) else None
+            )
+            if (
+                not requested_scope
+                or not stored_scope
+                or requested_scope.get("scope_id") != stored_scope.get("scope_id")
+            ):
+                raise ChiefAgentError(
+                    "Production mission belongs to another user or workspace."
+                )
         if action not in {"pause", "resume", "stop"}:
             raise ChiefAgentError("Неизвестное действие миссии.")
         mission["status"] = {"pause": "paused", "resume": "active", "stop": "stopped"}[action]
@@ -2323,9 +2393,13 @@ def set_mission_state(action: str) -> Dict[str, Any]:
     return mission
 
 
-def propose_action(action: str, payload: Dict[str, Any], reason: str) -> Dict[str, Any]:
+def propose_action(action: str, payload: Dict[str, Any], reason: str, *,
+                   scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if action not in SAFE_PROPOSAL_ACTIONS:
         raise ChiefAgentError("Главный агент может предлагать только enable/disable для paper/demo.")
+    scope_info = _normalize_conversation_scope(scope)
+    if _explicit_production() and not scope_info:
+        raise ChiefAgentError("Production proposal requires a user and workspace scope.")
     proposal = {
         "proposal_id": f"PROP-{uuid.uuid4().hex[:8].upper()}",
         "created_at_utc": _now(),
@@ -2338,6 +2412,13 @@ def propose_action(action: str, payload: Dict[str, Any], reason: str) -> Dict[st
         "status": "pending",
         "expires_at_utc": (_now_dt() + timedelta(hours=6)).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
+    if scope_info:
+        proposal.update({
+            "conversation_scope": scope_info,
+            "conversation_scope_id": scope_info["scope_id"],
+            "workspace_id": scope_info["workspace_id"],
+            "user_id": scope_info["user_id"],
+        })
     with _LOCK:
         doc = _load()
         proposals = list(doc.get("proposals") or [])[-99:]
@@ -2347,9 +2428,18 @@ def propose_action(action: str, payload: Dict[str, Any], reason: str) -> Dict[st
     return proposal
 
 
-def decide_proposal(proposal_id: str, decision: str) -> Dict[str, Any]:
+def decide_proposal(proposal_id: str, decision: str, *,
+                    scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if decision not in {"approve", "reject"}:
         raise ChiefAgentError("Решение должно быть approve или reject.")
+    scope_info = _normalize_conversation_scope(scope)
+    if _explicit_production() and not scope_info:
+        raise ChiefAgentError("Production proposal decision requires a user and workspace scope.")
+    if scope_info and not (
+        scope_info.get("is_owner")
+        or str(scope_info.get("membership_role") or "") == "owner"
+    ):
+        raise ChiefAgentError("Only the workspace owner may approve paper/demo control.")
     with _LOCK:
         doc = _load()
         proposals = list(doc.get("proposals") or [])
@@ -2357,6 +2447,13 @@ def decide_proposal(proposal_id: str, decision: str) -> Dict[str, Any]:
         if index is None:
             raise ChiefAgentError("Предложение не найдено.")
         proposal = dict(proposals[index])
+        proposal_scope = str(proposal.get("conversation_scope_id") or "")
+        if scope_info and proposal_scope and proposal_scope != scope_info["scope_id"]:
+            # Deliberately use the same response as an unknown id; another
+            # user's pending paper-control request must not be discoverable.
+            raise ChiefAgentError("Предложение не найдено.")
+        if _explicit_production() and not proposal_scope:
+            raise ChiefAgentError("Legacy unscoped proposal cannot be decided in Production.")
         if proposal.get("status") != "pending":
             raise ChiefAgentError("Предложение уже обработано.")
         if (_parse_time(proposal.get("expires_at_utc")) or _now_dt()) < _now_dt():
@@ -2373,19 +2470,41 @@ def decide_proposal(proposal_id: str, decision: str) -> Dict[str, Any]:
     if decision == "approve":
         from .. import runtime
         payload = dict(proposal.get("payload") or {})
-        result = runtime.submit_command(
-            command=str(proposal["action"]),
-            strategy_id=str(payload.get("strategy_id") or ""),
-            account_name=str(payload.get("account_name") or ""),
-            quantity=int(payload.get("quantity") or 1),
-            reason=f"Approved chief-agent proposal {proposal_id}: {proposal.get('reason') or ''}",
-            operator="telegram_owner_approval",
-            class_name=str(payload.get("class_name") or ""),
-            instrument=str(payload.get("instrument") or ""),
-            runtime_instance_id=str(payload.get("runtime_instance_id") or ""),
-            params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+        def submit() -> Dict[str, Any]:
+            return runtime.submit_command(
+                command=str(proposal["action"]),
+                strategy_id=str(payload.get("strategy_id") or ""),
+                account_name=str(payload.get("account_name") or ""),
+                quantity=int(payload.get("quantity") or 1),
+                reason=f"Approved chief-agent proposal {proposal_id}: {proposal.get('reason') or ''}",
+                operator="telegram_owner_approval",
+                class_name=str(payload.get("class_name") or ""),
+                instrument=str(payload.get("instrument") or ""),
+                runtime_instance_id=str(payload.get("runtime_instance_id") or ""),
+                params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+            )
+
+        stored_scope = _normalize_conversation_scope(
+            proposal.get("conversation_scope")
+            if isinstance(proposal.get("conversation_scope"), dict) else None
         )
+        runtime_dir = str(stored_scope.get("runtime_dir") or "")
+        if runtime_dir:
+            with runtime.runtime_dir_override(runtime_dir):
+                result = submit()
+        else:
+            result = submit()
         proposal["execution"] = result
+        proposal["executed_at_utc"] = _now()
+        with _LOCK:
+            latest = _load()
+            rows = list(latest.get("proposals") or [])
+            for row_index, row in enumerate(rows):
+                if row.get("proposal_id") == proposal_id:
+                    rows[row_index] = proposal
+                    latest["proposals"] = rows
+                    _save(latest)
+                    break
     return proposal
 
 
@@ -2669,7 +2788,7 @@ def _application_snapshot() -> Dict[str, Any]:
 
 def _scope_application_snapshot(snapshot: Dict[str, Any], scope_info: Dict[str, Any]) -> Dict[str, Any]:
     """Remove owner/global control-plane data from another user's model prompt."""
-    if not scope_info or scope_info.get("is_owner"):
+    if not scope_info:
         return snapshot
     workspace_id = str(scope_info.get("workspace_id") or "")
     scoped = dict(snapshot or {})
@@ -2682,9 +2801,6 @@ def _scope_application_snapshot(snapshot: Dict[str, Any], scope_info: Dict[str, 
     scoped["research_mission"] = (
         mission if str((mission_scope or {}).get("workspace_id") or "") == workspace_id else None
     )
-    scoped["agents"] = []  # provider balances and model budgets are owner-only
-    scoped["owner_rules"] = []
-    scoped["north_star"] = {"configured": False}
     scoped["open_tasks"] = [
         row for row in (snapshot.get("open_tasks") or [])
         if str(row.get("workspace_id") or "") == workspace_id
@@ -2693,6 +2809,15 @@ def _scope_application_snapshot(snapshot: Dict[str, Any], scope_info: Dict[str, 
         row for row in (snapshot.get("pending_proposals") or [])
         if str(row.get("workspace_id") or "") == workspace_id
     ]
+    scoped["active_run"] = runner.run_status(scope=scope_info)
+    if scope_info.get("is_owner"):
+        # The product owner may retain global governance/budget context, but
+        # tenant research, tasks and proposals still stay in the selected
+        # workspace and are never blended into one model prompt.
+        return scoped
+    scoped["agents"] = []  # provider balances and model budgets are owner-only
+    scoped["owner_rules"] = []
+    scoped["north_star"] = {"configured": False}
     return scoped
 
 
@@ -2714,8 +2839,8 @@ def _json_plan(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _status_reply() -> str:
-    doc = status()
+def _status_reply(scope: Optional[Dict[str, Any]] = None) -> str:
+    doc = status(scope=scope)
     run = doc.get("current_run") or {}
     mission = doc.get("mission") or {}
     if not mission or mission.get("status") not in {"active", "paused", "finishing"}:
@@ -3274,7 +3399,7 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
         if name == "respond":
             return {"name": name, "status": "no_action"}
         if name == "status":
-            return {"name": name, "status": "completed", "summary": _status_reply()}
+            return {"name": name, "status": "completed", "summary": _status_reply(scope)}
         if name == "start_research":
             # A model may carry an old false flag from dialogue history. Local
             # models are mandatory unless this exact owner message opts out.
@@ -3325,7 +3450,7 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
             }
         if name in {"pause_research", "resume_research", "stop_research"}:
             verb = {"pause_research": "pause", "resume_research": "resume", "stop_research": "stop"}[name]
-            mission = set_mission_state(verb)
+            mission = set_mission_state(verb, scope=scope)
             if name == "resume_research":
                 if context_authorized:
                     with _LOCK:
@@ -3398,7 +3523,9 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
                 ),
             }
         if name == "audit_backtests":
-            report = audit_recent_backtests(use_llm=True, send_telegram=False)
+            report = audit_recent_backtests(
+                use_llm=True, send_telegram=False, scope=scope,
+            )
             return {"name": name, "status": "completed", "checked": report["experiments_checked"], "findings": len(report["findings"])}
         if name == "save_rule":
             priority = str(args.get("priority") or "high")
@@ -3416,7 +3543,12 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
                 "memory_id": note.get("memory_id"),
             }
         if name in {"create_task", "add_calendar_event"}:
-            task = add_task({**args, "task_type": "calendar_event" if name == "add_calendar_event" else "operator_task", "source": "orchestrator"})
+            task = add_task({
+                **args,
+                "task_type": "calendar_event" if name == "add_calendar_event" else "operator_task",
+                "source": "orchestrator",
+                "conversation_scope": _normalize_conversation_scope(scope),
+            })
             return {"name": name, "status": "completed", "task_id": task["task_id"]}
         if name == "comment_strategy":
             experiment_id = str(args.get("experiment_id") or "").strip()
@@ -3437,7 +3569,12 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
             return {"name": name, "status": "completed", "created": created}
         if name == "propose_strategy_control":
             command = str(args.get("action") or "")
-            proposal = propose_action(command, args.get("payload") if isinstance(args.get("payload"), dict) else args, str(action.get("reason") or ""))
+            proposal = propose_action(
+                command,
+                args.get("payload") if isinstance(args.get("payload"), dict) else args,
+                str(action.get("reason") or ""),
+                scope=scope,
+            )
             return {"name": name, "status": "approval_required", "proposal_id": proposal["proposal_id"]}
         if name == "reconnect_runtime_connection":
             requested_account = str(
@@ -3460,7 +3597,11 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
                 ),
             }
         if name == "generate_report":
-            report = generate_periodic_report(str(args.get("period") or "weekly"), send_telegram=False)
+            report = generate_periodic_report(
+                str(args.get("period") or "weekly"),
+                send_telegram=False,
+                scope=scope,
+            )
             return {"name": name, "status": "completed", "period": report.get("period"), "report_id": report.get("report_id")}
         if name in {
             "chart_snapshot", "chart_draw", "chart_open", "chart_clear",
@@ -3509,31 +3650,68 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
     return {"name": name, "status": "blocked", "reason": "no_executor"}
 
 
-def generate_periodic_report(period: str, *, send_telegram: bool = True) -> Dict[str, Any]:
-    from .. import performance
+def generate_periodic_report(period: str, *, send_telegram: bool = True,
+                             scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from .. import performance, runtime
 
     normalized = str(period or "weekly").lower()
     period_key = {"weekly": "week", "week": "week", "monthly": "month", "month": "month", "quarterly": "quarter", "quarter": "quarter"}.get(normalized)
     if not period_key:
         raise ChiefAgentError("Период отчёта должен быть weekly, monthly или quarterly.")
-    metrics = performance.build_performance_response(period=period_key)
-    experiments = _application_snapshot().get("recent_experiments") or []
+    scope_info = _normalize_conversation_scope(scope)
+    if _explicit_production() and not scope_info:
+        raise ChiefAgentError("Production periodic report requires a user and workspace scope.")
+
+    def collect() -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        scoped_snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
+        return (
+            performance.build_performance_response(period=period_key),
+            list(scoped_snapshot.get("recent_experiments") or []),
+        )
+
+    runtime_dir = str(scope_info.get("runtime_dir") or "")
+    if runtime_dir:
+        with runtime.runtime_dir_override(runtime_dir):
+            metrics, experiments = collect()
+    else:
+        metrics, experiments = collect()
     packet = {"period": period_key, "performance": metrics, "recent_ai_experiments": experiments}
     complexity = "critical" if period_key in {"month", "quarter"} else "standard"
-    result = agent_router.invoke_role(
-        "orchestrator",
-        json.dumps(packet, ensure_ascii=False, default=str)[:19000],
-        system_prompt=(
-            "You are StratForge Orchestrator preparing a recurring owner report. "
-            "Use only supplied metrics. Answer in Russian with sections: evidence, conclusions, "
-            "problems/doubts, recommendations, and proposed next actions. Never authorize live trading."
-        ),
-        max_output_tokens=2500,
-        timeout=llm_timeouts.PERIODIC_REPORT,
-        purpose=f"orchestrator_{period_key}_report",
-        complexity=complexity,
-        cache_mode="off",
-    )
+    with universal_llm.usage_scope({
+        "user_id": scope_info.get("user_id"),
+        "user_name": scope_info.get("display_name"),
+        "workspace_id": scope_info.get("workspace_id"),
+        "conversation_id": DEFAULT_CONVERSATION_ID,
+        "request_source": f"orchestrator_{period_key}_report",
+    }):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded:
+            result = {
+                "content": (
+                    f"Отчёт за период {period_key} собран детерминированно. "
+                    "AI-интерпретация не запущена без привязки к "
+                    "пользователю и рабочей области."
+                ),
+                "actual_model": "scope policy",
+                "provider": "local",
+                "scope_blocked": True,
+            }
+        else:
+            result = agent_router.invoke_role(
+                "orchestrator",
+                json.dumps(packet, ensure_ascii=False, default=str)[:19000],
+                system_prompt=(
+                    "You are StratForge Orchestrator preparing a recurring owner report. "
+                    "Use only supplied metrics. Answer in Russian with sections: evidence, conclusions, "
+                    "problems/doubts, recommendations, and proposed next actions. Never authorize live trading."
+                ),
+                max_output_tokens=2500,
+                timeout=llm_timeouts.PERIODIC_REPORT,
+                purpose=f"orchestrator_{period_key}_report",
+                complexity=complexity,
+                cache_mode="off",
+            )
     report = {
         "report_id": f"ORCH-REPORT-{uuid.uuid4().hex[:10].upper()}",
         "generated_at_utc": _now(),
@@ -3546,8 +3724,11 @@ def generate_periodic_report(period: str, *, send_telegram: bool = True) -> Dict
         "output_tokens": result.get("output_tokens"),
         "cost_usd": result.get("cost_usd"),
     }
-    write_json_atomic(_reports_dir() / f"{period_key}-{_pt_now().date().isoformat()}.json", report)
-    if send_telegram:
+    write_json_atomic(
+        _report_output_dir(scope_info) / f"{period_key}-{_pt_now().date().isoformat()}.json",
+        report,
+    )
+    if send_telegram and _can_mirror_to_telegram(scope_info):
         from .. import telegram_service
         telegram_service.send_chief_report(
             f"Отчёт Orchestrator · {period_key}", [report["content"][:3500]],
@@ -3707,7 +3888,8 @@ def _is_followup_approval(message: str) -> bool:
     return command_language.continuation_decision(message) == "approve"
 
 
-def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+def _followup_start_plan(message: str, history: List[Dict[str, str]], *,
+                         scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     if not _is_followup_approval(message):
         return None
     last_assistant = next((
@@ -3720,6 +3902,10 @@ def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optiona
         return None
     root = _extract_root(last_assistant) or "MNQ"
     current_mission = dict(_load().get("mission") or {})
+    scope_info = _normalize_conversation_scope(scope)
+    mission_scope = current_mission.get("conversation_scope") if isinstance(current_mission.get("conversation_scope"), dict) else {}
+    if scope_info and str((mission_scope or {}).get("workspace_id") or "") != scope_info["workspace_id"]:
+        current_mission = {}
     mission_roots = [str(value).upper() for value in (current_mission.get("target_roots") or [])]
     if current_mission.get("status") in {"stopped", "paused"} and root in mission_roots:
         return {
@@ -3762,11 +3948,15 @@ def _followup_start_plan(message: str, history: List[Dict[str, str]]) -> Optiona
     }
 
 
-def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
+def _direct_plan(message: str, *, scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     text = str(message or "").strip()
     low = text.lower()
     normalized_low = low.rstrip("?! .")
     current_mission = dict(_load().get("mission") or {})
+    scope_info = _normalize_conversation_scope(scope)
+    mission_scope = current_mission.get("conversation_scope") if isinstance(current_mission.get("conversation_scope"), dict) else {}
+    if scope_info and str((mission_scope or {}).get("workspace_id") or "") != scope_info["workspace_id"]:
+        current_mission = {}
     address_match = re.search(
         r"(?:обращайся\s+ко\s+мне|зови\s+меня|называй\s+меня)\s+(.+?)(?:[.!?]|$)",
         text, flags=re.IGNORECASE,
@@ -3894,7 +4084,7 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
         "сколько стратег", "какие итог", "сколько осталось", "когда будет готов",
     ))
     if status_request:
-        return {"reply": _status_reply(), "confidence": 1.0, "doubts": [], "actions": []}
+        return {"reply": _status_reply(scope), "confidence": 1.0, "doubts": [], "actions": []}
     reconnect_request = (
         ("моделир" in low or "simulation" in low or "sim connection" in low)
         and any(value in low for value in ("включ", "перезапус", "переподключ", "reconnect", "restart"))
@@ -3917,19 +4107,26 @@ def _direct_plan(message: str) -> Optional[Dict[str, Any]]:
                 "reason": "owner requested reconnect of NinjaTrader modeling connection",
             }],
         }
-    pending = [row for row in (_load().get("proposals") or []) if row.get("status") == "pending"]
+    pending = [
+        row for row in (_load().get("proposals") or [])
+        if row.get("status") == "pending"
+        and (
+            not scope_info
+            or str(row.get("conversation_scope_id") or "") == scope_info["scope_id"]
+        )
+    ]
     if pending and low in {"да", "подтверждаю", "одобряю", "approve", "выполняй"}:
-        proposal = decide_proposal(str(pending[-1]["proposal_id"]), "approve")
+        proposal = decide_proposal(str(pending[-1]["proposal_id"]), "approve", scope=scope)
         return {"reply": f"Предложение {proposal['proposal_id']} подтверждено и передано в безопасную paper/demo очередь.", "confidence": 1.0, "doubts": [], "actions": []}
     if pending and low in {"нет", "отклоняю", "не делай", "reject"}:
-        proposal = decide_proposal(str(pending[-1]["proposal_id"]), "reject")
+        proposal = decide_proposal(str(pending[-1]["proposal_id"]), "reject", scope=scope)
         return {"reply": f"Предложение {proposal['proposal_id']} отклонено.", "confidence": 1.0, "doubts": [], "actions": []}
     match = re.search(r"\b(PROP-[A-Z0-9]+)\b", text, re.I)
     if match and any(word in low for word in ("approve", "подтверж", "одобр")):
-        proposal = decide_proposal(match.group(1).upper(), "approve")
+        proposal = decide_proposal(match.group(1).upper(), "approve", scope=scope)
         return {"reply": f"Предложение {proposal['proposal_id']} подтверждено.", "confidence": 1.0, "doubts": [], "actions": []}
     if match and any(word in low for word in ("reject", "отклон", "не делай")):
-        proposal = decide_proposal(match.group(1).upper(), "reject")
+        proposal = decide_proposal(match.group(1).upper(), "reject", scope=scope)
         return {"reply": f"Предложение {proposal['proposal_id']} отклонено.", "confidence": 1.0, "doubts": [], "actions": []}
     if continuous_request and current_mission.get("status") != "active":
         root = _extract_root(text) or "MNQ"
@@ -4070,6 +4267,24 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
         "request_source": source,
     }
     with universal_llm.usage_scope(usage_context):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded:
+            return {
+                "ok": False,
+                "internal": True,
+                "reply": (
+                    "Фоновое AI-поручение остановлено: в Production не указан "
+                    "пользователь и рабочая область."
+                ),
+                "model": "scope policy",
+                "provider": "local",
+                "actions": [{
+                    "name": "background_task",
+                    "status": "blocked",
+                    "reason": "production_ai_scope_required",
+                }],
+            }
         if runtime_dir:
             from .. import runtime
             with runtime.runtime_dir_override(runtime_dir):
@@ -4085,6 +4300,16 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 on_thinking=on_thinking, scope=scope, request_id=request_id,
             )
         return _gateway_envelope(result, source=source)
+
+
+def _direct_plan_for_scope(message: str, scope: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Keep older test/extension dispatchers compatible while adding scope."""
+    try:
+        return _direct_plan(message, scope=scope)
+    except TypeError as exc:
+        if "unexpected keyword argument 'scope'" not in str(exc):
+            raise
+        return _direct_plan(message)
 
 
 def execute_internal_task(task: Dict[str, Any], *,
@@ -4114,6 +4339,27 @@ def execute_internal_task(task: Dict[str, Any], *,
         "request_source": "vitek_internal_task",
     }
     with universal_llm.usage_scope(usage_context):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded:
+            return {
+                "ok": False,
+                "reply": (
+                    "Фоновое AI-поручение остановлено: в Production не указан "
+                    "пользователь и рабочая область."
+                ),
+                "model": "scope policy",
+                "provider": "local",
+                "complexity": "standard",
+                "actions": [{
+                    "name": "background_task",
+                    "status": "blocked",
+                    "reason": "production_ai_scope_required",
+                }],
+                "doubts": [],
+                "internal": True,
+                "conversation_id": _safe_conversation_id(conversation_id),
+            }
         if runtime_dir:
             from .. import runtime
             with runtime.runtime_dir_override(runtime_dir):
@@ -4146,7 +4392,7 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
     from . import domain_agents
     management = domain_agents.resolve_management(str(agent or "manager"), instruction)
     complexity = str((management or {}).get("forced_complexity") or classify_complexity(instruction, "orchestrator"))
-    direct = _direct_plan(instruction)
+    direct = _direct_plan_for_scope(instruction, scope)
     if direct is not None:
         plan = direct
         model, provider = "deterministic dispatcher", "local"
@@ -4198,10 +4444,6 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
         raw_actions = [row for row in raw_actions if str(row.get("name") or "") != "ensure_local_models"]
     if float(plan.get("confidence") or 0) < 0.45:
         raw_actions = []
-    continuation_authorized = bool(
-        isinstance(task.get("approved_continuation"), dict)
-        and task["approved_continuation"].get("status") == "approved"
-    )
 
     def persisted_authorization_allows(action_name: str) -> bool:
         if str(task.get("authorization_status") or "") != "approved":
@@ -4211,6 +4453,7 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
             raw_scopes = re.split(r"[,\s]+", str(raw_scopes))
         scopes = {str(value or "").strip().lower() for value in raw_scopes}
         required = {
+            "start_research": "safe_fix",
             "audit_backtests": "audit", "start_backtest": "audit",
             "generate_report": "audit", "deliver_report": "audit",
             "request_performance_report": "audit", "request_accounting_report": "audit",
@@ -4218,7 +4461,9 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
             "chart_snapshot": "audit", "chart_open": "audit",
             "update_research": "safe_fix", "create_cells": "safe_fix",
             "comment_strategy": "safe_fix", "save_rule": "safe_fix",
+            "create_task": "safe_fix", "add_calendar_event": "safe_fix",
             "chart_draw": "safe_fix", "chart_clear": "safe_fix",
+            "ensure_local_models": "restart",
             "reconnect_runtime_connection": "restart",
             "pause_research": "restart", "resume_research": "restart",
             "stop_research": "restart", "schedule_research_stop": "restart",
@@ -4226,17 +4471,26 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
         }.get(str(action_name or ""))
         return bool(required and required in scopes)
 
-    action_results = [
-        _execute_action(
+    def execute_persisted_action(row: Dict[str, Any]) -> Dict[str, Any]:
+        action_name = str(row.get("name") or "")
+        # A stored task description, model draft, event payload or imported
+        # document is data, never an owner command.  Unlike the interactive
+        # ingress, matching verbs in that text cannot grant tool authority.
+        # Every stateful/read-sensitive background action must be covered by a
+        # typed authorization persisted on the task itself.
+        if action_name not in {"respond", "status"} and not persisted_authorization_allows(action_name):
+            return {
+                "name": action_name,
+                "status": "blocked",
+                "reason": "persisted_authorization_required",
+            }
+        return _execute_action(
             row, instruction, cid,
-            context_authorized=(
-                continuation_authorized
-                or persisted_authorization_allows(str(row.get("name") or ""))
-            ),
+            context_authorized=True,
             scope=scope,
         )
-        for row in raw_actions[:5]
-    ]
+
+    action_results = [execute_persisted_action(row) for row in raw_actions[:5]]
     reply = _reply_for_actor(str(plan.get("reply") or "").strip()[:8000], scope)
     summaries = [str(row.get("summary")) for row in action_results if row.get("summary")]
     if summaries:
@@ -4248,6 +4502,8 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
             reason = str(row.get("error") or row.get("reason") or "неизвестная ошибка")
             label = _ACTION_LABELS_RU.get(str(row.get("name") or ""), "запрошенное действие")
             if reason == "current_message_does_not_authorize_action":
+                reason = f"для действия «{label}» нет сохранённого разрешения нужного уровня"
+            elif reason == "persisted_authorization_required":
                 reason = f"для действия «{label}» нет сохранённого разрешения нужного уровня"
             elif reason == "workspace_role_read_only":
                 reason = "активная рабочая область доступна только для просмотра"
@@ -4649,7 +4905,8 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     )
     discussion_only = strategic_dialogue or manager_dialogue
     direct = None if discussion_only else (
-        _followup_start_plan(clean, history) or _direct_plan(clean)
+        _followup_start_plan(clean, history, scope=scope_info)
+        or _direct_plan_for_scope(clean, scope_info)
     )
     result: Dict[str, Any] = {}
     continuation_action: Optional[Dict[str, Any]] = None
@@ -4926,12 +5183,25 @@ def analyze_event(event_type: str, payload: Dict[str, Any], *, send_telegram: bo
         event_complexity = "standard"
     scope_info = _normalize_conversation_scope(scope)
     with universal_llm.usage_scope({
-        "user_id": scope_info.get("user_id") or "system",
-        "user_name": scope_info.get("display_name") or "System",
-        "workspace_id": scope_info.get("workspace_id") or "system",
+        "user_id": scope_info.get("user_id"),
+        "user_name": scope_info.get("display_name"),
+        "workspace_id": scope_info.get("workspace_id"),
         "conversation_id": DEFAULT_CONVERSATION_ID,
         "request_source": "system_event",
     }):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded:
+            return {
+                "ok": False,
+                "blocked": True,
+                "reason": "production_ai_scope_required",
+                "model": "scope policy",
+                "content": (
+                    "AI-анализ системного события не запущен: отсутствует "
+                    "подтверждённая рабочая область пользователя."
+                ),
+            }
         result = agent_router.invoke_role(
             "orchestrator",
             json.dumps(packet, ensure_ascii=False, default=str)[:19000],
@@ -4973,7 +5243,8 @@ def analyze_event(event_type: str, payload: Dict[str, Any], *, send_telegram: bo
     return {"ok": True, "message": message, "model": model, "content": content, "cost_usd": result.get("cost_usd")}
 
 
-def enqueue_event(event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def enqueue_event(event_type: str, payload: Dict[str, Any], *,
+                  scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Hand system signals to the durable event-driven Vitek dispatcher."""
     from .. import vitek
     return vitek.emit_event(
@@ -4981,13 +5252,20 @@ def enqueue_event(event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         severity="critical" if event_type in {
             "connection_lost", "runtime_error", "parameter_mismatch",
         } else "info",
+        scope=_normalize_conversation_scope(scope),
     )
 
 
-def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False) -> Dict[str, Any]:
+def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False,
+                           scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     today = _pt_now().date()
+    scope_info = _normalize_conversation_scope(scope)
+    if _explicit_production() and not scope_info:
+        raise ChiefAgentError("Production backtest audit requires a user and workspace scope.")
     experiments = []
     for exp in registry.list_experiments(limit=1000):
+        if scope_info and str(exp.get("workspace_id") or "") != scope_info["workspace_id"]:
+            continue
         stamp = _parse_time(exp.get("created_at_utc") or exp.get("created_at"))
         if stamp:
             try:
@@ -5033,30 +5311,47 @@ def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False
         "model_review": None,
     }
     if use_llm and experiments:
-        result = agent_router.invoke_role(
-            "chief_agent",
-            json.dumps({"date": today.isoformat(), "findings": findings}, ensure_ascii=False),
-            system_prompt=(
-                "You are the StratForge research supervisor. Review historical backtest QA only. "
-                "State evidence, doubts, missing tests and the next safest research action. Never "
-                "authorize paper/live. Be concise and answer in Russian. This stable prefix is reused."
-            ),
-            max_output_tokens=2500,
-            timeout=llm_timeouts.ANALYSIS,
-            purpose="chief_daily_backtest_audit",
-            complexity="critical",
-        )
-        report["model_review"] = {
-            "agent_name": result.get("agent_name"),
-            "model": result.get("actual_model") or result.get("model"),
-            "content": str(result.get("content") or "")[:12000],
-            "input_tokens": result.get("input_tokens"),
-            "cached_input_tokens": result.get("cached_input_tokens"),
-            "output_tokens": result.get("output_tokens"),
-            "cost_usd": result.get("cost_usd"),
-        }
-    write_json_atomic(_reports_dir() / f"daily-{today.isoformat()}.json", report)
-    if send_telegram:
+        with universal_llm.usage_scope({
+            "user_id": scope_info.get("user_id"),
+            "user_name": scope_info.get("display_name"),
+            "workspace_id": scope_info.get("workspace_id"),
+            "conversation_id": DEFAULT_CONVERSATION_ID,
+            "request_source": "chief_backtest_audit",
+        }):
+            try:
+                universal_llm.require_valid_production_scope()
+            except universal_llm.BudgetExceeded:
+                report["model_review"] = {
+                    "status": "blocked",
+                    "reason": "production_ai_scope_required",
+                }
+            else:
+                result = agent_router.invoke_role(
+                    "chief_agent",
+                    json.dumps({"date": today.isoformat(), "findings": findings}, ensure_ascii=False),
+                    system_prompt=(
+                        "You are the StratForge research supervisor. Review historical backtest QA only. "
+                        "State evidence, doubts, missing tests and the next safest research action. Never "
+                        "authorize paper/live. Be concise and answer in Russian. This stable prefix is reused."
+                    ),
+                    max_output_tokens=2500,
+                    timeout=llm_timeouts.ANALYSIS,
+                    purpose="chief_daily_backtest_audit",
+                    complexity="critical",
+                )
+                report["model_review"] = {
+                    "agent_name": result.get("agent_name"),
+                    "model": result.get("actual_model") or result.get("model"),
+                    "content": str(result.get("content") or "")[:12000],
+                    "input_tokens": result.get("input_tokens"),
+                    "cached_input_tokens": result.get("cached_input_tokens"),
+                    "output_tokens": result.get("output_tokens"),
+                    "cost_usd": result.get("cost_usd"),
+                }
+    write_json_atomic(
+        _report_output_dir(scope_info) / f"daily-{today.isoformat()}.json", report,
+    )
+    if send_telegram and _can_mirror_to_telegram(scope_info):
         from .. import telegram_service
         review = str((report.get("model_review") or {}).get("content") or "")
         lines = [
@@ -5074,38 +5369,69 @@ def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False
     return report
 
 
-def status() -> Dict[str, Any]:
+def status(*, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    scope_info = _normalize_conversation_scope(scope)
+    if _explicit_production() and not scope_info:
+        raise ChiefAgentError("Production Orchestrator status requires a user and workspace scope.")
     doc = _load()
     chief = _chief_model()
     mission = dict(doc.get("mission") or {})
+    if scope_info and mission:
+        mission_scope = mission.get("conversation_scope") if isinstance(mission.get("conversation_scope"), dict) else {}
+        if str((mission_scope or {}).get("workspace_id") or "") != scope_info["workspace_id"]:
+            mission = {}
     if mission:
         ends = _parse_time(mission.get("ends_at_utc"))
         if mission.get("status") == "active" and ends and ends <= _now_dt():
-            mission["status"] = "finishing" if runner.run_status() else "deadline_reached"
-    last_messages = _read_conversation(80)
+            mission["status"] = "finishing" if runner.run_status(scope=scope_info or None) else "deadline_reached"
+    last_messages = _read_conversation(
+        80, path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope_info or None),
+    )
+    owner_view = bool(not scope_info or scope_info.get("is_owner"))
     orchestrator_info = None if not chief else {
         "agent_id": chief.get("id"), "agent_name": ORCHESTRATOR_NAME,
         "provider": chief.get("provider"), "configured_model": chief.get("model"),
         "mode": "auto", "last_model": doc.get("last_model") or "",
         "last_provider": doc.get("last_provider") or "",
         "last_complexity": doc.get("last_complexity") or "",
-        "monthly_budget_usd": chief.get("monthly_budget_usd"),
-        "spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
-        "account_spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
-        "remaining_monthly_budget_usd": chief.get("remaining_monthly_budget_usd"),
     }
-    return {
-        "enabled": bool(chief),
-        "name": ORCHESTRATOR_NAME,
-        "orchestrator": orchestrator_info,
-        "chief_model": None if not chief else {
-            "agent_id": chief.get("id"), "agent_name": chief.get("name"),
-            "provider": chief.get("provider"), "model": chief.get("model"),
+    if owner_view and orchestrator_info is not None:
+        orchestrator_info.update({
             "monthly_budget_usd": chief.get("monthly_budget_usd"),
             "spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
             "account_spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
             "remaining_monthly_budget_usd": chief.get("remaining_monthly_budget_usd"),
-        },
+        })
+    chief_model = None if not chief else {
+        "agent_id": chief.get("id"), "agent_name": chief.get("name"),
+        "provider": chief.get("provider"), "model": chief.get("model"),
+    }
+    if owner_view and chief_model is not None:
+        chief_model.update({
+            "monthly_budget_usd": chief.get("monthly_budget_usd"),
+            "spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
+            "account_spend_month_usd": chief.get("account_spend_month_usd", chief.get("spend_month_usd")),
+            "remaining_monthly_budget_usd": chief.get("remaining_monthly_budget_usd"),
+        })
+    if scope_info and _explicit_production():
+        try:
+            from .. import ai_budgets
+            usage = ai_budgets.workspace_usage_summary(scope_info["workspace_id"])
+        except Exception:
+            usage = {"ok": False, "code": "storage_unavailable"}
+    else:
+        usage = _usage_stats()
+    tasks = list(reversed(_read_tasks(50)))
+    proposals = [row for row in (doc.get("proposals") or []) if row.get("status") == "pending"]
+    if scope_info:
+        workspace_id = scope_info["workspace_id"]
+        tasks = [row for row in tasks if str(row.get("workspace_id") or "") == workspace_id]
+        proposals = [row for row in proposals if str(row.get("workspace_id") or "") == workspace_id]
+    return {
+        "enabled": bool(chief),
+        "name": ORCHESTRATOR_NAME,
+        "orchestrator": orchestrator_info,
+        "chief_model": chief_model,
         "routing_mode": "automatic_complexity",
         "complexity_tiers": {
             "light": "free/low-cost pool",
@@ -5113,18 +5439,22 @@ def status() -> Dict[str, Any]:
             "critical": "DeepSeek V4 Pro first",
         },
         "mission": mission or None,
-        "current_run": runner.run_status(),
+        "current_run": runner.run_status(scope=scope_info or None),
         # The Orchestrator coordinates the whole pool, so its dashboard must
         # report pool-wide cache/tokens/cost rather than only the Pro model.
-        "usage": _usage_stats(),
-        "tasks": list(reversed(_read_tasks(50))),
+        "usage": usage,
+        "tasks": tasks,
         "conversation": last_messages,
         "capabilities": [
-            {"id": name, "allowed": True, "requires_owner_approval": name == "propose_strategy_control"}
+            {
+                "id": name,
+                "allowed": _scope_allows_capability(name, scope_info),
+                "requires_owner_approval": name == "propose_strategy_control",
+            }
             for name in sorted(ALLOWED_PLAN_ACTIONS)
         ],
         "prohibited": ["source_code_edit", "shell", "arbitrary_http", "live_trading", "automatic_promotion"],
-        "pending_proposals": [row for row in (doc.get("proposals") or []) if row.get("status") == "pending"],
+        "pending_proposals": proposals,
         "safety": {
             "historical_research_autonomous": True,
             "paper_requires_owner_approval": True,
@@ -5138,9 +5468,13 @@ def status() -> Dict[str, Any]:
 def _mission_failure_breaker(mission: Dict[str, Any]) -> Dict[str, Any]:
     """Detect a systemic failure before an autonomous mission starts a new cycle."""
     started = _parse_time(mission.get("started_at_utc")) or _now_dt()
+    mission_scope = mission.get("conversation_scope") if isinstance(mission.get("conversation_scope"), dict) else {}
+    workspace_id = str((mission_scope or {}).get("workspace_id") or "")
     counts: Dict[str, int] = {}
     examples: Dict[str, str] = {}
     for row in registry.list_experiments(limit=1000):
+        if workspace_id and str(row.get("workspace_id") or "") != workspace_id:
+            continue
         created = _parse_time(row.get("created_at_utc") or row.get("created_at"))
         if not created or created < started:
             continue
@@ -5464,7 +5798,8 @@ def _mission_tick() -> None:
     last = _parse_time(mission.get("last_cycle_at_utc"))
     if last and (_now_dt() - last).total_seconds() < 120:
         return
-    spend_now = float(_usage_stats().get("cost_usd") or 0)
+    mission_workspace_id = str((mission.get("conversation_scope") or {}).get("workspace_id") or "")
+    spend_now = float(_workspace_usage_stats(mission_workspace_id).get("cost_usd") or 0)
     spend = max(0.0, spend_now - float(mission.get("paid_spend_at_start_usd") or 0))
     paid_budget = float(mission.get("paid_budget_usd") or 0)
     if paid_budget > 0 and spend >= paid_budget:
@@ -5630,9 +5965,12 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
             mission = current
     started = _parse_time(mission.get("started_at_utc")) or _now_dt()
     roots = set(mission.get("target_roots") or [])
+    mission_workspace_id = str((mission.get("conversation_scope") or {}).get("workspace_id") or "")
     experiments: List[Dict[str, Any]] = []
     full_experiments: List[Dict[str, Any]] = []
     for row in registry.list_experiments(limit=1000):
+        if mission_workspace_id and str(row.get("workspace_id") or "") != mission_workspace_id:
+            continue
         created = _parse_time(row.get("created_at_utc") or row.get("created_at"))
         if created and created >= started and (not roots or row.get("target_root") in roots):
             full_experiments.append(row)
@@ -5682,7 +6020,9 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
                 current["status"] = "archived"
                 current["archive_reason"] = f"mission completed without a candidate: {reason}"
             registry.write_experiment(current)
-    spend_now = float(_usage_stats().get("cost_usd") or 0)
+    spend_now = float(
+        _workspace_usage_stats(mission_workspace_id).get("cost_usd") or 0
+    )
     paid_spend = max(0.0, spend_now - float(mission.get("paid_spend_at_start_usd") or 0))
     status_counts: Dict[str, int] = {}
     rejection_counts: Dict[str, int] = {}
@@ -5771,6 +6111,32 @@ def _complete_mission(mission: Dict[str, Any], reason: str) -> None:
         pass
 
 
+def _scheduled_owner_scope() -> Dict[str, Any]:
+    """Resolve a persisted owner scope for unattended Production reporting."""
+    with _LOCK:
+        mission = dict(_load().get("mission") or {})
+    candidate = (
+        mission.get("conversation_scope")
+        if isinstance(mission.get("conversation_scope"), dict) else None
+    )
+    if candidate:
+        try:
+            return _normalize_conversation_scope(candidate)
+        except ChiefAgentError:
+            pass
+    try:
+        from .. import workspaces
+
+        for row in workspaces.runtime_monitor_scopes():
+            if not isinstance(row, dict):
+                continue
+            if row.get("uses_owner_runtime"):
+                return _normalize_conversation_scope(row)
+    except Exception:
+        pass
+    return {}
+
+
 def _scheduled_audit_tick() -> None:
     local = _pt_now()
     if (local.hour, local.minute) < (16, 20):
@@ -5780,8 +6146,15 @@ def _scheduled_audit_tick() -> None:
         doc = _load()
         if doc.get("daily_audit_key") == key:
             return
+    scope = _scheduled_owner_scope()
+    if _explicit_production() and not scope:
+        return
     try:
-        audit_recent_backtests(use_llm=True, send_telegram=True)
+        audit_recent_backtests(
+            use_llm=True,
+            send_telegram=True,
+            scope=scope,
+        )
     except Exception as exc:
         with _LOCK:
             doc = _load(); doc["last_audit_error"] = str(exc)[:500]; _save(doc)
@@ -5810,7 +6183,12 @@ def _scheduled_reports_tick() -> None:
             if doc.get(state_key) == key:
                 continue
         try:
-            generate_periodic_report(period, send_telegram=True)
+            report_scope = _scheduled_owner_scope()
+            if _explicit_production() and not report_scope:
+                continue
+            generate_periodic_report(
+                period, send_telegram=True, scope=report_scope,
+            )
         except Exception as exc:
             with _LOCK:
                 doc = _load(); doc[f"last_{period}_report_error"] = str(exc)[:500]; _save(doc)
@@ -5844,7 +6222,7 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
             "heartbeat_age_sec": heartbeat.get("age_sec"),
             "enabled_strategies": 0,
         }
-        enqueue_event(heartbeat_transition, payload)
+        enqueue_event(heartbeat_transition, payload, scope=scope)
     if not heartbeat_fresh:
         return
     strategies = runtime.read_strategies_raw()
@@ -5909,7 +6287,7 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
             enqueue_event(primary, {
                 "issues": issues, "enabled_strategies": len(enabled),
                 "workspace_id": runtime_identity,
-            })
+            }, scope=scope)
         except Exception as exc:
             with _LOCK:
                 doc = _load(); doc["last_runtime_analysis_error"] = str(exc)[:500]; _save(doc)
@@ -5923,7 +6301,7 @@ def _runtime_monitor_tick(scope: Optional[Dict[str, Any]] = None) -> None:
             enqueue_event("connection_lost", {
                 **connection_payload,
                 "workspace_id": runtime_identity,
-            })
+            }, scope=scope)
         except Exception as exc:
             with _LOCK:
                 doc = _load(); doc["last_runtime_analysis_error"] = str(exc)[:500]; _save(doc)
@@ -5945,6 +6323,8 @@ def _event_queue_tick() -> None:
         enqueue_event(
             str(event.get("event_type") or "system_event"),
             dict(event.get("payload") or {}),
+            scope=(event.get("conversation_scope")
+                   if isinstance(event.get("conversation_scope"), dict) else None),
         )
     except Exception as exc:
         event["attempts"] = int(event.get("attempts") or 0) + 1
@@ -5987,11 +6367,21 @@ def poll_once() -> Dict[str, Any]:
                         _runtime_monitor_tick(scope)
                 else:
                     _runtime_monitor_tick(scope)
-        else:
+        elif not _explicit_production():
             _runtime_monitor_tick()
     except Exception:
-        _runtime_monitor_tick()
+        # Production may never fall back from a failed workspace-directory
+        # lookup to the legacy global runtime.  That would inspect the wrong
+        # tenant and enqueue an unowned AI event.  The next coordinator tick
+        # retries the scoped lookup.
+        if not _explicit_production():
+            _runtime_monitor_tick()
     _event_queue_tick()
+    if _explicit_production():
+        scope = _scheduled_owner_scope()
+        if scope:
+            return status(scope=scope)
+        return {"enabled": bool(_chief_model()), "scoped": False}
     return status()
 
 

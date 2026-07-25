@@ -23,13 +23,14 @@ DEFAULT_TTL_SEC = 3600
 
 
 def make_key(*, agent_id: str, model: str, system_prompt: str, prompt: str,
-             max_output_tokens: int) -> str:
+             max_output_tokens: int, workspace_id: str = "") -> str:
     canonical = json.dumps({
         "agent_id": agent_id,
         "model": model,
         "system_prompt": system_prompt,
         "prompt": prompt,
         "max_output_tokens": int(max_output_tokens),
+        "workspace_id": str(workspace_id or ""),
     }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

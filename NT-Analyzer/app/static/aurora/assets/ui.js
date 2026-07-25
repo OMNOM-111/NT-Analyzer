@@ -2518,6 +2518,7 @@
           ['profile', 'Профиль'],
           ['users', 'Пользователи'],
           ['monitoring', 'Мониторинг'],
+          ['operations', 'Операции'],
           ['ai_ratings', 'Рейтинги ИИ'],
           ['requests', 'Заявки'],
           ['plans', 'Тарифы'],
@@ -2534,6 +2535,7 @@
       qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
       if (t === 'users') renderUsersInto(cb);
       else if (t === 'monitoring') renderMonitoringInto(cb);
+      else if (t === 'operations') renderOperationsInto(cb);
       else if (t === 'ai_ratings') renderAiRatingsInto(cb);
       else if (t === 'staging') renderStagingInto(cb);
       else if (t === 'requests') renderRequestsInto(cb);
@@ -2566,6 +2568,52 @@
       if (refresh) refresh.onclick = () => renderAiRatingsInto(node);
     } catch (e) {
       node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  async function renderOperationsInto(node) {
+    node.innerHTML = '<div class="cab-sub">Production control plane</div><div class="muted">Загрузка…</div>';
+    try {
+      const data = await API.http.ownerOperations();
+      const queues = data.queues || {};
+      const worker = data.worker || {};
+      const workerMetrics = worker.metrics || {};
+      const workerCounts = workerMetrics.counts || {};
+      const serviceHealth = data.service_health || {};
+      const services = Array.isArray(serviceHealth.services) ? serviceHealth.services : [];
+      const telegram = data.telegram || {};
+      const telegramCounts = telegram.counts || {};
+      const connectorCounts = data.connectors || {};
+      const formatAge = value => {
+        const seconds = Math.max(0, Number(value || 0));
+        return seconds < 60 ? `${Math.round(seconds)} с` : `${Math.round(seconds / 60)} мин`;
+      };
+      const value = (source, key) => Number((source || {})[key] || 0);
+      const healthy = service => !!service.fresh && String(service.status || '') === 'healthy';
+      const serviceRows = services.map(service => `<div class="row"><div class="row-main"><div class="row-title">${esc(service.service_role || 'service')} <span class="badge ${healthy(service) ? 'live' : 'pending'}">${healthy(service) ? 'healthy' : esc(service.status || 'unknown')}</span></div><div class="row-sub">${esc(service.instance_id || '—')} · ${formatAge(service.age_sec)} назад</div></div></div>`).join('');
+      const workerRows = Object.entries(workerCounts).map(([kind, counts]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(kind)}</div><div class="row-sub">queued ${value(counts, 'queued')} · running ${value(counts, 'running')} · completed ${value(counts, 'completed')} · dead letter ${value(counts, 'dead_letter')}</div></div></div>`).join('');
+      const dashboardState = data.ok ? 'live' : 'pending';
+      node.innerHTML = `
+        <div class="cab-sub">Только агрегированные статусы: без payload, токенов, путей и tenant-данных.</div>
+        <div class="kpi-row cab-kpi"><div class="kpi ${dashboardState}"><div class="kpi-label">Control plane</div><div class="kpi-value">${data.ok ? 'ready' : 'degraded'}</div></div>
+        <div class="kpi"><div class="kpi-label">Critical alerts</div><div class="kpi-value">${value(queues, 'critical_alerts')}</div></div>
+        <div class="kpi"><div class="kpi-label">Jobs queued</div><div class="kpi-value">${value(queues, 'jobs_queued')}</div></div>
+        <div class="kpi"><div class="kpi-label">Telegram queued</div><div class="kpi-value">${value(telegramCounts, 'updates_queued') + value(telegramCounts, 'outbox_queued')}</div></div></div>
+        <h4 class="cab-section-title">Service heartbeats</h4><div class="list">${serviceRows || '<div class="muted">Нет зарегистрированных heartbeat</div>'}</div>
+        <h4 class="cab-section-title">Durable queues</h4><div class="kpi-row cab-kpi"><div class="kpi"><div class="kpi-label">Telegram inbox</div><div class="kpi-value">${value(queues, 'telegram_inbox')}</div></div>
+        <div class="kpi"><div class="kpi-label">Telegram outbox</div><div class="kpi-value">${value(queues, 'telegram_outbox')}</div></div>
+        <div class="kpi"><div class="kpi-label">Worker p95 age</div><div class="kpi-value">${formatAge((workerMetrics.queue_age_seconds || {}).p95)}</div></div>
+        <div class="kpi"><div class="kpi-label">Expired leases</div><div class="kpi-value">${value(workerMetrics.leases, 'expired')}</div></div></div>
+        <h4 class="cab-section-title">Worker classes</h4><div class="list">${workerRows || '<div class="muted">Worker metrics недоступны</div>'}</div>
+        <h4 class="cab-section-title">Connector fleet</h4><div class="kpi-row cab-kpi"><div class="kpi"><div class="kpi-label">Online</div><div class="kpi-value">${value(connectorCounts, 'online')}</div></div>
+        <div class="kpi"><div class="kpi-label">Offline</div><div class="kpi-value">${value(connectorCounts, 'offline')}</div></div>
+        <div class="kpi"><div class="kpi-label">Blocked</div><div class="kpi-value">${value(connectorCounts, 'blocked')}</div></div>
+        <div class="kpi"><div class="kpi-label">Consumer</div><div class="kpi-value">${(telegram.consumer || {}).active ? 'active' : 'offline'}</div></div></div>
+        <div class="support-toolbar"><button class="btn ghost" id="ops-refresh">Обновить</button></div>`;
+      const refresh = qs('#ops-refresh', node);
+      if (refresh) refresh.onclick = () => renderOperationsInto(node);
+    } catch (e) {
+      renderError(node, e, () => renderOperationsInto(node));
     }
   }
 

@@ -15,13 +15,14 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import re
 import secrets
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 import urllib.parse
 
@@ -44,6 +45,9 @@ COMMAND_DELIVERY_LEASE_SEC = 30
 MAX_COMMAND_TTL_SEC = 5 * 60
 MAX_ACTIVE_INSTALLATIONS_PER_WORKSPACE = 10
 MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
+MAX_MARKET_DATA_BARS = 64
+MAX_MARKET_DATA_BYTES = 128 * 1024
+MAX_SOURCE_SEQUENCE = (1 << 63) - 1
 
 CAPABILITIES = frozenset({
     "telemetry",
@@ -60,9 +64,22 @@ _MAGIC = b"STRATFORGE-CONNECTORS-DPAPI-1\n"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,31}$")
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{7,127}$")
+_MARKET_CONTRACT_RE = re.compile(r"^[A-Za-z0-9._ -]{1,40}$")
+_MARKET_TIMEFRAME_RE = re.compile(
+    r"^(?:(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-3][0-9]|240)m|"
+    r"(?:[1-9]|1[0-9]|2[0-4])h|1D)$"
+)
 _ENROLLMENT_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 _LOCK = threading.RLock()
 _COMMANDS_CHANGED = threading.Condition(_LOCK)
+
+
+def _normalize_market_timeframe(value: Any) -> str:
+    raw = str(value or "").strip()
+    if raw.lower() == "1d":
+        return "1D"
+    lowered = raw.lower()
+    return lowered if _MARKET_TIMEFRAME_RE.fullmatch(lowered) else ""
 
 
 class ConnectorProtocolError(RuntimeError):
@@ -1041,6 +1058,230 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _market_data_source_sequence(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ConnectorProtocolError(
+            "source_sequence обязателен.", 400, "invalid_source_sequence",
+        )
+    try:
+        sequence = int(value)
+    except (TypeError, ValueError):
+        raise ConnectorProtocolError(
+            "source_sequence обязателен.", 400, "invalid_source_sequence",
+        ) from None
+    if sequence < 1 or sequence > MAX_SOURCE_SEQUENCE:
+        raise ConnectorProtocolError(
+            "source_sequence вышел за допустимые границы.", 400, "invalid_source_sequence",
+        )
+    return sequence
+
+
+def _clean_market_data_bars(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_MARKET_DATA_BARS:
+        raise ConnectorProtocolError(
+            "Market-data batch должен содержать от 1 до 64 bars.",
+            400,
+            "invalid_market_data_batch",
+        )
+    try:
+        if len(_canonical_json(value)) > MAX_MARKET_DATA_BYTES:
+            raise ConnectorProtocolError(
+                "Market-data batch превышает 128 KiB.", 413, "market_data_too_large",
+            )
+    except (TypeError, ValueError):
+        raise ConnectorProtocolError(
+            "Market-data batch содержит неподдерживаемое значение.",
+            400,
+            "invalid_market_data_batch",
+        ) from None
+
+    fields = {
+        "timestamp", "open", "high", "low", "close", "volume",
+        "exact_contract", "timeframe",
+    }
+    clean: list[Dict[str, Any]] = []
+    last_by_series: Dict[Tuple[str, str], datetime] = {}
+    for row in value:
+        if not isinstance(row, Mapping) or set(row) != fields:
+            raise ConnectorProtocolError(
+                "Market-data bar имеет неизвестные или отсутствующие поля.",
+                400,
+                "invalid_market_data_bar",
+            )
+        try:
+            prices = {
+                name: float(row[name])
+                for name in ("open", "high", "low", "close")
+            }
+            volume_value = float(row["volume"])
+        except (TypeError, ValueError):
+            raise ConnectorProtocolError(
+                "Market-data bar содержит некорректную цену или volume.",
+                400,
+                "invalid_market_data_bar",
+            ) from None
+        if (
+            any(not math.isfinite(number) for number in prices.values())
+            or not math.isfinite(volume_value)
+            or volume_value < 0
+            or not volume_value.is_integer()
+            or volume_value > MAX_SOURCE_SEQUENCE
+        ):
+            raise ConnectorProtocolError(
+                "Market-data bar содержит некорректную цену или volume.",
+                400,
+                "invalid_market_data_bar",
+            )
+        if (
+            prices["high"] < prices["low"]
+            or not prices["low"] <= prices["open"] <= prices["high"]
+            or not prices["low"] <= prices["close"] <= prices["high"]
+        ):
+            raise ConnectorProtocolError(
+                "Market-data OHLC нарушает диапазон bar.", 400, "invalid_market_data_bar",
+            )
+        timestamp = str(row["timestamp"] or "").strip()
+        try:
+            parsed_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            parsed_at = None
+        if parsed_at is None or parsed_at.tzinfo is None:
+            raise ConnectorProtocolError(
+                "Market-data timestamp должен содержать UTC offset.",
+                400,
+                "invalid_market_data_bar",
+            )
+        parsed_at = parsed_at.astimezone(timezone.utc)
+        if parsed_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ConnectorProtocolError(
+                "Market-data timestamp находится недопустимо далеко в будущем.",
+                400,
+                "invalid_market_data_bar",
+            )
+        contract = str(row["exact_contract"] or "").strip().upper()
+        timeframe = _normalize_market_timeframe(row["timeframe"])
+        if not _MARKET_CONTRACT_RE.fullmatch(contract) or not timeframe:
+            raise ConnectorProtocolError(
+                "Market-data contract или timeframe имеет некорректный формат.",
+                400,
+                "invalid_market_data_bar",
+            )
+        series_key = (contract, timeframe)
+        if series_key in last_by_series and parsed_at <= last_by_series[series_key]:
+            raise ConnectorProtocolError(
+                "Market-data bars должны строго возрастать по времени внутри серии.",
+                400,
+                "invalid_market_data_bar",
+            )
+        last_by_series[series_key] = parsed_at
+        clean.append({
+            "timestamp": parsed_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "open": prices["open"],
+            "high": prices["high"],
+            "low": prices["low"],
+            "close": prices["close"],
+            "volume": int(volume_value),
+            "exact_contract": contract,
+            "timeframe": timeframe,
+        })
+    return clean
+
+
+def ingest_market_data(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Accept a bounded telemetry batch bound to the authenticated Connector."""
+    allowed = {"connector_sequence", "source_sequence", "bars", "extensions"}
+    if not isinstance(payload, Mapping) or set(payload) - allowed:
+        raise ConnectorProtocolError(
+            "Market-data message содержит неизвестные поля.", 400, "invalid_market_data",
+        )
+    source_sequence = _market_data_source_sequence(payload.get("source_sequence"))
+    bars = _clean_market_data_bars(payload.get("bars"))
+    payload_sha256 = hashlib.sha256(_canonical_json(bars)).hexdigest()
+    now = time.time()
+    with _LOCK:
+        doc = _read_doc()
+        _refresh_states(doc, now)
+        session, installation = _authenticate_session(doc, token, now)
+        if "telemetry" not in installation.get("capabilities", []):
+            raise ConnectorProtocolError(
+                "Connector не имеет telemetry capability.", 403, "market_data_capability_denied",
+            )
+        connector_sequence = _advance_sequence(session, payload.get("connector_sequence"))
+        previous_sequence = int(installation.get("last_market_data_source_sequence") or 0)
+        if source_sequence < previous_sequence:
+            raise ConnectorProtocolError(
+                "source_sequence повторён или устарел.", 409, "source_sequence_replay",
+            )
+        if source_sequence == previous_sequence:
+            previous_hash = str(installation.get("last_market_data_payload_sha256") or "")
+            if not hmac.compare_digest(previous_hash, payload_sha256):
+                raise ConnectorProtocolError(
+                    "Повторный source_sequence отличается от исходного batch.",
+                    409,
+                    "source_sequence_conflict",
+                )
+            _write_doc(doc)
+            return {
+                "ok": True,
+                "connector_sequence": connector_sequence,
+                "source_sequence": source_sequence,
+                "batch_id": str(installation.get("last_market_data_batch_id") or ""),
+                "items": len(bars),
+                "idempotent_replay": True,
+                "fan_out": {"ok": True, "distributed": 0, "subscriptions": 0},
+            }
+
+        from . import market_data_ingestion
+
+        ingested = market_data_ingestion.ingest_batch(
+            str(installation.get("workspace_id") or ""),
+            str(installation.get("installation_id") or ""),
+            source_sequence,
+            bars,
+            user_id=int(installation.get("user_id") or 0),
+        )
+        if not ingested.get("ok"):
+            code = str(ingested.get("code") or "market_data_rejected")
+            if code == "storage_unavailable":
+                raise ConnectorProtocolError(
+                    "Market-data storage is unavailable.", 503, code,
+                )
+            status = 409 if code == "source_sequence_conflict" else 422
+            raise ConnectorProtocolError("Market-data batch отклонён.", status, code)
+        try:
+            fan_out = market_data_ingestion.fan_out(
+                str(installation.get("workspace_id") or ""), bars,
+            )
+        except Exception:
+            fan_out = {"ok": False, "distributed": 0, "subscriptions": 0}
+        installation.update({
+            "status": "online",
+            "last_heartbeat_utc": _now_iso(now),
+            "last_heartbeat_at": now,
+            "last_market_data_source_sequence": source_sequence,
+            "last_market_data_payload_sha256": payload_sha256,
+            "last_market_data_batch_id": str(ingested.get("batch_id") or ""),
+        })
+        _write_doc(doc)
+    _audit(
+        "market_data_ingested",
+        workspace_id=installation["workspace_id"],
+        installation_id=installation["installation_id"],
+        source_sequence=source_sequence,
+        batch_id=ingested.get("batch_id"),
+        items=len(bars),
+    )
+    return {
+        "ok": True,
+        "connector_sequence": connector_sequence,
+        "source_sequence": source_sequence,
+        "batch_id": str(ingested.get("batch_id") or ""),
+        "items": int(ingested.get("items") or len(bars)),
+        "idempotent_replay": bool(ingested.get("deduplicated")),
+        "fan_out": fan_out,
+    }
+
+
 def _safe_payload(payload: Any) -> Dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise ConnectorProtocolError(
@@ -1495,6 +1736,7 @@ def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             "challenge": "/api/connector/v1/challenge",
             "hello": "/api/connector/v1/hello",
             "heartbeat": "/api/connector/v1/heartbeat",
+            "market_data": "/api/connector/v1/market-data",
             "poll": "/api/connector/v1/commands/poll",
             "result": "/api/connector/v1/commands/result",
         },

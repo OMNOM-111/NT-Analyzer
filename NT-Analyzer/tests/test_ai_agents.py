@@ -11,7 +11,7 @@ import pytest
 
 from app import secure_store
 from app import server as server_mod
-from app.ai_lab import agent_registry, agent_router, universal_llm, response_cache
+from app.ai_lab import agent_registry, agent_router, response_cache, runner, universal_llm
 from app.ai_lab import orchestrator as lab_orchestrator
 
 
@@ -633,6 +633,119 @@ def test_exact_response_cache_avoids_second_provider_call(isolated_agents, monke
     assert logged["application_cache_hit"] is True
 
 
+def test_production_ai_requires_workspace_scope_before_provider_call(isolated_agents, monkeypatch) -> None:
+    from app import runtime_env
+
+    agent = agent_registry.create_agent(azure_payload(enabled=True))
+    called = []
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(universal_llm, "_request_json", lambda *_a, **_k: called.append(True) or {})
+
+    with pytest.raises(universal_llm.BudgetExceeded, match="workspace scope"):
+        universal_llm.invoke_agent(agent["id"], "isolated production request", cache_mode="off")
+
+    assert called == []
+
+
+@pytest.mark.parametrize("use_llm", [True, False])
+def test_production_runner_rejects_unscoped_work_before_pipeline_start(
+    isolated_agents, monkeypatch, use_llm,
+) -> None:
+    from app import runtime_env
+
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+
+    with pytest.raises(runner.RunScopeRequired, match="workspace scope"):
+        runner.start({"use_llm": use_llm, "strategy_count": 1})
+
+
+def test_production_runner_state_is_hidden_and_not_cancellable_cross_scope(
+    isolated_agents, monkeypatch,
+) -> None:
+    from app import runtime_env
+
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    cancel_event = threading.Event()
+    state = {
+        "experiment_id": "EXP-TENANT-STATE",
+        "status": "running",
+        "workspace_id": "ws_personal_ALPHA1234",
+        "user_id": 42,
+        "cancel_event": cancel_event,
+    }
+    monkeypatch.setattr(runner, "_CURRENT", dict(state))
+    monkeypatch.setattr(runner, "_RUN_STATE", {
+        **state, "run_id": "RUN-TENANT-STATE", "deadline_epoch": None,
+    })
+    monkeypatch.setattr(
+        runner.registry, "read_experiment",
+        lambda _experiment_id: {"status": "generated"},
+    )
+    own_scope = {"workspace_id": "ws_personal_ALPHA1234", "user_id": 42}
+    foreign_scope = {"workspace_id": "ws_personal_BETA12345", "user_id": 84}
+
+    assert runner.current(scope=own_scope)["experiment_id"] == "EXP-TENANT-STATE"
+    assert runner.run_status(scope=own_scope)["run_id"] == "RUN-TENANT-STATE"
+    assert runner.current(scope=foreign_scope) is None
+    assert runner.run_status(scope=foreign_scope) is None
+    assert runner.request_cancel("EXP-TENANT-STATE", scope=foreign_scope)["ok"] is False
+    assert runner.request_run_cancel("RUN-TENANT-STATE", scope=foreign_scope)["ok"] is False
+    assert cancel_event.is_set() is False
+
+
+def test_production_budget_denial_prevents_provider_call(isolated_agents, monkeypatch) -> None:
+    from app import ai_budgets, runtime_env
+
+    agent = agent_registry.create_agent(azure_payload(enabled=True))
+    called = []
+    recorded = []
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(
+        ai_budgets, "reserve",
+        lambda *_args, **_kwargs: {"ok": False, "code": "monthly_budget_exceeded"},
+    )
+    monkeypatch.setattr(ai_budgets, "record_usage", lambda *args, **_kwargs: recorded.append(args) or {"ok": True})
+    monkeypatch.setattr(universal_llm, "_request_json", lambda *_a, **_k: called.append(True) or {})
+
+    with universal_llm.usage_scope({"user_id": 42, "workspace_id": "ws_personal_ALPHA1234"}):
+        with pytest.raises(universal_llm.BudgetExceeded, match="monthly_budget_exceeded"):
+            universal_llm.invoke_agent(agent["id"], "budgeted production request", cache_mode="off")
+
+    assert called == []
+    assert recorded[-1][7] == "blocked"
+
+
+def test_response_cache_is_workspace_scoped_in_production(isolated_agents, monkeypatch) -> None:
+    from app import ai_budgets, runtime_env
+
+    response_cache.clear()
+    agent = agent_registry.create_agent(azure_payload(enabled=True))
+    calls = []
+    records = []
+    monkeypatch.setattr(runtime_env, "is_production", lambda: True)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(ai_budgets, "reserve", lambda *_args, **_kwargs: {"ok": True, "reservation_id": "air_test"})
+    monkeypatch.setattr(ai_budgets, "record_usage", lambda *args, **_kwargs: records.append(args) or {"ok": True})
+    monkeypatch.setattr(universal_llm, "_request_json", lambda *_a, **_k: calls.append(True) or {
+        "choices": [{"message": {"content": "tenant-safe analysis"}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+    })
+
+    for workspace_id in ("ws_personal_ALPHA1234", "ws_personal_BETA12345"):
+        with universal_llm.usage_scope({"user_id": 42, "workspace_id": workspace_id}):
+            result = universal_llm.invoke_agent(
+                agent["id"], "same immutable analysis", purpose="backtest_analysis",
+            )
+        assert result["application_cache_hit"] is False
+
+    assert len(calls) == 2
+    assert {row[1] for row in records} == {"ws_personal_ALPHA1234", "ws_personal_BETA12345"}
+
+
 def test_legacy_custom_github_models_agent_is_repaired_on_read(isolated_agents) -> None:
     path = agent_registry.registry_path()
     path.write_text(json.dumps({
@@ -735,6 +848,54 @@ def test_agent_http_routes(monkeypatch) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("path", [
+    "/api/ai-agents",
+    "/api/ai-agents/usage",
+    "/api/ai-lab/cloud-agents/status",
+])
+def test_non_owner_cannot_read_ai_operator_control_plane(monkeypatch, path) -> None:
+    context = {
+        "user_id": 42,
+        "is_owner": False,
+        "role": "full_control",
+        "membership_role": "admin",
+        "active_workspace": {"workspace_id": "ws-user", "uses_owner_runtime": False},
+        "capabilities": {"ai_lab": True},
+        "user": {"ux_mode": "professional"},
+    }
+    errors = []
+
+    class Request:
+        command = "GET"
+        headers = {}
+
+        def _is_remote_api_request(self):
+            return True
+
+        def _request_ips(self):
+            return "", ""
+
+        def _cookie_value(self, _name):
+            return "session"
+
+        def _decorate_workspace_context(self, value):
+            return value
+
+        def _check_api_rate_limit(self, _context, _path):
+            return True
+
+        def _err(self, status, message, **_kwargs):
+            errors.append((int(status), message))
+
+    monkeypatch.setattr(server_mod.account_auth, "auth_required", lambda: True)
+    monkeypatch.setattr(server_mod.account_auth, "authenticate_session", lambda _token: dict(context))
+
+    allowed = server_mod.Handler._authorize_api(Request(), path)
+
+    assert allowed is False
+    assert errors and errors[-1][0] == 403
 
 
 def test_agent_router_normalizes_response_to_content(monkeypatch) -> None:

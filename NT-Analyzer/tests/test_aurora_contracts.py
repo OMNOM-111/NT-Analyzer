@@ -142,7 +142,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260718-contours2"}, versions
+    assert set(versions.values()) == {"20260721-stage8-operations1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():

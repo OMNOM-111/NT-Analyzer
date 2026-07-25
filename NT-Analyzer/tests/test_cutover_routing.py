@@ -64,6 +64,18 @@ def test_aurora_page_controllers_call_real_endpoints():
         assert "(демо)" not in js, f"{fname} must not contain demo placeholders"
 
 
+def test_owner_operations_dashboard_uses_authorized_existing_contract():
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert 'path == "/api/owner/operations"' in server
+    assert 'if not context.get("is_owner"):' in server
+    assert "payload = observability.dashboard()" in server
+    assert "ownerOperations: (o) => getJSON('/api/owner/operations', o)" in api
+    assert "renderOperationsInto" in ui
+    assert "['operations', 'Операции']" in ui
+
+
 def test_server_routes_aurora_primary_and_legacy():
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
     # The explicit mode choice is the root before either Aurora contour; the
