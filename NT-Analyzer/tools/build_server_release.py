@@ -53,6 +53,7 @@ _INCLUDED_FILES = (
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
     "tools/release_static_scan.py",
+    "tools/verify_server_release.py",
 )
 _EXCLUDED_FILES = {"docs/AGENTS.md", "docs/AI_DIALOGUE_CONTRACT.md"}
 
@@ -259,6 +260,11 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             if path.is_file():
                 zipped.write(path, path.relative_to(bundle).as_posix())
     archive_hash = _sha256(archive)
+    verified = json.loads(_run([
+        sys.executable, "tools/verify_server_release.py", str(archive),
+    ], cwd=ROOT))
+    if not verified.get("ok"):
+        raise RuntimeError("server release archive self-verification failed")
     archive.with_suffix(archive.suffix + ".sha256").write_text(
         f"{archive_hash}  {archive.name}\n", encoding="ascii",
     )
@@ -273,6 +279,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "archive": str(archive),
         "bundle": str(bundle),
         "signature_verified": True,
+        "archive_self_verified": True,
         "static_scan": True,
         "file_count": len(files),
         "migration_count": len(migrations),
