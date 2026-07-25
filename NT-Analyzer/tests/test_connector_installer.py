@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
 from app import connector_protocol
 from tools import build_connector_release
+from tools import release_static_scan
 
 
 def test_production_release_signing_cannot_fall_back_to_development(
@@ -49,6 +51,29 @@ def test_release_builder_restores_clean_checkout_before_release_build() -> None:
     first_build = source.index('"dotnet", "build"')
     assert restore < first_build
     assert '"-c", "Release", "--no-restore"' in source
+
+
+def test_release_static_scan_supports_extracted_archive(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "app" / "server.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('release')\n", encoding="utf-8")
+    ignored = tmp_path / ".artifacts" / "secret.py"
+    ignored.parent.mkdir(parents=True)
+    ignored.write_text("generated\n", encoding="utf-8")
+    cached = tmp_path / "app" / "__pycache__" / "cached.py"
+    cached.parent.mkdir(parents=True)
+    cached.write_text("generated\n", encoding="utf-8")
+
+    monkeypatch.setattr(release_static_scan, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        release_static_scan.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 128, b"", b"not a repo"),
+    )
+    found = {path.resolve() for path in release_static_scan._tracked_files()}
+    assert source.resolve() in found
+    assert ignored.resolve() not in found
+    assert cached.resolve() not in found
 
 
 def test_external_updater_has_safe_restart_health_and_one_shot_rollback() -> None:

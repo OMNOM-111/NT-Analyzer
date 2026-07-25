@@ -15,10 +15,30 @@ AURORA = ROOT / "app" / "static" / "aurora"
 
 
 def _tracked_files() -> list[Path]:
-    raw = subprocess.check_output(
-        ["git", "ls-files", "-z"], cwd=ROOT,
-    ).decode("utf-8", errors="surrogateescape")
-    return [ROOT / value for value in raw.split("\0") if value]
+    completed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
+    )
+    if completed.returncode == 0:
+        raw = completed.stdout.decode("utf-8", errors="surrogateescape")
+        return [ROOT / value for value in raw.split("\0") if value]
+
+    # A build-once server archive intentionally has no .git directory. In
+    # that environment every extracted file came from git archive, so scan
+    # the bounded text tree while excluding generated/build directories.
+    excluded = {
+        ".git", ".artifacts", ".pytest_cache", "__pycache__",
+        ".venv", "venv", "node_modules", "bin", "obj",
+    }
+    files: list[Path] = []
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        relative_parts = {part.lower() for part in path.relative_to(ROOT).parts}
+        if relative_parts & excluded:
+            continue
+        if path.suffix.lower() in TEXT_SUFFIXES or path.name == ".gitignore":
+            files.append(path)
+    return files
 
 
 def _working_source_files() -> list[Path]:
