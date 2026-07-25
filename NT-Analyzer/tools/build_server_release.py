@@ -33,22 +33,28 @@ _SEMVER = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs")
+_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance")
 _INCLUDED_FILES = (
     "README.md",
     "README-RUN-MODES.md",
     "VERSION.json",
     "requirements.txt",
+    "docs/AI_STRATEGY_LAB_QUALITY.md",
+    "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+    "docs/CONNECTOR_INSTALL_GUIDE.md",
+    "docs/CONNECTOR_PROTOCOL_V1.md",
+    "docs/MARKET_DATA_PRODUCTION_RUNBOOK.md",
+    "docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md",
+    "docs/PRODUCTION_OPERATIONS_RUNBOOK.md",
+    "docs/PRODUCTION_STORAGE_RUNBOOK.md",
+    "docs/PRODUCTION_TELEGRAM_RUNBOOK.md",
+    "docs/PRODUCTION_WORKER_RUNBOOK.md",
+    "docs/risk-profile.md",
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
     "tools/release_static_scan.py",
 )
-_EXCLUDED_FILES = {
-    # These are contributor-only documents whose links intentionally point to
-    # an untracked personal persona document and a parent-repository manual.
-    "docs/AGENTS.md",
-    "docs/AI_DIALOGUE_CONTRACT.md",
-}
+_EXCLUDED_FILES = {"docs/AGENTS.md", "docs/AI_DIALOGUE_CONTRACT.md"}
 
 
 def _run(command: list[str], *, cwd: Path) -> str:

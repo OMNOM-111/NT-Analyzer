@@ -41,7 +41,7 @@ def test_server_release_channel_cannot_be_mislabeled(monkeypatch) -> None:
         lambda root: ("f" * 40, False),
     )
     args = argparse.Namespace(
-        version="0.9.0-dev.3", channel="canary", production=False, force=False,
+        version="0.9.0-dev.4", channel="canary", production=False, force=False,
     )
     with pytest.raises(RuntimeError, match="must remain development"):
         build_server_release.build(args)
