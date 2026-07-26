@@ -99,6 +99,26 @@ def test_law_update_writes_history_and_overview() -> None:
                 os.environ["NT_ANALYZER_ROOT"] = previous_root
 
 
+def test_explicit_production_renders_governance_outside_immutable_release(
+    tmp_path, monkeypatch,
+) -> None:
+    release_root = (tmp_path / "release").resolve()
+    data_root = (tmp_path / "persistent-runtime").resolve()
+    (release_root / "app").mkdir(parents=True)
+    monkeypatch.setenv("NT_ANALYZER_ROOT", str(release_root))
+    monkeypatch.setenv("STRATFORGE_ENV", "production")
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(data_root))
+
+    rendered = governance.docs_dir()
+    assert rendered == data_root / "governance-rendered"
+    assert release_root not in rendered.parents
+    governance.ensure_governance_files(render=True)
+    assert (rendered / "README.md").is_file()
+    assert not (release_root / "docs" / "governance").exists()
+
+
 def main() -> int:
     test_runtime_defaults_shape()
     test_governance_documents_exist()

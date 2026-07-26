@@ -118,7 +118,7 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.edge_mode == "direct-local"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
-    assert config.build_version == "0.9.0-dev.5"
+    assert config.build_version == "0.9.0-dev.6"
     assert config.release_channel == "development"
     assert config.release_status == "in_development"
     assert runtime_env.impersonation_enabled() is False

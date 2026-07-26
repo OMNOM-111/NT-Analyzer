@@ -22,7 +22,7 @@ DPAPI/JSON/SQLite при недоступности базы.
 | Runtime | `stratforge_app`, без superuser/BYPASSRLS | только service secret provider |
 | Migration | ограниченная DDL-role/владелец схемы | только окно изменения schema |
 | Backup | managed snapshot identity или read-only role с правом видеть все RLS-строки | только backup job |
-| Restore | владелец новой пустой базы | только incident/restore drill |
+| Restore | владелец новой пустой базы; может replay default ACL migration-role | только incident/restore drill |
 
 DSN не передаётся аргументом CLI, не записывается в Git, report или shell
 history. CLI читает только имя environment variable. Production DSN обязан
@@ -33,6 +33,18 @@ history. CLI читает только имя environment variable. Production D
 Runtime role не используется для полного `pg_dump`: принудительный RLS может
 сделать такой dump неполным. Backup identity должна обходить RLS только для
 чтения либо заменяться provider snapshot.
+
+`pg_dump` сохраняет `ALTER DEFAULT PRIVILEGES FOR ROLE stratforge_migration`.
+Поэтому отдельная `stratforge_restore` должна иметь `SET`/`INHERIT` membership
+в migration-role, иначе `pg_restore --exit-on-error` остановится на default ACL.
+Эта роль не получает `CONNECT` к действующей Production database; её пароль
+доступен только административному restore job. После создания ролей на
+PostgreSQL 16+ используется:
+
+~~~sql
+GRANT stratforge_migration TO stratforge_restore WITH INHERIT TRUE, SET TRUE;
+REVOKE CONNECT ON DATABASE stratforge_production FROM stratforge_restore;
+~~~
 
 ## Каталоги
 
@@ -214,7 +226,10 @@ readiness и canary read/write. Backup directory после создания rea
 
 Restore поверх действующей базы или существующего artifact root запрещён. До
 команды администратор создаёт отдельную пустую database и выбирает
-несуществующий каталог. Имя target DB и dump SHA подтверждаются отдельно:
+несуществующий каталог. Restore-role владеет этой database, имеет описанное
+выше membership для replay default ACL и по-прежнему не может подключаться к
+действующей Production database. Имя target DB и dump SHA подтверждаются
+отдельно:
 
 ~~~bash
 read -r -s -p 'Restore DSN: ' STRATFORGE_RESTORE_DATABASE_URL

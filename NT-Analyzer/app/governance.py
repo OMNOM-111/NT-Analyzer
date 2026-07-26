@@ -53,9 +53,17 @@ def data_dir() -> Path:
 
 
 def docs_dir() -> Path:
+    # Explicit Production runs from an immutable release.  Generated
+    # governance documents are mutable runtime state and therefore must live
+    # under the isolated data root just like the staging/development copy.
+    # Keep the historical implicit-environment behaviour for library callers
+    # that have not selected a deployment boundary yet.
+    isolated_runtime = runtime_env.is_staging() or (
+        runtime_env.is_production() and runtime_env.environment_explicit()
+    )
     path = (
         runtime_env.data_path("governance-rendered", project_root=project_root())
-        if runtime_env.is_staging()
+        if isolated_runtime
         else project_root() / "docs" / "governance"
     )
     path.mkdir(parents=True, exist_ok=True)
