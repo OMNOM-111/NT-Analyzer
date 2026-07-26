@@ -248,7 +248,7 @@ def parser() -> argparse.ArgumentParser:
     )
     restore.add_argument(
         "--restore-role", default="",
-        help="Restricted owner role selected explicitly by pg_restore.",
+        help="Explicit execution role selected by pg_restore after login.",
     )
     restore.add_argument("--backup-dir", required=True)
     restore.add_argument("--artifact-target", required=True)

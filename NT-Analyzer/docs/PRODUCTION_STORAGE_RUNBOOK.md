@@ -22,7 +22,7 @@ DPAPI/JSON/SQLite при недоступности базы.
 | Runtime | `stratforge_app`, без superuser/BYPASSRLS | только service secret provider |
 | Migration | ограниченная DDL-role/владелец схемы | только окно изменения schema |
 | Backup | managed snapshot identity или read-only role с правом видеть все RLS-строки | только backup job |
-| Restore | владелец новой пустой базы; может replay default ACL migration-role | только incident/restore drill |
+| Restore | изолированный login/runner без `INHERIT`; временный `CONNECT` и явный `SET ROLE` migration-role | только incident/restore drill |
 
 DSN не передаётся аргументом CLI, не записывается в Git, report или shell
 history. CLI читает только имя environment variable. Production DSN обязан
@@ -48,7 +48,7 @@ GRANT stratforge_migration TO stratforge_restore WITH INHERIT FALSE, SET TRUE;
 REVOKE CONNECT ON DATABASE stratforge_production FROM stratforge_restore;
 ~~~
 
-Forced RLS остаётся включённым и для владельца таблиц, поэтому restore-role не
+Forced RLS остаётся включённым и для владельца таблиц, поэтому restore-login не
 может достоверно посчитать восстановленные tenant-строки. Post-restore сверка
 получает отдельный DSN read-only `stratforge_backup` с `BYPASSRLS`, направленный
 строго в ту же isolated target database. CLI до `pg_restore` сравнивает host,
@@ -235,10 +235,21 @@ readiness и canary read/write. Backup directory после создания rea
 
 Restore поверх действующей базы или существующего artifact root запрещён. До
 команды администратор создаёт отдельную пустую database и выбирает
-несуществующий каталог. Restore-role владеет этой database, имеет описанное
-выше membership для replay default ACL и по-прежнему не может подключаться к
-действующей Production database. Имя target DB и dump SHA подтверждаются
-отдельно:
+несуществующий каталог. Владельцем target database должна быть
+`stratforge_migration`: именно эта роль создаёт schema objects после явного
+`SET ROLE`. `PUBLIC` не получает `CONNECT`; restore-login и backup verifier
+получают его только на время drill. Restore-login имеет описанное выше
+membership для replay default ACL и по-прежнему не может подключаться к
+действующей Production database:
+
+~~~bash
+createdb --owner=stratforge_migration '<new-empty-database-name>'
+psql -d postgres -v ON_ERROR_STOP=1 \
+  -c "REVOKE CONNECT ON DATABASE <new-empty-database-name> FROM PUBLIC" \
+  -c "GRANT CONNECT ON DATABASE <new-empty-database-name> TO stratforge_restore, stratforge_backup"
+~~~
+
+Имя target DB и dump SHA подтверждаются отдельно:
 
 ~~~bash
 read -r -s -p 'Restore DSN: ' STRATFORGE_RESTORE_DATABASE_URL
@@ -259,7 +270,9 @@ unset STRATFORGE_RESTORE_VERIFY_DATABASE_URL
 CLI отказывает, если target DB имеет хотя бы одну public table или artifact
 target уже существует. После restore он сравнивает counts, migration ledger и
 artifact checksums. Затем приложение под runtime role выполняет read-only smoke
-в изолированной цели. Неуспешная цель сохраняется для расследования или
+в изолированной цели. Временные `CONNECT` runtime, backup и restore ролей после
+smoke отзываются; restore-login так и не получает `CONNECT` к Production.
+Неуспешная цель сохраняется для расследования или
 удаляется администратором только после проверки точного имени/пути.
 
 ## RPO, RTO и расписание

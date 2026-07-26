@@ -169,3 +169,16 @@ def test_real_handler_enforces_host_and_exposes_safe_health(
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=5)
+
+
+def test_restore_runbook_uses_migration_owned_isolated_database() -> None:
+    runbook = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "PRODUCTION_STORAGE_RUNBOOK.md"
+    ).read_text(encoding="utf-8")
+
+    assert "createdb --owner=stratforge_migration" in runbook
+    assert "REVOKE CONNECT ON DATABASE <new-empty-database-name> FROM PUBLIC" in runbook
+    assert "--restore-role stratforge_migration" in runbook
+    assert "Restore-role владеет этой database" not in runbook
