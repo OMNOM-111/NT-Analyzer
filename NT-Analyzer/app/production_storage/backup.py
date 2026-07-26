@@ -356,6 +356,32 @@ def _assert_empty_database(url: str, *, confirmed_name: str) -> None:
         raise StorageConstraintError("Restore target database must contain no public tables.")
 
 
+def _assert_verification_database(
+    target_database_url: str,
+    verification_database_url: str,
+    *,
+    confirmed_name: str,
+) -> None:
+    """Require the read-only verifier to inspect the exact restore target.
+
+    Production restore identities intentionally do not bypass forced RLS.  A
+    separate backup/read-only identity may therefore verify post-restore table
+    counts, but it must not be possible to point that identity at a different
+    database or server and obtain a false green result.
+    """
+    target = _database_identity(target_database_url)
+    verifier = _database_identity(verification_database_url)
+    expected = str(confirmed_name or "")
+    if target["database"] != expected or verifier["database"] != expected:
+        raise StorageConstraintError(
+            "Restore verification database confirmation does not match."
+        )
+    if any(target[key] != verifier[key] for key in ("host", "port", "database")):
+        raise StorageConstraintError(
+            "Restore verification identity must target the same PostgreSQL database."
+        )
+
+
 def _restore_artifacts(source: Path, target: Path, manifest: Mapping[str, Any]) -> None:
     if target.exists():
         raise StorageConstraintError("Restore artifact target must not already exist.")
@@ -387,11 +413,18 @@ def restore_backup(
     confirm_dump_sha256: str,
     confirm_target_database: str,
     pg_bin: Path,
+    verification_database_url: str | None = None,
 ) -> Dict[str, Any]:
     verified = verify_backup(backup_dir=backup_dir, pg_bin=pg_bin)
     if str(confirm_dump_sha256 or "") != verified["dump_sha256"]:
         raise StorageConstraintError("Restore dump checksum confirmation mismatch.")
     _assert_empty_database(target_database_url, confirmed_name=confirm_target_database)
+    verifier_url = str(verification_database_url or target_database_url)
+    _assert_verification_database(
+        target_database_url,
+        verifier_url,
+        confirmed_name=confirm_target_database,
+    )
     root = _safe_root(Path(backup_dir), label="Backup directory", must_exist=True)
     target = _safe_root(Path(target_artifact_root), label="Restore artifact target", must_exist=False)
     if target.exists():
@@ -405,7 +438,7 @@ def restore_backup(
         str(pg_restore), "--exit-on-error", "--no-owner",
         f"--dbname={connection}", str(root / manifest["dump"]["file"]),
     ], environment=environment)
-    restored_database = _database_manifest(target_database_url)
+    restored_database = _database_manifest(verifier_url)
     if restored_database["table_counts"] != manifest["database"]["table_counts"]:
         raise BackupError("Restored PostgreSQL table counts differ from the backup manifest.")
     if restored_database["migrations"] != manifest["database"]["migrations"]:

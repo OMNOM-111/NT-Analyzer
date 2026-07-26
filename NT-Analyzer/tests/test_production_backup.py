@@ -8,9 +8,11 @@ import pytest
 from app.production_storage import backup as backup_mod
 from app.production_storage.backup import (
     BackupError,
+    _assert_verification_database,
     _subprocess_connection,
     _write_manifest,
     create_backup,
+    restore_backup,
     verify_backup,
 )
 from app.production_storage.core import StorageConstraintError, _canonical
@@ -58,7 +60,7 @@ def _fixture_backup(tmp_path: Path):
     manifest = {
         "format_version": 1,
         "backup_id": "sfbackup_test",
-        "database": {"table_counts": {}},
+        "database": {"table_counts": {}, "migrations": []},
         "dump": {
             "file": "database.dump",
             "size_bytes": dump.stat().st_size,
@@ -91,3 +93,53 @@ def test_backup_verification_detects_manifest_tampering(tmp_path: Path, monkeypa
     manifest.write_bytes(manifest.read_bytes() + b" ")
     with pytest.raises(BackupError, match="manifest checksum"):
         verify_backup(backup_dir=root, pg_bin=pg_bin)
+
+
+def test_restore_verification_identity_must_target_exact_database() -> None:
+    target = "postgresql://restore@db.internal:5432/restore_drill?sslmode=verify-full"
+    verifier = "postgresql://backup@db.internal:5432/restore_drill?sslmode=verify-full"
+    _assert_verification_database(
+        target, verifier, confirmed_name="restore_drill",
+    )
+    with pytest.raises(StorageConstraintError, match="same PostgreSQL database"):
+        _assert_verification_database(
+            target,
+            "postgresql://backup@other.internal:5432/restore_drill?sslmode=verify-full",
+            confirmed_name="restore_drill",
+        )
+    with pytest.raises(StorageConstraintError, match="confirmation"):
+        _assert_verification_database(
+            target,
+            "postgresql://backup@db.internal:5432/other_drill?sslmode=verify-full",
+            confirmed_name="restore_drill",
+        )
+
+
+def test_restore_uses_separate_read_only_verification_identity(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root, pg_bin, _ = _fixture_backup(tmp_path)
+    target_url = "postgresql://restore@db.internal:5432/restore_drill?sslmode=verify-full"
+    verifier_url = "postgresql://backup@db.internal:5432/restore_drill?sslmode=verify-full"
+    observed: list[str] = []
+    monkeypatch.setattr(backup_mod, "_run", lambda *args, **kwargs: "")
+    monkeypatch.setattr(backup_mod, "_assert_empty_database", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        backup_mod,
+        "_database_manifest",
+        lambda url: observed.append(url) or {"table_counts": {}, "migrations": []},
+    )
+
+    result = restore_backup(
+        backup_dir=root,
+        target_database_url=target_url,
+        verification_database_url=verifier_url,
+        target_artifact_root=tmp_path / "restored-objects",
+        confirm_dump_sha256=hashlib.sha256(b"verified pg dump").hexdigest(),
+        confirm_target_database="restore_drill",
+        pg_bin=pg_bin,
+    )
+
+    assert result["ok"] is True
+    assert observed == [verifier_url]
+    assert (tmp_path / "restored-objects/ws_owner_TEST0001/artifact.bin").read_bytes() == b"verified artifact"

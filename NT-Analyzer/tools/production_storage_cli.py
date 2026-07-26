@@ -112,9 +112,15 @@ def _verify(args: argparse.Namespace) -> int:
 
 
 def _restore(args: argparse.Namespace) -> int:
+    verification_url = (
+        _url_from_environment(args.verify_url_env)
+        if str(args.verify_url_env or "").strip()
+        else None
+    )
     _print(restore_backup(
         backup_dir=Path(args.backup_dir),
         target_database_url=_url_from_environment(args.url_env),
+        verification_database_url=verification_url,
         target_artifact_root=Path(args.artifact_target),
         confirm_dump_sha256=args.confirm_dump_sha256,
         confirm_target_database=args.confirm_target_database,
@@ -235,6 +241,10 @@ def parser() -> argparse.ArgumentParser:
 
     restore = commands.add_parser("restore", help="Restore only into an empty isolated target.")
     restore.add_argument("--url-env", default="STRATFORGE_RESTORE_DATABASE_URL")
+    restore.add_argument(
+        "--verify-url-env", default="",
+        help="Optional read-only/BYPASSRLS DSN for post-restore verification.",
+    )
     restore.add_argument("--backup-dir", required=True)
     restore.add_argument("--artifact-target", required=True)
     restore.add_argument("--confirm-dump-sha256", required=True)

@@ -46,6 +46,13 @@ GRANT stratforge_migration TO stratforge_restore WITH INHERIT TRUE, SET TRUE;
 REVOKE CONNECT ON DATABASE stratforge_production FROM stratforge_restore;
 ~~~
 
+Forced RLS остаётся включённым и для владельца таблиц, поэтому restore-role не
+может достоверно посчитать восстановленные tenant-строки. Post-restore сверка
+получает отдельный DSN read-only `stratforge_backup` с `BYPASSRLS`, направленный
+строго в ту же isolated target database. CLI до `pg_restore` сравнивает host,
+port и подтверждённое имя database обоих DSN. Backup-role получает временный
+`CONNECT` к drill DB, но не DDL/DML; после smoke этот `CONNECT` отзывается.
+
 ## Каталоги
 
 ~~~text
@@ -234,12 +241,16 @@ Restore поверх действующей базы или существующ
 ~~~bash
 read -r -s -p 'Restore DSN: ' STRATFORGE_RESTORE_DATABASE_URL
 export STRATFORGE_RESTORE_DATABASE_URL
+read -r -s -p 'Read-only verification DSN: ' STRATFORGE_RESTORE_VERIFY_DATABASE_URL
+export STRATFORGE_RESTORE_VERIFY_DATABASE_URL
 python tools/production_storage_cli.py restore \
+  --verify-url-env STRATFORGE_RESTORE_VERIFY_DATABASE_URL \
   --backup-dir '<exact-backup-directory>' \
   --artifact-target '<new-nonexistent-artifact-root>' \
   --confirm-dump-sha256 '<verified-dump-sha256>' \
   --confirm-target-database '<new-empty-database-name>'
 unset STRATFORGE_RESTORE_DATABASE_URL
+unset STRATFORGE_RESTORE_VERIFY_DATABASE_URL
 ~~~
 
 CLI отказывает, если target DB имеет хотя бы одну public table или artifact
