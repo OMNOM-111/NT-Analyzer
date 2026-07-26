@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -16,6 +17,7 @@ from .core import StorageConfigurationError, StorageConstraintError, StorageErro
 
 
 BACKUP_FORMAT_VERSION = 1
+_RESTORE_ROLE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
 class BackupError(StorageError):
@@ -414,7 +416,11 @@ def restore_backup(
     confirm_target_database: str,
     pg_bin: Path,
     verification_database_url: str | None = None,
+    restore_execution_role: str = "",
 ) -> Dict[str, Any]:
+    execution_role = str(restore_execution_role or "").strip()
+    if execution_role and not _RESTORE_ROLE.fullmatch(execution_role):
+        raise StorageConfigurationError("Restore execution role is invalid.")
     verified = verify_backup(backup_dir=backup_dir, pg_bin=pg_bin)
     if str(confirm_dump_sha256 or "") != verified["dump_sha256"]:
         raise StorageConstraintError("Restore dump checksum confirmation mismatch.")
@@ -434,10 +440,18 @@ def restore_backup(
     manifest = _load_manifest(root)
     pg_restore = _tool(pg_bin, "pg_restore")
     connection, environment = _subprocess_connection(target_database_url)
-    _run([
+    restore_command = [
         str(pg_restore), "--exit-on-error", "--no-owner",
+    ]
+    if execution_role:
+        # The login restore identity has SET=TRUE but INHERIT=FALSE membership.
+        # Explicit SET ROLE keeps ordinary Production access unavailable while
+        # allowing owner/default-ACL statements to replay in the isolated DB.
+        restore_command.append(f"--role={execution_role}")
+    restore_command.extend([
         f"--dbname={connection}", str(root / manifest["dump"]["file"]),
-    ], environment=environment)
+    ])
+    _run(restore_command, environment=environment)
     restored_database = _database_manifest(verifier_url)
     if restored_database["table_counts"] != manifest["database"]["table_counts"]:
         raise BackupError("Restored PostgreSQL table counts differ from the backup manifest.")
@@ -451,6 +465,7 @@ def restore_backup(
         "ok": True,
         "backup_id": str(manifest["backup_id"]),
         "target_database": str(confirm_target_database),
+        "restore_execution_role": execution_role,
         "dump_sha256": verified["dump_sha256"],
         "table_counts": restored_database["table_counts"],
         "object_file_count": len(restored_scan),

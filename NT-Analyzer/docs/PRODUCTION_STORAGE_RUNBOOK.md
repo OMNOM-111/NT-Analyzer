@@ -35,14 +35,16 @@ Runtime role не используется для полного `pg_dump`: пр
 чтения либо заменяться provider snapshot.
 
 `pg_dump` сохраняет `ALTER DEFAULT PRIVILEGES FOR ROLE stratforge_migration`.
-Поэтому отдельная `stratforge_restore` должна иметь `SET`/`INHERIT` membership
-в migration-role, иначе `pg_restore --exit-on-error` остановится на default ACL.
-Эта роль не получает `CONNECT` к действующей Production database; её пароль
-доступен только административному restore job. После создания ролей на
-PostgreSQL 16+ используется:
+Поэтому отдельная `stratforge_restore` получает `SET`, но не `INHERIT`
+membership в migration-role. `pg_restore` запускается с явным
+`--role=stratforge_migration`: default ACL replay разрешён только после `SET
+ROLE`, а обычная restore-сессия не наследует migration-role и не получает
+`CONNECT` к действующей Production database. Пароль restore-role доступен
+только административному restore job. После создания ролей на PostgreSQL 16+
+используется:
 
 ~~~sql
-GRANT stratforge_migration TO stratforge_restore WITH INHERIT TRUE, SET TRUE;
+GRANT stratforge_migration TO stratforge_restore WITH INHERIT FALSE, SET TRUE;
 REVOKE CONNECT ON DATABASE stratforge_production FROM stratforge_restore;
 ~~~
 
@@ -245,6 +247,7 @@ read -r -s -p 'Read-only verification DSN: ' STRATFORGE_RESTORE_VERIFY_DATABASE_
 export STRATFORGE_RESTORE_VERIFY_DATABASE_URL
 python tools/production_storage_cli.py restore \
   --verify-url-env STRATFORGE_RESTORE_VERIFY_DATABASE_URL \
+  --restore-role stratforge_migration \
   --backup-dir '<exact-backup-directory>' \
   --artifact-target '<new-nonexistent-artifact-root>' \
   --confirm-dump-sha256 '<verified-dump-sha256>' \

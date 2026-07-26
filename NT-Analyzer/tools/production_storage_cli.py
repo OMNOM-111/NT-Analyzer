@@ -121,6 +121,7 @@ def _restore(args: argparse.Namespace) -> int:
         backup_dir=Path(args.backup_dir),
         target_database_url=_url_from_environment(args.url_env),
         verification_database_url=verification_url,
+        restore_execution_role=args.restore_role,
         target_artifact_root=Path(args.artifact_target),
         confirm_dump_sha256=args.confirm_dump_sha256,
         confirm_target_database=args.confirm_target_database,
@@ -244,6 +245,10 @@ def parser() -> argparse.ArgumentParser:
     restore.add_argument(
         "--verify-url-env", default="",
         help="Optional read-only/BYPASSRLS DSN for post-restore verification.",
+    )
+    restore.add_argument(
+        "--restore-role", default="",
+        help="Restricted owner role selected explicitly by pg_restore.",
     )
     restore.add_argument("--backup-dir", required=True)
     restore.add_argument("--artifact-target", required=True)

@@ -15,7 +15,11 @@ from app.production_storage.backup import (
     restore_backup,
     verify_backup,
 )
-from app.production_storage.core import StorageConstraintError, _canonical
+from app.production_storage.core import (
+    StorageConfigurationError,
+    StorageConstraintError,
+    _canonical,
+)
 
 
 def test_subprocess_connection_removes_password_from_process_arguments() -> None:
@@ -122,7 +126,11 @@ def test_restore_uses_separate_read_only_verification_identity(
     target_url = "postgresql://restore@db.internal:5432/restore_drill?sslmode=verify-full"
     verifier_url = "postgresql://backup@db.internal:5432/restore_drill?sslmode=verify-full"
     observed: list[str] = []
-    monkeypatch.setattr(backup_mod, "_run", lambda *args, **kwargs: "")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        backup_mod, "_run",
+        lambda command, **kwargs: commands.append(command) or "",
+    )
     monkeypatch.setattr(backup_mod, "_assert_empty_database", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         backup_mod,
@@ -138,8 +146,25 @@ def test_restore_uses_separate_read_only_verification_identity(
         confirm_dump_sha256=hashlib.sha256(b"verified pg dump").hexdigest(),
         confirm_target_database="restore_drill",
         pg_bin=pg_bin,
+        restore_execution_role="stratforge_migration",
     )
 
     assert result["ok"] is True
+    assert result["restore_execution_role"] == "stratforge_migration"
     assert observed == [verifier_url]
+    assert "--role=stratforge_migration" in commands[-1]
     assert (tmp_path / "restored-objects/ws_owner_TEST0001/artifact.bin").read_bytes() == b"verified artifact"
+
+
+def test_restore_rejects_unsafe_execution_role_before_io(tmp_path: Path) -> None:
+    with pytest.raises(StorageConfigurationError, match="execution role"):
+        restore_backup(
+            backup_dir=tmp_path / "missing-backup",
+            target_database_url="postgresql://restore@db.internal/restore_drill",
+            verification_database_url="postgresql://backup@db.internal/restore_drill",
+            target_artifact_root=tmp_path / "objects",
+            confirm_dump_sha256="0" * 64,
+            confirm_target_database="restore_drill",
+            pg_bin=tmp_path / "bin",
+            restore_execution_role="stratforge_migration --no-acl",
+        )
