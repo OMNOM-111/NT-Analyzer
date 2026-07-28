@@ -106,6 +106,59 @@ namespace NTAnalyzerBridge.Connector
                 Interlocked.Read(ref _droppedBatches));
         }
 
+        /// <summary>
+        /// Recreate the locally configured read-only subscriptions.  The
+        /// Connector command path may request this, but it never accepts
+        /// server-supplied instruments or changes the configured streams.
+        /// </summary>
+        public bool ForceResubscribe()
+        {
+            if (!_running) return false;
+            List<Subscription> subscriptions;
+            lock (_subscriptionsGate)
+            {
+                subscriptions = _subscriptions.ToList();
+                _subscriptions.Clear();
+            }
+            foreach (Subscription subscription in subscriptions)
+                DisposeSubscription(subscription);
+            foreach (ProductionMarketDataStreamConfig stream in _configured)
+                StartSubscription(stream);
+            BridgeLog.Info(
+                "ProductionMarketDataExporter: ForceResubscribe streams=" +
+                _configured.Count);
+            return _configured.Count > 0;
+        }
+
+        /// <summary>
+        /// Recreate one locally configured stream.  A remote command can only
+        /// select a configured exact contract; it cannot create a new stream.
+        /// </summary>
+        public bool ResubscribeInstrument(string exactContract)
+        {
+            if (!_running || string.IsNullOrWhiteSpace(exactContract)) return false;
+            List<ProductionMarketDataStreamConfig> matches = _configured.Where(stream =>
+                string.Equals(stream.ExactContract, exactContract,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count == 0) return false;
+
+            List<Subscription> subscriptions;
+            lock (_subscriptionsGate)
+            {
+                subscriptions = _subscriptions.Where(subscription => matches.Any(stream =>
+                    string.Equals(stream.ExactContract, subscription.Config.ExactContract,
+                        StringComparison.OrdinalIgnoreCase))).ToList();
+                foreach (Subscription subscription in subscriptions)
+                    _subscriptions.Remove(subscription);
+            }
+            foreach (Subscription subscription in subscriptions)
+                DisposeSubscription(subscription);
+            foreach (ProductionMarketDataStreamConfig stream in matches)
+                StartSubscription(stream);
+            BridgeLog.Info("ProductionMarketDataExporter: ResubscribeInstrument accepted");
+            return true;
+        }
+
         private void StartSubscription(ProductionMarketDataStreamConfig stream)
         {
             try

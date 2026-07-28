@@ -40,6 +40,10 @@ namespace NTAnalyzerBridge
         private ProductionMarketDataExporter _productionMarketDataExporter;
 
         internal RuntimeMarketDataExporter MarketDataExporter { get { return _marketDataExporter; } }
+        internal ProductionMarketDataExporter ProductionMarketDataExporter
+        {
+            get { return _productionMarketDataExporter; }
+        }
 
         internal bool QueueProductionMarketData(JArray bars)
         {

@@ -167,12 +167,17 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     try
                     {
-                        var exporter = BridgeAddOn.Instance != null ? BridgeAddOn.Instance.MarketDataExporter : null;
+                        BridgeAddOn addon = BridgeAddOn.Instance;
+                        var exporter = addon != null ? addon.MarketDataExporter : null;
                         if (exporter != null)
                         {
                             exporter.ForceResubscribe();
                             return WriteResult(cid, "success", "resubscribe triggered", "");
                         }
+                        var productionExporter = addon != null
+                            ? addon.ProductionMarketDataExporter : null;
+                        if (productionExporter != null && productionExporter.ForceResubscribe())
+                            return WriteResult(cid, "success", "production resubscribe triggered", "");
                         return WriteResult(cid, "rejected", "exporter not running", "");
                     }
                     catch (Exception ex)
@@ -185,12 +190,18 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     try
                     {
-                        var exporter = BridgeAddOn.Instance != null ? BridgeAddOn.Instance.MarketDataExporter : null;
+                        BridgeAddOn addon = BridgeAddOn.Instance;
+                        var exporter = addon != null ? addon.MarketDataExporter : null;
                         if (exporter != null)
                         {
                             exporter.ResubscribeInstrument(instrument);
                             return WriteResult(cid, "success", "resubscribe instrument triggered: " + instrument, "");
                         }
+                        var productionExporter = addon != null
+                            ? addon.ProductionMarketDataExporter : null;
+                        if (productionExporter != null &&
+                            productionExporter.ResubscribeInstrument(instrument))
+                            return WriteResult(cid, "success", "production instrument resubscribe triggered", "");
                         return WriteResult(cid, "rejected", "exporter not running", "");
                     }
                     catch (Exception ex)
