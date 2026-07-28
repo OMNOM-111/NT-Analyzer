@@ -9,6 +9,7 @@ from urllib.parse import quote
 import pytest
 
 from app.production_storage import (
+    AuditRepository,
     AuthRepository,
     CommandRepository,
     ConnectorRepository,
@@ -180,6 +181,29 @@ def test_document_optimistic_concurrency_rejects_lost_update() -> None:
     doc_b["active_workspaces"]["303"] = ids["b"]
     with pytest.raises(StorageConflictError, match="Concurrent workspaces"):
         repo_b.write("workspaces", doc_b)
+
+
+def test_legacy_audit_repository_populates_stage8_required_columns() -> None:
+    client = _client()
+    ids = _seed(client)
+    scope = Scope(user_id=202, workspace_id=ids["a"])
+    event_id = AuditRepository(client).append(
+        "workspace_selected",
+        {"workspace_id": ids["a"], "user_id": 202},
+        source="workspace_registry",
+        scope=scope,
+    )
+    rows = AuditRepository(client).list(scope=scope)
+    row = next(item for item in rows if item["event_id"] == event_id)
+    assert row["actor"] == "user:202"
+    assert row["action"] == "workspace_registry.workspace_selected"
+    assert row["resource_type"] == "workspace_registry"
+    assert row["resource_id"] == ids["a"]
+    assert row["outcome"] == "success"
+    assert row["ip_hash"] == ""
+    assert row["document"] == {
+        "workspace_id": ids["a"], "user_id": 202,
+    }
 
 
 def test_parallel_scoped_job_writes_are_lossless_and_isolated() -> None:

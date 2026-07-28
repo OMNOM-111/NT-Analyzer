@@ -715,20 +715,53 @@ class AuditRepository:
         key = event_id or f"audit_{uuid.uuid4().hex}"
         workspace_id = scope.workspace_id or None
         user_id = scope.user_id or None
+        values = dict(payload)
+        source_value = str(source or "system")[:100] or "system"
+        event_value = str(event_type or "audit_event")[:120] or "audit_event"
+        actor = str(
+            values.get("actor")
+            or (f"user:{user_id}" if user_id else source_value)
+            or "system"
+        )[:160]
+        action = str(
+            values.get("action") or f"{source_value}.{event_value}"
+        )[:120] or "audit_event"
+        resource_type = str(
+            values.get("resource_type") or source_value
+        )[:80] or "audit_event"
+        resource_id = str(
+            values.get("resource_id")
+            or workspace_id
+            or user_id
+            or ""
+        )[:200]
+        outcome = str(values.get("outcome") or "success").strip().lower()
+        if outcome not in {"success", "denied", "error"}:
+            outcome = "error"
+        ip_hash = str(values.get("ip_hash") or "")[:64]
         with self.client.transaction(scope) as conn:
             conn.execute(
                 """
-                INSERT INTO sf_audit_events(event_id,workspace_id,user_id,source,event_type,payload)
-                VALUES(%s,%s,%s,%s,%s,%s)
+                INSERT INTO sf_audit_events(
+                  event_id,workspace_id,user_id,source,event_type,payload,
+                  actor,action,resource_type,resource_id,outcome,ip_hash,document
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (key, workspace_id, user_id, str(source)[:100], str(event_type)[:120], _jsonb(dict(payload))),
+                (
+                    key, workspace_id, user_id, source_value, event_value,
+                    _jsonb(values), actor, action, resource_type, resource_id,
+                    outcome, ip_hash, _jsonb(values),
+                ),
             )
         return key
 
     def list(self, *, scope: Scope, limit: int = 100) -> list[Dict[str, Any]]:
         with self.client.transaction(scope, read_only=True) as conn:
             rows = conn.execute(
-                """SELECT event_id,workspace_id,user_id,source,event_type,payload,occurred_at
+                """SELECT event_id,workspace_id,user_id,source,event_type,payload,
+                          actor,action,resource_type,resource_id,outcome,ip_hash,
+                          document,occurred_at
                    FROM sf_audit_events ORDER BY audit_id DESC LIMIT %s""",
                 (max(1, min(1000, int(limit))),),
             ).fetchall()
