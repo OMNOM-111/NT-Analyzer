@@ -26,7 +26,8 @@
             └─ специалисты: Марина · Толик · Никита · Иван
 ```
 
-Личности, манера и голоса: [AGENT_PERSONAS.md](AGENT_PERSONAS.md).
+Личности и манера: [`domain_agents.py`](../app/ai_lab/domain_agents.py); стандартные
+голосовые профили: [`agent_tts.py`](../app/ai_lab/agent_tts.py).
 `StratForge Orchestrator` — название **технического шлюза** (`chief_agent.handle_message`),
 а не отдельный начальник над Витьком. Подробности маршрутизации:
 [CHIEF_AI_AGENT.md](CHIEF_AI_AGENT.md). Поведение Витька, события, отдых, API:
@@ -113,7 +114,7 @@ Speech-модели даже при `disabled` (чтобы роутер чата
 статус `TTS готов: Azure gpt-4o-mini-tts`, synthesize Виктора/Марины → `audio/mpeg`.
 Chat-ключи (GPT-4.1, Gemini, gpt-5-mini без TTS-деплоя) по-прежнему не дают голос.
 
-Стандартные голоса (обоснование: [AGENT_PERSONAS.md](AGENT_PERSONAS.md)):
+Стандартные голоса (канон: [`agent_tts.py`](../app/ai_lab/agent_tts.py)):
 
 | id | Пол | Voice | Speed | Характер |
 | --- | --- | --- | --- | --- |
