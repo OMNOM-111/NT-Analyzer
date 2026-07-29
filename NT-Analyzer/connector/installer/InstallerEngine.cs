@@ -83,7 +83,8 @@ namespace StratForge.Connector.Setup
                     throw new InvalidOperationException(
                         "A one-time enrollment code is required for the first installation.");
                 JObject operationBackup = CreateOperationBackup(
-                    stateDir, dllTarget, configTarget, repair ? "repair" : "install");
+                    stateDir, dllTarget, configTarget, recordPath, bootstrapPath,
+                    repair ? "repair" : "install");
                 try
                 {
                     string payloadDll = Path.Combine(release.Root, "payload", DllName);
@@ -108,8 +109,8 @@ namespace StratForge.Connector.Setup
                 }
                 catch (Exception exc)
                 {
-                    RestoreOperationBackup(operationBackup, dllTarget, configTarget);
-                    if (!bootstrapExisted && File.Exists(bootstrapPath)) File.Delete(bootstrapPath);
+                    RestoreOperationBackup(
+                        operationBackup, dllTarget, configTarget, recordPath, bootstrapPath);
                     Journal(stateDir, repair ? "repair" : "install", release.Version,
                         "rolled_back", exc.GetType().Name);
                     throw;
@@ -132,8 +133,9 @@ namespace StratForge.Connector.Setup
                     throw new InvalidOperationException("No Connector installation record was found.");
                 string dllTarget = Path.Combine(customDir, DllName);
                 string configTarget = Path.Combine(customDir, ConfigName);
+                string bootstrapPath = Path.Combine(stateDir, "bootstrap.dpapi");
                 JObject operationBackup = CreateOperationBackup(
-                    stateDir, dllTarget, configTarget, "uninstall");
+                    stateDir, dllTarget, configTarget, recordPath, bootstrapPath, "uninstall");
                 try
                 {
                     RestoreOriginal(record, "dll", dllTarget);
@@ -148,7 +150,8 @@ namespace StratForge.Connector.Setup
                 }
                 catch (Exception exc)
                 {
-                    RestoreOperationBackup(operationBackup, dllTarget, configTarget);
+                    RestoreOperationBackup(
+                        operationBackup, dllTarget, configTarget, recordPath, bootstrapPath);
                     Journal(stateDir, "uninstall", release.Version, "rolled_back", exc.GetType().Name);
                     throw;
                 }
@@ -305,13 +308,18 @@ namespace StratForge.Connector.Setup
         }
 
         private static JObject CreateOperationBackup(
-            string stateDir, string dllTarget, string configTarget, string action)
+            string stateDir, string dllTarget, string configTarget,
+            string recordPath, string bootstrapPath, string action)
         {
             string root = Path.Combine(stateDir, "backups", UtcStamp() + "-pre-" + action);
             Directory.CreateDirectory(root);
             JObject result = new JObject { ["root"] = root };
             CaptureOperation(result, "dll", dllTarget, Path.Combine(root, DllName));
             CaptureOperation(result, "config", configTarget, Path.Combine(root, ConfigName));
+            CaptureOperation(
+                result, "install_record", recordPath, Path.Combine(root, "install-record.json"));
+            CaptureOperation(
+                result, "bootstrap", bootstrapPath, Path.Combine(root, "bootstrap.dpapi"));
             return result;
         }
 
@@ -319,46 +327,106 @@ namespace StratForge.Connector.Setup
             JObject operation, string name, string source, string backup)
         {
             bool existed = File.Exists(source);
-            if (existed) RetryIo(delegate { File.Copy(source, backup, true); });
+            string sha256 = "";
+            if (existed)
+            {
+                sha256 = ReleaseManifestVerifier.Sha256(source);
+                RetryIo(delegate { File.Copy(source, backup, true); });
+                if (!string.Equals(
+                        ReleaseManifestVerifier.Sha256(backup), sha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new CryptographicException(
+                        "Operation backup hash mismatch: " + name);
+            }
             operation[name] = new JObject
             {
                 ["existed"] = existed,
                 ["backup_path"] = existed ? backup : "",
+                ["sha256"] = sha256,
             };
         }
 
         private static void RestoreOperationBackup(
-            JObject operation, string dllTarget, string configTarget)
+            JObject operation, string dllTarget, string configTarget,
+            string recordPath, string bootstrapPath)
         {
             RestoreOperationFile(operation["dll"] as JObject, dllTarget);
             RestoreOperationFile(operation["config"] as JObject, configTarget);
+            RestoreOperationFile(operation["install_record"] as JObject, recordPath);
+            RestoreOperationFile(operation["bootstrap"] as JObject, bootstrapPath);
         }
 
         private static void RestoreOperationFile(JObject row, string target)
         {
             if (row == null) throw new InvalidDataException("Operation rollback metadata is missing.");
             if ((bool?)row["existed"] == true)
+            {
                 AtomicCopy((string)row["backup_path"], target);
+                string expected = (string)row["sha256"] ?? "";
+                if (string.IsNullOrWhiteSpace(expected) || !string.Equals(
+                        ReleaseManifestVerifier.Sha256(target), expected,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new CryptographicException(
+                        "Restored operation backup hash mismatch: " + Path.GetFileName(target));
+            }
             else if (File.Exists(target)) RetryIo(delegate { File.Delete(target); });
         }
 
         private static string CacheVerifiedRelease(VerifiedRelease release, string stateDir)
         {
             string target = Path.Combine(stateDir, "release-cache", release.Version);
-            if (string.Equals(
-                    Path.GetFullPath(release.Root).TrimEnd('\\', '/'),
-                    Path.GetFullPath(target).TrimEnd('\\', '/'),
-                    StringComparison.OrdinalIgnoreCase))
+            string sourceRoot = Path.GetFullPath(release.Root).TrimEnd('\\', '/');
+            string targetRoot = Path.GetFullPath(target).TrimEnd('\\', '/');
+            if (string.Equals(sourceRoot, targetRoot, StringComparison.OrdinalIgnoreCase))
                 return target;
-            Directory.CreateDirectory(target);
-            CopyExact(Path.Combine(release.Root, "manifest.json"), Path.Combine(target, "manifest.json"));
-            CopyExact(Path.Combine(release.Root, "manifest.sig"), Path.Combine(target, "manifest.sig"));
-            foreach (JObject row in (release.Manifest["files"] as JArray ?? new JArray()).OfType<JObject>())
+
+            if (Directory.Exists(target))
             {
-                string relative = ((string)row["path"] ?? "").Replace('/', Path.DirectorySeparatorChar);
-                CopyExact(Path.Combine(release.Root, relative), Path.Combine(target, relative));
+                VerifiedRelease cached = ReleaseManifestVerifier.Verify(target);
+                if (!string.Equals(cached.Version, release.Version, StringComparison.Ordinal) ||
+                    !string.Equals(
+                        cached.ManifestSha256, release.ManifestSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        "A different Connector release is already cached under version " +
+                        release.Version + ".");
+                return target;
             }
-            return target;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            string temporary = target + ".stratforge-cache-" + Guid.NewGuid().ToString("N");
+            Directory.CreateDirectory(temporary);
+            try
+            {
+                CopyExact(
+                    Path.Combine(release.Root, "manifest.json"),
+                    Path.Combine(temporary, "manifest.json"));
+                CopyExact(
+                    Path.Combine(release.Root, "manifest.sig"),
+                    Path.Combine(temporary, "manifest.sig"));
+                foreach (JObject row in
+                    (release.Manifest["files"] as JArray ?? new JArray()).OfType<JObject>())
+                {
+                    string relative = ((string)row["path"] ?? "")
+                        .Replace('/', Path.DirectorySeparatorChar);
+                    CopyExact(
+                        Path.Combine(release.Root, relative),
+                        Path.Combine(temporary, relative));
+                }
+                VerifiedRelease cached = ReleaseManifestVerifier.Verify(temporary);
+                if (!string.Equals(
+                        cached.ManifestSha256, release.ManifestSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new CryptographicException(
+                        "Cached Connector release manifest changed during copy.");
+                Directory.Move(temporary, target);
+                return target;
+            }
+            catch
+            {
+                if (Directory.Exists(temporary)) Directory.Delete(temporary, true);
+                throw;
+            }
         }
 
         private static string NormalizeEnrollmentCode(string value)

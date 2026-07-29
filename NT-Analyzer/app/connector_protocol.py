@@ -1830,6 +1830,7 @@ def revoke_installation(
                 and session.get("status") == "active"
             ):
                 session["status"] = "revoked"
+                session["revoked_at_utc"] = _now_iso(now)
                 session["ended_at_utc"] = _now_iso(now)
         for command in doc["commands"]:
             if (

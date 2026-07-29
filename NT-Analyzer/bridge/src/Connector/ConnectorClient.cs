@@ -169,7 +169,11 @@ namespace NTAnalyzerBridge.Connector
             {
                 if (File.Exists(Path.Combine(_stateDir, "bootstrap.dpapi")))
                 {
-                    try { File.Delete(Path.Combine(_stateDir, "device-key.dpapi")); } catch { }
+                    if (string.IsNullOrWhiteSpace(ResolveEnrollmentCode()))
+                        throw new InvalidDataException(
+                            "Connector re-enrollment bootstrap is empty or unreadable");
+                    string deviceKeyPath = Path.Combine(_stateDir, "device-key.dpapi");
+                    if (File.Exists(deviceKeyPath)) File.Delete(deviceKeyPath);
                     _state = ConnectorStateStore.Load(_stateDir);
                     _state.Revoked = false;
                     _state.InstallationId = null;

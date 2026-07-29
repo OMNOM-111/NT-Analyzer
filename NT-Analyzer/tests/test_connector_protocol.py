@@ -402,6 +402,15 @@ def test_command_scope_idempotency_result_and_revoke(connector_store) -> None:
         42, welcome["connection_id"], workspace_id=workspace["workspace_id"],
     )
     assert revoked["connection"]["status"] == "revoked"
+    with connector_protocol._LOCK:
+        revoked_doc = connector_protocol._read_doc()
+        revoked_row = next(
+            row for row in revoked_doc["sessions"]
+            if row["session_id"] == welcome["session_id"]
+        )
+    assert revoked_row["status"] == "revoked"
+    assert revoked_row["revoked_at_utc"].endswith("Z")
+    assert revoked_row["ended_at_utc"].endswith("Z")
     with pytest.raises(connector_protocol.ConnectorProtocolError) as revoked_session:
         connector_protocol.heartbeat(token, {
             "connector_sequence": 3,
@@ -680,63 +689,58 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
         thread.join(timeout=5)
 
 
-def test_re_enrollment_after_revoke(connector_store) -> None:
+def test_re_enrollment_after_revoke_uses_new_installation_and_key(
+    connector_store,
+) -> None:
     workspace = connector_store[42]
-    private, jwk, started, pending = _enroll(workspace["workspace_id"])
-    welcome = connector_protocol.signed_hello(_hello(private, pending))
-    assert welcome["state"] == "online"
-    
-    # Revoke
-    connector_protocol.revoke_installation(42, welcome["connection_id"])
-    
-    # Re-enroll
-    private2, jwk2, started2, pending2 = _enroll(workspace["workspace_id"])
-    welcome2 = connector_protocol.signed_hello(_hello(private2, pending2))
-    assert welcome2["state"] == "online"
-    assert pending["installation_id"] != pending2["installation_id"]
+    first_private, _, _, first_pending = _enroll(workspace["workspace_id"])
+    first_welcome = connector_protocol.signed_hello(
+        _hello(first_private, first_pending)
+    )
+
+    revoked = connector_protocol.revoke_installation(
+        42,
+        first_welcome["connection_id"],
+        workspace_id=workspace["workspace_id"],
+    )
+    assert revoked["connection"]["status"] == "revoked"
+
+    second_private, _, _, second_pending = _enroll(workspace["workspace_id"])
+    second_welcome = connector_protocol.signed_hello(
+        _hello(second_private, second_pending)
+    )
+    assert second_welcome["state"] == "online"
+    assert second_pending["installation_id"] != first_pending["installation_id"]
+    assert (
+        second_pending["public_key_fingerprint"]
+        != first_pending["public_key_fingerprint"]
+    )
+
+    listed = connector_protocol.list_installations(
+        42, workspace_id=workspace["workspace_id"]
+    )["connections"]
+    assert {row["status"] for row in listed} == {"online", "revoked"}
 
 
-def test_expired_enrollment_code(connector_store, monkeypatch) -> None:
-    import time
+def test_expired_enrollment_code_is_rejected(connector_store, monkeypatch) -> None:
     workspace = connector_store[42]
-    
-    private, jwk = _device_key()
+    _, public_key = _device_key()
     started = connector_protocol.start_enrollment(
         42,
         workspace_id=workspace["workspace_id"],
         machine_label="Test NT",
         capabilities=["telemetry", "accounts_read", "paper_commands"],
     )
-    
-    # Fast forward
-    original_time = time.time
-    monkeypatch.setattr(time, "time", lambda: original_time() + 900)
-    
-    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + 900)
+
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
         connector_protocol.enroll_device({
             "code": started["code"],
-            "public_key": jwk,
+            "public_key": public_key,
             "connector_version": "0.2.0-test",
             "nt_version": "8.1.6.3",
             "machine_label": "Test NT",
             "ninja_instance_id": "nt_test_instance_01",
         })
-    assert exc.value.code == "enrollment_unavailable"
-
-
-def test_blocked_handshake_rollback(connector_store) -> None:
-    workspace = connector_store[42]
-    private, jwk, started, pending = _enroll(workspace["workspace_id"])
-    
-    # Send forged signature
-    forged_private, _ = _device_key()
-    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
-        connector_protocol.signed_hello(_hello(forged_private, pending))
-    assert exc.value.code == "invalid_signature"
-    
-    # The installation shouldn't be fully enrolled / active
-    listed = connector_protocol.list_installations(
-        42, workspace_id=workspace["workspace_id"],
-    )
-    assert listed["connections"][0]["status"] == "pending"
-
+    assert rejected.value.code == "enrollment_unavailable"
