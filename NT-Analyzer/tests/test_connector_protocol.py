@@ -678,3 +678,65 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=5)
+
+
+def test_re_enrollment_after_revoke(connector_store) -> None:
+    workspace = connector_store[42]
+    private, jwk, started, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    assert welcome["state"] == "online"
+    
+    # Revoke
+    connector_protocol.revoke_installation(42, welcome["connection_id"])
+    
+    # Re-enroll
+    private2, jwk2, started2, pending2 = _enroll(workspace["workspace_id"])
+    welcome2 = connector_protocol.signed_hello(_hello(private2, pending2))
+    assert welcome2["state"] == "online"
+    assert pending["installation_id"] != pending2["installation_id"]
+
+
+def test_expired_enrollment_code(connector_store, monkeypatch) -> None:
+    import time
+    workspace = connector_store[42]
+    
+    private, jwk = _device_key()
+    started = connector_protocol.start_enrollment(
+        42,
+        workspace_id=workspace["workspace_id"],
+        machine_label="Test NT",
+        capabilities=["telemetry", "accounts_read", "paper_commands"],
+    )
+    
+    # Fast forward
+    original_time = time.time
+    monkeypatch.setattr(time, "time", lambda: original_time() + 900)
+    
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
+        connector_protocol.enroll_device({
+            "code": started["code"],
+            "public_key": jwk,
+            "connector_version": "0.2.0-test",
+            "nt_version": "8.1.6.3",
+            "machine_label": "Test NT",
+            "ninja_instance_id": "nt_test_instance_01",
+        })
+    assert exc.value.code == "enrollment_unavailable"
+
+
+def test_blocked_handshake_rollback(connector_store) -> None:
+    workspace = connector_store[42]
+    private, jwk, started, pending = _enroll(workspace["workspace_id"])
+    
+    # Send forged signature
+    forged_private, _ = _device_key()
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
+        connector_protocol.signed_hello(_hello(forged_private, pending))
+    assert exc.value.code == "invalid_signature"
+    
+    # The installation shouldn't be fully enrolled / active
+    listed = connector_protocol.list_installations(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    assert listed["connections"][0]["status"] == "pending"
+

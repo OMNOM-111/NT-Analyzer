@@ -43,6 +43,11 @@ def test_installer_is_standalone_strict_and_transactional() -> None:
     assert "unsafe file path" in verifier
     assert "payload hash mismatch" in verifier
     assert "absent from manifest" in verifier
+    assert "Path.GetFullPath(release.Root)" in engine
+    assert "string.Equals" in engine
+    client = (root / "bridge" / "src" / "Connector" / "ConnectorClient.cs").read_text(encoding="utf-8")
+    assert 'File.Exists(Path.Combine(_stateDir, "bootstrap.dpapi"))' in client
+    assert '_state.Revoked = false;' in client
 
 
 def test_release_builder_restores_clean_checkout_before_release_build() -> None:
