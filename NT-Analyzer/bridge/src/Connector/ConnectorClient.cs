@@ -167,6 +167,19 @@ namespace NTAnalyzerBridge.Connector
             int backoffSeconds = 2;
             try
             {
+                if (File.Exists(Path.Combine(_stateDir, "bootstrap.dpapi")))
+                {
+                    if (string.IsNullOrWhiteSpace(ResolveEnrollmentCode()))
+                        throw new InvalidDataException(
+                            "Connector re-enrollment bootstrap is empty or unreadable");
+                    string deviceKeyPath = Path.Combine(_stateDir, "device-key.dpapi");
+                    if (File.Exists(deviceKeyPath)) File.Delete(deviceKeyPath);
+                    _state = ConnectorStateStore.Load(_stateDir);
+                    _state.Revoked = false;
+                    _state.InstallationId = null;
+                    _state.PublicKeyFingerprint = null;
+                    ConnectorStateStore.Save(_stateDir, _state);
+                }
                 _identity = ConnectorDeviceIdentity.LoadOrCreate(_stateDir);
                 _state = ConnectorStateStore.Load(_stateDir);
                 EnsureStateIdentity();

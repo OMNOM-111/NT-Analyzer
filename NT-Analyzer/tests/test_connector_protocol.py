@@ -678,3 +678,60 @@ def test_http_long_poll_connector_flow_has_no_browser_cookie(connector_store) ->
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=5)
+
+
+def test_re_enrollment_after_revoke_uses_new_installation_and_key(
+    connector_store,
+) -> None:
+    workspace = connector_store[42]
+    first_private, _, _, first_pending = _enroll(workspace["workspace_id"])
+    first_welcome = connector_protocol.signed_hello(
+        _hello(first_private, first_pending)
+    )
+
+    revoked = connector_protocol.revoke_installation(
+        42,
+        first_welcome["connection_id"],
+        workspace_id=workspace["workspace_id"],
+    )
+    assert revoked["connection"]["status"] == "revoked"
+
+    second_private, _, _, second_pending = _enroll(workspace["workspace_id"])
+    second_welcome = connector_protocol.signed_hello(
+        _hello(second_private, second_pending)
+    )
+    assert second_welcome["state"] == "online"
+    assert second_pending["installation_id"] != first_pending["installation_id"]
+    assert (
+        second_pending["public_key_fingerprint"]
+        != first_pending["public_key_fingerprint"]
+    )
+
+    listed = connector_protocol.list_installations(
+        42, workspace_id=workspace["workspace_id"]
+    )["connections"]
+    assert {row["status"] for row in listed} == {"online", "revoked"}
+
+
+def test_expired_enrollment_code_is_rejected(connector_store, monkeypatch) -> None:
+    workspace = connector_store[42]
+    _, public_key = _device_key()
+    started = connector_protocol.start_enrollment(
+        42,
+        workspace_id=workspace["workspace_id"],
+        machine_label="Test NT",
+        capabilities=["telemetry", "accounts_read", "paper_commands"],
+    )
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + 900)
+
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
+        connector_protocol.enroll_device({
+            "code": started["code"],
+            "public_key": public_key,
+            "connector_version": "0.2.0-test",
+            "nt_version": "8.1.6.3",
+            "machine_label": "Test NT",
+            "ninja_instance_id": "nt_test_instance_01",
+        })
+    assert rejected.value.code == "enrollment_unavailable"

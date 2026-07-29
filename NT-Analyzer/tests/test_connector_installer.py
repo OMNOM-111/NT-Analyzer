@@ -37,8 +37,21 @@ def test_installer_is_standalone_strict_and_transactional() -> None:
     assert "DataProtectionScope.CurrentUser" in engine
     assert "RetryIo" in engine
     assert "NinjaTrader started while Connector files were being changed" in engine
+    assert 'result, "install_record"' in engine
+    assert 'result, "bootstrap"' in engine
+    assert "Operation backup hash mismatch" in engine
+    assert "Restored operation backup hash mismatch" in engine
+    assert "A different Connector release is already cached under version" in engine
+    assert "ReleaseManifestVerifier.Verify(temporary)" in engine
     assert 'connector.Remove("enrollment_code")' in engine
     assert '["enrollment_code"] =' not in engine
+    client = (
+        root / "bridge" / "src" / "Connector" / "ConnectorClient.cs"
+    ).read_text(encoding="utf-8")
+    bootstrap_check = client.index("ResolveEnrollmentCode()")
+    identity_delete = client.index("File.Delete(deviceKeyPath)")
+    assert bootstrap_check < identity_delete
+    assert "_state.Revoked = false;" in client
     assert "VerifyData" in verifier
     assert "unsafe file path" in verifier
     assert "payload hash mismatch" in verifier
