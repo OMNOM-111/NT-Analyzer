@@ -402,6 +402,15 @@ def test_command_scope_idempotency_result_and_revoke(connector_store) -> None:
         42, welcome["connection_id"], workspace_id=workspace["workspace_id"],
     )
     assert revoked["connection"]["status"] == "revoked"
+    with connector_protocol._LOCK:
+        revoked_doc = connector_protocol._read_doc()
+        revoked_row = next(
+            row for row in revoked_doc["sessions"]
+            if row["session_id"] == welcome["session_id"]
+        )
+    assert revoked_row["status"] == "revoked"
+    assert revoked_row["revoked_at_utc"].endswith("Z")
+    assert revoked_row["ended_at_utc"].endswith("Z")
     with pytest.raises(connector_protocol.ConnectorProtocolError) as revoked_session:
         connector_protocol.heartbeat(token, {
             "connector_sequence": 3,
