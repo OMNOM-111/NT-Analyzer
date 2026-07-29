@@ -167,6 +167,15 @@ namespace NTAnalyzerBridge.Connector
             int backoffSeconds = 2;
             try
             {
+                if (File.Exists(Path.Combine(_stateDir, "bootstrap.dpapi")))
+                {
+                    try { File.Delete(Path.Combine(_stateDir, "device-key.dpapi")); } catch { }
+                    _state = ConnectorStateStore.Load(_stateDir);
+                    _state.Revoked = false;
+                    _state.InstallationId = null;
+                    _state.PublicKeyFingerprint = null;
+                    ConnectorStateStore.Save(_stateDir, _state);
+                }
                 _identity = ConnectorDeviceIdentity.LoadOrCreate(_stateDir);
                 _state = ConnectorStateStore.Load(_stateDir);
                 EnsureStateIdentity();

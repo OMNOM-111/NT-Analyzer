@@ -345,6 +345,11 @@ namespace StratForge.Connector.Setup
         private static string CacheVerifiedRelease(VerifiedRelease release, string stateDir)
         {
             string target = Path.Combine(stateDir, "release-cache", release.Version);
+            if (string.Equals(
+                    Path.GetFullPath(release.Root).TrimEnd('\\', '/'),
+                    Path.GetFullPath(target).TrimEnd('\\', '/'),
+                    StringComparison.OrdinalIgnoreCase))
+                return target;
             Directory.CreateDirectory(target);
             CopyExact(Path.Combine(release.Root, "manifest.json"), Path.Combine(target, "manifest.json"));
             CopyExact(Path.Combine(release.Root, "manifest.sig"), Path.Combine(target, "manifest.sig"));
