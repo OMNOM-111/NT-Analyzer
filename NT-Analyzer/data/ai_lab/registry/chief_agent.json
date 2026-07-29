@@ -1,4 +1,9 @@
 {
-  "daily_audit_key": "2026-07-28",
-  "last_audit_error": ""
+  "daily_audit_key": "2026-07-27",
+  "last_audit_error": "",
+  "runtime_heartbeat_fresh__owner_runtime": true,
+  "runtime_heartbeat_fresh__ws_personal_NOC6oIz2EdQiZ9TK": false,
+  "runtime_connection_signature__owner_runtime": "",
+  "orchestrator_weekly_report_key": "2026-W30",
+  "last_weekly_report_error": ""
 }
