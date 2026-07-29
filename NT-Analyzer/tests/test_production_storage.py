@@ -168,6 +168,66 @@ def test_jobs_commands_and_direct_foreign_write_are_workspace_scoped() -> None:
             )
 
 
+def test_membership_sync_soft_revokes_referenced_rows_and_can_reactivate() -> None:
+    client = _client()
+    ids = _seed(client)
+    alpha = Scope(user_id=202, workspace_id=ids["a"])
+    job = {
+        "job_id": "job_membership_reference_01",
+        "workspace_id": ids["a"],
+        "user_id": 202,
+        "kind": "backtest",
+        "status": "queued",
+        "idempotency_key": "idem-membership-reference-01",
+    }
+    JobRepository(client).put(job, scope=alpha)
+
+    documents = DocumentRepository(client)
+    workspace_doc = documents.read("workspaces", {})
+    removed = next(
+        row for row in workspace_doc["memberships"]
+        if row["workspace_id"] == ids["a"] and row["user_id"] == 202
+    )
+    workspace_doc["memberships"].remove(removed)
+    workspace_doc["active_workspaces"].pop("202")
+    documents.write("workspaces", workspace_doc)
+
+    global_memberships = WorkspaceRepository(client).memberships(
+        scope=Scope.global_service_scope()
+    )
+    retired = next(
+        row for row in global_memberships
+        if row["workspace_id"] == ids["a"] and row["user_id"] == 202
+    )
+    assert retired["revoked_at_utc"].endswith("Z")
+    # Revoking membership must preserve the workspace and FK-referenced job for
+    # audit/history.  RLS still denies both from a different workspace scope.
+    assert WorkspaceRepository(client).get(ids["a"], scope=alpha)["status"] == "active"
+    assert JobRepository(client).get(job["job_id"], scope=alpha)["job_id"] == job["job_id"]
+    beta = Scope(user_id=202, workspace_id=ids["b"])
+    assert WorkspaceRepository(client).get(ids["a"], scope=beta) is None
+    assert JobRepository(client).get(job["job_id"], scope=beta) is None
+
+    workspace_doc = documents.read("workspaces", {})
+    workspace_doc["memberships"].append({
+        "workspace_id": ids["a"],
+        "user_id": 202,
+        "role": "owner",
+        "revoked_at_utc": "",
+    })
+    workspace_doc["active_workspaces"]["202"] = ids["a"]
+    documents.write("workspaces", workspace_doc)
+    reactivated = next(
+        row for row in WorkspaceRepository(client).memberships(
+            scope=Scope.global_service_scope()
+        )
+        if row["workspace_id"] == ids["a"] and row["user_id"] == 202
+    )
+    assert reactivated["revoked_at_utc"] == ""
+    assert WorkspaceRepository(client).get(ids["a"], scope=alpha)["status"] == "active"
+    assert JobRepository(client).get(job["job_id"], scope=alpha)["job_id"] == job["job_id"]
+
+
 def test_document_optimistic_concurrency_rejects_lost_update() -> None:
     first = _client()
     ids = _seed(first)

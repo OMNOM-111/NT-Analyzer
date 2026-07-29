@@ -125,6 +125,15 @@ def _timestamp(value: Any) -> Optional[datetime]:
     )
 
 
+def _utc_text(value: Any) -> str:
+    if not isinstance(value, datetime):
+        return ""
+    current = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
+
+
 def _validate_database_url(url: str, *, production: bool) -> str:
     value = str(url or "").strip()
     if not value:
@@ -381,17 +390,47 @@ class DocumentRepository:
                  str(row.get("kind") or "personal")[:64], _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
         memberships = [row for row in doc.get("memberships", []) if isinstance(row, dict)]
-        conn.execute("DELETE FROM sf_workspace_memberships")
+        retained_memberships: list[Dict[str, Any]] = []
         for row in memberships:
+            workspace_id = str(row.get("workspace_id") or "")
+            user_id = _int(row.get("user_id"))
+            if not _WORKSPACE_RE.fullmatch(workspace_id) or user_id <= 0:
+                raise StorageConstraintError("Workspace membership identity is invalid.")
+            retained_memberships.append({"workspace_id": workspace_id, "user_id": user_id})
             conn.execute(
                 """
                 INSERT INTO sf_workspace_memberships(workspace_id,user_id,role,revoked_at,document,created_at,updated_at)
                 VALUES(%s,%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),clock_timestamp())
+                ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=EXCLUDED.role,
+                  revoked_at=EXCLUDED.revoked_at,document=EXCLUDED.document,
+                  updated_at=clock_timestamp()
                 """,
-                (str(row.get("workspace_id") or ""), _int(row.get("user_id")),
-                 str(row.get("role") or "viewer"), _timestamp(row.get("revoked_at_utc")),
+                (workspace_id, user_id,
+                 _status(row.get("role"), {"owner","admin","operator","viewer","developer"}, "viewer"),
+                 _timestamp(row.get("revoked_at_utc")),
                  _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
+        conn.execute(
+            """
+            UPDATE sf_workspace_memberships AS membership
+            SET revoked_at=COALESCE(membership.revoked_at,clock_timestamp()),
+              document=COALESCE(membership.document,'{}'::jsonb) || jsonb_build_object(
+                'revoked_at_utc',
+                to_char(
+                  COALESCE(membership.revoked_at,clock_timestamp()) AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                )
+              ),
+              updated_at=clock_timestamp()
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM jsonb_to_recordset(%s) AS retained(workspace_id text,user_id bigint)
+              WHERE retained.workspace_id=membership.workspace_id
+                AND retained.user_id=membership.user_id
+            )
+            """,
+            (_jsonb(retained_memberships),),
+        )
         conn.execute("DELETE FROM sf_active_workspaces")
         for raw_user, raw_workspace in dict(doc.get("active_workspaces") or {}).items():
             conn.execute(
@@ -417,7 +456,16 @@ class DocumentRepository:
                  _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
         self._delete_missing(conn, "sf_connections", "connection_id", connection_ids)
-        self._delete_missing(conn, "sf_workspaces", "workspace_id", workspace_ids)
+        conn.execute(
+            """
+            UPDATE sf_workspaces
+            SET status='deleted',
+              document=COALESCE(document,'{}'::jsonb) || jsonb_build_object('status','deleted'),
+              updated_at=clock_timestamp()
+            WHERE NOT (workspace_id=ANY(%s))
+            """,
+            (workspace_ids,),
+        )
 
     def _sync_entitlements(self, conn: Any, doc: Dict[str, Any]) -> None:
         rows = [row for row in doc.get("entitlements", []) if isinstance(row, dict)]
@@ -543,9 +591,15 @@ class WorkspaceRepository:
     def memberships(self, *, scope: Scope) -> list[Dict[str, Any]]:
         with self.client.transaction(scope, read_only=True) as conn:
             rows = conn.execute(
-                "SELECT document FROM sf_workspace_memberships ORDER BY workspace_id,user_id"
+                "SELECT document,revoked_at FROM sf_workspace_memberships "
+                "ORDER BY workspace_id,user_id"
             ).fetchall()
-        return [copy.deepcopy(dict(row["document"])) for row in rows]
+        result: list[Dict[str, Any]] = []
+        for row in rows:
+            document = copy.deepcopy(dict(row["document"]))
+            document["revoked_at_utc"] = _utc_text(row["revoked_at"])
+            result.append(document)
+        return result
 
     def get_ledger(self, *, scope: Scope, default: Mapping[str, Any]) -> Dict[str, Any]:
         if not scope.workspace_id:
