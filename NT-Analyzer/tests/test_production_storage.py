@@ -507,33 +507,48 @@ def test_real_application_modules_route_production_state_to_postgres_only(
 
 
 def test_workspace_membership_upsert_defect(monkeypatch, tmp_path) -> None:
-    reset_for_tests()
     monkeypatch.setenv("STRATFORGE_STORAGE_MODE", "postgresql")
     monkeypatch.setenv("STRATFORGE_DATABASE_URL", APP_URL)
-    core.init_pool()
-    with core._pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM sf_workspace_memberships")
-            cur.execute("DELETE FROM sf_workspaces")
-            cur.execute("DELETE FROM sf_users")
-    try:
-        user_id = 901
-        ws_id = "ws_test_upsert_123"
-        with core._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO sf_users (user_id, status, role, is_owner, auth_secret) VALUES (%s, 'active', 'user', false, '')", (user_id,))
-                cur.execute("INSERT INTO sf_workspaces (workspace_id, owner_user_id, status, kind, name) VALUES (%s, %s, 'active', 'personal', 'Test')", (ws_id, user_id))
-        
-        doc = {"workspaces": [], "memberships": [{"workspace_id": ws_id, "user_id": user_id, "role": "owner"}], "active_workspaces": {}}
-        # This will trigger the INSERT ON CONFLICT UPDATE in core.py
-        core.flush_workspaces(doc)
-        
-        # Second flush should not raise UniqueViolation or Foreign Key error
-        core.flush_workspaces(doc)
-        
-        with core._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT role FROM sf_workspace_memberships WHERE workspace_id = %s AND user_id = %s", (ws_id, user_id))
-                assert cur.fetchone()[0] == "owner"
-    finally:
-        reset_for_tests()
+    client = PostgresClient(APP_URL)
+    repository = DocumentRepository(client)
+    user_id = 901
+    workspace_id = "ws_test_upsert_123"
+
+    auth = repository.read("auth", {})
+    auth["users"] = [{
+        "user_id": user_id,
+        "status": "active",
+        "role": "user",
+        "is_owner": False,
+    }]
+    repository.write("auth", auth)
+
+    document = repository.read("workspaces", {})
+    document.update({
+        "workspaces": [{
+            "workspace_id": workspace_id,
+            "owner_user_id": user_id,
+            "status": "active",
+            "kind": "personal",
+            "name": "Test",
+        }],
+        "memberships": [{
+            "workspace_id": workspace_id,
+            "user_id": user_id,
+            "role": "owner",
+        }],
+        "active_workspaces": {str(user_id): workspace_id},
+    })
+    repository.write("workspaces", document)
+
+    # A second flush exercises ON CONFLICT(workspace_id,user_id) and must not
+    # raise a uniqueness or foreign-key error.
+    repository.write("workspaces", document)
+
+    with client.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        row = conn.execute(
+            "SELECT role FROM sf_workspace_memberships "
+            "WHERE workspace_id=%s AND user_id=%s",
+            (workspace_id, user_id),
+        ).fetchone()
+    assert row["role"] == "owner"

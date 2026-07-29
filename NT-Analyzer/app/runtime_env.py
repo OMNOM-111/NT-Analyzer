@@ -241,6 +241,17 @@ def is_production() -> bool:
     return deployment_environment() == PRODUCTION
 
 
+def uses_isolated_data_root() -> bool:
+    """Return whether mutable state must use the selected environment root.
+
+    Explicit Development and Production processes are operational runtimes and
+    must never write into the source or immutable release tree. The implicit
+    historical profile remains only for callers that have not selected an
+    environment yet.
+    """
+    return is_development() or environment_explicit()
+
+
 def _optional_bool(name: str) -> Optional[bool]:
     raw = str(os.environ.get(name) or "").strip().lower()
     if not raw:

@@ -75,6 +75,8 @@ def test_all_mutable_core_paths_switch_to_staging_root(tmp_path, monkeypatch) ->
     stage_paths = capture()
 
     assert set(prod_paths) == set(stage_paths)
+    for name, prod_path in prod_paths.items():
+        assert prod_path == production or production in prod_path.parents, (name, prod_path)
     for name, stage_path in stage_paths.items():
         assert stage_path != prod_paths[name], name
         assert stage_path == staging or staging in stage_path.parents, (name, stage_path)
@@ -93,9 +95,22 @@ def test_staging_cannot_restore_sources_into_ninjatrader(tmp_path, monkeypatch) 
     try:
         strategy_recovery.begin({}, {}, task_id="staging-probe")
     except strategy_recovery.StrategyRecoveryError as exc:
-        assert "staging" in str(exc)
+        assert "запрещено" in str(exc)
     else:  # pragma: no cover - safety regression
         raise AssertionError("staging was allowed to restore NinjaTrader sources")
+
+
+def test_explicit_production_cannot_restore_sources_into_ninjatrader(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "production")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "production"))
+    try:
+        strategy_recovery.begin({}, {}, task_id="production-probe")
+    except strategy_recovery.StrategyRecoveryError as exc:
+        assert "запрещено" in str(exc)
+    else:  # pragma: no cover - safety regression
+        raise AssertionError("production was allowed to restore NinjaTrader sources")
 
 
 def test_clean_staging_reads_safe_catalog_baseline_but_writes_copy_on_write(

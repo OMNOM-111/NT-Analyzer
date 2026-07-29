@@ -24,7 +24,7 @@ def _root() -> Path:
 
 
 def _store_path() -> Path:
-    if runtime_env.is_staging():
+    if runtime_env.uses_isolated_data_root():
         return runtime_env.data_path(
             "ai_lab", "registry", "star_ratings.json", project_root=_root(),
         )

@@ -313,13 +313,13 @@ def _configured_jobs_dir() -> Optional[Path]:
 
 def jobs_dir() -> Path:
     configured = _configured_jobs_dir()
-    if runtime_env.is_staging():
+    if runtime_env.uses_isolated_data_root():
         return runtime_env.data_path("jobs", project_root=project_root())
     return configured or (project_root() / "jobs")
 
 
 def default_jobs_dir() -> Path:
-    if runtime_env.is_staging():
+    if runtime_env.uses_isolated_data_root():
         return runtime_env.data_path("jobs", project_root=project_root())
     return project_root() / "jobs"
 

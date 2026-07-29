@@ -98,6 +98,18 @@ python tools/production_preflight.py \
   --env-file "$HOME/.config/stratforge/production.env"
 ~~~
 
+Перед распаковкой Production archive обязательно закрепить проверку на
+внешний публичный fingerprint, хранящийся в защищённой конфигурации:
+
+~~~bash
+python tools/verify_server_release.py "$ARCHIVE" \
+  --expected-key-fingerprint "$STRATFORGE_RELEASE_SIGNING_KEY_FINGERPRINT"
+~~~
+
+Самопроверка подписи без этого pin не является Production trust. Полный
+канонический процесс сборки, canary promotion и rollback:
+`docs/PRODUCTION_RELEASE_WORKFLOW.md`.
+
 Preflight печатает только имена проверок и коды, но не значения конфигурации.
 
 ## Первый запуск и restart

@@ -222,9 +222,12 @@ def _enqueue_validation_jobs(profile: Dict[str, Any], class_name: str, run_id: s
 def begin(profile: Dict[str, Any], quarantine_record: Dict[str, Any], *,
           task_id: str, compile_wait_sec: int = 300) -> Dict[str, Any]:
     """Restore, compile and enqueue evidence jobs for an approved task."""
-    if runtime_env.is_staging():
+    if (
+        runtime_env.app_env() == runtime_env.STAGING
+        or (runtime_env.is_production() and runtime_env.environment_explicit())
+    ):
         raise StrategyRecoveryError(
-            "Восстановление исходников NinjaTrader запрещено в staging."
+            "Восстановление исходников NinjaTrader запрещено в выбранном окружении."
         )
     class_name = str(profile.get("strategy_class") or "")
     profile_id = str(profile.get("profile_id") or "")

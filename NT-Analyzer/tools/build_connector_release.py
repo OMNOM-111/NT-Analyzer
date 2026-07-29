@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import zipfile
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -91,6 +92,10 @@ def _load_signing_key(root: Path, production: bool) -> tuple[ec.EllipticCurvePri
         raise RuntimeError("Production release key must be ECDSA P-256")
     if not os.environ.get("STRATFORGE_AUTHENTICODE_THUMBPRINT"):
         raise RuntimeError("Production release requires STRATFORGE_AUTHENTICODE_THUMBPRINT")
+    if not re.fullmatch(
+        r"[0-9A-Fa-f]{40}", os.environ["STRATFORGE_AUTHENTICODE_THUMBPRINT"].strip(),
+    ):
+        raise RuntimeError("STRATFORGE_AUTHENTICODE_THUMBPRINT must be a SHA-1 thumbprint")
     if shutil.which("signtool") is None:
         raise RuntimeError("Production release requires signtool on PATH")
     return key, "production"
@@ -121,13 +126,30 @@ def _write_trust_source(path: Path, x: str, y: str, fingerprint: str, tier: str)
     )
 
 
+def _authenticode_timestamp_url() -> str:
+    timestamp = str(os.environ.get("STRATFORGE_AUTHENTICODE_TIMESTAMP_URL") or "").strip()
+    parsed_timestamp = urllib.parse.urlsplit(timestamp)
+    if parsed_timestamp.scheme not in {"http", "https"} or not parsed_timestamp.netloc:
+        raise RuntimeError(
+            "Production release requires an explicit trusted Authenticode timestamp URL"
+        )
+    return timestamp
+
+
 def _authenticode_sign(files: list[Path]) -> None:
     thumbprint = os.environ["STRATFORGE_AUTHENTICODE_THUMBPRINT"]
-    timestamp = os.environ.get("STRATFORGE_AUTHENTICODE_TIMESTAMP_URL") or "http://timestamp.digicert.com"
+    timestamp = _authenticode_timestamp_url()
     for path in files:
         _run([
             "signtool", "sign", "/sha1", thumbprint, "/fd", "SHA256",
             "/tr", timestamp, "/td", "SHA256", str(path),
+        ], cwd=path.parent)
+
+
+def _authenticode_verify(files: list[Path]) -> None:
+    for path in files:
+        _run([
+            "signtool", "verify", "/pa", "/all", "/tw", str(path),
         ], cwd=path.parent)
 
 
@@ -240,12 +262,14 @@ def build(args: argparse.Namespace) -> dict:
         },
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    signed_files = [
+        bundle / "StratForge.Connector.Setup.exe",
+        bundle / "StratForge.Connector.Updater.exe",
+        payload / "NTAnalyzerBridge.dll",
+    ]
     if args.production:
-        _authenticode_sign([
-            bundle / "StratForge.Connector.Setup.exe",
-            bundle / "StratForge.Connector.Updater.exe",
-            payload / "NTAnalyzerBridge.dll",
-        ])
+        _authenticode_sign(signed_files)
+        _authenticode_verify(signed_files)
 
     files = []
     for path in sorted(bundle.rglob("*")):
@@ -319,11 +343,14 @@ def build(args: argparse.Namespace) -> dict:
         "trust_tier": trust_tier,
         "source_revision": manifest["source_revision"],
         "manifest_sha256": _sha256(bundle / "manifest.json"),
+        "key_fingerprint": fingerprint,
         "archive_sha256": archive_hash,
         "archive": str(archive),
         "bundle": str(bundle),
         "setup_self_verify": bool(verify_result.get("ok")),
         "authenticode": bool(args.production),
+        "authenticode_verified": bool(args.production),
+        "authenticode_timestamp_verified": bool(args.production),
         "file_count": len(files),
     }
     (release_root / "build-report.json").write_text(

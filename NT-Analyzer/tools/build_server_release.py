@@ -33,18 +33,21 @@ _SEMVER = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance")
+_INCLUDED_TREES = ("app", "ai_lab", "deploy", "docs/governance")
 _INCLUDED_FILES = (
     "README.md",
     "README-RUN-MODES.md",
     "VERSION.json",
     "requirements.txt",
+    "data/catalog/instrument_groups.json",
+    "data/catalog/margins.json",
     "docs/AI_STRATEGY_LAB_QUALITY.md",
     "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
     "docs/CONNECTOR_INSTALL_GUIDE.md",
     "docs/CONNECTOR_PROTOCOL_V1.md",
     "docs/MARKET_DATA_PRODUCTION_RUNBOOK.md",
     "docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md",
+    "docs/PRODUCTION_RELEASE_WORKFLOW.md",
     "docs/PRODUCTION_OPERATIONS_RUNBOOK.md",
     "docs/PRODUCTION_STORAGE_RUNBOOK.md",
     "docs/PRODUCTION_TELEGRAM_RUNBOOK.md",
@@ -115,6 +118,29 @@ def _selected_files(root: Path) -> list[Path]:
         "VERSION.json",
     }
     present = {path.as_posix() for path in selected}
+    forbidden = sorted(
+        path for path in present
+        if path.startswith((
+            "data/ai_lab/",
+            "data/development/",
+            "data/governance/",
+            "data/governance-rendered/",
+            "data/portfolio/",
+        ))
+        or (
+            path.startswith("data/")
+            and (
+                path.endswith((".sqlite", ".sqlite3", ".db", ".jsonl", ".log"))
+                or "token" in Path(path).name.lower()
+                or "secret" in Path(path).name.lower()
+            )
+        )
+    )
+    if forbidden:
+        raise RuntimeError(
+            "mutable or sensitive data selected for server release: "
+            + ", ".join(forbidden[:10])
+        )
     missing = sorted(required - present)
     if missing:
         raise RuntimeError("incomplete server release selection: " + ", ".join(missing))
@@ -260,8 +286,13 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             if path.is_file():
                 zipped.write(path, path.relative_to(bundle).as_posix())
     archive_hash = _sha256(archive)
+    expected_fingerprint = _public_signing(key)["key_fingerprint"]
     verified = json.loads(_run([
-        sys.executable, "tools/verify_server_release.py", str(archive),
+        sys.executable,
+        "tools/verify_server_release.py",
+        str(archive),
+        "--expected-key-fingerprint",
+        expected_fingerprint,
     ], cwd=ROOT))
     if not verified.get("ok"):
         raise RuntimeError("server release archive self-verification failed")
@@ -275,6 +306,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "trust_tier": trust_tier,
         "source_revision": revision,
         "manifest_sha256": _sha256(manifest_path),
+        "key_fingerprint": expected_fingerprint,
         "archive_sha256": archive_hash,
         "archive": str(archive),
         "bundle": str(bundle),

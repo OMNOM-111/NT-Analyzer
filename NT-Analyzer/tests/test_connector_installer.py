@@ -71,6 +71,26 @@ def test_release_builder_restores_clean_checkout_before_release_build() -> None:
     assert '"-c", "Release", "--no-restore"' in source
 
 
+def test_production_authenticode_is_verified_after_signing(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    monkeypatch.setattr(
+        build_connector_release,
+        "_run",
+        lambda command, *, cwd: calls.append((command, cwd)),
+    )
+    targets = [tmp_path / "Setup.exe", tmp_path / "Updater.exe", tmp_path / "Bridge.dll"]
+    build_connector_release._authenticode_verify(targets)
+    assert len(calls) == 3
+    assert all(call[0][1:5] == ["verify", "/pa", "/all", "/tw"] for call in calls)
+
+
+def test_production_authenticode_requires_explicit_timestamp(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("STRATFORGE_AUTHENTICODE_THUMBPRINT", "A" * 40)
+    monkeypatch.delenv("STRATFORGE_AUTHENTICODE_TIMESTAMP_URL", raising=False)
+    with pytest.raises(RuntimeError, match="explicit trusted Authenticode timestamp URL"):
+        build_connector_release._authenticode_sign([tmp_path / "Setup.exe"])
+
+
 def test_release_static_scan_supports_extracted_archive(monkeypatch, tmp_path: Path) -> None:
     source = tmp_path / "app" / "server.py"
     source.parent.mkdir(parents=True)

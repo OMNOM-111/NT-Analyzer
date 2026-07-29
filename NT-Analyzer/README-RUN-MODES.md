@@ -25,3 +25,8 @@
 - `1.2.3` — стабильный релиз;
 - `1.3.0-rc.1` — canary/предрелиз;
 - `1.3.0-dev.4` — незавершённая локальная разработка.
+
+Проверяемая сборка новой локальной Server-версии из чистого commit выполняется
+одной командой: `py -3 tools/release_candidate.py --server-only`. Полный путь
+того же артефакта через canary в Production описан в
+`docs/PRODUCTION_RELEASE_WORKFLOW.md`.

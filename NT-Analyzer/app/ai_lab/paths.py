@@ -21,7 +21,7 @@ PROJECT_ROOT = _project_root()
 AI_LAB_DIR = PROJECT_ROOT / "ai_lab"
 MUTABLE_AI_LAB_DIR = (
     runtime_env.data_path("ai_lab", project_root=PROJECT_ROOT)
-    if runtime_env.is_staging() else AI_LAB_DIR
+    if runtime_env.uses_isolated_data_root() else AI_LAB_DIR
 )
 REGISTRY_DIR = MUTABLE_AI_LAB_DIR / "registry"
 EXPERIMENTS_DIR = REGISTRY_DIR / "experiments"
@@ -58,7 +58,7 @@ def nt_user_home() -> Path:
 
 
 def nt_custom_dir() -> Path:
-    if runtime_env.is_staging():
+    if runtime_env.uses_isolated_data_root():
         return runtime_env.data_path(
             "ninjatrader", "Custom", project_root=PROJECT_ROOT,
         )

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import json
 from pathlib import Path, PurePosixPath
 import stat
@@ -45,7 +46,11 @@ def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
     return data
 
 
-def verify(path: Path) -> dict[str, object]:
+def verify(
+    path: Path,
+    *,
+    expected_key_fingerprint: str = "",
+) -> dict[str, object]:
     archive_path = path.expanduser().resolve()
     if not archive_path.is_file():
         raise RuntimeError("release archive does not exist")
@@ -113,6 +118,29 @@ def verify(path: Path) -> dict[str, object]:
         )
         if len(x) != 32 or len(y) != 32 or len(signature) != 64:
             raise RuntimeError("release signing material has an invalid length")
+        actual_fingerprint = "SHA256:" + hashlib.sha256(b"\x04" + x + y).hexdigest()
+        manifest_fingerprint = str(signing.get("key_fingerprint") or "")
+        if not manifest_fingerprint or not hmac.compare_digest(
+            actual_fingerprint.lower(), manifest_fingerprint.lower(),
+        ):
+            raise RuntimeError("release signing key fingerprint is invalid")
+        expected_fingerprint_pin = str(expected_key_fingerprint or "").strip()
+        trust_tier = str(manifest.get("trust_tier") or "")
+        channel = str(manifest.get("channel") or "")
+        if (trust_tier, channel) not in {
+            ("development", "development"),
+            ("production", "canary"),
+            ("production", "stable"),
+        }:
+            raise RuntimeError("release trust tier and channel are inconsistent")
+        if trust_tier == "production" and not expected_fingerprint_pin:
+            raise RuntimeError(
+                "Production release verification requires a trusted key fingerprint"
+            )
+        if expected_fingerprint_pin and not hmac.compare_digest(
+            actual_fingerprint.lower(), expected_fingerprint_pin.lower(),
+        ):
+            raise RuntimeError("release signing key fingerprint is not trusted")
         public_key = ec.EllipticCurvePublicNumbers(
             int.from_bytes(x, "big"), int.from_bytes(y, "big"), ec.SECP256R1(),
         ).public_key()
@@ -132,6 +160,7 @@ def verify(path: Path) -> dict[str, object]:
         "channel": str(manifest.get("channel") or ""),
         "trust_tier": str(manifest.get("trust_tier") or ""),
         "source_revision": str(manifest.get("source_revision") or ""),
+        "key_fingerprint": actual_fingerprint,
         "file_count": len(expected),
         "archive_sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest().upper(),
     }
@@ -140,9 +169,13 @@ def verify(path: Path) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
+    parser.add_argument("--expected-key-fingerprint", default="")
     args = parser.parse_args()
     try:
-        result = verify(args.archive)
+        result = verify(
+            args.archive,
+            expected_key_fingerprint=args.expected_key_fingerprint,
+        )
     except Exception as exc:
         print(json.dumps({
             "ok": False,
