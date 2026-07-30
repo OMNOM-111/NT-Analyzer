@@ -181,17 +181,41 @@ all migrations and non-Telegram readiness checks. Its SHA-256 is
 
 ## External state at pause
 
+Production provider credentials were supplied through a user-only local JSON
+file and transferred to the protected Linux environment through SSH stdin. The
+JSON formatting error and TopstepX key aliases were normalized without exposing
+values; a verified temporary rollback copy was removed after exact comparison.
+The Linux environment has a root-owned rollback directory at
+`/home/stratforge/production_data/backups/pre-provider-credentials-20260730T023939Z`.
+
+- Telegram `getMe` passed and a real silent message received an API delivery
+  acknowledgment. Its existing webhook remains on local `app`; the Linux
+  consumer was not started, avoiding disruption of Development before cutover.
+- Gemini model-list and one minimal inference passed. The request reserved a
+  Production workspace budget before provider traffic, recorded token/cost
+  usage durably in PostgreSQL, and an oversized request was denied.
+- TopstepX was tested locally in read-only mode with zero orders. Vendor auth
+  rejected the credentials, so no bars were returned and market-data acceptance
+  remains blocked.
+- Exact-value scans found zero credential matches in local Git/evidence/history
+  and Linux logs/evidence/history. Secret values were not emitted or hashed.
+  Remote evidence SHA-256 is
+  `80258C97DBEF5AC083A71F658B5CCA9842AB2AFC31A0FABB5B2BF343173BC871F`.
+
 - Linux current: `0.9.0-dev.13-8917ffad`; previous:
   `0.9.0-dev.12-847f69f3`.
 - PostgreSQL, API, worker, operations, artifact server, and Cloudflare are
-  RUNNING. Telegram is STOPPED because its token is absent.
+  RUNNING. Telegram is intentionally STOPPED until its shared webhook moves
+  from local `app` during an otherwise approved cutover.
 - `canary.stratforges.com` reports Production profile, dev.13, canary channel,
   live trading false, and real payments false.
 - `app.stratforges.com` still reports local Development dev.10. It was not
   switched.
-- Telegram, AI-provider, market-data, Production P-256, Authenticode, and
-  public release-fingerprint configuration names are unset.
-- `signtool` and the protected local Production signing file are absent.
+- Telegram and Gemini credentials are installed and probed. Accepted
+  market-data credentials, Production P-256 material, Authenticode certificate,
+  thumbprint, and timestamp configuration remain absent.
+- `signtool` is installed. The protected local Production signing template
+  exists but remains unfilled.
 - Empty provider/signing templates were then created outside Git at
   `C:\Users\dimon\.stratforge\production-providers.json` and
   `C:\Users\dimon\.stratforge\production-signing.ps1`. Inheritance is disabled;
@@ -207,8 +231,8 @@ all migrations and non-Telegram readiness checks. Its SHA-256 is
   policy and host reboot cannot be executed or verified from the granted
   boundary.
 
-No Production domain cutover, live trading, real payment, Telegram delivery,
-AI request, market-data request, external beta action, container restart, or
-host reboot was performed. Canary deployment, application rollback/restore,
-cloudflared restart, and local Development stop/restore were performed and
-verified.
+No Production domain cutover, live trading, real payment, successful
+market-data request, external beta action, container restart, or host reboot was
+performed. Canary deployment, application rollback/restore, cloudflared
+restart, local Development stop/restore, Telegram delivery, and budgeted AI
+inference were performed and verified.

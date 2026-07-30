@@ -10,8 +10,9 @@ source regression passes, and immutable Development Server dev.13 is running
 on the Linux canary. Encrypted off-host backup and isolated restore, an atomic
 dev.13 deployment, a bidirectional dev.13/dev.12 rollback drill, Cloudflare
 pre-cutover ingress, and a real local-Development stop/restore drill pass.
-Production cannot be declared ready because provider credentials/readiness,
-host/container persistence, Production signing, and external beta remain open.
+Production cannot be declared ready because market-data acceptance and Telegram
+consumer cutover/readiness, host/container persistence, Production signing, and
+external beta remain open.
 
 ## Gate matrix
 
@@ -25,10 +26,10 @@ host/container persistence, Production signing, and external beta remain open.
 | Immutable Development build | PASS | dev.13 archive/manifest/signature verified and tagged |
 | Linux canary dev.13 | PASS | dev.13 current, dev.12 previous, public liveness alive, preflight 14 PASS, migrations `pending=[]`, safety flags false |
 | Canary rollback | PASS | real dev.13 to dev.12 to dev.13 drill; public health verified in both directions |
-| Production credentials | BLOCKED | Telegram, AI, and market-data credential names are unset |
+| Production credentials | PARTIAL | Telegram identity/delivery PASS; Gemini model-list/inference/budget accounting PASS; TopstepX read-only auth was vendor-rejected |
 | Off-host backup/PITR | PASS | encrypted R2 snapshot, full-data check, isolated DB/artifact restore, daily schedule and retention verified |
 | Host persistence/reboot | BLOCKED_EXTERNAL | verified start script and Supervisor autostart exist, but no Docker socket, outer-host SSH, restart-policy, or host systemd access is granted |
-| Production signing | BLOCKED | no protected P-256 key, Authenticode certificate/thumbprint, or `signtool` |
+| Production signing | BLOCKED | `signtool` is installed; no protected P-256 key, Authenticode certificate/private key/thumbprint, or timestamp policy |
 | External beta | BLOCKED | no consenting beta-user execution or sign-off supplied |
 | Cloudflare pre-cutover | PASS | Linux ingress now accepts `app`; config validated/restarted with verified rollback, explicit tunnel-ID routing works |
 | Main Cloudflare cutover | BLOCKED | owner authorization is granted, but prerequisite P0/P1 gates and a signed stable Production artifact remain open |
@@ -37,8 +38,8 @@ host/container persistence, Production signing, and external beta remain open.
 
 | Blocker | Classification | Exact missing capability |
 |---|---|---|
-| Production signing | NEEDS USER ACTION | fill the user-only `C:\Users\dimon\.stratforge\production-signing.ps1`, provision Authenticode certificate/private key and `signtool` |
-| Telegram / AI / market data | NEEDS USER ACTION | fill the user-only `C:\Users\dimon\.stratforge\production-providers.json` for credentialed probes |
+| Production signing | NEEDS USER ACTION | fill the user-only `C:\Users\dimon\.stratforge\production-signing.ps1` and provision a trusted Authenticode certificate/private key |
+| Market data | NEEDS USER ACTION | correct the vendor-rejected TopstepX credentials or provide a supported Databento/DXFeed credential |
 | Container restart / host reboot | BLOCKED_EXTERNAL | host or Docker control outside the granted container |
 | External beta | NEEDS USER ACTION | one or two consenting non-owner users and final sign-off |
 | Main cutover | BLOCKED_BY_GATES | authorization is already granted; do not route `app` until readiness, signed stable artifacts, persistence, and beta gates pass |
@@ -70,6 +71,8 @@ Pre-convergence backup root:
 | Cloudflare pre-cutover audit | `61EAE165DCA23DBB70034F64919D0333F8B770EBA08066BE492A517A58F369EF` |
 | Linux Cloudflare config | `59F860C5A83F680F03779287A1C66CC555806E7567E4EAFA655232109AA68257` |
 | Linux Cloudflare rollback script | `FF33BA1EC0C69AA23C5B7087CCABF984541B5DA823D4547E5FDFC9519F2D63EE` |
+| Provider-probe summary | `07751ACBE8A5343A311451D3EE9924014D39F6C95D2F27FB3D8FA3DCF5DDCB2C` |
+| Remote provider-probe evidence | `80258C97DBEF5AC083A71F658B5CCA9842AB2AFC31A0FABB5B2BF343173BC871F` |
 
 Final gate evidence is retained under
 `C:\SF10\evidence\final-regression-final-20260729`. The pytest log SHA-256 is
@@ -85,7 +88,8 @@ The system remains safe at the pause point: `app.stratforges.com` still routes
 to restored local Development dev.10, while `canary.stratforges.com` routes to
 Linux dev.13 and has dev.12 as a verified rollback. Live trading and real
 payments remain disabled. All non-Telegram readiness probes pass; readiness
-correctly remains HTTP 503 because the Telegram consumer credential is absent.
+remains HTTP 503 because the Linux Telegram consumer is deliberately stopped
+while the same bot webhook still belongs to local `app.stratforges.com`.
 The Linux tunnel is prepared for `app`, but DNS was deliberately not switched
 because a development/canary artifact is not a signed stable Production
 artifact and the remaining P0/P1 gates are open.
