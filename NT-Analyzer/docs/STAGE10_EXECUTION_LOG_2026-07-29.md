@@ -108,9 +108,34 @@ It produced immutable Server `0.9.0-dev.13`:
 - signature, archive self-verification, and static scan: PASS.
 
 Annotated tag `stratforge-server-v0.9.0-dev.13` points to the exact source
-commit. The artifact was not uploaded or deployed because the off-host backup
-gate is not available; bypassing that gate would contradict the release
-workflow.
+commit. After the off-host gate passed, the artifact, reports, and verifier
+were uploaded to the isolated Linux incoming directory. Remote SHA-256,
+manifest signature, external Development fingerprint pin, exact source
+revision, and 325-file set all passed. The live canary symlink has not yet been
+changed because that risk action requires explicit owner confirmation.
+
+## Off-host backup and restore
+
+- Cloudflare R2 access is bucket-scoped: account-level ListBuckets is denied,
+  one designated bucket accepts signed access, and an anonymous listing does
+  not return content.
+- The previously empty bucket was initialized as a restic v2 repository. The
+  repository ID is
+  `d3a9a38adf1799b895499b6433394e9353de66394bd137d44e3b419e65464115`.
+- A new quiesced PostgreSQL plus artifact backup was retained at
+  `/home/stratforge/production_data/backups/stage10-offhost-source-20260730T010247Z`
+  and encrypted into R2 snapshot
+  `839d2519c209d0bd5490f9221a20e6d8ec17f8faf536fd507abce38ce47a59b8`.
+- Full `restic check --read-data` passed.
+- Restic restore produced a byte-identical manifest. The isolated PostgreSQL
+  restore matched table counts and migrations 0001–0004; restored artifact
+  hashes matched the manifest.
+- The temporary restore database and both temporary restore directories were
+  deleted only after PASS. Existing same-host backups remain.
+- Observed isolated restore time was 4.004 seconds. Target RPO is 24 hours.
+- Supervisor now runs the daily scheduler for 03:30 UTC. Retention is 14 daily,
+  8 weekly, 12 monthly, and 3 yearly snapshots. Scheduler configuration has a
+  verified rollback directory.
 
 ## External state at pause
 
@@ -125,8 +150,9 @@ workflow.
 - Telegram, AI-provider, market-data, Production P-256, Authenticode, and
   public release-fingerprint configuration names are unset.
 - `signtool` and the protected local Production signing file are absent.
-- Restic 0.16.4 is installed, but `restic.env` is absent and both data and
-  backups resolve to the same physical logical volume.
+- Restic 0.16.4 uses a root-only `0600` credential file and an independent
+  Cloudflare R2 failure domain. The same-host backup copy remains on the data
+  logical volume as an additional recovery tier.
 - The process is inside a Docker container with no Docker socket and offline
   systemd. Container restart policy and host reboot cannot be verified from
   the granted boundary.

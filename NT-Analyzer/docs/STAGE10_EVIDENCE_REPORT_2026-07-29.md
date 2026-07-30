@@ -7,9 +7,10 @@
 The local code histories are converged into a canonical Development branch,
 the owner worktree is preserved, Development isolation is proven, the final
 source regression passes, and a reproducible immutable Development Server
-release exists. Production cannot be declared ready because off-host backup,
-credentials, host persistence tests, Production signing, external beta, and
-the explicit cutover authorization are not available.
+release exists. Encrypted off-host backup, retention, full data check, and an
+isolated restore drill now pass. Production cannot be declared ready because
+provider credentials, host persistence tests, Production signing, external
+beta, canary deployment approval, and explicit cutover authorization remain.
 
 ## Gate matrix
 
@@ -22,23 +23,23 @@ the explicit cutover authorization are not available.
 | Source regression | PASS | 924 pytest; migrations 0001–0004; legacy 13/13; Python/JS/JSON/C#/static gates PASS |
 | Immutable Development build | PASS | dev.13 archive/manifest/signature verified and tagged |
 | Existing Linux canary | PASS | dev.12 current, dev.11 previous, public health alive, safety flags false |
-| Deploy dev.13 to canary | BLOCKED | mandatory independent off-host backup target is absent |
+| Deploy dev.13 to canary | AWAITING CONFIRMATION | artifact is remotely staged and independently verified; live symlink unchanged |
 | Production credentials | BLOCKED | Telegram, AI, and market-data credential names are unset |
-| Off-host backup/PITR | BLOCKED | Restic installed, but no repository config; backups share the data LV |
+| Off-host backup/PITR | PASS | encrypted R2 snapshot, full-data check, isolated DB/artifact restore, daily schedule and retention verified |
 | Host persistence/reboot | BLOCKED_EXTERNAL | no Docker socket or host systemd access from the container |
 | Production signing | BLOCKED | no protected P-256 key, Authenticode certificate/thumbprint, or `signtool` |
 | External beta | BLOCKED | no consenting beta-user execution or sign-off supplied |
 | Main Cloudflare cutover | BLOCKED | prerequisite gates open and exact authorization phrase not supplied |
 
-## Six external blockers
+## Remaining external blockers
 
 | Blocker | Classification | Exact missing capability |
 |---|---|---|
 | Production signing | NEEDS USER ACTION | externally protected P-256 key, Authenticode certificate/private key, thumbprint, `signtool`, timestamp policy |
 | Telegram / AI / market data | NEEDS USER ACTION | protected Production credentials for credentialed probes |
-| Independent backup | NEEDS USER ACTION | S3/B2/R2/restic repository outside the server's physical failure domain |
 | Container restart / host reboot | BLOCKED_EXTERNAL | host or Docker control outside the granted container |
 | External beta | NEEDS USER ACTION | one or two consenting non-owner users and final sign-off |
+| Canary dev.13 switch | NEEDS USER ACTION | approval for atomic dev.12 to dev.13 switch and rollback drill |
 | Main cutover | NEEDS USER ACTION | all prior gates plus the exact phrase `ПЕРЕКЛЮЧАЙ PRODUCTION` |
 
 ## Cryptographic and rollback evidence
@@ -57,6 +58,11 @@ Pre-convergence backup root:
 | Final regression PostgreSQL dump | `e3f72cb6804cf4bc874494315cd82bb5b8c109908bcea276e1fb9c2b5300dfbf` |
 | dev.13 Server archive | `B52299A2460BFACBCE1484086658967375E9FED65498B6030F96AF3025D8F693` |
 | dev.13 Server manifest | `4BC7AD4267E032203CF7B62C371953E9C5B055ADDDC911D2B5E07B7B7457E6A0` |
+| Off-host backup manifest | `7b99cd16ff298417a56c6e88174ce9ae92de7763be5fcdedee5e53676820d73f` |
+| Off-host PostgreSQL dump | `8609fe83770cf189131daa23e42593fa0dd09d46e984a573de575cc65b25da61` |
+| Off-host backup/restore evidence | `0ac768154598c0206b719cd27e2ed5a37421f3d1e6a29c2ce10e0d00c12ba855` |
+| Off-host schedule evidence | `cf29e657c923fd662bb02865797d5b37478e6b492a36488c3c3cdf3b093d78c6` |
+| Targeted pre-cutover audit | `4cd8fa143ceec29d801a5c7c3bbe8bceca534bd62d60168e12921178b3555c3e` |
 
 Final gate evidence is retained under
 `C:\SF10\evidence\final-regression-final-20260729`. The pytest log SHA-256 is
@@ -70,7 +76,7 @@ the static-scan log SHA-256 is
 
 The system remains safe at the pause point: the public main domain was not
 changed, the known-good Linux canary was not replaced, the local owner backend
-was not stopped, and live trading and real payments remain disabled. The next
-authorized action is to attach an independent encrypted backup repository;
-only then may the fresh backup, isolated restore, dev.13 canary deployment, and
-rollback drill proceed.
+was not stopped, and live trading and real payments remain disabled. All
+non-Telegram readiness probes pass; readiness remains correctly blocked by the
+absent Telegram consumer credential. The next risk action is the prepared
+dev.13 canary deployment and dev.13 to dev.12 to dev.13 rollback drill.
