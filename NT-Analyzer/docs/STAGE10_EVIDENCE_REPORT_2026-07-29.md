@@ -37,8 +37,8 @@ host/container persistence, Production signing, and external beta remain open.
 
 | Blocker | Classification | Exact missing capability |
 |---|---|---|
-| Production signing | NEEDS USER ACTION | externally protected P-256 key, Authenticode certificate/private key, thumbprint, `signtool`, timestamp policy |
-| Telegram / AI / market data | NEEDS USER ACTION | protected Production credentials for credentialed probes |
+| Production signing | NEEDS USER ACTION | fill the user-only `C:\Users\dimon\.stratforge\production-signing.ps1`, provision Authenticode certificate/private key and `signtool` |
+| Telegram / AI / market data | NEEDS USER ACTION | fill the user-only `C:\Users\dimon\.stratforge\production-providers.json` for credentialed probes |
 | Container restart / host reboot | BLOCKED_EXTERNAL | host or Docker control outside the granted container |
 | External beta | NEEDS USER ACTION | one or two consenting non-owner users and final sign-off |
 | Main cutover | BLOCKED_BY_GATES | authorization is already granted; do not route `app` until readiness, signed stable artifacts, persistence, and beta gates pass |

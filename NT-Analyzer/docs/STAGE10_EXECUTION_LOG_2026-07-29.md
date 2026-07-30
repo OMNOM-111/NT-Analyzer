@@ -192,6 +192,11 @@ all migrations and non-Telegram readiness checks. Its SHA-256 is
 - Telegram, AI-provider, market-data, Production P-256, Authenticode, and
   public release-fingerprint configuration names are unset.
 - `signtool` and the protected local Production signing file are absent.
+- Empty provider/signing templates were then created outside Git at
+  `C:\Users\dimon\.stratforge\production-providers.json` and
+  `C:\Users\dimon\.stratforge\production-signing.ps1`. Inheritance is disabled;
+  each file has exactly one allow rule for the current `dimon` SID. No secret
+  value was supplied, displayed, logged, or hashed.
 - Restic 0.16.4 uses a root-only `0600` credential file and an independent
   Cloudflare R2 failure domain. The same-host backup copy remains on the data
   logical volume as an additional recovery tier.
