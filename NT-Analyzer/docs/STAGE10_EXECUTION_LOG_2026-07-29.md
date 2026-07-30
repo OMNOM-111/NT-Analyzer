@@ -9,7 +9,7 @@ external gates that remain. It does not claim Production readiness or STABLE.
    `C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader` was on
    `antigravity/stage10-partitioned` at
    `56f6da0272f6d51d59605884060044f2b419d55e`, with 12 tracked changes,
-   one untracked file, and an empty index.
+   one initial untracked file, and an empty index.
 2. Created and verified the rollback set at
    `C:\SF10\pre-convergence-20260729T211708Z`: Git bundle, HEAD archive,
    exact checkout archive, binary diff, untracked snapshot, and SHA-256
@@ -19,8 +19,10 @@ external gates that remain. It does not claim Production readiness or STABLE.
 4. Merged Stage 9 acceptance commit
    `2bf502784f65e4a6e91b48bf7d845299fea751db` with the owner baseline in merge
    commit `b0539a09550c770eafd448de52dd7ecadf8ea7af`.
-5. Preserved the owner checkout exactly. The closing check still showed the
-   original branch, commit, 12 tracked changes, and one untracked file.
+5. Preserved the owner checkout. The closing check still showed the original
+   branch/commit, 12 tracked changes, an empty index, and two untracked files.
+   The second untracked file was daily runtime output produced by the already
+   running owner backend; no owner path was staged or edited by Stage 10.
 6. Kept `codex/stage10-production` at
    `2bf502784f65e4a6e91b48bf7d845299fea751db`. It is not advanced until the
    same signed candidate is accepted and deployed.
@@ -111,8 +113,23 @@ Annotated tag `stratforge-server-v0.9.0-dev.13` points to the exact source
 commit. After the off-host gate passed, the artifact, reports, and verifier
 were uploaded to the isolated Linux incoming directory. Remote SHA-256,
 manifest signature, external Development fingerprint pin, exact source
-revision, and 325-file set all passed. The live canary symlink has not yet been
-changed because that risk action requires explicit owner confirmation.
+revision, and 325-file set all passed.
+
+The first deployment attempt stopped before any live change because the
+root-only staging directory was unreadable to the unzip subprocess. The empty
+partial directory was verified and removed, and the deploy runner was corrected
+to unpack as root before immediately assigning immutable files to the service
+user. The retry atomically activated `0.9.0-dev.13-8917ffad` with dev.12 as
+`previous`; preflight, public liveness, migrations 0001–0004, `pending=[]`, and
+safety flags passed. Evidence SHA-256 is
+`0a0fb724b5ee5c865d2142b8610d76ef9abfa7ce87c8a512a46be3306afcc6f5`.
+
+A real rollback drill then switched dev.13 to dev.12, verified public health,
+and restored the exact dev.13 bytes. Its evidence SHA-256 is
+`f4d0a1d2d09780b5f31f2085a8c7507144c2eb41aa362c7eac19abceeb1bf133`.
+The final targeted audit passed 14 preflight checks, restic metadata check,
+all migrations and non-Telegram readiness checks. Its SHA-256 is
+`f25a70d313b1377626d6c8654b2c320ab0a1713585da0b3f246ab60b6c0352f1`.
 
 ## Off-host backup and restore
 
@@ -137,13 +154,38 @@ changed because that risk action requires explicit owner confirmation.
   8 weekly, 12 monthly, and 3 yearly snapshots. Scheduler configuration has a
   verified rollback directory.
 
+## Environment independence and Cloudflare pre-cutover
+
+- The existing Development supervisor/backend was stopped without rebooting
+  Windows. While local port 8765 was closed, Linux canary remained healthy on
+  Production profile dev.13. The exact Development supervisor command then
+  restored localhost and public `app` to dev.10. Canary remained dev.13. The
+  sanitized evidence SHA-256 is
+  `2627ACF4366E5E4F3508808E440641472CBF7138623CB05DD539A44A1FD3853A`.
+- Cloudflare route management was verified with the account certificate. A
+  local default config initially overrode an explicitly named tunnel; the
+  canary record was immediately corrected using an empty routing config and
+  explicit Linux tunnel ID. The post-correction public response was HTTP 200,
+  Production/dev.13.
+- Linux ingress originally accepted only the canary hostname, which would have
+  made a future `app` DNS switch return 404. A validated config now contains
+  equivalent protected Connector/diagnostic/general rules for `app`. It was
+  installed with a verified rollback, cloudflared restarted, and canary stayed
+  healthy. Config SHA-256 is
+  `59F860C5A83F680F03779287A1C66CC555806E7567E4EAFA655232109AA68257`;
+  rollback-script SHA-256 is
+  `FF33BA1EC0C69AA23C5B7087CCABF984541B5DA823D4547E5FDFC9519F2D63EE`.
+- `app.stratforges.com` DNS remains on local Development. No Production cutover
+  was performed because readiness, signing, persistence, and beta gates remain
+  open.
+
 ## External state at pause
 
-- Linux current: `0.9.0-dev.12-847f69f3`; previous:
-  `0.9.0-dev.11-77f68fb2`.
+- Linux current: `0.9.0-dev.13-8917ffad`; previous:
+  `0.9.0-dev.12-847f69f3`.
 - PostgreSQL, API, worker, operations, artifact server, and Cloudflare are
   RUNNING. Telegram is STOPPED because its token is absent.
-- `canary.stratforges.com` reports Production profile, dev.12, canary channel,
+- `canary.stratforges.com` reports Production profile, dev.13, canary channel,
   live trading false, and real payments false.
 - `app.stratforges.com` still reports local Development dev.10. It was not
   switched.
@@ -153,10 +195,15 @@ changed because that risk action requires explicit owner confirmation.
 - Restic 0.16.4 uses a root-only `0600` credential file and an independent
   Cloudflare R2 failure domain. The same-host backup copy remains on the data
   logical volume as an additional recovery tier.
-- The process is inside a Docker container with no Docker socket and offline
-  systemd. Container restart policy and host reboot cannot be verified from
-  the granted boundary.
+- A root-owned `start-production.sh` and Supervisor autostart/autorestart rules
+  cover PostgreSQL, API, worker, operations, artifact server, cloudflared, and
+  backup scheduler. The process is inside a Docker container with no Docker
+  socket, no reachable outer-host SSH, and offline systemd. Container restart
+  policy and host reboot cannot be executed or verified from the granted
+  boundary.
 
 No Production domain cutover, live trading, real payment, Telegram delivery,
 AI request, market-data request, external beta action, container restart, or
-host reboot was performed.
+host reboot was performed. Canary deployment, application rollback/restore,
+cloudflared restart, and local Development stop/restore were performed and
+verified.

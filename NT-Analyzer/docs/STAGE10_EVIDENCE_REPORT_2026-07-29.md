@@ -6,30 +6,32 @@
 
 The local code histories are converged into a canonical Development branch,
 the owner worktree is preserved, Development isolation is proven, the final
-source regression passes, and a reproducible immutable Development Server
-release exists. Encrypted off-host backup, retention, full data check, and an
-isolated restore drill now pass. Production cannot be declared ready because
-provider credentials, host persistence tests, Production signing, external
-beta, canary deployment approval, and explicit cutover authorization remain.
+source regression passes, and immutable Development Server dev.13 is running
+on the Linux canary. Encrypted off-host backup and isolated restore, an atomic
+dev.13 deployment, a bidirectional dev.13/dev.12 rollback drill, Cloudflare
+pre-cutover ingress, and a real local-Development stop/restore drill pass.
+Production cannot be declared ready because provider credentials/readiness,
+host/container persistence, Production signing, and external beta remain open.
 
 ## Gate matrix
 
 | Gate | State | Evidence |
 |---|---|---|
-| Owner checkout preservation | PASS | Original `56f6da02`, 12 tracked + 1 untracked unchanged; verified backup set exists |
+| Owner checkout preservation | PASS | Original `56f6da02`, 12 tracked + 2 untracked, empty index; the extra file is owner-backend runtime output and no owner path was staged or edited |
 | Canonical Development history | PASS | merge `b0539a09`; release-source commit `8917ffad` |
 | Separate Production reference | PASS | `codex/stage10-production` remains at Stage 9 closeout `2bf50278` |
-| Local Development isolation | PASS | localhost `127.0.0.1:18780`, dedicated data root, UI 200, no Production DB env |
+| Local Development isolation | PASS | isolated smoke plus real dev.10 stop/restore; Linux dev.13 remained healthy while localhost `:8765` was stopped |
 | Source regression | PASS | 924 pytest; migrations 0001–0004; legacy 13/13; Python/JS/JSON/C#/static gates PASS |
 | Immutable Development build | PASS | dev.13 archive/manifest/signature verified and tagged |
-| Existing Linux canary | PASS | dev.12 current, dev.11 previous, public health alive, safety flags false |
-| Deploy dev.13 to canary | AWAITING CONFIRMATION | artifact is remotely staged and independently verified; live symlink unchanged |
+| Linux canary dev.13 | PASS | dev.13 current, dev.12 previous, public liveness alive, preflight 14 PASS, migrations `pending=[]`, safety flags false |
+| Canary rollback | PASS | real dev.13 to dev.12 to dev.13 drill; public health verified in both directions |
 | Production credentials | BLOCKED | Telegram, AI, and market-data credential names are unset |
 | Off-host backup/PITR | PASS | encrypted R2 snapshot, full-data check, isolated DB/artifact restore, daily schedule and retention verified |
-| Host persistence/reboot | BLOCKED_EXTERNAL | no Docker socket or host systemd access from the container |
+| Host persistence/reboot | BLOCKED_EXTERNAL | verified start script and Supervisor autostart exist, but no Docker socket, outer-host SSH, restart-policy, or host systemd access is granted |
 | Production signing | BLOCKED | no protected P-256 key, Authenticode certificate/thumbprint, or `signtool` |
 | External beta | BLOCKED | no consenting beta-user execution or sign-off supplied |
-| Main Cloudflare cutover | BLOCKED | prerequisite gates open and exact authorization phrase not supplied |
+| Cloudflare pre-cutover | PASS | Linux ingress now accepts `app`; config validated/restarted with verified rollback, explicit tunnel-ID routing works |
+| Main Cloudflare cutover | BLOCKED | owner authorization is granted, but prerequisite P0/P1 gates and a signed stable Production artifact remain open |
 
 ## Remaining external blockers
 
@@ -39,8 +41,7 @@ beta, canary deployment approval, and explicit cutover authorization remain.
 | Telegram / AI / market data | NEEDS USER ACTION | protected Production credentials for credentialed probes |
 | Container restart / host reboot | BLOCKED_EXTERNAL | host or Docker control outside the granted container |
 | External beta | NEEDS USER ACTION | one or two consenting non-owner users and final sign-off |
-| Canary dev.13 switch | NEEDS USER ACTION | approval for atomic dev.12 to dev.13 switch and rollback drill |
-| Main cutover | NEEDS USER ACTION | all prior gates plus the exact phrase `ПЕРЕКЛЮЧАЙ PRODUCTION` |
+| Main cutover | BLOCKED_BY_GATES | authorization is already granted; do not route `app` until readiness, signed stable artifacts, persistence, and beta gates pass |
 
 ## Cryptographic and rollback evidence
 
@@ -62,7 +63,13 @@ Pre-convergence backup root:
 | Off-host PostgreSQL dump | `8609fe83770cf189131daa23e42593fa0dd09d46e984a573de575cc65b25da61` |
 | Off-host backup/restore evidence | `0ac768154598c0206b719cd27e2ed5a37421f3d1e6a29c2ce10e0d00c12ba855` |
 | Off-host schedule evidence | `cf29e657c923fd662bb02865797d5b37478e6b492a36488c3c3cdf3b093d78c6` |
-| Targeted pre-cutover audit | `4cd8fa143ceec29d801a5c7c3bbe8bceca534bd62d60168e12921178b3555c3e` |
+| dev.13 deployment evidence | `0a0fb724b5ee5c865d2142b8610d76ef9abfa7ce87c8a512a46be3306afcc6f5` |
+| dev.13 rollback-drill evidence | `f4d0a1d2d09780b5f31f2085a8c7507144c2eb41aa362c7eac19abceeb1bf133` |
+| Targeted dev.13 pre-cutover audit | `f25a70d313b1377626d6c8654b2c320ab0a1713585da0b3f246ab60b6c0352f1` |
+| Development-independence drill | `2627ACF4366E5E4F3508808E440641472CBF7138623CB05DD539A44A1FD3853A` |
+| Cloudflare pre-cutover audit | `61EAE165DCA23DBB70034F64919D0333F8B770EBA08066BE492A517A58F369EF` |
+| Linux Cloudflare config | `59F860C5A83F680F03779287A1C66CC555806E7567E4EAFA655232109AA68257` |
+| Linux Cloudflare rollback script | `FF33BA1EC0C69AA23C5B7087CCABF984541B5DA823D4547E5FDFC9519F2D63EE` |
 
 Final gate evidence is retained under
 `C:\SF10\evidence\final-regression-final-20260729`. The pytest log SHA-256 is
@@ -74,9 +81,11 @@ the static-scan log SHA-256 is
 
 ## Safety conclusion
 
-The system remains safe at the pause point: the public main domain was not
-changed, the known-good Linux canary was not replaced, the local owner backend
-was not stopped, and live trading and real payments remain disabled. All
-non-Telegram readiness probes pass; readiness remains correctly blocked by the
-absent Telegram consumer credential. The next risk action is the prepared
-dev.13 canary deployment and dev.13 to dev.12 to dev.13 rollback drill.
+The system remains safe at the pause point: `app.stratforges.com` still routes
+to restored local Development dev.10, while `canary.stratforges.com` routes to
+Linux dev.13 and has dev.12 as a verified rollback. Live trading and real
+payments remain disabled. All non-Telegram readiness probes pass; readiness
+correctly remains HTTP 503 because the Telegram consumer credential is absent.
+The Linux tunnel is prepared for `app`, but DNS was deliberately not switched
+because a development/canary artifact is not a signed stable Production
+artifact and the remaining P0/P1 gates are open.

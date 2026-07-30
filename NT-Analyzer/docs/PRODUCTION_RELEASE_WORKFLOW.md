@@ -99,14 +99,44 @@ Targeted canary gates are liveness/readiness, schema `pending=[]`, auth and
 workspace isolation, owner dashboard, Connector catalog, one paper-only
 Connector command, redaction, and live trading/payments both `false`.
 
+The deployment runner must print and retain its exact immutable release ID and
+rollback directory. Verify both before promotion:
+
+```powershell
+ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
+  -o BatchMode=yes -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
+  -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
+  stratforge@ssh-canary.stratforges.com `
+  "sudo -n sh -c 'readlink -f /home/stratforge/current; readlink -f /home/stratforge/previous'"
+```
+
 ## 4. Promote without rebuilding
 
 Promotion is permitted only when the candidate archive, manifest, source
 revision, and SHA-256 values are byte-for-byte identical to the canary evidence.
 Point the stable Connector catalog at the same archive and change the Server
-runtime release channel to `stable`. The main Cloudflare hostname is switched
-only after the owner writes the exact authorization phrase required by the
-Stage 10 runbook.
+runtime release channel to `stable`. Require green readiness, credentialed
+provider probes, persistence/reboot evidence, external beta sign-off, and a
+signed stable Server/Connector candidate. Current Stage 10 owner authorization
+permits the DNS change only after those checks pass.
+
+The Linux tunnel already has validated `app.stratforges.com` ingress. For DNS
+routing commands, never allow the local default Cloudflare config to override
+the positional tunnel ID. Use an intentionally non-routing config and explicit
+IDs:
+
+```powershell
+$Cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+$RoutingConfig = 'C:\SF10\cloudflared-route-empty.yml'
+$LinuxTunnel = '1f6f3ab3-f181-47bd-8cd9-d088bd89e2d1'
+& $Cloudflared --config $RoutingConfig tunnel route dns --overwrite-dns `
+  $LinuxTunnel app.stratforges.com
+```
+
+After DNS propagation, require `app` to report the same stable version and
+source revision as canary, TLS/UI/API/auth/catalog/redaction to pass, and both
+safety flags to remain false. A failed check restores the edge route first.
 
 Keep `canary.stratforges.com` as the internal release lane. Keep local
 Development bound to localhost and independent of the Linux database, tunnel,
@@ -119,6 +149,45 @@ application failure, stop API/worker/operations, atomically restore the saved
 `current` and `previous` links plus active version configuration, then start and
 verify the previous release. Never mutate an immutable release directory.
 
+The current edge rollback command is:
+
+```powershell
+$Cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+$RoutingConfig = 'C:\SF10\cloudflared-route-empty.yml'
+$DevelopmentTunnel = 'd0439b3c-bce5-48eb-810a-1b84f5770874'
+& $Cloudflared --config $RoutingConfig tunnel route dns --overwrite-dns `
+  $DevelopmentTunnel app.stratforges.com
+```
+
+For the application rollback, execute the root-owned `rollback.sh` from the
+exact directory printed by the deployment evidence. For current canary dev.13
+that verified script is:
+
+```powershell
+ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
+  -o BatchMode=yes -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
+  -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
+  stratforge@ssh-canary.stratforges.com `
+  "sudo -n /home/stratforge/production_data/backups/pre-deploy-dev13-20260730T013050Z/rollback.sh"
+```
+
 If a schema change is not backward compatible, restore the pre-release backup
 into a new isolated database/artifact target and verify it before switching;
 never destructively downgrade the live database in place.
+
+## 6. Run local Development independently
+
+Start the local Development supervisor from the owner application directory:
+
+```powershell
+Start-Process C:\Python312\python.exe `
+  -ArgumentList '-m','app.backend_supervisor','--development-profile','--port','8765','--retry-seconds','10' `
+  -WorkingDirectory 'C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\NT-Analyzer' `
+  -WindowStyle Hidden
+```
+
+It binds the backend to localhost and runs the separate Development tunnel.
+Stopping that supervisor/backend does not stop Linux; this was verified while
+the Linux canary continued to serve dev.13. Never point Development at the
+Production database, data root, secrets, or artifact store.
