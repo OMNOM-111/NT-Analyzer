@@ -11,7 +11,7 @@ import pytest
 
 from app import secure_store
 from app import server as server_mod
-from app.ai_lab import agent_registry, agent_router, response_cache, runner, universal_llm
+from app.ai_lab import agent_registry, agent_router, chief_agent, news_agent, paths, response_cache, runner, universal_llm
 from app.ai_lab import orchestrator as lab_orchestrator
 
 
@@ -64,6 +64,58 @@ def github_models_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def test_ai_lab_runtime_registry_recreates_missing_files(tmp_path, monkeypatch) -> None:
+    registry_dir = tmp_path / "data" / "ai_lab" / "registry"
+    integrations_dir = tmp_path / "data" / "integrations"
+
+    monkeypatch.setattr(paths, "REGISTRY_DIR", registry_dir)
+    monkeypatch.setattr(paths, "ensure_dirs", lambda: registry_dir.mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(agent_registry, "registry_path", lambda: integrations_dir / "ai_agents.registry.json")
+    monkeypatch.setattr(agent_registry, "usage_dir", lambda: registry_dir / "agent_usage")
+
+    assert not registry_dir.exists()
+
+    agent_registry.record_usage({
+        "timestamp_utc": "2026-08-01T00:00:00Z",
+        "request_id": "REQ-EMPTY-RUNTIME",
+        "agent_id": "agent-empty-runtime",
+        "agent_name": "Empty Runtime Agent",
+        "provider": "pytest",
+        "model": "deterministic",
+        "role": "general",
+        "endpoint_type": "chat",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        "cost_usd": 0,
+        "status": "success",
+    })
+    usage_files = list((registry_dir / "agent_usage").glob("*.jsonl"))
+    assert len(usage_files) == 1
+    assert json.loads(usage_files[0].read_text(encoding="utf-8"))["request_id"] == "REQ-EMPTY-RUNTIME"
+
+    news_agent.observe_items([{
+        "id": "NEWS-EMPTY-RUNTIME",
+        "title": "Runtime registry smoke item",
+        "severity": "high",
+        "source": "pytest",
+        "published_at_utc": "2026-08-01T00:00:00Z",
+    }], send_telegram=False, use_llm=False)
+    assert (registry_dir / "news_agent.json").is_file()
+
+    chief_agent._save({"schema_version": 1, "updated_by": "pytest"})
+    assert (registry_dir / "chief_agent.json").is_file()
+
+    chief_agent._append_conversation(
+        "user",
+        "runtime registry smoke",
+        source="pytest",
+        path=chief_agent._conversation_path(),
+    )
+    assert (registry_dir / "orchestrator_conversation.jsonl").is_file()
+    assert chief_agent._reports_dir().is_dir()
 
 
 def test_dpapi_store_masks_and_never_writes_plaintext(isolated_agents) -> None:

@@ -133,6 +133,18 @@
 !/NT-Analyzer/ai_lab/user_research/README.md
 /NT-Analyzer/ai_lab/reference_strategies/source_acquisition/raw_sources/
 
+# AI Strategy Lab runtime state under environment data roots.
+/NT-Analyzer/data/ai_lab/registry/agent_usage/
+/NT-Analyzer/data/ai_lab/registry/chief_reports/
+/NT-Analyzer/data/ai_lab/registry/chief_agent.json
+/NT-Analyzer/data/ai_lab/registry/news_agent.json
+/NT-Analyzer/data/ai_lab/registry/orchestrator_conversation.jsonl
+/NT-Analyzer/data/ai_lab/registry/orchestrator_conversations.json
+
+# Local closeout artifacts. Preserve on disk or in artifact storage; do not commit.
+/NT-Analyzer/dev10-reconstructed-rollback.bundle
+/NT-Analyzer/docs.zip
+
 # Internal AI task briefs and local strategy research notes.
 /NT-Analyzer/docs/ai/
 /РАЗРАБОТКА СТРАТЕГИЙ/*
