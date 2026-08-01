@@ -25,6 +25,8 @@ def _environment(root: Path) -> str:
         "STRATFORGE_QUEUE_ID=production-jobs",
         "STRATFORGE_OBJECT_STORAGE_ID=production-artifacts",
         "STRATFORGE_TELEGRAM_BOT_ID=production-main",
+        "NTA_TELEGRAM_CHAT_ID=999",
+        "STRATFORGE_OWNER_WORKSPACE_ID=ws_owner_primary_12345678",
         "STRATFORGE_COOKIE_NAMESPACE=sf-prod",
         "STRATFORGE_SIGNING_KEY_ID=production-key-v1",
         "STRATFORGE_LOG_NAMESPACE=production",
@@ -128,6 +130,7 @@ def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     assert "app.stratforges.com" in env_template
     assert "STRATFORGE_LIVE_TRADING_ALLOWED=0" in env_template
     assert "STRATFORGE_STORAGE_MODE=postgresql" in env_template
+    assert "STRATFORGE_OWNER_WORKSPACE_ID=" in env_template
     assert "STRATFORGE_DATABASE_URL=__FROM_PROTECTED_SECRET_PROVIDER__" in env_template
     assert "STRATFORGE_ARTIFACT_ROOT=" in env_template
     assert "token=" not in env_template.lower()

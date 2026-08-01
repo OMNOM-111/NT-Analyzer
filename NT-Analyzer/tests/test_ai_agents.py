@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import urllib.request
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -566,7 +567,8 @@ def test_monthly_budget_is_shared_by_provider_account(isolated_agents) -> None:
     pro = agent_registry.create_agent({**common, "name": "Pro", "model": "deepseek-v4-pro", "role": "orchestrator"})
     flash = agent_registry.create_agent({**common, "name": "Flash", "model": "deepseek-v4-flash", "role": "strategy_analyst"})
     agent_registry.record_usage({
-        "timestamp_utc": "2026-07-02T08:00:00Z", "agent_id": pro["id"], "agent_name": "Pro",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "agent_id": pro["id"], "agent_name": "Pro",
         "provider": "deepseek", "account_name": "DeepSeek account", "model": "deepseek-v4-pro",
         "role": "orchestrator", "status": "success", "cost_usd": 0.9,
     })

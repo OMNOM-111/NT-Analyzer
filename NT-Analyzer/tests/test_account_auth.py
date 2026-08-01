@@ -88,18 +88,20 @@ def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store)
         "contact": {"user_id": 42, "phone_number": "+15551234567"},
         "from": {"id": 42}, "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_profile"
+    assert account_auth.login_state(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )["status"] == "awaiting_profile"
 
     # Terms acceptance is mandatory.
     with pytest.raises(account_auth.AccountAuthError):
         account_auth.complete_profile(login["challenge_id"], {
             "first_name": "Ada", "last_name": "Lovelace", "email": "ADA@example.com",
-        }, api_call=api, owner_chat_id="999")
+        }, api_call=api, owner_chat_id="999", browser_nonce=login["browser_nonce"])
 
     state = account_auth.complete_profile(login["challenge_id"], {
         "first_name": "Ada", "last_name": "Lovelace", "email": "ADA@example.com",
         "accept_terms": True,
-    }, api_call=api, owner_chat_id="999")
+    }, api_call=api, owner_chat_id="999", browser_nonce=login["browser_nonce"])
     # New accounts wait for the owner's personal confirmation.
     assert state["status"] == "pending_owner"
     assert account_auth._user(account_auth._read_doc(), 42)["status"] == "pending"
@@ -110,11 +112,14 @@ def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store)
     assert account_auth.process_update({"callback_query": {
         "id": "cb1", "data": allow, "from": {"id": 999},
     }}, api_call=api, owner_chat_id="999")
-    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
+    assert account_auth.login_state(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )["status"] == "login_approved"
     assert account_auth._user(account_auth._read_doc(), 42)["status"] == "active"
 
     result = account_auth.create_session_for_challenge(
         login["challenge_id"], ip="127.0.0.1", user_agent="pytest",
+        browser_nonce=login["browser_nonce"],
     )
     assert result["status"] == "authenticated"
     context = account_auth.authenticate_session(result["session_token"])
@@ -140,7 +145,9 @@ def test_contact_must_belong_to_sender(auth_store) -> None:
         "contact": {"user_id": 7, "phone_number": "+15551234567"},
         "from": {"id": 42}, "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
-    assert account_auth.login_state(login["challenge_id"])["status"] == "identity_mismatch"
+    assert account_auth.login_state(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )["status"] == "identity_mismatch"
 
 
 def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> None:
@@ -155,7 +162,9 @@ def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> 
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
 
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_contact"
+    assert account_auth.login_state(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )["status"] == "awaiting_contact"
     assert any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
 
 
@@ -171,6 +180,93 @@ def test_plain_start_gets_actionable_login_help(auth_store) -> None:
 
     texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
     assert any("/login" in text and "одноразовая" in text for text in texts)
+
+
+def test_browser_nonce_binds_login_and_challenge_is_consumed_once(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        owner = account_auth._user(doc, 999)
+        owner.update({
+            "first_name": "Owner", "last_name": "One", "email": "owner@example.com",
+        })
+        account_auth._write_doc(doc)
+    login = account_auth.start_login(
+        bot_username="StratForge_bot", ip="127.0.0.1", user_agent="Browser A",
+    )
+    assert login["telegram_app_url"].startswith("tg://resolve?")
+    assert login["telegram_web_url"].startswith("https://t.me/")
+    assert len(login["code"]) >= 20
+    assert login["browser_nonce"] not in login["telegram_app_url"]
+    assert login["browser_nonce"] not in login["telegram_web_url"]
+
+    with pytest.raises(account_auth.AccountAuthError) as stolen:
+        account_auth.login_state(login["challenge_id"], browser_nonce="x" * 43)
+    assert stolen.value.status == 403
+    assert stolen.value.code == "login_state_mismatch"
+
+    _calls, api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/start login_{login['code']}",
+        "from": {"id": 999, "first_name": "Renamed", "username": "new_name"},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.process_update({"message": {
+        "contact": {"user_id": 999, "phone_number": "+15551234567"},
+        "from": {"id": 999}, "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    first = account_auth.create_session_for_challenge(
+        login["challenge_id"], ip="127.0.0.1", user_agent="Browser A",
+        browser_nonce=login["browser_nonce"],
+    )
+    replay = account_auth.create_session_for_challenge(
+        login["challenge_id"], ip="127.0.0.1", user_agent="Browser A",
+        browser_nonce=login["browser_nonce"],
+    )
+    assert first["status"] == "authenticated"
+    assert replay["status"] == "consumed"
+    stored = account_auth._read_doc()
+    assert len(stored["sessions"]) == 1
+    assert account_auth._user(stored, 999)["is_owner"] is True
+    assert account_auth._user(stored, 999)["username"] == "new_name"
+
+
+def test_login_cancel_is_nonce_bound_and_terminal(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    with pytest.raises(account_auth.AccountAuthError) as wrong:
+        account_auth.cancel_login(login["challenge_id"], browser_nonce="z" * 43)
+    assert wrong.value.code == "login_state_mismatch"
+
+    cancelled = account_auth.cancel_login(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )
+    assert cancelled["status"] == "cancelled"
+    assert account_auth.login_state(
+        login["challenge_id"], browser_nonce=login["browser_nonce"],
+    )["status"] == "cancelled"
+    _calls, api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/login {login['code']}", "from": {"id": 999},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    assert not account_auth._user(account_auth._read_doc(), 999).get("phone")
+
+
+def test_owner_conflict_fails_closed_instead_of_using_first_registrant(auth_store) -> None:
+    account_auth._write_doc({
+        "version": 2,
+        "users": [{
+            "user_id": 42, "role": "owner", "is_owner": True, "status": "active",
+        }],
+        "challenges": [], "sessions": [],
+    })
+    with pytest.raises(account_auth.AccountAuthError) as conflict:
+        account_auth.ensure_owner(999)
+    assert conflict.value.status == 503
+    assert conflict.value.code == "owner_identity_conflict"
+    assert account_auth._user(account_auth._read_doc(), 999) is None
 
 
 def test_revocation_invalidates_all_sessions(auth_store) -> None:
@@ -272,6 +368,65 @@ def test_server_requires_session_and_csrf_even_on_localhost(auth_store, monkeypa
             assert response.status == 200
     finally:
         srv.shutdown(); srv.server_close()
+
+
+def test_public_login_origin_nonce_cancel_and_ui_fallback_contract(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(
+        server_mod.telegram_service, "load_settings",
+        lambda: {"bot_username": "StratForge_bot"},
+    )
+    srv = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True); thread.start()
+    base = f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+
+    def post(path, body, *, origin):
+        request = urllib.request.Request(
+            base + path,
+            data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json", "Origin": origin},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+
+    try:
+        with pytest.raises(urllib.error.HTTPError) as cross_site:
+            post("/api/auth/login/start", {}, origin="https://evil.example")
+        assert cross_site.value.code == 403
+
+        status, login = post("/api/auth/login/start", {}, origin=base)
+        assert status == 200
+        assert login["telegram_app_url"].startswith("tg://resolve?")
+        assert login["telegram_web_url"].startswith("https://t.me/")
+        with pytest.raises(urllib.error.HTTPError) as missing_nonce:
+            post(
+                "/api/auth/login/status",
+                {"challenge_id": login["challenge_id"]}, origin=base,
+            )
+        assert missing_nonce.value.code == 403
+        _status, state = post(
+            "/api/auth/login/status",
+            {"challenge_id": login["challenge_id"], "browser_nonce": login["browser_nonce"]},
+            origin=base,
+        )
+        assert state["status"] == "created"
+        _status, cancelled = post(
+            "/api/auth/login/cancel",
+            {"challenge_id": login["challenge_id"], "browser_nonce": login["browser_nonce"]},
+            origin=base,
+        )
+        assert cancelled["status"] == "cancelled"
+    finally:
+        srv.shutdown(); srv.server_close()
+
+    root = auth_store.parent if (auth_store.parent / "app").is_dir() else None
+    if root is None:
+        root = account_auth._PROJECT_ROOT
+    ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (root / "app" / "static" / "aurora" / "assets" / "api.js").read_text(encoding="utf-8")
+    assert "telegram_app_url" in ui and "telegram_web_url" in ui
+    assert "QR-код для телефона" in ui and "telegramQrSvg" in ui
+    assert "launcher.click()" in ui
+    assert "browser_nonce" in api and "/api/auth/login/cancel" in api
 
 
 def test_server_rate_limits_authenticated_api_by_user_and_ip(auth_store, monkeypatch) -> None:
@@ -422,6 +577,28 @@ def test_local_owner_keeps_professional_mode_and_full_capabilities(monkeypatch) 
     assert payload["ux_mode"] == "professional"
     assert payload["ux_pending"] is False
     assert all(payload["capabilities"].values())
+
+
+def test_production_owner_never_falls_back_to_synthetic_local_workspace(monkeypatch) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "production")
+    monkeypatch.setattr(
+        server_mod.workspaces, "context_for_user",
+        lambda *args, **kwargs: {
+            "error": "canonical workspace unavailable",
+            "workspaces": [], "active_workspace": {}, "active_membership": {},
+        },
+    )
+    monkeypatch.setattr(
+        server_mod.permissions, "resolve_for_user_id",
+        lambda *args, **kwargs: {"capabilities": {}, "ux_mode": ""},
+    )
+    handler = server_mod.Handler.__new__(server_mod.Handler)
+    context = handler._decorate_workspace_context({
+        "user_id": 999, "is_owner": True, "role": "owner", "user": {},
+    })
+    assert context["active_workspace"] == {}
+    assert context["active_membership"] == {}
+    assert context["workspace_context"]["error"] == "canonical workspace unavailable"
 
 
 def test_register_via_telegram_waits_for_owner(auth_store) -> None:

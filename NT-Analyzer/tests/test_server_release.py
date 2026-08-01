@@ -28,6 +28,7 @@ def test_server_release_selection_is_runtime_bounded() -> None:
     assert "docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md" in selected
     assert "docs/PRODUCTION_RELEASE_WORKFLOW.md" in selected
     assert "tools/production_preflight.py" in selected
+    assert "tools/production_owner_bootstrap.py" in selected
     assert "tools/verify_server_release.py" in selected
     assert "tests/test_server_release.py" not in selected
     assert "bridge/NTAnalyzerBridge.csproj" not in selected

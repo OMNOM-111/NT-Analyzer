@@ -984,6 +984,23 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
         raise AccountAuthError("Owner identity не совпадает с настроенным личным чатом Telegram.", 403)
     with _LOCK:
         doc = _read_doc()
+        foreign_owners = [
+            row for row in doc.get("users") or []
+            if (
+                bool(row.get("is_owner"))
+                or str(row.get("role") or "").strip().lower() == "owner"
+            )
+            and int(row.get("user_id") or 0) != uid
+        ]
+        if foreign_owners:
+            # Never repair this ambiguity by choosing the first registrant or by
+            # silently moving owner privileges.  Production must be reconciled
+            # explicitly against the configured numeric Telegram identity.
+            raise AccountAuthError(
+                "Canonical owner conflict: Production содержит другую owner identity.",
+                503,
+                code="owner_identity_conflict",
+            )
         existing = _user(doc, uid)
         changed = False
         if existing is None:
@@ -1293,7 +1310,11 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
     if not username:
         raise AccountAuthError("Telegram-бот не настроен.", 503)
     challenge_id = secrets.token_urlsafe(24)
-    code = secrets.token_hex(4).upper()
+    # The bot start parameter is public by design, but it must still be
+    # unguessable during the short challenge lifetime.  Eight hex characters
+    # provided only 32 bits; use a Telegram-safe 144-bit one-time value.
+    code = secrets.token_urlsafe(18)
+    browser_nonce = secrets.token_urlsafe(32)
     now = time.time()
     with _LOCK:
         doc = _read_doc()
@@ -1303,12 +1324,17 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
             "created_at_utc": _now_iso(), "expires_at": now + CHALLENGE_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
+            "browser_nonce_hash": hashlib.sha256(browser_nonce.encode("ascii")).hexdigest(),
+            "source": "browser_bot_confirmation",
         })
         _write_doc(doc)
     _audit("login_started", ip=ip)
     return {
         "challenge_id": challenge_id, "status": "created", "expires_in_sec": CHALLENGE_TTL_SEC,
+        "telegram_app_url": f"tg://resolve?domain={username}&start=login_{code}",
+        "telegram_web_url": f"https://t.me/{username}?start=login_{code}",
         "bot_url": f"https://t.me/{username}?start=login_{code}",
+        "browser_nonce": browser_nonce,
         "code": code,
         "manual_command": f"/login {code}",
     }
@@ -1324,7 +1350,7 @@ def _challenge(doc: Dict[str, Any], *, challenge_id: str = "", code: str = "",
             continue
         if challenge_id and hmac.compare_digest(str(row.get("challenge_id") or ""), challenge_id):
             return row
-        if code and hmac.compare_digest(str(row.get("code") or "").upper(), code.upper()):
+        if code and hmac.compare_digest(str(row.get("code") or ""), str(code)):
             return row
         if user_id and int(row.get("user_id") or 0) == user_id:
             return row
@@ -1337,16 +1363,35 @@ def _required_fields(user: Optional[Dict[str, Any]]) -> list[str]:
     return [key for key in ("first_name", "last_name", "email") if not str(user.get(key) or "").strip()]
 
 
-def login_state(challenge_id: str) -> Dict[str, Any]:
+def _require_browser_nonce(challenge: Dict[str, Any], browser_nonce: str) -> None:
+    expected = str(challenge.get("browser_nonce_hash") or "")
+    if not expected:
+        # Mini App registration challenges are bound to signed initData and do
+        # not create desktop sessions through the browser-bot flow.
+        return
+    supplied = str(browser_nonce or "")
+    if len(supplied) < 32 or not hmac.compare_digest(
+        expected, hashlib.sha256(supplied.encode("ascii", errors="ignore")).hexdigest(),
+    ):
+        raise AccountAuthError(
+            "Запрос входа принадлежит другой вкладке или браузеру.",
+            403,
+            code="login_state_mismatch",
+        )
+
+
+def login_state(challenge_id: str, *, browser_nonce: str = "") -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
         challenge = _challenge(doc, challenge_id=str(challenge_id or ""))
         if challenge is None:
             raise AccountAuthError("Запрос входа истёк. Начните заново.", 410)
+        _require_browser_nonce(challenge, browser_nonce)
         user = _user(doc, int(challenge.get("user_id") or 0)) if challenge.get("user_id") else None
         return {
             "challenge_id": challenge.get("challenge_id"), "status": challenge.get("status"),
             "required_fields": _required_fields(user),
+            "owner_flow": bool((user or {}).get("is_owner")),
             "profile": {
                 "first_name": str((user or {}).get("first_name") or ""),
                 "last_name": str((user or {}).get("last_name") or ""),
@@ -1357,7 +1402,8 @@ def login_state(challenge_id: str) -> Dict[str, Any]:
 
 def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
                      api_call: Callable[..., Any], owner_chat_id: str,
-                     ip: str = "", user_agent: str = "") -> Dict[str, Any]:
+                     ip: str = "", user_agent: str = "",
+                     browser_nonce: str = "") -> Dict[str, Any]:
     first_name = _clean_name(profile.get("first_name"), "Имя")
     last_name = _clean_name(profile.get("last_name"), "Фамилия")
     email = _valid_email(profile.get("email"))
@@ -1368,6 +1414,7 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
         challenge = _challenge(doc, challenge_id=str(challenge_id or ""), statuses=("awaiting_profile",))
         if challenge is None:
             raise AccountAuthError("Профиль уже обработан или запрос истёк.", 409)
+        _require_browser_nonce(challenge, browser_nonce)
         user = _user(doc, int(challenge.get("user_id") or 0))
         if user is None:
             raise AccountAuthError("Telegram identity не найдена.", 409)
@@ -1416,7 +1463,7 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Ожидайте личного подтверждения владельца — мы сообщим, когда доступ откроется."})
     else:
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Доступ к StratForge AI ограничен владельцем."})
-    return login_state(challenge_id)
+    return login_state(challenge_id, browser_nonce=browser_nonce)
 
 
 def _notify_owner_new_user(api_call: Callable[..., Any], owner_chat_id: str,
@@ -1462,6 +1509,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
     em = _valid_email(email)
     now = _now_iso()
     challenge_id = ""
+    browser_nonce = ""
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
@@ -1505,11 +1553,15 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
         status_out = "active" if user.get("status") == "active" else "pending_owner"
         if status_out == "pending_owner":
             challenge_id = secrets.token_urlsafe(24)
+            browser_nonce = secrets.token_urlsafe(32)
             doc["challenges"].append({
                 "challenge_id": challenge_id, "code": "", "status": "pending_owner",
                 "user_id": uid, "created_at_utc": now,
                 "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
                 "source": "mini_app_register",
+                "browser_nonce_hash": hashlib.sha256(
+                    browser_nonce.encode("ascii")
+                ).hexdigest(),
             })
         _write_doc(doc)
         snapshot = dict(user)
@@ -1529,6 +1581,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
         "authenticated": status_out == "active",
         "status": status_out,
         "challenge_id": challenge_id,
+        "browser_nonce": browser_nonce,
         "user": _public_user(snapshot, include_contact=True, include_avatar=True),
     }
 
@@ -1677,8 +1730,13 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             buttons.append([{"text": f"⛔ Отозвать {label}", "callback_data": f"account_revoke:{int(row['user_id'])}"}])
         api_call("sendMessage", {"chat_id": uid, "text": "\n".join(lines), "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}})
         return True
-    start = re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+login_([A-Fa-f0-9]{8})", text)
-    manual_login = re.fullmatch(r"/(?:login|code)(?:@[A-Za-z0-9_]+)?\s+(?:login_)?([A-Fa-f0-9]{8})", text, flags=re.IGNORECASE)
+    login_code = r"([A-Za-z0-9_-]{20,32})"
+    start = re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+login_" + login_code, text)
+    manual_login = re.fullmatch(
+        r"/(?:login|code)(?:@[A-Za-z0-9_]+)?\s+(?:login_)?" + login_code,
+        text,
+        flags=re.IGNORECASE,
+    )
     if start or manual_login:
         code = (start or manual_login).group(1)
         with _LOCK:
@@ -1778,12 +1836,38 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
     return False
 
 
-def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str) -> Dict[str, Any]:
+def cancel_login(challenge_id: str, *, browser_nonce: str) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(doc, challenge_id=str(challenge_id or ""))
+        if challenge is None:
+            raise AccountAuthError("Запрос входа истёк. Начните заново.", 410)
+        _require_browser_nonce(challenge, browser_nonce)
+        status = str(challenge.get("status") or "")
+        if status in {"consumed", "cancelled"}:
+            return {"challenge_id": challenge.get("challenge_id"), "status": status}
+        if status == "login_approved":
+            raise AccountAuthError(
+                "Подтверждённый вход нельзя отменить; завершите вход или дождитесь истечения.",
+                409,
+                code="login_already_approved",
+            )
+        challenge["status"] = "cancelled"
+        challenge["consumed"] = True
+        challenge["cancelled_at_utc"] = _now_iso()
+        _write_doc(doc)
+    _audit("login_cancelled")
+    return {"challenge_id": challenge.get("challenge_id"), "status": "cancelled"}
+
+
+def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
+                                 browser_nonce: str = "") -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
         challenge = _challenge(doc, challenge_id=str(challenge_id or ""), statuses=("login_approved",))
         if challenge is None:
-            return login_state(challenge_id)
+            return login_state(challenge_id, browser_nonce=browser_nonce)
+        _require_browser_nonce(challenge, browser_nonce)
         uid = int(challenge.get("user_id") or 0)
         user = _user(doc, uid)
         if not user or user.get("status") != "active" or not _profile_complete(user):
@@ -1802,6 +1886,8 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str)
             "machine": _machine_label(), "ip": _mask_ip(ip),
         })
         challenge["status"] = "consumed"
+        challenge["consumed"] = True
+        challenge["consumed_at_utc"] = _now_iso()
         _append_login(user, source="desktop_session", ip=ip, user_agent=user_agent)
         _cleanup(doc)
         _write_doc(doc)

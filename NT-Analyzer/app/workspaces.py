@@ -27,6 +27,7 @@ PAIRING_TTL_SEC = 10 * 60
 WORKSPACE_ROLES = {"owner", "admin", "operator", "viewer", "developer"}
 WRITE_ROLES = {"owner", "admin", "operator", "developer"}
 ENTITLEMENT_OK = {"promo_grant", "trial", "active"}
+OWNER_WORKSPACE_ENV = "STRATFORGE_OWNER_WORKSPACE_ID"
 
 
 class WorkspaceError(RuntimeError):
@@ -220,6 +221,14 @@ def _audit(event: str, **values: Any) -> None:
 
 
 def _owner_workspace_id(owner_id: int) -> str:
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        configured = str(os.environ.get(OWNER_WORKSPACE_ENV) or "").strip()
+        if not re.fullmatch(r"ws_[A-Za-z0-9_-]{8,80}", configured):
+            raise WorkspaceError(
+                f"{OWNER_WORKSPACE_ENV} обязателен и должен содержать canonical Production workspace.",
+                503,
+            )
+        return configured
     digest = hashlib.sha256(str(int(owner_id)).encode("ascii")).hexdigest()[:12]
     return f"ws_owner_training_{digest}"
 
@@ -259,7 +268,13 @@ def _membership(doc: Dict[str, Any], workspace_id: str, user_id: int) -> Optiona
 def _ensure_membership(doc: Dict[str, Any], *, workspace_id: str, user_id: int, role: str, created_by: int) -> bool:
     if role not in WORKSPACE_ROLES:
         raise WorkspaceError("Неизвестная роль рабочей области.")
-    row = _membership(doc, workspace_id, user_id)
+    # Reactivate an existing soft-revoked relation instead of appending a
+    # duplicate (the normalized PostgreSQL key is workspace_id + user_id).
+    row = next((
+        item for item in doc["memberships"]
+        if str(item.get("workspace_id") or "") == workspace_id
+        and int(item.get("user_id") or 0) == int(user_id)
+    ), None)
     if row is None:
         doc["memberships"].append({
             "workspace_id": workspace_id,
@@ -270,11 +285,16 @@ def _ensure_membership(doc: Dict[str, Any], *, workspace_id: str, user_id: int, 
             "revoked_at_utc": "",
         })
         return True
+    changed = False
+    if row.get("revoked_at_utc"):
+        row["revoked_at_utc"] = ""
+        changed = True
     if str(row.get("role") or "") != role:
         row["role"] = role
+        changed = True
+    if changed:
         row["updated_at_utc"] = _now_iso()
-        return True
-    return False
+    return changed
 
 
 def _ensure_tenant_dirs(workspace_id: str) -> None:
@@ -289,6 +309,18 @@ def _ensure_owner_workspace_doc(doc: Dict[str, Any], owner_id: int) -> tuple[Dic
     workspace_id = _owner_workspace_id(owner_id)
     row = _workspace(doc, workspace_id)
     changed = False
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        other_owner_workspaces = [
+            item for item in doc["workspaces"]
+            if str(item.get("workspace_id") or "") != workspace_id
+            and int(item.get("owner_user_id") or 0) == int(owner_id)
+            and str(item.get("status") or "active") == "active"
+        ]
+        if other_owner_workspaces:
+            raise WorkspaceError(
+                "Canonical owner уже владеет другой активной Production workspace.",
+                503,
+            )
     if row is None:
         row = {
             "workspace_id": workspace_id,
@@ -305,12 +337,29 @@ def _ensure_owner_workspace_doc(doc: Dict[str, Any], owner_id: int) -> tuple[Dic
         doc["workspaces"].append(row)
         changed = True
     else:
+        if int(row.get("owner_user_id") or 0) != int(owner_id):
+            raise WorkspaceError(
+                "Canonical Production workspace не принадлежит настроенной owner identity.",
+                503,
+            )
         if row.get("display_name") in ("Учебный аккаунт владельца", "", None):
             row["display_name"] = "Аккаунт владельца · NinjaTrader"
             changed = True
         if row.get("entitlement_id") in ("owner_unlimited", "", None):
             row["entitlement_id"] = "founder"
             changed = True
+    foreign_owner_memberships = [
+        item for item in doc["memberships"]
+        if int(item.get("user_id") or 0) == int(owner_id)
+        and str(item.get("workspace_id") or "") != workspace_id
+        and str(item.get("role") or "") == "owner"
+        and not item.get("revoked_at_utc")
+    ]
+    if foreign_owner_memberships:
+        raise WorkspaceError(
+            "Canonical owner имеет неоднозначные активные owner memberships.",
+            503,
+        )
     changed = _ensure_membership(doc, workspace_id=workspace_id, user_id=owner_id, role="owner", created_by=owner_id) or changed
     return row, changed
 

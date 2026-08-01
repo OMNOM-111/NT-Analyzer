@@ -1314,7 +1314,11 @@ class Handler(BaseHTTPRequestHandler):
         context["workspaces"] = workspace_context.get("workspaces") or []
         context["active_workspace"] = workspace_context.get("active_workspace") or {}
         context["active_membership"] = workspace_context.get("active_membership") or {}
-        if context.get("is_owner") and not context["active_workspace"]:
+        if (
+            context.get("is_owner")
+            and not context["active_workspace"]
+            and not (runtime_env.is_production() and runtime_env.environment_explicit())
+        ):
             # Local single-user mode may run before Telegram owner bootstrap.
             # Give it an explicit scope instead of emitting unowned writes.
             context["active_workspace"] = {
@@ -2329,10 +2333,11 @@ class Handler(BaseHTTPRequestHandler):
                 "authenticated": bool(out.get("authenticated")),
                 "status": str(out.get("status") or ""),
                 "challenge_id": str(out.get("challenge_id") or ""),
+                "browser_nonce": str(out.get("browser_nonce") or ""),
                 "user": out.get("user") or {},
             })
         except account_auth.AccountAuthError as exc:
-            self._err(exc.status, str(exc))
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
 
     def _auth_public_post(self, path: str) -> None:
         if not self._check_public_auth_origin():
@@ -2354,20 +2359,27 @@ class Handler(BaseHTTPRequestHandler):
                 out = account_auth.create_session_for_challenge(
                     str(body.get("challenge_id") or ""), ip=ip,
                     user_agent=str(self.headers.get("User-Agent") or ""),
+                    browser_nonce=str(body.get("browser_nonce") or ""),
                 )
                 if out.get("status") == "authenticated":
                     self._set_session_cookie(str(out.pop("session_token")))
+            elif path == "/api/auth/login/cancel":
+                out = account_auth.cancel_login(
+                    str(body.get("challenge_id") or ""),
+                    browser_nonce=str(body.get("browser_nonce") or ""),
+                )
             elif path == "/api/auth/profile":
                 out = account_auth.complete_profile(
                     str(body.get("challenge_id") or ""), body.get("profile") or body,
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    browser_nonce=str(body.get("browser_nonce") or ""),
                 )
             else:
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
             self._json(HTTPStatus.OK, out)
         except account_auth.AccountAuthError as exc:
-            self._err(exc.status, str(exc))
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
 
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
@@ -5954,7 +5966,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
 
-        if path in {"/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile"}:
+        if path in {
+            "/api/auth/login/start", "/api/auth/login/status",
+            "/api/auth/login/cancel", "/api/auth/profile",
+        }:
             self._auth_public_post(path)
             return
 

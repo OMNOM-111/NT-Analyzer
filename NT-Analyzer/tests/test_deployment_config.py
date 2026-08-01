@@ -37,6 +37,8 @@ _ENV_KEYS = (
     "STRATFORGE_QUEUE_ID",
     "STRATFORGE_OBJECT_STORAGE_ID",
     "STRATFORGE_TELEGRAM_BOT_ID",
+    "NTA_TELEGRAM_CHAT_ID",
+    "STRATFORGE_OWNER_WORKSPACE_ID",
     "STRATFORGE_COOKIE_NAMESPACE",
     "STRATFORGE_SIGNING_KEY_ID",
     "STRATFORGE_LOG_NAMESPACE",
@@ -78,6 +80,8 @@ def _production_config(monkeypatch, tmp_path: Path) -> None:
         "STRATFORGE_QUEUE_ID": "production-jobs",
         "STRATFORGE_OBJECT_STORAGE_ID": "production-artifacts",
         "STRATFORGE_TELEGRAM_BOT_ID": "production-main",
+        "NTA_TELEGRAM_CHAT_ID": "999",
+        "STRATFORGE_OWNER_WORKSPACE_ID": "ws_owner_primary_12345678",
         "STRATFORGE_COOKIE_NAMESPACE": "sf-prod",
         "STRATFORGE_SIGNING_KEY_ID": "production-key-v1",
         "STRATFORGE_LOG_NAMESPACE": "production",
@@ -118,7 +122,7 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.edge_mode == "direct-local"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
-    assert config.build_version == "0.9.0-dev.13"
+    assert config.build_version == "0.9.0-dev.14"
     assert config.release_channel == "development"
     assert config.release_status == "in_development"
     assert runtime_env.impersonation_enabled() is False

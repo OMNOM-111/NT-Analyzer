@@ -53,6 +53,7 @@ _INCLUDED_FILES = (
     "docs/PRODUCTION_TELEGRAM_RUNBOOK.md",
     "docs/PRODUCTION_WORKER_RUNBOOK.md",
     "docs/risk-profile.md",
+    "tools/production_owner_bootstrap.py",
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
     "tools/release_static_scan.py",

@@ -2726,8 +2726,125 @@
     }
   }
 
+  // Self-contained QR encoder for the short-lived Telegram bot URL.  Keeping
+  // generation in the page avoids sending the one-time login state to a
+  // third-party QR service. Version 5-L covers the ASCII t.me URL we emit.
+  function telegramQrSvg(value) {
+    const bytes = Array.from(new TextEncoder().encode(String(value || '')));
+    const version = 5, size = 17 + version * 4, dataWords = 108, ecWords = 26;
+    if (!bytes.length || bytes.length > 106) return '';
+    const bits = [];
+    const pushBits = (number, count) => {
+      for (let shift = count - 1; shift >= 0; shift -= 1) bits.push((number >>> shift) & 1);
+    };
+    pushBits(4, 4); // byte mode
+    pushBits(bytes.length, 8);
+    bytes.forEach(byte => pushBits(byte, 8));
+    for (let i = 0; i < Math.min(4, dataWords * 8 - bits.length); i += 1) bits.push(0);
+    while (bits.length % 8) bits.push(0);
+    const data = [];
+    for (let offset = 0; offset < bits.length; offset += 8) {
+      let byte = 0;
+      for (let i = 0; i < 8; i += 1) byte = (byte << 1) | bits[offset + i];
+      data.push(byte);
+    }
+    for (let pad = 0; data.length < dataWords; pad += 1) data.push(pad % 2 ? 0x11 : 0xec);
+
+    const exp = new Array(512), log = new Array(256);
+    let x = 1;
+    for (let i = 0; i < 255; i += 1) {
+      exp[i] = x; log[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d;
+    }
+    for (let i = 255; i < exp.length; i += 1) exp[i] = exp[i - 255];
+    const mul = (a, b) => (!a || !b ? 0 : exp[log[a] + log[b]]);
+    let generator = [1];
+    for (let degree = 0; degree < ecWords; degree += 1) {
+      const next = new Array(generator.length + 1).fill(0);
+      generator.forEach((coefficient, index) => {
+        next[index] ^= coefficient;
+        next[index + 1] ^= mul(coefficient, exp[degree]);
+      });
+      generator = next;
+    }
+    const remainder = data.concat(new Array(ecWords).fill(0));
+    for (let i = 0; i < data.length; i += 1) {
+      const factor = remainder[i];
+      if (!factor) continue;
+      generator.forEach((coefficient, j) => { remainder[i + j] ^= mul(coefficient, factor); });
+    }
+    const encoded = data.concat(remainder.slice(data.length));
+    const payload = [];
+    encoded.forEach(byte => {
+      for (let shift = 7; shift >= 0; shift -= 1) payload.push((byte >>> shift) & 1);
+    });
+
+    const modules = Array.from({ length: size }, () => new Array(size).fill(null));
+    const set = (row, col, dark) => {
+      if (row >= 0 && col >= 0 && row < size && col < size) modules[row][col] = !!dark;
+    };
+    const finder = (row, col) => {
+      for (let dr = -1; dr <= 7; dr += 1) for (let dc = -1; dc <= 7; dc += 1) {
+        const inside = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
+        const dark = inside && (dr === 0 || dr === 6 || dc === 0 || dc === 6
+          || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+        set(row + dr, col + dc, dark);
+      }
+    };
+    finder(0, 0); finder(size - 7, 0); finder(0, size - 7);
+    [6, 30].forEach(row => [6, 30].forEach(col => {
+      if (modules[row][col] !== null) return;
+      for (let dr = -2; dr <= 2; dr += 1) for (let dc = -2; dc <= 2; dc += 1) {
+        set(row + dr, col + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+      }
+    }));
+    for (let i = 8; i < size - 8; i += 1) {
+      if (modules[i][6] === null) set(i, 6, i % 2 === 0);
+      if (modules[6][i] === null) set(6, i, i % 2 === 0);
+    }
+    const degree = number => {
+      let result = -1, current = number;
+      while (current) { result += 1; current >>>= 1; }
+      return result;
+    };
+    const formatData = 8; // error correction L (01), mask 0
+    let formatRemainder = formatData << 10;
+    while (degree(formatRemainder) >= degree(0x537)) {
+      formatRemainder ^= 0x537 << (degree(formatRemainder) - degree(0x537));
+    }
+    const formatBits = ((formatData << 10) | formatRemainder) ^ 0x5412;
+    for (let i = 0; i < 15; i += 1) {
+      const dark = ((formatBits >>> i) & 1) === 1;
+      if (i < 6) set(i, 8, dark); else if (i < 8) set(i + 1, 8, dark); else set(size - 15 + i, 8, dark);
+      if (i < 8) set(8, size - i - 1, dark); else if (i === 8) set(8, 7, dark); else set(8, 15 - i - 1, dark);
+    }
+    set(size - 8, 8, true);
+
+    let payloadIndex = 0, row = size - 1, direction = -1;
+    for (let col = size - 1; col > 0; col -= 2) {
+      if (col === 6) col -= 1;
+      for (;;) {
+        for (let offset = 0; offset < 2; offset += 1) {
+          const targetCol = col - offset;
+          if (modules[row][targetCol] !== null) continue;
+          let dark = payloadIndex < payload.length && payload[payloadIndex] === 1;
+          if ((row + targetCol) % 2 === 0) dark = !dark;
+          modules[row][targetCol] = dark;
+          payloadIndex += 1;
+        }
+        row += direction;
+        if (row < 0 || row >= size) { row -= direction; direction = -direction; break; }
+      }
+    }
+    const quiet = 4, full = size + quiet * 2, cells = [];
+    for (let r = 0; r < size; r += 1) for (let c = 0; c < size; c += 1) {
+      if (modules[r][c]) cells.push(`M${c + quiet} ${r + quiet}h1v1h-1z`);
+    }
+    return `<svg class="auth-qr-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${full} ${full}" role="img" aria-label="QR-код для входа через Telegram"><rect width="${full}" height="${full}" fill="#fff"/><path d="${cells.join('')}" fill="#000"/></svg>`;
+  }
+  window.StratForgeTelegramQR = Object.freeze({ svg: telegramQrSvg });
+
   function loginCard(inner) {
-    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Telegram user id · requestContact · подтверждение владельца<br>Персональные данные защищены Windows DPAPI</div></section></div>`;
+    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Telegram numeric user id · requestContact · server verification<br>Короткоживущий one-time state · HttpOnly session</div></section></div>`;
   }
 
   async function showTermsModal() {
@@ -2748,68 +2865,122 @@
     const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
     if (!content) return;
     let polling = null;
+    let currentLogin = null;
+    let renderedStatus = '';
     const stopPolling = () => { if (polling) clearInterval(polling); polling = null; };
+    const terminal = (title, message) => {
+      stopPolling(); currentLogin = null; renderedStatus = '';
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${esc(title)}</h1><p>${esc(message)}</p></div><button class="btn primary auth-main-action" id="auth-retry" type="button">Повторить</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button>`);
+      const retry = qs('#auth-retry', content); if (retry) retry.onclick = () => renderStart('');
+      const back = qs('#auth-back-preview', content); if (back) back.onclick = () => startGuestBrowse();
+    };
+    const cancelCurrent = async (showResult) => {
+      const login = currentLogin;
+      stopPolling(); currentLogin = null; renderedStatus = '';
+      if (login && login.challenge_id && login.browser_nonce) {
+        try { await API.http.authLoginCancel(login.challenge_id, login.browser_nonce); }
+        catch (e) { /* expired/processed challenges are already terminal */ }
+      }
+      if (showResult) terminal('Вход отменён', 'Одноразовый запрос закрыт. Можно безопасно начать заново.');
+    };
     const renderStart = (message) => {
       stopPolling();
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Для нового аккаунта обязательны номер Telegram, профиль и личное разрешение владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start">Авторизоваться через Telegram</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button>`);
+      currentLogin = null; renderedStatus = '';
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Telegram подтвердит numeric user id и ваш контакт; роль владельца берётся только из защищённой конфигурации сервера.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" disabled>Готовим защищённый вход…</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button>`);
       const button = qs('#auth-start', content);
-      if (button) button.onclick = async () => {
-        button.disabled = true;
-        try { renderWaiting(await API.http.authLoginStart()); }
-        catch (error) { renderStart(error.message || String(error)); }
-      };
       const back = qs('#auth-back-preview', content);
       if (back) back.onclick = () => startGuestBrowse();
+      // Preparing a short-lived challenge is safe; launching Telegram remains
+      // strictly inside the user's subsequent click event.
+      API.http.authLoginStart().then(login => {
+        if (!button || !button.isConnected) return;
+        currentLogin = login;
+        button.disabled = false;
+        button.textContent = 'Авторизоваться с помощью Telegram';
+        button.onclick = () => {
+          const prepared = currentLogin;
+          if (!prepared) return;
+          const appUrl = prepared.telegram_app_url || '';
+          if (appUrl) {
+            const launcher = document.createElement('a');
+            launcher.href = appUrl; launcher.target = '_blank'; launcher.rel = 'noopener';
+            launcher.hidden = true; document.body.appendChild(launcher);
+            launcher.click(); launcher.remove();
+          }
+          renderWaiting(prepared, { status: 'created', launch_attempted: true });
+        };
+      }).catch(error => terminal(
+        'Telegram недоступен',
+        (error && error.message) || 'Не удалось подготовить вход. Проверьте соединение и повторите.',
+      ));
     };
-    const renderProfile = (challengeId, state) => {
+    const renderProfile = (login, state) => {
       stopPolling();
       const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — затем дождитесь личного подтверждения владельца.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться и ждать подтверждения</button></form>`);
+      const ownerFlow = !!state.owner_flow;
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>${ownerFlow ? 'Telegram подтвердил заранее разрешённую identity владельца. Заполните профиль, чтобы завершить первый Production-вход.' : 'Telegram подтвердил личность. Укажите имя, фамилию и e-mail — затем дождитесь личного подтверждения владельца.'}</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">${ownerFlow ? 'Завершить вход владельца' : 'Зарегистрироваться и ждать подтверждения'}</button></form><button class="btn ghost auth-main-action" id="auth-cancel-profile" type="button">Отменить вход</button>`);
       const form = qs('#auth-profile-form', content);
       const termsLink = qs('#auth-terms-link', form);
       if (termsLink) termsLink.onclick = () => showTermsModal();
+      const cancel = qs('#auth-cancel-profile', content); if (cancel) cancel.onclick = () => cancelCurrent(true);
       form.onsubmit = async (event) => {
         event.preventDefault();
         if (!(qs('#auth-accept-terms', form) || {}).checked) { toast('Примите условия использования'); return; }
         const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
         try {
-          const next = await API.http.authProfile(challengeId, {
+          const next = await API.http.authProfile(login.challenge_id, login.browser_nonce, {
             first_name: qs('#auth-first-name', form).value,
             last_name: qs('#auth-last-name', form).value,
             email: qs('#auth-email', form).value,
             accept_terms: true,
           });
-          renderWaiting({ challenge_id: challengeId }, next);
+          renderWaiting(login, next);
         } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
       };
     };
-    const check = async (challengeId) => {
+    const check = async (login) => {
       try {
-        const state = await API.http.authLoginStatus(challengeId);
-        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
-        if (state.status === 'awaiting_profile') { renderProfile(challengeId, state); return; }
-        if (state.status === 'pending_owner') { renderWaiting({ challenge_id: challengeId }, state); return; }
-        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) renderStart('Вход отклонён. Обратитесь к владельцу.');
+        const state = await API.http.authLoginStatus(login.challenge_id, login.browser_nonce);
+        if (state.status === 'authenticated') {
+          stopPolling();
+          content.innerHTML = loginCard('<div class="auth-copy"><h1>Подтверждено</h1><p>Защищённая Production-сессия создана. Возвращаем вас в StratForge…</p></div><div class="auth-wait"><span class="spinner"></span><span>Открываем приложение…</span></div>');
+          setTimeout(() => location.reload(), 350);
+          return;
+        }
+        if (state.status === 'awaiting_profile') { renderProfile(login, state); return; }
+        if (state.status === 'pending_owner' && renderedStatus !== 'pending_owner') { renderWaiting(login, state); return; }
+        if (state.status === 'cancelled') { terminal('Вход отменён', 'Одноразовый запрос закрыт. Начните новый вход.'); return; }
+        if (state.status === 'consumed') { terminal('Код уже использован', 'Этот одноразовый запрос уже создал сессию и не может быть использован повторно.'); return; }
+        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch', 'phone_invalid'].includes(state.status)) {
+          terminal('Вход отклонён', 'Telegram identity или доступ не прошли проверку. Обратитесь к владельцу.');
+        }
       } catch (error) {
-        if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
+        if (error.status === 410) terminal('Код истёк', 'Срок одноразового запроса закончился. Создайте новый.');
+        else if (error.status === 403) terminal('Проверка вкладки не пройдена', 'Запрос входа нельзя переносить в другую вкладку или браузер. Начните заново.');
       }
     };
     const renderWaiting = (login, knownState) => {
-      const challengeId = login.challenge_id;
+      currentLogin = { ...(currentLogin || {}), ...(login || {}) };
+      login = currentLogin;
       const status = (knownState || {}).status || 'created';
-      if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
+      renderedStatus = status;
+      if (status === 'awaiting_profile') { renderProfile(login, knownState); return; }
       const pendingOwner = status === 'pending_owner';
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}${manual ? `<div class="finance-note"><strong>Если Telegram открылся без подтверждения:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Начать заново</button>`);
+      const webUrl = login.telegram_web_url || login.bot_url || '';
+      const appUrl = login.telegram_app_url || '';
+      const qr = !pendingOwner && webUrl ? telegramQrSvg(webUrl) : '';
+      const fallback = pendingOwner ? '' : `<div class="auth-fallback"><div class="flex wrap gap-sm">${appUrl ? `<a class="btn primary" href="${esc(appUrl)}">Открыть Telegram</a>` : ''}${webUrl ? `<a class="btn" href="${esc(webUrl)}" target="_blank" rel="noopener">Telegram Web</a>` : ''}</div>${qr ? `<details class="auth-qr"><summary>QR-код для телефона</summary><div class="auth-qr-box">${qr}</div><div class="row-sub">Отсканируйте камерой телефона и подтвердите вход в Telegram.</div></details>` : ''}</div>`;
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Запуск Telegram уже запрошен вашим кликом. Если системное окно не появилось, используйте кнопку, Telegram Web или QR-код.'}</p></div>${fallback}${manual && !pendingOwner ? `<div class="finance-note"><strong>Если Telegram открылся без команды:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>${pendingOwner ? 'Ждём решения владельца…' : 'Ждём подтверждения Telegram…'}</span></div><button class="btn ghost auth-main-action" id="auth-cancel" type="button">Отменить вход</button>`);
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
         catch (e) { toast(manual); }
       };
-      const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
+      const cancel = qs('#auth-cancel', content); if (cancel) cancel.onclick = () => cancelCurrent(true);
       stopPolling();
-      polling = setInterval(() => check(challengeId), 2000);
-      check(challengeId);
+      polling = setInterval(() => check(login), 2000);
+      check(login);
     };
     const renderMiniAppRegister = (message) => {
       stopPolling();
@@ -2835,11 +3006,11 @@
           });
           if (out && out.authenticated) { toast('Доступ открыт'); location.reload(); return; }
           if (out && out.status === 'pending_owner' && out.challenge_id) {
-            renderWaiting({ challenge_id: out.challenge_id }, { status: 'pending_owner' });
+            renderWaiting({ challenge_id: out.challenge_id, browser_nonce: out.browser_nonce }, { status: 'pending_owner' });
             return;
           }
           toast('Заявка отправлена владельцу');
-          renderWaiting({ challenge_id: out && out.challenge_id }, { status: 'pending_owner' });
+          renderWaiting({ challenge_id: out && out.challenge_id, browser_nonce: out && out.browser_nonce }, { status: 'pending_owner' });
         } catch (error) { submit.disabled = false; renderMiniAppRegister(error.message || String(error)); }
       };
     };

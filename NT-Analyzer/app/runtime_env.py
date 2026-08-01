@@ -574,6 +574,20 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
             raise RuntimeEnvError(
                 "STRATFORGE_DATA_ROOT обязателен в production.", 503,
             )
+        owner_identity = str(os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
+        if not re.fullmatch(r"[1-9][0-9]{0,19}", owner_identity):
+            raise RuntimeEnvError(
+                "NTA_TELEGRAM_CHAT_ID должен содержать заранее разрешённый numeric owner id.",
+                503,
+            )
+        owner_workspace = str(
+            os.environ.get("STRATFORGE_OWNER_WORKSPACE_ID") or ""
+        ).strip()
+        if not re.fullmatch(r"ws_[A-Za-z0-9_-]{8,80}", owner_workspace):
+            raise RuntimeEnvError(
+                "STRATFORGE_OWNER_WORKSPACE_ID должен содержать canonical Production workspace.",
+                503,
+            )
         for flag_name in (
             "STRATFORGE_LIVE_TRADING_ALLOWED",
             "STRATFORGE_REAL_PAYMENTS_ALLOWED",

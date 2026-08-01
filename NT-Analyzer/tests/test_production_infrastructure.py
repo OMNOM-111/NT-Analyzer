@@ -33,6 +33,8 @@ PRODUCTION_ENV = {
     "STRATFORGE_QUEUE_ID": "production-jobs",
     "STRATFORGE_OBJECT_STORAGE_ID": "production-artifacts",
     "STRATFORGE_TELEGRAM_BOT_ID": "production-main",
+    "NTA_TELEGRAM_CHAT_ID": "999",
+    "STRATFORGE_OWNER_WORKSPACE_ID": "ws_owner_primary_12345678",
     "STRATFORGE_COOKIE_NAMESPACE": "sf-prod",
     "STRATFORGE_SIGNING_KEY_ID": "production-key-v1",
     "STRATFORGE_LOG_NAMESPACE": "production",

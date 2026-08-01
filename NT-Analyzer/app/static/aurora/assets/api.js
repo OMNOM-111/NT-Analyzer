@@ -280,12 +280,19 @@
   const http = {
     authStatus: (o) => getJSON('/api/auth/status', o),
     authLoginStart: () => send('/api/auth/login/start', 'POST', {}),
-    authLoginStatus: async (challengeId) => {
-      const data = await send('/api/auth/login/status', 'POST', { challenge_id: challengeId });
+    authLoginStatus: async (challengeId, browserNonce) => {
+      const data = await send('/api/auth/login/status', 'POST', {
+        challenge_id: challengeId, browser_nonce: browserNonce || '',
+      });
       if (data && data.csrf_token) csrfToken = data.csrf_token;
       return data;
     },
-    authProfile: (challengeId, profile) => send('/api/auth/profile', 'POST', { challenge_id: challengeId, profile }),
+    authLoginCancel: (challengeId, browserNonce) => send('/api/auth/login/cancel', 'POST', {
+      challenge_id: challengeId, browser_nonce: browserNonce || '',
+    }),
+    authProfile: (challengeId, browserNonce, profile) => send('/api/auth/profile', 'POST', {
+      challenge_id: challengeId, browser_nonce: browserNonce || '', profile,
+    }),
     miniappRegister: (body) => send('/api/auth/miniapp/register', 'POST', body || {}),
     legalTerms: (o) => getJSON('/api/legal/terms', o),
     authLogout: () => send('/api/auth/logout', 'POST', {}),
