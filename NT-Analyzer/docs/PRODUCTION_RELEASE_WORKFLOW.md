@@ -10,11 +10,11 @@ Current pinned state after the Stage 10 cutover:
 - Development branch contains the tested source plus evidence-only closeout
   commits;
 - Production branch and Server tag point to deployed source
-  `8917ffad9e14d9899f8532cbec86ed0f0f742035`;
-- Linux `current=0.9.0-dev.13-8917ffad` and
-  `previous=0.9.0-dev.12-847f69f3`;
+  `f05f287d3233554049fa9086598905bacc46146b`;
+- Linux `current=0.9.0-dev.15-f05f287d` and
+  `previous=0.9.0-dev.14-915832f2`;
 - `app.stratforges.com` and `canary.stratforges.com` are Linux-hosted;
-- local Development remains `127.0.0.1:8765` and does not serve Production.
+- local Development remains independent and does not serve Production.
 
 Do not develop on the Production branch and do not run Production from the
 local Windows data root. A release promotion changes references to an existing
@@ -138,9 +138,10 @@ Get-Content -LiteralPath $DeployScript -Raw | & $Ssh `
   stratforge@ssh-canary.stratforges.com 'sudo -n bash -s --'
 ```
 
-The exact current `dev.13` runner is retained at
-`C:\SF10\stage10-deploy-dev13.sh` as evidence only. It is deliberately
-one-shot and must not be rerun or generalized by changing a version string.
+The exact dev.15 stage/canary/promotion runners are retained under `C:\SF10`
+as evidence only. They are deliberately one-shot, pin commit and hashes, and
+must not be rerun or generalized by changing a version string. The earlier
+`stage10-deploy-dev13.sh` remains historical cutover evidence.
 
 ## 4. Promote without rebuilding
 
@@ -151,9 +152,10 @@ bytes and change the Server runtime release channel to `stable` only after
 Production signing and beta policy are satisfied. Never relabel or rebuild an
 already published version.
 
-The Stage 10 owner explicitly authorized the current dev.13 cutover after the
-runtime safety gates passed. That exception does not waive signing requirements
-for the next formally stable release.
+The Stage 10 owner explicitly authorized the initial dev.13 cutover and the
+subsequent dev.14/dev.15 owner-onboarding patches after their runtime safety
+gates passed. That exception does not waive signing requirements for the next
+formally stable release.
 
 The Linux tunnel already has validated `app.stratforges.com` ingress. For DNS
 routing commands, never allow the local default Cloudflare config to override
@@ -173,7 +175,8 @@ source revision as canary, TLS/UI/API/auth/catalog/redaction to pass, and both
 safety flags to remain false. A failed check restores the edge route first.
 
 For the current release, the externally verified contract is Production
-`0.9.0-dev.13`, instance `stratforge-linux-production-01`, ready HTTP 200.
+`0.9.0-dev.15`, source `f05f287d3233554049fa9086598905bacc46146b`, instance
+`stratforge-linux-production-01`, ready HTTP 200.
 
 Keep `canary.stratforges.com` as the internal release lane. Keep local
 Development bound to localhost and independent of the Linux database, tunnel,
@@ -198,9 +201,9 @@ $DevelopmentTunnel = 'd0439b3c-bce5-48eb-810a-1b84f5770874'
 
 For the application rollback, execute the root-owned release-specific script
 from the exact directory printed by the latest topology evidence. The current
-script covers `api`, `api-app`, worker, operations and Telegram, validates exact
-config SHA-256 values, verifies both public hosts on dev.12 and automatically
-attempts the dev.13 restore if rollback validation fails:
+script restores Production `api-app`, worker, operations and Telegram to
+dev.14 while canary remains dev.15. Its inputs, protected pre-promotion
+PostgreSQL dump and restore script were hash-verified before promotion:
 
 ```powershell
 ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
@@ -208,10 +211,10 @@ ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
   -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
   -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
   stratforge@ssh-canary.stratforges.com `
-  "sudo -n /home/stratforge/production_data/backups/application-rollback-current-topology-20260801T175303Z/rollback-to-dev12.sh"
+  "sudo -n /home/stratforge/production_data/backups/stage10-1-owner-promote-dev15-20260801T213852Z/rollback-production.sh"
 ```
 
-Restore the current dev.13 release after a drill or when the rollback target
+Restore the current dev.15 release after a drill or when the rollback target
 has been rejected:
 
 ```powershell
@@ -220,7 +223,7 @@ ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
   -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
   -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
   stratforge@ssh-canary.stratforges.com `
-  "sudo -n /home/stratforge/production_data/backups/application-rollback-current-topology-20260801T175303Z/restore-dev13.sh"
+  "sudo -n /home/stratforge/production_data/backups/stage10-1-owner-promote-dev15-20260801T213852Z/restore-dev15.sh"
 ```
 
 If a schema change is not backward compatible, restore the pre-release backup
@@ -229,20 +232,28 @@ never destructively downgrade the live database in place.
 
 ## 6. Run local Development independently
 
-Start the local Development supervisor from the owner application directory:
+The preserved owner Development runtime remains at `127.0.0.1:8765`. Do not
+reset or merge its dirty checkout just to match Production. Future canonical
+work starts from `codex/stage10-development`, whose application source contains
+the exact dev.15 Production source plus documentation-only closure commits.
+
+To run an isolated local sandbox from the current canonical source alongside
+the preserved runtime, use a different host spelling, port and data roots. The
+`localhost` host keeps its browser session cookie separate from the preserved
+`127.0.0.1` runtime:
 
 ```powershell
-Start-Process C:\Python312\python.exe `
-  -ArgumentList '-m','app.backend_supervisor','--development-profile','--port','8765','--retry-seconds','10' `
-  -WorkingDirectory 'C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\NT-Analyzer' `
+$Arguments = '/d /c "set STRATFORGE_ENV=development&& set STRATFORGE_INSTANCE_ID=stratforge-dev15-local&& set STRATFORGE_PUBLIC_ORIGIN=http://localhost:8766&& set STRATFORGE_ALLOWED_HOSTS=localhost,127.0.0.1&& set STRATFORGE_DEVELOPMENT_DATA_ROOT=C:\SF10\runtime\development-dev15&& set STRATFORGE_DATA_ROOT=C:\SF10\runtime\production-disabled-dev15&& set STRATFORGE_COOKIE_NAMESPACE=sf-dev15&& set STRATFORGE_LIVE_TRADING_ALLOWED=0&& set STRATFORGE_REAL_PAYMENTS_ALLOWED=0&& cd /d C:\SF10\development\NT-Analyzer&& C:\Python312\python.exe -m app.server 8766"'
+Start-Process $env:ComSpec -ArgumentList $Arguments `
   -WindowStyle Hidden
+Invoke-RestMethod http://localhost:8766/api/health/live
 ```
 
-It binds the backend to localhost and runs the separate Development tunnel.
-Stopping that supervisor/backend does not stop Linux; this was verified after
-cutover while both public `app` and `canary` continued to serve dev.13. Never
-point Development at the Production database, data root, secrets, or artifact
-store.
+This sandbox has no Production database URL, secret file, artifact root or
+Cloudflare route. Stop it by resolving only the listener on port 8766; do not
+stop an unverified process ID. Stopping either local runtime does not stop
+Linux; that independence was verified after cutover. Never point Development
+at the Production database, data root, secrets or artifact store.
 
 ## 7. Daily operator commands
 
@@ -250,14 +261,16 @@ Open local Development health and Production health:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8765/api/health/live
+Invoke-RestMethod http://localhost:8766/api/health/live  # optional canonical-source sandbox
 Invoke-RestMethod https://app.stratforges.com/api/health/ready
 ```
 
-Restore Development if localhost is not listening:
+Restore the preserved Development runtime only from its existing owner
+checkout and without Git mutation:
 
 ```powershell
 Start-Process C:\Python312\python.exe `
-  -ArgumentList '-m','app.backend_supervisor','--development-profile','--port','8765','--retry-seconds','10' `
+  -ArgumentList '-m','app.backend_supervisor','--development-profile','--development-public-origin','https://dev.stratforges.com','--port','8765','--retry-seconds','10' `
   -WorkingDirectory 'C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\NT-Analyzer' `
   -WindowStyle Hidden
 ```

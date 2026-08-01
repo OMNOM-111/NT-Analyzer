@@ -1,6 +1,11 @@
 # Stage 10 execution log — closed available scope 2026-08-01
 
-Status: **LINUX PRODUCTION CUTOVER COMPLETE; NO OPEN P0/P1.** Formal stable
+Current closure: **STAGE 10 CLOSED; PRODUCTION dev.15 OPERATIONAL; NO OPEN
+P0/P1.** See [STAGE10_CLOSURE_2026-08-01.md](STAGE10_CLOSURE_2026-08-01.md).
+Sections 1–10 retain the detailed initial dev.13 cutover chronology; Section 11
+records the later owner-onboarding patch and final closure.
+
+Historical cutover status: **LINUX PRODUCTION CUTOVER COMPLETE; NO OPEN P0/P1.** Formal stable
 signing, outer-host reboot proof and non-owner beta sign-off remain external
 evidence and are not misreported as completed.
 
@@ -265,3 +270,67 @@ marked PASS:
 
 No live trading, real payments, real order, main-PC reboot, destructive Git
 operation or secret disclosure occurred.
+
+## 11. Stage 10.1 owner onboarding and final closure
+
+The canonical owner identity/workspace path was reconciled in immutable Server
+dev.14 (`915832f252b1d2aab302f4ef46525a14ef7ade0f`). A subsequent real login
+showed that Chrome could keep the old dev.13 `api.js`/`ui.js` query URLs for the
+four-hour static cache lifetime. The server correctly rejected that old client
+because it omitted the new browser nonce, but the old UI swallowed the 403 and
+continued displaying a spinner.
+
+The clean dev.15 source commit
+`f05f287d3233554049fa9086598905bacc46146b`:
+
+- assigned one cache version, `20260801-stage10-1-auth2`, to every Aurora page;
+- retained mandatory first `requestContact` verification;
+- allowed an already verified contact to be reused only after a fresh,
+  one-time Telegram `/start` from the authoritative numeric sender;
+- kept revoked, denied and blocked identities fail-closed;
+- added first-profile and repeat-login idempotence coverage.
+
+Focused verification was 80 PASS. The source-changing regression was 901 PASS
+and 32 environment-dependent PostgreSQL tests skipped locally; Production
+migrations `[1,2,3,4]`, `pending=[]`, both preflights, Python compilation and
+JavaScript syntax checks passed separately.
+
+dev.15 immutable release evidence:
+
+- archive SHA-256:
+  `722B387DE6B0EDEABB90CDF2E732CBA858130E53A5A9F875D9220EFEC8A05172`;
+- manifest SHA-256:
+  `C86E1DF4DADABBD2BE996088F57146135E8A628434F62E985A8CFBC9E0649F56`;
+- staging evidence SHA-256:
+  `AF96BDAE3318CEC4C4A030966EB548FAF2EA9A8B683F6D0B42E7787C9A9641D7`;
+- canary/rollback evidence SHA-256:
+  `13C657961537390595EDE04189DE468DBBA47CFCC3A0D14C9A506A241D5BE9A6`;
+- Production promotion/rollback evidence SHA-256:
+  `C3386C77A351B0BDA1AF7414C5342213FC6C8B197A645218072DB777EC4E75BD`.
+
+Canary ran dev.15 while Production remained dev.14, passed public auth/cache
+probes and a real dev.15→dev.14→dev.15 rollback. Promotion then created a
+quiesced, verified PostgreSQL custom dump with the protected backup role,
+promoted the same bytes, and passed a separate Production
+dev.15→dev.14→dev.15 drill. A first attempt using the RLS-limited application
+role failed before any release mutation; services were restored and the
+protected backup role was used on the successful attempt.
+
+The owner completed the real Production flow. Sanitized final evidence reports
+one active canonical owner, one active owner workspace, one owner membership,
+one active session, a complete profile, consumed one-time challenge, retained
+verified contact and one fresh owner-attributed Connector. Evidence SHA-256:
+`D724832D81E89CE0BED10DE233E58B90F666D347A172031042FC23D0FA427EBE`.
+
+Final runtime pointers are dev.15 current and dev.14 previous. The current
+rollback pair is retained under
+`/home/stratforge/production_data/backups/stage10-1-owner-promote-dev15-20260801T213852Z`.
+No Connector/C# source, DNS route, NinjaTrader state, live trading or payment
+flag changed during Stage 10.1.
+
+For local use, the preserved owner dev.10 listener at `127.0.0.1:8765` was left
+untouched. A second exact-source dev.15 process was started at
+`http://localhost:8766` with explicit Development identity, separate writable
+roots and no inherited Production/provider credentials. Both local listeners
+and both Linux endpoints were healthy simultaneously; stopping the dev.15
+sandbox is scoped by its verified port/process launcher under `C:\SF10`.

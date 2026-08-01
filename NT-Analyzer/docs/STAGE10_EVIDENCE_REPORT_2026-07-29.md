@@ -1,6 +1,27 @@
-# Stage 10 evidence report — final cutover update 2026-08-01
+# Stage 10 evidence report — detailed cutover evidence 2026-08-01
 
-## Verdict
+## Stage 10.1 authoritative addendum
+
+The authoritative current-state verdict is
+[STAGE10_CLOSURE_2026-08-01.md](STAGE10_CLOSURE_2026-08-01.md). After the
+initial dev.13 cutover recorded below, immutable dev.14 reconciled the canonical
+owner workspace and immutable dev.15 fixed cached owner-login completion.
+
+Current Linux state is `current=0.9.0-dev.15-f05f287d`,
+`previous=0.9.0-dev.14-915832f2`; both public hosts are ready. The exact
+dev.15 source is `f05f287d3233554049fa9086598905bacc46146b`, archive SHA-256
+`722B387DE6B0EDEABB90CDF2E732CBA858130E53A5A9F875D9220EFEC8A05172`
+and manifest SHA-256
+`C86E1DF4DADABBD2BE996088F57146135E8A628434F62E985A8CFBC9E0649F56`.
+Canary and Production rollback drills dev.15→dev.14→dev.15 passed. The owner
+then completed a real Production login: one canonical owner, workspace,
+membership and active session; the Connector remained online in that workspace.
+
+The remainder of this file is deliberately retained as the detailed historical
+dev.13 cutover record. Terms such as “current” and “final” below describe that
+cutover checkpoint, not the later Stage 10.1 closure state.
+
+## Historical dev.13 cutover verdict
 
 **PRODUCTION CUTOVER COMPLETE — LIVE/READY, NO OPEN P0/P1.**
 

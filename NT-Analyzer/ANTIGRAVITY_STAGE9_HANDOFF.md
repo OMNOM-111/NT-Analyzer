@@ -1,5 +1,10 @@
 # Antigravity Stage 9 Handoff (2026-07-28)
 
+> **Historical Stage 9 status. Superseded by the authoritative Stage 10 closure report.**
+> The commands, temporary enrollment material and `BLOCKED` rows below are
+> retained only as dated evidence and must not be used as current operating
+> instructions. See `docs/STAGE10_CLOSURE_2026-08-01.md`.
+
 ## 1. Reproduction Commands
 ### Server Canary Deployment (dev.10)
 ```powershell
