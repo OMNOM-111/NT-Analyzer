@@ -254,6 +254,75 @@ def test_login_cancel_is_nonce_bound_and_terminal(auth_store) -> None:
     assert not account_auth._user(account_auth._read_doc(), 999).get("phone")
 
 
+def test_verified_contact_is_reused_for_first_profile_and_repeat_login(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        owner = account_auth._user(doc, 999)
+        owner.update({
+            "phone": "+15551234567",
+            "phone_hash": account_auth._phone_hash("15551234567"),
+            "phone_verified_at_utc": "2026-08-01T00:00:00Z",
+        })
+        account_auth._write_doc(doc)
+
+    first_login = account_auth.start_login(
+        bot_username="StratForge_bot", ip="127.0.0.1", user_agent="Browser A",
+    )
+    calls, api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/start login_{first_login['code']}",
+        "from": {"id": 999, "first_name": "Owner"},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.login_state(
+        first_login["challenge_id"], browser_nonce=first_login["browser_nonce"],
+    )["status"] == "awaiting_profile"
+    assert not any(
+        (payload.get("reply_markup") or {}).get("keyboard")
+        for _method, payload in calls
+    )
+
+    completed = account_auth.complete_profile(
+        first_login["challenge_id"], {
+            "first_name": "Owner", "last_name": "One",
+            "email": "owner@example.com", "accept_terms": True,
+        }, api_call=api, owner_chat_id="999", ip="127.0.0.1",
+        user_agent="Browser A", browser_nonce=first_login["browser_nonce"],
+    )
+    assert completed["status"] == "login_approved"
+    first_session = account_auth.create_session_for_challenge(
+        first_login["challenge_id"], ip="127.0.0.1", user_agent="Browser A",
+        browser_nonce=first_login["browser_nonce"],
+    )
+    assert first_session["status"] == "authenticated"
+
+    repeat_login = account_auth.start_login(
+        bot_username="StratForge_bot", ip="127.0.0.1", user_agent="Browser A",
+    )
+    repeat_calls, repeat_api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/start login_{repeat_login['code']}",
+        "from": {"id": 999, "first_name": "Owner"},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=repeat_api, owner_chat_id="999")
+    assert account_auth.login_state(
+        repeat_login["challenge_id"], browser_nonce=repeat_login["browser_nonce"],
+    )["status"] == "login_approved"
+    assert not any(
+        (payload.get("reply_markup") or {}).get("keyboard")
+        for _method, payload in repeat_calls
+    )
+    second_session = account_auth.create_session_for_challenge(
+        repeat_login["challenge_id"], ip="127.0.0.1", user_agent="Browser A",
+        browser_nonce=repeat_login["browser_nonce"],
+    )
+    assert second_session["status"] == "authenticated"
+    stored = account_auth._read_doc()
+    assert len([row for row in stored["users"] if row["user_id"] == 999]) == 1
+    assert len([row for row in stored["sessions"] if row["user_id"] == 999]) == 2
+
+
 def test_owner_conflict_fails_closed_instead_of_using_first_registrant(auth_store) -> None:
     account_auth._write_doc({
         "version": 2,
@@ -423,10 +492,12 @@ def test_public_login_origin_nonce_cancel_and_ui_fallback_contract(auth_store, m
         root = account_auth._PROJECT_ROOT
     ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
     api = (root / "app" / "static" / "aurora" / "assets" / "api.js").read_text(encoding="utf-8")
+    index = (root / "app" / "static" / "aurora" / "index.html").read_text(encoding="utf-8")
     assert "telegram_app_url" in ui and "telegram_web_url" in ui
     assert "QR-код для телефона" in ui and "telegramQrSvg" in ui
     assert "launcher.click()" in ui
     assert "browser_nonce" in api and "/api/auth/login/cancel" in api
+    assert "20260801-stage10-1-auth2" in index
 
 
 def test_server_rate_limits_authenticated_api_by_user_and_ip(auth_store, monkeypatch) -> None:

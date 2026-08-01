@@ -1618,6 +1618,29 @@ def _claim_login_challenge(doc: Dict[str, Any], *, code: str, uid: int,
         "first_name": str(sender.get("first_name") or ""),
         "last_name": str(sender.get("last_name") or ""),
     }
+    # requestContact is mandatory for the first verification.  Afterwards the
+    # one-time Telegram /start command already has an authoritative sender id,
+    # so a previously verified contact can be reused without asking the owner
+    # to disclose the same phone number on every login.
+    user = _user(doc, uid)
+    if user and user.get("phone_hash") and user.get("phone_verified_at_utc"):
+        tg = challenge["telegram_user"]
+        user["username"] = str(tg.get("username") or user.get("username") or "")
+        if not user.get("first_name"):
+            user["first_name"] = str(tg.get("first_name") or "")
+        if not user.get("last_name"):
+            user["last_name"] = str(tg.get("last_name") or "")
+        if user.get("status") in {"revoked", "denied", "blocked"}:
+            challenge["status"] = "account_blocked"
+        elif _profile_complete(user):
+            user["status"] = "active"
+            if not user.get("approved_at_utc"):
+                user["approved_at_utc"] = _now_iso()
+            challenge["status"] = "login_approved"
+        else:
+            challenge["status"] = "awaiting_profile"
+        challenge["verified_contact_reused"] = True
+        challenge["contact_reused_at_utc"] = _now_iso()
     return challenge
 
 
@@ -1746,7 +1769,27 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 api_call("sendMessage", {"chat_id": uid, "text": "Ссылка входа истекла или уже использована."})
                 return True
             _write_doc(doc)
-        _send_contact_request(api_call, uid)
+            next_status = str(challenge.get("status") or "")
+        if next_status == "awaiting_contact":
+            _send_contact_request(api_call, uid)
+        elif next_status == "awaiting_profile":
+            api_call("sendMessage", {
+                "chat_id": uid,
+                "text": "Telegram identity и ранее подтверждённый контакт приняты. Вернитесь в приложение и заполните обязательные поля профиля.",
+                "reply_markup": {"remove_keyboard": True},
+            })
+        elif next_status == "login_approved":
+            api_call("sendMessage", {
+                "chat_id": uid,
+                "text": "✅ Вход подтверждён. Вернитесь в StratForge AI.",
+                "reply_markup": {"remove_keyboard": True},
+            })
+        else:
+            api_call("sendMessage", {
+                "chat_id": uid,
+                "text": "Доступ к StratForge AI ограничен владельцем.",
+                "reply_markup": {"remove_keyboard": True},
+            })
         return True
 
     if re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?", text, flags=re.IGNORECASE):
