@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-07-15T03:24:28Z
+Дата актуализации: 2026-08-01T23:47:37Z
 
 ## Короткое предисловие
 
@@ -38,6 +38,7 @@
 
 ## Последние поправки
 
+- Поправка 5 · 2026-08-01T23:47:37Z · `GPT-5.5 через Codex по запросу owner` · Stage 10 Repository Hygiene Closeout documentation: Новые документы closeout: `absent` -> `git-workflow.md; task-closeout-protocol.md; repository-hygiene.md`; Архитектурный отчёт скопирован в репозиторий: `external desktop report only` -> `docs/current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md`
 - Поправка 4 · 2026-07-03T11:38:10Z · `owner` · GOV-AI-018 — безопасный reconnect NinjaTrader: Новый закон: `GOV-AI-001..017` -> `GOV-AI-001..018`
 - Поправка 3 · 2026-07-03T06:00:00Z · `owner` · GOV-AI-015..016 — сильная модель и полный контекст: Новые законы: `GOV-AI-001..014` -> `GOV-AI-001..016`
 - Поправка 2 · 2026-07-03T05:18:00Z · `owner` · GOV-AI-011..014 — философия Orchestrator: Новые законы: `GOV-AI-001..010` -> `GOV-AI-001..014`

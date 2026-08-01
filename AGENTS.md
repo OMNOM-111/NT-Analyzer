@@ -9,3 +9,19 @@
 - Если нужна именно визуальная ручная проверка без явного поручения пользователя, сообщить точный локальный URL и попросить пользователя открыть его самостоятельно. Не открывать браузер автоматически.
 
 Это ограничение важнее обычного требования выполнять браузерную QA-проверку и действует для всех вложенных каталогов workspace.
+
+## Закрытие задач и Git hygiene
+
+- Не использовать слепой `git add -A`. Перед stage/commit классифицировать tracked, untracked и ignored изменения: код, документация, runtime data, generated output, локальные архивы, rollback/artifact файлы.
+- Runtime state, локальные telemetry/log/registry файлы, временные архивы и rollback bundles не должны попадать в обычную историю Git. Если такие файлы уже tracked, снимать их с индекса только через `git rm --cached` с сохранением локального файла на диске и с owner-approved scope.
+- Generated governance output можно коммитить только вместе с каноническим source-of-truth и changelog/amendment evidence. Date-only rendered noise без такого evidence надо восстанавливать к HEAD.
+- После реализации scoped-задачи автоматически пушить task branch и создать или обновить PR, если это не main, не merge, не release, не deployment, не Production secrets/server/DB и не необратимая миграция.
+- Merge, прямые изменения main, Production/Canary deployment, release и любые действия с Production secrets/server/DB требуют отдельного явного подтверждения owner.
+- Закрытый этап должен иметь commit SHA, branch, PR URL, проверенный `git status`, результаты тестов/статических проверок и явное разделение `IMPLEMENTATION COMPLETE`, `GIT CLOSEOUT COMPLETE`, `STAGE CLOSED`.
+- Перед merge задавать owner ровно один вопрос о слиянии. Production readiness или Production confirmation всегда отдельны от вопроса о merge.
+
+## Видимая история поправок документов
+
+- Каждая модель, которая по запросу owner меняет документы, должна записать в изменённые документы и применимый журнал поправок: модель, инструмент/поверхность, requester, UTC дату и краткий scope.
+- Для текущей модели формат записи: `GPT-5.5 через Codex по запросу owner`.
+- Если используется governance/docs UI с amendment history, добавлять соответствующую запись в `NT-Analyzer/data/governance/change_log.jsonl`, не подменяя owner как автора бизнес-решения.
