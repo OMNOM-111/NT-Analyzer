@@ -1,238 +1,245 @@
-# Stage 10 execution log — 2026-07-29
+# Stage 10 execution log — closed available scope 2026-08-01
 
-Status: **PRE-CUTOVER BLOCKED**. This log records completed work and the exact
-external gates that remain. It does not claim Production readiness or STABLE.
+Status: **LINUX PRODUCTION CUTOVER COMPLETE; NO OPEN P0/P1.** Formal stable
+signing, outer-host reboot proof and non-owner beta sign-off remain external
+evidence and are not misreported as completed.
 
-## Source preservation and convergence
+## 1. Source preservation and branch convergence
 
-1. Confirmed the owner checkout at
-   `C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader` was on
-   `antigravity/stage10-partitioned` at
-   `56f6da0272f6d51d59605884060044f2b419d55e`, with 12 tracked changes,
-   one initial untracked file, and an empty index.
-2. Created and verified the rollback set at
-   `C:\SF10\pre-convergence-20260729T211708Z`: Git bundle, HEAD archive,
-   exact checkout archive, binary diff, untracked snapshot, and SHA-256
-   manifest.
-3. Created the isolated worktree `C:\SF10\development` and branch
-   `codex/stage10-development`.
-4. Merged Stage 9 acceptance commit
-   `2bf502784f65e4a6e91b48bf7d845299fea751db` with the owner baseline in merge
-   commit `b0539a09550c770eafd448de52dd7ecadf8ea7af`.
-5. Preserved the owner checkout. The closing check still showed the original
-   branch/commit, 12 tracked changes, an empty index, and two untracked files.
-   The second untracked file was daily runtime output produced by the already
-   running owner backend; no owner path was staged or edited by Stage 10.
-6. Kept `codex/stage10-production` at
-   `2bf502784f65e4a6e91b48bf7d845299fea751db`. It is not advanced until the
-   same signed candidate is accepted and deployed.
+1. The owner checkout remained on `antigravity/stage10-partitioned` at
+   `56f6da0272f6d51d59605884060044f2b419d55e`. Stage 10 did not stage, reset,
+   clean, discard, rebase or force-push any owner path.
+2. Before convergence, the verified backup set at
+   `C:\SF10\pre-convergence-20260729T211708Z` captured a Git bundle, HEAD
+   archive, exact checkout archive, binary diff, untracked snapshot and
+   SHA-256 manifest.
+3. Work continued only in the isolated worktree
+   `C:\SF10\development\NT-Analyzer` on `codex/stage10-development`.
+4. Stage 9 acceptance `2bf502784f65e4a6e91b48bf7d845299fea751db`
+   was merged with the owner baseline in `b0539a09550c770eafd448de52dd7ecadf8ea7af`.
+5. The fully tested release source is
+   `8917ffad9e14d9899f8532cbec86ed0f0f742035`, tree
+   `e7eb8a07464f040e93bf756e70b5ea34a40f04c7`.
+6. After cutover, `codex/stage10-production` was atomically fast-forwarded
+   from `2bf50278` to exact deployed source `8917ffad`. The hidden rollback ref
+   `refs/stage10-backups/production-pre-cutover-20260801` preserves the former
+   value.
 
-No reset, clean, checkout-discard, rebase, or force operation was used.
+The owner checkout had an empty index at the final audit. Its changing
+tracked/untracked runtime files were left intact; no Git operation was run
+against them.
 
-## Stage 10 source changes
+## 2. Source verification and immutable build
 
-- Excluded mutable Development data, SQLite files, tokens, dialogs, reports,
-  logs, and portfolio state from Server releases. Only the two required static
-  catalog files under `data/catalog/` are selected.
-- Added external P-256 fingerprint pinning to Server archive verification.
-  Stable/canary channels cannot downgrade themselves to Development trust.
-- Bound reused Production candidate reports to the independently loaded
-  Production key rather than trusting their self-reported fingerprint.
-- Required explicit Authenticode timestamp configuration and post-signing
-  `signtool verify /pa /all /tw` for Setup, Updater, and Bridge.
-- Routed explicit Development and Production AI registry, rating, job queue,
-  and NinjaTrader mutable paths through their environment data root.
-- Kept source recovery disabled in explicit Production.
-- Added the clean-worktree, immutable, one-command release orchestrator and
-  the two-environment release/rollback runbook.
-- Replaced one obsolete PostgreSQL test harness with the real public
-  `PostgresClient` and `DocumentRepository` contract.
+The last source-changing commit passed:
 
-The tested release-source tree was committed as
-`8917ffad9e14d9899f8532cbec86ed0f0f742035` with tree
-`e7eb8a07464f040e93bf756e70b5ea34a40f04c7`. Its staged binary patch SHA-256
-was `7C55CD05B0AB55C7C9432054C975D799AD0DEA9FA0FA610AE1ACBB0C8BB28398`.
+- 924 pytest, zero failures and zero skips;
+- PostgreSQL migrations 0001–0004 with `pending=[]`;
+- legacy runner 13/13;
+- Python compile, 32 JavaScript syntax checks and 73 JSON parses;
+- four C# Release builds with zero warnings and zero errors;
+- CSP, static, Markdown, redaction and secret scans.
 
-## Verification chronology
+No application or Connector source changed during the final configuration,
+cutover and documentation work, so the full regression and four C# builds were
+not repeated.
 
-- Pre-merge focused PostgreSQL tests: 21 passed; 12 credential-gated tests
-  skipped before the real test database was attached.
-- Hardened release/isolation focused tests: 51 passed.
-- Final trust-pin focused tests: 41 passed.
-- First full PostgreSQL run preserved as failed evidence: 921 passed, one
-  failed because the restored test referenced removed internal functions.
-  No application defect was hidden; the test was rewritten against the real
-  repository API.
-- Targeted real PostgreSQL reproduction after that correction: PASS.
-- Intermediate full run: 922 passed, followed by all non-pytest gates PASS.
-- Final run after the last source change: 924 passed, zero failed, zero
-  skipped; migrations 0001–0004 applied to a fresh database with `pending=[]`.
-- Legacy runner: 13/13 suites PASS.
-- Python compileall: PASS.
-- JavaScript syntax: 32 files, zero failures.
-- JSON parse: 73 files, zero failures.
-- C# Release builds: four projects, zero warnings, zero errors.
-- CSP, secret, and Markdown static scans: PASS.
+From clean source `8917ffad`, `tools/release_candidate.py --server-only`
+produced Server `0.9.0-dev.13`:
 
-The final regression database was archived and then dropped. Its custom dump
-SHA-256 is
-`e3f72cb6804cf4bc874494315cd82bb5b8c109908bcea276e1fb9c2b5300dfbf`.
-
-The regression helper's generated `tested_tree` field used the pre-existing
-Git index and is therefore not used as source identity evidence. The tests ran
-against the working tree that was staged without source edits immediately
-afterward; the authoritative identity is the commit/tree pair above, together
-with the preserved gate logs and hashes.
-
-## Development and immutable release
-
-The isolated Development smoke ran on `127.0.0.1:18780` with a temporary
-Development data root. Health was alive, `/ui/` returned HTTP 200 HTML,
-Production database configuration was absent, and both live trading and real
-payments were false. The pre-existing owner backend was not stopped.
-
-From clean commit `8917ffad`, this command completed successfully:
-
-```powershell
-py -3 tools/release_candidate.py --server-only
-```
-
-It produced immutable Server `0.9.0-dev.13`:
-
-- archive SHA-256:
+- archive SHA-256
   `B52299A2460BFACBCE1484086658967375E9FED65498B6030F96AF3025D8F693`;
-- manifest SHA-256:
+- manifest SHA-256
   `4BC7AD4267E032203CF7B62C371953E9C5B055ADDDC911D2B5E07B7B7457E6A0`;
-- Development key fingerprint:
-  `SHA256:124cb8285af3660877daabc0470b6552d82d05338b00e503c426ca8bd3de6a13`;
-- exact file count: 325;
-- migration count: four;
-- signature, archive self-verification, and static scan: PASS.
+- exact files: 325;
+- migrations: four;
+- development P-256 signature and external fingerprint verification: PASS;
+- tag: `stratforge-server-v0.9.0-dev.13`.
 
-Annotated tag `stratforge-server-v0.9.0-dev.13` points to the exact source
-commit. After the off-host gate passed, the artifact, reports, and verifier
-were uploaded to the isolated Linux incoming directory. Remote SHA-256,
-manifest signature, external Development fingerprint pin, exact source
-revision, and 325-file set all passed.
+This is not represented as Authenticode-signed or as a formally stable-channel
+artifact.
 
-The first deployment attempt stopped before any live change because the
-root-only staging directory was unreadable to the unzip subprocess. The empty
-partial directory was verified and removed, and the deploy runner was corrected
-to unpack as root before immediately assigning immutable files to the service
-user. The retry atomically activated `0.9.0-dev.13-8917ffad` with dev.12 as
-`previous`; preflight, public liveness, migrations 0001–0004, `pending=[]`, and
-safety flags passed. Evidence SHA-256 is
-`0a0fb724b5ee5c865d2142b8610d76ef9abfa7ce87c8a512a46be3306afcc6f5`.
+## 3. Access boundary and topology
 
-A real rollback drill then switched dev.13 to dev.12, verified public health,
-and restored the exact dev.13 bytes. Its evidence SHA-256 is
-`f4d0a1d2d09780b5f31f2085a8c7507144c2eb41aa362c7eac19abceeb1bf133`.
-The final targeted audit passed 14 preflight checks, restic metadata check,
-all migrations and non-Telegram readiness checks. Its SHA-256 is
-`f25a70d313b1377626d6c8654b2c320ab0a1713585da0b3f246ab60b6c0352f1`.
+- Linux control used `stratforge@ssh-canary.stratforges.com` through Cloudflare
+  Access with strict host-key pinning and the existing Stage 9 key.
+- `sudo` is scoped to the Docker container. The accessible boundary contains
+  `/home/stratforge/production_data`; it does not expose the outer Docker
+  daemon, host systemd or host reboot control.
+- Windows VM control used the container network target
+  `Ninja@192.168.122.33:22` through local tunnel `127.0.0.1:12222`.
+- RDP remained private through `127.0.0.1:13389 → 192.168.122.33:3389`.
+  No RDP/VNC/SSH management port was published to the Internet.
+- The main Windows computer was never rebooted or powered off.
 
-## Off-host backup and restore
+## 4. Off-host backup and isolated restore
 
-- Cloudflare R2 access is bucket-scoped: account-level ListBuckets is denied,
-  one designated bucket accepts signed access, and an anonymous listing does
-  not return content.
-- The previously empty bucket was initialized as a restic v2 repository. The
-  repository ID is
-  `d3a9a38adf1799b895499b6433394e9353de66394bd137d44e3b419e65464115`.
-- A new quiesced PostgreSQL plus artifact backup was retained at
-  `/home/stratforge/production_data/backups/stage10-offhost-source-20260730T010247Z`
-  and encrypted into R2 snapshot
-  `839d2519c209d0bd5490f9221a20e6d8ec17f8faf536fd507abce38ce47a59b8`.
-- Full `restic check --read-data` passed.
-- Restic restore produced a byte-identical manifest. The isolated PostgreSQL
-  restore matched table counts and migrations 0001–0004; restored artifact
-  hashes matched the manifest.
-- The temporary restore database and both temporary restore directories were
-  deleted only after PASS. Existing same-host backups remain.
-- Observed isolated restore time was 4.004 seconds. Target RPO is 24 hours.
-- Supervisor now runs the daily scheduler for 03:30 UTC. Retention is 14 daily,
-  8 weekly, 12 monthly, and 3 yearly snapshots. Scheduler configuration has a
-  verified rollback directory.
+Cloudflare R2 access was verified as private and bucket-scoped. A restic v2
+repository with ID
+`d3a9a38adf1799b895499b6433394e9353de66394bd137d44e3b419e65464115`
+was initialized only after the empty/uninitialized state was confirmed.
 
-## Environment independence and Cloudflare pre-cutover
+Snapshot
+`839d2519c209d0bd5490f9221a20e6d8ec17f8faf536fd507abce38ce47a59b8`
+contains a coordinated PostgreSQL dump, artifacts and manifest. Full data check
+passed. An isolated restore matched migrations `[1,2,3,4]`, database counts,
+artifact hashes and a byte-identical manifest. The temporary restore database
+and directories were removed only after PASS; same-host backups remain.
 
-- The existing Development supervisor/backend was stopped without rebooting
-  Windows. While local port 8765 was closed, Linux canary remained healthy on
-  Production profile dev.13. The exact Development supervisor command then
-  restored localhost and public `app` to dev.10. Canary remained dev.13. The
-  sanitized evidence SHA-256 is
-  `2627ACF4366E5E4F3508808E440641472CBF7138623CB05DD539A44A1FD3853A`.
-- Cloudflare route management was verified with the account certificate. A
-  local default config initially overrode an explicitly named tunnel; the
-  canary record was immediately corrected using an empty routing config and
-  explicit Linux tunnel ID. The post-correction public response was HTTP 200,
-  Production/dev.13.
-- Linux ingress originally accepted only the canary hostname, which would have
-  made a future `app` DNS switch return 404. A validated config now contains
-  equivalent protected Connector/diagnostic/general rules for `app`. It was
-  installed with a verified rollback, cloudflared restarted, and canary stayed
-  healthy. Config SHA-256 is
-  `59F860C5A83F680F03779287A1C66CC555806E7567E4EAFA655232109AA68257`;
-  rollback-script SHA-256 is
-  `FF33BA1EC0C69AA23C5B7087CCABF984541B5DA823D4547E5FDFC9519F2D63EE`.
-- `app.stratforges.com` DNS remains on local Development. No Production cutover
-  was performed because readiness, signing, persistence, and beta gates remain
-  open.
+Observed restore RTO was 4.004 seconds. Target RPO is 24 hours. Supervisor runs
+the 03:30 UTC daily schedule with retention 14 daily, 8 weekly, 12 monthly and
+3 yearly. The final check found scheduled snapshot
+`e6bec09d6e242008c964ac47e24c3bfc642e735e931b04322207f929cde8acb5`
+created at `2026-08-01T03:30:23Z`, proving that the schedule executes rather
+than merely existing in configuration.
 
-## External state at pause
+## 5. Linux release, application rollback and services
 
-Production provider credentials were supplied through a user-only local JSON
-file and transferred to the protected Linux environment through SSH stdin. The
-JSON formatting error and TopstepX key aliases were normalized without exposing
-values; a verified temporary rollback copy was removed after exact comparison.
-The Linux environment has a root-owned rollback directory at
-`/home/stratforge/production_data/backups/pre-provider-credentials-20260730T023939Z`.
+The immutable release was deployed atomically as:
 
-- Telegram `getMe` passed and a real silent message received an API delivery
-  acknowledgment. Its existing webhook remains on local `app`; the Linux
-  consumer was not started, avoiding disruption of Development before cutover.
-- Gemini model-list and one minimal inference passed. The request reserved a
-  Production workspace budget before provider traffic, recorded token/cost
-  usage durably in PostgreSQL, and an oversized request was denied.
-- TopstepX was tested locally in read-only mode with zero orders. Vendor auth
-  rejected the credentials, so no bars were returned and market-data acceptance
-  remains blocked.
-- Exact-value scans found zero credential matches in local Git/evidence/history
-  and Linux logs/evidence/history. Secret values were not emitted or hashed.
-  Remote evidence SHA-256 is
-  `80258C97DBEF5AC083A71F658B5CCA9842AB2AFC31A0FABB5B2BF343173BC871F`.
+- current: `0.9.0-dev.13-8917ffad`;
+- previous: `0.9.0-dev.12-847f69f3`.
 
-- Linux current: `0.9.0-dev.13-8917ffad`; previous:
-  `0.9.0-dev.12-847f69f3`.
-- PostgreSQL, API, worker, operations, artifact server, and Cloudflare are
-  RUNNING. Telegram is intentionally STOPPED until its shared webhook moves
-  from local `app` during an otherwise approved cutover.
-- `canary.stratforges.com` reports Production profile, dev.13, canary channel,
-  live trading false, and real payments false.
-- `app.stratforges.com` still reports local Development dev.10. It was not
-  switched.
-- Telegram and Gemini credentials are installed and probed. Accepted
-  market-data credentials, Production P-256 material, Authenticode certificate,
-  thumbprint, and timestamp configuration remain absent.
-- `signtool` is installed. The protected local Production signing template
-  exists but remains unfilled.
-- Empty provider/signing templates were then created outside Git at
-  `C:\Users\dimon\.stratforge\production-providers.json` and
-  `C:\Users\dimon\.stratforge\production-signing.ps1`. Inheritance is disabled;
-  each file has exactly one allow rule for the current `dimon` SID. No secret
-  value was supplied, displayed, logged, or hashed.
-- Restic 0.16.4 uses a root-only `0600` credential file and an independent
-  Cloudflare R2 failure domain. The same-host backup copy remains on the data
-  logical volume as an additional recovery tier.
-- A root-owned `start-production.sh` and Supervisor autostart/autorestart rules
-  cover PostgreSQL, API, worker, operations, artifact server, cloudflared, and
-  backup scheduler. The process is inside a Docker container with no Docker
-  socket, no reachable outer-host SSH, and offline systemd. Container restart
-  policy and host reboot cannot be executed or verified from the granted
-  boundary.
+A real application drill switched `dev.13 → dev.12 → dev.13`, verified public
+health in both directions and restored exact dev.13 bytes. PostgreSQL remained
+healthy, migrations were `[1,2,3,4]`, `pending=[]`, and temporary Stage 10
+databases/directories were absent.
 
-No Production domain cutover, live trading, real payment, successful
-market-data request, external beta action, container restart, or host reboot was
-performed. Canary deployment, application rollback/restore, cloudflared
-restart, local Development stop/restore, Telegram delivery, and budgeted AI
-inference were performed and verified.
+The final supervisor inventory had all nine required processes RUNNING:
+PostgreSQL, canary API, Production app API, worker, operations, artifact
+server, cloudflared, off-host backup scheduler and Telegram.
+
+Canary and Production use separate API processes so the strict canonical-host
+security contract is preserved:
+
+- canary API: `127.0.0.1:18765`, instance
+  `stratforge-linux-canary-01`, origin `canary.stratforges.com`;
+- app API: `127.0.0.1:18767`, instance
+  `stratforge-linux-production-01`, origin `app.stratforges.com`.
+
+They intentionally share the same immutable Linux release and Production
+PostgreSQL/state. The app API deployment backup is
+`/home/stratforge/production_data/backups/pre-app-api-20260801T123842Z`.
+
+## 6. Windows Connector and NinjaTrader market data
+
+The final installed Connector is `0.4.2-dev.6`; Server `dev.13` is a separate
+version namespace. Verified values:
+
+- installation `33265A4F57D24DFE`;
+- manifest SHA-256
+  `21796A45682991AF3A84A03D25E972428ABF5F389AB7E2F84150F4D9231157E7`;
+- installed DLL SHA-256
+  `7ED279BA6FDA1B00734BA74B973D6F38D801C2B8F5C6E0B4CA4AA33AF2CA2990`;
+- server origin `https://canary.stratforges.com`;
+- channel `canary`; update policy `safe_restart`.
+
+Following repair/pairing and the final NinjaTrader restart:
+
+- signed hello accepted; final recorded hello `2026-08-01T17:22:35Z`;
+- heartbeat current; final consolidated heartbeat `2026-08-01T17:26:55Z`;
+- Connector status `online`, NinjaTrader `8.1.8.1`;
+- telemetry contained four accounts, zero positions, zero strategies and zero
+  active strategies;
+- capabilities included `accounts_read`, `paper_commands`, `telemetry`;
+- the user confirmed DEMO, no positions/orders and disabled strategies;
+- no current 401, 403, pairing, signature, timestamp, TLS, DNS, origin,
+  channel, stale-client or clock-skew error was present.
+
+The required market-data path
+`Windows NinjaTrader → Connector → Linux Production` delivered two ordered
+batches, 128 items and one 64-bar `MES 09-26` / `1m` snapshot. Payload SHA-256
+is `8DBDDC5B51AC62AD0A6F3E43F3E0FAFD67709BACA7CFBE6BF15EE602F16C11EF`.
+The Saturday probe correctly classified Friday data as stale; stale/offline
+execution denial remained fail-closed. Direct TopstepX, Databento and DXFeed
+are optional deferred failover providers and were not treated as blockers.
+
+## 7. Telegram and Gemini
+
+Provider secrets were read only from protected stores and never emitted,
+hashed into reports or placed in commands/Git/history.
+
+- Telegram identity and a silent delivery acknowledgement passed.
+- The webhook now points to `app.stratforges.com`.
+- A dedicated Production app runner uses the app canonical environment.
+- Supervisor was backed up before persistence changed. The Telegram program now
+  has `autostart=true`, `autorestart=true`, `startretries=10`.
+- A controlled restart returned one and only one consumer; public readiness
+  stayed HTTP 200. Backup:
+  `/home/stratforge/production_data/backups/pre-telegram-persistence-20260801T172402Z`.
+- Gemini model listing and a minimal inference passed. Budget was reserved
+  before provider traffic, durable usage was recorded, and an oversized
+  request was denied.
+
+## 8. Cloudflare cutover and rollback drill
+
+Linux ingress was backed up and extended for both `canary` and `app` without
+weakening Host/Origin validation. The final cloudflared configuration SHA-256
+is `6EB3075FC9170A26837C2A99D10106F2A9208EC4F649AB50C2FE4069D8B1BD98`.
+Routing used the empty config
+`C:\SF10\cloudflared-route-empty.yml`, SHA-256
+`4B015F24D75D77390963147E2698DC824E0C05ACEB93FAFA9019C70A03B56949`,
+so a local default config could not substitute the wrong tunnel.
+
+The real public route sequence was:
+
+1. initial Development `0.9.0-dev.10`;
+2. promotion to Linux Production `0.9.0-dev.13` at
+   `2026-08-01T17:12:23Z`;
+3. rollback to Development at `2026-08-01T17:13:57Z`;
+4. final promotion to Linux Production at `2026-08-01T17:14:34Z`.
+
+Final public probes:
+
+- `https://app.stratforges.com`: live 200, ready 200, Production dev.13, instance
+  `stratforge-linux-production-01`, HTML UI 200;
+- `https://canary.stratforges.com`: live 200, ready 200, Production dev.13, instance
+  `stratforge-linux-canary-01`, HTML UI 200;
+- `/api/diagnostics`: 404;
+- `/metrics`: 404;
+- live trading and real payments: false.
+
+## 9. Post-cutover Development independence
+
+Before the drill, a rollback directory and hash-verified restore script were
+created at
+`C:\SF10\rollback\development-independence-20260801T173547Z`.
+
+The local supervisor, backend listener and its Development tunnel were stopped.
+While `127.0.0.1:8765` was closed, three consecutive checks of both public
+hostnames remained on their Linux Production instances. The exact Development
+supervisor command restored localhost dev.10, and hashes of
+`app/backend_supervisor.py` and `app/server.py` were unchanged. This proves
+that stopping local Development does not stop Production and that Production
+does not depend on the local checkout/database.
+
+## 10. Final evidence and unresolved external items
+
+Primary sanitized evidence:
+
+- final Linux Production state:
+  `/home/stratforge/production_data/runtime/stage10-evidence/final-production-state-20260801T173338Z.json`,
+  SHA-256
+  `2D84656FFB8E3FDD378E094E7D413E048415802F6669453DC137F7D4BB629D16`;
+- public DNS promotion/rollback/promotion:
+  `C:\SF10\evidence\stage10-production-dns-cutover-drill-20260801T171208Z.json`,
+  SHA-256
+  `2D204CA0F6AD3CB4D85DB77B2A3BBD679A4A639B68E5E71E274BD720F7F4E10F`;
+- Telegram persistence:
+  `/home/stratforge/production_data/runtime/stage10-evidence/telegram-persistence-20260801T172514Z.json`,
+  SHA-256
+  `9E0323E5A09E94C1155B9DC835E2878675CD53C7C248AB2841E5AAA7079E5447`;
+- post-cutover independence:
+  `C:\SF10\evidence\stage10-postcutover-development-independence-20260801T173547Z.json`,
+  SHA-256
+  `F7552F72908142F5254AD8BB49E095FE75C9C04540708D646F2F3993611F4C02`.
+
+No P0/P1 remains open. These external items are deferred rather than falsely
+marked PASS:
+
+1. protected Production P-256 and trusted Authenticode signing material;
+2. literal container restart and host reboot through outer-host administration;
+3. independent non-owner beta acceptance/sign-off.
+
+No live trading, real payments, real order, main-PC reboot, destructive Git
+operation or secret disclosure occurred.

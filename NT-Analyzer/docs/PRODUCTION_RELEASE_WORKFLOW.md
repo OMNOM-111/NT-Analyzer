@@ -3,7 +3,18 @@
 This is the canonical update path for the two supported environments:
 
 - `codex/stage10-development` — local Windows Development;
-- `codex/stage10-production` — exact code currently deployed on Linux.
+- `codex/stage10-production` — exact source currently deployed on Linux.
+
+Current pinned state after the Stage 10 cutover:
+
+- Development branch contains the tested source plus evidence-only closeout
+  commits;
+- Production branch and Server tag point to deployed source
+  `8917ffad9e14d9899f8532cbec86ed0f0f742035`;
+- Linux `current=0.9.0-dev.13-8917ffad` and
+  `previous=0.9.0-dev.12-847f69f3`;
+- `app.stratforges.com` and `canary.stratforges.com` are Linux-hosted;
+- local Development remains `127.0.0.1:8765` and does not serve Production.
 
 Do not develop on the Production branch and do not run Production from the
 local Windows data root. A release promotion changes references to an existing
@@ -111,15 +122,38 @@ ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
   "sudo -n sh -c 'readlink -f /home/stratforge/current; readlink -f /home/stratforge/previous'"
 ```
 
+Run a reviewed release-specific deployment script through strict SSH. The
+script must pin the candidate version, source commit, archive SHA, manifest
+SHA, expected old `current`/`previous`, backup directory and automatic rollback
+checks; do not reuse a one-shot script for different bytes:
+
+```powershell
+$DeployScript = 'C:\SF10\deploy-<exact-release-id>.sh'
+$Ssh = 'C:\Windows\System32\OpenSSH\ssh.exe'
+Get-Content -LiteralPath $DeployScript -Raw | & $Ssh `
+  -i "$HOME\.ssh\codex_stratforge_stage9" `
+  -o BatchMode=yes -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
+  -o 'ProxyCommand=C:\PROGRA~2\cloudflared\cloudflared.exe access ssh --hostname %h' `
+  stratforge@ssh-canary.stratforges.com 'sudo -n bash -s --'
+```
+
+The exact current `dev.13` runner is retained at
+`C:\SF10\stage10-deploy-dev13.sh` as evidence only. It is deliberately
+one-shot and must not be rerun or generalized by changing a version string.
+
 ## 4. Promote without rebuilding
 
 Promotion is permitted only when the candidate archive, manifest, source
 revision, and SHA-256 values are byte-for-byte identical to the canary evidence.
-Point the stable Connector catalog at the same archive and change the Server
-runtime release channel to `stable`. Require green readiness, credentialed
-provider probes, persistence/reboot evidence, external beta sign-off, and a
-signed stable Server/Connector candidate. Current Stage 10 owner authorization
-permits the DNS change only after those checks pass.
+For future formal releases, point the stable Connector catalog at those same
+bytes and change the Server runtime release channel to `stable` only after
+Production signing and beta policy are satisfied. Never relabel or rebuild an
+already published version.
+
+The Stage 10 owner explicitly authorized the current dev.13 cutover after the
+runtime safety gates passed. That exception does not waive signing requirements
+for the next formally stable release.
 
 The Linux tunnel already has validated `app.stratforges.com` ingress. For DNS
 routing commands, never allow the local default Cloudflare config to override
@@ -137,6 +171,9 @@ $LinuxTunnel = '1f6f3ab3-f181-47bd-8cd9-d088bd89e2d1'
 After DNS propagation, require `app` to report the same stable version and
 source revision as canary, TLS/UI/API/auth/catalog/redaction to pass, and both
 safety flags to remain false. A failed check restores the edge route first.
+
+For the current release, the externally verified contract is Production
+`0.9.0-dev.13`, instance `stratforge-linux-production-01`, ready HTTP 200.
 
 Keep `canary.stratforges.com` as the internal release lane. Keep local
 Development bound to localhost and independent of the Linux database, tunnel,
@@ -188,6 +225,54 @@ Start-Process C:\Python312\python.exe `
 ```
 
 It binds the backend to localhost and runs the separate Development tunnel.
-Stopping that supervisor/backend does not stop Linux; this was verified while
-the Linux canary continued to serve dev.13. Never point Development at the
-Production database, data root, secrets, or artifact store.
+Stopping that supervisor/backend does not stop Linux; this was verified after
+cutover while both public `app` and `canary` continued to serve dev.13. Never
+point Development at the Production database, data root, secrets, or artifact
+store.
+
+## 7. Daily operator commands
+
+Open local Development health and Production health:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/api/health/live
+Invoke-RestMethod https://app.stratforges.com/api/health/ready
+```
+
+Restore Development if localhost is not listening:
+
+```powershell
+Start-Process C:\Python312\python.exe `
+  -ArgumentList '-m','app.backend_supervisor','--development-profile','--port','8765','--retry-seconds','10' `
+  -WorkingDirectory 'C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\NT-Analyzer' `
+  -WindowStyle Hidden
+```
+
+Restore the private RDP tunnel to the NinjaTrader VM:
+
+```powershell
+& C:\SF10\Start-StratForge-VM-RDP-Tunnel.ps1
+Test-NetConnection 127.0.0.1 -Port 13389
+```
+
+Check the current Linux release and Connector-facing services without exposing
+credentials:
+
+```powershell
+$Ssh = 'C:\Windows\System32\OpenSSH\ssh.exe'
+& $Ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
+  -o BatchMode=yes -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
+  -o 'ProxyCommand=C:\PROGRA~2\cloudflared\cloudflared.exe access ssh --hostname %h' `
+  stratforge@ssh-canary.stratforges.com `
+  "sudo -n supervisorctl -c /home/stratforge/production_data/config/supervisord.conf status; readlink -f /home/stratforge/current; readlink -f /home/stratforge/previous"
+```
+
+The normal release loop is therefore:
+
+1. commit a clean Development change;
+2. build one immutable candidate and record its hashes;
+3. run the release-specific canary deployment and targeted acceptance;
+4. route `app` to the Linux tunnel without rebuilding;
+5. on failure, route the edge back first, then execute the recorded release
+   rollback script.
