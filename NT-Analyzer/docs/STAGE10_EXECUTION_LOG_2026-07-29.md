@@ -101,9 +101,27 @@ The immutable release was deployed atomically as:
 - previous: `0.9.0-dev.12-847f69f3`.
 
 A real application drill switched `dev.13 → dev.12 → dev.13`, verified public
-health in both directions and restored exact dev.13 bytes. PostgreSQL remained
-healthy, migrations were `[1,2,3,4]`, `pending=[]`, and temporary Stage 10
-databases/directories were absent.
+health in both directions and restored exact dev.13 bytes. After the separate
+`api-app` and persistent Telegram processes were added, that drill was repeated
+against the current topology. Both `app` and `canary` returned ready dev.12 and
+then ready dev.13; `api`, `api-app`, worker, operations and Telegram were all
+covered. PostgreSQL remained healthy, migrations were `[1,2,3,4]`,
+`pending=[]`, and temporary Stage 10 databases/directories were absent.
+
+The current-topology backup and executable rollback pair are at
+`/home/stratforge/production_data/backups/application-rollback-current-topology-20260801T175303Z`.
+The rollback/restore controller SHA-256 is
+`6A74E050DA666081D25981711A4057D1FC1D9E53025DABC9BCC6355BA2AC7324`;
+evidence SHA-256 is
+`8618E8682B4284E4B56917ED5512C85A6EB9810A3C847BDACDF4DAA754C1DF28`.
+
+Two preparation attempts failed closed before live change because the service
+user could not traverse the root-only backup directory to read candidate
+preflight env files. The candidates were instead copied to protected temporary
+runtime paths and both dev.12 preflights passed 14 checks. During the successful
+drill, the first driver-level evidence write raced Supervisor's sequential
+startup; public per-version probes and an independent stabilized postcheck
+closed the evidence without repeating the live transition.
 
 The final supervisor inventory had all nine required processes RUNNING:
 PostgreSQL, canary API, Production app API, worker, operations, artifact
@@ -233,6 +251,10 @@ Primary sanitized evidence:
   `C:\SF10\evidence\stage10-postcutover-development-independence-20260801T173547Z.json`,
   SHA-256
   `F7552F72908142F5254AD8BB49E095FE75C9C04540708D646F2F3993611F4C02`.
+- current-topology application rollback:
+  `C:\SF10\evidence\application-rollback-current-topology-20260801T175303Z.json`,
+  SHA-256
+  `8618E8682B4284E4B56917ED5512C85A6EB9810A3C847BDACDF4DAA754C1DF28`.
 
 No P0/P1 remains open. These external items are deferred rather than falsely
 marked PASS:

@@ -196,9 +196,11 @@ $DevelopmentTunnel = 'd0439b3c-bce5-48eb-810a-1b84f5770874'
   $DevelopmentTunnel app.stratforges.com
 ```
 
-For the application rollback, execute the root-owned `rollback.sh` from the
-exact directory printed by the deployment evidence. For current canary dev.13
-that verified script is:
+For the application rollback, execute the root-owned release-specific script
+from the exact directory printed by the latest topology evidence. The current
+script covers `api`, `api-app`, worker, operations and Telegram, validates exact
+config SHA-256 values, verifies both public hosts on dev.12 and automatically
+attempts the dev.13 restore if rollback validation fails:
 
 ```powershell
 ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
@@ -206,7 +208,19 @@ ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
   -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
   -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
   stratforge@ssh-canary.stratforges.com `
-  "sudo -n /home/stratforge/production_data/backups/pre-deploy-dev13-20260730T013050Z/rollback.sh"
+  "sudo -n /home/stratforge/production_data/backups/application-rollback-current-topology-20260801T175303Z/rollback-to-dev12.sh"
+```
+
+Restore the current dev.13 release after a drill or when the rollback target
+has been rejected:
+
+```powershell
+ssh -i "$HOME\.ssh\codex_stratforge_stage9" `
+  -o BatchMode=yes -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$HOME\.ssh\known_hosts_stratforge_stage9" `
+  -o 'ProxyCommand="C:\Program Files (x86)\cloudflared\cloudflared.exe" access ssh --hostname %h' `
+  stratforge@ssh-canary.stratforges.com `
+  "sudo -n /home/stratforge/production_data/backups/application-rollback-current-topology-20260801T175303Z/restore-dev13.sh"
 ```
 
 If a schema change is not backward compatible, restore the pre-release backup

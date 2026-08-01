@@ -25,7 +25,7 @@ development-signed `dev.13` bytes as a formally signed stable release.
 | Production source reference | PASS | `codex/stage10-production` fast-forwarded atomically from `2bf50278` to exact deployed source `8917ffad`; rollback ref retains the old value |
 | Source regression | PASS | 924 pytest; migrations 0001–0004; legacy 13/13; Python, JavaScript, JSON, C#, CSP, redaction and secret gates PASS; source did not change during cutover, so this was not repeated |
 | Linux release | PASS | current `0.9.0-dev.13-8917ffad`; previous `0.9.0-dev.12-847f69f3`; `pending=[]`; both runtime preflights PASS |
-| Application rollback | PASS | real `dev.13 → dev.12 → dev.13`; exact bytes restored |
+| Application rollback | PASS | real `dev.13 → dev.12 → dev.13` repeated after `api-app`/Telegram introduction; both public hosts and all five release-coupled processes verified |
 | Off-host backup/restore | PASS | encrypted Cloudflare R2 repository, `restic check --read-data`, isolated PostgreSQL/artifact restore, matching migrations/counts/hashes, temporary restore targets removed |
 | Scheduled backup | PASS | supervisor scheduler RUNNING; newest R2 snapshot `e6bec09d…` at `2026-08-01T03:30:23Z`, 14.055 hours old at final probe; RPO 24 h |
 | Linux services | PASS | PostgreSQL, canary API, Production app API, worker, operations, artifact server, cloudflared, off-host scheduler and Telegram all RUNNING |
@@ -94,6 +94,9 @@ TopstepX, Databento and DXFeed are optional future failover providers.
   and public readiness HTTP 200.
 - `2026-08-01T17:33:38Z`: consolidated Linux Production evidence PASS.
 - `2026-08-01T17:35:47Z`: post-cutover Development stop/restore drill PASS.
+- `2026-08-01T17:53Z`: current-topology application rollback exposed both
+  `app` and `canary` on ready dev.12, then restored both to ready dev.13; the
+  Connector subsequently returned online with heartbeat `17:56:54Z`.
 
 No main-Windows reboot, live trading, real payment, real order, secret exposure,
 destructive Git command, or owner-checkout Git mutation occurred.
@@ -110,6 +113,8 @@ destructive Git command, or owner-checkout Git mutation occurred.
 | Off-host backup/restore evidence | `0AC768154598C0206B719CD27E2ED5A37421F3D1E6A29C2CE10E0D00C12BA855` |
 | Off-host schedule evidence | `CF29E657C923FD662BB02865797D5B37478E6B492A36488C3C3CDF3B093D78C6` |
 | Application rollback drill | `F4D0A1D2D09780B5F31F2085A8C7507144C2EB41AA362C7EAC19ABCEEB1BF133` |
+| Current-topology application rollback | `8618E8682B4284E4B56917ED5512C85A6EB9810A3C847BDACDF4DAA754C1DF28` |
+| Current-topology rollback/restore controller | `6A74E050DA666081D25981711A4057D1FC1D9E53025DABC9BCC6355BA2AC7324` |
 | Parallel Production app API evidence | `117E8429F407BAD171EB3C356A822549D4FD4E143E9186783162B5079A869469` |
 | DNS promotion/rollback/promotion evidence | `2D204CA0F6AD3CB4D85DB77B2A3BBD679A4A639B68E5E71E274BD720F7F4E10F` |
 | Telegram persistence evidence | `9E0323E5A09E94C1155B9DC835E2878675CD53C7C248AB2841E5AAA7079E5447` |
