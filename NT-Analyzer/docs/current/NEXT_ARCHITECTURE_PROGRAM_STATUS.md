@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-02T22:01:10Z; внёс `GitHub Copilot`; scope: Phase 4 closeout — записать PR #10, cross-platform CI run 30769037213, merge commit 4c60df6c и удаление task branch.
+
 История поправки: 2026-08-02T21:54:12Z; внёс `GitHub Copilot`; scope: Phase 4 — зафиксировать trusted-device registry, step-up challenges, migration 0006 и локальный verification evidence.
 
 История поправки: 2026-08-02T20:27:30Z; внёс `GitHub Copilot`; scope: Phase 3 closeout — записать PR #9, cross-platform CI, merge commit и удаление task branch.
@@ -18,7 +20,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T21:54:12Z
+Обновлено: 2026-08-02T22:01:10Z
 
 ## Baseline
 
@@ -39,7 +41,7 @@
 | 1 | STAGE CLOSED | merged/deleted | `f4bcb3fc`; [PR #7](https://github.com/OMNOM-111/NT-Analyzer/pull/7) | Environment metadata, version, badges, owner icons; CI PASS |
 | 2 | STAGE CLOSED | merged/deleted | `ca65be2e`; [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; CI PASS |
 | 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
-| 4 | IMPLEMENTATION COMPLETE | `phase/4-trusted-devices` | pending PR | Trusted devices, step-up challenges, migration 0006 |
+| 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | PENDING | `phase/5-personal-nt-security` | pending | Personal NT security |
 | 6 | PENDING | `phase/6-agent-resource-queue` | pending | Agent allocation и NT lease |
 | 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
@@ -117,4 +119,5 @@
 - PostgreSQL acceptance: migration 0006 покрыта статическим контрактным тестом без БД; live acceptance пропущен безопасно, потому что `STRATFORGE_TEST_POSTGRES_ADMIN_URL`/`STRATFORGE_TEST_POSTGRES_URL` отсутствовали. Никакая PostgreSQL migration не применялась к Production или Canary.
 - Deployment boundary: Production не изменялась; Canary не изменялся; deployment не выполнялся; main не затронут; Production secrets, DNS, bot/email credentials и базы данных не использовались.
 - Residual: реальная доставка кода через Telegram/email — owner gate (в Development test-auth код echo только за явным gate); production email provider остаётся отдельным решением. Посторонние dirty/untracked файлы (`data/development/durable/nt_analyzer.sqlite3`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) не трогались и не включались в commit.
-- CI/PR: pending (заполняется в closeout после Windows/Linux CI PASS и merge).
+- CI/PR: [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) merged; [Actions run 30769037213](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30769037213) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
+- Git closeout: implementation `2ec986b4`; merge `4c60df6c`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 4 delivery.
