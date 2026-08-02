@@ -1,6 +1,6 @@
 # AI Strategy Lab — quality pipeline
 
-Дата проверки: 2026-06-22.
+Дата проверки: 2026-06-29.
 
 ## Рабочая архитектура
 
@@ -41,11 +41,30 @@
 - context: `8192`
 - parallel: `1`
 - retries: `0`
-- idea/spec: `qwen3-coder-30b-a3b-instruct`
+- local fallback for idea/spec/code/review: `openai/gpt-oss-20b`
 - compile fixer/reviewer: `openai/gpt-oss-20b`
 
 Перед запуском readiness обязан проверить `judge`, `coder` и
 `compile_error_fixer` через реальный `chat/completions`.
+
+## Controlled cloud fallback
+
+AI Lab остаётся local-first. После некорректного локального hypothesis-контракта
+может быть вызван `hypothesis_fallback`; после трёх повторных compile-fail
+циклов — `compile_error_fixer_fallback`. Оба пути по умолчанию выключены,
+требуют отдельного API-ключа и разрешения, ограничены `$20/месяц` и
+`$0.50/run`. Cloud output снова проходит все deterministic gates и не имеет
+права на verdict. Полный контракт: `docs/AI_LAB_CLOUD_AGENTS.md`.
+
+## Competitive feedback для AI-ролей
+
+Управление ролями строится через проверяемую конкуренцию, а не через угрозы.
+Analyst, Coder, Judge и Reviewer могут сравниваться внутри одного cycle по
+фактическому результату: contract validity, compile, backtest, risk gates,
+arbitration и честность `unclear/reject/no_signal`. Слабый ответ получает
+feedback и временно меньший приоритет следующего вызова, но честный отказ при
+недостатке данных не считается браком. Полный контракт и MVP внедрения:
+`docs/AI_LAB_COMPETITIVE_FEEDBACK.md`.
 
 ## Реальные E2E результаты
 
@@ -78,3 +97,32 @@ gate, а не ошибка инфраструктуры.
 NinjaTrader перезапускать не требуется. AI Lab пишет новый sandbox source,
 отправляет F5 в уже открытый NinjaScript Editor и ждёт изменение
 `NinjaTrader.Custom.dll`.
+
+## Защита от повторения системных ошибок (02.07.2026)
+
+Ноль сделок считается результатом стратегии только при подтверждённом ряде
+баров: непустой `BarsArray[0]`, реальный `historical_data_fingerprint`,
+положительный `bar_count`/`bars.json` и пересечение периода задания с
+`data_first..data_last` контракта. Иначе это инфраструктурная блокировка, а не
+отрицательный урок о стратегии.
+
+Контракт выбирается по самой свежей фактической минутной свече. Smoke при
+ошибке данных один раз пробует следующий подходящий контракт. Run-level и
+mission-level circuit breakers прекращают новые генерации и платные вызовы
+после двух одинаковых структурных ошибок либо пяти `SMOKE_ZERO_TRADES`.
+Остановка отображается в AI Lab и отправляется в Telegram.
+
+Signal sanity сначала ищет bars именно выбранного контракта. Данные другого
+месяца того же root разрешены только как advisory: они не могут отклонить
+стратегию до авторитетного NinjaTrader smoke текущего контракта.
+
+Маршрут гипотез: бесплатный внешний пул → локальная модель → платный fallback.
+Health gate локальной модели кэшируется на 15 минут. Динамические experiment
+поля перенесены после cache marker, чтобы стабильный prefix действительно
+переиспользовался.
+
+Compile baseline снимается до записи sandbox `.cs`. NinjaTrader может
+автоматически собрать DLL за несколько секунд ещё до явного F5; прежний порядок
+терял это событие и ошибочно ждал второе изменение пять минут. Bootstrap также
+сверяет собранную и установленную bridge DLL и безопасно разворачивает обновление
+до старта NinjaTrader, если терминал закрыт.

@@ -48,23 +48,4 @@ namespace NTAnalyzerBridge.Execution
                           string runningJobDir, CancellationToken ct);
     }
 
-    /// <summary>
-    /// Stub runner kept as a fallback / for future tests.
-    /// Production wiring uses StrategyAnalyzerRunner (Variant 1).
-    /// </summary>
-    internal sealed class NotImplementedHistoricalRunner : IHistoricalRunner
-    {
-        public string VariantId => "0_stub";
-
-        public JobRunOutcome Run(string jobId, JObject job, Type strategyType,
-                                 string runningJobDir, CancellationToken ct)
-        {
-            if (ct.IsCancellationRequested)
-                return JobRunOutcome.Cancelled("cancelled before execution started");
-
-            return JobRunOutcome.Failed(
-                "not_implemented",
-                "Stub runner — wire StrategyAnalyzerRunner instead");
-        }
-    }
 }

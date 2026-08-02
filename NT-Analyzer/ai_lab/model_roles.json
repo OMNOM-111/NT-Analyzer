@@ -1,15 +1,15 @@
 {
-  "idea_generator": "qwen3-coder-30b-a3b-instruct",
-  "strategy_researcher": "qwen3-coder-30b-a3b-instruct",
-  "strategy_spec_writer": "qwen3-coder-30b-a3b-instruct",
-  "code_writer": "qwen3-coder-30b-a3b-instruct",
+  "idea_generator": "openai/gpt-oss-20b",
+  "strategy_researcher": "openai/gpt-oss-20b",
+  "strategy_spec_writer": "openai/gpt-oss-20b",
+  "code_writer": "openai/gpt-oss-20b",
   "code_reviewer": "openai/gpt-oss-20b",
   "compile_error_fixer": "openai/gpt-oss-20b",
-  "backtest_analyst": "qwen3-coder-30b-a3b-instruct",
-  "mutation_planner": "qwen3-coder-30b-a3b-instruct",
+  "backtest_analyst": "openai/gpt-oss-20b",
+  "mutation_planner": "openai/gpt-oss-20b",
   "overfit_detector": "openai/gpt-oss-20b",
   "safety_judge": "openai/gpt-oss-20b",
-  "final_judge": "qwen3-coder-30b-a3b-instruct",
+  "final_judge": "openai/gpt-oss-20b",
   "fast_assistant": "openai/gpt-oss-20b",
   "embedding_model": "text-embedding-nomic-embed-text-v1.5"
 }

@@ -17,7 +17,7 @@ namespace NTAnalyzerBridge.Runtime
     /// Phase 17 - NinjaTrader runtime telemetry exporter.
     ///
     /// Writes JSON snapshots and JSONL append-only event streams under
-    ///   {project_root}/data/runtime/
+    ///   runtime_data_dir if configured, otherwise {project_root}/data/runtime/
     /// so the NT-Analyzer Strategy Control Center (app/runtime.py) can
     /// merge real Ninja runtime state with its registry/state machine.
     ///
@@ -44,12 +44,14 @@ namespace NTAnalyzerBridge.Runtime
         private string _activeCycleId = "";
         private long _activeCycleStamp;
 
-        public RuntimeTelemetryExporter(string projectRoot)
+        public RuntimeTelemetryExporter(string projectRoot, string runtimeDir = null)
         {
-            if (string.IsNullOrEmpty(projectRoot))
-                throw new ArgumentNullException(nameof(projectRoot));
-            _projectRoot = projectRoot;
-            _runtimeDir = Path.Combine(projectRoot, "data", "runtime");
+            if (string.IsNullOrWhiteSpace(projectRoot) && string.IsNullOrWhiteSpace(runtimeDir))
+                throw new ArgumentNullException(nameof(runtimeDir));
+            _projectRoot = projectRoot ?? "";
+            _runtimeDir = string.IsNullOrWhiteSpace(runtimeDir)
+                ? Path.Combine(projectRoot, "data", "runtime")
+                : runtimeDir;
             Directory.CreateDirectory(_runtimeDir);
             LoadKnownExecutionIds();
             _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
@@ -556,6 +558,38 @@ namespace NTAnalyzerBridge.Runtime
             AppendKv(sb, "unrealized_pnl",      st.UnrealizedPnl);
             sb.Append("}");
             AppendLine(Path.Combine(_runtimeDir, "strategy_history.jsonl"), sb.ToString());
+
+            string vitekType = null;
+            if (string.Equals(eventName, "started", StringComparison.OrdinalIgnoreCase))
+                vitekType = "strategy_started";
+            else if (string.Equals(eventName, "stopped", StringComparison.OrdinalIgnoreCase))
+                vitekType = "strategy_stopped";
+            else if (string.Equals(eventName, "state_changed", StringComparison.OrdinalIgnoreCase))
+                vitekType = "strategy_state_changed";
+            else if (string.Equals(eventName, "disappeared", StringComparison.OrdinalIgnoreCase))
+                vitekType = "strategy_disappeared";
+            if (!string.IsNullOrEmpty(vitekType))
+            {
+                var signal = new StringBuilder(512);
+                signal.Append("{");
+                AppendKv(signal, "event_type", vitekType);              Sep(signal);
+                AppendKv(signal, "source", "ninjatrader_bridge");      Sep(signal);
+                AppendKv(signal, "severity", vitekType == "strategy_stopped" || vitekType == "strategy_disappeared" ? "critical" : "info"); Sep(signal);
+                signal.Append("\"payload\":{");
+                AppendKv(signal, "reason", reason ?? "");                Sep(signal);
+                AppendKv(signal, "runtime_instance_id", st.RuntimeInstanceId); Sep(signal);
+                AppendKv(signal, "strategy_id", st.StrategyId);          Sep(signal);
+                AppendKv(signal, "strategy_class", st.StrategyClass);    Sep(signal);
+                AppendKv(signal, "strategy_name", st.StrategyName);      Sep(signal);
+                AppendKv(signal, "account_name", st.AccountName);        Sep(signal);
+                AppendKv(signal, "account_mode", st.AccountMode);        Sep(signal);
+                AppendKv(signal, "instrument", st.Instrument);           Sep(signal);
+                AppendKv(signal, "timeframe", st.Timeframe);             Sep(signal);
+                AppendKv(signal, "enabled", st.Enabled);                 Sep(signal);
+                AppendKv(signal, "state", st.State);
+                signal.Append("}}");
+                AppendLine(Path.Combine(_runtimeDir, "vitek_events.jsonl"), signal.ToString());
+            }
         }
 
         // ---------------- account hookup -----------------------------------
@@ -767,6 +801,18 @@ namespace NTAnalyzerBridge.Runtime
                 AppendKv(sb, "stack",         ex == null ? "" : (ex.StackTrace ?? ""));
                 sb.Append("}");
                 AppendLine(Path.Combine(_runtimeDir, "errors.jsonl"), sb.ToString());
+
+                var signal = new StringBuilder(512);
+                signal.Append("{");
+                AppendKv(signal, "event_type", "runtime_error");       Sep(signal);
+                AppendKv(signal, "source", "ninjatrader_bridge");     Sep(signal);
+                AppendKv(signal, "severity", "critical");             Sep(signal);
+                signal.Append("\"payload\":{");
+                AppendKv(signal, "where", where ?? "");                Sep(signal);
+                AppendKv(signal, "type", ex == null ? "" : ex.GetType().FullName); Sep(signal);
+                AppendKv(signal, "message", ex == null ? "" : (ex.Message ?? ""));
+                signal.Append("}}");
+                AppendLine(Path.Combine(_runtimeDir, "vitek_events.jsonl"), signal.ToString());
             }
             catch { /* swallow - never throw from error path */ }
         }
@@ -1223,6 +1269,8 @@ namespace NTAnalyzerBridge.Runtime
             string id = "";
             try
             {
+                if (string.IsNullOrWhiteSpace(_projectRoot))
+                    return "";
                 string path = Path.Combine(_projectRoot, "data", "ops", "cycles.json");
                 if (File.Exists(path))
                 {

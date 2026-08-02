@@ -1,0 +1,84 @@
+"""Background refresh lifecycle for calendar and live market headlines."""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from typing import Optional
+
+from app import market_events, market_news, runtime_env
+
+
+_start_lock = threading.Lock()
+_thread: Optional[threading.Thread] = None
+_stop = threading.Event()
+
+
+def _seconds(name: str, default: int, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _worker(live_interval_sec: int, calendar_interval_sec: int) -> None:
+    next_calendar = time.monotonic() + calendar_interval_sec
+    while not _stop.is_set():
+        try:
+            market_news.write_live_news()
+            # Deterministic reports are generated for every relevant headline;
+            # an LLM/Telegram alert is used only for a newly observed high item.
+            from app.ai_lab import news_agent
+            news_agent.observe_live_news(
+                send_telegram=True,
+                # A global feed has no user/workspace owner. Production keeps
+                # this refresh deterministic; scoped user requests can still
+                # ask the Orchestrator for an AI news analysis.
+                use_llm=not (
+                    runtime_env.is_production()
+                    and runtime_env.environment_explicit()
+                ),
+            )
+        except Exception as exc:  # pragma: no cover - network/filesystem dependent
+            print(f"[nta-news] live refresh failed: {exc}")
+        now = time.monotonic()
+        if now >= next_calendar:
+            try:
+                market_events.write_news_json()
+            except Exception as exc:  # pragma: no cover - filesystem dependent
+                print(f"[nta-news] calendar refresh failed: {exc}")
+            next_calendar = now + calendar_interval_sec
+        _stop.wait(live_interval_sec)
+
+
+def start_background_refresher() -> threading.Thread:
+    """Refresh the local calendar now and live headlines on a daemon thread."""
+    global _thread
+    with _start_lock:
+        if _thread is not None and _thread.is_alive():
+            return _thread
+        _stop.clear()
+        # Calendar generation is local and fast; complete it before the first
+        # UI request so a restart never serves stale guessed dates.
+        market_events.write_news_json()
+        live_interval = _seconds("NTA_NEWS_REFRESH_SEC", 900, 60)
+        calendar_interval = _seconds("NTA_CALENDAR_REFRESH_SEC", 21600, 300)
+        _thread = threading.Thread(
+            target=_worker,
+            args=(live_interval, calendar_interval),
+            name="nta-news-refresh",
+            daemon=True,
+        )
+        _thread.start()
+        return _thread
+
+
+def stop_background_refresher() -> None:
+    """Request a bounded stop for the supervised Production coordinator."""
+    global _thread
+    _stop.set()
+    current = _thread
+    if current and current is not threading.current_thread():
+        current.join(timeout=5.0)
+    if current is None or not current.is_alive():
+        _thread = None

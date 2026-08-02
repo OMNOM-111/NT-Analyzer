@@ -22,7 +22,7 @@ The runner uses:
 
 Mandatory target models:
 
-- `qwen/qwen3.6-35b-a3b`
+- Runtime inventory is discovered from `/v1/models`; removed models remain only in dated benchmark artifacts.
 - `gpt-oss-20b`
 - `Qwen3-Coder-30B-A3B-Instruct`
 - `Codestral-22B`

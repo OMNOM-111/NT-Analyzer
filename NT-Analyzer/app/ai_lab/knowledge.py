@@ -65,6 +65,7 @@ def _project_docs() -> List[Path]:
     legacy_root = paths.PROJECT_ROOT.parent / "РАЗРАБОТКА СТРАТЕГИЙ"
     candidates = [
         paths.PROJECT_ROOT / "docs" / "governance" / "CHARTER.md",
+        paths.PROJECT_ROOT / "docs" / "governance" / "NORTH_STAR_2026.md",
         paths.PROJECT_ROOT / "docs" / "governance" / "ROLES.md",
         paths.PROJECT_ROOT / "docs" / "governance" / "LAWS.md",
         paths.PROJECT_ROOT / "docs" / "governance" / "LOCAL_AI_LAWS.md",
@@ -286,6 +287,30 @@ def _rejection_gates() -> List[str]:
     ]
 
 
+def _north_star_lines() -> List[str]:
+    """Compact mission block so every generation knows what the strategy is for."""
+    try:
+        from .. import governance
+        north = (governance.read_goals() or {}).get("north_star") or {}
+    except Exception:
+        north = {}
+    target = north.get("target_usd") or 100000
+    deadline = north.get("deadline") or "2026-12-31"
+    return [
+        "PROJECT NORTH STAR (why this strategy exists):",
+        f"- Goal: ${target:,} realized after-commission PnL from approved_demo/"
+        f"approved_live runtime strategies by {deadline}.",
+        "- Every strategy must contribute a real, repeatable edge toward this goal.",
+        "- Development doctrine: name the market regime and entry confirmation; "
+        "produce enough quality signals for statistical significance WITHOUT "
+        "overtrading against commission; positive economics AFTER costs; use the "
+        "approved references and user research as the edge source; iterate on "
+        "near-misses instead of abandoning them.",
+        "- The goal never overrides risk/compile/backtest/promotion gates.",
+        "",
+    ]
+
+
 def build_context(
     target_root: str,
     *,
@@ -325,7 +350,17 @@ def build_context(
 
     scan = user_research.scan()
     user_research_refs: List[str] = []
-    for rel_path in (scan.get("new", []) + scan.get("changed", []))[:8]:
+    research_paths = list(scan.get("new", []) + scan.get("changed", []))
+    if not research_paths:
+        # A file stops being "new" after the first scan, but it does not stop
+        # being relevant. Strategic dialogue and later runs must still read the
+        # owner's current research corpus.
+        research_paths = [
+            str(row.get("rel_path") or "")
+            for row in user_research.all_files()
+            if str(row.get("rel_path") or "")
+        ]
+    for rel_path in research_paths[:8]:
         text, _meta = user_research.read_file(rel_path, max_bytes=5000)
         if text:
             user_research_refs.append(rel_path)
@@ -341,12 +376,15 @@ def build_context(
     acceptance = _acceptance_gates(goal_constraints)
     rejection = _rejection_gates()
 
+    goal_lines = _north_star_lines()
+
     prompt_parts = [
         "KNOWLEDGE_CONTEXT: required before strategy generation.",
         f"Target root: {target_root}",
         f"User goal: {user_goal or 'auto'}",
         f"Parsed constraints: {json.dumps(goal_constraints, ensure_ascii=False, sort_keys=True)}",
         "",
+        *goal_lines,
         "Hard constraints:",
         *[f"- {x}" for x in hard],
         "",
@@ -436,6 +474,7 @@ def build_context(
         "lessons": lesson_rows[:30],
         "global_operator_notes": global_notes,
         "user_research_refs": user_research_refs,
+        "source_excerpt_summaries": source_summaries[:12],
         "source_refs": sources,
         "prompt_context": prompt_context,
     }

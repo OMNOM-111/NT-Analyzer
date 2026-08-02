@@ -17,7 +17,7 @@ AURORA = STATIC / "aurora"
 
 NEW_PAGES = [
     "index.html", "backtesting.html", "trading.html", "performance.html",
-    "strategies.html", "ai-lab.html", "news.html", "topstep.html", "documents.html",
+    "strategies.html", "ai-lab.html", "ai-agents.html", "news.html", "topstep.html", "documents.html",
 ]
 LEGACY_PAGES = [
     "index.html", "trading.html", "strategies.html", "performance.html",
@@ -53,6 +53,7 @@ def test_aurora_page_controllers_call_real_endpoints():
         "strategies.js": "API.http.profiles",
         "trading.js": "API.http.runtimeAccounts",
         "ai-lab.js": "API.http.aiSummary",
+        "ai-agents.js": "API.http.aiAgents",
         "backtesting.js": "API.http.reports",
         "news.js": "API.http.news",
         "topstep.js": "API.http.topstepStatus",
@@ -63,11 +64,24 @@ def test_aurora_page_controllers_call_real_endpoints():
         assert "(демо)" not in js, f"{fname} must not contain demo placeholders"
 
 
+def test_owner_operations_dashboard_uses_authorized_existing_contract():
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert 'path == "/api/owner/operations"' in server
+    assert 'if not context.get("is_owner"):' in server
+    assert "payload = observability.dashboard()" in server
+    assert "ownerOperations: (o) => getJSON('/api/owner/operations', o)" in api
+    assert "renderOperationsInto" in ui
+    assert "['operations', 'Операции']" in ui
+
+
 def test_server_routes_aurora_primary_and_legacy():
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
-    # Aurora is the primary UI served from app/static/aurora/.
-    assert '"aurora/index.html" if rel == "/" else "aurora" + rel' in server, \
-        "server must serve the Aurora UI for /ui/ and new pages"
+    # The explicit mode choice is the root before either Aurora contour; the
+    # professional shell remains available at /ui/index.html.
+    assert '"aurora/mode-entry.html" if rel == "/" else "aurora" + rel' in server, \
+        "server must serve the mode entry at /ui/ and Aurora pages below it"
     # Classic UI preserved under /ui/legacy/.
     assert 'rel == "/legacy" or rel.startswith("/legacy/")' in server, \
         "server must serve the legacy UI under /ui/legacy/"
@@ -77,6 +91,7 @@ def test_server_routes_aurora_primary_and_legacy():
     assert '"/ai-strategy.html": "/ui/ai-lab.html"' in server
     assert '"/ops.html": "/ui/trading.html"' in server
     assert '"/docs.html": "/ui/documents.html"' in server
+    assert '"/accounting.html": "/ui/performance.html"' in server
     # Uniform CSP response header that blocks inline scripts.
     assert "STATIC_CSP" in server and "script-src 'self'" in server
     assert 'self.send_header("Content-Security-Policy", STATIC_CSP)' in server

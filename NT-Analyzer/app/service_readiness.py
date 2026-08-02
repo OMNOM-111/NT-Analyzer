@@ -1,0 +1,90 @@
+"""Safe liveness/readiness payloads for StratForge service supervision."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+from typing import Any, Callable, Dict, Mapping, Optional
+
+
+PRODUCTION_COMPONENTS = (
+    "database",
+    "queue",
+    "object_storage",
+    "signing_key",
+    "connector_control",
+    "telegram_consumer",
+)
+
+
+def liveness_payload(config: Any) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "alive",
+        "deployment": config.public_dict(),
+    }
+
+
+def _data_root_check(config: Any, minimum_free_mb: int) -> Dict[str, Any]:
+    root = Path(config.data_root)
+    if not root.exists() or not root.is_dir():
+        return {"ok": False, "code": "data_root_missing"}
+    if not os.access(str(root), os.R_OK | os.W_OK | os.X_OK):
+        return {"ok": False, "code": "data_root_not_writable"}
+    try:
+        free_mb = int(shutil.disk_usage(root).free // (1024 * 1024))
+    except OSError:
+        return {"ok": False, "code": "disk_status_unavailable"}
+    if free_mb < minimum_free_mb:
+        return {"ok": False, "code": "disk_free_below_floor"}
+    return {"ok": True, "code": "ok"}
+
+
+def _run_probe(probe: Optional[Callable[[], Any]]) -> Dict[str, Any]:
+    if probe is None:
+        return {"ok": False, "code": "probe_not_registered"}
+    try:
+        result = probe()
+    except Exception:
+        return {"ok": False, "code": "probe_failed"}
+    if isinstance(result, Mapping):
+        ok = bool(result.get("ok"))
+        code = str(result.get("code") or ("ok" if ok else "not_ready"))
+        return {"ok": ok, "code": code[:64]}
+    ok = bool(result)
+    return {"ok": ok, "code": "ok" if ok else "not_ready"}
+
+
+def readiness_payload(
+    config: Any,
+    *,
+    probes: Optional[Mapping[str, Callable[[], Any]]] = None,
+    minimum_free_mb: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Return a bounded, secret-free readiness view.
+
+    Production remains not-ready until every authoritative control-plane
+    component registers a real probe.  Later stages replace these missing
+    probes as PostgreSQL, the durable queue, signing keys and Connector control
+    plane are enabled.
+    """
+    floor = int(
+        minimum_free_mb
+        if minimum_free_mb is not None
+        else getattr(config, "readiness_min_free_mb", 1024)
+    )
+    checks: Dict[str, Dict[str, Any]] = {
+        "config": {"ok": True, "code": "ok"},
+        "data_root": _data_root_check(config, max(1, floor)),
+    }
+    registered = dict(probes or {})
+    if config.environment == "production":
+        for name in PRODUCTION_COMPONENTS:
+            checks[name] = _run_probe(registered.get(name))
+    ok = all(bool(check.get("ok")) for check in checks.values())
+    return {
+        "ok": ok,
+        "status": "ready" if ok else "not_ready",
+        "deployment": config.public_dict(),
+        "checks": checks,
+    }

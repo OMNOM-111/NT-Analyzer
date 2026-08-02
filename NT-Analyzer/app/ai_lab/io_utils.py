@@ -51,6 +51,31 @@ def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
         f.write(line + "\n")
 
 
+def write_jsonl_atomic(path: Path, records: Iterable[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            for record in records:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        last_err: Exception | None = None
+        for delay in (0, 0.05, 0.1, 0.2, 0.5, 1.0):
+            if delay:
+                time.sleep(delay)
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as e:
+                last_err = e
+        raise last_err if last_err else RuntimeError("os.replace failed")
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def read_jsonl(path: Path, limit: int | None = None) -> List[Dict[str, Any]]:
     if not path.exists():
         return []

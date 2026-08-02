@@ -827,8 +827,45 @@ def t19(tmp: Path) -> None:
     assert out["profile"]["failed_archive"]["fingerprint"], out
 
 
+@case("job and batch reads are isolated by workspace origin")
+def t20(tmp: Path) -> None:
+    for suffix, workspace, user in (("a", "ws_a", "42"), ("b", "ws_b", "77")):
+        jid = f"job_{suffix}"
+        jdir = tmp / "jobs" / "pending" / jid
+        jdir.mkdir(parents=True, exist_ok=True)
+        (jdir / "job.json").write_text(json.dumps({
+            "job_id": jid,
+            "created_at_utc": "2026-07-16T00:00:00Z",
+            "strategy": {"class_name": "SampleMACrossOver"},
+            "instrument": "MNQ 09-26",
+            "origin": {"workspace_id": workspace, "user_id": user},
+        }), encoding="utf-8")
+        jq._ensure_report_number("job", jid, "2026-07-16T00:00:00Z")
+
+        bid = f"batch_{suffix}"
+        bdir = tmp / "data" / "batches" / bid
+        bdir.mkdir(parents=True, exist_ok=True)
+        (bdir / "batch.json").write_text(json.dumps({
+            "batch_id": bid,
+            "created_at_utc": "2026-07-16T00:00:00Z",
+            "origin": {"workspace_id": workspace, "user_id": user},
+            "children": [],
+            "total": 0,
+        }), encoding="utf-8")
+
+    jq.reset_caches()
+    jobs_a = jq.list_jobs(workspace_id="ws_a", user_id="42")
+    assert [row["job_id"] for row in jobs_a] == ["job_a"], jobs_a
+    assert jq.job_in_scope("job_a", workspace_id="ws_a", user_id="42") is True
+    assert jq.job_in_scope("job_b", workspace_id="ws_a", user_id="42") is False
+    batches_a = jq.list_batches(workspace_id="ws_a", user_id="42")
+    assert [row["batch_id"] for row in batches_a] == ["batch_a"], batches_a
+    assert jq.batch_in_scope("batch_b", workspace_id="ws_a", user_id="42") is False
+
+
 def main() -> int:
-    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10, t11, t12, t13, t14, t15, t16, t17, t18]
+    cases = [t01, t02, t03, t04, t05, t06, t07, t08, t08b, t09, t10,
+             t11, t12, t13, t14, t15, t16, t17, t18, t19, t20]
     print(f"Running {len(cases)} queue contract tests:")
     for c in cases:
         c()

@@ -1,12 +1,39 @@
 {
+  "schema_version": 3,
+  "mode": "local_development",
   "project_root": "C:\\Path\\To\\NT-Analyzer",
   "ninjatrader_user_dir": "C:\\Path\\To\\NinjaTrader 8",
   "jobs_dir": "D:\\Documents\\NT-Analyzer-artifacts\\jobs",
+  "runtime_data_dir": "",
   "poll_interval_ms": 1500,
   "heartbeat_interval_ms": 5000,
   "heartbeat_ttl_ms": 60000,
   "rd_variant_preferred": "1_strategy_analyzer",
   "rd_variant_fallback_allowed": false,
+  "runtime_reconnect_connection_name": "",
   "enable_path_a_optimizer_runbacktest": false,
-  "enable_verbose_diagnostics": false
+  "enable_verbose_diagnostics": false,
+  "production_connector": {
+    "enabled": false,
+    "server_origin": "https://app.stratforges.com",
+    "protocol_version": "1.0",
+    "connector_version": "0.2.0",
+    "enrollment_credential_ref": "dpapi:bootstrap-v1",
+    "state_dir": "%LOCALAPPDATA%\\StratForge\\Connector",
+    "heartbeat_interval_ms": 15000,
+    "command_poll_seconds": 15,
+    "market_data_streams": [],
+    "release_channel": "stable",
+    "update_policy": "safe_restart"
+  },
+  "market_data_ipc": {
+    "enabled": true,
+    "transport": "tcp",
+    "host": "127.0.0.1",
+    "port": 18765,
+    "pipe_name": "\\\\.\\pipe\\stratforge-market-data",
+    "ws_url": "ws://127.0.0.1:18765/bridge/market-events",
+    "queue_capacity": 8192,
+    "source_epoch": 1
+  }
 }

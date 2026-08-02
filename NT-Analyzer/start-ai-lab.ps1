@@ -1,10 +1,14 @@
 <#
 .SYNOPSIS
-    Full AI Strategy Lab launcher.
+    Full StratForge AI Lab launcher.
 
 .DESCRIPTION
     Best-effort startup for the local research stack:
-    NinjaTrader -> LM Studio server -> NT-Analyzer UI.
+    LM Studio server -> StratForge AI UI.
+
+    NinjaTrader is NOT started by default (prevents login lockouts after reboot).
+    Pass -StartNinjaTrader only when you intentionally want the process launched;
+    you must still sign in to NinjaTrader manually.
 
     Configure custom paths via environment variables or ai_lab/bootstrap.json:
       NINJATRADER_EXE, LM_STUDIO_EXE, LMS_CLI
@@ -13,7 +17,10 @@
 param(
     [int]$Port = 8765,
     [switch]$NoBrowser,
-    [switch]$SkipDependencyStart
+    [switch]$SkipDependencyStart,
+    # Dangerous after reboot: opens NT login dialog and can lock the account.
+    # Opt-in only, and still requires NTA_ALLOW_AUTOSTART_NINJATRADER=1 in Python paths.
+    [switch]$StartNinjaTrader
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,7 +39,7 @@ function Read-BootstrapConfig {
         $json.PSObject.Properties | ForEach-Object { $map[$_.Name] = [string]$_.Value }
         return $map
     } catch {
-        Write-Host "[AI Lab] warning: cannot read ${path}: $_" -ForegroundColor Yellow
+        Write-Host "[StratForge AI Lab] warning: cannot read ${path}: $_" -ForegroundColor Yellow
         return @{}
     }
 }
@@ -57,14 +64,14 @@ function Test-ProcessName([string]$Needle) {
 
 function Start-IfMissing([string]$Label, [string]$Needle, [string]$Exe) {
     if (Test-ProcessName $Needle) {
-        Write-Host "[AI Lab] $Label already running." -ForegroundColor Cyan
+        Write-Host "[StratForge AI Lab] $Label already running." -ForegroundColor Cyan
         return
     }
     if ([string]::IsNullOrWhiteSpace($Exe)) {
-        Write-Host "[AI Lab] $Label path is not configured; skipping auto-start." -ForegroundColor Yellow
+        Write-Host "[StratForge AI Lab] $Label path is not configured; skipping auto-start." -ForegroundColor Yellow
         return
     }
-    Write-Host "[AI Lab] starting ${Label}: $Exe" -ForegroundColor Cyan
+    Write-Host "[StratForge AI Lab] starting ${Label}: $Exe" -ForegroundColor Cyan
     Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) | Out-Null
 }
 
@@ -78,7 +85,7 @@ function Resolve-LmsCli($Cfg) {
 
 function Invoke-Lms([string]$Cli, [string[]]$LmsArgs) {
     if ([string]::IsNullOrWhiteSpace($Cli)) { return $false }
-    Write-Host "[AI Lab] lms $($LmsArgs -join ' ')" -ForegroundColor DarkCyan
+    Write-Host "[StratForge AI Lab] lms $($LmsArgs -join ' ')" -ForegroundColor DarkCyan
     & $Cli @LmsArgs
     return ($LASTEXITCODE -eq 0)
 }
@@ -89,13 +96,13 @@ function Wait-LmStudioModels([int]$TimeoutSec = 90) {
         try {
             $resp = Invoke-RestMethod -Uri 'http://127.0.0.1:1234/v1/models' -TimeoutSec 5
             $count = @($resp.data).Count
-            Write-Host "[AI Lab] LM Studio server responding; models listed: $count" -ForegroundColor Green
+            Write-Host "[StratForge AI Lab] LM Studio server responding; models listed: $count" -ForegroundColor Green
             return $true
         } catch {
             Start-Sleep -Seconds 3
         }
     }
-    Write-Host "[AI Lab] LM Studio server did not answer on 127.0.0.1:1234 within timeout." -ForegroundColor Yellow
+    Write-Host "[StratForge AI Lab] LM Studio server did not answer on 127.0.0.1:1234 within timeout." -ForegroundColor Yellow
     return $false
 }
 
@@ -117,14 +124,19 @@ $lmExe = Resolve-FirstExisting @(
 $lms = Resolve-LmsCli $cfg
 
 if (-not $SkipDependencyStart) {
-    Start-IfMissing 'NinjaTrader' 'ninjatrader' $ntExe
+    if ($StartNinjaTrader) {
+        Write-Host '[StratForge AI Lab] StartNinjaTrader requested — launching NT (owner must sign in manually).' -ForegroundColor Yellow
+        Start-IfMissing 'NinjaTrader' 'ninjatrader' $ntExe
+    } else {
+        Write-Host '[StratForge AI Lab] NinjaTrader auto-start skipped (default). Start NT yourself after login.' -ForegroundColor Cyan
+    }
     Start-IfMissing 'LM Studio' 'lm studio' $lmExe
     Start-Sleep -Seconds 3
 
     if ($lms) {
         Invoke-Lms $lms @('server', 'start') | Out-Null
     } else {
-        Write-Host '[AI Lab] lms CLI not found; backend bootstrap/readiness will report what is missing.' -ForegroundColor Yellow
+        Write-Host '[StratForge AI Lab] lms CLI not found; backend bootstrap/readiness will report what is missing.' -ForegroundColor Yellow
     }
 
     Wait-LmStudioModels 90 | Out-Null

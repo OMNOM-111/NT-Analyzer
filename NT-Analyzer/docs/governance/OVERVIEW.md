@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-06-29T01:37:58Z
+Дата актуализации: 2026-08-01T23:47:37Z
 
 ## Короткое предисловие
 
@@ -19,6 +19,7 @@
 - Paper before live: `Да`
 - Runtime должен совпадать с locked params: `Да`
 - AI Lab sandbox only: `Да`
+- AI Lab cloud API: `local-first fallback; 20.00 USD/month; 0.50 USD/run`
 - Базовое PT-окно AI Lab: `06:30-12:30 PT`
 
 ## На что смотреть в первую очередь
@@ -37,4 +38,8 @@
 
 ## Последние поправки
 
-- Пока без зафиксированных поправок.
+- Поправка 5 · 2026-08-01T23:47:37Z · `GPT-5.5 через Codex по запросу owner` · Stage 10 Repository Hygiene Closeout documentation: Новые документы closeout: `absent` -> `git-workflow.md; task-closeout-protocol.md; repository-hygiene.md`; Архитектурный отчёт скопирован в репозиторий: `external desktop report only` -> `docs/current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md`
+- Поправка 4 · 2026-07-03T11:38:10Z · `owner` · GOV-AI-018 — безопасный reconnect NinjaTrader: Новый закон: `GOV-AI-001..017` -> `GOV-AI-001..018`
+- Поправка 3 · 2026-07-03T06:00:00Z · `owner` · GOV-AI-015..016 — сильная модель и полный контекст: Новые законы: `GOV-AI-001..014` -> `GOV-AI-001..016`
+- Поправка 2 · 2026-07-03T05:18:00Z · `owner` · GOV-AI-011..014 — философия Orchestrator: Новые законы: `GOV-AI-001..010` -> `GOV-AI-001..014`
+- Поправка 1 · 2026-07-02T18:36:29Z · `owner` · Изменение: Без деталей

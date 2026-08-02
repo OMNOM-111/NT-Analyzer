@@ -1,0 +1,17 @@
+# Copy to ~/.config/stratforge/cloudflared.yml and chmod 600.
+# The credential JSON is provisioned out-of-band and never enters Git.
+tunnel: __TUNNEL_UUID__
+credentials-file: __STRATFORGE_HOME__/.cloudflared/__TUNNEL_UUID__.json
+
+ingress:
+  # Internal readiness and diagnostic routes are reachable only over loopback.
+  - hostname: app.stratforges.com
+    path: ^/(api/(health/ready|ready|diagnostics|admin)(/.*)?|metrics(/.*)?|debug(/.*)?)$
+    service: http_status:404
+  - hostname: app.stratforges.com
+    service: http://127.0.0.1:18765
+    originRequest:
+      httpHostHeader: app.stratforges.com
+      connectTimeout: 10s
+      noHappyEyeballs: true
+  - service: http_status:404

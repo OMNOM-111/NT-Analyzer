@@ -33,7 +33,7 @@ TERMINAL_STATUSES = {
 }
 
 VALID_STATUSES = TERMINAL_STATUSES | {
-    "draft", "generating", "generated",
+    "draft", "designing", "draft_ready", "generating", "generated",
     "awaiting_compile", "catalog_visible",
     "backtesting", "backtest_done", "analysis_ready",
 }
@@ -54,6 +54,8 @@ PORTFOLIO_ELIGIBLE_STATUSES = {
 
 PORTFOLIO_BLOCKED_STATUSES = {
     "draft",
+    "designing",
+    "draft_ready",
     "generating",
     "generated",
     "validation_failed",

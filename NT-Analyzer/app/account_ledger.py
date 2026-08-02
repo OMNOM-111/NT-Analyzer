@@ -8,16 +8,29 @@ reported as strategy profit or silently labelled as deposits.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import runtime_env
 
-LEDGER_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime" / "account_ledger.json"
+
+_DEFAULT_LEDGER_PATH = Path(__file__).resolve().parents[1] / "data" / "runtime" / "account_ledger.json"
+LEDGER_PATH = _DEFAULT_LEDGER_PATH
 _LOCK = threading.RLock()
-_KINDS = {"deposit", "withdrawal", "transfer", "fee", "unclassified_adjustment"}
+_KINDS = {
+    "deposit", "withdrawal", "transfer", "fee", "reconciliation",
+    "unclassified_adjustment",
+}
+
+
+def _ledger_path() -> Path:
+    if LEDGER_PATH != _DEFAULT_LEDGER_PATH:
+        return Path(LEDGER_PATH)
+    return runtime_env.data_path("runtime", "account_ledger.json", project_root=Path(__file__).resolve().parents[1])
 
 
 def _now() -> str:
@@ -60,10 +73,11 @@ def _empty() -> Dict[str, Any]:
 
 
 def _read() -> Dict[str, Any]:
-    if not LEDGER_PATH.exists():
+    path = _ledger_path()
+    if not path.exists():
         return _empty()
     try:
-        doc = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"account ledger is unreadable: {exc}") from exc
     if not isinstance(doc, dict) or not isinstance(doc.get("accounts"), dict):
@@ -72,11 +86,12 @@ def _read() -> Dict[str, Any]:
 
 
 def _write(doc: Dict[str, Any]) -> None:
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = _ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     doc["updated_at_utc"] = _now()
-    tmp = LEDGER_PATH.with_suffix(".tmp")
+    tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(LEDGER_PATH)
+    tmp.replace(path)
 
 
 def _repair_fallback_artifacts(doc: Dict[str, Any]) -> bool:
@@ -120,13 +135,14 @@ def _repair_fallback_artifacts(doc: Dict[str, Any]) -> bool:
     return changed
 
 
-def record_accounts(payload: Dict[str, Any]) -> None:
+def record_accounts(payload: Dict[str, Any]) -> Dict[str, Any]:
     # A positions-only fallback has no authoritative account balance fields.
     if str(payload.get("source") or "") == "positions_fallback":
-        return
+        return {"ok": True, "changed": False, "new_event_ids": []}
     rows = payload.get("accounts") or payload.get("online_accounts") or []
     if not isinstance(rows, list):
-        return
+        return {"ok": False, "changed": False, "new_event_ids": []}
+    new_events: List[Dict[str, str]] = []
     with _LOCK:
         doc = _read()
         changed = _repair_fallback_artifacts(doc)
@@ -164,7 +180,7 @@ def record_accounts(payload: Dict[str, Any]) -> None:
                 )
                 unexplained = round(equity_delta - trading_delta, 2)
                 if abs(unexplained) >= 0.01:
-                    account.setdefault("events", []).append({
+                    event = {
                         "event_id": "EVT-" + uuid.uuid4().hex[:12],
                         "at_utc": snapshot["at_utc"],
                         "kind": "unclassified_adjustment",
@@ -175,10 +191,17 @@ def record_accounts(payload: Dict[str, Any]) -> None:
                         "classification_status": "needs_review",
                         "actor": "system",
                         "note": "Не классифицировано: источник не предоставляет broker cash transactions.",
-                    })
+                    }
+                    account.setdefault("events", []).append(event)
+                    new_events.append({"account_name": name, "event_id": event["event_id"]})
             changed = True
         if changed:
             _write(doc)
+    return {
+        "ok": True, "changed": bool(changed),
+        "new_event_ids": [row["event_id"] for row in new_events],
+        "new_events": new_events,
+    }
 
 
 def account_history(account_name: str = "", limit: int = 500) -> Dict[str, Any]:
@@ -220,10 +243,113 @@ def account_history(account_name: str = "", limit: int = 500) -> Dict[str, Any]:
     }
 
 
+def audit_integrity(account_name: str = "", *, repair_safe: bool = False) -> Dict[str, Any]:
+    """Find ledger corruption and remove only byte-equivalent safe duplicates.
+
+    A safe repair never guesses a financial classification or amount. It may
+    only remove a repeated snapshot with the same timestamp/source/values, a
+    repeated source_id with identical financial fields, or a repeated
+    system-derived unclassified adjustment. Every other anomaly is reported
+    for a person to review.
+    """
+    with _LOCK:
+        doc = _read()
+        issues: List[Dict[str, Any]] = []
+        repaired: List[Dict[str, Any]] = []
+        names = [account_name] if account_name else sorted(doc["accounts"])
+        changed = False
+        for name in names:
+            account = doc["accounts"].get(name)
+            if not account:
+                continue
+            snapshots = list(account.get("snapshots") or [])
+            kept_snapshots: List[Dict[str, Any]] = []
+            seen_snapshots: Dict[tuple, int] = {}
+            for index, row in enumerate(snapshots):
+                signature = (
+                    str(row.get("at_utc") or ""), str(row.get("source") or ""),
+                    _number(row.get("net_liquidation")), _number(row.get("cash_value")),
+                    _number(row.get("realized_pnl")), _number(row.get("unrealized_pnl")),
+                )
+                if signature in seen_snapshots:
+                    issue = {"code": "duplicate_snapshot", "account_name": name, "index": index, "safe_to_repair": True}
+                    issues.append(issue)
+                    if repair_safe:
+                        repaired.append(issue)
+                        changed = True
+                        continue
+                else:
+                    seen_snapshots[signature] = index
+                kept_snapshots.append(row)
+
+            events = list(account.get("events") or [])
+            kept_events: List[Dict[str, Any]] = []
+            seen_source: Dict[str, Dict[str, Any]] = {}
+            seen_derived: Dict[tuple, Dict[str, Any]] = {}
+            for row in events:
+                event_id = str(row.get("event_id") or "")
+                try:
+                    raw_amount = float(row.get("amount"))
+                    finite = math.isfinite(raw_amount)
+                except (TypeError, ValueError):
+                    finite = False
+                if not finite:
+                    issues.append({"code": "invalid_amount", "account_name": name, "event_id": event_id, "safe_to_repair": False})
+                source_id = str(row.get("source_id") or "").strip()
+                core = (
+                    str(row.get("at_utc") or ""), str(row.get("kind") or ""),
+                    _number(row.get("amount")), str(row.get("provenance") or ""),
+                )
+                duplicate = False
+                if source_id and source_id in seen_source:
+                    previous = seen_source[source_id]
+                    previous_core = (
+                        str(previous.get("at_utc") or ""), str(previous.get("kind") or ""),
+                        _number(previous.get("amount")), str(previous.get("provenance") or ""),
+                    )
+                    safe = core == previous_core
+                    issue = {"code": "duplicate_source_id", "account_name": name, "event_id": event_id, "source_id": source_id, "safe_to_repair": safe}
+                    issues.append(issue)
+                    duplicate = bool(safe and repair_safe)
+                elif source_id:
+                    seen_source[source_id] = row
+                derived = (
+                    row.get("provenance") == "derived_from_net_liquidation_minus_runtime_pnl_delta"
+                    and row.get("classification_status") == "needs_review"
+                )
+                if derived:
+                    derived_key = (str(row.get("at_utc") or ""), _number(row.get("amount")), str(row.get("kind") or ""))
+                    if derived_key in seen_derived:
+                        issue = {"code": "duplicate_derived_adjustment", "account_name": name, "event_id": event_id, "safe_to_repair": True}
+                        issues.append(issue)
+                        duplicate = bool(repair_safe)
+                    else:
+                        seen_derived[derived_key] = row
+                if duplicate:
+                    repaired.append(issues[-1])
+                    changed = True
+                    continue
+                kept_events.append(row)
+            if repair_safe:
+                account["snapshots"] = kept_snapshots
+                account["events"] = kept_events
+        if changed:
+            _write(doc)
+        return {
+            "ok": True,
+            "generated_at_utc": _now(),
+            "account": account_name or "__all__",
+            "issues": issues,
+            "repaired": repaired,
+            "repair_policy": "exact_duplicates_only",
+            "requires_review": sum(1 for row in issues if not row.get("safe_to_repair")),
+        }
+
+
 def classify_event(account_name: str, event_id: str, kind: str, actor: str, note: str = "") -> Dict[str, Any]:
     kind = str(kind or "").strip().lower()
     if kind not in _KINDS - {"unclassified_adjustment"}:
-        raise ValueError("kind must be deposit, withdrawal, transfer, or fee")
+        raise ValueError("kind must be deposit, withdrawal, transfer, fee, or reconciliation")
     with _LOCK:
         doc = _read()
         account = doc["accounts"].get(str(account_name or "").strip())
@@ -250,7 +376,7 @@ def add_event(account_name: str, kind: str, amount: Any, actor: str, note: str =
               at_utc: Any = None, source: str = "manual", source_id: str = "") -> Dict[str, Any]:
     kind = str(kind or "").strip().lower()
     if kind not in _KINDS - {"unclassified_adjustment"}:
-        raise ValueError("kind must be deposit, withdrawal, transfer, or fee")
+        raise ValueError("kind must be deposit, withdrawal, transfer, fee, or reconciliation")
     account_name = str(account_name or "").strip()
     if not account_name:
         raise ValueError("account_name is required")

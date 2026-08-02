@@ -17,14 +17,27 @@ jobs:
         shell: pwsh
         working-directory: NT-Analyzer
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
-      - name: Run test suite
+      - name: Run release test runner
         run: python -m tests
+      - name: Run full pytest suite
+        run: python -m pytest -q
+      - name: Compile Python sources
+        run: python -m compileall -q app tests
+      - name: Validate Aurora JavaScript
+        run: |
+          Get-ChildItem app\static\aurora\assets -Recurse -Filter *.js | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   bridge-build-if-nt8-present:
     runs-on: windows-latest
@@ -33,8 +46,8 @@ jobs:
         shell: pwsh
         working-directory: NT-Analyzer
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
       - name: Build bridge when NinjaTrader assemblies are available

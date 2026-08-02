@@ -8,3 +8,4 @@
 *.html text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
+NT-Analyzer/docs/STRATFORGE_ORCHESTRATOR_BACKLOG_ISSUES_1-210_SOURCE.md whitespace=-trailing-space

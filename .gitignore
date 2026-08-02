@@ -36,15 +36,40 @@
 /NT-Analyzer/jobs/
 /NT-Analyzer/data/batches/
 /NT-Analyzer/data/commands/
+/NT-Analyzer/data/durable/
 /NT-Analyzer/data/reports/
 /NT-Analyzer/data/profiles/
 /NT-Analyzer/data/research/
 /NT-Analyzer/data/runtime/
 /NT-Analyzer/data/ops/
+/NT-Analyzer/data/operations/
+/NT-Analyzer/data/logs/
 /NT-Analyzer/data/last_job.txt
+/NT-Analyzer/data/integrations/news.json
+/NT-Analyzer/data/integrations/live_news.json
+/NT-Analyzer/data/integrations/telegram.settings.json
+/NT-Analyzer/data/integrations/telegram.state.json
+/NT-Analyzer/data/integrations/telegram.topics.json
+/NT-Analyzer/data/integrations/telegram.reply-outbox.json
+/NT-Analyzer/data/integrations/telegram.update-inbox.json
+/NT-Analyzer/data/integrations/telegram.remote-access.json
+/NT-Analyzer/data/integrations/*.lock
+/NT-Analyzer/data/integrations/cloudflared-tunnel.state.json
+/NT-Analyzer/data/integrations/accounts.dpapi
+/NT-Analyzer/data/integrations/*.dpapi
+/NT-Analyzer/data/integrations/*.dpapi.*
+/NT-Analyzer/data/integrations/*.recovery.json
+/NT-Analyzer/data/integrations/avatars/
+/NT-Analyzer/data/integrations/ai_agents.settings.json
+/NT-Analyzer/data/integrations/ai_agents.registry.json
+/NT-Analyzer/data/integrations/agent_voices.json
+/NT-Analyzer/data/integrations/ai_agent_keys.dpapi
+/NT-Analyzer/data/tenants/
 /NT-Analyzer/logs/
 /NT-Analyzer/_backup_before_restore_*/
 /NT-Analyzer/research_archive/
+/NT-Analyzer/.artifacts/
+/NT-Analyzer/data/staging/
 
 # Keep only safe static catalog sources in Git.
 /NT-Analyzer/data/catalog/*.json
@@ -83,7 +108,9 @@
 
 # Explicit audit/runtime artifacts called out before first public push.
 /NT-Analyzer/data/ops/audit_log.jsonl
+/NT-Analyzer/data/audit/
 /NT-Analyzer/docs/audit/
+/NT-Analyzer/docs/CEO/
 
 # AI Strategy Lab generated/runtime artifacts. Keep source prompts, schemas,
 # reference docs, and app code in Git; keep experiment history and model IO local.
@@ -96,11 +123,27 @@
 /NT-Analyzer/ai_lab/*_REPORT.md
 /NT-Analyzer/ai_lab/model_benchmark/results/
 /NT-Analyzer/ai_lab/model_benchmark/reports/
+/NT-Analyzer/ai_lab/model_benchmark/comparison_*/
+/NT-Analyzer/ai_lab/model_benchmark/external_results/
+/NT-Analyzer/ai_lab/model_benchmark/local_*_20*/
+/NT-Analyzer/ai_lab/model_benchmark/zai_*_20*/
 /NT-Analyzer/ai_lab/model_benchmark/AI_SANDBOX_COMPILE_TEST/
 /NT-Analyzer/ai_lab/model_benchmark/**/__pycache__/
 /NT-Analyzer/ai_lab/user_research/*
 !/NT-Analyzer/ai_lab/user_research/README.md
 /NT-Analyzer/ai_lab/reference_strategies/source_acquisition/raw_sources/
+
+# AI Strategy Lab runtime state under environment data roots.
+/NT-Analyzer/data/ai_lab/registry/agent_usage/
+/NT-Analyzer/data/ai_lab/registry/chief_reports/
+/NT-Analyzer/data/ai_lab/registry/chief_agent.json
+/NT-Analyzer/data/ai_lab/registry/news_agent.json
+/NT-Analyzer/data/ai_lab/registry/orchestrator_conversation.jsonl
+/NT-Analyzer/data/ai_lab/registry/orchestrator_conversations.json
+
+# Local closeout artifacts. Preserve on disk or in artifact storage; do not commit.
+/NT-Analyzer/dev10-reconstructed-rollback.bundle
+/NT-Analyzer/docs.zip
 
 # Internal AI task briefs and local strategy research notes.
 /NT-Analyzer/docs/ai/

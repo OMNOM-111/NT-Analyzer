@@ -1,6 +1,8 @@
 using System;
+using Newtonsoft.Json.Linq;
 using NinjaTrader.NinjaScript;
 using NTAnalyzerBridge.Config;
+using NTAnalyzerBridge.Connector;
 using NTAnalyzerBridge.Execution;
 using NTAnalyzerBridge.JobQueue;
 using NTAnalyzerBridge.Reporting;
@@ -24,13 +26,30 @@ namespace NTAnalyzerBridge
     /// </summary>
     public sealed class BridgeAddOn : AddOnBase
     {
+        public static BridgeAddOn Instance { get; private set; }
+
         private BridgeConfig _cfg;
         private StrategyLoader _strategyLoader;
         private JobQueueWatcher _watcher;
         private CatalogRefresher _catalogRefresher;
         private CompileErrorExporter _compileErrorExporter;
         private RuntimeTelemetryExporter _runtimeExporter;
+        private RuntimeMarketDataExporter _marketDataExporter;
         private RuntimeCommandProcessor _commandProcessor;
+        private ConnectorClient _connectorClient;
+        private ProductionMarketDataExporter _productionMarketDataExporter;
+
+        internal RuntimeMarketDataExporter MarketDataExporter { get { return _marketDataExporter; } }
+        internal ProductionMarketDataExporter ProductionMarketDataExporter
+        {
+            get { return _productionMarketDataExporter; }
+        }
+
+        internal bool QueueProductionMarketData(JArray bars)
+        {
+            ConnectorClient client = _connectorClient;
+            return client != null && client.QueueMarketDataBatch(bars);
+        }
 
         protected override void OnStateChange()
         {
@@ -38,6 +57,7 @@ namespace NTAnalyzerBridge
             {
                 Name        = "NTAnalyzerBridge";
                 Description = "NT-Analyzer file-queue bridge (Variant 1 Strategy Analyzer)";
+                Instance    = this;
             }
             else if (State == NinjaTrader.NinjaScript.State.Configure)
             {
@@ -66,6 +86,11 @@ namespace NTAnalyzerBridge
 
                 BridgeLog.Configure(_cfg.NinjaTraderUserDir);
                 BridgeLog.Info("config loaded from " + configPath);
+                if (_cfg.IsProductionConnector)
+                {
+                    StartProductionConnector();
+                    return;
+                }
                 BridgeLog.Info("project_root=" + _cfg.ProjectRoot);
                 BridgeLog.Info("jobs_dir=" + _cfg.JobsDir);
 
@@ -124,7 +149,7 @@ namespace NTAnalyzerBridge
                 // No order placement, no strategy enable/disable.
                 try
                 {
-                    _runtimeExporter = new RuntimeTelemetryExporter(_cfg.ProjectRoot);
+                    _runtimeExporter = new RuntimeTelemetryExporter(_cfg.ProjectRoot, _cfg.RuntimeDataDir);
                     _runtimeExporter.Start();
                 }
                 catch (Exception rex)
@@ -132,12 +157,25 @@ namespace NTAnalyzerBridge
                     BridgeLog.Error("RuntimeTelemetryExporter start failed", rex);
                 }
 
-                // Phase 18: paper-only command processor.
-                // Reads data/runtime/commands.jsonl and enable/disables NinjaScript
-                // strategy instances. Live accounts are hard-rejected.
+                // Dynamic historical + realtime bar subscriptions requested by
+                // the browser desktop. Read-only; never places orders.
                 try
                 {
-                    _commandProcessor = new RuntimeCommandProcessor(_cfg.ProjectRoot);
+                    _marketDataExporter = new RuntimeMarketDataExporter(_cfg.ProjectRoot, _cfg.RuntimeDataDir);
+                    _marketDataExporter.Start();
+                }
+                catch (Exception mdex)
+                {
+                    BridgeLog.Error("RuntimeMarketDataExporter start failed", mdex);
+                }
+
+                // Phase 18: paper-only command processor.
+                // Reads data/runtime/commands.jsonl and enable/disables NinjaScript
+                // strategy instances or reconnects paper/demo/playback connections.
+                // Live accounts are hard-rejected.
+                try
+                {
+                    _commandProcessor = new RuntimeCommandProcessor(_cfg);
                     _commandProcessor.Start();
                 }
                 catch (Exception cpex)
@@ -151,11 +189,58 @@ namespace NTAnalyzerBridge
             }
         }
 
+        private void StartProductionConnector()
+        {
+            BridgeLog.Info("mode=production_connector; local repository/job watcher disabled");
+            BridgeLog.Info("connector_origin=" + _cfg.ProductionConnector.ServerOrigin);
+            BridgeLog.Info("runtime_spool=" + _cfg.RuntimeDataDir);
+
+            // Local telemetry remains the source for account/strategy state,
+            // but the spool is private to the Windows installation and is not
+            // a server-shared filesystem boundary.
+            _runtimeExporter = new RuntimeTelemetryExporter("", _cfg.RuntimeDataDir);
+            _runtimeExporter.Start();
+
+            // The existing processor is paper-only and idempotent. Remote
+            // commands reach it through the private local spool after the
+            // Connector validates workspace, capability, expiry and ids.
+            _commandProcessor = new RuntimeCommandProcessor(_cfg);
+            _commandProcessor.Start();
+
+            _connectorClient = new ConnectorClient(_cfg);
+            _connectorClient.Start();
+
+            if (_cfg.ProductionConnector.MarketDataStreams != null &&
+                _cfg.ProductionConnector.MarketDataStreams.Count > 0)
+            {
+                _productionMarketDataExporter = new ProductionMarketDataExporter(
+                    _cfg.ProductionConnector.MarketDataStreams,
+                    QueueProductionMarketData);
+                _productionMarketDataExporter.Start();
+            }
+            else
+            {
+                BridgeLog.Info("production_connector market-data exporter disabled: no configured streams");
+            }
+        }
+
         private void StopBridge()
         {
+            try { _productionMarketDataExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: productionMarketData.Stop failed", ex); }
+            finally { _productionMarketDataExporter = null; }
+
+            try { _connectorClient?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: connector.Stop failed", ex); }
+            finally { _connectorClient = null; }
+
             try { _commandProcessor?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: command.Stop failed", ex); }
             finally { _commandProcessor = null; }
+
+            try { _marketDataExporter?.Stop(); }
+            catch (Exception ex) { BridgeLog.Error("StopBridge: marketData.Stop failed", ex); }
+            finally { _marketDataExporter = null; }
 
             try { _runtimeExporter?.Stop(); }
             catch (Exception ex) { BridgeLog.Error("StopBridge: runtime.Stop failed", ex); }

@@ -4,7 +4,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$ShortcutName = 'NT-Analyzer AI Lab'
+    [string]$ShortcutName = 'StratForge AI Lab'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -16,13 +16,20 @@ if (-not (Test-Path $target)) { throw "Missing target: $target" }
 
 $desktop = [Environment]::GetFolderPath('Desktop')
 $lnkPath = Join-Path $desktop "$ShortcutName.lnk"
+$legacyLnkPath = Join-Path $desktop 'NT-Analyzer AI Lab.lnk'
+$brandIcon = Join-Path $projectRoot 'app\static\brand\stratforge-icon.ico'
+
+if ((Test-Path -LiteralPath $legacyLnkPath) -and -not (Test-Path -LiteralPath $lnkPath)) {
+    Move-Item -LiteralPath $legacyLnkPath -Destination $lnkPath -Force
+}
+if (-not (Test-Path -LiteralPath $brandIcon)) { throw "Missing brand icon: $brandIcon" }
 
 $wsh = New-Object -ComObject WScript.Shell
 $lnk = $wsh.CreateShortcut($lnkPath)
 $lnk.TargetPath = $target
 $lnk.WorkingDirectory = $projectRoot
-$lnk.Description = 'Launch NT-Analyzer AI Strategy Lab stack'
-$lnk.IconLocation = "$env:WINDIR\System32\shell32.dll,167"
+$lnk.Description = 'Launch StratForge AI Lab stack'
+$lnk.IconLocation = "$brandIcon,0"
 $lnk.Save()
 
 Write-Host "Shortcut created: $lnkPath" -ForegroundColor Green

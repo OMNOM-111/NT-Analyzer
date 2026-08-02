@@ -1,0 +1,372 @@
+{
+  "version": 2,
+  "role_stats": {
+    "vitek_dispatcher": {
+      "count": 12,
+      "rating_weight": 12.0,
+      "weighted_sum": 12.0,
+      "avg": 1.0,
+      "sum": 12.0,
+      "ones": 12,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 11.675438617124836
+    },
+    "accountant": {
+      "count": 6,
+      "rating_weight": 6.0,
+      "weighted_sum": 12.0,
+      "avg": 2.0,
+      "sum": 12.0,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 5.9254981287468755
+    }
+  },
+  "model_stats": {
+    "unknown": {
+      "provider": "",
+      "count": 12,
+      "rating_weight": 12.0,
+      "weighted_sum": 12.0,
+      "avg": 1.0,
+      "sum": 12.0,
+      "ones": 12,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 11.675438617124836
+    },
+    "gpt-test": {
+      "provider": "local",
+      "count": 6,
+      "rating_weight": 6.0,
+      "weighted_sum": 12.0,
+      "avg": 2.0,
+      "sum": 12.0,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 5.9254981287468755
+    }
+  },
+  "role_model_stats": {
+    "vitek_dispatcher::unknown": {
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "count": 12,
+      "rating_weight": 12.0,
+      "weighted_sum": 12.0,
+      "avg": 1.0,
+      "sum": 12.0,
+      "ones": 12,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 11.675438617124836
+    },
+    "accountant::gpt-test": {
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "count": 6,
+      "rating_weight": 6.0,
+      "weighted_sum": 12.0,
+      "avg": 2.0,
+      "sum": 12.0,
+      "updated_at_utc": "2026-07-25T21:21:59Z",
+      "weight": 5.9254981287468755
+    }
+  },
+  "workspace_stats": {
+    "ws-shared": {
+      "role_stats": {
+        "vitek_dispatcher": {
+          "count": 6,
+          "rating_weight": 6.0,
+          "weighted_sum": 6.0,
+          "avg": 1.0,
+          "sum": 6.0,
+          "ones": 6,
+          "updated_at_utc": "2026-07-25T21:21:56Z",
+          "weight": 5.9254981287468755
+        }
+      },
+      "model_stats": {
+        "unknown": {
+          "provider": "",
+          "count": 6,
+          "rating_weight": 6.0,
+          "weighted_sum": 6.0,
+          "avg": 1.0,
+          "sum": 6.0,
+          "ones": 6,
+          "updated_at_utc": "2026-07-25T21:21:56Z",
+          "weight": 5.9254981287468755
+        }
+      },
+      "role_model_stats": {
+        "vitek_dispatcher::unknown": {
+          "role_id": "vitek_dispatcher",
+          "model_id": "unknown",
+          "provider": "",
+          "count": 6,
+          "rating_weight": 6.0,
+          "weighted_sum": 6.0,
+          "avg": 1.0,
+          "sum": 6.0,
+          "ones": 6,
+          "updated_at_utc": "2026-07-25T21:21:56Z",
+          "weight": 5.9254981287468755
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "event_id": "message_rating:ws-shared:MSG-5B82996C5986",
+      "at": "2026-07-25T20:02:58Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-5B82996C5986",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-FE3454075C8B",
+      "at": "2026-07-25T20:03:02Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-FE3454075C8B",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-579E97B9F7D2",
+      "at": "2026-07-25T20:03:02Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-579E97B9F7D2",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-EBCA6913E2D9",
+      "at": "2026-07-25T20:06:15Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-EBCA6913E2D9",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-BD2BBA5BDB3C",
+      "at": "2026-07-25T20:06:19Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-BD2BBA5BDB3C",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-F1CF78DDA10D",
+      "at": "2026-07-25T20:06:19Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-F1CF78DDA10D",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-82EC886B8525",
+      "at": "2026-07-25T20:30:29Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-82EC886B8525",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-CB9C31B25A70",
+      "at": "2026-07-25T20:30:32Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-CB9C31B25A70",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-A103E8FA4BC7",
+      "at": "2026-07-25T20:30:32Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-A103E8FA4BC7",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-3177061540C9",
+      "at": "2026-07-25T20:38:43Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-3177061540C9",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-82DB2C788934",
+      "at": "2026-07-25T20:38:47Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-82DB2C788934",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-88C449DD4153",
+      "at": "2026-07-25T20:38:47Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-88C449DD4153",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-3D4233ADA685",
+      "at": "2026-07-25T21:07:12Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-3D4233ADA685",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-290479D64EB6",
+      "at": "2026-07-25T21:07:15Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-290479D64EB6",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-493A672C6F50",
+      "at": "2026-07-25T21:07:15Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-493A672C6F50",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-135EBCA935FE",
+      "at": "2026-07-25T21:21:56Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-135EBCA935FE",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-9C6B160A5534",
+      "at": "2026-07-25T21:21:59Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-9C6B160A5534",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-F596BDFCC33B",
+      "at": "2026-07-25T21:21:59Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-F596BDFCC33B",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    }
+  ]
+}

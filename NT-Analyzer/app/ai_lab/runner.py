@@ -27,6 +27,7 @@ import threading
 import time
 import traceback
 import uuid
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -61,6 +62,10 @@ class RunBlockedLMStudio(Exception):
         )
 
 
+class RunScopeRequired(Exception):
+    """Raised before a Production LLM pipeline can start without attribution."""
+
+
 _LOCK = threading.Lock()
 _CURRENT: Optional[Dict[str, Any]] = None
 _THREAD: Optional[threading.Thread] = None
@@ -71,18 +76,122 @@ _RUN_STATE: Optional[Dict[str, Any]] = None
 _FINALIZE_MAX_WAIT_SEC = 1800  # 30 min upper bound on waiting for result.json
 _FINALIZE_POLL_SEC = 5
 
+_STRUCTURAL_BREAKER_CODES = {
+    "STAGED_DESIGN_FAILED", "PIPELINE_EXCEPTION", "SMOKE_DATA_UNVERIFIED",
+    "FULL_DATA_UNVERIFIED", "FULL_DATA_INSUFFICIENT", "BLOCKED_LM_STUDIO",
+}
+
+
+def _llm_usage_context(args: Dict[str, Any], source: str) -> Dict[str, Any]:
+    return {
+        "user_id": args.get("user_id"),
+        "user_name": args.get("user_name"),
+        "workspace_id": args.get("workspace_id"),
+        "conversation_id": args.get("conversation_id"),
+        "request_source": source,
+    }
+
+
+def _require_llm_scope(args: Dict[str, Any]) -> None:
+    """Reject unscoped Production AI work before bootstrapping a pipeline."""
+    from . import universal_llm
+
+    with universal_llm.usage_scope(_llm_usage_context(args, "research_runner_admission")):
+        try:
+            universal_llm.require_valid_production_scope()
+        except universal_llm.BudgetExceeded as exc:
+            raise RunScopeRequired(str(exc)) from exc
+
+
+def _failure_signature(exp: Dict[str, Any]) -> str:
+    verdict = exp.get("verdict") if isinstance(exp.get("verdict"), dict) else {}
+    code = str(verdict.get("rejection_code") or "").strip()
+    if code:
+        return code
+    status = str(exp.get("status") or "").strip()
+    return status if status.endswith(("_failed", "_timeout")) else ""
+
+
+def _breaker_threshold(signature: str) -> int:
+    if signature in _STRUCTURAL_BREAKER_CODES or signature.endswith(("_failed", "_timeout")):
+        return 2
+    if signature == "SMOKE_ZERO_TRADES":
+        return 5
+    return 0
+
+
+def _notify_circuit_breaker(experiment_id: str, signature: str, count: int) -> None:
+    try:
+        from .. import telegram_service
+        telegram_service.send_chief_report(
+            "Работа остановлена защитой",
+            [
+                "Дмитрий Сергеевич, остановил новые запуски: повторяется одна системная ошибка.",
+                "Проверяю причину; новые стратегии и платные запросы пока не запускаю.",
+            ],
+            urgent=True,
+            model_name="deterministic safety circuit breaker",
+        )
+    except Exception:
+        pass
+    activity.log(
+        experiment_id, "safety", "circuit_breaker_open", level="error",
+        signature=signature, repeated=count,
+    )
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def current() -> Optional[Dict[str, Any]]:
+def _scope_identity(scope: Optional[Dict[str, Any]]) -> tuple[str, int]:
+    if not isinstance(scope, dict):
+        return "", 0
+    active = scope.get("active_workspace") if isinstance(scope.get("active_workspace"), dict) else {}
+    workspace_id = str(scope.get("workspace_id") or active.get("workspace_id") or "").strip()
+    try:
+        user_id = int(scope.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    return workspace_id, user_id
+
+
+def _state_matches_scope(state: Dict[str, Any], scope: Optional[Dict[str, Any]]) -> bool:
+    """Apply tenant filtering only to explicitly scoped Production callers.
+
+    Internal coordinator calls intentionally pass ``None``. HTTP callers pass
+    their authenticated scope, so a busy run in another workspace is neither
+    visible nor cancellable through the public API.
+    """
+    if scope is None:
+        return True
+    from .. import runtime_env
+
+    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+        return True
+    workspace_id, user_id = _scope_identity(scope)
+    return bool(
+        workspace_id and user_id > 0
+        and str(state.get("workspace_id") or "") == workspace_id
+        and int(state.get("user_id") or 0) == user_id
+    )
+
+
+def _visible_busy_state(state: Dict[str, Any], scope: Dict[str, Any]) -> Dict[str, Any]:
+    if _state_matches_scope(state, scope):
+        return dict(state)
+    return {"status": "busy"}
+
+
+def current(scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Return running pipeline info, or None if idle.
 
     The returned dict is a shallow copy so callers can safely serialize it.
     """
     with _LOCK:
         if _CURRENT is None:
+            return None
+        if not _state_matches_scope(_CURRENT, scope):
             return None
         snap = _api_snap(_CURRENT)
         exp = registry.read_experiment(_CURRENT["experiment_id"])
@@ -117,9 +226,13 @@ def is_cancelled(experiment_id: Optional[str] = None) -> bool:
         return bool(ev and ev.is_set())
 
 
-def request_cancel(experiment_id: str) -> Dict[str, Any]:
+def request_cancel(experiment_id: str, *, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     with _LOCK:
-        if _CURRENT is None or _CURRENT.get("experiment_id") != experiment_id:
+        if (
+            _CURRENT is None
+            or _CURRENT.get("experiment_id") != experiment_id
+            or not _state_matches_scope(_CURRENT, scope)
+        ):
             return {"ok": False, "cancelled": False, "reason": "not current"}
         ev = _CURRENT.get("cancel_event")
         if ev is None:
@@ -195,6 +308,12 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     # Keep legacy field populated so orchestrator.start_skeleton still serializes it.
     args["max_cells_per_run"] = strategy_count
 
+    # Every Production research run, including deterministic/template runs,
+    # must carry an authenticated user/workspace owner before any background
+    # state is created. Development remains backward compatible.
+    _require_llm_scope(args)
+    run_workspace_id, run_user_id = _scope_identity(args)
+
     # Reject a concurrent start before any LM Studio traffic.  The preflight
     # can take minutes on local models; running it for a request that cannot
     # start both delays the 409 response and competes with the active model
@@ -203,7 +322,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     with _LOCK:
         if _is_busy_locked():
             assert _CURRENT is not None
-            raise RunnerBusy(_CURRENT)
+            raise RunnerBusy(_visible_busy_state(_CURRENT, args))
 
     bootstrap_result: Dict[str, Any] = {"skipped": True}
     if (
@@ -250,7 +369,7 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
     with _LOCK:
         if _is_busy_locked():
             assert _CURRENT is not None
-            raise RunnerBusy(dict(_CURRENT))
+            raise RunnerBusy(_visible_busy_state(_CURRENT, args))
 
         run_id = "RUN-" + uuid.uuid4().hex[:12]
         deadline = (
@@ -269,10 +388,19 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
             "started_at_utc": _now(),
             "cancel_event": cancel_event,
             "run_id": run_id,
+            "workspace_id": run_workspace_id[:96],
+            "user_id": run_user_id,
+            "conversation_id": str(args.get("conversation_id") or "default")[:64],
         }
         _RUN_STATE = {
             "run_id": run_id,
             "started_utc": _now(),
+            "research_id": str(args.get("research_id") or ""),
+            "research_title": str(args.get("research_title") or ""),
+            "research_family": str(args.get("research_family_key") or ""),
+            "workspace_id": run_workspace_id[:96],
+            "user_id": run_user_id,
+            "conversation_id": str(args.get("conversation_id") or "default")[:64],
             "strategy_count": strategy_count,
             "iterations_per_strategy": iterations_per_strategy,
             "iterations_unlimited": iterations_unlimited,
@@ -301,7 +429,9 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
         _persist_run_state_locked()
 
         def _worker():
-            _run_pipeline_worker(experiment_id, args, run_id)
+            from . import universal_llm
+            with universal_llm.usage_scope(_llm_usage_context(args, "research_runner")):
+                _run_pipeline_worker(experiment_id, args, run_id)
 
         _THREAD = threading.Thread(
             target=_worker, name=f"ai-lab-runner-{run_id}", daemon=True
@@ -315,11 +445,99 @@ def start(args: Dict[str, Any]) -> Dict[str, Any]:
         "class_name": skeleton.get("class_name"),
         "queued": True,
         "run_id": run_id,
+        "research_id": str(args.get("research_id") or ""),
+        "research_title": str(args.get("research_title") or ""),
         "strategy_count": strategy_count,
         "iterations_per_strategy": iterations_per_strategy,
         "iterations_unlimited": iterations_unlimited,
         "max_total_runtime_minutes": runtime_minutes,
     }
+
+
+def _prepare_next_during_backtest(
+    source_experiment_id: str,
+    args: Dict[str, Any],
+    holder: Dict[str, Any],
+    run_id: str,
+) -> None:
+    """Use otherwise idle model time while NinjaTrader owns the backtest lane."""
+    from . import orchestrator
+
+    _update_run_state(staged_pipeline={
+        "state": "waiting_for_backtest", "source_experiment_id": source_experiment_id,
+    })
+    deadline = time.time() + 900
+    while time.time() < deadline and not _is_run_cancelled():
+        source = registry.read_experiment(source_experiment_id) or {}
+        status = str(source.get("status") or "")
+        if status == "backtesting" or registry.is_terminal(status):
+            break
+        time.sleep(2)
+    if _is_run_cancelled():
+        holder["cancelled"] = True
+        return
+    source = registry.read_experiment(source_experiment_id) or {}
+    next_args = dict(args)
+    source_family = str(source.get("family") or "")
+    source_hypothesis = str(source.get("hypothesis") or "")[:500]
+    base_goal = str(next_args.get("user_goal") or next_args.get("goal") or "")
+    next_args["user_goal"] = (
+        base_goal
+        + "\nStaged pipeline: prepare a structurally distinct next strategy while the prior one "
+        + f"is backtesting. Avoid copying family={source_family}; prior hypothesis={source_hypothesis}"
+    )[:3000]
+    next_args["staged_source_experiment_id"] = source_experiment_id
+    next_args["avoid_families"] = [source_family] if source_family else []
+    _update_run_state(staged_pipeline={
+        "state": "designing", "source_experiment_id": source_experiment_id,
+    })
+    prepared = orchestrator.prepare_strategy_draft(next_args)
+    if holder.get("abandoned"):
+        prepared["status"] = "archived"
+        prepared["archive_reason"] = "staged planner exceeded handoff deadline"
+        registry.write_experiment(prepared)
+        return
+    holder["experiment"] = prepared
+    _update_run_state(staged_pipeline={
+        "state": "ready" if prepared.get("status") == "draft_ready" else "failed",
+        "source_experiment_id": source_experiment_id,
+        "developing_experiment_id": prepared.get("experiment_id"),
+        "status": prepared.get("status"),
+        "family": prepared.get("family"),
+        "model": ((prepared.get("staged_pipeline") or {}).get("model")),
+    })
+
+
+def _prepare_next_with_usage_scope(
+    source_experiment_id: str,
+    args: Dict[str, Any],
+    holder: Dict[str, Any],
+    run_id: str,
+) -> None:
+    """Restore user/workspace attribution in the staged background thread."""
+    from . import universal_llm
+
+    with universal_llm.usage_scope(_llm_usage_context(args, "research_runner_staged")):
+        _prepare_next_during_backtest(source_experiment_id, args, holder, run_id)
+
+
+def _attach_staged_feedback(next_experiment: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+    committee = source.get("agent_committee") or {}
+    optimizer = ((committee.get("reports") or {}).get("optimizer") or {})
+    next_experiment["staged_feedback"] = {
+        "source_experiment_id": source.get("experiment_id"),
+        "source_status": source.get("status"),
+        "source_family": source.get("family"),
+        "source_verdict": source.get("verdict") or {},
+        "source_metrics": {
+            key: (source.get("analysis") or {}).get(key)
+            for key in ("trades_total", "net_after_commission", "pf_after_commission", "dd_after_commission")
+        },
+        "optimizer_advice": str(optimizer.get("content") or "")[:2500],
+        "shared_at_utc": _now(),
+    }
+    registry.write_experiment(next_experiment)
+    return next_experiment
 
 
 def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) -> None:
@@ -337,6 +555,8 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
         deadline = time.time() + int(runtime_min) * 60
     stop_on_first_candidate = bool(args.get("stop_on_first_candidate", False))
     candidate_count = 0
+    failure_counts: Dict[str, int] = {}
+    breaker_open = False
 
     try:
         for strategy_idx in range(1, strategy_count + 1):
@@ -349,6 +569,23 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
 
             _update_run_state(strategy_idx=strategy_idx, iteration_idx=1,
                               current_experiment_id=current_experiment_id)
+            staged_holder: Dict[str, Any] = {}
+            staged_thread: Optional[threading.Thread] = None
+            if strategy_idx < strategy_count:
+                staged_args = dict(args)
+                staged_args.update({
+                    "parent_experiment_id": current_experiment_id,
+                    "research_mode": "research_until_candidate_or_budget_exhausted",
+                    "research_run_id": run_id,
+                    "research_attempt_index": strategy_idx + 1,
+                    "max_cells_per_run": strategy_count,
+                })
+                staged_thread = threading.Thread(
+                    target=_prepare_next_with_usage_scope,
+                    args=(current_experiment_id, staged_args, staged_holder, run_id),
+                    name=f"ai-lab-staged-{run_id}-{strategy_idx + 1}", daemon=True,
+                )
+                staged_thread.start()
             activity.log(
                 current_experiment_id, "runner", "strategy_started", level="info",
                 run_id=run_id, strategy_idx=strategy_idx,
@@ -392,7 +629,29 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
                     candidate_count=candidate_count,
                 )
 
+                signature = _failure_signature(exp)
+                if signature:
+                    failure_counts[signature] = failure_counts.get(signature, 0) + 1
+                    threshold = _breaker_threshold(signature)
+                    if threshold and failure_counts[signature] >= threshold:
+                        breaker_open = True
+                        _update_run_state(
+                            circuit_breaker={
+                                "open": True, "signature": signature,
+                                "count": failure_counts[signature],
+                                "opened_at_utc": _now(),
+                            }
+                        )
+                        _notify_circuit_breaker(
+                            current_experiment_id, signature, failure_counts[signature],
+                        )
+                        break
+
                 # Should we mutate and try another iteration in the same cell?
+                with _LOCK:
+                    if _RUN_STATE is not None and _RUN_STATE.get("run_id") == run_id:
+                        iterations_per_strategy = _RUN_STATE.get("iterations_per_strategy")
+                        stop_on_first_candidate = bool(_RUN_STATE.get("stop_on_first_candidate"))
                 if not _inner_should_continue(
                     exp, iter_idx,
                     iterations_per_strategy=iterations_per_strategy,
@@ -436,6 +695,10 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
                 run_id=run_id, strategy_idx=strategy_idx,
                 candidate_count=candidate_count,
             )
+            if breaker_open:
+                if staged_thread is not None and staged_thread.is_alive():
+                    staged_holder["abandoned"] = True
+                break
             if stop_on_first_candidate and candidate_count >= 1:
                 break
             if strategy_idx >= strategy_count:
@@ -445,15 +708,26 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
             if deadline is not None and time.time() >= deadline:
                 break
 
-            next_args = dict(args)
-            next_args.update({
-                "parent_experiment_id": current_experiment_id,
-                "research_mode": "research_until_candidate_or_budget_exhausted",
-                "research_run_id": run_id,
-                "research_attempt_index": strategy_idx + 1,
-                "max_cells_per_run": strategy_count,
-            })
-            next_skeleton = orchestrator.start_skeleton(next_args)
+            source_experiment = registry.read_experiment(current_experiment_id) or {}
+            if staged_thread is not None:
+                wait_limit = 240.0
+                if deadline is not None:
+                    wait_limit = max(1.0, min(wait_limit, deadline - time.time()))
+                staged_thread.join(timeout=wait_limit)
+            next_skeleton = staged_holder.get("experiment")
+            if not isinstance(next_skeleton, dict) or next_skeleton.get("status") != "draft_ready":
+                if staged_thread is not None and staged_thread.is_alive():
+                    staged_holder["abandoned"] = True
+                next_args = dict(args)
+                next_args.update({
+                    "parent_experiment_id": current_experiment_id,
+                    "research_mode": "research_until_candidate_or_budget_exhausted",
+                    "research_run_id": run_id,
+                    "research_attempt_index": strategy_idx + 1,
+                    "max_cells_per_run": strategy_count,
+                })
+                next_skeleton = orchestrator.start_skeleton(next_args)
+            next_skeleton = _attach_staged_feedback(next_skeleton, source_experiment)
             current_experiment_id = next_skeleton["experiment_id"]
             with _LOCK:
                 if _CURRENT is not None:
@@ -469,6 +743,11 @@ def _run_pipeline_worker(experiment_id: str, args: Dict[str, Any], run_id: str) 
                 if _RUN_STATE is not None:
                     _RUN_STATE["current_experiment_id"] = current_experiment_id
                     _RUN_STATE["experiments"].append(current_experiment_id)
+                    _RUN_STATE["staged_pipeline"] = {
+                        "state": "promoted_to_execution",
+                        "developing_experiment_id": current_experiment_id,
+                        "status": next_skeleton.get("status"),
+                    }
                     _persist_run_state_locked()
     except Exception as e:  # noqa: BLE001
         activity.log(current_experiment_id, "runner", "pipeline_crashed", level="error",
@@ -557,10 +836,43 @@ def _inner_should_continue(
     verdict = (exp.get("verdict") or {}).get("outcome")
     # Mutate when verdict indicates mid-quality or explicit reject.
     if verdict in {"mutate", "reject"}:
+        if _strategy_is_stagnating(exp):
+            return False
         return True
     if status in {"rejected", "mutation_candidate"}:
+        if _strategy_is_stagnating(exp):
+            return False
         return True
     return False
+
+
+def _strategy_is_stagnating(exp: Dict[str, Any]) -> bool:
+    """Detect an evidence-backed plateau across the latest three variants."""
+    history = [
+        row for row in (exp.get("iteration_history") or [])
+        if isinstance(row, dict) and row.get("status") != "mutation_planned"
+    ]
+    if len(history) < 3:
+        return False
+    recent = history[-3:]
+    codes = {str(row.get("rejection_code") or "") for row in recent}
+    families = {str(row.get("family") or "") for row in recent}
+    hypotheses = [
+        re.sub(r"\s+", " ", str(row.get("hypothesis") or "").strip().lower())
+        for row in recent
+    ]
+    if hypotheses[0] and len(set(hypotheses)) == 1:
+        return True
+    if len(codes) != 1 or "" in codes or len(families) != 1:
+        return False
+    pfs = [row.get("pf_after_commission") for row in recent]
+    if any(value is None for value in pfs):
+        return False
+    try:
+        numeric = [float(value) for value in pfs]
+    except (TypeError, ValueError):
+        return False
+    return max(numeric[1:]) <= numeric[0] + 0.03
 
 
 def _record_iteration_in_experiment(exp: Dict[str, Any], iter_idx: int) -> None:
@@ -568,14 +880,20 @@ def _record_iteration_in_experiment(exp: Dict[str, Any], iter_idx: int) -> None:
     if not eid:
         return
     history = list(exp.get("iteration_history") or [])
+    analysis = exp.get("analysis") if isinstance(exp.get("analysis"), dict) else {}
+    backtests = [row for row in (exp.get("backtests") or []) if isinstance(row, dict)]
+    latest_test = backtests[-1] if backtests else {}
     final_row = {
         "iteration": iter_idx,
         "sha256": (exp.get("strategy_source") or {}).get("sha256"),
         "verdict": (exp.get("verdict") or {}).get("outcome"),
         "rejection_code": (exp.get("verdict") or {}).get("rejection_code"),
         "status": exp.get("status"),
-        "pf_after_commission": (exp.get("analysis") or {}).get("pf_after_commission"),
-        "trades_total": (exp.get("analysis") or {}).get("trades_total"),
+        "pf_after_commission": analysis.get("pf_after_commission", latest_test.get("pf_after_commission")),
+        "trades_total": analysis.get("trades_total", latest_test.get("trades")),
+        "net_after_commission": analysis.get("net_after_commission", latest_test.get("net_after_commission")),
+        "family": exp.get("family"),
+        "hypothesis": str(exp.get("hypothesis") or "")[:500],
         "score": (exp.get("arbitration") or {}).get("score"),
         "recorded_utc": _now(),
     }
@@ -711,13 +1029,15 @@ def _is_run_cancelled() -> bool:
         return bool(ev and ev.is_set())
 
 
-def run_status() -> Optional[Dict[str, Any]]:
+def run_status(scope: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Return current run progress (outer/inner indices, deadline, etc.).
 
     Returns None if no run is active.
     """
     with _LOCK:
         if _RUN_STATE is None:
+            return None
+        if not _state_matches_scope(_RUN_STATE, scope):
             return None
         snap = _api_snap(_RUN_STATE)
         # Live mirror of current experiment status.
@@ -733,11 +1053,14 @@ def run_status() -> Optional[Dict[str, Any]]:
         return snap
 
 
-def request_run_cancel(run_id: Optional[str] = None) -> Dict[str, Any]:
+def request_run_cancel(run_id: Optional[str] = None, *,
+                       scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Cancel the whole run: stops outer loop, cancels current inner iteration."""
     with _LOCK:
         if _RUN_STATE is None:
             return {"ok": False, "reason": "no_active_run"}
+        if not _state_matches_scope(_RUN_STATE, scope):
+            return {"ok": False, "reason": "not_current"}
         if run_id and _RUN_STATE.get("run_id") != run_id:
             return {"ok": False, "reason": "not_current", "current_run_id": _RUN_STATE.get("run_id")}
         _RUN_STATE["cancelled"] = True
@@ -754,6 +1077,20 @@ def request_run_cancel(run_id: Optional[str] = None) -> Dict[str, Any]:
         except Exception:
             pass
     return {"ok": True, "run_id": cur_run_id, "experiment_id": cur_eid}
+
+
+def update_run_policy(*, iterations_per_strategy: Optional[int] = None,
+                      stop_on_first_candidate: Optional[bool] = None) -> Dict[str, Any]:
+    """Adjust safe loop limits for the currently running strategy."""
+    with _LOCK:
+        if _RUN_STATE is None:
+            return {"ok": False, "reason": "no_active_run"}
+        if iterations_per_strategy is not None:
+            _RUN_STATE["iterations_per_strategy"] = max(1, min(20, int(iterations_per_strategy)))
+        if stop_on_first_candidate is not None:
+            _RUN_STATE["stop_on_first_candidate"] = bool(stop_on_first_candidate)
+        _persist_run_state_locked()
+        return {"ok": True, **_api_snap(_RUN_STATE)}
 
 
 def _await_and_finalize(experiment_id: str, job_id: str) -> None:

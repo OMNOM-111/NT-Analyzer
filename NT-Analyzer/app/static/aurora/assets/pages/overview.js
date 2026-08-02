@@ -3,6 +3,121 @@ UI.ready(renderLive);
 
 function ovYmd(date) { return date.toISOString().slice(0, 10); }
 
+function ovGuestDemoPack() {
+  // Realistic free-preview fixture so the frosted overview looks populated
+  // (as in the earlier test build), without calling authenticated APIs.
+  const today = new Date();
+  const daily = [];
+  let equity = 0;
+  for (let i = 59; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const pnl = Math.round((Math.sin(i / 4) * 180 + Math.cos(i / 7) * 90 + (i % 5 === 0 ? -120 : 40)) * 100) / 100;
+    equity += pnl;
+    daily.push({ date: ovYmd(d), pnl });
+  }
+  const strategies = [
+    { strategy: 'ORB Reversion', instrument: 'MNQ', pnl: 1840.5, trades: 42, win_rate: 0.57, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.45 * 100) / 100 })) },
+    { strategy: 'VWAP Fade', instrument: 'MES', pnl: 960.25, trades: 31, win_rate: 0.52, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.3 * 100) / 100 })) },
+    { strategy: 'London Break', instrument: 'MGC', pnl: -210.0, trades: 18, win_rate: 0.44, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.15 * 100) / 100 })) },
+    { strategy: 'Session Drift', instrument: 'MYM', pnl: 640.75, trades: 27, win_rate: 0.55, daily: daily.map((d, i) => ({ date: d.date, pnl: Math.round(d.pnl * 0.1 * 100) / 100 })) },
+  ];
+  const monthPnl = strategies.reduce((s, row) => s + row.pnl, 0);
+  const monthTrades = strategies.reduce((s, row) => s + row.trades, 0);
+  const summary = {
+    pnl: Math.round(monthPnl * 100) / 100,
+    trades: monthTrades,
+    win_rate: 0.54,
+    profit_factor: 1.62,
+    commission: 312.4,
+  };
+  const yearStrategies = strategies.map(row => ({
+    ...row,
+    pnl: Math.round(row.pnl * 4.2 * 100) / 100,
+    trades: row.trades * 4,
+    daily: daily.concat(daily.map((d, i) => {
+      const older = new Date(today.getTime() - (120 - i) * 86400000);
+      return { date: ovYmd(older), pnl: Math.round(d.pnl * 0.85 * 100) / 100 };
+    })),
+  }));
+  const yearSummary = {
+    pnl: Math.round(summary.pnl * 4.2 * 100) / 100,
+    trades: summary.trades * 4,
+    win_rate: 0.53,
+    profit_factor: 1.48,
+    commission: 1288.2,
+  };
+  const account = {
+    account_name: 'Sim101',
+    display_name: 'Demo Sim',
+    net_liquidation: 52480,
+    cash_value: 50120,
+    realized_pnl: yearSummary.pnl,
+    connection_status: 'connected',
+    is_live: false,
+    account_mode: 'sim',
+  };
+  const snapshots = daily.filter((_, i) => i % 2 === 0).map((d, i) => ({
+    at_utc: d.date + 'T21:00:00Z',
+    net_liquidation: 48000 + i * 75 + d.pnl,
+    cash_value: 46000 + i * 60,
+    source: 'demo',
+  }));
+  const month = { strategy_summary: summary, summary, strategies, has_trades: true };
+  const year = {
+    strategy_summary: yearSummary, summary: yearSummary, strategies: yearStrategies, has_trades: true,
+    strategy_breakdowns: {
+      daily: daily.map(d => ({ key: d.date, label: d.date, pnl: d.pnl })),
+      weekly: daily.filter((_, i) => i % 7 === 0).map(d => ({ key: d.date, label: 'с ' + d.date, pnl: Math.round(d.pnl * 4.5 * 100) / 100 })),
+      monthly: [
+        { key: '2026-04', label: '2026-04', pnl: 820 },
+        { key: '2026-05', label: '2026-05', pnl: 1140 },
+        { key: '2026-06', label: '2026-06', pnl: -260 },
+        { key: '2026-07', label: '2026-07', pnl: summary.pnl },
+      ],
+    },
+  };
+  const todayDoc = {
+    has_trades: true,
+    strategy_summary: { pnl: 186.5, trades: 4, win_rate: 0.75, profit_factor: 2.1, commission: 8.4 },
+    summary: { pnl: 186.5, trades: 4, win_rate: 0.75, profit_factor: 2.1, commission: 8.4 },
+  };
+  return {
+    account,
+    accounts: [account],
+    month,
+    year,
+    today: todayDoc,
+    history: { accounts: [{ account_name: account.account_name, snapshots, events: [
+      { kind: 'deposit', amount: 5000, classification_status: 'classified' },
+      { kind: 'fee', amount: 12.5, classification_status: 'classified' },
+    ] }] },
+    reports: { jobs: [
+      { job_id: 'demo-1', label: 'ORB MNQ · 90д', strategy: 'ORB Reversion', status: 'done', metrics: { net_profit_after_commission: 1240 } },
+      { job_id: 'demo-2', label: 'VWAP MES · walk-forward', strategy: 'VWAP Fade', status: 'done', origin: { type: 'ai_lab' }, metrics: { net_profit_after_commission: 680 } },
+      { job_id: 'demo-3', label: 'London MGC', strategy: 'London Break', status: 'done', metrics: { net_profit_after_commission: -145 } },
+    ] },
+    coverage: {
+      summary: { ready: 6, total_micros: 12 },
+      instruments: [
+        { root: 'MNQ', strategy_count: 3, best_status: 'ready' },
+        { root: 'MES', strategy_count: 2, best_status: 'ready' },
+        { root: 'MGC', strategy_count: 1, best_status: 'pending' },
+        { root: 'MYM', strategy_count: 2, best_status: 'ready' },
+      ],
+    },
+    ai: { totals: { experiments: 18, running_jobs: 0, champions: 3, candidates: 7 } },
+    health: { ninjatrader_running: true },
+    news: {
+      configured: true, total: 3,
+      items: [
+        { title: 'FOMC decision preview', impact: 'high', source: 'Calendar', published_at_utc: new Date().toISOString(), instruments: ['MNQ', 'MES'] },
+        { title: 'Crude inventory', impact: 'medium', source: 'EIA', published_at_utc: new Date(Date.now() - 3600000).toISOString(), instruments: ['MCL'] },
+        { title: 'Equity futures overnight', impact: 'low', source: 'Desk', published_at_utc: new Date(Date.now() - 7200000).toISOString(), instruments: ['MYM'] },
+      ],
+    },
+  };
+}
+
 function ovRangeParams(range, accountName) {
   const today = new Date();
   const params = { account: accountName };
@@ -45,9 +160,14 @@ function ovRhythmFallback(data, mode) {
   return Object.keys(grouped).sort().map(key => ({ key, label: key, pnl: Math.round(grouped[key] * 100) / 100 }));
 }
 
+function renderKpiLoading(box) {
+  const labels = ['Баланс счёта', 'Торговый P&L · месяц', 'Торговый P&L · год', 'Макс. просадка · год', 'Комиссия · год', 'Контур портфеля / AI'];
+  box.innerHTML = labels.map(label => `<div class="kpi kpi-loading" aria-busy="true"><div class="kpi-top"><span class="kpi-label">${label}</span><span class="kpi-ic"><span class="spinner"></span></span></div><div class="kpi-val sm">Загрузка…</div><div class="kpi-foot">Получаем актуальные данные</div></div>`).join('');
+}
+
 async function renderLive() {
   const kpiBox = UI.qs('#kpis');
-  UI.renderLoading(kpiBox, 'Загрузка счетов и метрик...');
+  if (!kpiBox.querySelector('.kpi-loading')) renderKpiLoading(kpiBox);
 
   let accountDoc = null;
   try { accountDoc = await API.http.runtimeAccounts({ signal: UI.signal() }); } catch (_) { accountDoc = null; }
@@ -58,41 +178,119 @@ async function renderLive() {
   const accountName = selectedAccount && selectedAccount.account_name;
   if (selectedAccount && (!preferred || preferred.account_name !== accountName)) UI.setSelectedAccount(accountName, false);
 
+  // AI summary may involve checking a local model runtime. It must enrich the
+  // overview, not hold back the account and trading data which are available
+  // independently.  Give it a short first-paint budget and refresh its two
+  // cards when the slower answer arrives.
+  const aiSummaryTask = API.http.aiSummary({}, { signal: UI.signal() }).catch(() => null);
+  const aiFirstPaint = Promise.race([
+    aiSummaryTask,
+    new Promise(resolve => window.setTimeout(() => resolve(null), 700)),
+  ]);
+  // The overview is useful as soon as its trading summary is ready. Account
+  // history, reports and news enrich lower panels, but must never block the
+  // first row of actionable metrics.
   const settled = await Promise.allSettled([
     API.http.performance({ period: 'month', account: accountName }, { signal: UI.signal() }),
     API.http.performance({ period: 'year', account: accountName }, { signal: UI.signal() }),
     API.http.performance({ period: 'today', account: accountName }, { signal: UI.signal() }),
+    API.http.coverage({}, { signal: UI.signal() }),
+    API.http.health({}, { signal: UI.signal() }),
+  ]);
+  const optionalTask = Promise.allSettled([
     API.http.runtimeAccountHistory({ account: accountName, limit: 500 }, { signal: UI.signal() }),
     API.http.reports({ limit: 6 }, { signal: UI.signal() }),
-    API.http.coverage({}, { signal: UI.signal() }),
-    API.http.aiSummary({}, { signal: UI.signal() }),
-    API.http.health({}, { signal: UI.signal() }),
     API.http.news({ limit: 5 }, { signal: UI.signal() }),
   ]);
   const value = index => settled[index].status === 'fulfilled' ? settled[index].value : null;
   const month = value(0);
   const year = value(1);
   const today = value(2);
-  const history = value(3);
-  const reports = value(4);
-  const coverage = value(5);
-  const ai = value(6);
-  const health = value(7);
-  const news = value(8);
+  const coverage = value(3);
+  const health = value(4);
+  const ai = await aiFirstPaint;
+  const guest = !!(window.UI && UI.isGuest && UI.isGuest());
+  const firstFail = settled.find(row => row.status === 'rejected');
+  const authBlocked = firstFail && firstFail.reason && (firstFail.reason.status === 401 || firstFail.reason.status === 403
+    || /whitelist|не входит/i.test(String(firstFail.reason.message || '')));
   if (!month && !year && !accountDoc && !coverage && !ai && !health) {
+    if (guest || authBlocked) {
+      const demo = ovGuestDemoPack();
+      renderKpis(kpiBox, demo.account, demo.month, demo.year, demo.coverage, demo.ai);
+      wireEquity(demo.month, demo.year, demo.account.account_name, true);
+      renderToday(demo.today);
+      renderAccountOverview(demo.accounts, demo.account, demo.history);
+      wireRhythm(demo.year);
+      renderTopStrategies(demo.month);
+      renderReports(demo.reports);
+      renderNews(demo.news);
+      renderSystems(demo.account, demo.month, demo.coverage, demo.ai, demo.health);
+      return;
+    }
     UI.renderError(kpiBox, settled[0].reason || new Error('backend недоступен'), renderLive);
     return;
   }
 
   renderKpis(kpiBox, selectedAccount, month, year, coverage, ai);
+  renderNorthStar();
   wireEquity(month, year, accountName);
   renderToday(today);
-  renderAccountOverview(accounts, selectedAccount, history);
+  renderAccountOverview(accounts, selectedAccount, null);
   wireRhythm(year);
   renderTopStrategies(month);
-  renderReports(reports);
-  renderNews(news);
   renderSystems(selectedAccount, month, coverage, ai, health);
+
+  optionalTask.then(optional => {
+    if (!document.documentElement.contains(kpiBox)) return;
+    const optionalValue = index => optional[index].status === 'fulfilled' ? optional[index].value : null;
+    renderAccountOverview(accounts, selectedAccount, optionalValue(0));
+    renderReports(optionalValue(1));
+    renderNews(optionalValue(2));
+  });
+
+  if (!ai) {
+    aiSummaryTask.then(lateAi => {
+      // A navigation can dispose this page while the optional answer is in
+      // flight.  Never update a detached overview.
+      if (!lateAi || !document.documentElement.contains(kpiBox)) return;
+      renderKpis(kpiBox, selectedAccount, month, year, coverage, lateAi);
+      renderSystems(selectedAccount, month, coverage, lateAi, health);
+    });
+  }
+}
+
+async function renderNorthStar() {
+  const panel = UI.qs('#north-star-panel'), body = UI.qs('#north-star-body');
+  if (!panel || !body) return;
+  let ns = null;
+  try { ns = await API.http.northStar({ signal: UI.signal() }); } catch (e) { panel.hidden = true; return; }
+  if (!ns || !ns.configured) { panel.hidden = true; return; }
+  const target = Number(ns.target_usd || 0);
+  const progress = ns.progress_usd == null ? null : Number(ns.progress_usd);
+  const remaining = ns.remaining_usd == null ? null : Number(ns.remaining_usd);
+  const pctRaw = ns.progress_pct == null ? (progress != null && target ? progress / target * 100 : null) : Number(ns.progress_pct);
+  const pctClamped = pctRaw == null ? 0 : Math.max(0, Math.min(100, pctRaw));
+  const barCls = pctRaw == null ? '' : (progress < 0 ? 'neg' : 'pos');
+  const foot = [
+    ns.days_left != null ? `${ns.days_left} дн. до дедлайна` : '',
+    ns.pace_required_usd_per_day != null ? `нужно ≈ ${UI.money(ns.pace_required_usd_per_day)}/день` : '',
+    ns.deadline ? `дедлайн ${ns.deadline}` : '',
+  ].filter(Boolean).join(' · ');
+  body.innerHTML = `
+    <div class="ns-head">
+      <div><div class="ns-kick">North Star 2026</div><div class="ns-title">${UI.esc(ns.title || 'Цель года')}</div></div>
+      <a class="btn sm ghost" href="documents.html?doc=north-star-2026">Документ цели</a>
+    </div>
+    <div class="ns-bar"><div class="ns-fill ${barCls}" style="width:${pctClamped}%"></div></div>
+    <div class="ns-stats">
+      <span class="ns-prog ${progress != null ? UI.pnlClass(progress) : ''}">${progress == null ? '—' : UI.money(progress, { sign: true })}</span>
+      <span class="ns-sep">/</span>
+      <span class="ns-target">${UI.money(target)}</span>
+      <span class="ns-pct">${pctRaw == null ? '' : (pctRaw.toFixed(1) + '%')}</span>
+      <span class="ns-remain">${remaining == null ? '' : 'осталось ' + UI.money(remaining)}</span>
+    </div>
+    <div class="ns-foot muted">${UI.esc(foot)} · реализованная прибыль после комиссии с ${UI.esc(ns.baseline_date || '')}</div>`;
+  panel.hidden = false;
 }
 
 function renderKpis(box, account, month, year, coverage, ai) {
@@ -112,7 +310,7 @@ function renderKpis(box, account, month, year, coverage, ai) {
   box.innerHTML = kpis.map(kpi => `<div class="kpi ${kpi.cls}"><div class="kpi-top"><span class="kpi-label">${kpi.label}</span><span class="kpi-ic">${UI.icon(kpi.icon)}</span></div><div class="kpi-val sm">${kpi.val}</div><div class="kpi-foot">${kpi.foot}</div></div>`).join('');
 }
 
-function wireEquity(month, year, accountName) {
+function wireEquity(month, year, accountName, previewOnly) {
   const box = UI.qs('#eq-chart-box');
   const sub = UI.qs('#eq-sub');
   function draw(data) {
@@ -127,6 +325,7 @@ function wireEquity(month, year, accountName) {
     UI.qsa('#eq-range button').forEach(item => item.classList.toggle('active', item === button));
     if (range === 'month') { draw(month); return; }
     if (range === 'year') { draw(year); return; }
+    if (previewOnly) { draw(year || month); return; }
     UI.renderLoading(box, 'Загрузка диапазона...');
     try { draw(await API.http.performance(ovRangeParams(range, accountName), { signal: UI.signal() })); }
     catch (error) { if (error.name !== 'AbortError') UI.renderError(box, error, () => select(range, button)); }
@@ -228,7 +427,7 @@ function renderReports(reports) {
     const metrics = job.metrics || {};
     const pnl = metrics.net_profit_after_commission != null ? metrics.net_profit_after_commission : (metrics.net_profit != null ? metrics.net_profit : (job.net_pnl != null ? job.net_pnl : job.pnl));
     const ai = job.origin && job.origin.type === 'ai_lab';
-    return `<a class="row" href="backtesting.html?job=${encodeURIComponent(job.job_id || '')}"><div class="row-main"><div class="row-title">${UI.esc(job.label || job.name || job.job_id || 'отчёт')} ${ai ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div><div class="row-sub">${UI.esc(job.strategy || job.class_name || '')} · ${UI.esc(job.status || '')}</div></div><div class="row-val ${pnl != null ? UI.pnlClass(pnl) : 'muted'}">${pnl != null ? UI.money(pnl, { sign: true }) : '—'}</div></a>`;
+    return `<a class="row" href="backtesting.html?job=${encodeURIComponent(job.job_id || '')}"><div class="row-main"><div class="row-title">${UI.esc(job.label || job.name || job.job_id || 'отчёт')} ${ai ? '<span class="badge ai-origin-badge">AI</span>' : ''}</div><div class="row-sub">${UI.esc(job.strategy || job.class_name || '')} · ${UI.esc(job.status || '')}</div></div><div class="row-val ${pnl != null ? UI.pnlClass(pnl) : 'muted'}">${pnl != null ? UI.money(pnl, { sign: true }) : '—'}</div></a>`;
   }).join('') : '<div class="empty-state">Отчётов пока нет.</div>';
 }
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .. import runtime_env
+
 
 def _project_root() -> Path:
     # app/ai_lab/paths.py -> app/ai_lab -> app -> NT-Analyzer
@@ -17,7 +19,11 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 
 AI_LAB_DIR = PROJECT_ROOT / "ai_lab"
-REGISTRY_DIR = AI_LAB_DIR / "registry"
+MUTABLE_AI_LAB_DIR = (
+    runtime_env.data_path("ai_lab", project_root=PROJECT_ROOT)
+    if runtime_env.is_staging() else AI_LAB_DIR
+)
+REGISTRY_DIR = MUTABLE_AI_LAB_DIR / "registry"
 EXPERIMENTS_DIR = REGISTRY_DIR / "experiments"
 POSTMORTEMS_DIR = REGISTRY_DIR / "strategy_postmortems"
 KNOWLEDGE_CARDS_DIR = REGISTRY_DIR / "knowledge_cards"
@@ -26,12 +32,12 @@ PROMPTS_LOG_DIR = REGISTRY_DIR / "prompts_log"
 ACTIVITY_DIR = REGISTRY_DIR / "activity"
 REFERENCE_STRATEGIES_DIR = AI_LAB_DIR / "reference_strategies"
 
-USER_RESEARCH_DIR = AI_LAB_DIR / "user_research"
+USER_RESEARCH_DIR = MUTABLE_AI_LAB_DIR / "user_research"
 PROMPTS_DIR = AI_LAB_DIR / "prompts"
 SCHEMAS_DIR = AI_LAB_DIR / "schemas"
-MIRRORS_DIR = AI_LAB_DIR / "mirrors"
+MIRRORS_DIR = MUTABLE_AI_LAB_DIR / "mirrors"
 SOURCE_SNAPSHOTS_DIR = MIRRORS_DIR / "source_snapshots"
-QUARANTINE_DIR = AI_LAB_DIR / "quarantine" / "compile_failed"
+QUARANTINE_DIR = MUTABLE_AI_LAB_DIR / "quarantine" / "compile_failed"
 MODEL_BENCHMARK_PATH = REGISTRY_DIR / "model_benchmark_latest.json"
 
 INDEX_PATH = REGISTRY_DIR / "index.json"
@@ -52,6 +58,10 @@ def nt_user_home() -> Path:
 
 
 def nt_custom_dir() -> Path:
+    if runtime_env.is_staging():
+        return runtime_env.data_path(
+            "ninjatrader", "Custom", project_root=PROJECT_ROOT,
+        )
     return nt_user_home() / "Documents" / "NinjaTrader 8" / "bin" / "Custom"
 
 

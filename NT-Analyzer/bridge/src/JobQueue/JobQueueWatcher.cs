@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -276,6 +277,7 @@ namespace NTAnalyzerBridge.JobQueue
                 Directory.Move(runningJobDir, finalDir);
                 BridgeLog.Info("job " + jobId + " -> " + outcome.Status + " (" +
                                (outcome.ErrorType ?? "ok") + ") at " + Path.GetFileName(finalDir));
+                AppendVitekJobEvent(jobId, outcome, finalDir);
             }
             catch (Exception ex)
             {
@@ -295,6 +297,39 @@ namespace NTAnalyzerBridge.JobQueue
                     BridgeLog.Error("quarantine also failed for " + jobId +
                                     " — job remains in running/", ex2);
                 }
+            }
+        }
+
+        private void AppendVitekJobEvent(string jobId, JobRunOutcome outcome, string finalDir)
+        {
+            try
+            {
+                string eventType = outcome.Status == JobStatus.Done ? "job_completed"
+                    : outcome.Status == JobStatus.Cancelled ? "job_cancelled" : "job_failed";
+                var signal = new JObject
+                {
+                    ["event_type"] = eventType,
+                    ["source"] = "ninjatrader_bridge",
+                    ["severity"] = outcome.Status == JobStatus.Failed ? "critical" : "info",
+                    ["payload"] = new JObject
+                    {
+                        ["job_id"] = jobId,
+                        ["status"] = outcome.Status.ToString().ToLowerInvariant(),
+                        ["error_type"] = outcome.ErrorType ?? string.Empty,
+                        ["message"] = outcome.Message ?? string.Empty,
+                        ["terminal_dir"] = finalDir ?? string.Empty
+                    }
+                };
+                Directory.CreateDirectory(_cfg.RuntimeDataDir);
+                File.AppendAllText(
+                    Path.Combine(_cfg.RuntimeDataDir, "vitek_events.jsonl"),
+                    signal.ToString(Formatting.None) + Environment.NewLine,
+                    Encoding.UTF8
+                );
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Error("failed to signal Vitek for job " + jobId, ex);
             }
         }
 

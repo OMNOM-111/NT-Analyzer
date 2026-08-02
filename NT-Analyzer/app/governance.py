@@ -15,6 +15,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from zoneinfo import ZoneInfo
+
+from . import runtime_env
 
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
@@ -23,6 +26,11 @@ PROJECT_OWNER = "Черевко Дмитро"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _project_local_date() -> str:
+    """Return the owner's calendar date used by operator-facing documents."""
+    return datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
 
 
 def project_root() -> Path:
@@ -39,13 +47,25 @@ def workspace_root() -> Path:
 
 
 def data_dir() -> Path:
-    path = project_root() / "data" / "governance"
+    path = runtime_env.data_path("governance", project_root=project_root())
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def docs_dir() -> Path:
-    path = project_root() / "docs" / "governance"
+    # Explicit Production runs from an immutable release.  Generated
+    # governance documents are mutable runtime state and therefore must live
+    # under the isolated data root just like the staging/development copy.
+    # Keep the historical implicit-environment behaviour for library callers
+    # that have not selected a deployment boundary yet.
+    isolated_runtime = runtime_env.is_staging() or (
+        runtime_env.is_production() and runtime_env.environment_explicit()
+    )
+    path = (
+        runtime_env.data_path("governance-rendered", project_root=project_root())
+        if isolated_runtime
+        else project_root() / "docs" / "governance"
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -448,6 +468,189 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         ],
         "review_targets": [],
     },
+    {
+        "id": "GOV-AI-007",
+        "key": "ai_lab_cloud_local_first_only",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Облачный API работает только как local-first fallback",
+        "summary": "Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": [
+            "app/ai_lab/cloud_agents.py",
+            "app/ai_lab/orchestrator.py",
+            "app/ai_lab/generator.py",
+        ],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-008",
+        "key": "ai_lab_cloud_budget_caps",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Бюджет облачного API имеет жёсткие потолки",
+        "summary": "Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.",
+        "kind": "string",
+        "value": "20.00 USD/month; 0.50 USD/run",
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": ["app/ai_lab/cloud_agents.py", "ui AI Lab cloud-agent settings"],
+        "review_targets": ["provider invoice versus local cost audit"],
+    },
+    {
+        "id": "GOV-AI-009",
+        "key": "ai_lab_cloud_output_not_verdict",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "API output не является verdict",
+        "summary": "Cloud-ответ не может обойти validator, compile, backtest, arbitration, governance или ручное promotion-решение.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": [
+            "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md",
+            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        ],
+        "dynamic_targets": ["app/ai_lab/cloud_agents.py", "app/ai_lab/orchestrator.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-010",
+        "key": "ai_lab_cloud_secrets_private",
+        "group": "local_ai",
+        "audience": "local_ai",
+        "title": "Облачные ключи и prompts не раскрываются",
+        "summary": "Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.",
+        "kind": "boolean",
+        "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "dynamic_targets": ["app/local_secrets.py", "app/ai_lab/cloud_agents.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-011", "key": "orchestrator_discussion_is_not_execution",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Вопрос об исследовании не является командой запуска",
+        "summary": "Вопросы о выборе стратегии и обсуждение гипотез дают содержательный ответ без изменения mission state; запуск разрешён только явной командой владельца в текущем сообщении.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-012", "key": "orchestrator_lm_studio_required",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "LM Studio обязательна до начала research",
+        "summary": "До создания эксперимента Orchestrator самостоятельно запускает LM Studio и model server; fallback разрешён только после трёх зафиксированных неудач либо по явной команде владельца.",
+        "kind": "string", "value": "3 bounded self-heal attempts", "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/bootstrap.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-013", "key": "orchestrator_notifications_change_only",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Уведомления владельцу только по изменению фактов",
+        "summary": "Нормальный ход работы не отправляется; один experiment и одно завершение mission дают не более одного отчёта, а полностью одинаковое Telegram-сообщение подавляется на 24 часа.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/telegram_service.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-014", "key": "orchestrator_one_strategy_until_exhausted",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Одна стратегия до исчерпания гипотез",
+        "summary": "Orchestrator меняет фильтры, входы, выходы и режимы внутри одной основы и переходит к следующей только после кандидата либо доказанного исчерпания содержательно разных вариантов.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/runner.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-015", "key": "orchestrator_discussion_uses_strongest_model",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Содержательное обсуждение использует strongest reasoning lane",
+        "summary": "Обсуждение, диагностика, выбор стратегии и планирование идут через critical-маршрут к самой сильной доступной модели; простые операционные команды остаются в быстром маршруте.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/agent_router.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-016", "key": "orchestrator_dialogue_context_and_completeness",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Ответ менеджера обязан быть контекстным и завершённым",
+        "summary": "Перед стратегическим ответом читаются project docs, reference library, lessons, user research и фактические эксперименты; короткий, обещающий или оборванный ответ автоматически заменяется полным, а команда «начинай» продолжает согласованный план этого чата.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/ai_lab/knowledge.py", "app/ai_lab/universal_llm.py"], "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-017", "key": "ai_roles_compete_through_feedback",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "ИИ-роли улучшаются через конкурентную обратную связь",
+        "summary": "Роли Analyst/Coder/Judge/Reviewer сравниваются по проверяемому результату; слабый ответ не наказывается, а получает детальный feedback и временно меньший приоритет следующего вызова, пока не восстановит качество.",
+        "kind": "boolean", "value": True,
+        "source_refs": ["NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
+        "dynamic_targets": ["governance docs", "docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
+        "review_targets": ["app/ai_lab/agent_router.py role ranking", "agent usage/feedback ledger", "AI Lab UI feedback report"],
+    },
+    {
+        "id": "GOV-AI-018", "key": "runtime_reconnect_fails_closed",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Переподключение NinjaTrader не подменяет торговое соединение Datafeed",
+        "summary": "Автоматический reconnect разрешён только для фактически активной Realtime-стратегии на paper/demo-счёте; системные Backtest/Sim/Playback-счета, исторические экземпляры, live-счета и Datafeed исключены. Bridge не выбирает неоднозначное соединение и не отключает другие соединения автоматически.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/runtime.py", "bridge/src/Runtime/RuntimeCommandProcessor.cs"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-019", "key": "orchestrator_no_false_refusal",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Оркестратор не вправе отказать в выполнимой задаче",
+        "summary": "До ответа «не могу» Orchestrator обязан проверить детерминированный intent и все штатные обработчики capability_map. Если действие доступно внутри приложения, оно передаётся профильному исполнителю независимо от выбранной версии модели и без требования назвать персону. Отказ допустим только вне карты возможностей либо при фактической ошибке инфраструктуры; причина и доступный следующий шаг указываются явно.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/intent_classifier.py", "app/ai_lab/capability_map.py", "app/ai_lab/chief_agent.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-020", "key": "orchestrator_semantic_command_resolution",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Команды понимаются по смыслу, а подтверждение следует факту",
+        "summary": "Перед маршрутизацией Orchestrator нормализует речь, раскладку и однозначные тикеры; уверенные команды исполняются детерминированно, неоднозначные короткие команды проверяет быстрая модель только в пределах capability allowlist. Контекст не подменяет явно введённый инструмент, а Telegram не теряет ответ и не подтверждает невыполненное действие.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": [
+            "app/ai_lab/command_language.py", "app/ai_lab/intent_classifier.py",
+            "app/ai_lab/capability_map.py", "app/telegram_service.py",
+        ],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-021", "key": "owner_visible_execution_metadata_only",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Владелец видит исполнителя и ход работы, но не скрытые рассуждения",
+        "summary": "Aurora и Telegram показывают фактического агента, модель/provider и проверяемый статус действия. Provider chain-of-thought не сохраняется и не выводится; вместо него используются короткие публичные стадии работы.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/chief_agent.py", "app/server.py", "app/static/aurora/assets/ui.js", "app/telegram_service.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-022", "key": "capability_agent_and_completion_invariants",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Capability закрепляет исполнителя, а завершение подтверждает целевая система",
+        "summary": "Финансовая capability всегда принадлежит Марине, lifecycle стратегии — Толику, графики — Ивану, runtime connection — Виктору. Модель не может разорвать эту связь. Поручение не становится completed по обещанию или пустому actions: требуется verified completed action либо подтверждение целевой подсистемы.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/vitek.py", "app/ai_lab/capability_map.py", "app/ai_lab/chief_agent.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-023", "key": "aurora_telegram_conversation_strict_sync",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Один диалог Aurora соответствует одной теме Telegram",
+        "summary": "Исходная реплика, уточнение, действие и итог сохраняют один conversation_id. При ошибке topic mapping сообщение остаётся в долговечной очереди и не отправляется в General; неизвестная входящая тема не подменяется default-диалогом.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/telegram_service.py", "app/ai_lab/chief_agent.py", "app/durable.py"],
+        "review_targets": [],
+    },
+    {
+        "id": "GOV-AI-024", "key": "negation_and_clarification_are_authoritative",
+        "group": "local_ai", "audience": "local_ai",
+        "title": "Отрицание запрещает действие, а пояснение возвращается тому же исполнителю",
+        "summary": "Фразы «не запускай», «ничего не восстанавливай» и вопросы о причине не превращаются в команды. Ответ владельца на needs_input передаётся в том же диалоге и тому же профильному агенту; подтверждение не подписывается именем другого специалиста.",
+        "kind": "boolean", "value": True, "source_refs": [],
+        "dynamic_targets": ["app/ai_lab/intent_classifier.py", "app/ai_lab/chief_agent.py", "app/vitek.py"],
+        "review_targets": [],
+    },
 ]
 
 
@@ -575,6 +778,22 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "label": "AI Lab quality pipeline",
             "category": "technical",
             "path": "docs/AI_STRATEGY_LAB_QUALITY.md",
+            "editable_kind": "none",
+        },
+        {
+            "id": "ai-lab-cloud-agents",
+            "title": "AI_LAB_CLOUD_AGENTS",
+            "label": "AI Lab cloud agents, roles and budget",
+            "category": "technical",
+            "path": "docs/AI_LAB_CLOUD_AGENTS.md",
+            "editable_kind": "none",
+        },
+        {
+            "id": "ai-lab-competitive-feedback",
+            "title": "AI_LAB_COMPETITIVE_FEEDBACK",
+            "label": "AI Lab competitive feedback contract",
+            "category": "technical",
+            "path": "docs/AI_LAB_COMPETITIVE_FEEDBACK.md",
             "editable_kind": "none",
         },
         {
@@ -730,7 +949,7 @@ def _group_title(group: str) -> str:
         "execution_costs": "Комиссии, slippage и fill",
         "process": "Процесс разработки",
         "promotion": "Promotion и runtime-контроль",
-        "local_ai": "Локальный ИИ и AI Lab sandbox",
+        "local_ai": "Локальный ИИ и cloud fallback в AI Lab sandbox",
     }.get(group, group)
 
 
@@ -936,9 +1155,9 @@ def _render_laws_markdown(audience: str) -> str:
     subtitle = (
         "Короткий свод проектных законов для людей, Codex, Cursor, Claude и Gemini."
         if audience == "project"
-        else "Короткий свод законов только для локального ИИ / AI Lab sandbox."
+        else "Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox."
     )
-    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_now_iso()[:10]}", "", subtitle]
+    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_project_local_date()}", "", subtitle]
     current_group = None
     for law in selected:
         group = str(law.get("group") or "")
@@ -976,7 +1195,7 @@ def _render_sync_map_markdown() -> str:
     parts = [
         "# SYNC_MAP",
         "",
-        f"Дата актуализации: {_now_iso()[:10]}",
+        f"Дата актуализации: {_project_local_date()}",
         "",
         "Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.",
         "",
@@ -1006,7 +1225,8 @@ def _render_readme_markdown() -> str:
 - `CHARTER.md` — цель, границы и основные принципы.
 - `ROLES.md` — роли владельца и всех ИИ-каналов.
 - `LAWS.md` — общие законы проекта.
-- `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ / AI Lab.
+- `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ и cloud fallback / AI Lab.
+- `../AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
 
@@ -1042,11 +1262,18 @@ def _render_overview_markdown() -> str:
     runtime_lock = "Да" if bool(law_value("runtime_locked_params_must_match", True)) else "Нет"
     ai_window = str(law_value("ai_lab_session_window_pt", "06:30-12:30 PT"))
     ai_sandbox = "Да" if bool(law_value("ai_lab_sandbox_only", True)) else "Нет"
+    cloud_budget = str(law_value("ai_lab_cloud_budget_caps", "20.00 USD/month; 0.50 USD/run"))
+    # Generated docs are refreshed on every backend start. Their contents must
+    # not become dirty merely because the process restarted; use the latest
+    # actual governance mutation time instead of wall-clock render time.
+    mutation_times = [str(laws_doc.get("updated_at_utc") or "")]
+    mutation_times.extend(str(row.get("ts_utc") or "") for row in history)
+    updated_at = max((value for value in mutation_times if value), default="не указана")
 
     parts = [
         "# OVERVIEW",
         "",
-        f"Дата актуализации: {_now_iso()}",
+        f"Дата актуализации: {updated_at}",
         "",
         "## Короткое предисловие",
         "",
@@ -1065,6 +1292,7 @@ def _render_overview_markdown() -> str:
         f"- Paper before live: `{paper_gate}`",
         f"- Runtime должен совпадать с locked params: `{runtime_lock}`",
         f"- AI Lab sandbox only: `{ai_sandbox}`",
+        f"- AI Lab cloud API: `local-first fallback; {cloud_budget}`",
         f"- Базовое PT-окно AI Lab: `{ai_window}`",
         "",
         "## На что смотреть в первую очередь",
@@ -1364,6 +1592,89 @@ def runtime_defaults() -> Dict[str, Any]:
         "order_fill_resolution": str(law_value("order_fill_resolution", "High")),
         "intraday_only": bool(law_value("intraday_only_default", True)),
         "ai_lab_session_window_pt": str(law_value("ai_lab_session_window_pt", "06:30-12:30 PT")),
+    }
+
+
+def goals_path() -> Path:
+    return data_dir() / "goals.json"
+
+
+def read_goals() -> Dict[str, Any]:
+    """Machine-readable project goals (North Star). Empty dict if not configured."""
+    path = goals_path()
+    if not path.is_file():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def north_star_progress() -> Dict[str, Any]:
+    """North Star goal + live progress from runtime realized PnL after commission.
+
+    ``progress`` is realized (closed) after-commission PnL accumulated since the
+    goal ``baseline_date``. It intentionally excludes backtest and unrealized
+    PnL — those never count toward the goal.
+    """
+    goals = read_goals()
+    north = goals.get("north_star") if isinstance(goals, dict) else None
+    if not isinstance(north, dict) or not north:
+        return {"configured": False}
+
+    target = float(north.get("target_usd") or 0.0)
+    baseline_date = str(north.get("baseline_date") or "").strip()
+    baseline_realized = float(north.get("baseline_realized_usd") or 0.0)
+    deadline = str(north.get("deadline") or "").strip()
+
+    realized: Optional[float] = None
+    realized_error = ""
+    if baseline_date:
+        try:
+            from . import performance as _perf  # lazy import to avoid cycles
+            today = datetime.now(timezone.utc).date().isoformat()
+            resp = _perf.build_performance_response(
+                period="custom", from_date=baseline_date, to_date=today,
+            )
+            realized = float((resp.get("summary") or {}).get("pnl") or 0.0)
+        except Exception as exc:  # pragma: no cover - defensive
+            realized_error = str(exc)[:200]
+
+    progress = None if realized is None else round(realized - baseline_realized, 2)
+    remaining = None if progress is None else round(target - progress, 2)
+    pct = None if (progress is None or target <= 0) else round(progress / target * 100.0, 2)
+
+    days_left: Optional[int] = None
+    if deadline:
+        try:
+            end = datetime.fromisoformat(deadline).date()
+            days_left = max(0, (end - datetime.now(timezone.utc).date()).days)
+        except ValueError:
+            days_left = None
+    pace_required = None
+    if remaining is not None and days_left and days_left > 0:
+        pace_required = round(max(0.0, remaining) / days_left, 2)
+
+    return {
+        "configured": True,
+        "id": north.get("id"),
+        "title": north.get("title"),
+        "statement": north.get("statement"),
+        "target_usd": target,
+        "deadline": deadline,
+        "baseline_date": baseline_date,
+        "baseline_realized_usd": baseline_realized,
+        "progress_usd": progress,
+        "remaining_usd": remaining,
+        "progress_pct": pct,
+        "days_left": days_left,
+        "pace_required_usd_per_day": pace_required,
+        "measurement": north.get("measurement"),
+        "milestones": north.get("milestones") or [],
+        "constraints": north.get("constraints") or [],
+        "doc": north.get("doc"),
+        "realized_source_error": realized_error,
     }
 
 

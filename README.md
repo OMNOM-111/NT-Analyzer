@@ -12,6 +12,9 @@ The product is intentionally local-first:
   telemetry views, and AI-assisted research workflows.
 - AI-generated strategy code is sandboxed and gated before any promotion to a
   portfolio or paper workflow.
+- Vitek is the owner-facing control layer: application and Telegram messages
+  enter through one StratForge Orchestrator gateway, while the manager and
+  specialist agents work independently behind it.
 
 ## Repository Layout
 
@@ -20,6 +23,7 @@ NT-Analyzer/
   app/                       Python backend, API, and static UI server
   app/static/                Backtesting, strategies, trading, performance, AI UI
   app/ai_lab/                AI Strategy Lab orchestration code
+  app/secure_store.py        Windows DPAPI storage for local integration secrets
   bridge/                    NinjaTrader 8 AddOn (.NET Framework 4.8)
   ninjatrader/strategies/    Project NinjaScript strategy sources
   ai_lab/prompts/            Curated AI system prompts
@@ -65,6 +69,22 @@ Then open:
 http://127.0.0.1:8765/ui/
 ```
 
+For unattended local operation, install the event-driven Vitek watchdog once:
+
+```powershell
+cd NT-Analyzer
+.\00_INSTALL_VITEK_BACKGROUND.cmd
+```
+
+The watchdog does not open a browser. See
+`NT-Analyzer/docs/VITEK.md` and
+`NT-Analyzer/docs/PRODUCTION_READINESS_2026-07-13.md`.
+
+External model connections are configured locally at
+`http://127.0.0.1:8765/ui/ai-agents.html`. API keys are encrypted with Windows
+DPAPI, never stored in source, and never returned by the HTTP API. See
+`NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md` for providers, budgets and grant tracking.
+
 ## Product Boundary
 
 Commit:
@@ -79,6 +99,8 @@ Do not commit:
   `data/profiles/`, `data/ops/`;
 - `ai_lab/registry/`, `ai_lab/experiments/`, model benchmark results,
   prompt logs, screenshots, local model calls;
+- `data/integrations/ai_agents.registry.json` and
+  `data/integrations/ai_agent_keys.dpapi`;
 - local NinjaTrader catalogs generated from a user's machine.
 
 See `NT-Analyzer/docs/repository-hygiene.md` for the full policy.

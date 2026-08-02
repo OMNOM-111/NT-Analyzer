@@ -25,9 +25,41 @@ def test_runtime_defaults_shape() -> None:
 
 def test_governance_documents_exist() -> None:
     docs = {row["id"]: row for row in governance.list_documents()}
-    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map"):
+    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map", "ai-lab-competitive-feedback"):
         assert required in docs, f"missing document registry row: {required}"
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
+
+
+def test_competitive_feedback_law_is_registered() -> None:
+    laws = {row["id"]: row for row in governance.load_laws().get("laws", [])}
+    law = laws.get("GOV-AI-017")
+    assert law, "competitive feedback law must be registered"
+    assert law["audience"] == "local_ai"
+    assert law["value"] is True
+    assert "AI_LAB_COMPETITIVE_FEEDBACK.md" in " ".join(law.get("source_refs") or [])
+
+
+def test_north_star_goal_is_registered_and_readable() -> None:
+    goals = governance.read_goals()
+    north = goals.get("north_star")
+    assert isinstance(north, dict) and north, "north_star goal must be configured"
+    assert north["target_usd"] == 100000
+    assert north["deadline"] == "2026-12-31"
+    assert len(north.get("milestones") or []) == 4
+    # registered as a governance document and the markdown file exists
+    docs = {row["id"]: row for row in governance.list_documents()}
+    assert "north-star-2026" in docs
+    assert Path(docs["north-star-2026"]["abs_path"]).is_file()
+
+
+def test_north_star_progress_shape() -> None:
+    progress = governance.north_star_progress()
+    assert progress["configured"] is True
+    assert progress["target_usd"] == 100000
+    assert progress["deadline"] == "2026-12-31"
+    # progress/remaining come from runtime realized PnL; keys must always exist
+    for key in ("progress_usd", "remaining_usd", "progress_pct", "days_left", "pace_required_usd_per_day"):
+        assert key in progress
 
 
 def test_change_log_reader_shape() -> None:
@@ -67,9 +99,30 @@ def test_law_update_writes_history_and_overview() -> None:
                 os.environ["NT_ANALYZER_ROOT"] = previous_root
 
 
+def test_explicit_production_renders_governance_outside_immutable_release(
+    tmp_path, monkeypatch,
+) -> None:
+    release_root = (tmp_path / "release").resolve()
+    data_root = (tmp_path / "persistent-runtime").resolve()
+    (release_root / "app").mkdir(parents=True)
+    monkeypatch.setenv("NT_ANALYZER_ROOT", str(release_root))
+    monkeypatch.setenv("STRATFORGE_ENV", "production")
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(data_root))
+
+    rendered = governance.docs_dir()
+    assert rendered == data_root / "governance-rendered"
+    assert release_root not in rendered.parents
+    governance.ensure_governance_files(render=True)
+    assert (rendered / "README.md").is_file()
+    assert not (release_root / "docs" / "governance").exists()
+
+
 def main() -> int:
     test_runtime_defaults_shape()
     test_governance_documents_exist()
+    test_competitive_feedback_law_is_registered()
     test_change_log_reader_shape()
     test_law_update_writes_history_and_overview()
     print("test_governance: ok")

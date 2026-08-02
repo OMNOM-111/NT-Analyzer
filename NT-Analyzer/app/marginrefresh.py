@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import runtime_env
+
 # Single source of truth — the broker's public per-symbol margin page.
 MARGIN_SOURCE_URL = "https://ninjatrader.com/pricing/margins/"
 MARGIN_BROKER = "NinjaTrader"
@@ -71,7 +73,9 @@ def _project_root() -> Path:
 
 
 def margins_json_path() -> Path:
-    return _project_root() / "data" / "catalog" / "margins.json"
+    return runtime_env.data_path(
+        "catalog", "margins.json", project_root=_project_root(),
+    )
 
 
 # ---------------------------------------------------------------------------

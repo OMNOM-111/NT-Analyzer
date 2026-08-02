@@ -13,12 +13,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import portfolio_cells
+from . import portfolio_cells, runtime_env
 
 
-REGISTRY_PATH = Path(__file__).resolve().parents[1] / "data" / "portfolio" / "cells.json"
+_DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "data" / "portfolio" / "cells.json"
+REGISTRY_PATH = _DEFAULT_REGISTRY_PATH
 _LOCK = threading.RLock()
 _ROOT_RE = re.compile(r"^[A-Z][A-Z0-9]{0,11}$")
+
+
+def _registry_path() -> Path:
+    # Tests and explicit embedding callers may override the legacy constant.
+    if REGISTRY_PATH != _DEFAULT_REGISTRY_PATH:
+        return Path(REGISTRY_PATH)
+    return runtime_env.data_path("portfolio", "cells.json", project_root=Path(__file__).resolve().parents[1])
 
 
 def _now() -> str:
@@ -63,10 +71,11 @@ def _default_doc() -> Dict[str, Any]:
 
 
 def _read() -> Dict[str, Any]:
-    if not REGISTRY_PATH.exists():
+    path = _registry_path()
+    if not path.exists():
         return _default_doc()
     try:
-        raw = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"portfolio registry is unreadable: {exc}") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("cells"), list):
@@ -82,11 +91,12 @@ def _read() -> Dict[str, Any]:
 
 
 def _write(doc: Dict[str, Any]) -> None:
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = _registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     doc["updated_at_utc"] = _now()
-    tmp = REGISTRY_PATH.with_suffix(".tmp")
+    tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(REGISTRY_PATH)
+    tmp.replace(path)
 
 
 def _public(doc: Dict[str, Any]) -> Dict[str, Any]:

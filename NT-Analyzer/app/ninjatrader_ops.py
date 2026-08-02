@@ -639,7 +639,10 @@ def cleanup_to_approved(profiles: List[Dict[str, Any]],
     index_dirs = [repo, custom / "NT-Analyzer_strategies",
                   custom / "NT-Analyzer_AI Labstrategies", custom / "NT-Analyzer_Ref Lib"]
     index = build_class_index([d for d in index_dirs if d.is_dir()])
-    keep = compute_keep_closure(approved, index)
+    # ResearchHub classes are shared research engines, not disposable cell
+    # wrappers. Keep them even when no current demo profile references them.
+    research_hubs = {name for name in index if name.lower().endswith("researchhub")}
+    keep = compute_keep_closure(approved | research_hubs, index)
 
     clean_dirs = cleanup_custom_dirs(
         nt_user_home, include_ai_sandbox=include_ai_sandbox, include_ref_lib=include_ref_lib)
@@ -685,6 +688,7 @@ def cleanup_to_approved(profiles: List[Dict[str, Any]],
     return {
         "dry_run": dry_run,
         "approved": sorted(approved),
+        "research_hubs": sorted(research_hubs),
         "keep_closure_count": len(keep),
         "kept_count": len(kept),
         "removed_count": len(removed),

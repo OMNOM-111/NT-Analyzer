@@ -5,7 +5,7 @@ specific roles -> model ids. Logs every prompt/response to
 ``ai_lab/registry/prompts_log/<date>.jsonl`` for full audit.
 
 Roles:
-    - "judge"     -> qwen/qwen3.6-35b-a3b      (analyst, reasoning, scoring)
+    - "judge"     -> openai/gpt-oss-20b        (local emergency fallback)
     - "coder"     -> gpt-oss-20b               (code drafter / reviewer)
     - "embedder"  -> text-embedding-nomic-embed-text-v1.5
 """
@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
-from . import paths
+from . import llm_timeouts, paths
 from .io_utils import append_jsonl
 
 # LM Studio is intentionally bound to IPv4 loopback by the local launcher.
@@ -33,11 +33,13 @@ from .io_utils import append_jsonl
 # on an unreachable IPv6 socket until the model-probe timeout even though
 # 127.0.0.1:1234 is healthy.
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
-DEFAULT_CHAT_TIMEOUT = int(os.environ.get("LM_STUDIO_CHAT_TIMEOUT", "120"))
-DEFAULT_JUDGE_TIMEOUT = int(os.environ.get("LM_STUDIO_JUDGE_TIMEOUT", "180"))
-DEFAULT_CODER_TIMEOUT = int(os.environ.get("LM_STUDIO_CODER_TIMEOUT", "480"))
+# Timeouts are driven by the quality_over_speed policy in ai_lab/llm_timeouts.json.
+# Each env var overrides the corresponding entry for local tuning without editing JSON.
+DEFAULT_CHAT_TIMEOUT = int(os.environ.get("LM_STUDIO_CHAT_TIMEOUT") or llm_timeouts.LOCAL_CHAT)
+DEFAULT_JUDGE_TIMEOUT = int(os.environ.get("LM_STUDIO_JUDGE_TIMEOUT") or llm_timeouts.LOCAL_JUDGE)
+DEFAULT_CODER_TIMEOUT = int(os.environ.get("LM_STUDIO_CODER_TIMEOUT") or llm_timeouts.LOCAL_CODER)
 DEFAULT_CHAT_RETRIES = int(os.environ.get("LM_STUDIO_CHAT_RETRIES", "0"))
-DEFAULT_MODEL_PROBE_TIMEOUT = int(os.environ.get("AI_LAB_MODEL_PROBE_TIMEOUT", "60"))
+DEFAULT_MODEL_PROBE_TIMEOUT = int(os.environ.get("AI_LAB_MODEL_PROBE_TIMEOUT") or llm_timeouts.MODEL_PROBE)
 READINESS_CACHE_TTL_SEC = int(os.environ.get("AI_LAB_READINESS_CACHE_SEC", "60"))
 RUN_REQUIRED_ROLES = ("judge", "coder", "compile_error_fixer")
 RUN_START_REQUIRED_ROLES = ("judge", "coder")
@@ -47,7 +49,7 @@ _READINESS_CACHE: Optional[Dict[str, Any]] = None
 _READINESS_CACHE_AT: float = 0.0
 
 MODEL_ROUTES = {
-    "judge": "qwen/qwen3.6-35b-a3b",
+    "judge": "openai/gpt-oss-20b",
     "coder": "openai/gpt-oss-20b",
     "code_reviewer": "openai/gpt-oss-20b",
     "compile_error_fixer": "openai/gpt-oss-20b",

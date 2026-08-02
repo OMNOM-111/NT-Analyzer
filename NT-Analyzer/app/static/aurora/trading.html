@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
-<title>Торговля онлайн — NT-Analyzer</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260629-final4">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>Торговля онлайн — StratForge AI</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260721-build-identity1">
+<link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="trading" data-title="Центр управления торговлей" data-kicker="NT-Analyzer · Control Center">
+<body data-page="trading" data-title="Центр управления торговлей" data-kicker="StratForge AI · Control Center">
 
   <!-- account band -->
   <div class="grid cols-4" id="acct"></div>
@@ -36,6 +37,7 @@
       <div class="spacer"></div>
       <select class="field" id="ctrl-account" style="padding:6px 10px;font-size:12px" aria-label="Счёт для управления"></select>
       <button class="btn sm ghost" id="ctrl-show-hidden">Показать скрытые / внешние</button>
+      <button class="btn sm" id="ctrl-reconnect">Включить моделирование</button>
       <button class="btn sm primary" id="ctrl-launch">Запустить стратегию</button>
       <button class="btn sm" id="ctrl-refresh" title="Обновить">Обновить</button>
     </div>
@@ -122,9 +124,11 @@
   </div>
 
 <script src="assets/charts.js?v=20260629-final4"></script>
-<script src="assets/api.js?v=20260629-final4"></script>
+<script src="assets/api.js?v=20260721-stage8-operations1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
-<script src="assets/ui.js?v=20260629-final4"></script>
+<script src="assets/ambient.js?v=20260703-stratforge1"></script>
+<script src="assets/ui.js?v=20260721-stage8-operations1"></script>
+<script src="assets/victor.js?v=20260718-contours2"></script>
 <script src="assets/pages/trading.js?v=20260629-final4"></script>
 </body>
 </html>

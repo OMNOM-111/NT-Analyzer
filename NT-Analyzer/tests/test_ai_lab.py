@@ -533,6 +533,30 @@ def t_knowledge_reference_shortlist_excludes_forbidden_refs() -> None:
         assert "REF-BAD" not in ctx["prompt_context"]
 
 
+def t_knowledge_context_keeps_reading_existing_user_research() -> None:
+    from app.ai_lab import user_research
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        _redirect_paths(tmp)
+        paths.USER_RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+        research_file = paths.USER_RESEARCH_DIR / "curated" / "owner_findings.md"
+        research_file.parent.mkdir(parents=True, exist_ok=True)
+        research_file.write_text(
+            "Owner finding: MNQ opening range needs VWAP confirmation and at most two trades.",
+            encoding="utf-8",
+        )
+        first_scan = user_research.scan()
+        assert "curated/owner_findings.md" in first_scan["new"]
+        second_scan = user_research.scan()
+        assert second_scan["new"] == [] and second_scan["changed"] == []
+
+        ctx = knowledge.build_context("MNQ", max_prompt_chars=20_000)
+
+        assert "curated/owner_findings.md" in ctx["user_research_refs"]
+        assert any("Owner finding" in row for row in ctx["source_excerpt_summaries"])
+
+
 def t_generator_prompt_includes_knowledge_context() -> None:
     prompt = generator.build_user_prompt(
         class_name="NTAAiSandboxFoo",
@@ -1054,11 +1078,53 @@ def t_compile_pipeline_parses_ninjascript_editor_grid() -> None:
 def t_lmstudio_default_timeouts_are_bounded() -> None:
     import inspect
     sig = inspect.signature(ai_lm_studio.chat)
-    assert sig.parameters["timeout"].default == 120, sig.parameters["timeout"].default
+    # quality_over_speed policy: chat default must be >= 180 (was 120 before the policy)
+    assert sig.parameters["timeout"].default >= 180, sig.parameters["timeout"].default
     assert ai_lm_studio.DEFAULT_JUDGE_TIMEOUT >= 180
     assert ai_lm_studio.DEFAULT_CODER_TIMEOUT >= 300
     assert ai_lm_studio.DEFAULT_MODEL_PROBE_TIMEOUT >= 60
     assert sig.parameters["retries"].default == 0, sig.parameters["retries"].default
+
+
+def t_llm_timeouts_config() -> None:
+    """Unified timeout config must satisfy quality_over_speed policy invariants."""
+    from app.ai_lab import llm_timeouts
+
+    # Low-level probes stay short: must not block long when model is absent.
+    assert llm_timeouts.CONNECTION_TEST <= 60, llm_timeouts.CONNECTION_TEST
+    assert llm_timeouts.MODEL_PROBE <= 120, llm_timeouts.MODEL_PROBE
+    assert llm_timeouts.LIST_MODELS <= 30, llm_timeouts.LIST_MODELS
+
+    # Analysis and review need enough time for thinking tokens.
+    assert llm_timeouts.ANALYSIS >= 240, llm_timeouts.ANALYSIS
+    assert llm_timeouts.REVIEW >= 240, llm_timeouts.REVIEW
+
+    # Code generation is the longest cloud operation; must not be cut short.
+    assert llm_timeouts.CODE_GENERATION >= 600, llm_timeouts.CODE_GENERATION
+    assert llm_timeouts.CODE_AUTOFIX >= 600, llm_timeouts.CODE_AUTOFIX
+
+    # Orchestrator / chief with repair pass need even more headroom.
+    assert llm_timeouts.ORCHESTRATOR_PLAN >= 360, llm_timeouts.ORCHESTRATOR_PLAN
+    assert llm_timeouts.CHIEF_DIALOGUE >= 420, llm_timeouts.CHIEF_DIALOGUE
+
+    # Local LM Studio coder: generous ceiling (GPT-OSS p95 ~ 5 min).
+    assert llm_timeouts.LOCAL_CODER >= 600, llm_timeouts.LOCAL_CODER
+    assert llm_timeouts.LOCAL_JUDGE >= 240, llm_timeouts.LOCAL_JUDGE
+    assert llm_timeouts.LOCAL_CHAT >= 180, llm_timeouts.LOCAL_CHAT
+
+    # All entries must return int and resolve without error.
+    for op in [
+        "connection_test", "model_probe", "list_models", "embedding",
+        "light_chat", "analysis", "review", "code_generation", "code_autofix",
+        "orchestrator_plan", "chief_dialogue", "periodic_report",
+        "local_judge", "local_coder", "local_chat_default",
+    ]:
+        val = llm_timeouts.resolve_timeout(op)
+        assert isinstance(val, int) and val > 0, f"{op}: {val!r}"
+
+    # policy key must be present.
+    cfg = llm_timeouts.policy()
+    assert cfg.get("policy") == "quality_over_speed", cfg.get("policy")
 
 
 def t_lmstudio_default_base_url_uses_ipv4_loopback() -> None:
@@ -1117,12 +1183,79 @@ def t_bootstrap_status_shape_without_side_effects() -> None:
         assert out["components"]["lm_studio_server"]["run_allowed"] is True
         assert isinstance(out["required_models"], list)
         assert out["required_models"], out
+        assert out.get("ninjatrader_autostart_allowed") is False
+        assert out["components"]["ninjatrader"].get("autostart_allowed") is False
     finally:
         ai_bootstrap.lm_studio.lm_status = original_lm_status  # type: ignore[assignment]
         ai_bootstrap._tasklist_contains = original_tasklist  # type: ignore[assignment]
         ai_bootstrap._lms_cli = original_lms  # type: ignore[assignment]
         ai_bootstrap._ninjatrader_exe = original_nt  # type: ignore[assignment]
         ai_bootstrap._lm_studio_exe = original_lm  # type: ignore[assignment]
+
+
+def t_bootstrap_never_autostarts_ninjatrader_without_env_opt_in() -> None:
+    """Even start_ninjatrader=True must not Popen NT.exe without NTA_ALLOW_AUTOSTART_NINJATRADER."""
+    calls: list = []
+
+    def fake_start(exe: str, label: str):
+        calls.append((exe, label))
+        return {"ok": True, "status": "started", "exe": exe}
+
+    def fake_lm_status(*, allow_probe=False, force=False):
+        return {
+            "available": True, "ready": False, "run_allowed": False,
+            "status": "offline", "missing_run_roles": [],
+        }
+
+    original = {
+        "tasklist": ai_bootstrap._tasklist_contains,
+        "start": ai_bootstrap._start_process,
+        "lm": ai_bootstrap.lm_studio.lm_status,
+        "lms": ai_bootstrap._lms_cli,
+        "run_lms": ai_bootstrap._run_lms,
+        "nt": ai_bootstrap._ninjatrader_exe,
+        "lm_exe": ai_bootstrap._lm_studio_exe,
+        "deploy": ai_bootstrap._deploy_bridge_if_safe,
+    }
+    old_env = os.environ.pop(ai_bootstrap.AUTOSTART_NT_ENV, None)
+    try:
+        ai_bootstrap._tasklist_contains = lambda needle: False  # type: ignore[assignment]
+        ai_bootstrap._start_process = fake_start  # type: ignore[assignment]
+        ai_bootstrap.lm_studio.lm_status = fake_lm_status  # type: ignore[assignment]
+        ai_bootstrap._lms_cli = lambda: ""  # type: ignore[assignment]
+        ai_bootstrap._run_lms = lambda *a, **k: {"ok": True, "status": "skipped"}  # type: ignore[assignment]
+        ai_bootstrap._ninjatrader_exe = lambda: r"C:\NT\NinjaTrader.exe"  # type: ignore[assignment]
+        ai_bootstrap._lm_studio_exe = lambda: ""  # type: ignore[assignment]
+        ai_bootstrap._deploy_bridge_if_safe = lambda *_a, **_k: {"ok": True, "status": "up_to_date"}  # type: ignore[assignment]
+
+        blocked = ai_bootstrap.start(
+            start_ninjatrader=True, start_lm_studio=False, start_lm_server=False,
+            load_models=False, wait_readiness=False, timeout_sec=30,
+        )
+        nt_step = next(s for s in blocked["steps"] if s.get("component") == "ninjatrader")
+        assert nt_step["status"] == "manual_login_required"
+        assert not any(label == "NinjaTrader" for _, label in calls)
+
+        defaulted = ai_bootstrap.start(
+            start_lm_studio=False, start_lm_server=False,
+            load_models=False, wait_readiness=False, timeout_sec=30,
+        )
+        nt_default = next(s for s in defaulted["steps"] if s.get("component") == "ninjatrader")
+        assert nt_default["status"] == "skipped_default_off"
+        assert not any(label == "NinjaTrader" for _, label in calls)
+    finally:
+        ai_bootstrap._tasklist_contains = original["tasklist"]  # type: ignore[assignment]
+        ai_bootstrap._start_process = original["start"]  # type: ignore[assignment]
+        ai_bootstrap.lm_studio.lm_status = original["lm"]  # type: ignore[assignment]
+        ai_bootstrap._lms_cli = original["lms"]  # type: ignore[assignment]
+        ai_bootstrap._run_lms = original["run_lms"]  # type: ignore[assignment]
+        ai_bootstrap._ninjatrader_exe = original["nt"]  # type: ignore[assignment]
+        ai_bootstrap._lm_studio_exe = original["lm_exe"]  # type: ignore[assignment]
+        ai_bootstrap._deploy_bridge_if_safe = original["deploy"]  # type: ignore[assignment]
+        if old_env is None:
+            os.environ.pop(ai_bootstrap.AUTOSTART_NT_ENV, None)
+        else:
+            os.environ[ai_bootstrap.AUTOSTART_NT_ENV] = old_env
 
 
 def t_ai_strategy_ui_has_bootstrap_controls() -> None:
@@ -1136,6 +1269,7 @@ def t_ai_strategy_ui_has_bootstrap_controls() -> None:
     assert "/api/ai-lab/bootstrap/start" in js
     assert "/api/ai-lab/bootstrap/unload" in js
     assert "load_models: false" in js
+    assert "start_ninjatrader: false" in js
     assert "startBootstrap" in js
     assert "unloadLmStudio" in js
 
@@ -1785,8 +1919,14 @@ def t_reject_creates_lesson_for_next_iteration() -> None:
         job_dir.mkdir(parents=True)
         (job_dir / "result.json").write_text(json.dumps({
             "metrics": {"net_profit": -500.0, "trade_count": 5,
-                        "profit_factor": 0.5, "max_drawdown": -800.0},
+                         "profit_factor": 0.5, "max_drawdown": -800.0},
+            "context": {"historical_data_fingerprint": {
+                "method": "sha256_of_primary_bar_series", "value": "sha256:test",
+                "bar_count": 100,
+            }},
+            "artifacts": {"bars_file": "bars.json"},
         }), encoding="utf-8")
+        (job_dir / "bars.json").write_text("[]", encoding="utf-8")
         (job_dir / "trades.json").write_text(json.dumps({"trades": [
             {"exit_time_utc": "2026-01-01T10:00:00Z", "pnl_currency": -100.0}
             for _ in range(5)
@@ -2210,6 +2350,8 @@ def main() -> int:
         ("t12 knowledge context reads reference library and sources", t_knowledge_context_reads_reference_library_and_sources),
         ("t12b knowledge shortlist excludes forbidden references",
          t_knowledge_reference_shortlist_excludes_forbidden_refs),
+        ("t12c knowledge keeps reading existing user research",
+         t_knowledge_context_keeps_reading_existing_user_research),
         ("t13 generator prompt includes knowledge context", t_generator_prompt_includes_knowledge_context),
         ("t14 runner research loop continues after rejected", t_runner_research_loop_continues_after_rejected),
         ("t15 signal sanity counts breakout signals", t_signal_sanity_counts_breakout_signals),
@@ -2239,6 +2381,7 @@ def main() -> int:
         ("t32c compile quarantine moves broken AI source",
          t_compile_quarantine_moves_only_ai_sandbox_source),
         ("t33 lm_studio default timeouts are bounded/no retries", t_lmstudio_default_timeouts_are_bounded),
+        ("t33a llm_timeouts config quality_over_speed invariants", t_llm_timeouts_config),
         ("t33b lm_studio default URL uses IPv4 loopback",
          t_lmstudio_default_base_url_uses_ipv4_loopback),
         ("t33c AI UI preserves ready state during background probe",
@@ -2247,6 +2390,8 @@ def main() -> int:
          t_ai_strategy_ui_hides_terminal_heartbeat),
         ("t33e bootstrap status shape without side effects",
          t_bootstrap_status_shape_without_side_effects),
+        ("t33e2 bootstrap never autostarts NinjaTrader without env opt-in",
+         t_bootstrap_never_autostarts_ninjatrader_without_env_opt_in),
         ("t33f AI UI has bootstrap controls",
          t_ai_strategy_ui_has_bootstrap_controls),
         ("t34 heartbeat emits during long stage", t_heartbeat_emits_during_long_stage),

@@ -84,13 +84,23 @@
   prefix / KV-cache;
 - повторный `lms load <model>` для уже активной модели пропускается;
 - после завершения research run выполняется `lms unload --all`;
-- по умолчанию затем выполняется `lms server stop`;
-- кнопка **«Освободить AI-память»** делает то же вручную.
+- API-сервер LM Studio по умолчанию остаётся запущенным: это не занимает VRAM, но
+  убирает ложный status «LM Studio недоступна» между итерациями;
+- кнопка **«Освободить AI-память»** выгружает модели; сервер останавливается только при
+  явном `stop_server=true` или `AI_LAB_AUTO_STOP_LM_SERVER=1`.
 
 В UI есть кнопка **«Подготовить среду»**. Она вызывает:
 
 - `GET /api/ai-lab/bootstrap/status`;
-- `POST /api/ai-lab/bootstrap/start`.
+- `POST /api/ai-lab/bootstrap/start` (**без** автозапуска NinjaTrader).
+
+`NinjaTrader.exe` по умолчанию **не** стартует из bootstrap / reconnect / runner /
+`start-ai-lab.ps1`. Это защита от lockout логина после reboot. Opt-in только:
+
+```powershell
+$env:NTA_ALLOW_AUTOSTART_NINJATRADER = "1"
+# и явно start_ninjatrader=true в API, либо start-ai-lab.ps1 -StartNinjaTrader
+```
 
 Автоподготовка внутри кнопки «Запустить» включается только явно:
 
@@ -100,7 +110,7 @@ $env:AI_LAB_LAZY_LM_STUDIO = "1"
 $env:AI_LAB_AUTO_UNLOAD_MODELS = "1"
 $env:AI_LAB_REUSE_LOADED_MODEL = "1"
 $env:AI_LAB_UNLOAD_AFTER_EACH_REQUEST = "0"
-$env:AI_LAB_AUTO_STOP_LM_SERVER = "1"
+$env:AI_LAB_AUTO_STOP_LM_SERVER = "0"
 ```
 
 ### 2.2. Prompt / prefix caching discipline

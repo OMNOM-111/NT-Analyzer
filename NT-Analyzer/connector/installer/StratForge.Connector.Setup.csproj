@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>StratForge.Connector.Setup</AssemblyName>
+    <RootNamespace>StratForge.Connector.Setup</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Version>0.0.0-local</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+    <Description>Verified installer and repair utility for StratForge NinjaTrader Connector</Description>
+    <NinjaTraderInstallDir Condition=" '$(NinjaTraderInstallDir)' == '' ">C:\Program Files\NinjaTrader 8\bin</NinjaTraderInstallDir>
+  </PropertyGroup>
+  <ItemGroup Condition=" '$(ReleaseTrustSource)' != '' ">
+    <Compile Remove="ReleaseTrustPlaceholder.cs" />
+    <Compile Include="$(ReleaseTrustSource)" Link="GeneratedReleaseTrust.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(NinjaTraderInstallDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="System.Security" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+</Project>

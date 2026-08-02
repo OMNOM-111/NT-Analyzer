@@ -4612,7 +4612,7 @@ function _buildReportRow(it) {
   tdStrat.appendChild(document.createTextNode(it.strategy || "—"));
   if (it.origin && it.origin.type === "ai_lab") {
     const aiPill = el("span", { cls: "job-origin-pill ai", text: "AI" });
-    aiPill.title = `AI Strategy Lab · ${it.origin.experiment_id || ""}`;
+    aiPill.title = `StratForge AI Lab · ${it.origin.experiment_id || ""}`;
     aiPill.style.cursor = "pointer";
     aiPill.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -5876,7 +5876,7 @@ function renderTradesTable() {
     tr.appendChild(td(fmtPx(t.exit_price), { cls: "num" }));
     tr.appendChild(td(t.quantity, { cls: "num" }));
     const pnl = (t.pnl_currency ?? 0);
-    tr.appendChild(td(fmtMoney(t.pnl_currency),
+    tr.appendChild(td(fmtTradeMoney(t.pnl_currency),
       { cls: "num " + (pnl >= 0 ? "pos" : "neg") }));
     tr.appendChild(td(t.pnl_ticks, { cls: "num" }));
     tr.addEventListener("click", () => selectTrade(t.trade_no));
@@ -5899,7 +5899,7 @@ function selectTrade(tradeNo) {
 }
 
 function fmtPx(v) { return (v == null) ? "" : v.toLocaleString(undefined, { maximumFractionDigits: 4 }); }
-function fmtMoney(v) { return (v == null) ? "" : v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 }); }
+function fmtTradeMoney(v) { return (v == null) ? "" : v.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 }); }
 function fmtMoneySign(v) {
   if (v == null || Number.isNaN(v)) return "—";
   const s = v >= 0 ? "+" : "−";
@@ -6103,7 +6103,7 @@ function drawEquityCurve() {
   const finalEquity = base + acc;
   document.getElementById("eq-note").textContent =
     base > 0
-      ? `(${curve.length} сделок, старт ${fmtMoney(base)}, итог ${fmtMoney(finalEquity)}, PnL ${fmtMoneySign(acc)})`
+      ? `(${curve.length} сделок, старт ${fmtTradeMoney(base)}, итог ${fmtTradeMoney(finalEquity)}, PnL ${fmtMoneySign(acc)})`
       : `(${curve.length} сделок, итого ${fmtMoneySign(acc)})`;
 }
 function fmtMoneyShort(v) {

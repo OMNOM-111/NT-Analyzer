@@ -1,6 +1,18 @@
 /* Документы и законы — реальная интеграция (/api/governance/*). CSP-safe. */
 UI.ready(async function () {
   let docs = [], active = null, current = null, dirty = false, owner = 'Черевко Дмитро';
+  let historyEntries = [];
+  let pendingLawHighlight = null;
+  let pendingAmendmentNo = null;
+
+  function headingHtml(level, raw, inline) {
+    const lawMatch = raw.match(/^(GOV-[A-Z]+-\d+)\s*[—–-]\s*/);
+    if (lawMatch) {
+      const id = lawMatch[1];
+      return `<h${level} id="law-${id}" class="doc-law-anchor">${inline(raw)}</h${level}>`;
+    }
+    return `<h${level}>${inline(raw)}</h${level}>`;
+  }
 
   // minimal markdown renderer (headings, bold, code, lists, blockquote, hr)
   function md(src) {
@@ -9,9 +21,9 @@ UI.ready(async function () {
     function closeList() { if (inList) { html += `</${listType}>`; inList = false; } }
     lines.forEach(raw => {
       const l = raw.replace(/\r$/, '');
-      if (/^### /.test(l)) { closeList(); html += '<h3>' + inline(l.slice(4)) + '</h3>'; }
-      else if (/^## /.test(l)) { closeList(); html += '<h2>' + inline(l.slice(3)) + '</h2>'; }
-      else if (/^# /.test(l)) { closeList(); html += '<h1>' + inline(l.slice(2)) + '</h1>'; }
+      if (/^### /.test(l)) { closeList(); html += headingHtml(3, l.slice(4), inline); }
+      else if (/^## /.test(l)) { closeList(); html += headingHtml(2, l.slice(3), inline); }
+      else if (/^# /.test(l)) { closeList(); html += headingHtml(1, l.slice(2), inline); }
       else if (/^> /.test(l)) { closeList(); html += '<blockquote>' + inline(l.slice(2)) + '</blockquote>'; }
       else if (/^---/.test(l)) { closeList(); html += '<hr>'; }
       else if (/^\s*[-*] /.test(l)) { if (!inList || listType !== 'ul') { closeList(); html += '<ul>'; inList = true; listType = 'ul'; } html += '<li>' + inline(l.replace(/^\s*[-*] /, '')) + '</li>'; }
@@ -21,7 +33,179 @@ UI.ready(async function () {
     });
     closeList(); return html;
   }
+
   function fmtTs(iso) { try { return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso || ''; } }
+
+  function lawDocForId(lawId) {
+    return String(lawId || '').startsWith('GOV-AI-') ? 'local-ai-laws' : 'laws';
+  }
+
+  function parseLawIds(text) {
+    const ids = [];
+    const seen = new Set();
+    const add = (id) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    const src = String(text || '');
+    const re = /(GOV-[A-Z]+-)(\d{3,4})(?:\.\.(\d{3,4}))?/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const prefix = m[1];
+      const width = m[2].length;
+      const start = parseInt(m[2], 10);
+      const end = m[3] ? parseInt(m[3], 10) : start;
+      const lo = Math.min(start, end);
+      const hi = Math.max(start, end);
+      if (hi - lo + 1 > 8) {
+        add(prefix + String(lo).padStart(width, '0'));
+        add(prefix + String(hi).padStart(width, '0'));
+      } else {
+        for (let n = lo; n <= hi; n++) add(prefix + String(n).padStart(width, '0'));
+      }
+    }
+    return ids;
+  }
+
+  function resolveAmendmentTarget(entry) {
+    if (!entry) return { docId: null, lawIds: [], mode: 'summary' };
+    if (entry.entity_type === 'law' && entry.entity_id) {
+      return { docId: lawDocForId(entry.entity_id), lawIds: [entry.entity_id], mode: 'law' };
+    }
+    if (entry.entity_type === 'document' && entry.entity_id) {
+      return { docId: entry.entity_id, lawIds: [], mode: 'document' };
+    }
+    const fromTitle = parseLawIds(entry.entity_title);
+    if (fromTitle.length) {
+      return { docId: lawDocForId(fromTitle[0]), lawIds: fromTitle, mode: 'law' };
+    }
+    const fromChanges = parseLawIds((entry.changes || []).map(c => `${c.before_text || ''} ${c.after_text || ''}`).join(' '));
+    if (fromChanges.length) {
+      return { docId: lawDocForId(fromChanges[0]), lawIds: fromChanges, mode: 'law' };
+    }
+    const docIds = (entry.document_ids || []).filter(id => id !== 'project-overview');
+    const docId = docIds.find(id => docs.some(d => d.id === id)) || docIds[0] || entry.entity_id || null;
+    return { docId, lawIds: [], mode: 'summary' };
+  }
+
+  function docTitle(docId) {
+    const row = docs.find(d => d.id === docId);
+    return row ? (row.title || row.label || docId) : docId;
+  }
+
+  function renderChangeDiff(change, expanded) {
+    if (!change) return '';
+    const label = UI.esc(change.label || change.field || 'Изменение');
+    if (change.before_text || change.after_text) {
+      if (expanded) {
+        return `<div class="amend-change-row"><div class="amend-change-label">${label}</div><div class="amend-diff-wide"><div class="amend-diff-col"><div class="amend-diff-head">Было</div><pre class="amend-diff-pre old">${UI.esc(change.before_text || '—')}</pre></div><div class="amend-diff-col"><div class="amend-diff-head">Стало</div><pre class="amend-diff-pre new">${UI.esc(change.after_text || '—')}</pre></div></div></div>`;
+      }
+      return `<div class="diff"><span class="old">${UI.esc(change.before_text || '—')}</span> → <span class="new">${UI.esc(change.after_text || '—')}</span></div>`;
+    }
+    if (change.before_hash || change.after_hash) {
+      return `<div class="diff"><span class="old mono">${UI.esc((change.before_hash || '—').slice(0, 10))}</span> → <span class="new mono">${UI.esc((change.after_hash || '—').slice(0, 10))}</span></div>`;
+    }
+    return '';
+  }
+
+  function renderChangesDetail(changes) {
+    const items = Array.isArray(changes) ? changes : [];
+    if (!items.length) return '<div class="muted" style="font-size:12px">Детализированных полей нет.</div>';
+    return items.map(c => renderChangeDiff(c, true)).join('');
+  }
+
+  function setDocUrl(docId, lawId, amendmentNo) {
+    const p = new URLSearchParams();
+    if (docId) p.set('doc', docId);
+    if (lawId) p.set('law', lawId);
+    if (amendmentNo != null) p.set('amendment', String(amendmentNo));
+    const qs = p.toString();
+    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+  }
+
+  function highlightLaws(lawIds) {
+    const ids = (lawIds || []).filter(Boolean);
+    UI.qsa('.doc-law-highlight').forEach(el => el.classList.remove('doc-law-highlight'));
+    if (!ids.length) return;
+    ids.forEach(id => {
+      const el = UI.qs(`#law-${CSS.escape(id)}`);
+      if (el) el.classList.add('doc-law-highlight');
+    });
+    const first = UI.qs(`#law-${CSS.escape(ids[0])}`);
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      UI.qsa('.doc-law-highlight').forEach(el => el.classList.remove('doc-law-highlight'));
+    }, 4000);
+  }
+
+  function openAmendmentDrawer(entry) {
+    if (!entry) return;
+    const target = resolveAmendmentTarget(entry);
+    const title = UI.esc(entry.entity_title || entry.entity_id || 'Изменение');
+    let actions = '';
+    if (target.docId) {
+      let label = `Открыть в «${docTitle(target.docId)}»`;
+      if (target.lawIds.length) label = `Открыть ${target.lawIds.join(', ')} в «${docTitle(target.docId)}»`;
+      actions = `<div class="flex gap-sm" style="margin-top:16px"><button class="btn primary" id="amend-open-doc">${UI.esc(label)}</button><button class="btn ghost" data-close-drawer>Закрыть</button></div>`;
+    } else {
+      actions = `<div class="flex gap-sm" style="margin-top:16px"><button class="btn ghost" data-close-drawer>Закрыть</button></div>`;
+    }
+    const body = `
+      <div class="amend-drawer-meta">
+        <div class="t">${title}</div>
+        <div class="m">${UI.esc(entry.actor || '')} · ${UI.esc(fmtTs(entry.ts_utc))}</div>
+      </div>
+      ${entry.reason ? `<div class="amend-drawer-reason"><div class="amend-change-label">Основание</div><p>${UI.esc(entry.reason)}</p></div>` : ''}
+      <div class="amend-drawer-changes"><div class="amend-change-label">Изменения</div>${renderChangesDetail(entry.changes)}</div>
+      ${actions}`;
+    UI.drawer(`<h3>Поправка №${entry.amendment_no}</h3>`, body);
+    const openBtn = UI.qs('#amend-open-doc');
+    if (openBtn) {
+      openBtn.onclick = () => {
+        UI.closeDrawer();
+        openAmendmentInDocument(entry, target);
+      };
+    }
+    setDocUrl(active, target.lawIds[0] || null, entry.amendment_no);
+  }
+
+  async function openAmendmentInDocument(entry, target) {
+    if (!target || !target.docId) {
+      UI.toast('Для этой поправки не удалось определить документ');
+      return;
+    }
+    if (!confirmLeaveEdit()) return;
+    pendingLawHighlight = target.lawIds.length ? target.lawIds.slice() : null;
+    setDocUrl(target.docId, target.lawIds[0] || null, entry.amendment_no);
+    if (active !== target.docId) {
+      active = target.docId;
+      renderList(UI.qs('#doc-search').value);
+      await selectDoc(target.docId);
+      return;
+    }
+    if (pendingLawHighlight?.length) {
+      highlightLaws(pendingLawHighlight);
+      pendingLawHighlight = null;
+    }
+  }
+
+  function wireHistoryClicks() {
+    UI.qsa('#history .tl-item[data-amendment-no]').forEach(el => {
+      el.onclick = () => {
+        const no = parseInt(el.dataset.amendmentNo, 10);
+        const entry = historyEntries.find(e => e.amendment_no === no);
+        if (entry) openAmendmentDrawer(entry);
+      };
+    });
+  }
+
+  function maybeOpenPendingAmendment() {
+    if (pendingAmendmentNo == null) return;
+    const entry = historyEntries.find(e => e.amendment_no === pendingAmendmentNo);
+    pendingAmendmentNo = null;
+    if (entry) openAmendmentDrawer(entry);
+  }
 
   const listBox = UI.qs('#doc-list');
   UI.renderLoading(listBox, 'Загрузка документов…');
@@ -63,7 +247,10 @@ UI.ready(async function () {
     `).join('');
     UI.qsa('#doc-list .row').forEach(el => el.onclick = () => {
       if (!confirmLeaveEdit()) return;
-      active = el.dataset.id; renderList(UI.qs('#doc-search').value); selectDoc(active);
+      active = el.dataset.id;
+      renderList(UI.qs('#doc-search').value);
+      setDocUrl(active, null, null);
+      selectDoc(active);
     });
   }
 
@@ -78,6 +265,10 @@ UI.ready(async function () {
     UI.qs('#doc-cat').textContent = doc.title || doc.label || doc.id;
     UI.qs('#doc-meta').textContent = `Владелец: ${doc.owner || owner} · ` + (doc.rel_path || doc.path || '') + (doc.editable_kind === 'markdown' ? '' : ' · только чтение');
     viewBox.innerHTML = md(doc.content);
+    if (pendingLawHighlight?.length) {
+      highlightLaws(pendingLawHighlight);
+      pendingLawHighlight = null;
+    }
     UI.qs('#edit-area').value = doc.content || '';
     const editable = doc.editable_kind === 'markdown';
     const editBtn = UI.qs('#edit-btn');
@@ -92,20 +283,30 @@ UI.ready(async function () {
     UI.qs('#hist-scope').textContent = current ? (current.title || id) : '';
     try {
       const h = await API.http.governanceHistory({ document_id: id, limit: 40 }, { signal: UI.signal() });
-      const entries = (h && h.entries) || [];
-      if (!entries.length) { box.innerHTML = '<div class="empty-state" style="padding:14px">Поправок по этому документу ещё нет.</div>'; return; }
-      box.innerHTML = entries.map(e => {
-        const diffs = (e.changes || []).map(c => {
-          if (c.before_text || c.after_text) return `<div class="diff"><span class="old">${UI.esc(c.before_text || '—')}</span> → <span class="new">${UI.esc(c.after_text || '—')}</span></div>`;
-          if (c.before_hash || c.after_hash) return `<div class="diff"><span class="old mono">${UI.esc((c.before_hash || '—').slice(0, 10))}</span> → <span class="new mono">${UI.esc((c.after_hash || '—').slice(0, 10))}</span></div>`;
-          return '';
-        }).join('');
-        return `<div class="tl-item update"><div class="tl-dot"></div><div class="tl-body">
+      historyEntries = (h && h.entries) || [];
+      if (!historyEntries.length) {
+        box.innerHTML = '<div class="empty-state" style="padding:14px">Поправок по этому документу ещё нет.</div>';
+        return;
+      }
+      box.innerHTML = historyEntries.map(e => {
+        const diffs = (e.changes || []).map(c => renderChangeDiff(c, false)).join('');
+        return `<div class="tl-item update clickable" data-amendment-no="${e.amendment_no}" tabindex="0" role="button" aria-label="Открыть поправку №${e.amendment_no}"><div class="tl-dot"></div><div class="tl-body">
           <div class="t">Поправка №${e.amendment_no} · ${UI.esc(e.entity_title || '')}</div>
           <div class="m">${UI.esc(e.actor || '')} · ${fmtTs(e.ts_utc)}</div>
           <div class="m" style="color:var(--tx-2)">${UI.esc(e.reason || '')}</div>${diffs}
+          <div class="m amend-open-hint">Нажмите, чтобы открыть</div>
         </div></div>`;
       }).join('');
+      wireHistoryClicks();
+      UI.qsa('#history .tl-item[data-amendment-no]').forEach(el => {
+        el.onkeydown = (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            el.click();
+          }
+        };
+      });
+      maybeOpenPendingAmendment();
     } catch (e) { if (e.name !== 'AbortError') box.innerHTML = '<div class="empty-state" style="padding:14px">История недоступна.</div>'; }
   }
 
@@ -151,9 +352,16 @@ UI.ready(async function () {
   UI.qs('#doc-search').oninput = e => renderList(e.target.value);
   window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-  // initial selection (honor ?doc= deep link)
-  const wanted = new URLSearchParams(location.search).get('doc');
-  active = (wanted && docs.find(d => d.id === wanted)) ? wanted : (docs[0] && docs[0].id);
+  const params = new URLSearchParams(location.search);
+  const wantedDoc = params.get('doc');
+  const wantedLaw = params.get('law');
+  const wantedAmendment = params.get('amendment');
+  if (wantedLaw) pendingLawHighlight = [wantedLaw];
+  if (wantedAmendment) {
+    const no = parseInt(wantedAmendment, 10);
+    if (!Number.isNaN(no)) pendingAmendmentNo = no;
+  }
+  active = (wantedDoc && docs.find(d => d.id === wantedDoc)) ? wantedDoc : (docs[0] && docs[0].id);
   renderList('');
   if (active) await selectDoc(active);
 });

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>StratForge.Connector.Updater</AssemblyName>
+    <RootNamespace>StratForge.Connector.Updater</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Version>0.0.0-local</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+    <Description>External safe-restart updater for StratForge NinjaTrader Connector</Description>
+    <NinjaTraderInstallDir Condition=" '$(NinjaTraderInstallDir)' == '' ">C:\Program Files\NinjaTrader 8\bin</NinjaTraderInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\installer\ReleaseManifestVerifier.cs" Link="ReleaseManifestVerifier.cs" />
+    <Compile Include="..\installer\ReleaseTrustPlaceholder.cs" Link="ReleaseTrustPlaceholder.cs"
+             Condition=" '$(ReleaseTrustSource)' == '' " />
+  </ItemGroup>
+  <ItemGroup Condition=" '$(ReleaseTrustSource)' != '' ">
+    <Compile Include="$(ReleaseTrustSource)" Link="GeneratedReleaseTrust.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(NinjaTraderInstallDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+</Project>

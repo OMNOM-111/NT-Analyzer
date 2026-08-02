@@ -2905,9 +2905,35 @@
     const hb = await heartbeatPromise;
     STATE.bridgeOnline = !!(hb && hb.fresh);
     setChip("chip-backend", "Backend: онлайн", "ok");
-    setChip("chip-runtime",
-      "NT runtime: " + (STATE.bridgeOnline ? "онлайн" : "offline"),
-      STATE.bridgeOnline ? "ok" : "bad");
+
+    const stateStr = hb.state || (STATE.bridgeOnline ? "LIVE" : "STALE");
+    let ntClass = "bad";
+    if (stateStr === "LIVE" || stateStr === "RECEIVING_EVENTS") {
+      ntClass = "ok";
+    } else if (stateStr === "STALE" || stateStr === "SUBSCRIBED" || stateStr === "AUTHENTICATED" || stateStr === "TRANSPORT_CONNECTED" || stateStr === "PROCESS_UP") {
+      ntClass = "warn";
+    }
+    setChip("chip-runtime", "NT runtime: " + stateStr, ntClass);
+
+    const el = $("chip-runtime");
+    if (el) {
+      if (hb.present) {
+        const tooltip = [
+          `Состояние: ${stateStr}`,
+          `NinjaTrader: ${hb.present ? 'Запущен' : 'Остановлен'}`,
+          `NT версия: ${hb.ninja_version || '—'}`,
+          `Exporter версия: v${hb.exporter_version || '—'}`,
+          `Последний heartbeat (UTC): ${hb.timestamp_utc || '—'}`,
+          `Последний тик (UTC): ${hb.last_tick_at || '—'}`,
+          `Активные подписки (кол-во): ${hb.subscription_count || 0}`,
+          `Активные контракты: ${(hb.active_contracts || []).join(', ') || '—'}`,
+          `Кол-во реконнектов: ${hb.reconnect_count || 0}`,
+        ].join("\n");
+        el.title = tooltip;
+      } else {
+        el.removeAttribute("title");
+      }
+    }
 
     const [all, reg] = await Promise.all([strategiesPromise, profilesPromise, displayPrefsPromise, historyPromise, startDatesPromise])
       .then(([allResp, regResp]) => [allResp, regResp]);
@@ -4903,6 +4929,7 @@
     const br       = $("block-reasons");
     const startBtn = $("btn-start");
     const stopBtn  = $("btn-stop");
+    const reconnectBtn = $("btn-reconnect-sim");
 
     const view = findRuntimeView(STATE.selectedRuntime);
     const isRunning = !!(view && view.runtime_detected && view.runtime_enabled);
@@ -4930,6 +4957,7 @@
     const acctOk = acct &&
       !acct.is_live &&
       ["paper", "demo", "playback"].includes(acct.account_mode);
+    const acctConnected = String((acct && acct.connection_status) || "").toLowerCase() === "connected";
     const canStop = STATE.bridgeOnline && !!view && isRunning && !!acctOk;
     if (stopBtn) {
       stopBtn.disabled = !canStop;
@@ -4938,6 +4966,15 @@
         : !view              ? "Выберите строку в таблице"
         : !isRunning         ? "Стратегия уже остановлена в NinjaTrader"
         :                      "Остановите вручную в NinjaTrader";
+    }
+    if (reconnectBtn) {
+      const canReconnect = !!acctOk && !!STATE.bridgeOnline && !acctConnected;
+      reconnectBtn.disabled = !canReconnect;
+      reconnectBtn.title = canReconnect
+        ? "Переподключить paper/demo/playback соединение NinjaTrader"
+        : !STATE.bridgeOnline ? "Bridge offline"
+        : !acctOk ? "Выберите paper/demo/playback счёт"
+        : "Счёт уже подключён";
     }
 
     // ----- block-reasons: inline status text -----
@@ -4992,8 +5029,9 @@
   }
 
   // ----- online command (enable / disable strategy) ------------------------
-  // Monitor+Validate mode: we only enable/disable EXISTING NinjaTrader strategy instances.
-  // Creating a new instance programmatically is NOT supported by NinjaTrader AddOn API.
+  // Monitor+Validate mode: we only enable/disable EXISTING NinjaTrader strategy
+  // instances. Creating a new instance programmatically is NOT supported by the
+  // NinjaTrader AddOn API. Account-level reconnect is handled separately below.
   async function sendCommand(command) {
     const view = findRuntimeView(STATE.selectedRuntime);
 
@@ -5055,6 +5093,60 @@
     }
   }
 
+  async function sendReconnectCommand() {
+    const acctList = STATE.onlineAccounts && STATE.onlineAccounts.length
+      ? STATE.onlineAccounts : STATE.accounts;
+    const acct = acctList.find(a => a.account_name === STATE.selectedAccount);
+    if (!acct) {
+      renderCmdStatus({
+        state: "failed_other",
+        reason: "Не выбран paper/demo/playback счёт для reconnect.",
+        command: "reconnect_account",
+      });
+      return;
+    }
+    if (!confirm(`Переподключить paper/demo/playback соединение для счёта ${acct.account_name}?`)) {
+      return;
+    }
+    try {
+      const r = await api("/api/ops/runtime/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: "reconnect_account",
+          strategy_id: "",
+          account_name: acct.account_name,
+          operator: "ui-trading-online",
+          reason: "reconnect_account from Trading Online",
+        }),
+      });
+      const cid = r.command_id;
+      STATE.activeCommand = {
+        command_id: cid,
+        command: "reconnect_account",
+        submitted_at_utc: r.timestamp_utc || new Date().toISOString(),
+        timeout_sec: r.timeout_sec || 45,
+        acct: acct.account_name,
+      };
+      renderCmdStatus({
+        state: "waiting_for_bridge",
+        elapsed_sec: 0,
+        timeout_sec: STATE.activeCommand.timeout_sec,
+        command_id: cid,
+        command: "reconnect_account",
+      });
+      startCmdPolling(cid, STATE.activeCommand.timeout_sec);
+      setTimeout(loadAccounts, 1500);
+    } catch (e) {
+      renderCmdStatus({
+        state: "failed_other",
+        command_id: null,
+        command: "reconnect_account",
+        reason: "Backend отклонил: " + e.message,
+      });
+    }
+  }
+
   // ----- Phase 6.6 — command status polling --------------------------------
   function stopCmdPolling() {
     if (STATE.cmdPollTimer) {
@@ -5090,11 +5182,11 @@
               });
             } else {
               renderCmdStatus({ state: "failed_other", command_id: cid,
-                reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите NT-Analyzer backend." });
+                reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите StratForge AI backend." });
             }
           } catch (e2) {
             renderCmdStatus({ state: "failed_other", command_id: cid,
-              reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите NT-Analyzer backend." });
+              reason: "Backend запущен старой версией: нет /api/ops/runtime/command-status. Перезапустите StratForge AI backend." });
           }
           stopCmdPolling();
         } else {
@@ -5114,7 +5206,8 @@
     if (!st) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
     bar.classList.remove("hidden", "waiting", "success", "failure");
     const cmdLabel = (st.command === "disable_strategy") ? "Остановка" :
-                     (st.command === "enable_strategy")  ? "Запуск" : "Команда";
+                     (st.command === "enable_strategy")  ? "Запуск" :
+                     (st.command === "reconnect_account") ? "Моделирование" : "Команда";
     const elapsed = (st.elapsed_sec != null) ? Math.round(st.elapsed_sec) : "?";
     const timeout = st.timeout_sec || 30;
     let cls = "waiting", head = "", body = "", spin = "";
@@ -5127,7 +5220,9 @@
       case "bridge_completed_awaiting_runtime":
         cls = "waiting"; spin = '<span class="spinner"></span>';
         head = `${cmdLabel}: NinjaTrader принял команду.`;
-        body = `Жду обновления статуса стратегии…`;
+        body = st.command === "reconnect_account"
+          ? "Жду подтверждения connection_status=Connected…"
+          : "Жду обновления статуса стратегии…";
         break;
       case "confirmed_running":
         cls = "success"; head = "✓ NinjaTrader подтвердил запуск стратегии."; break;
@@ -5138,6 +5233,8 @@
         break;
       case "confirmed_stopped":
         cls = "success"; head = "✓ NinjaTrader подтвердил остановку стратегии."; break;
+      case "confirmed_connected":
+        cls = "success"; head = "✓ NinjaTrader подтвердил переподключение моделирования."; break;
       case "confirmed_stopped_unverified":
         cls = "failure";
         head = "✗ Не удалось подтвердить остановку стратегии.";
@@ -5145,8 +5242,12 @@
         break;
       case "failed_no_runtime_confirmation":
         cls = "failure";
-        head = "✗ NinjaTrader не подтвердил изменение состояния.";
-        body = "Обновите список и проверьте Strategies tab вручную.";
+        head = st.command === "reconnect_account"
+          ? "✗ NinjaTrader не подтвердил переподключение моделирования."
+          : "✗ NinjaTrader не подтвердил изменение состояния.";
+        body = st.command === "reconnect_account"
+          ? "Проверьте Connections в NinjaTrader вручную."
+          : "Обновите список и проверьте Strategies tab вручную.";
         break;
       case "failed_timeout":
         cls = "failure";
@@ -5563,6 +5664,7 @@
     });
     $("btn-start").addEventListener("click", () => sendCommand("enable_strategy"));
     $("btn-stop").addEventListener("click", () => sendCommand("disable_strategy"));
+    $("btn-reconnect-sim").addEventListener("click", () => sendReconnectCommand());
     const showHidden = $("chk-show-hidden");
     if (showHidden) showHidden.addEventListener("change", e => {
       STATE.showHiddenStrategies = !!e.target.checked;

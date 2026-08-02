@@ -1,7 +1,7 @@
 # NTAnalyzerBridge
 
 C# NinjaTrader 8 AddOn, который работает внутри NinjaTrader runtime и связывает
-NinjaTrader с локальным NT-Analyzer.
+NinjaTrader либо с локальным NT-Analyzer, либо с Production Connector.
 
 ## Назначение
 
@@ -14,6 +14,14 @@ Bridge выполняет четыре рабочие задачи:
 
 Bridge не принимает произвольный C# код из job. Исполняются только стратегии,
 которые уже скомпилированы в `NinjaTrader.Custom.dll` и найдены через whitelist.
+Production всегда подключает `StrategyAnalyzerRunner`; незавершённого
+fallback-runner в сборке нет.
+
+В режиме `production_connector` AddOn не читает repository jobs и не требует
+`project_root`. Он открывает только outbound HTTPS к canonical origin,
+генерирует P-256 device key в DPAPI CurrentUser, выполняет signed
+challenge/hello, heartbeat и bounded long-poll. Broker credentials серверу не
+передаются; live commands выключены. Контракт: `../docs/CONNECTOR_PROTOCOL_V1.md`.
 
 ## Сборка
 
@@ -70,8 +78,18 @@ dotnet build bridge\NTAnalyzerBridge.csproj -c Debug `
 - `project_root` — путь к `NT-Analyzer`;
 - `ninjatrader_user_dir` — путь к `%USERPROFILE%\Documents\NinjaTrader 8`;
 - `jobs_dir` — необязательный внешний каталог очереди jobs; если не задан, используется `<project_root>/jobs`;
+- `runtime_data_dir` — необязательный каталог runtime telemetry; если не задан,
+  используется `<project_root>/data/runtime`. Для personal workspace можно
+  указать `<project_root>/data/tenants/<workspace_id>/runtime`, чтобы локальный
+  NinjaTrader пользователя писал в изолированный контур.
 - `poll_interval_ms` — частота проверки очереди;
 - `heartbeat_interval_ms` — частота heartbeat running job.
+
+Для сторонней Production-установки используются `mode: production_connector`
+и блок `production_connector`: HTTPS origin, protocol/package versions,
+одноразовый enrollment code, DPAPI state directory и poll policy. Local jobs и
+абсолютный путь репозитория для этого режима не нужны. Code расходуется при
+первом enrollment; постоянная identity хранится только локально под DPAPI.
 
 ## Runtime outputs
 
@@ -93,6 +111,9 @@ Bridge пишет локальные runtime-файлы в:
 - `strategy_history.jsonl`.
 
 Эти файлы являются локальным состоянием и не предназначены для Git.
+Изменения heartbeat, strategies, errors и завершения jobs преобразуются backend
+в долговечные события Витька. Bridge не вызывает AI и не принимает решения
+самостоятельно.
 
 ## Queue contract
 

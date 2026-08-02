@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    NT-Analyzer launcher.
+    StratForge AI launcher.
 
 .DESCRIPTION
     Starts the local Python backend (which also serves the static UI) on
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# start.ps1 lives directly in the NT-Analyzer project root.
+# start.ps1 lives directly in the StratForge AI project root.
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
@@ -29,10 +29,61 @@ $projectRoot = $scriptDir
 Set-Location $projectRoot
 if (-not $UiPath.StartsWith('/')) { $UiPath = '/' + $UiPath }
 
+# This launcher is intentionally Development-only.  It preserves the existing
+# local data directory while reserving a distinct unused production root, so a
+# future production profile cannot be selected by an omitted variable.
+if (-not $env:STRATFORGE_ENV) { $env:STRATFORGE_ENV = 'development' }
+if ($env:STRATFORGE_ENV -notin @('development', 'dev', 'local')) {
+    Write-Host "ERROR: start.ps1 is Development-only; STRATFORGE_ENV=$($env:STRATFORGE_ENV)" -ForegroundColor Red
+    exit 2
+}
+if (-not $env:STRATFORGE_INSTANCE_ID) {
+    $env:STRATFORGE_INSTANCE_ID = "stratforge-dev-$($env:COMPUTERNAME)"
+}
+if (-not $env:STRATFORGE_DEPLOYMENT_ROLE) { $env:STRATFORGE_DEPLOYMENT_ROLE = 'all-in-one' }
+if (-not $env:STRATFORGE_CONFIG_PROFILE) { $env:STRATFORGE_CONFIG_PROFILE = 'local-development' }
+$versionFile = Join-Path $projectRoot 'VERSION.json'
+if (-not (Test-Path -LiteralPath $versionFile)) {
+    Write-Host "ERROR: project version file not found: $versionFile" -ForegroundColor Red
+    exit 2
+}
+try { $projectVersion = Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 | ConvertFrom-Json }
+catch {
+    Write-Host "ERROR: VERSION.json is invalid: $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
+if ([string]$projectVersion.channel -ne 'development' -or [string]$projectVersion.status -ne 'in_development') {
+    Write-Host 'ERROR: the local launcher requires VERSION.json channel=development and status=in_development.' -ForegroundColor Red
+    exit 2
+}
+# Never inherit a stable/canary identity from another terminal.  This launcher
+# is the one authoritative way to start the checked-out Development build.
+$env:STRATFORGE_BUILD_VERSION = [string]$projectVersion.version
+$env:STRATFORGE_BUILD_DATE = [string]$projectVersion.build_date
+$env:STRATFORGE_RELEASE_CHANNEL = 'development'
+if (-not $env:STRATFORGE_REGION) { $env:STRATFORGE_REGION = 'local' }
+if (-not $env:STRATFORGE_BIND_HOST) { $env:STRATFORGE_BIND_HOST = '127.0.0.1' }
+if (-not $env:STRATFORGE_ALLOWED_HOSTS) { $env:STRATFORGE_ALLOWED_HOSTS = '127.0.0.1,localhost' }
+if (-not $env:STRATFORGE_DEVELOPMENT_DATA_ROOT) {
+    $env:STRATFORGE_DEVELOPMENT_DATA_ROOT = (Join-Path $projectRoot 'data')
+}
+if (-not $env:STRATFORGE_DATA_ROOT) {
+    $env:STRATFORGE_DATA_ROOT = (Join-Path $projectRoot 'data\production')
+}
+if (-not $env:STRATFORGE_DATABASE_ID) { $env:STRATFORGE_DATABASE_ID = 'development-sqlite' }
+if (-not $env:STRATFORGE_QUEUE_ID) { $env:STRATFORGE_QUEUE_ID = 'development-local-worker' }
+if (-not $env:STRATFORGE_OBJECT_STORAGE_ID) { $env:STRATFORGE_OBJECT_STORAGE_ID = 'development-files' }
+if (-not $env:STRATFORGE_TELEGRAM_BOT_ID) { $env:STRATFORGE_TELEGRAM_BOT_ID = 'development-local' }
+if (-not $env:STRATFORGE_COOKIE_NAMESPACE) { $env:STRATFORGE_COOKIE_NAMESPACE = 'sf-dev' }
+if (-not $env:STRATFORGE_SIGNING_KEY_ID) { $env:STRATFORGE_SIGNING_KEY_ID = 'development-local' }
+if (-not $env:STRATFORGE_LOG_NAMESPACE) { $env:STRATFORGE_LOG_NAMESPACE = 'development' }
+if (-not $env:STRATFORGE_LIVE_TRADING_ALLOWED) { $env:STRATFORGE_LIVE_TRADING_ALLOWED = '0' }
+if (-not $env:STRATFORGE_REAL_PAYMENTS_ALLOWED) { $env:STRATFORGE_REAL_PAYMENTS_ALLOWED = '0' }
+
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {
     Write-Host "ERROR: backend entrypoint not found at: $serverScript" -ForegroundColor Red
-    Write-Host "       expected this script (start.ps1) to live in the NT-Analyzer project root." -ForegroundColor Red
+    Write-Host "       expected this script (start.ps1) to live in the StratForge AI project root." -ForegroundColor Red
     Write-Host "       resolved project_root = $projectRoot" -ForegroundColor Red
     exit 2
 }
@@ -49,8 +100,10 @@ if (-not $pyCmd) {
     exit 1
 }
 
-Write-Host '[NT-Analyzer] starting backend...' -ForegroundColor Cyan
-Write-Host "[NT-Analyzer] project_root: $projectRoot"
+Write-Host '[StratForge AI] starting backend...' -ForegroundColor Cyan
+Write-Host "[StratForge AI] project_root: $projectRoot"
+Write-Host "[StratForge AI] v$($env:STRATFORGE_BUILD_VERSION) | DEVELOPMENT | from $($env:STRATFORGE_BUILD_DATE)" -ForegroundColor Yellow
+Write-Host '[StratForge AI] This launcher never starts the stable Production service.' -ForegroundColor Yellow
 
 $env:PYTHONUNBUFFERED = '1'
 $env:NT_ANALYZER_ROOT = $projectRoot
@@ -89,10 +142,10 @@ function Test-PortInUse([int]$p) {
 }
 
 if (Test-PortInUse $Port) {
-    Write-Host "[NT-Analyzer] backend already running on port $Port." -ForegroundColor Cyan
+    Write-Host "[StratForge AI] backend already running on port $Port." -ForegroundColor Cyan
     if (-not $NoBrowser) {
         $url = "http://127.0.0.1:$Port$UiPath"
-        Write-Host "[NT-Analyzer] opening browser: $url"
+        Write-Host "[StratForge AI] opening browser: $url"
         Start-Process $url | Out-Null
     }
     exit 0
@@ -134,7 +187,7 @@ try {
                         }
                     }
                     if ($urlOpened) {
-                        Write-Host '[NT-Analyzer] browser opened.' -ForegroundColor Cyan
+                        Write-Host '[StratForge AI] browser opened.' -ForegroundColor Cyan
                     }
                 }
             }
@@ -152,8 +205,8 @@ try {
 
 $code = $proc.ExitCode
 if ($code -ne 0) {
-    Write-Host "[NT-Analyzer] backend exited with code $code." -ForegroundColor Yellow
+    Write-Host "[StratForge AI] backend exited with code $code." -ForegroundColor Yellow
 } else {
-    Write-Host '[NT-Analyzer] backend stopped.' -ForegroundColor Cyan
+    Write-Host '[StratForge AI] backend stopped.' -ForegroundColor Cyan
 }
 exit $code

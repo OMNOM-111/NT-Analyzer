@@ -1,5 +1,7 @@
 # Aurora operator guide
 
+Актуально на 2026-07-14.
+
 ## Start and navigation
 
 Run `start.ps1`. The launcher opens `/ui/`, which is Aurora. The classic UI is
@@ -14,6 +16,39 @@ The top bar is shared by every page:
   accounts. Live remains read-only.
 - The three-dot menu contains environment start/status, diagnostics, backend
   restart, LM memory release, catalog/margin refresh and classic UI.
+
+## Вход и общий чат
+
+Каждый desktop-браузер имеет собственную Telegram-сессию. Если вместо чатов
+виден экран входа, нажмите `Авторизоваться через Telegram` и отправьте боту
+показанную команду `/login КОД`; открытие ссылки без параметра не является
+успешным входом. После авторизации обновите страницу. Ошибка 401 больше не
+стирает уже показанную историю.
+
+Общий виджет называется `StratForge Orchestrator`; его пользовательский
+собеседник по умолчанию — Виктор. Владелец может напрямую вызвать Марину,
+Толика, Никиту, Ивана или Управляющего по имени. Ответ `да`, `нет` или обычное
+пояснение относится к последнему активному вопросу в этом же диалоге. Под
+ответом показываются фактическая модель и проверяемые стадии действия:
+`в очереди`, `выполняется`, `жду ваш ответ`, `нужно внимание`, `выполнено`.
+Внутренние рассуждения модели не отображаются. Состояние Виктора, временные окна,
+план на день/неделю и одновременно работающие агенты видны на странице Обзор.
+Aurora и Telegram используют один `conversation_id`; поручение, уточнение и итог
+не должны переходить в другой чат.
+Финансовый ответ Марины всегда начинается с названия периода и точных дат
+`from — to`; число операций без этой подписи нельзя сравнивать с другим экраном.
+
+Владелец открывает `Кабинет → Пользователи → Детали`, чтобы увидеть активные
+сессии и нагрузку вкладок. Там можно перезагрузить выбранную вкладку, немедленно
+завершить одну или все browser-cookie сессии и запросить снимок экрана.
+Те же действия доступны для самого владельца. ID в строке владельца — это ID
+одного Telegram-аккаунта, а не отдельное устройство. Каждое устройство появляется в
+живой телеметрии после обновления приложения; его можно назвать, например,
+`Основной компьютер` или `Телефон`. Удалять аккаунт и подключаться заново для этого не нужно.
+Пользователь сначала видит объяснение и кнопки разрешения/отказа, затем сам
+выбирает экран, окно или вкладку в системном диалоге браузера. Без обоих шагов
+снимок не создаётся. В чате доступны формы вроде `сделай скрин экрана
+пользователю Dev` или `перезагрузи сессии пользователя ID 42`.
 
 ## Overview
 
@@ -83,12 +118,39 @@ arbitration score). Exact token totals appear only when LM Studio returns `usage
 At run end the configured cleanup may unload models and stop the model server.
 That is expected; the next environment/run start restores it.
 
+## AI Agents / API Keys
+
+Open **AI Agents** from navigation. The basic form asks only for provider,
+account/quota label, deployment/model, API key and (for Azure/Custom) endpoint.
+Transport, auth and endpoint type are inferred. Roles, rotation pool and priority
+are optional advanced settings; prices come from the central model catalog.
+The key is stored through Windows DPAPI and only a mask is shown afterward.
+
+For student credits, record the grant total and the current remaining amount from
+the provider billing portal. Azure model keys cannot read Cost Management, so its
+balance is a manual snapshot minus later StratForge calls. Deployment retirement
+shown in Foundry is not the grant expiry. The tariff table is an estimator; the
+provider invoice is authoritative.
+
+Budget `0` is monitoring-only and does not block requests. A configured positive
+daily/monthly/credit or `$0.50` single-call gate can block and disable the model.
+Models sharing one provider/account share the same grant balance. Enabling a model
+does not give it trading, Telegram or strategy
+promotion rights; workflow integration is a separate reviewed change.
+
 ## Documents
 
 Documents use the governance API. Editing requires actor and reason, has a dirty
 guard and preserves history. Runtime defaults are read alongside governance text.
 
 ## Recovery
+
+Фоновый watchdog устанавливается командой
+`00_INSTALL_VITEK_BACKGROUND.cmd`. Он поддерживает backend, Telegram и
+событийный worker без браузера. Лог: `logs/vitek-background.log`.
+Для этого workspace запрещён встроенный браузер Codex; ручной визуальный smoke
+выполняется пользователем в обычном браузере по
+`http://127.0.0.1:8765/ui/`.
 
 The pre-completion, final and prototype-cleanup backups are documented in
 `UI_ROUTES_AND_ROLLBACK.md`. Do not use `git reset

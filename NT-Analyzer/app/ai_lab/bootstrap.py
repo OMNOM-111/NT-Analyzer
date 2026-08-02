@@ -8,6 +8,7 @@ to NinjaTrader, starts trading, or hides missing operator setup.
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from .io_utils import append_jsonl, read_json
 
 DEFAULT_TIMEOUT_SEC = int(os.environ.get("AI_LAB_BOOTSTRAP_TIMEOUT_SEC", "300"))
 POLL_SEC = float(os.environ.get("AI_LAB_BOOTSTRAP_POLL_SEC", "3"))
+AUTOSTART_NT_ENV = "NTA_ALLOW_AUTOSTART_NINJATRADER"
 
 _LOADED_MODEL_LOCK = threading.Lock()
 _LOADED_MODEL: Optional[str] = None
@@ -121,6 +123,55 @@ def _ninjatrader_exe() -> str:
     ])
 
 
+def _bridge_paths() -> tuple[Path, Path]:
+    build_root = paths.PROJECT_ROOT / "bridge" / "bin"
+    candidates = [
+        build_root / "Release" / "NTAnalyzerBridge.dll",
+        build_root / "Debug" / "NTAnalyzerBridge.dll",
+    ]
+    existing = [path for path in candidates if path.exists()]
+    built = max(existing, key=lambda path: path.stat().st_mtime) if existing else candidates[-1]
+    live = paths.nt_user_home() / "Documents" / "NinjaTrader 8" / "bin" / "Custom" / "NTAnalyzerBridge.dll"
+    return built, live
+
+
+def _file_sha256(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def bridge_deployment_status() -> Dict[str, Any]:
+    built, live = _bridge_paths()
+    built_hash = _file_sha256(built)
+    live_hash = _file_sha256(live)
+    return {
+        "built_path": str(built), "live_path": str(live),
+        "built_exists": built.exists(), "live_exists": live.exists(),
+        "up_to_date": bool(built_hash and built_hash == live_hash),
+        "pending": bool(built_hash and built_hash != live_hash),
+        "built_sha256": built_hash[:16] or None,
+        "live_sha256": live_hash[:16] or None,
+    }
+
+
+def _deploy_bridge_if_safe(nt_running: Optional[bool]) -> Dict[str, Any]:
+    state = bridge_deployment_status()
+    if not state["pending"]:
+        return {"ok": True, "status": "up_to_date", **state}
+    if nt_running is True:
+        return {"ok": True, "status": "deferred_until_ninjatrader_restart", **state}
+    built, live = _bridge_paths()
+    try:
+        live.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, live)
+    except OSError as exc:
+        return {"ok": False, "status": "deploy_failed", "error": str(exc), **state}
+    fresh = bridge_deployment_status()
+    return {"ok": bool(fresh["up_to_date"]), "status": "deployed", **fresh}
+
+
 def _lms_cli() -> str:
     configured = _conf_value("lms_cli", "LMS_CLI")
     if configured and Path(os.path.expandvars(configured)).expanduser().exists():
@@ -191,8 +242,23 @@ def auto_unload_enabled() -> bool:
 
 
 def auto_stop_server_enabled() -> bool:
-    return os.environ.get("AI_LAB_AUTO_STOP_LM_SERVER", "1").strip().lower() not in {
+    # Keep the lightweight API server alive between strategy iterations. Models
+    # are still unloaded to release VRAM, but stopping the server made every
+    # next iteration look like an LM Studio outage and triggered needless
+    # restart attempts. Operators can opt back into full shutdown explicitly.
+    return os.environ.get("AI_LAB_AUTO_STOP_LM_SERVER", "0").strip().lower() not in {
         "0", "false", "no", "off",
+    }
+
+
+def ninjatrader_autostart_allowed() -> bool:
+    """Return the explicit owner opt-in for launching NinjaTrader.exe.
+
+    Keeping this default-off avoids opening the login dialog unexpectedly after
+    a reboot, which can contribute to account lockouts.
+    """
+    return os.environ.get(AUTOSTART_NT_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
     }
 
 
@@ -295,6 +361,7 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
         "lazy_mode_enabled": lazy_mode_enabled(),
         "auto_unload_enabled": auto_unload_enabled(),
         "auto_stop_server_enabled": auto_stop_server_enabled(),
+        "ninjatrader_autostart_allowed": ninjatrader_autostart_allowed(),
         "reuse_loaded_model_enabled": lm_studio.reuse_loaded_model_enabled(),
         "unload_after_request_enabled": lm_studio.unload_after_request_enabled(),
         "config_path": str(config_path()),
@@ -302,7 +369,9 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
             "ninjatrader": {
                 "running": nt_running,
                 "exe": _ninjatrader_exe(),
+                "autostart_allowed": ninjatrader_autostart_allowed(),
             },
+            "bridge_deployment": bridge_deployment_status(),
             "lm_studio_process": {
                 "running": lm_process,
                 "exe": _lm_studio_exe(),
@@ -320,7 +389,7 @@ def status(*, probe: bool = False) -> Dict[str, Any]:
 def start(
     *,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
-    start_ninjatrader: bool = True,
+    start_ninjatrader: bool = False,
     start_lm_studio: bool = True,
     start_lm_server: bool = True,
     load_models: bool = False,
@@ -336,12 +405,29 @@ def start(
     _log("bootstrap_start", timeout_sec=timeout_sec)
 
     nt_running = _tasklist_contains("ninjatrader")
-    if start_ninjatrader:
+    steps.append({
+        "component": "bridge_deployment",
+        **_deploy_bridge_if_safe(nt_running),
+    })
+    if start_ninjatrader and not ninjatrader_autostart_allowed():
+        steps.append({
+            "component": "ninjatrader",
+            "ok": False,
+            "status": "manual_login_required",
+            "message": f"Set {AUTOSTART_NT_ENV}=1 only for an intentional local launch",
+        })
+    elif start_ninjatrader:
         if nt_running is True:
             steps.append({"component": "ninjatrader", "ok": True, "status": "already_running"})
         else:
             res = _start_process(_ninjatrader_exe(), "NinjaTrader")
             steps.append({"component": "ninjatrader", **res})
+    else:
+        steps.append({
+            "component": "ninjatrader",
+            "ok": True,
+            "status": "already_running" if nt_running is True else "skipped_default_off",
+        })
 
     lm_proc = _tasklist_contains("lm studio")
     if start_lm_studio:

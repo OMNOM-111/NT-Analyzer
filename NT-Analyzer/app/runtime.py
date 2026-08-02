@@ -30,11 +30,14 @@ import math
 import os
 import re
 import statistics
+import threading
+from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from . import ops
+from . import ops, runtime_env
 from . import strategy_families
 
 HEARTBEAT_MAX_AGE_SEC = 60          # heartbeat older than this => stale
@@ -47,12 +50,16 @@ STRATEGY_DISPLAY_PREFS_FILE = "strategy_display_prefs.json"
 # FIFO PnL in the UI. Prefer a generous tail (or unlimited via max_lines <= 0).
 RUNTIME_EXEC_JSONL_MAX_LINES = 250_000
 RUNTIME_ORDER_JSONL_MAX_LINES = 100_000
+RUNTIME_JSONL_ROTATE_BYTES = 32 * 1024 * 1024
+RUNTIME_JSONL_ROTATE_KEEP = 6
+RUNTIME_JSONL_ROTATE_FILES = ("executions.jsonl", "orders.jsonl", "errors.jsonl")
 
 _JSONL_CACHE: Dict[str, Tuple[Tuple[int, int, int], List[Dict[str, Any]]]] = {}
 _JSONL_CACHE_ORDER: List[str] = []
-_JSONL_CACHE_MAX_ENTRIES = 8
+_JSONL_CACHE_MAX_ENTRIES = 32
 _ACTIVITY_VIEW_CACHE: Dict[Tuple[Any, ...], Tuple[List[Dict[str, Any]], Dict[str, Any]]] = {}
 _ACTIVITY_VIEW_CACHE_ORDER: List[Tuple[Any, ...]] = []
+_RUNTIME_CONTEXT = threading.local()
 _ACTIVITY_VIEW_CACHE_MAX_ENTRIES = 24
 
 # Subset of locked params we re-verify at runtime per Phase 17 spec.
@@ -785,8 +792,21 @@ def _normalize_runtime_strategy_row(row: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def runtime_dir() -> Path:
-    d = ops._project_root() / "data" / RUNTIME_DIR_NAME
+    override = getattr(_RUNTIME_CONTEXT, "runtime_dir", "")
+    if override:
+        return Path(str(override))
+    d = runtime_env.data_path(RUNTIME_DIR_NAME, project_root=ops._project_root())
     return d
+
+
+@contextmanager
+def runtime_dir_override(path: Any):
+    previous = getattr(_RUNTIME_CONTEXT, "runtime_dir", "")
+    _RUNTIME_CONTEXT.runtime_dir = str(path or "")
+    try:
+        yield
+    finally:
+        _RUNTIME_CONTEXT.runtime_dir = previous
 
 
 def _path(name: str) -> Path:
@@ -826,15 +846,15 @@ def _read_jsonl(p: Path, max_lines: Optional[int] = 5000) -> List[Dict[str, Any]
     except Exception:
         sig = None
         key = ""
-    out: List[Dict[str, Any]] = []
     try:
         with p.open("r", encoding="utf-8-sig") as f:
-            lines = f.readlines()
+            if max_lines is not None and max_lines > 0:
+                lines = list(deque(f, maxlen=max_lines))
+            else:
+                lines = list(f)
     except Exception:
         return []
-    # max_lines is None or <= 0  => read entire file (no tail truncation).
-    if max_lines is not None and max_lines > 0 and len(lines) > max_lines:
-        lines = lines[-max_lines:]
+    out: List[Dict[str, Any]] = []
     for ln in lines:
         ln = ln.strip()
         if not ln:
@@ -863,6 +883,120 @@ def _jsonl_file_sig(name: str) -> Tuple[str, Optional[int], Optional[int]]:
     except OSError:
         return (str(p.resolve()), None, None)
     return (str(p.resolve()), st.st_size, st.st_mtime_ns)
+
+
+def _clear_jsonl_cache_for(path: Path) -> None:
+    try:
+        prefix = str(path.resolve()) + "|"
+    except Exception:
+        prefix = str(path) + "|"
+    for key in list(_JSONL_CACHE.keys()):
+        if key.startswith(prefix):
+            _JSONL_CACHE.pop(key, None)
+            try:
+                _JSONL_CACHE_ORDER.remove(key)
+            except ValueError:
+                pass
+    _ACTIVITY_VIEW_CACHE.clear()
+    _ACTIVITY_VIEW_CACHE_ORDER.clear()
+
+
+def _runtime_rotation_stamp(now: Optional[datetime] = None) -> str:
+    dt = now or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _rotated_jsonl_files(path: Path) -> List[Path]:
+    try:
+        candidates = list(path.parent.glob(path.name + ".*.rotated"))
+    except Exception:
+        return []
+
+    def sort_key(p: Path) -> Tuple[int, str]:
+        try:
+            return (p.stat().st_mtime_ns, p.name)
+        except OSError:
+            return (0, p.name)
+
+    return sorted([p for p in candidates if p.is_file()], key=sort_key, reverse=True)
+
+
+def rotate_runtime_jsonl_files(*, max_bytes: int = RUNTIME_JSONL_ROTATE_BYTES,
+                               keep: int = RUNTIME_JSONL_ROTATE_KEEP,
+                               names: Optional[Iterable[str]] = None,
+                               now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Rotate large runtime JSONL ingress files without blocking readers.
+
+    The NinjaTrader bridge can continue appending to the canonical file name;
+    after a successful rename we create a fresh empty file in the same location.
+    Rotation is best-effort because Windows file locks may temporarily block a
+    rename while the bridge is writing.
+    """
+    rdir = runtime_dir()
+    threshold = max(0, int(max_bytes or 0))
+    retention = max(0, int(keep or 0))
+    selected = tuple(names or RUNTIME_JSONL_ROTATE_FILES)
+    result: Dict[str, Any] = {
+        "ok": True,
+        "runtime_dir": str(rdir),
+        "max_bytes": threshold,
+        "keep": retention,
+        "files": [],
+    }
+    if not rdir.is_dir():
+        return result
+
+    stamp = _runtime_rotation_stamp(now)
+    for raw_name in selected:
+        safe_name = Path(str(raw_name or "")).name
+        row: Dict[str, Any] = {
+            "name": safe_name,
+            "path": str(rdir / safe_name),
+            "exists": False,
+            "size": 0,
+            "rotated": False,
+            "pruned": [],
+        }
+        if not safe_name or safe_name != str(raw_name or "") or not safe_name.endswith(".jsonl"):
+            row["error"] = "invalid_name"
+            result["ok"] = False
+            result["files"].append(row)
+            continue
+        path = rdir / safe_name
+        try:
+            st = path.stat()
+        except OSError:
+            result["files"].append(row)
+            continue
+        row["exists"] = True
+        row["size"] = st.st_size
+        try:
+            if threshold > 0 and st.st_size >= threshold and st.st_size > 0:
+                idx = 0
+                rotated = path.with_name(f"{path.name}.{stamp}.rotated")
+                while rotated.exists():
+                    idx += 1
+                    rotated = path.with_name(f"{path.name}.{stamp}.{idx}.rotated")
+                os.replace(str(path), str(rotated))
+                path.touch()
+                _clear_jsonl_cache_for(path)
+                row["rotated"] = True
+                row["rotated_path"] = str(rotated)
+            rotated_files = _rotated_jsonl_files(path)
+            for stale in rotated_files[retention:]:
+                try:
+                    stale.unlink()
+                    row["pruned"].append(str(stale))
+                except OSError as exc:
+                    row["prune_error"] = str(exc)
+                    result["ok"] = False
+        except OSError as exc:
+            row["error"] = str(exc)
+            result["ok"] = False
+        result["files"].append(row)
+    return result
 
 
 def _clone_activity_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -924,14 +1058,41 @@ def _now_utc() -> datetime:
 
 def read_heartbeat() -> Dict[str, Any]:
     raw = _read_json(_path("heartbeat.json"), default=None)
+
+    from . import market_data_ipc
+    ipc_metrics = {}
+    try:
+        ipc_metrics = market_data_ipc.metrics()
+        detailed_state = ipc_metrics.get("state", "DISCONNECTED")
+    except Exception:
+        detailed_state = "DISCONNECTED"
+
     if not raw or not isinstance(raw, dict):
-        return {"present": False, "fresh": False, "age_sec": None}
+        return {
+            "present": False,
+            "fresh": False,
+            "age_sec": None,
+            "timestamp_utc": None,
+            "ninja_version": None,
+            "machine": None,
+            "exporter_version": None,
+            "state": detailed_state,
+            "last_tick_at": ipc_metrics.get("last_tick_at", ""),
+            "subscription_count": ipc_metrics.get("subscription_count", 0),
+            "active_contracts": ipc_metrics.get("active_contracts", []),
+            "reconnect_count": ipc_metrics.get("reconnect_count", 0),
+        }
+
     ts = _parse_iso(raw.get("timestamp_utc"))
     age = None
     fresh = False
     if ts is not None:
         age = (_now_utc() - ts).total_seconds()
         fresh = age <= HEARTBEAT_MAX_AGE_SEC and age >= -5  # allow tiny clock skew
+
+    if detailed_state == "STALE":
+        fresh = False
+
     return {
         "present": True,
         "fresh": bool(fresh),
@@ -940,6 +1101,11 @@ def read_heartbeat() -> Dict[str, Any]:
         "ninja_version": raw.get("ninja_version"),
         "machine": raw.get("machine"),
         "exporter_version": raw.get("exporter_version"),
+        "state": detailed_state,
+        "last_tick_at": ipc_metrics.get("last_tick_at", ""),
+        "subscription_count": ipc_metrics.get("subscription_count", 0),
+        "active_contracts": ipc_metrics.get("active_contracts", []),
+        "reconnect_count": ipc_metrics.get("reconnect_count", 0),
     }
 
 
@@ -3245,7 +3411,9 @@ def confirm_runtime(strategy_id: str, action: str, reason: str = "") -> Dict[str
 COMMANDS_FILE = "commands.jsonl"
 COMMAND_RESULTS_FILE = "command_results.jsonl"
 
-ALLOWED_COMMANDS = ("enable_strategy", "disable_strategy")
+STRATEGY_RUNTIME_COMMANDS = ("enable_strategy", "disable_strategy")
+ACCOUNT_RUNTIME_COMMANDS = ("reconnect_account",)
+ALLOWED_COMMANDS = STRATEGY_RUNTIME_COMMANDS + ACCOUNT_RUNTIME_COMMANDS
 
 
 def _is_paper_account(account_name: str) -> bool:
@@ -3273,6 +3441,18 @@ def _resolve_account_mode_for_command(account_name: str) -> str:
     return _classify_account_mode(account_name, declared)
 
 
+def _default_connection_command_strategy_id(account_name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(account_name or "").strip()) or "account"
+    return f"runtime_connection_reconnect__{safe}"
+
+
+def _is_datafeed_connection_name(connection_name: str) -> bool:
+    value = str(connection_name or "").strip().lower()
+    return any(marker in value for marker in (
+        "data feed", "datafeed", "датафид", "дата фид",
+    ))
+
+
 def submit_command(command: str,
                    strategy_id: str,
                    account_name: str,
@@ -3284,7 +3464,8 @@ def submit_command(command: str,
                    contract_month: str = "",
                    timeframe: str = "",
                    runtime_instance_id: str = "",
-                   params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   params: Optional[Dict[str, Any]] = None,
+                   connection_name: str = "") -> Dict[str, Any]:
     """Queue a command for the NT bridge (paper/playback/demo only).
 
     Hard rules:
@@ -3293,6 +3474,8 @@ def submit_command(command: str,
       * if strategy_id matches a registry entry → registry archived/rejected
         launch block applies to enable_strategy. disable_strategy remains
         allowed so a frozen strategy can still be stopped from runtime.
+      * reconnect_account targets the account connection only and therefore
+        does not require a strategy instance/class.
       * runtime_instance_id (when provided) targets the exact strategy
         instance the UI selected; the bridge uses it to disambiguate
         multiple instances of the same class on the same account.
@@ -3302,15 +3485,27 @@ def submit_command(command: str,
     """
     if command not in ALLOWED_COMMANDS:
         raise ops.OpsError(f"command not allowed: {command}", 400)
-    if not strategy_id:
-        raise ops.OpsError("strategy_id required", 400)
-    s = ops.get_strategy(strategy_id)
-    canonical_sid = str((s or {}).get("strategy_id") or strategy_id)
-    resolved_class = class_name or (s.get("class_name") if s else "")
-    if not resolved_class:
-        raise ops.OpsError("class_name required (catalog strategy)", 400)
+    connection_command = command in ACCOUNT_RUNTIME_COMMANDS
+    s = ops.get_strategy(strategy_id) if strategy_id else None
+    if connection_command:
+        canonical_sid = str(strategy_id or _default_connection_command_strategy_id(account_name))
+        resolved_class = str(class_name or "").strip()
+    else:
+        if not strategy_id:
+            raise ops.OpsError("strategy_id required", 400)
+        canonical_sid = str((s or {}).get("strategy_id") or strategy_id)
+        resolved_class = class_name or (s.get("class_name") if s else "")
+        if not resolved_class:
+            raise ops.OpsError("class_name required (catalog strategy)", 400)
     if command == "enable_strategy" and s and s.get("status") in ("rejected", "archived"):
         raise ops.OpsError("strategy is archived/rejected — launch refused", 403)
+    if connection_command and _is_system_account(account_name):
+        raise ops.OpsError(
+            f"account '{account_name}' is a NinjaTrader system account — "
+            "reconnect is not allowed", 403)
+    if connection_command and _is_datafeed_connection_name(connection_name):
+        raise ops.OpsError(
+            "data-feed connections cannot be used for account reconnect", 403)
     acct_mode = _resolve_account_mode_for_command(account_name)
     if acct_mode == "unknown":
         raise ops.OpsError(
@@ -3397,6 +3592,7 @@ def submit_command(command: str,
         "reason": reason or "",
         "params": final_params,
         "runtime_instance_id": runtime_instance_id or "",
+        "connection_name": str(connection_name or "").strip(),
         "live_block_passed": True,
     }
     p = _path(COMMANDS_FILE)
@@ -3743,8 +3939,9 @@ def get_command_status(command_id: str,
         "stale_sec": (hb.get("age_sec") if hb.get("present") else None),
     }
 
-    raw_strats = read_strategies_raw()
-    rt_match_raw = _match_runtime_for_command(cmd, raw_strats)
+    cmd_kind = str(cmd.get("command") or "")
+    raw_strats = read_strategies_raw() if cmd_kind in STRATEGY_RUNTIME_COMMANDS else []
+    rt_match_raw = _match_runtime_for_command(cmd, raw_strats) if raw_strats else None
     runtime_match: Optional[Dict[str, Any]] = None
     if rt_match_raw is not None:
         runtime_match = {
@@ -3755,10 +3952,19 @@ def get_command_status(command_id: str,
             "enabled":        bool(rt_match_raw.get("enabled")),
             "timestamp_utc":  rt_match_raw.get("timestamp_utc"),
         }
+    account_match = next((
+        {
+            "account_name": row.get("account_name"),
+            "account_mode": row.get("account_mode"),
+            "connection_status": row.get("connection_status"),
+        }
+        for row in read_accounts()
+        if str(row.get("account_name") or "") == str(cmd.get("account_name") or "")
+    ), None)
 
     base: Dict[str, Any] = {
         "command_id":       command_id,
-        "command":          cmd.get("command"),
+        "command":          cmd_kind,
         "strategy_id":      cmd.get("strategy_id"),
         "strategy_class":   cmd.get("strategy_class"),
         "account_name":     cmd.get("account_name"),
@@ -3768,7 +3974,9 @@ def get_command_status(command_id: str,
         "elapsed_sec":      round(float(elapsed_sec), 2),
         "bridge_result":    bridge_result,
         "runtime_match":    runtime_match,
+        "account_match":    account_match,
         "heartbeat":        hb_view,
+        "connection_name":  cmd.get("connection_name") or "",
         "timeout_sec":      int(timeout_sec),
     }
 
@@ -3785,7 +3993,6 @@ def get_command_status(command_id: str,
             state  = "failed_other"
             reason = bmsg or "bridge reported failure"
         elif bstatus == "completed":
-            cmd_kind = str(cmd.get("command") or "")
             if (not hb_view["present"]) or (not hb_view["fresh"]):
                 state = "failed_bridge_offline"
                 reason = (
@@ -3817,6 +4024,18 @@ def get_command_status(command_id: str,
                     state  = "bridge_completed_awaiting_runtime"
                     reason = ("bridge completed; waiting up to "
                               f"{_BRIDGE_RUNTIME_GRACE_SEC}s for next telemetry tick")
+            elif cmd_kind == "reconnect_account":
+                if account_match and str(account_match.get("connection_status") or "").strip().lower() == "connected":
+                    state  = "confirmed_connected"
+                    reason = "account connection_status is Connected"
+                elif elapsed_sec > timeout_sec:
+                    state  = "failed_no_runtime_confirmation"
+                    reason = ("Bridge принял команду reconnect, но выбранный paper/demo "
+                              "account не перешёл в Connected в пределах таймаута.")
+                else:
+                    state  = "bridge_completed_awaiting_runtime"
+                    reason = ("bridge completed; waiting for accounts.json to report "
+                              "connection_status=Connected")
             else:
                 state  = "failed_other"
                 reason = f"unknown command kind: {cmd_kind}"

@@ -43,6 +43,17 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const PTZ = "America/Los_Angeles";
+  const fmtTimePt = (iso) => {
+    if (!iso) return "";
+    try {
+      return new Intl.DateTimeFormat("ru-RU", {
+        timeZone: PTZ, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }).format(new Date(iso)) + " PT";
+    } catch {
+      return String(iso).slice(11, 19);
+    }
+  };
 
   async function loadGovernanceDefaults() {
     try {
@@ -1010,7 +1021,7 @@
             );
         logEl.appendChild(warn);
       }
-      const ts = (e.ts || "").slice(11, 19);
+      const ts = fmtTimePt(e.ts || "");
       const hiddenFields = [
         "ts", "line", "stage", "action", "level", "role", "model_role", "heartbeat",
         "stage_ru", "action_ru", "level_ru", "from_status_ru", "to_status_ru",
@@ -1069,7 +1080,7 @@
     const cells = roles.map(r => {
       const e = STATE.lastByRole[r];
       if (!e) return `<div class="ai-model-coord-cell"><span class="lbl">${bilingualBlock(activityRoleEn(r), activityRoleRu(r))}</span><span class="val muted">—</span></div>`;
-      const ts = (e.ts || "").slice(11, 19);
+      const ts = fmtTimePt(e.ts || "");
       const actionEn = activityActionEn(e);
       const actionRu = activityActionRu(e);
       const roleRu = activityRoleRu(r);
@@ -1463,7 +1474,7 @@
       if (!notes.length) { wrap.innerHTML = "Пока нет заметок."; return; }
       wrap.innerHTML = notes.map(n => {
         const applied = n.applied_at_stage ? " applied" : "";
-        const ts = (n.ts_utc || "").slice(11, 19);
+        const ts = fmtTimePt(n.ts_utc || "");
         const stage = n.applied_at_stage ? ` → applied at <em>${escape(n.applied_at_stage)}</em>` : " (pending)";
         return `<div class="note-row${applied ? ' applied' : ''}">
           <span class="muted">${escape(ts)}</span> ${escape(n.text || "")}${stage}
@@ -1499,7 +1510,7 @@
     try {
       const s = await fetchJson("/api/ai-lab/compile-source-status");
       const src = s.last_emitted_source || s.reason || "no compile-error pipe yet";
-      const ts = (s.last_emit_ts_utc || s.checked_at_utc || "").slice(11, 19);
+      const ts = fmtTimePt(s.last_emit_ts_utc || s.checked_at_utc || "");
       chip.textContent = `compile source: ${src}${ts ? " · " + ts : ""}`;
       chip.classList.toggle("ok", !!s.last_emitted_source);
       chip.classList.toggle("bad", !!s.error || !!s.reason);
@@ -1771,7 +1782,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start_ninjatrader: true,
+          start_ninjatrader: false,
           start_lm_studio: true,
           start_lm_server: true,
           load_models: false,

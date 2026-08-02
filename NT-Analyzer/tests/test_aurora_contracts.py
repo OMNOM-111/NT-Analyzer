@@ -125,8 +125,73 @@ def test_market_phase_handles_weekend_and_daily_maintenance_in_pt():
 def test_every_aurora_page_loads_domain_adapter_before_ui():
     for page in AURORA.glob("*.html"):
         html = page.read_text(encoding="utf-8")
+        # The mode picker deliberately precedes the Aurora application shell;
+        # it only needs auth API + its focused controller, not domain/UI code.
+        if page.name == "mode-entry.html":
+            assert 'src="assets/pages/mode-entry.js' in html
+            assert 'src="assets/ui.js' not in html
+            continue
         assert 'src="assets/domain.js' in html, page.name
         assert html.index('src="assets/domain.js') < html.index('src="assets/ui.js'), page.name
+
+
+def test_every_aurora_page_uses_one_api_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'src="assets/api.js?v='
+        assert marker in html, page.name
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert set(versions.values()) == {"20260721-stage8-operations1"}, versions
+
+
+def test_every_aurora_page_uses_current_theme_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'href="assets/theme.css?v='
+        assert marker in html, page.name
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert set(versions.values()) == {"20260721-build-identity1"}, versions
+
+
+def test_build_identity_is_visible_and_never_guessed_client_side():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    entry = (AURORA / "mode-entry.html").read_text(encoding="utf-8")
+    entry_js = (AURORA / "assets" / "pages" / "mode-entry.js").read_text(
+        encoding="utf-8"
+    )
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+
+    assert 'id="app-release-badge" data-release-badge' in ui
+    assert 'id="app-build-meta" data-build-meta' in ui
+    assert "development: { short: 'DEV', full: 'РАЗРАБОТКА'" in ui
+    assert "canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ'" in ui
+    assert "stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ'" in ui
+    assert "deployment.release_channel || ''" in ui
+    assert "environment === 'development' ? 'development'" not in ui
+    assert "v${version} · от ${visibleDate}" in ui
+    assert 'id="mode-entry-release-badge"' in entry
+    assert 'id="mode-entry-build-meta"' in entry
+    assert "API.http.runtimeEnv" in entry_js
+    assert "never guess a channel" in entry_js
+    assert ".rail-release-badge.dev" in theme
+    assert ".rail-release-badge.canary" in theme
+    assert ".rail-release-badge.stable" in theme
+
+
+def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    news = (AURORA / "news.html").read_text(encoding="utf-8")
+    page_js = (AURORA / "assets" / "pages" / "news.js").read_text(encoding="utf-8")
+
+    assert "data-global-news-strip" in ui and "page === 'news' ? null" not in ui
+    assert "global-news-window" in ui and "overflow: hidden" in theme
+    assert "news-ticker" not in news and "repeat(7,minmax(0,1fr))" in news
+    assert "scheduleStrategyRows" in ui and "cal-ev-title" in page_js
+    assert "item.is_confirmed" in page_js
+    assert "ОТКЛЮЧИТЕ СТРАТЕГИИ" in ui
 
 
 def test_live_static_handler_routes_csp_and_assets():
@@ -221,6 +286,34 @@ def test_account_ledger_never_labels_unexplained_balance_as_profit_or_deposit(tm
     assert classified["event"]["classification_status"] == "classified"
 
 
+def test_account_ledger_reconciliation_is_classified_but_not_cash_flow(tmp_path, monkeypatch):
+    monkeypatch.setattr(account_ledger, "LEDGER_PATH", tmp_path / "account_ledger.json")
+    account_ledger.record_accounts({
+        "source": "test", "accounts_generated_at_utc": "2026-07-01T00:00:00Z",
+        "online_accounts": [{
+            "account_name": "DEMO", "net_liquidation": 100, "cash_value": 100,
+            "realized_pnl": 0, "unrealized_pnl": 0,
+        }],
+    })
+    account_ledger.record_accounts({
+        "source": "test", "accounts_generated_at_utc": "2026-07-01T00:01:00Z",
+        "online_accounts": [{
+            "account_name": "DEMO", "net_liquidation": 200, "cash_value": 200,
+            "realized_pnl": 0, "unrealized_pnl": 0,
+        }],
+    })
+    event = account_ledger.account_history("DEMO")["accounts"][0]["events"][0]
+
+    account_ledger.classify_event(
+        "DEMO", event["event_id"], "reconciliation", "owner", "after reconnect",
+    )
+    history = account_ledger.account_history("DEMO")["accounts"][0]
+
+    assert history["events"][0]["kind"] == "reconciliation"
+    assert history["events"][0]["classification_status"] == "classified"
+    assert history["summary"]["classified_cash_flow"] == 0
+
+
 def test_account_ledger_explains_equity_change_from_runtime_pnl(tmp_path, monkeypatch):
     monkeypatch.setattr(account_ledger, "LEDGER_PATH", tmp_path / "account_ledger.json")
     account_ledger.record_accounts({"online_accounts": [{"account_name": "Sim101", "net_liquidation": 10000, "cash_value": 10000, "realized_pnl": 0, "unrealized_pnl": 0}]})
@@ -251,6 +344,147 @@ def test_aurora_keeps_legacy_operational_capabilities_wired():
         assert f"API.http.{method}" in ai_lab
 
 
+def test_aurora_trading_exposes_reconnect_modeling_control():
+    html = (AURORA / "trading.html").read_text(encoding="utf-8")
+    trading = (AURORA / "assets" / "pages" / "trading.js").read_text(encoding="utf-8")
+    assert 'id="ctrl-reconnect"' in html
+    assert "command: 'reconnect_account'" in trading
+    assert "#ctrl-reconnect" in trading
+
+
+def test_vitek_chat_hides_internal_model_beside_message_time():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "orchFmtTime(row.timestamp_utc)" in ui
+    assert "!isUser && row.model ? esc(row.model)" not in ui
+    assert "StratForge Orchestrator · Витёк" in ui
+    assert '<span class="orch-head-name">StratForge Orchestrator</span>' in ui
+    assert "Витёк · ваша правая рука" in ui
+    assert "Ваши чаты и данные сохранены" in ui
+    assert "ORCH.conversations = []" not in ui
+    assert "modelMeta" in ui and "модель:" in ui
+    assert "orchActionsHtml" in ui and "Ход выполнения" in ui
+    assert "ORCH_ACTION_LABELS" in ui and "ORCH_ACTION_STATES" in ui
+    assert "row.thinking" not in ui
+    assert "orchThinkBlock" not in ui
+    assert "Анализирую задачу…" in ui
+
+
+def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "let stopped = false, running = false;" in ui
+    assert "if (stopped || running) return;" in ui
+    assert "let stopped = false, refreshing = false;" in ui
+    assert "Date.now() < Number(ORCH.retryAfter || 0)" in ui
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "Number(e.retryAfterMs || 0)" in ui
+    assert "e instanceof HttpError && e.status >= 400 && e.status < 500" in api
+    assert 'headers={"Retry-After": str(retry_after)}' in server
+    assert "streamResult.ok !== true" in ui
+    assert "if (!sawFinal || !sawDone)" in api
+    assert "request_id: mutationRequestId('orchestrator')" in api
+    assert "local_worker.enqueue_ai_message" in server
+    assert "threading.Thread(target=worker, name=\"orchestrator-stream\"" not in server
+    assert "ai_chief_agent.handle_message(" not in server
+    assert "API.http.aiOrchestratorMessage(text, cid, agent)" not in ui
+    assert "row.actor_is_owner ? 'Owner'" not in ui
+    assert "async function refreshAuth()" in api and "authReady, refreshAuth" in api
+    assert "authenticateAndStart(newsStrip, true)" in ui
+    assert "if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }" in ui
+    assert "}, 3000);" in ui
+    assert "}, 5000);" in ui
+    # In-app notices: slower poll + no auto-ack while chat is open + 429 backoff.
+    assert "poll(() => refreshInAppNotices(), 12000)" in ui
+    assert "NOTICE.retryAfter" in ui
+    assert "never auto-ack" in ui.lower() or "NEVER auto-ack" in ui
+    assert 'path == "/api/notifications"' in server
+    assert 'path == "/api/vitek/status"' in server
+
+
+def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
+    html = (AURORA / "ai-lab.html").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    # AI Lab keeps only a compact status card + a launcher for the global chat.
+    assert "Виктор · правая рука руководителя" in html
+    assert 'id="orchestrator-open"' in html
+    assert 'id="chief-hours"' not in html
+    assert 'id="chief-task"' not in html
+    # The full conversational surface is the global floating widget in the shell:
+    # launcher FAB, per-conversation switching and the message API are all wired.
+    assert "openOrchestrator" in ui
+    assert "orch-fab" in ui
+    assert "API.http.aiOrchestratorMessage" in ui
+    assert "aiOrchestratorConversations" in ui
+    assert "/api/ai-lab/orchestrator/message" in api
+    assert "/api/ai-lab/orchestrator/conversations" in api
+    assert "aiOrchestratorSpeak" in api and "/api/ai-lab/orchestrator/speak" in api
+    assert "domainAgentVoices" in api and "/api/ai-lab/domain-agents/voices" in api
+    assert "domainAgentVoiceSave" in api and "domainAgentVoicePreview" in api
+    assert 'path == "/api/ai-lab/orchestrator/speak"' in (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "domain-agents/voices" in (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    assert "agentSpeakFromFace" in ui and "AGENT_SPEAK_HOVER_MS" in ui
+    html = (AURORA / "ai-agents.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "ai-agents.js").read_text(encoding="utf-8")
+    assert "staff-voice-grid" in html and "openVoiceSettings" in page
+
+
+def test_named_domain_agents_and_unified_finance_page_contract():
+    finance = (AURORA / "performance.html").read_text(encoding="utf-8")
+    finance_js = (AURORA / "assets" / "pages" / "performance.js").read_text(encoding="utf-8")
+    strategies = (AURORA / "strategies.html").read_text(encoding="utf-8")
+    strategies_js = (AURORA / "assets" / "pages" / "strategies.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+
+    assert "Финансы" in finance and "Марина · финансовый контроль" in finance
+    assert "renderMarina" in finance_js and "API.http.accounting" in finance_js
+    assert not (AURORA / "accounting.html").exists()
+    assert "Толик · контроль качества стратегий" in strategies
+    assert "tolik-message" not in strategies and "domainAgentMessage('tolik'" not in strategies_js
+    assert "/api/ai-lab/accounting" in api and "/api/ai-lab/strategy-analysis" in api
+    assert "aiOrchestratorRateMessage" in api and "/api/ai-lab/orchestrator/message/" in api
+    assert "aiOrchestratorFulfillMessage" in api and "/fulfillment" in api and "/fulfillment" in server
+    assert "aiOrchestratorSetConversationState" in api and "/orchestrator/conversations/state" in server
+    assert "rate_message" in server and "message/" in server and "/rating" in server
+    assert "set_message_fulfillment" in server
+    assert "orchRatingHtml" in ui and "data-orch-rate" in ui and "orch-feedback-area" in ui
+    assert "orchFooterHtml" in ui and "orch-fulfill-marks" in ui and "orch-chain" in ui
+    assert "Тема завершена" in ui
+    assert "isDefault" in ui and "badge.hidden = true" in ui
+    assert "orchStartFeedbackVoice" in ui and "orch-feedback-mic" in ui
+    assert "orch-feedback-archive" in ui and "orch-feedback-edit" in ui
+    assert "orchStopFeedbackVoice" in ui and "rec.continuous = true" in ui
+    assert "messagesSignature" in ui and "ta.dataset.dirty" in ui
+    assert "orch-task-state" in ui and "orchToggleConversationState" in ui
+    assert "Текущая тема ещё не завершена" in ui
+    # Vitek chooses the model internally; the owner never sees a model menu.
+    assert "data-orch-mode=" not in ui and "ORCH_MODES" in ui
+    assert 'id="orch-model-picker" hidden' in ui
+    assert "orch-model-trigger" not in ui and "orch-model-item" not in ui
+    assert "fast:" not in ui and "standard:" not in ui and "max:" not in ui
+    assert "agent: 'secretary'" not in ui and "agent: 'manager'" not in ui
+    # The old role rail is fully removed from the menu.
+    assert "data-orch-role" not in ui and "ORCH_ROLES" not in ui and "orch-agent-rail" not in ui
+    assert "accounting.html" not in ui and "label: 'Финансы'" in ui
+
+
+def test_news_agent_page_ticker_and_api_contract():
+    html = (AURORA / "news.html").read_text(encoding="utf-8")
+    news = (AURORA / "assets" / "pages" / "news.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+
+    assert "Никита · новостной аналитик" in html
+    assert "renderAgentAnalysis" in news and "API.http.newsAnalysis" in news
+    assert "news-agent-instruments" in html and "agentWhen" in news and "agentRelevance" in news
+    assert "news-agent-details" in html and "детерминированный анализ · без токенов" not in news
+    assert "news-agent-thumb-wrap" in html and "agentThumbHtml" in news
+    assert "🧠 Никита:" not in news and "🧠 Никита:" not in ui
+    assert "/api/ai-lab/news-analysis" in api
+
+
 def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     charts = (AURORA / "assets" / "charts.js").read_text(encoding="utf-8")
     overview = (AURORA / "assets" / "pages" / "overview.js").read_text(encoding="utf-8")
@@ -264,7 +498,7 @@ def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     assert "canvas.onmousemove" in charts and "t-detail" in charts
     assert "tooltipLabel: String(row.label" in overview
     assert "data-report-spark" in backtesting and "API.http.jobTrades" in backtesting
-    assert "AI стратегия" in backtesting and "ai-origin-ribbon" in strategies
+    assert "ai-origin-badge" in backtesting and "ai-origin-ribbon" in strategies
     assert "Простой" not in ai_lab and "Цикл не запущен" in ai_lab
 
 
@@ -413,3 +647,76 @@ def test_ai_model_telemetry_records_usage_and_aggregates(tmp_path, monkeypatch):
     assert result["models"][0]["total_tokens"] == 30
     assert result["models"][0]["p95_latency_sec"] == 10.0
     assert result["roles"][0]["role"] == "coder"
+
+
+def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
+    html = (AURORA / "documents.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "documents.js").read_text(encoding="utf-8")
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "assets/pages/documents.js" in html
+    assert "openAmendmentDrawer" in js
+    assert "resolveAmendmentTarget" in js
+    assert "parseLawIds" in js
+    assert "doc-law-anchor" in js
+    assert "data-amendment-no" in js
+    assert "API.http.governanceHistory" in js
+    assert ".tl-item.clickable" in theme
+    assert ".doc-law-highlight" in theme
+def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    assert "!drawing.alertId || alertIds.has(drawing.alertId)" in js
+    assert "if (changed || removed)" in js
+
+
+def test_command_language_covers_every_desktop_instrument():
+    import re
+    from app.ai_lab import command_language
+
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    start = js.index("const DESKTOP_INSTRUMENTS")
+    block = js[start:js.index("];", start) + 2]
+    desktop_roots = set(re.findall(r"\['([A-Z0-9]+)'", block))
+    assert desktop_roots <= set(command_language.INSTRUMENT_ROOTS)
+
+
+def test_heartbeat_and_ipc_contracts():
+    from app import runtime as ops_runtime
+    from app import market_data_ipc
+
+    # 1. Verify read_heartbeat payload contract
+    hb = ops_runtime.read_heartbeat()
+    expected_hb_keys = {
+        "present", "fresh", "age_sec", "timestamp_utc", "ninja_version",
+        "machine", "exporter_version", "state", "last_tick_at",
+        "subscription_count", "active_contracts", "reconnect_count"
+    }
+    for key in expected_hb_keys:
+        assert key in hb, f"Missing key {key} in heartbeat response"
+
+    # 2. Verify market_data_ipc.metrics() payload contract
+    ipc = market_data_ipc.metrics()
+    expected_ipc_keys = {
+        "last_tick_at", "subscription_count", "active_contracts",
+        "event_rate", "dropped", "reconnect_count", "active_generation",
+        "rejected_auth", "rejected_protocol"
+    }
+    for key in expected_ipc_keys:
+        assert key in ipc, f"Missing key {key} in IPC metrics"
+
+
+def test_victor_ui_exposes_durable_progress_workflow_and_selective_cleanup():
+    js = (AURORA / "assets" / "victor.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "items_remaining" in js
+    assert "progress_revision" in js
+    assert "workflow.participants" in js
+    assert "безопасный режим" in js
+    assert "backend_instance_id" in js
+    assert "data-cleanup-kinds" in js
+    assert "vitekReconcile(true, kinds)" in js
+    assert "vitekTaskProgress" in api
+    assert ".btn:disabled" in theme
+    assert "cursor: not-allowed" in theme

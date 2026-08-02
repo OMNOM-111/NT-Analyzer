@@ -1,7 +1,8 @@
 /* Центр управления торговлей — реальная интеграция (/api/ops/runtime/*). CSP-safe.
-   Команды paper-only (enable/disable_strategy), live-счета блокируются на сервере. */
+   Команды: paper-only enable/disable_strategy + bounded reconnect_account for
+   paper/demo/playback; live-счета блокируются на сервере. */
 UI.ready(async function () {
-  let accounts = [], controlAccount = '', catalog = [], perfMonth = null, rtTab = 'positions', bridgePaused = false;
+  let accounts = [], controlAccount = '', catalog = [], perfMonth = null, rtTab = 'positions', bridgePaused = false, bridgeOnline = false;
   let historySessions = [], hiddenClasses = [], strategyStartDates = {}, trackedCommandId = '';
   let runtimeStrategies = [], showHiddenStrategies = false;
   let calendarDate = new Date();
@@ -16,6 +17,7 @@ UI.ready(async function () {
     try { doc = await API.http.runtimeAccounts({ signal: UI.signal() }); }
     catch (e) { if (e.name !== 'AbortError') UI.renderError(accBox, e, loadAccounts); return; }
     accounts = (doc.accounts || doc.online_accounts || []).filter(account => !account.is_system);
+    bridgeOnline = !!doc.bridge_online;
     accBox.innerHTML = accounts.length ? accounts.map(accountCard).join('') : '<div class="empty-state">Счета недоступны — мост NinjaTrader офлайн.</div>';
     const sel = UI.qs('#ctrl-account');
     const ctrlable = accounts.filter(a => a.control_allowed && !a.is_live);
@@ -23,7 +25,8 @@ UI.ready(async function () {
     const shared = UI.getSelectedAccount();
     if (shared && ctrlable.some(a => a.account_name === shared.account_name)) sel.value = shared.account_name;
     controlAccount = sel.value;
-    UI.qs('#ctrl-sub').textContent = doc.bridge_online ? `мост онлайн · ${accounts.length} счетов · команды только paper` : 'мост офлайн';
+    UI.qs('#ctrl-sub').textContent = doc.bridge_online ? `мост онлайн · ${accounts.length} счетов · стратегии только paper, reconnect modeling доступен` : 'мост офлайн';
+    refreshControlActions();
     loadAccountAnalytics();
   }
   function accountCard(a) {
@@ -100,6 +103,20 @@ UI.ready(async function () {
         UI.closeDrawer(); UI.toast('Событие классифицировано'); loadAccountAnalytics();
       } catch (e) { UI.reportError(e); }
     };
+  }
+
+  function refreshControlActions() {
+    const reconnect = UI.qs('#ctrl-reconnect');
+    if (!reconnect) return;
+    const account = accounts.find(a => a.account_name === controlAccount) || null;
+    const connected = String(account && account.connection_status || '').toLowerCase() === 'connected';
+    const canReconnect = !!account && !account.is_live && !!bridgeOnline && !connected;
+    reconnect.disabled = !canReconnect;
+    reconnect.title = canReconnect
+      ? `Переподключить paper/demo/playback соединение для ${account.account_name}`
+      : !bridgeOnline ? 'Мост NinjaTrader офлайн'
+      : !account ? 'Выберите paper/demo/playback счёт'
+      : 'Счёт уже подключён';
   }
 
   function selectedLedgerAccount() {
@@ -277,6 +294,24 @@ UI.ready(async function () {
     } catch (e) { UI.reportError(e); }
   }
 
+  async function reconnectSimulation() {
+    const account = accounts.find(a => a.account_name === controlAccount) || null;
+    if (!account) { UI.toast('Выберите paper/demo/playback счёт'); return; }
+    if (!confirm(`Переподключить моделирование для счёта ${account.account_name}? Команда будет поставлена в очередь моста.`)) return;
+    try {
+      const result = await API.http.runtimeCommand({
+        command: 'reconnect_account',
+        strategy_id: '',
+        account_name: account.account_name,
+        reason: 'переподключение моделирования из UI',
+        operator: 'ui',
+      });
+      trackCommand(result);
+      UI.toast('Команда reconnect поставлена в очередь');
+      loadControl(); loadCommands(); loadAccounts();
+    } catch (e) { UI.reportError(e); }
+  }
+
   async function openLaunch() {
     if (!controlAccount) { UI.toast('Нет paper-счёта для управления'); return; }
     UI.drawer('<h3>Запустить стратегию (paper)</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка каталога…</div>');
@@ -351,7 +386,7 @@ UI.ready(async function () {
       const state = status.state || status.status || 'pending';
       box.hidden = false;
       box.innerHTML = `<strong>Последняя команда ${UI.esc(trackedCommandId)}:</strong> ${UI.esc(state)}${status.reason || status.message ? ' · ' + UI.esc(status.reason || status.message) : ''}`;
-      if (['completed', 'failed', 'failed_other', 'rejected', 'timeout'].includes(state)) trackedCommandId = '';
+      if (/^(confirmed_|failed_|unknown_command)/.test(String(state))) trackedCommandId = '';
     } catch (e) {
       box.hidden = false;
       box.textContent = 'Статус команды временно недоступен: ' + e.message;
@@ -383,8 +418,10 @@ UI.ready(async function () {
       node.textContent = (diag.bridge_log_tail || []).slice(-60).join('\n');
       node.scrollTop = node.scrollHeight;
       const st = UI.qs('#bridge-state');
+      bridgeOnline = !!diag.ninjatrader_running;
       st.className = 'badge ' + (diag.ninjatrader_running ? 'live' : 'failed');
       st.innerHTML = `<span class="dot"></span>${diag.ninjatrader_running ? 'онлайн' : 'офлайн'}`;
+      refreshControlActions();
     } catch (e) { /* keep last */ }
   }
 
@@ -528,7 +565,8 @@ UI.ready(async function () {
   // ---------- wire + init ----------
   UI.qsa('#rt-tabs button').forEach(b => b.onclick = () => { UI.qsa('#rt-tabs button').forEach(x => x.classList.remove('active')); b.classList.add('active'); rtTab = b.dataset.t; loadRuntime(); });
   UI.qs('#ctrl-launch').onclick = openLaunch;
-  UI.qs('#ctrl-refresh').onclick = () => { loadControl(); loadRuntime(); loadRuntimeAudit(); };
+  UI.qs('#ctrl-reconnect').onclick = reconnectSimulation;
+  UI.qs('#ctrl-refresh').onclick = () => { loadAccounts(); loadControl(); loadRuntime(); loadRuntimeAudit(); };
   UI.qs('#ctrl-show-hidden').onclick = (event) => {
     showHiddenStrategies = !showHiddenStrategies;
     event.currentTarget.textContent = showHiddenStrategies ? 'Скрыть внешние / личные' : 'Показать скрытые / внешние';
@@ -537,7 +575,7 @@ UI.ready(async function () {
   UI.qs('#hidden-classes-btn').onclick = openHiddenClasses;
   UI.qs('#ledger-add').onclick = openManualLedgerEvent;
   UI.qs('#ledger-import').onclick = openLedgerImport;
-  UI.qs('#ctrl-account').onchange = (e) => { controlAccount = e.target.value; UI.setSelectedAccount(controlAccount, true); };
+  UI.qs('#ctrl-account').onchange = (e) => { controlAccount = e.target.value; UI.setSelectedAccount(controlAccount, true); refreshControlActions(); };
   UI.qs('#cal-prev').onclick = () => { calendarDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1); loadCalendar(); };
   UI.qs('#cal-next').onclick = () => { calendarDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1); loadCalendar(); };
   UI.qs('#cal-today').onclick = () => { calendarDate = new Date(); loadCalendar(); };

@@ -51,18 +51,47 @@ async function refresh() {
 
   const hb = data.heartbeat || {};
   const fresh = hb.fresh === true;
+  const ipc = data.ipc || {};
 
   // Status chips
   renderChip("chip-backend", "Backend: OK", "ok");
   if (!hb.present) {
     renderChip("chip-nt", "NT Runtime: оффлайн", "bad");
     renderChip("chip-acct", "Аккаунт: —", "");
-  } else if (!fresh) {
-    const age = hb.age_sec != null ? ` (${hb.age_sec}s)` : "";
-    renderChip("chip-nt", `NT Runtime: устарел${age}`, "warn");
-    renderChip("chip-acct", "Аккаунт: —", "warn");
+    const el = $("chip-nt");
+    if (el) el.removeAttribute("title");
   } else {
-    renderChip("chip-nt", "NT Runtime: OK", "ok");
+    const stateStr = hb.state || (fresh ? "LIVE" : "STALE");
+    let ntClass = "bad";
+    if (stateStr === "LIVE" || stateStr === "RECEIVING_EVENTS") {
+      ntClass = "ok";
+    } else if (stateStr === "STALE" || stateStr === "SUBSCRIBED" || stateStr === "AUTHENTICATED" || stateStr === "TRANSPORT_CONNECTED" || stateStr === "PROCESS_UP") {
+      ntClass = "warn";
+    }
+    const age = hb.age_sec != null ? ` (${hb.age_sec}s)` : "";
+    renderChip("chip-nt", `NT Runtime: ${stateStr}${age}`, ntClass);
+
+    // Build rich details tooltip
+    const tooltip = [
+      `Состояние: ${stateStr}`,
+      `NinjaTrader: ${hb.present ? 'Запущен' : 'Остановлен'}`,
+      `NT версия: ${hb.ninja_version || '—'}`,
+      `Exporter версия: v${hb.exporter_version || '—'}`,
+      `Последний heartbeat (UTC): ${hb.timestamp_utc || '—'}`,
+      `Последний тик (UTC): ${ipc.last_tick_at || '—'}`,
+      `Активные подписки (кол-во): ${ipc.subscription_count || 0}`,
+      `Активные контракты: ${(ipc.active_contracts || []).join(', ') || '—'}`,
+      `Частота событий: ${ipc.event_rate || 0.0} /сек`,
+      `Потеряно событий: ${ipc.dropped || 0}`,
+      `Кол-во реконнектов: ${ipc.reconnect_count || 0}`,
+      `ID генерации (Connection): ${ipc.active_generation || '—'}`,
+      `Отказ авторизации: ${ipc.rejected_auth || 0}`,
+      `Отказ протокола: ${ipc.rejected_protocol || 0}`,
+      `Последняя ошибка: ${ipc.last_reject_reason || '—'}`
+    ].join("\n");
+    const el = $("chip-nt");
+    if (el) el.title = tooltip;
+
     // Show account from first active running strategy
     const running = (data.strategies || []).find(s => s.runtime_enabled);
     const acct = running ? running.account_name : "—";

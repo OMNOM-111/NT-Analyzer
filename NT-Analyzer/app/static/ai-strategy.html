@@ -4,23 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'">
-<title>ИИ-стратегии — NT-Analyzer</title>
+<title>AI Lab — StratForge AI</title>
 <link rel="stylesheet" href="style.css?v=20260627-lifecycle4">
 <link rel="stylesheet" href="ai-strategy.css?v=20260627-bilingual-log1">
+<link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <script src="page-prefetch.js?v=20260508-smooth-nav1" defer></script>
 <script src="performance.js?v=20260604-ai-lab4" defer></script>
-<script src="ai-strategy.js?v=20260627-cellhistory2" defer></script>
+<script src="ai-strategy.js?v=20260701-pt-time1" defer></script>
 </head>
 <body class="ai-lab-page-body">
 <header>
-  <h1>NT-Analyzer <span class="muted">— ИИ-стратегии</span> <span class="ai-badge">AI Lab</span></h1>
+  <h1><span class="brand-name">StratForge AI</span> <span class="muted">— AI Lab</span> <span class="ai-badge">NTA Edition</span></h1>
   <nav class="top-nav" aria-label="Разделы">
     <a href="/ui/legacy/index.html" class="top-nav-link">Бэктестирование</a>
     <a href="/ui/legacy/trading.html" class="top-nav-link">Торговля онлайн</a>
     <a href="/ui/legacy/performance.html" class="top-nav-link">Центр доходности</a>
     <a href="/ui/legacy/strategies.html" class="top-nav-link">Стратегии</a>
     <a href="/ui/legacy/docs.html" class="top-nav-link">Документы</a>
-    <a href="/ui/legacy/ai-strategy.html" class="top-nav-link active">ИИ-стратегии</a>
+    <a href="/ui/legacy/ai-strategy.html" class="top-nav-link active">AI Lab</a>
   </nav>
   <div class="status-strip">
     <span class="status-chip ai-status-chip" id="ai-lm-chip" title="LM Studio">LM Studio: ...</span>
@@ -31,7 +32,7 @@
     <button type="button" id="ai-refresh-btn" class="hdr-btn">Обновить</button>
     <button type="button" id="ai-bootstrap-btn" class="hdr-btn" title="Запустить/проверить NinjaTrader, LM Studio и модели">Подготовить среду</button>
     <button type="button" id="ai-unload-lm-btn" class="hdr-btn" title="Выгрузить модели LM Studio и остановить локальный server">Освободить AI-память</button>
-    <button type="button" id="ai-run-btn" class="hdr-btn" title="Запустить один research-цикл AI Strategy Lab">Запустить цикл</button>
+    <button type="button" id="ai-run-btn" class="hdr-btn" title="Запустить один research-цикл StratForge AI Lab">Запустить цикл</button>
     <button type="button" id="ai-cancel-btn" class="hdr-btn ai-cancel-btn" title="Остановить текущий цикл" hidden>Остановить</button>
     <button type="button" id="ai-scan-btn" class="hdr-btn" title="Пересканировать user_research">Сканировать research</button>
   </div>
@@ -43,7 +44,7 @@
 
   <section class="ai-hero" aria-labelledby="ai-hero-title">
     <div class="ai-hero-copy">
-      <div class="ai-hero-kicker">AI Strategy Lab</div>
+      <div class="ai-hero-kicker">StratForge AI Lab</div>
       <h2 id="ai-hero-title">Автономный исследовательский контур</h2>
       <p>
         Эта страница — только AI. Сюда не попадают production-стратегии и нет live/runtime control.

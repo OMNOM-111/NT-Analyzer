@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,12 +29,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import governance
+from . import durable
 from . import marginrefresh  # informational margin catalog auto-refresh
 from . import portfolio_cells
 from . import report_assessment
 from . import strategy_families
 from . import strategy_lifecycle
 from . import ninjatrader_ops
+from . import runtime_env
 
 # ---------------------------------------------------------------------------
 # Whitelist + defaults. Strategy whitelist on the backend MUST match what the
@@ -90,6 +93,15 @@ _JOB_LOCATION_INDEX: Dict[str, Tuple[str, Path, float]] = {}
 # batch_id -> (signature, aggregate_dict).  signature combines bdir mtime,
 # child status, and child mtime so aggregate refreshes whenever any child moves.
 _BATCH_METRICS_CACHE: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
+
+# Chart historical fallback index: root -> [ {job_id, dir, instrument, timeframe}, ... ]
+# newest-first.  Building it walks thousands of job dirs and reads job.json, so
+# it is TTL-cached: the desktop chart grid calls read_instrument_bars for every
+# "waiting" instrument on every poll tick and must never pay that scan per chart.
+_INSTR_BARS_INDEX_LOCK = threading.Lock()
+_INSTR_BARS_INDEX: Dict[str, List[Dict[str, Any]]] = {}
+_INSTR_BARS_INDEX_AT: float = 0.0
+_INSTR_BARS_INDEX_TTL: float = 20.0
 
 # Last queue fingerprint that triggered a sync_report_numbers() call; reused
 # until the queue itself changes.  Avoids the per-request full scan.
@@ -300,10 +312,15 @@ def _configured_jobs_dir() -> Optional[Path]:
 
 
 def jobs_dir() -> Path:
-    return _configured_jobs_dir() or (project_root() / "jobs")
+    configured = _configured_jobs_dir()
+    if runtime_env.is_staging():
+        return runtime_env.data_path("jobs", project_root=project_root())
+    return configured or (project_root() / "jobs")
 
 
 def default_jobs_dir() -> Path:
+    if runtime_env.is_staging():
+        return runtime_env.data_path("jobs", project_root=project_root())
     return project_root() / "jobs"
 
 
@@ -312,11 +329,24 @@ def default_jobs_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 def catalog_dir() -> Path:
-    return project_root() / "data" / "catalog"
+    return runtime_env.data_path("catalog", project_root=project_root())
+
+
+def _environment_read_path(section: str, name: str) -> Path:
+    """Read isolated data first, then safe checked-in baselines on staging.
+
+    Mutable writes always target the active environment. This fallback keeps a
+    clean staging root useful without copying or modifying production files.
+    """
+    active = runtime_env.data_path(section, name, project_root=project_root())
+    if active.is_file() or not runtime_env.is_staging():
+        return active
+    baseline = project_root() / "data" / section / name
+    return baseline if baseline.is_file() else active
 
 
 def reports_dir() -> Path:
-    return project_root() / "data" / "reports"
+    return runtime_env.data_path("reports", project_root=project_root())
 
 
 def report_numbers_file() -> Path:
@@ -718,7 +748,8 @@ def unfavorite_report(kind: str, report_id: str) -> Dict[str, Any]:
     return {"ok": True, "removed": removed, "key": key}
 
 
-def read_report_favorites(validate: bool = False) -> Dict[str, Any]:
+def read_report_favorites(validate: bool = False, *, workspace_id: str = "",
+                          user_id: Any = "", allow_legacy: bool = False) -> Dict[str, Any]:
     data = _read_report_favorites_raw()
     out: List[Dict[str, Any]] = []
     changed = False
@@ -728,6 +759,10 @@ def read_report_favorites(validate: bool = False) -> Dict[str, Any]:
         kind = str(entry.get("kind") or "").strip().lower()
         rid = str(entry.get("id") or "").strip()
         if kind not in {"job", "batch"} or not rid:
+            continue
+        if (workspace_id or user_id) and not report_in_scope(
+                kind, rid, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy):
             continue
         item = dict(entry)
         item["key"] = key
@@ -759,7 +794,8 @@ def _favorite_timeframe_parts(doc: Dict[str, Any]) -> Tuple[str, int]:
     return bars_period_type, bars_period_value
 
 
-def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
+def repeat_report_favorite(kind: str, report_id: str, *,
+                           origin_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     kind, report_id = _normalize_report_ref(kind, report_id)
     data = _read_report_favorites_raw()
     favorites = data.setdefault("favorites", {})
@@ -812,6 +848,7 @@ def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
             timezone=str(execution.get("timezone") or "UTC"),
             name=(str(batch.get("name")) if batch.get("name") else None),
             role=str(execution.get("role") or "research"),
+            origin=dict(origin_override or batch.get("origin") or {}),
         )
         batch_id, job_ids = create_batch(req)
         return {
@@ -855,6 +892,7 @@ def repeat_report_favorite(kind: str, report_id: str) -> Dict[str, Any]:
         timezone=str(execution.get("timezone") or "UTC"),
         role=str(execution.get("role") or "research"),
         job_id=None,
+        origin=dict(origin_override or job.get("origin") or {}),
     )
     job_id, path = create_job(req)
     return {
@@ -1104,7 +1142,7 @@ def _get_report_numbers_cached() -> Dict[str, int]:
 
 def profiles_dir() -> Path:
     """Directory holding the curated Strategy Profiles registry."""
-    return project_root() / "data" / "profiles"
+    return runtime_env.data_path("profiles", project_root=project_root())
 
 
 def read_strategy_profiles() -> Dict[str, Any]:
@@ -1115,7 +1153,7 @@ def read_strategy_profiles() -> Dict[str, Any]:
     second left-panel tab; the Trading page will compare live-running NT
     strategies against them to surface parameter drift.
     """
-    p = profiles_dir() / "strategies.json"
+    p = _environment_read_path("profiles", "strategies.json")
     if not p.is_file():
         return {"schema_version": "1.0", "profiles": []}
     try:
@@ -1141,7 +1179,7 @@ def read_strategy_families() -> Dict[str, Any]:
 
 def read_research_modes() -> Dict[str, Any]:
     """Return the Research Hub Mode registry."""
-    path = project_root() / "data" / "profiles" / "research_modes.json"
+    path = _environment_read_path("profiles", "research_modes.json")
     try:
         with path.open("r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
@@ -1331,7 +1369,7 @@ def _write_json_atomic(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _read_strategy_profiles_raw() -> Dict[str, Any]:
-    path = _strategy_profiles_path()
+    path = _environment_read_path("profiles", "strategies.json")
     if not path.is_file():
         return {"schema_version": "1.1", "profiles": []}
     with open(path, "r", encoding="utf-8-sig") as fh:
@@ -1522,7 +1560,7 @@ def read_archived_strategies() -> Dict[str, Any]:
     Keyed by a stable :func:`strategy_lifecycle.archive_fingerprint` so the UI
     can warn when an operator/AI tries to rebuild a previously-failed strategy.
     """
-    path = _archived_strategies_path()
+    path = _environment_read_path("profiles", "archived_strategies.json")
     if not path.is_file():
         return {"schema_version": "1.0", "entries": []}
     try:
@@ -1658,7 +1696,7 @@ def read_instrument_coverage() -> Dict[str, Any]:
     `tools/research/python/write_instrument_coverage.py`; we just expose it
     over HTTP without re-deriving here.
     """
-    p = profiles_dir() / "instrument_strategy_coverage.json"
+    p = _environment_read_path("profiles", "instrument_strategy_coverage.json")
     if not p.is_file():
         return {"schema_version": "1.0", "instruments": [], "summary": {}}
     try:
@@ -1672,6 +1710,25 @@ def read_instrument_coverage() -> Dict[str, Any]:
             x for x in profiles_doc.get("profiles", [])
             if isinstance(x, dict)
         ]
+        # Coverage source files describe the best *individual* strategy and can
+        # legitimately say ``ready`` while most portfolio cells are still empty.
+        # The UI goal, however, is complete only when every active registry slot
+        # has an approved profile.  Read the append-only cell registry directly
+        # through project_root() so isolated tests and portable installations use
+        # the same source of truth.
+        registry_targets: Dict[str, int] = {}
+        registry_path = runtime_env.data_path("portfolio", "cells.json", project_root=project_root())
+        if registry_path.is_file():
+            try:
+                registry_doc = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+                for cell in registry_doc.get("cells") or []:
+                    if not isinstance(cell, dict) or str(cell.get("status") or "active") != "active":
+                        continue
+                    cell_root = str(cell.get("root") or "").strip().upper()
+                    if cell_root:
+                        registry_targets[cell_root] = registry_targets.get(cell_root, 0) + 1
+            except (OSError, json.JSONDecodeError):
+                registry_targets = {}
         catalog_doc = read_strategies_catalog() or {}
         catalog_classes = {
             str(x.get("class_name") or "")
@@ -1791,11 +1848,28 @@ def read_instrument_coverage() -> Dict[str, Any]:
                 profs[0] if profs else None,
             )
             counts = _status_counts(profs)
+            ready_count = int(counts.get("ready") or 0)
+            target_slots = int(
+                registry_targets.get(str(root).upper())
+                or entry.get("target_slots")
+                or portfolio_cells.TARGET_PORTFOLIO_SLOTS
+            )
+            goal_ready = bool(target_slots > 0 and ready_count >= target_slots)
             return {
                 "root":           root,
                 "group":          ", ".join(groups) if groups else "—",
                 "strategy_count": counts["total"] if profs else int(entry.get("strategy_count") or 0),
-                "best_status":    _coverage_status(entry.get("status") or "missing"),
+                "ready_count":    ready_count,
+                "target_slots":   target_slots,
+                "remaining_slots": max(0, target_slots - ready_count),
+                "progress_pct":   round(ready_count / target_slots * 100.0, 2) if target_slots else 0.0,
+                "best_status":    "ready" if goal_ready else "in_progress",
+                "status_label":   "Готово" if goal_ready else "В работе",
+                "status_reason":  (
+                    f"Все {target_slots} активных слотов имеют одобренный профиль."
+                    if goal_ready else
+                    f"Одобрено {ready_count} из {target_slots} активных слотов."
+                ),
                 "profile_name":   (best or {}).get("name") or entry.get("strategy_class") or "",
                 "profile_id":     best_id,
                 "instrument":     entry.get("current_contract") or "",
@@ -1817,10 +1891,24 @@ def read_instrument_coverage() -> Dict[str, Any]:
         order = {"ready": 0, "in_progress": 1}
         rows.sort(key=lambda r: (order.get(r["best_status"], 9), r["root"]))
 
+        derived_summary = dict(data.get("summary") or {})
+        micro_roots = {
+            str(entry.get("root") or "").upper()
+            for entry in (data.get("micros") or []) if isinstance(entry, dict)
+        }
+        micro_rows = [row for row in rows if str(row.get("root") or "").upper() in micro_roots]
+        derived_summary.update({
+            "ready": sum(1 for row in micro_rows if row.get("best_status") == "ready"),
+            "in_progress": sum(1 for row in micro_rows if row.get("best_status") != "ready"),
+            "total_micros": len(micro_rows),
+            "approved_slots": sum(int(row.get("ready_count") or 0) for row in rows),
+            "target_slots": sum(int(row.get("target_slots") or 0) for row in rows),
+            "calculation": "approved_profiles_vs_active_portfolio_slots",
+        })
         return {
             "schema_version":   data.get("schema_version", "1.0"),
             "generated_at_utc": data.get("generated_at_utc", ""),
-            "summary":          data.get("summary") or {},
+            "summary":          derived_summary,
             "instruments":      rows,
         }
     except (OSError, json.JSONDecodeError):
@@ -2117,7 +2205,7 @@ def _persist_result_portfolio(jdir: Path, result_doc: Any, portfolio: Dict[str, 
 
 
 def _read_catalog_file(name: str) -> Optional[Dict[str, Any]]:
-    p = catalog_dir() / name
+    p = _environment_read_path("catalog", name)
     if not p.is_file():
         return None
     try:
@@ -2135,9 +2223,72 @@ def read_strategies_catalog() -> Optional[Dict[str, Any]]:
     return _read_catalog_file("strategies.json")
 
 
+def _merge_instruments_front_months(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Upsert preferred front-month contracts over the bridge catalog.
+
+    Bridge rebuilds instruments.json from db\\minute only, so newly rolled
+    contracts can be missing until NT accumulates local bars. The overlay
+    file keeps Desktop rollover pointed at the live month across refreshes.
+    """
+    overlay = _read_catalog_file("instruments_front_months.json") or {}
+    extras = overlay.get("contracts")
+    if not isinstance(extras, list) or not extras:
+        return doc
+    instruments = list(doc.get("instruments") or [])
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for ins in instruments:
+        if isinstance(ins, dict):
+            name = str(ins.get("instrument") or "")
+            if name:
+                by_name[name] = ins
+    changed = False
+    for row in extras:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("instrument") or "").strip()
+        if not name:
+            continue
+        existing = by_name.get(name)
+        if existing is None:
+            instruments.append(dict(row))
+            by_name[name] = instruments[-1]
+            changed = True
+            continue
+        # Keep bridge metadata, but never let overlay lose a fresher data_last.
+        overlay_last = str(row.get("data_last") or "")
+        existing_last = str(existing.get("data_last") or "")
+        if overlay_last and overlay_last > existing_last:
+            existing["data_last"] = overlay_last
+            if row.get("data_first") and not existing.get("data_first"):
+                existing["data_first"] = row.get("data_first")
+            existing["has_minute_data"] = True
+            changed = True
+        for key in ("tick_size", "point_value", "tick_value", "currency",
+                    "exchange", "instrument_type", "master_instrument",
+                    "asset_class", "root", "expiry"):
+            if existing.get(key) in (None, "") and row.get(key) not in (None, ""):
+                existing[key] = row.get(key)
+                changed = True
+    if not changed:
+        return doc
+    instruments.sort(key=lambda c: str((c or {}).get("instrument") or ""))
+    out = dict(doc)
+    out["instruments"] = instruments
+    out["count"] = len(instruments)
+    out["front_months_overlay"] = {
+        "applied": True,
+        "count": len(extras),
+        "updated_at_utc": overlay.get("updated_at_utc"),
+    }
+    return out
+
+
 def read_instruments_catalog() -> Optional[Dict[str, Any]]:
-    """Returns parsed data/catalog/instruments.json or None."""
-    return _read_catalog_file("instruments.json")
+    """Returns parsed data/catalog/instruments.json (plus front-month overlay)."""
+    doc = _read_catalog_file("instruments.json")
+    if not isinstance(doc, dict):
+        return None
+    return _merge_instruments_front_months(doc)
 
 
 def read_templates_catalog() -> Optional[Dict[str, Any]]:
@@ -2173,7 +2324,7 @@ def read_instrument_groups_catalog() -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def commands_dir() -> Path:
-    return project_root() / "data" / "commands"
+    return runtime_env.data_path("commands", project_root=project_root())
 
 
 def _custom_dll_path() -> Path:
@@ -2288,7 +2439,7 @@ def _catalog_rejected_classes() -> set[str]:
     A decommissioned class can remain in the DLL/source tree for audit history,
     but it must not be offered as a launch/backtest choice from the app.
     """
-    path = project_root() / "data" / "ops" / "scc_classes.json"
+    path = runtime_env.data_path("ops", "scc_classes.json", project_root=project_root())
     try:
         with path.open("r", encoding="utf-8-sig") as fh:
             doc = json.load(fh)
@@ -2425,7 +2576,7 @@ def catalog_staleness() -> Dict[str, Any]:
     the catalog), the catalog is stale and the user should refresh.
     """
     dll = _custom_dll_path()
-    cat = catalog_dir() / "strategies.json"
+    cat = _environment_read_path("catalog", "strategies.json")
     dll_mt = _safe_mtime(dll)
     cat_mt = _safe_mtime(cat)
     out: Dict[str, Any] = {
@@ -3609,7 +3760,40 @@ def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     if not req.batch_id:
         _ensure_report_number("job", job_id, created_at_utc)
 
+    _record_job_durable_best_effort(job_id, pending_job, job_doc)
+
     return job_id, pending_job
+
+
+def _record_job_durable_best_effort(job_id: str, path: Path,
+                                    job_doc: Dict[str, Any],
+                                    status: str = "pending") -> None:
+    strategy = job_doc.get("strategy") if isinstance(job_doc.get("strategy"), dict) else {}
+    timeframe = job_doc.get("timeframe") if isinstance(job_doc.get("timeframe"), dict) else {}
+    origin = job_doc.get("origin") if isinstance(job_doc.get("origin"), dict) else {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    try:
+        durable.record_job(project_root(), {
+            "job_id": job_id,
+            "workspace_id": origin.get("workspace_id") or job_doc.get("workspace_id") or "",
+            "user_id": origin.get("user_id") or job_doc.get("user_id") or "",
+            "status": status,
+            "kind": job_doc.get("kind") or "",
+            "class_name": strategy.get("class_name") or "",
+            "instrument": job_doc.get("instrument") or "",
+            "timeframe": f"{timeframe.get('value', '')} {timeframe.get('bars_period_type', '')}".strip(),
+            "created_at_utc": job_doc.get("created_at_utc") or "",
+            "updated_at_utc": job_doc.get("created_at_utc") or "",
+            "path": str(path),
+            "dir_mtime": mtime,
+            "origin": origin,
+            "job": job_doc,
+        })
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -3659,6 +3843,11 @@ def queue_counts() -> Dict[str, int]:
     return out
 
 
+def sync_durable_index() -> Dict[str, Any]:
+    """Recover/update the SQLite WAL job index from queue directories."""
+    return durable.sweep_job_queue(project_root(), jobs_dir(), QUEUE_SUBDIRS)
+
+
 def _scan_job_location_index() -> Tuple[Tuple[int, float], Dict[str, Tuple[str, Path, float]]]:
     index: Dict[str, Tuple[str, Path, float]] = {}
     fp_count = 0
@@ -3705,7 +3894,8 @@ def _job_loc_from_index(job_id: Any,
     return hit[0], hit[1]
 
 
-def listable_queue_counts() -> Dict[str, int]:
+def listable_queue_counts(*, workspace_id: str = "", user_id: Any = "",
+                          allow_legacy: bool = False) -> Dict[str, int]:
     out: Dict[str, int] = {}
     report_numbers = _get_report_numbers_cached()
     for sub in QUEUE_SUBDIRS:
@@ -3718,6 +3908,10 @@ def listable_queue_counts() -> Dict[str, int]:
             if not child.is_dir() or child.name.startswith("."):
                 continue
             if _report_key("job", child.name) not in report_numbers:
+                continue
+            if (workspace_id or user_id) and not job_in_scope(
+                    child.name, workspace_id=workspace_id, user_id=user_id,
+                    allow_legacy=allow_legacy):
                 continue
             n += 1
         out[sub] = n
@@ -3776,7 +3970,8 @@ def _build_job_list_row(index_row: Dict[str, Any],
     return r
 
 
-def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_jobs(limit: int = 50, offset: int = 0, *, workspace_id: str = "",
+              user_id: Any = "", allow_legacy: bool = False) -> List[Dict[str, Any]]:
     """Most recent first across all queues.
 
     Performance: walks all queue subdirs once to build (jid, status, mtime),
@@ -3784,6 +3979,14 @@ def list_jobs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     before. Only changed entries hit disk via read_job_summary().
     """
     rows, report_numbers = _indexed_job_rows()
+    if workspace_id or user_id:
+        rows = [
+            row for row in rows
+            if job_in_scope(
+                str(row.get("job_id") or ""), workspace_id=workspace_id,
+                user_id=user_id, allow_legacy=allow_legacy,
+            )
+        ]
     favorite_keys = _report_favorite_key_set()
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 50))
@@ -3806,6 +4009,68 @@ def _read_json_safe(path: Path) -> Optional[Any]:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _origin_in_scope(origin: Any, *, workspace_id: str = "", user_id: Any = "",
+                     allow_legacy: bool = False) -> bool:
+    data = origin if isinstance(origin, dict) else {}
+    actual_workspace = str(data.get("workspace_id") or "")
+    actual_user = str(data.get("user_id") or "")
+    expected_workspace = str(workspace_id or "")
+    expected_user = str(user_id or "")
+    if not actual_workspace and not actual_user:
+        return bool(allow_legacy)
+    if expected_workspace and actual_workspace != expected_workspace:
+        return False
+    if expected_user and actual_user and actual_user != expected_user:
+        return False
+    return True
+
+
+def job_origin(job_id: str) -> Dict[str, Any]:
+    located = find_job_dir(job_id)
+    if not located:
+        return {}
+    doc = _read_json_safe(located[1] / "job.json") or {}
+    return dict(doc.get("origin") or {}) if isinstance(doc, dict) else {}
+
+
+def batch_origin(batch_id: str) -> Dict[str, Any]:
+    batch_id = _safe_batch_id(batch_id)
+    doc = _read_json_safe(_safe_child_path(batches_dir(), batch_id, "batch_id") / "batch.json") or {}
+    return dict(doc.get("origin") or {}) if isinstance(doc, dict) else {}
+
+
+def job_in_scope(job_id: str, *, workspace_id: str = "", user_id: Any = "",
+                 allow_legacy: bool = False) -> bool:
+    if not find_job_dir(job_id):
+        return False
+    return _origin_in_scope(
+        job_origin(job_id), workspace_id=workspace_id, user_id=user_id,
+        allow_legacy=allow_legacy,
+    )
+
+
+def batch_in_scope(batch_id: str, *, workspace_id: str = "", user_id: Any = "",
+                   allow_legacy: bool = False) -> bool:
+    path = _safe_child_path(batches_dir(), _safe_batch_id(batch_id), "batch_id")
+    if not path.is_dir():
+        return False
+    return _origin_in_scope(
+        batch_origin(batch_id), workspace_id=workspace_id, user_id=user_id,
+        allow_legacy=allow_legacy,
+    )
+
+
+def report_in_scope(kind: str, report_id: str, *, workspace_id: str = "",
+                    user_id: Any = "", allow_legacy: bool = False) -> bool:
+    return (
+        batch_in_scope(report_id, workspace_id=workspace_id, user_id=user_id,
+                       allow_legacy=allow_legacy)
+        if str(kind or "").lower() == "batch"
+        else job_in_scope(report_id, workspace_id=workspace_id, user_id=user_id,
+                          allow_legacy=allow_legacy)
+    )
 
 
 def _json_value_after_key(text: str, key: str) -> Optional[Any]:
@@ -4269,6 +4534,118 @@ def read_bars(job_id: str, offset: int = 0, limit: int = 5000) -> Dict[str, Any]
     }
 
 
+def _timeframe_label(doc: Dict[str, Any]) -> str:
+    """Compact timeframe token ('5m', '1h', '1D') from a job.json timeframe."""
+    tf = doc.get("timeframe") if isinstance(doc.get("timeframe"), dict) else {}
+    ptype = str(tf.get("bars_period_type") or "").strip()
+    raw = tf.get("value")
+    if raw is None:
+        raw = tf.get("bars_period_value")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        val = None
+    if not val:
+        return ""
+    if ptype == "Day":
+        return f"{val}D"
+    abbr = {"Minute": "m", "Hour": "h", "Second": "s", "Tick": "t", "Week": "W", "Month": "M"}.get(ptype)
+    return f"{val}{abbr}" if abbr else ""
+
+
+def _instrument_bars_index() -> Dict[str, List[Dict[str, Any]]]:
+    """TTL-cached map of instrument root -> newest-first jobs that carry a
+    ``bars.json`` artifact.  Refreshed at most once per ``_INSTR_BARS_INDEX_TTL``
+    seconds so a large chart grid does not re-scan the whole jobs tree per poll.
+    """
+    global _INSTR_BARS_INDEX, _INSTR_BARS_INDEX_AT
+    now = time.monotonic()
+    with _INSTR_BARS_INDEX_LOCK:
+        if _INSTR_BARS_INDEX_AT and (now - _INSTR_BARS_INDEX_AT) < _INSTR_BARS_INDEX_TTL:
+            return _INSTR_BARS_INDEX
+    rows, _ = _indexed_job_rows()
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows[:120]:
+        jdir = Path(r["path"])
+        if not (jdir / "bars.json").is_file():
+            continue
+        job = _read_json_safe(jdir / "job.json") or {}
+        root = portfolio_cells.normalize_root(job.get("instrument"))
+        if not root:
+            continue
+        index.setdefault(root, []).append({
+            "job_id": r["job_id"], "dir": str(jdir),
+            "instrument": job.get("instrument"), "timeframe": _timeframe_label(job),
+        })
+    with _INSTR_BARS_INDEX_LOCK:
+        _INSTR_BARS_INDEX = index
+        _INSTR_BARS_INDEX_AT = time.monotonic()
+    return index
+
+
+def read_instrument_bars(instrument: str, timeframe: str = "",
+                         limit: int = 1500) -> Dict[str, Any]:
+    """Return the most recent OHLCV bars for an instrument, sourced from
+    NinjaTrader.
+
+    There is no live market-data feed yet; the honest real source of NT bars
+    are the ``bars.json`` artifacts produced by Strategy Analyzer runs. We pick
+    the newest job whose instrument *root* matches the request, preferring an
+    exact timeframe match and falling back to any timeframe available for that
+    root. When nothing is available we return an honest-empty payload (never
+    fabricated candles) so the chart can show a "waiting for NinjaTrader" state.
+    """
+    root = portfolio_cells.normalize_root(instrument)
+    if not root:
+        return {"instrument": instrument, "bars": [], "total": 0,
+                "source": None, "live": False,
+                "note": "инструмент не указан"}
+
+    want_tf = str(timeframe or "").strip().lower()
+    candidates = _instrument_bars_index().get(root, [])
+    best: Optional[Dict[str, Any]] = None
+    fallback: Optional[Dict[str, Any]] = None
+    for candidate in candidates:
+        label = str(candidate.get("timeframe") or "")
+        if want_tf and label.lower() == want_tf:
+            best = candidate
+            break
+        if fallback is None:
+            fallback = candidate
+
+    chosen = best or fallback
+    if not chosen:
+        return {"instrument": instrument, "root": root, "bars": [], "total": 0,
+                "source": None, "live": False,
+                "note": f"нет данных NinjaTrader по {root}"}
+
+    arr = _read_json_array_cached(Path(chosen["dir"]) / "bars.json")
+    if not isinstance(arr, list):
+        arr = []
+    total = len(arr)
+    if limit <= 0:
+        limit = 1500
+    if limit > 20000:
+        limit = 20000
+    bars = arr[-limit:]
+    note = ""
+    if want_tf and not best and chosen.get("timeframe"):
+        note = f"показан доступный ТФ {chosen['timeframe']}"
+    return {
+        "instrument": instrument, "root": root,
+        "bars": bars, "total": total,
+        "requested_timeframe": timeframe,
+        "matched_timeframe": chosen.get("timeframe"),
+        "source": {
+            "job_id": chosen["job_id"],
+            "instrument": chosen.get("instrument"),
+            "timeframe": chosen.get("timeframe"),
+        },
+        "live": False,
+        "note": note,
+    }
+
+
 def read_draw_objects(job_id: str) -> Dict[str, Any]:
     """Returns the strategy-draw-objects artifact for a job.
 
@@ -4327,39 +4704,60 @@ def bridge_log_tail(lines: int = 40) -> List[str]:
         return []
 
 
-def ninjatrader_running() -> Optional[bool]:
+_NT_RUNNING_CACHE: Dict[str, Any] = {"value": None, "checked_at": 0.0}
+_NT_RUNNING_CACHE_LOCK = threading.Lock()
+_NT_RUNNING_CACHE_TTL_SEC = 2.0
+
+
+def ninjatrader_running(*, force: bool = False) -> Optional[bool]:
     """Best-effort cross-process check via tasklist (Windows only).
 
     Returns True/False on a confident match, or None ("unknown") when the
     detection itself failed (tasklist missing, timeout, OS not Windows).
     The case-insensitive substring scan also tolerates variations like
     "NinjaTrader 8.exe".
+
+    Result is cached briefly: market-bars batch paths call this once per
+    panel; spawning tasklist for every chart made Offline mode take ~1s/panel.
     """
+    now = time.time()
+    if not force:
+        with _NT_RUNNING_CACHE_LOCK:
+            cached_at = float(_NT_RUNNING_CACHE.get("checked_at") or 0.0)
+            if cached_at and (now - cached_at) < _NT_RUNNING_CACHE_TTL_SEC:
+                return _NT_RUNNING_CACHE.get("value")  # type: ignore[return-value]
+    value: Optional[bool]
     if not sys.platform.startswith("win"):
-        return None
-    try:
-        import subprocess
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        tasklist = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tasklist.exe"
-        out = subprocess.run(
-            [str(tasklist), "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=False,
-            timeout=4,
-            startupinfo=startupinfo,
-            creationflags=creationflags,
-        )
-        if out.returncode != 0:
-            return None
-        stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
-        stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
-        haystack = stdout.lower() + "\n" + stderr.lower()
-        return "ninjatrader" in haystack
-    except Exception:
-        return None
+        value = None
+    else:
+        try:
+            import subprocess
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            tasklist = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tasklist.exe"
+            out = subprocess.run(
+                [str(tasklist), "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=False,
+                timeout=4,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            )
+            if out.returncode != 0:
+                value = None
+            else:
+                stdout = (out.stdout or b"").decode("utf-8", errors="ignore")
+                stderr = (out.stderr or b"").decode("utf-8", errors="ignore")
+                haystack = stdout.lower() + "\n" + stderr.lower()
+                value = "ninjatrader" in haystack
+        except Exception:
+            value = None
+    with _NT_RUNNING_CACHE_LOCK:
+        _NT_RUNNING_CACHE["value"] = value
+        _NT_RUNNING_CACHE["checked_at"] = time.time()
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -4373,7 +4771,7 @@ def ninjatrader_running() -> Optional[bool]:
 # ---------------------------------------------------------------------------
 
 def batches_dir() -> Path:
-    return project_root() / "data" / "batches"
+    return runtime_env.data_path("batches", project_root=project_root())
 
 
 def gen_batch_id(prefix: str = "batch") -> str:
@@ -4402,6 +4800,7 @@ class CreateBatchRequest:
     name: Optional[str] = None  # display name for the batch
     # See CreateJobRequest.role.
     role: str = "research"
+    origin: Optional[Dict[str, Any]] = None
 
 
 def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
@@ -4458,6 +4857,7 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
             batch_id=batch_id,
             batch_index=idx,
             batch_total=total,
+            origin=dict(req.origin or {}),
         )
         try:
             jid, _ = create_job(child_req)
@@ -4511,6 +4911,8 @@ def create_batch(req: CreateBatchRequest) -> Tuple[str, List[str]]:
         "children": children_meta,
         "total": total,
     }
+    if isinstance(req.origin, dict):
+        manifest["origin"] = dict(req.origin)
     _atomic_write_text(bdir / "batch.json",
                        json.dumps(manifest, ensure_ascii=False, indent=2))
     _ensure_report_number("batch", batch_id, created_at_utc)
@@ -4532,7 +4934,13 @@ def _safe_batch_id(batch_id: str) -> str:
     return _validate_safe_id(batch_id, "batch_id")
 
 
-def count_batches() -> int:
+def count_batches(*, workspace_id: str = "", user_id: Any = "",
+                  allow_legacy: bool = False) -> int:
+    if workspace_id or user_id:
+        return len(list_batches(
+            limit=1_000_000, workspace_id=workspace_id, user_id=user_id,
+            allow_legacy=allow_legacy,
+        ))
     bdir = batches_dir()
     if not bdir.is_dir():
         return 0
@@ -4636,6 +5044,7 @@ def _build_batch_list_row(bdir_mtime: float,
             "gross_loss":      agg_metrics.get("gross_loss"),
             "profit_factor":   agg_metrics.get("profit_factor"),
             "max_drawdown":    agg_metrics.get("max_drawdown"),
+            "origin":          dict(m.get("origin") or {}),
         }
         if include_metrics:
             assessment = report_assessment.assess_report(
@@ -4663,7 +5072,8 @@ def _build_batch_list_row(bdir_mtime: float,
     }
 
 
-def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_batches(limit: int = 50, offset: int = 0, *, workspace_id: str = "",
+                 user_id: Any = "", allow_legacy: bool = False) -> List[Dict[str, Any]]:
     """Most recent batches first.
 
     Aggregate metrics + period + finished_at scans are O(N)
@@ -4674,6 +5084,14 @@ def list_batches(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     global _REPORT_NUMBERS_FP, _REPORT_NUMBERS_VALUE
 
     rows = _indexed_batch_rows()
+    if workspace_id or user_id:
+        rows = [
+            row for row in rows
+            if batch_in_scope(
+                row[1].name, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy,
+            )
+        ]
     if not rows:
         return []
 
@@ -4764,7 +5182,10 @@ def list_reports(limit: int = 100,
                  min_pf: Optional[float] = None,
                  pnl_sign: str = "",
                  min_confidence: Optional[float] = None,
-                 analysis_limit: int = 500) -> Dict[str, Any]:
+                 analysis_limit: int = 500,
+                 workspace_id: str = "",
+                 user_id: Any = "",
+                 allow_legacy: bool = False) -> Dict[str, Any]:
     """Mixed reports feed with one shared server-side pagination stream.
 
     The UI scrolls by pages, so sorting must happen before slicing.  The
@@ -4775,6 +5196,21 @@ def list_reports(limit: int = 100,
     _load_persisted_report_summaries()
     job_rows, report_numbers = _indexed_job_rows()
     batch_rows = _indexed_batch_rows()
+    if workspace_id or user_id:
+        job_rows = [
+            row for row in job_rows
+            if job_in_scope(
+                str(row.get("job_id") or ""), workspace_id=workspace_id,
+                user_id=user_id, allow_legacy=allow_legacy,
+            )
+        ]
+        batch_rows = [
+            row for row in batch_rows
+            if batch_in_scope(
+                row[1].name, workspace_id=workspace_id, user_id=user_id,
+                allow_legacy=allow_legacy,
+            )
+        ]
     favorite_keys = _report_favorite_key_set()
     sort_col = _coerce_report_sort_col(sort_col)
     sort_dir = _coerce_report_sort_dir(sort_dir)

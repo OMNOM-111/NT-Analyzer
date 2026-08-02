@@ -190,7 +190,7 @@ UI.ready(async function () {
         <td><button class="btn icon ghost fav-star" data-fav="${UI.esc(r.job_id)}" data-on="${r.favorite ? '1' : '0'}" style="color:${r.favorite ? 'var(--warn)' : 'var(--tx-4)'}">${UI.icon('star')}</button></td>
         <td class="mono muted">${r.report_no || ''}</td>
         <td class="muted">${fmtDate(r.created_at_utc)}</td>
-        <td><div class="report-strategy-cell"><div><div class="cell-strat"><strong>${UI.esc(r.class_name || '')}</strong>${r.origin && r.origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}</div><div class="row-sub">${UI.esc(r.instrument || '')} · ${tfLabel(r.timeframe)}</div></div>${done ? `<canvas class="row-spark" data-report-spark="${UI.esc(r.job_id)}" aria-label="Мини-график результата бэктеста"></canvas>` : ''}</div></td>
+        <td><div class="report-strategy-cell"><div><div class="cell-strat"><strong>${UI.esc(r.class_name || '')}</strong>${r.origin && r.origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI</span>' : ''}</div><div class="row-sub">${UI.esc(r.instrument || '')} · ${tfLabel(r.timeframe)}</div></div>${done ? `<canvas class="row-spark" data-report-spark="${UI.esc(r.job_id)}" aria-label="Мини-график результата бэктеста"></canvas>` : ''}</div></td>
         <td>${statusBadge(r.status)}</td>
         <td class="muted mono">${periodLabel(r.period)}</td>
         <td title="${UI.esc(frequencyTitle)}"><span class="badge ${frequency.key === 'normal' ? 'live' : frequency.key === 'unknown' ? 'archived' : 'trial'}">${UI.esc(frequency.label || '—')}</span><div class="row-sub">${frequency.trades_per_week == null ? '—' : Number(frequency.trades_per_week).toFixed(1)}/нед</div></td>
@@ -264,9 +264,12 @@ UI.ready(async function () {
       monthlyMap[key] = (monthlyMap[key] || 0) + tradePnl(trade);
     });
     const monthly = Object.keys(monthlyMap).sort().map(key => ({ label: key.slice(5) || key, tooltipLabel: `Месяц ${key}`, value: Math.round(monthlyMap[key] * 100) / 100 }));
+    const isDemo = origin.type === 'demo' || detail.kind === 'demo_backtest' || (detail.result && detail.result.kind === 'demo_backtest')
+      || (detail.job && detail.job.kind === 'demo_backtest');
     body.innerHTML = `
-      <div class="tb-title" style="margin-bottom:10px"><span class="tb-kicker">№${detail.report_no || summary.report_no || ''} · ${UI.esc(instrument)} · ${UI.esc(status)}</span><span class="tb-h1">${UI.esc(className)}</span></div>
-      <div class="flex wrap gap-sm">${statusBadge(status)}<span class="tag">${tfLabel(timeframe)}</span>${period.from_utc || period.to_utc ? `<span class="tag">${(period.from_utc || '').slice(0, 10)} … ${(period.to_utc || '').slice(0, 10)}</span>` : ''}${origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI стратегия</span>' : ''}${detail.validated_against_strategy_analyzer ? '<span class="tag">Strategy Analyzer: проверено</span>' : ''}</div>
+      ${isDemo ? '<div class="demo-report-banner">Демоверсия. Данные нереальные. · <button type="button" class="btn sm" id="dw-demo-cta">Что откроется после подписки</button></div>' : ''}
+      <div class="tb-title" style="margin-bottom:10px"><span class="tb-kicker">№${detail.report_no || summary.report_no || ''} · ${UI.esc(instrument)} · ${UI.esc(status)}${isDemo ? ' · ДЕМО' : ''}</span><span class="tb-h1">${UI.esc(className)}</span></div>
+      <div class="flex wrap gap-sm">${statusBadge(status)}${isDemo ? '<span class="badge demo">демо</span>' : ''}<span class="tag">${tfLabel(timeframe)}</span>${period.from_utc || period.to_utc ? `<span class="tag">${(period.from_utc || '').slice(0, 10)} … ${(period.to_utc || '').slice(0, 10)}</span>` : ''}${origin.type === 'ai_lab' ? '<span class="badge ai-origin-badge">AI</span>' : ''}${detail.validated_against_strategy_analyzer ? '<span class="tag">Strategy Analyzer: проверено</span>' : ''}</div>
       <section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Как работает стратегия</h2><span class="sub">${UI.esc(linkedProfile.family || strategyMeta.family || linkedProfile.pattern || 'правила из каталога/профиля')}</span></div><div class="panel-b col gap-sm">${description ? `<p style="margin:0;color:var(--tx-2);line-height:1.55">${UI.esc(description)}</p>` : '<div class="muted">Описание стратегии пока не заполнено в профиле или каталоге; интерфейс не выдумывает правила.</div>'}${rules.length ? `<ul>${rules.map(rule => `<li>${UI.esc(typeof rule === 'string' ? rule : rule.label || rule.summary || JSON.stringify(rule))}</li>`).join('')}</ul>` : ''}<div class="flex wrap gap-sm"><span class="tag" title="${UI.esc(assessment.frequency.explanation)}">${UI.esc(assessment.frequency.label)} · ${assessment.frequency.trades_per_week == null ? '—' : Number(assessment.frequency.trades_per_week).toFixed(1)}/нед</span><span class="tag" title="${UI.esc(assessment.confidence.reasons.join(' · '))}">доверие ${assessment.confidence.score}% · ${UI.esc(assessment.confidence.label)}</span>${linkedProfile.profile_id ? `<a class="tag" href="strategies.html?strategy=${encodeURIComponent(className)}">профиль ${UI.esc(linkedProfile.profile_id)}</a>` : ''}</div></div></section>
       ${eq.length ? '<section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Кривая накопленного P&L (по сделкам)</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-eq" style="height:240px"></canvas></div></div></section>' : ''}
       ${trades.length ? '<div class="grid cols-2" style="margin-top:12px"><section class="panel"><div class="panel-h"><h2>P&L каждой сделки</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-trade-pnl" style="height:220px"></canvas></div></div></section><section class="panel"><div class="panel-h"><h2>Итог по месяцам</h2></div><div class="panel-b"><div class="chart-box"><canvas id="dw-monthly" style="height:220px"></canvas></div></div></section></div>' : ''}
@@ -295,7 +298,13 @@ UI.ready(async function () {
       Chart.bars(UI.qs('#dw-monthly'), monthly, { money: true, height: 220 });
     });
     UI.qs('#dw-fav').onclick = async () => { try { if (favorite) await API.http.unfavoriteReport('job', jobId); else await API.http.favoriteReport({ kind: 'job', id: jobId }); UI.toast(favorite ? 'Убрано из избранного' : 'В избранном'); UI.closeDrawer(); loadReports(true); } catch (e) { UI.reportError(e); } };
+    const demoCta = UI.qs('#dw-demo-cta');
+    if (demoCta) demoCta.onclick = () => { try { UI.openCabinet('plans'); } catch (e) { /* ignore */ } };
+    if (isDemo) {
+      const rep = UI.qs('#dw-repeat'); if (rep) { rep.disabled = true; rep.title = 'Повтор реального прогона недоступен в демо'; }
+    }
     UI.qs('#dw-repeat').onclick = async () => {
+      if (isDemo) { UI.toast('В демо повторите сценарий кнопкой «Демо-бэктест»'); return; }
       if (!confirm('Повторить прогон с теми же параметрами?')) return;
       const reqBody = {
         class_name: className, instrument,
@@ -367,6 +376,58 @@ UI.ready(async function () {
     catch (e) { UI.reportError(e); } finally { btn.disabled = false; }
   }
 
+  async function runDemoBacktest(scenarioId) {
+    const btn = UI.qs('#demo-run-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const out = await API.http.createDemoBacktest({ scenario_id: scenarioId || selectedDemoScenario || '' });
+      UI.toast((out.watermark || 'Демо готово') + ' · осталось сегодня: ' + (out.remaining_today ?? '—'));
+      await loadReports(true);
+      if (out.job_id) openReport(out.job_id);
+    } catch (e) { UI.reportError(e); }
+    finally { if (btn) btn.disabled = false; }
+  }
+
+  let selectedDemoScenario = '';
+  async function setupDemoTier() {
+    const demoBtn = UI.qs('#demo-run-btn');
+    const runBtn = UI.qs('#run-btn');
+    const host = UI.qs('#demo-scenarios');
+    const demoTier = document.body.dataset.demoTier === '1'
+      || !!(window.UI && UI.CURRENT_AUTH && UI.CURRENT_AUTH.demo_tier);
+    const auth = (window.UI && UI.CURRENT_AUTH) || (window.API && (await API.refreshAuth()).auth) || {};
+    const caps = auth.capabilities || {};
+    const isDemoOnly = !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting && !auth.is_owner));
+    if (isDemoOnly && runBtn) {
+      runBtn.hidden = true;
+      const composer = UI.qs('.composer');
+      if (composer) composer.hidden = true;
+    }
+    if (!demoBtn) return;
+    try {
+      const doc = await API.http.demoBacktestScenarios();
+      const scenarios = doc.scenarios || [];
+      selectedDemoScenario = (scenarios[0] && scenarios[0].id) || '';
+      if (host) {
+        host.hidden = false;
+        host.innerHTML = `<div class="cab-sub">${UI.esc(doc.watermark || 'Демоверсия. Данные нереальные.')}</div>
+          <div class="seg demo-scenario-seg">${scenarios.map((s, i) =>
+            `<button type="button" class="${i === 0 ? 'active' : ''}" data-demo-sc="${UI.esc(s.id)}">${UI.esc(s.label)}</button>`
+          ).join('')}</div>
+          <div class="muted">После подписки откроются полный бэктест, свои стратегии и live/paper.</div>`;
+        UI.qsa('[data-demo-sc]', host).forEach(b => b.onclick = () => {
+          UI.qsa('[data-demo-sc]', host).forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          selectedDemoScenario = b.dataset.demoSc;
+        });
+      }
+    } catch (e) { /* scenarios optional for paid users */ }
+    demoBtn.onclick = () => runDemoBacktest(selectedDemoScenario);
+    if (!isDemoOnly && !caps.demo_backtest && !auth.is_owner && !caps.backtesting) {
+      demoBtn.hidden = true;
+    }
+  }
+
   // ---------- active queue ----------
   async function pollQueue() {
     let doc;
@@ -391,6 +452,7 @@ UI.ready(async function () {
   UI.qs('#f-strategy').onchange = () => renderStrategyParams({});
   UI.qs('#run-btn').innerHTML = UI.icon('play') + 'Запустить прогон';
   UI.qs('#run-btn').onclick = runBacktest;
+  setupDemoTier();
   UI.qsa('#rep-filter button').forEach(b => b.onclick = () => { UI.qsa('#rep-filter button').forEach(x => x.classList.remove('active')); b.classList.add('active'); repFilter = b.dataset.f === 'fav' ? 'favorite' : b.dataset.f; loadReports(true); });
   UI.qsa('#rep-table th.sortable').forEach(header => header.onclick = () => {
     const next = header.dataset.sort;

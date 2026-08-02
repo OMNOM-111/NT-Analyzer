@@ -121,6 +121,15 @@ def _write_hb(tmp: Path, fresh: bool = True):
     }), encoding="utf-8")
 
 
+def _write_accounts(tmp: Path, accounts, *, age_sec: float = 2):
+    rdir = tmp / "data" / "runtime"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / "accounts.json").write_text(json.dumps({
+        "generated_at_utc": _now_iso(-age_sec),
+        "accounts": accounts,
+    }), encoding="utf-8")
+
+
 def _write_profiles_registry(tmp: Path, profiles):
     pdir = tmp / "data" / "profiles"
     pdir.mkdir(parents=True, exist_ok=True)
@@ -210,25 +219,29 @@ def t05(tmp):
 
 @case("executions.jsonl -> quantity-aware daily metrics + journal upsert")
 def t06(tmp):
-    today_pt = ops._to_pt(datetime.now(timezone.utc)).date().isoformat()
+    # Use a fixed midday on the current PT date so synthetic offsets can never
+    # straddle midnight while the release suite is running around 00:00 PT.
+    base_pt = ops._to_pt(datetime.now(timezone.utc)).replace(
+        hour=12, minute=0, second=0, microsecond=0,
+    )
+    base_utc = base_pt.astimezone(timezone.utc)
+    stamp = lambda seconds: (base_utc + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
     execs = [
         # entry exec (no PnL)
-        {"timestamp_utc": _now_iso(-1200), "strategy_id": "b1_shortonly",
+        {"timestamp_utc": stamp(-1200), "strategy_id": "b1_shortonly",
          "role": "entry", "quantity": 2, "price": 20000.0,
          "realized_pnl": 0.0, "slippage_ticks": 1.0},
         # winning exit, qty 2, +50
-        {"timestamp_utc": _now_iso(-900), "strategy_id": "b1_shortonly",
+        {"timestamp_utc": stamp(-900), "strategy_id": "b1_shortonly",
          "role": "exit", "exit_reason": "target", "quantity": 2,
          "price": 19990.0, "realized_pnl": 50.0, "slippage_ticks": 1.0},
         # losing exit, qty 1, -10
-        {"timestamp_utc": _now_iso(-300), "strategy_id": "b1_shortonly",
+        {"timestamp_utc": stamp(-300), "strategy_id": "b1_shortonly",
          "role": "exit", "exit_reason": "stop", "quantity": 1,
          "price": 20002.0, "realized_pnl": -10.0, "slippage_ticks": 2.0},
     ]
     _write_runtime(tmp, executions=execs)
-    # The test can run just after Pacific midnight, while the synthetic
-    # executions intentionally span the previous 20 minutes. Pin the audit day
-    # to the last execution instead of relying on the wall-clock date.
+    # Pin the audit day to the synthetic execution date.
     execution_date_pt = ops._to_pt(datetime.fromisoformat(execs[-1]["timestamp_utc"])).date().isoformat()
     m = rt.compute_runtime_today_metrics("b1_shortonly", on_date_pt=execution_date_pt)
     assert m["trades_count"] == 2, m
@@ -528,6 +541,59 @@ def t18(tmp):
     assert rec["command"] == "disable_strategy"
 
 
+@case("phase18: reconnect_account queues without strategy class")
+def t18a(tmp):
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+    }])
+    rec = rt.submit_command(
+        command="reconnect_account",
+        strategy_id="",
+        account_name="DEMO3369390",
+        connection_name="Simulation",
+    )
+    assert rec["status"] == "queued"
+    saved = rt.read_commands(1)[0]
+    assert saved["command"] == "reconnect_account"
+    assert saved["account_name"] == "DEMO3369390"
+    assert saved["connection_name"] == "Simulation"
+    assert saved["strategy_id"].startswith("runtime_connection_reconnect__"), saved["strategy_id"]
+
+
+@case("phase18: reconnect_account rejected for system accounts")
+def t18b(tmp):
+    try:
+        rt.submit_command(
+            command="reconnect_account",
+            strategy_id="",
+            account_name="Backtest",
+        )
+        raise AssertionError("expected OpsError for system account reconnect")
+    except ops.OpsError as e:
+        assert "system account" in str(e).lower(), str(e)
+
+
+@case("phase18: reconnect_account rejects data-feed connection names")
+def t18c(tmp):
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Disconnected",
+    }])
+    try:
+        rt.submit_command(
+            command="reconnect_account",
+            strategy_id="",
+            account_name="DEMO3369390",
+            connection_name="Симуляционный Датафид",
+        )
+        raise AssertionError("expected data-feed reconnect rejection")
+    except ops.OpsError as e:
+        assert "data-feed" in str(e).lower(), str(e)
+
+
 # --------------------------------------------------------------------------
 # Phase 10 — normalization + selection_diff + command status
 # --------------------------------------------------------------------------
@@ -769,6 +835,32 @@ def t34(tmp):
     }) + "\n", encoding="utf-8")
     out = rt.get_command_status(cid, timeout_sec=30)
     assert out["state"] == "failed_account_mismatch", out
+
+
+@case("phase10: get_command_status -> confirmed_connected for reconnect_account")
+def t34a(tmp):
+    _write_hb(tmp, fresh=True)
+    _write_accounts(tmp, [{
+        "account_name": "DEMO3369390",
+        "account_mode": "demo",
+        "connection_status": "Connected",
+    }])
+    rec = rt.submit_command(
+        command="reconnect_account",
+        strategy_id="",
+        account_name="DEMO3369390",
+        connection_name="Simulation",
+    )
+    cid = rec["command_id"]
+    res_p = tmp / "data" / "runtime" / "command_results.jsonl"
+    res_p.write_text(json.dumps({
+        "command_id": cid, "status": "completed",
+        "message": "reconnect issued",
+        "timestamp_utc": _now_iso(0),
+    }) + "\n", encoding="utf-8")
+    out = rt.get_command_status(cid, timeout_sec=30)
+    assert out["state"] == "confirmed_connected", out
+    assert out["account_match"]["connection_status"] == "Connected", out["account_match"]
 
 
 @case("phase10: account display_name is preserved exactly (no ' sim' suffix)")
@@ -1196,11 +1288,38 @@ def t48_trade_window_merge(tmp):
   assert rt.is_hhmm_in_trade_window(1300, tw) is False
 
 
+@case("jsonl lifecycle: rotate large runtime file and prune old archives")
+def t51_jsonl_rotation(tmp):
+    rdir = tmp / "data" / "runtime"
+    target = rdir / "errors.jsonl"
+    target.write_text('{"message":"a"}\n{"message":"b"}\n', encoding="utf-8")
+    old_a = rdir / "errors.jsonl.20000101T000000Z.rotated"
+    old_b = rdir / "errors.jsonl.20000101T000001Z.rotated"
+    old_a.write_text('{"old":1}\n', encoding="utf-8")
+    old_b.write_text('{"old":2}\n', encoding="utf-8")
+    os.utime(old_a, (1, 1))
+    os.utime(old_b, (2, 2))
+
+    res = rt.rotate_runtime_jsonl_files(
+        max_bytes=10,
+        keep=1,
+        names=("errors.jsonl",),
+        now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+    )
+    assert res["ok"], res
+    row = res["files"][0]
+    assert row["rotated"] is True, row
+    assert target.is_file(), "canonical JSONL should be recreated for bridge appends"
+    assert target.read_text(encoding="utf-8") == ""
+    rotated = sorted(p.name for p in rdir.glob("errors.jsonl.*.rotated"))
+    assert rotated == ["errors.jsonl.20260710T000000Z.rotated"], rotated
+
+
 def main() -> int:
     cases = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11, t11b, t11c, t12,
-             t13, t14, t15, t16, t17, t18,
+             t13, t14, t15, t16, t17, t18, t18a, t18b, t18c,
              t19, t20, t21, t22, t23, t24, t25, t26,
-             t27, t28, t29, t30, t31, t31b, t32, t33, t34,
+             t27, t28, t29, t30, t31, t31b, t32, t33, t34, t34a,
              t35, t36, t37,
              # Phase 19
              t38, t39, t40, t41, t42, t43, t44,
@@ -1209,7 +1328,8 @@ def main() -> int:
              # Phase 23
              t45, t46,
              t47_trade_window_helpers, t48_trade_window_merge,
-             t49_inactive_second_window_skipped, t50_c012_stale_window_mismatch]
+             t49_inactive_second_window_skipped, t50_c012_stale_window_mismatch,
+             t51_jsonl_rotation]
     print(f"Running {len(cases)} Phase 17/18/10/19 runtime tests:")
     for c in cases:
         c()

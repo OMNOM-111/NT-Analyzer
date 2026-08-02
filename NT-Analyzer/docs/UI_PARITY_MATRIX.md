@@ -17,9 +17,10 @@ Classic remains available for rollback/reference, but normal work starts in Auro
 | Portfolio cells | persistent root/cell registry, immutable IDs, manual root/cell creation, explicit 200/300/400 blocks, archive/no reuse | Complete |
 | Strategy lifecycle | kanban, origin + rare/normal/frequent filters, coverage, goals, profile status/delete/notes, factual runtime readiness/P&L, AI history and 3D origin badges, archive, runtime hide/restore, NinjaTrader cleanup | Complete |
 | AI Lab | lazy readiness/bootstrap, run/cancel, heartbeat/activity roles, experiments, quality board, model/role request and outcome telemetry, external-agent budget/activity, calendar, candidates, error memory, compile source, research scan, notes | Complete; external execution intentionally disabled |
+| AI Agents / API Keys | DPAPI key storage, provider/model/role CRUD, chat/embedding test, editable tariff table, token/cost audit, daily/monthly/single-call gates, grant snapshots | Complete base mechanism; workflow permissions intentionally disconnected |
 | News | separate feed + Overview summary; only persisted real events | Scaffold complete; sources not configured by default |
 | TopStep | connection/risk status and approved-strategy transport design | Scaffold complete; live actions intentionally disabled |
-| Telegram | status in system integration drawer; secrets remain server-side | Scaffold complete; commands intentionally disabled |
+| Telegram | dedicated system drawer, secure token/chat pairing, test send, per-event switches, app/strategy/connection/error/news alerts, daily/weekly/monthly summaries | Notifications complete; commands intentionally disabled |
 | Documents | explicit owner `Черевко Дмитро`, governance list, runtime defaults, markdown view/edit, actor/reason save, history | Complete |
 | Security | CSP `script-src 'self'`, external scripts/handlers, Origin guard, paper/live safety | Complete |
 | Responsive | 390/760/1024/1280/1440 layouts, internal table scrollers, mobile bottom nav | Complete |

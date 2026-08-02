@@ -7,7 +7,7 @@ import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
-from . import lm_studio, paths
+from . import llm_timeouts, lm_studio, paths
 from .generator import (
     _build_static_validation_autofix_prompt,
     _extract_csharp,
@@ -164,8 +164,8 @@ def _run_task(
 def benchmark(
     models: Optional[Iterable[str]] = None,
     *,
-    judge_timeout: int = 240,
-    coder_timeout: int = 360,
+    judge_timeout: int = llm_timeouts.LOCAL_JUDGE,
+    coder_timeout: int = llm_timeouts.LOCAL_CODER,
 ) -> Dict[str, Any]:
     candidates = list(dict.fromkeys(models or lm_studio.list_models(timeout=15)))
     candidates = [

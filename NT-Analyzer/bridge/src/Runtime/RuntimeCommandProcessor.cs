@@ -9,6 +9,7 @@ using System.Threading;
 
 using NinjaTrader.Cbi;
 using NinjaTrader.NinjaScript;
+using NTAnalyzerBridge.Config;
 using NTAnalyzerBridge.Util;
 
 namespace NTAnalyzerBridge.Runtime
@@ -17,7 +18,8 @@ namespace NTAnalyzerBridge.Runtime
     /// Phase 18 - Runtime command processor.
     ///
     /// Polls data/runtime/commands.jsonl, executes enable/disable
-    /// of NinjaScript Strategy instances, appends a result to
+    /// of NinjaScript Strategy instances or safe paper/demo/playback
+    /// connection reconnects, and appends a result to
     /// data/runtime/command_results.jsonl.
     ///
     /// Hard safety:
@@ -40,6 +42,7 @@ namespace NTAnalyzerBridge.Runtime
         public const string ProcessorVersion = "1.0.0";
         private const int   PollIntervalMs   = 1500;
 
+        private readonly BridgeConfig _cfg;
         private readonly string _runtimeDir;
         private readonly string _commandsPath;
         private readonly string _resultsPath;
@@ -76,11 +79,12 @@ namespace NTAnalyzerBridge.Runtime
             { "SlippageTicks",       1    },
         };
 
-        public RuntimeCommandProcessor(string projectRoot)
+        public RuntimeCommandProcessor(BridgeConfig cfg)
         {
-            if (string.IsNullOrEmpty(projectRoot))
-                throw new ArgumentNullException(nameof(projectRoot));
-            _runtimeDir   = Path.Combine(projectRoot, "data", "runtime");
+            _cfg = cfg ?? throw new ArgumentNullException(nameof(cfg));
+            _runtimeDir   = cfg.RuntimeDataDir;
+            if (string.IsNullOrEmpty(_runtimeDir))
+                throw new ArgumentNullException(nameof(cfg.RuntimeDataDir));
             _commandsPath = Path.Combine(_runtimeDir, "commands.jsonl");
             _resultsPath  = Path.Combine(_runtimeDir, "command_results.jsonl");
             Directory.CreateDirectory(_runtimeDir);
@@ -151,27 +155,66 @@ namespace NTAnalyzerBridge.Runtime
         private bool ProcessOne(string rawJson, string cid)
         {
             string command           = ExtractJsonString(rawJson, "command");
-            string strategyId        = ExtractJsonString(rawJson, "strategy_id");
             string strategyClass     = ExtractJsonString(rawJson, "strategy_class");
             string accountName       = ExtractJsonString(rawJson, "account_name");
             string instrument        = ExtractJsonString(rawJson, "instrument");
             string runtimeInstanceId = ExtractJsonString(rawJson, "runtime_instance_id");
+            string connectionName    = ExtractJsonString(rawJson, "connection_name");
 
             try
             {
-                if (command != "enable_strategy" && command != "disable_strategy")
+                if (command == "resubscribe_market_data")
+                {
+                    try
+                    {
+                        BridgeAddOn addon = BridgeAddOn.Instance;
+                        var exporter = addon != null ? addon.MarketDataExporter : null;
+                        if (exporter != null)
+                        {
+                            exporter.ForceResubscribe();
+                            return WriteResult(cid, "success", "resubscribe triggered", "");
+                        }
+                        var productionExporter = addon != null
+                            ? addon.ProductionMarketDataExporter : null;
+                        if (productionExporter != null && productionExporter.ForceResubscribe())
+                            return WriteResult(cid, "success", "production resubscribe triggered", "");
+                        return WriteResult(cid, "rejected", "exporter not running", "");
+                    }
+                    catch (Exception ex)
+                    {
+                        return WriteResult(cid, "error", ex.Message, "");
+                    }
+                }
+
+                if (command == "resubscribe_instrument")
+                {
+                    try
+                    {
+                        BridgeAddOn addon = BridgeAddOn.Instance;
+                        var exporter = addon != null ? addon.MarketDataExporter : null;
+                        if (exporter != null)
+                        {
+                            exporter.ResubscribeInstrument(instrument);
+                            return WriteResult(cid, "success", "resubscribe instrument triggered: " + instrument, "");
+                        }
+                        var productionExporter = addon != null
+                            ? addon.ProductionMarketDataExporter : null;
+                        if (productionExporter != null &&
+                            productionExporter.ResubscribeInstrument(instrument))
+                            return WriteResult(cid, "success", "production instrument resubscribe triggered", "");
+                        return WriteResult(cid, "rejected", "exporter not running", "");
+                    }
+                    catch (Exception ex)
+                    {
+                        return WriteResult(cid, "error", ex.Message, "");
+                    }
+                }
+
+                if (command != "enable_strategy" &&
+                    command != "disable_strategy" &&
+                    command != "reconnect_account")
                 {
                     return WriteResult(cid, "rejected", "unknown command: " + command, "");
-                }
-                if (string.IsNullOrEmpty(strategyClass))
-                {
-                    return WriteResult(cid, "rejected", "strategy_class is required", "");
-                }
-                if (command == "enable_strategy" && RejectedClasses.Contains(strategyClass))
-                {
-                    return WriteResult(cid, "rejected",
-                        "strategy class '" + strategyClass + "' is archived/rejected by registry - launch refused",
-                        "");
                 }
 
                 // Resolve account.
@@ -190,6 +233,31 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     return WriteResult(cid, "rejected",
                         "live account control is disabled; telemetry is read-only", "");
+                }
+
+                if (command == "reconnect_account")
+                {
+                    if (IsSystemAccountName(accountName))
+                    {
+                        return WriteResult(cid, "rejected",
+                            "system account '" + accountName + "' cannot be reconnected", "");
+                    }
+                    string reconnectMessage;
+                    string reconnectStatus;
+                    ReconnectAccountConnection(
+                        acc, accountName, connectionName, out reconnectStatus, out reconnectMessage);
+                    return WriteResult(cid, reconnectStatus, reconnectMessage, "");
+                }
+
+                if (string.IsNullOrEmpty(strategyClass))
+                {
+                    return WriteResult(cid, "rejected", "strategy_class is required", "");
+                }
+                if (command == "enable_strategy" && RejectedClasses.Contains(strategyClass))
+                {
+                    return WriteResult(cid, "rejected",
+                        "strategy class '" + strategyClass + "' is archived/rejected by registry - launch refused",
+                        "");
                 }
 
                 // Find existing strategy instance on this account (we never create
@@ -291,6 +359,14 @@ namespace NTAnalyzerBridge.Runtime
             return "live";
         }
 
+        private static bool IsSystemAccountName(string accountName)
+        {
+            string value = (accountName ?? "").Trim();
+            return string.Equals(value, "Backtest", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "Sim101", StringComparison.OrdinalIgnoreCase) ||
+                   value.StartsWith("Playback", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static object FindStrategy(Account acc, string className, string instrument,
                                            string accountName, string runtimeInstanceId)
         {
@@ -345,6 +421,386 @@ namespace NTAnalyzerBridge.Runtime
                 return best;
             }
             catch { return null; }
+        }
+
+        private bool ReconnectAccountConnection(Account acc, string accountName,
+                                                string requestedConnectionName,
+                                                out string status, out string message)
+        {
+            status = "failed";
+            message = "reconnect failed";
+            string resolvedName;
+            string resolveError;
+            object connectOption = ResolveReconnectConnectOption(
+                acc, accountName, requestedConnectionName, out resolvedName, out resolveError);
+            if (connectOption == null)
+            {
+                status = "rejected";
+                message = resolveError;
+                return false;
+            }
+
+            if (IsDataFeedConnection(connectOption))
+            {
+                status = "rejected";
+                message = "refusing to reconnect data-feed connection '" + resolvedName +
+                          "' for account '" + accountName +
+                          "'; account reconnect requires an exact trading connection";
+                return false;
+            }
+
+            object existingTrading = FindLiveConnection(resolvedName);
+            if (existingTrading != null && IsConnectionActive(existingTrading))
+            {
+                status = "completed";
+                message = "connection '" + resolvedName + "' already active on account '" +
+                          accountName + "'; reconnect skipped";
+                return true;
+            }
+
+            string disconnectWarning = "";
+            object existing = FindLiveConnection(resolvedName);
+            if (existing != null)
+            {
+                string disconnectErr;
+                if (!TryDisconnectConnection(existing, out disconnectErr) &&
+                    !string.IsNullOrEmpty(disconnectErr))
+                {
+                    disconnectWarning = " previous disconnect warning: " + disconnectErr;
+                }
+                else
+                {
+                    try { Thread.Sleep(250); } catch { }
+                }
+            }
+
+            // Never mutate another connection to make this reconnect succeed.
+            // In particular, silently disconnecting a data feed can interrupt a
+            // user session or Strategy Analyzer. Fail closed and let the owner
+            // decide which connection should remain open.
+            object blockingDataFeed = FindActiveDataFeedConnection();
+            if (blockingDataFeed != null)
+            {
+                status = "rejected";
+                message = "trading connection '" + resolvedName +
+                          "' was not opened because data-feed connection '" +
+                          SafeConnectionOptionName(SafeGetPropValue(blockingDataFeed, "Options")) +
+                          "' is active";
+                return false;
+            }
+
+            string connectErr;
+            string immediateStatus;
+            if (!TryConnectOption(connectOption, out connectErr, out immediateStatus))
+            {
+                status = "failed";
+                message = "Connection.Connect failed for '" + resolvedName + "': " + connectErr;
+                return false;
+            }
+
+            status = "completed";
+            message = "reconnect issued for connection '" + resolvedName + "' on account '" +
+                      accountName + "'";
+            if (!string.IsNullOrEmpty(immediateStatus))
+                message += " (immediate status=" + immediateStatus + ")";
+            if (!string.IsNullOrEmpty(disconnectWarning))
+                message += ";" + disconnectWarning;
+            return true;
+        }
+
+        private object ResolveReconnectConnectOption(Account acc, string accountName,
+                                                     string requestedConnectionName,
+                                                     out string resolvedName, out string error)
+        {
+            resolvedName = "";
+            error = "";
+            var options = GetConfiguredConnectOptions();
+            if (options.Count == 0)
+            {
+                error = "no configured NinjaTrader connections found";
+                return null;
+            }
+
+            string accountMode = ClassifyAccountMode(accountName, acc);
+            string accountConnectionName = SafeConnectionOptionName(
+                SafeGetPropValue(SafeGetPropValue(acc, "Connection"), "Options"));
+            string configuredName = _cfg == null ? "" : (_cfg.RuntimeReconnectConnectionName ?? "");
+            var namedCandidates = new List<string>();
+            if (!string.IsNullOrWhiteSpace(requestedConnectionName))
+                namedCandidates.Add(requestedConnectionName);
+            if (!string.IsNullOrWhiteSpace(accountConnectionName))
+                namedCandidates.Add(accountConnectionName);
+            if (!string.IsNullOrWhiteSpace(configuredName) &&
+                (accountMode != "playback" ||
+                 configuredName.IndexOf("playback", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                namedCandidates.Add(configuredName);
+            }
+
+            foreach (string candidate in namedCandidates)
+            {
+                object exact = FindConfiguredConnectionOption(options, candidate, false);
+                if (exact != null && !IsDataFeedConnection(exact))
+                {
+                    resolvedName = SafeConnectionOptionName(exact);
+                    return exact;
+                }
+            }
+            foreach (string candidate in namedCandidates)
+            {
+                object fuzzy = FindConfiguredConnectionOption(options, candidate, true);
+                if (fuzzy != null && !IsDataFeedConnection(fuzzy))
+                {
+                    resolvedName = SafeConnectionOptionName(fuzzy);
+                    return fuzzy;
+                }
+            }
+
+            var modeMatches = options
+                .Where(option => OptionMatchesAccountMode(option, accountMode))
+                .ToList();
+            if (modeMatches.Count == 1)
+            {
+                resolvedName = SafeConnectionOptionName(modeMatches[0]);
+                return modeMatches[0];
+            }
+            if (modeMatches.Count > 1)
+            {
+                object preferred = PreferTradingConnectOption(modeMatches, accountMode);
+                if (preferred != null)
+                {
+                    resolvedName = SafeConnectionOptionName(preferred);
+                    return preferred;
+                }
+                error = "multiple configured connections match account '" + accountName +
+                        "': [" + string.Join(", ", modeMatches.Select(SafeConnectionOptionName)) +
+                        "]. Set runtime_reconnect_connection_name in NTAnalyzerBridge.config.json.";
+                return null;
+            }
+
+            error = "no configured connection matched account '" + accountName + "'" +
+                    (string.IsNullOrWhiteSpace(configuredName) ? "" :
+                     " (configured default '" + configuredName + "')") +
+                    ". Available: [" + string.Join(", ", options.Select(SafeConnectionOptionName)) + "]";
+            return null;
+        }
+
+        private static List<object> GetConfiguredConnectOptions()
+        {
+            var outList = new List<object>();
+            try
+            {
+                Type globalsType = Type.GetType("NinjaTrader.Core.Globals, NinjaTrader.Core");
+                if (globalsType == null) return outList;
+                var prop = globalsType.GetProperty("ConnectOptions",
+                    BindingFlags.Public | BindingFlags.Static);
+                if (prop == null) return outList;
+                var col = prop.GetValue(null, null) as System.Collections.IEnumerable;
+                if (col == null) return outList;
+                lock (col)
+                {
+                    foreach (var item in col)
+                        if (item != null) outList.Add(item);
+                }
+            }
+            catch { }
+            return outList;
+        }
+
+        private static object FindConfiguredConnectionOption(List<object> options, string targetName,
+                                                             bool fuzzy)
+        {
+            if (options == null || options.Count == 0 || string.IsNullOrWhiteSpace(targetName))
+                return null;
+            string wanted = targetName.Trim();
+            var matches = options.Where(option =>
+            {
+                string name = SafeConnectionOptionName(option);
+                if (string.IsNullOrEmpty(name)) return false;
+                return fuzzy
+                    ? name.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0
+                    : string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase);
+            }).ToList();
+            return matches.Count == 1 ? matches[0] : null;
+        }
+
+        private static bool OptionMatchesAccountMode(object option, string accountMode)
+        {
+            if (IsDataFeedConnection(option))
+                return false;
+            string mode = (SafeStringProp(option, "Mode") ?? "").ToLowerInvariant();
+            string name = SafeConnectionOptionName(option).ToLowerInvariant();
+            if (accountMode == "playback")
+                return mode.Contains("playback") || name.Contains("playback") ||
+                       mode.Contains("воспроизвед") || name.Contains("воспроизвед");
+            return mode.Contains("simulation") || mode.Contains("sim") ||
+                   name.Contains("simulation") || name.StartsWith("sim") ||
+                   mode.Contains("симуляц") || name.Contains("симуляц") ||
+                   name.Contains("моделир") ||
+                   name.StartsWith("demo") || name.Contains(" demo") || name.EndsWith("demo");
+        }
+
+        private static bool IsDataFeedConnection(object option)
+        {
+            if (option == null) return false;
+            string name = SafeConnectionOptionName(option).ToLowerInvariant();
+            string mode = (SafeStringProp(option, "Mode") ?? "").ToLowerInvariant();
+            return name.Contains("data feed") || name.Contains("датафид") ||
+                   mode.Contains("data feed") || mode.Contains("датафид");
+        }
+
+        private static object PreferTradingConnectOption(List<object> candidates, string accountMode)
+        {
+            if (candidates == null || candidates.Count == 0) return null;
+            var tradingOnly = candidates.Where(option => !IsDataFeedConnection(option)).ToList();
+            if (tradingOnly.Count == 1) return tradingOnly[0];
+
+            Func<object, bool> isPreferred = option =>
+            {
+                string name = SafeConnectionOptionName(option).ToLowerInvariant();
+                if (accountMode == "playback")
+                    return name.Contains("playback") || name.Contains("воспроизвед");
+                return name.Contains("моделир") ||
+                       (name.Contains("simulation") && !name.Contains("data feed"));
+            };
+            var preferred = tradingOnly.Where(isPreferred).ToList();
+            if (preferred.Count == 1) return preferred[0];
+            return null;
+        }
+
+        private static bool IsConnectionActive(object connection)
+        {
+            if (connection == null) return false;
+            string status = (SafeStringProp(connection, "Status") ?? "").ToLowerInvariant();
+            return status.Contains("connected") || status.Contains("работает");
+        }
+
+        private static object FindActiveDataFeedConnection()
+        {
+            try
+            {
+                var prop = typeof(Connection).GetProperty("Connections",
+                    BindingFlags.Public | BindingFlags.Static);
+                var col = prop == null ? null : prop.GetValue(null, null) as System.Collections.IEnumerable;
+                if (col == null) return null;
+                lock (col)
+                {
+                    foreach (var item in col)
+                    {
+                        if (item == null || !IsConnectionActive(item)) continue;
+                        object options = SafeGetPropValue(item, "Options");
+                        if (IsDataFeedConnection(options))
+                            return item;
+                    }
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+
+        private static string SafeConnectionOptionName(object option)
+        {
+            if (option == null) return "";
+            return SafeStringProp(option, "Name");
+        }
+
+        private static object FindLiveConnection(string connectionName)
+        {
+            if (string.IsNullOrWhiteSpace(connectionName)) return null;
+            try
+            {
+                var prop = typeof(Connection).GetProperty("Connections",
+                    BindingFlags.Public | BindingFlags.Static);
+                var col = prop == null ? null : prop.GetValue(null, null) as System.Collections.IEnumerable;
+                if (col == null) return null;
+                lock (col)
+                {
+                    foreach (var item in col)
+                    {
+                        if (item == null) continue;
+                        string name = SafeConnectionOptionName(SafeGetPropValue(item, "Options"));
+                        if (string.Equals(name, connectionName, StringComparison.OrdinalIgnoreCase))
+                            return item;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static bool TryDisconnectConnection(object connection, out string error)
+        {
+            error = "";
+            if (connection == null) return true;
+            try
+            {
+                var method = connection.GetType().GetMethod("Disconnect",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null, Type.EmptyTypes, null);
+                if (method == null) return true;
+                method.Invoke(connection, null);
+                return true;
+            }
+            catch (TargetInvocationException tex)
+            {
+                error = tex.InnerException != null ? tex.InnerException.Message : tex.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryConnectOption(object option, out string error, out string immediateStatus)
+        {
+            error = "";
+            immediateStatus = "";
+            if (option == null)
+            {
+                error = "connect option is null";
+                return false;
+            }
+            try
+            {
+                MethodInfo connectMethod = typeof(Connection)
+                    .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m =>
+                        m.Name == "Connect" &&
+                        m.GetParameters().Length == 1 &&
+                        m.GetParameters()[0].ParameterType.IsAssignableFrom(option.GetType()));
+                if (connectMethod == null)
+                {
+                    connectMethod = typeof(Connection)
+                        .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .FirstOrDefault(m => m.Name == "Connect" && m.GetParameters().Length == 1);
+                }
+                if (connectMethod == null)
+                {
+                    error = "Connection.Connect(ConnectOptions) not found";
+                    return false;
+                }
+
+                object connected = connectMethod.Invoke(null, new[] { option });
+                immediateStatus = SafeStringProp(connected, "Status");
+                if (string.IsNullOrEmpty(immediateStatus))
+                {
+                    object existing = FindLiveConnection(SafeConnectionOptionName(option));
+                    immediateStatus = SafeStringProp(existing, "Status");
+                }
+                return true;
+            }
+            catch (TargetInvocationException tex)
+            {
+                error = tex.InnerException != null ? tex.InnerException.Message : tex.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
 
         private static bool SetStrategyState(object strat, bool enable, out string err)
@@ -414,13 +870,23 @@ namespace NTAnalyzerBridge.Runtime
             catch { return false; }
         }
 
+        private static object SafeGetPropValue(object o, string name)
+        {
+            try
+            {
+                if (o == null) return null;
+                var pi = o.GetType().GetProperty(name,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                return pi == null ? null : pi.GetValue(o, null);
+            }
+            catch { return null; }
+        }
+
         private static string SafeStringProp(object o, string name)
         {
             try
             {
-                var pi = o.GetType().GetProperty(name);
-                if (pi == null) return "";
-                object v = pi.GetValue(o, null);
+                object v = SafeGetPropValue(o, name);
                 return v == null ? "" : v.ToString();
             }
             catch { return ""; }
