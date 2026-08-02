@@ -132,6 +132,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _normalized_future_utc(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise AccountAuthError("Срок доступа должен быть UTC ISO-8601.") from None
+    if parsed.tzinfo is None:
+        raise AccountAuthError("Срок доступа должен содержать UTC offset.")
+    normalized = parsed.astimezone(timezone.utc)
+    if normalized <= datetime.now(timezone.utc):
+        raise AccountAuthError("Срок административного доступа должен быть в будущем.")
+    return normalized.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _default_doc() -> Dict[str, Any]:
     return {"version": ACCOUNT_STORE_VERSION, "users": [], "challenges": [], "sessions": []}
 
@@ -840,6 +856,18 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         out["feature_overrides"] = {key: bool(value) for key, value in overrides.items() if key in FEATURES}
         perm_ov = user.get("permission_overrides") if isinstance(user.get("permission_overrides"), dict) else {}
         out["permission_overrides"] = {key: bool(value) for key, value in perm_ov.items() if isinstance(value, bool)}
+        from . import permissions  # lazy import avoids a load-time dependency cycle
+        admin_grants = user.get("admin_permission_grants")
+        admin_grants = admin_grants if isinstance(admin_grants, dict) else {}
+        out["admin_permission_grants"] = {
+            key: {
+                "enabled": bool(value.get("enabled")),
+                "granted_at_utc": str(value.get("granted_at_utc") or ""),
+                "expires_at_utc": str(value.get("expires_at_utc") or ""),
+            }
+            for key, value in admin_grants.items()
+            if key in permissions.ADMIN_CAPABILITY_IDS and isinstance(value, dict)
+        }
     if include_contact:
         out["email"] = str(user.get("email") or "")
         phone = str(user.get("phone") or "")
@@ -972,6 +1000,67 @@ def set_user_permission(owner_id: Any, user_id: Any, capability: str, enabled: A
     return list_users(owner_id)
 
 
+def set_user_admin_permission(
+    owner_id: Any,
+    user_id: Any,
+    capability: str,
+    enabled: Any,
+    *,
+    expires_at_utc: Any = "",
+) -> Dict[str, Any]:
+    """Owner-only grant/revoke of a control-plane capability.
+
+    Administrative access never comes from a subscription.  A grant may be
+    permanent (empty expiry) or expire at a timezone-aware UTC instant.
+    """
+    from . import permissions  # lazy import avoids a load-time dependency cycle
+    cap = str(capability or "")
+    if cap not in permissions.ADMIN_CAPABILITY_IDS:
+        raise AccountAuthError("Неизвестное административное разрешение.")
+    if not isinstance(enabled, bool):
+        raise AccountAuthError("Поле enabled должно быть boolean.")
+    uid = int(user_id)
+    expiry = _normalized_future_utc(expires_at_utc) if enabled else ""
+    with _LOCK:
+        doc = _read_doc()
+        try:
+            _require_owner_in_doc(doc, owner_id)
+        except AccountAuthError:
+            raise AccountAuthError(
+                "Только владелец может выдавать административные разрешения.", 403,
+            ) from None
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        if user.get("is_owner"):
+            raise AccountAuthError("У владельца все административные разрешения включены.")
+        grants = user.get("admin_permission_grants")
+        grants = grants if isinstance(grants, dict) else {}
+        if enabled:
+            grants[cap] = {
+                "enabled": True,
+                "granted_at_utc": _now_iso(),
+                "expires_at_utc": expiry,
+                "granted_by": str(owner_id),
+            }
+        else:
+            grants.pop(cap, None)
+        user["admin_permission_grants"] = grants
+        user["updated_at_utc"] = _now_iso()
+        _write_doc(doc)
+    _audit(
+        "user_admin_permission_changed",
+        owner_id=int(owner_id),
+        user_id=uid,
+        extra={
+            "capability": cap,
+            "enabled": bool(enabled),
+            "expires_at_utc": expiry,
+        },
+    )
+    return list_users(owner_id)
+
+
 def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
     try:
         uid = int(owner_id or 0)
@@ -1039,10 +1128,29 @@ def _require_owner_in_doc(doc: Dict[str, Any], owner_id: Any) -> Dict[str, Any]:
     return owner
 
 
+def _require_admin_capability_in_doc(
+    doc: Dict[str, Any], actor_id: Any, capability: str,
+) -> Dict[str, Any]:
+    """Require an active owner or an active explicitly-granted staff actor."""
+    try:
+        uid = int(actor_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    actor = _user(doc, uid) if uid else None
+    if not actor or actor.get("status") != "active":
+        raise AccountAuthError("Администратор не авторизован.", 403)
+    if actor.get("is_owner"):
+        return _require_owner_in_doc(doc, uid)
+    from . import permissions  # lazy import avoids a load-time dependency cycle
+    if not permissions.resolve_admin_capabilities(actor).get(str(capability or "")):
+        raise AccountAuthError("Административное разрешение не выдано или истекло.", 403)
+    return actor
+
+
 def list_users(owner_id: Any) -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
-        _require_owner_in_doc(doc, owner_id)
+        _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         users = sorted(doc["users"], key=lambda row: (not bool(row.get("is_owner")), str(row.get("created_at_utc") or "")))
         return {
             "users": [_public_user(row, include_contact=True, include_avatar=True) for row in users],
@@ -1056,9 +1164,9 @@ def update_user(owner_id: Any, user_id: Any, *, role: str = "", revoke: bool = F
     with _LOCK:
         doc = _read_doc()
         try:
-            _require_owner_in_doc(doc, owner_id)
+            _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         except AccountAuthError:
-            raise AccountAuthError("Только владелец может управлять пользователями.", 403) from None
+            raise AccountAuthError("Нет разрешения управлять пользователями.", 403) from None
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
@@ -1122,9 +1230,9 @@ def set_user_status(owner_id: Any, user_id: Any, status: str) -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
         try:
-            _require_owner_in_doc(doc, owner_id)
+            _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         except AccountAuthError:
-            raise AccountAuthError("Только владелец может управлять пользователями.", 403) from None
+            raise AccountAuthError("Нет разрешения управлять пользователями.", 403) from None
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
@@ -1152,9 +1260,9 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
         try:
-            _require_owner_in_doc(doc, owner_id)
+            _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         except AccountAuthError:
-            raise AccountAuthError("Только владелец может удалять пользователей.", 403) from None
+            raise AccountAuthError("Нет разрешения удалять пользователей.", 403) from None
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
@@ -1178,7 +1286,7 @@ def user_detail(owner_id: Any, user_id: Any) -> Dict[str, Any]:
     uid = int(user_id)
     with _LOCK:
         doc = _read_doc()
-        _require_owner_in_doc(doc, owner_id)
+        _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
@@ -1229,9 +1337,9 @@ def revoke_user_sessions(owner_id: Any, user_id: Any, *, session_id: str = "",
     with _LOCK:
         doc = _read_doc()
         try:
-            _require_owner_in_doc(doc, owner_id)
+            _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         except AccountAuthError:
-            raise AccountAuthError("Только владелец может отзывать сессии.", 403) from None
+            raise AccountAuthError("Нет разрешения отзывать сессии.", 403) from None
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)

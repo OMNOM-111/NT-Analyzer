@@ -139,6 +139,7 @@
     applyReleaseIcon(label.icon);
     const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|BETA|STABLE)\]\s*/, '');
     document.title = label.short ? `[${label.short}] ${baseTitle}` : baseTitle;
+    if (CURRENT_AUTH) wireAdminEnvironmentButton();
   }
 
   async function refreshBuildIdentity(seed) {
@@ -1670,7 +1671,15 @@
       let me;
       try { me = await API.http.authMe(); }
       catch (e) { renderError(body, e, load); return; }
-      CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, { user: me.user, features: me.features, is_owner: me.is_owner, role: me.role, active_workspace: me.active_workspace });
+      CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, {
+        user: me.user,
+        features: me.features,
+        capabilities: me.capabilities,
+        admin_capabilities: me.admin_capabilities,
+        is_owner: me.is_owner,
+        role: me.role,
+        active_workspace: me.active_workspace,
+      });
       applyChipUser(me.user || {});
       renderCabinet(body, me, initialTab || 'profile');
     };
@@ -1882,7 +1891,7 @@
       return `<div class="row support-auth-session"><div class="row-main"><div class="row-title">${esc(session.device_name || session.machine || 'Устройство')} · ${esc(session.client || 'Браузер')}${isCurrent ? ' · <span class="badge live">текущая сессия</span>' : ''}</div><div class="row-sub">Создана ${esc(shortDt(session.created_at_utc) || '—')}${session.ip ? ' · ' + esc(session.ip) : ''}</div></div><button class="btn sm ghost" data-support-reload-session="${esc(session.session_id)}">Перезагрузить</button><button class="btn sm danger" data-support-end-session="${esc(session.session_id)}" data-support-current="${isCurrent ? '1' : ''}">Завершить</button></div>`;
     }).join('');
     const shotCards = activeShots.map(shot => `<div class="support-shot"><div class="flex between gap-sm"><div><strong>${esc(supportStatusLabel(shot.status))}</strong><div class="cab-sub">${esc(shortDt(shot.created_at_utc) || '—')}${shot.retained_until_utc ? ' · хранится до ' + esc(shortDt(shot.retained_until_utc)) : ''}</div></div>${shot.status === 'completed' ? `<button class="btn sm danger" data-support-delete-shot="${esc(shot.request_id)}">Удалить</button>` : ''}</div>${shot.error ? `<div class="support-error">${esc(shot.error)}</div>` : ''}${shot.image_url ? `<a href="${esc(shot.image_url)}" target="_blank" rel="noopener"><img src="${esc(shot.image_url)}" loading="lazy" alt="Снимок экрана пользователя"></a>` : ''}</div>`).join('');
-    return `${selfNote}<div class="support-toolbar"><button class="btn primary" data-support-request-shot>Запросить снимок экрана</button><button class="btn ghost" data-support-reload-all ${authSessions.length || telemetry.some(row => row.online) ? '' : 'disabled'}>Перезагрузить все</button><button class="btn danger" data-support-end-all ${authSessions.length ? '' : 'disabled'} data-support-self="${data.is_self ? '1' : ''}">Завершить все браузерные сессии</button>${(CURRENT_AUTH && CURRENT_AUTH.runtime && CURRENT_AUTH.runtime.is_staging && !data.is_self) ? '<button class="btn ghost" data-support-impersonate>Войти как пользователь</button>' : ''}<button class="btn ghost" data-support-refresh>Обновить</button></div>
+    return `${selfNote}<div class="support-toolbar"><button class="btn primary" data-support-request-shot>Запросить снимок экрана</button><button class="btn ghost" data-support-reload-all ${authSessions.length || telemetry.some(row => row.online) ? '' : 'disabled'}>Перезагрузить все</button><button class="btn danger" data-support-end-all ${authSessions.length ? '' : 'disabled'} data-support-self="${data.is_self ? '1' : ''}">Завершить все браузерные сесии</button>${(CURRENT_AUTH && CURRENT_AUTH.is_owner && CURRENT_AUTH.runtime && CURRENT_AUTH.runtime.is_staging && !data.is_self) ? '<button class="btn ghost" data-support-impersonate>Войти как пользователь</button>' : ''}<button class="btn ghost" data-support-refresh>Обновить</button></div>
       <div class="finance-note support-privacy-note">${esc(data.telemetry_note || '')} Снимок возможен только после согласия пользователя и системного выбора экрана; хранится зашифрованным не более ${esc(data.screenshot_retention_hours || 24)} часов.</div>
       ${alerts.length ? `<div class="support-alerts">${alerts.map(alert => `<div class="support-alert ${alert.severity === 'critical' ? 'critical' : ''}">⚠ ${esc(alert.message)}</div>`).join('')}</div>` : '<div class="support-ok">Критических превышений сейчас нет.</div>'}
       <div class="section-title">Живая телеметрия вкладок</div>${liveCards || '<div class="empty-state">Пользователь не передаёт телеметрию: приложение закрыто или ещё не обновлено.</div>'}
@@ -1959,6 +1968,10 @@
       const u = d.user || {};
       const caps = d.capabilities || {};
       const catalog = d.capability_catalog || [];
+      const adminCaps = d.admin_capabilities || {};
+      const adminCatalog = d.admin_capability_catalog || [];
+      const adminGrants = u.admin_permission_grants || {};
+      const canGrant = !!(CURRENT_AUTH && CURRENT_AUTH.is_owner);
       const nt = d.nt_connection || {};
       const hist = u.login_history || [];
       const devices = u.devices || [];
@@ -1967,7 +1980,16 @@
       const ntMode = nt.mode === 'own_ninjatrader' ? 'Свой NinjaTrader' : 'Наблюдение за владельцем';
       const permissionsHtml = u.is_owner
         ? '<div class="finance-note">У владельца всегда полный доступ. Индивидуальные переключатели разрешений для него не требуются.</div>'
-        : `<div class="section-title">Разрешения (тариф + индивидуально)</div><div class="finance-note">Переключатель включает/выключает привилегию именно для этого пользователя поверх его тарифа.</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)}${c.hint ? ` <span class="cab-sub">(${esc(c.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-cap-toggle="${esc(uid)}" data-cap-id="${esc(c.id)}" ${caps[c.id] ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
+        : (canGrant
+          ? `<div class="section-title">Продуктовые разрешения (тариф + индивидуально)</div><div class="finance-note">Эти права управляют продуктом и не открывают Admin Panel.</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)}${c.hint ? ` <span class="cab-sub">(${esc(c.hint)})</span>` : ''}</span><label class="switch"><input type="checkbox" data-cap-toggle="${esc(uid)}" data-cap-id="${esc(c.id)}" ${caps[c.id] ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`
+          : `<div class="section-title">Продуктовые разрешения</div><div class="cap-panel">${catalog.filter(c => caps[c.id]).map(c => `<div class="feat-row"><span>${esc(c.label)}</span><span class="badge live">активно</span></div>`).join('') || '<div class="empty-state">Нет активных прав.</div>'}</div>`);
+      const adminPermissionsHtml = u.is_owner
+        ? ''
+        : `<div class="section-title">Административные grants</div><div class="finance-note">Не связаны с тарифом. ${canGrant ? 'Выдать или отозвать их может только owner; UTC-срок необязателен.' : 'Доступен только просмотр эффективных grants.'}</div><div class="cap-panel">${adminCatalog.map(c => {
+          const grant = adminGrants[c.id] || {};
+          const expiry = String(grant.expires_at_utc || '').replace('Z', '').slice(0, 16);
+          return `<div class="admin-grant-row"><div><strong>${esc(c.label)}</strong><div class="cab-sub mono">${esc(c.id)} · risk=${esc(c.risk || 'high')}</div></div>${canGrant ? `<input type="datetime-local" aria-label="UTC expiry" data-admin-cap-expiry="${esc(c.id)}" value="${esc(expiry)}"><label class="switch"><input type="checkbox" data-admin-cap-toggle="${esc(uid)}" data-admin-cap-id="${esc(c.id)}" ${adminCaps[c.id] ? 'checked' : ''}><span class="sl"></span></label>` : `<span class="badge ${adminCaps[c.id] ? 'live' : 'archived'}">${adminCaps[c.id] ? 'активно' : 'нет'}</span>`}</div>`;
+        }).join('')}</div>`;
       panel.innerHTML = `
         <div class="udetail-grid">
           <div class="cab-kv"><span class="k">Статус</span><span class="v">${esc(u.status || '—')}${u.blocked_at_utc ? ' · заблокирован ' + esc(shortDt(u.blocked_at_utc)) : ''}</span></div>
@@ -1987,8 +2009,20 @@
         <div class="list">${hist.length ? hist.map(h => `<div class="row"><div class="row-main"><div class="row-title">${esc(h.machine || 'Этот компьютер')} · ${esc(h.device || '—')}</div><div class="row-sub">${esc(shortDt(h.at))} · ${esc(h.source === 'telegram_mini_app' ? 'Telegram Mini App' : 'Браузер')}${h.ip ? ' · ' + esc(h.ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Входов пока нет.</div>'}</div>
         <div class="section-title">Поддержка, сессии и ресурсы</div>
         <div class="user-support-live" data-user-support-live="${esc(uid)}"><div class="state-loading"><span class="spinner"></span>Загрузка мониторинга…</div></div>
-        ${permissionsHtml}`;
+        ${permissionsHtml}
+        ${adminPermissionsHtml}`;
       qsa('[data-cap-toggle]', panel).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.authUserPermission(t.dataset.capToggle, t.dataset.capId, t.checked); toast('Разрешение обновлено'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
+      qsa('[data-admin-cap-toggle]', panel).forEach(t => t.onchange = async () => {
+        t.disabled = true;
+        const expiryInput = qs(`[data-admin-cap-expiry="${t.dataset.adminCapId}"]`, panel);
+        let expiresAt = '';
+        try {
+          if (t.checked && expiryInput && expiryInput.value) expiresAt = new Date(expiryInput.value + 'Z').toISOString();
+          await API.http.authUserAdminPermission(t.dataset.adminCapToggle, t.dataset.adminCapId, t.checked, expiresAt);
+          toast(t.checked ? 'Административный grant выдан' : 'Административный grant отозван');
+          await renderUserDetail(panel, uid, listNode);
+        } catch (e) { t.checked = !t.checked; reportError(e); t.disabled = false; }
+      });
       startUserSupportPoll(qs('[data-user-support-live]', panel), uid);
     } catch (e) { renderError(panel, e, () => renderUserDetail(panel, uid, listNode)); }
   }
@@ -2005,7 +2039,7 @@
         <div class="finance-note"><strong>Мониторинг:</strong> ${esc(monitorData.online_count || 0)} пользователей онлайн${monitorData.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(monitorData.alert_count)} предупреждений</span>` : ' · превышений нет'}. Показатели относятся к вкладкам StratForge AI.</div>
         <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
       const invite = qs('#users-invite', node);
-      if (invite) invite.onclick = () => { const tab = document.querySelector('[data-cab-tab="invites"]'); if (tab) tab.click(); };
+      if (invite) invite.onclick = () => openAdminPanel('invites');
       qsa('[data-user-role]', node).forEach(s => s.onchange = async () => { s.disabled = true; try { await API.http.authUserRole(s.dataset.userRole, s.value); toast('Роль обновлена'); } catch (e) { reportError(e); } finally { s.disabled = false; } });
       qsa('[data-user-revoke]', node).forEach(b => b.onclick = async () => { if (!confirm('Отозвать аккаунт? Все его сессии завершатся.')) return; b.disabled = true; try { await API.http.authUserRevoke(b.dataset.userRevoke); toast('Аккаунт отозван'); await renderUsersInto(node); } catch (e) { reportError(e); b.disabled = false; } });
       qsa('[data-user-detail]', node).forEach(b => b.onclick = async () => { const uid = b.dataset.userDetail; const p = qs(`[data-detail-panel="${uid}"]`, node); if (!p) return; if (!p.hidden) { p.hidden = true; stopUserSupportPoll(uid); return; } p.hidden = false; await renderUserDetail(p, uid, node); });
@@ -2341,7 +2375,7 @@
       };
       qsa('[data-inv-status]', node).forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.ownerInviteStatus(b.dataset.invStatus, b.dataset.invTo); toast('Приглашение обновлено'); await renderInvitesInto(node); } catch (e) { reportError(e); b.disabled = false; } });
       qsa('[data-inv-del]', node).forEach(b => b.onclick = async () => { if (!confirm('Удалить приглашение навсегда?')) return; b.disabled = true; try { await API.http.ownerInviteDelete(b.dataset.invDel); toast('Приглашение удалено'); await renderInvitesInto(node); } catch (e) { reportError(e); b.disabled = false; } });
-      qsa('[data-open-user]', node).forEach(b => b.onclick = () => { PENDING_USER_DETAIL = b.dataset.openUser; const tab = document.querySelector('[data-cab-tab="users"]'); if (tab) tab.click(); });
+      qsa('[data-open-user]', node).forEach(b => b.onclick = () => { PENDING_USER_DETAIL = b.dataset.openUser; openAdminPanel('users'); });
     } catch (e) { renderError(node, e, () => renderInvitesInto(node)); }
   }
 
@@ -2559,22 +2593,10 @@
   }
   function renderCabinet(body, me, tab) {
     const header = cabinetHeader(me);
-    const staging = !!(me.runtime && me.runtime.is_staging);
-    const tabs = me.is_owner
-      ? [
-          ['profile', 'Профиль'],
-          ['users', 'Пользователи'],
-          ['monitoring', 'Мониторинг'],
-          ['operations', 'Операции'],
-          ['ai_ratings', 'Рейтинги ИИ'],
-          ['requests', 'Заявки'],
-          ['plans', 'Тарифы'],
-          ['invites', 'Приглашения'],
-          ['payment', 'Оплата'],
-          ['journal', 'Журнал'],
-          ...(staging ? [['staging', 'Staging QA']] : []),
-        ]
-      : [['profile', 'Профиль'], ['plans', 'Тарифы']];
+    // Cabinet is personal self-service only. System operations, user
+    // management, monitoring and owner controls live in the capability-gated
+    // Admin Panel.
+    const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
     const cb = qs('#cab-body', body);
@@ -2698,7 +2720,7 @@
       if (refresh) refresh.onclick = () => renderMonitoringInto(node);
       qsa('[data-mon-open]', node).forEach(btn => btn.onclick = () => {
         try { sessionStorage.setItem('stratforge.open.user', String(btn.dataset.monOpen || '')); } catch (e) { /* ignore */ }
-        openCabinet('users');
+        openAdminPanel('users');
       });
       qsa('[data-mon-end]', node).forEach(btn => btn.onclick = async () => {
         if (!confirm('Завершить выбранную сессию? Пользователь увидит сообщение «Сессия завершена администратором».')) return;
@@ -3287,7 +3309,7 @@
           finally { tunnelRefresh.disabled = false; }
         };
         const openUsers = qs('#telegram-open-users', body);
-        if (openUsers) openUsers.onclick = () => { closeDrawer(); openCabinet('users'); };
+        if (openUsers) openUsers.onclick = () => { closeDrawer(); openAdminPanel('users'); };
         const accessPair = qs('#telegram-access-pair', body);
         if (accessPair) accessPair.onclick = async () => {
           accessPair.disabled = true;
@@ -3350,37 +3372,245 @@
     await refresh();
   }
 
+  function adminCapabilities() {
+    return (CURRENT_AUTH && CURRENT_AUTH.admin_capabilities) || {};
+  }
+
+  function hasAdminCapability(capability) {
+    return !!(CURRENT_AUTH && (CURRENT_AUTH.is_owner || adminCapabilities()[capability] === true));
+  }
+
+  function environmentMetaHtml(target) {
+    const warnings = Array.isArray(target.warnings) ? target.warnings : [];
+    return `<div class="admin-env-meta">
+      <div><span>Версия</span><strong>${esc(target.version || 'неизвестно')}</strong></div>
+      <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || 'неизвестно')}</strong></div>
+      <div><span>Build</span><strong class="mono">${esc(target.build_id || 'неизвестно')}</strong></div>
+      <div><span>Health</span><strong>${esc(target.health || 'unknown')}</strong></div>
+      <div><span>Readiness</span><strong>${esc(target.readiness || 'unknown')}</strong></div>
+    </div>${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
+  }
+
+  async function probeEnvironmentTarget(target, card) {
+    const origin = target.current ? location.origin : target.origin;
+    if (!origin) throw new Error('Origin не настроен.');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const response = await fetch(origin + '/api/runtime/env', {
+        method: 'GET', credentials: 'omit', cache: 'no-store', signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const deployment = data.deployment || data;
+      const environment = String(deployment.deployment_environment || deployment.environment || '').toLowerCase();
+      if (environment !== target.environment) throw new Error(`Endpoint сообщил environment=${environment || 'unknown'}`);
+      target.version = deployment.app_version || deployment.build_version || '';
+      target.commit = deployment.git_commit_sha || '';
+      target.build_id = deployment.build_id || '';
+      target.release_channel = deployment.release_channel || '';
+      target.health = 'reachable';
+      target.readiness = 'runtime endpoint reachable';
+      target.probe_ok = true;
+      if (card) {
+        const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
+        const open = qs('[data-env-open]', card); if (open) open.disabled = false;
+      }
+      return target;
+    } finally { clearTimeout(timer); }
+  }
+
+  function openEnvironmentOrigin(target) {
+    const origin = target.current ? location.origin : String(target.origin || '');
+    if (!origin) return;
+    // Deliberately no query string, Telegram initData, cookies, CSRF token or
+    // localStorage payload. A different origin starts its own authentication.
+    window.open(origin + '/ui/', '_blank', 'noopener,noreferrer');
+  }
+
+  function renderEnvironmentTargets(node, payload) {
+    const targets = (payload && payload.targets) || [];
+    node.innerHTML = `<div class="finance-note"><strong>Изолированный переход:</strong> каждая среда открывается на своём origin в новой вкладке. Токены, cookies, CSRF и localStorage не переносятся.</div>
+      <div class="admin-env-grid">${targets.map((target, index) => `<section class="cab-card admin-env-card" data-env-card="${index}">
+        <div class="admin-env-head"><div><span class="badge ${target.current ? 'live' : (target.configured ? 'pending' : 'archived')}">${esc(target.environment.toUpperCase())}</span>${target.current ? '<span class="cab-sub"> текущая</span>' : ''}</div><span class="mono cab-sub">${esc(target.current ? location.origin : (target.origin || 'origin не задан'))}</span></div>
+        <div data-env-meta>${environmentMetaHtml(target)}</div>
+        <div class="flex gap-sm wrap">
+          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Проверить endpoint</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
+        </div><div data-env-confirm></div>
+      </section>`).join('')}</div>
+      <div class="flex gap-sm wrap"><button class="btn ghost" id="admin-env-compare">Сравнить Canary / Production в отдельных вкладках</button></div>`;
+    qsa('[data-env-probe]', node).forEach(button => button.onclick = async () => {
+      const target = targets[Number(button.dataset.envProbe)];
+      const card = button.closest('[data-env-card]');
+      button.disabled = true;
+      try {
+        await probeEnvironmentTarget(target, card);
+        const review = qs('[data-env-review]', card); if (review) review.disabled = false;
+        toast(`Endpoint ${target.environment} доступен`);
+      } catch (e) {
+        target.probe_ok = false;
+        const review = qs('[data-env-review]', card);
+        if (review && target.environment === 'development') review.disabled = true;
+        reportError(new Error(`Endpoint ${target.environment} недоступен: ${e.message || e}`));
+      } finally { button.disabled = false; }
+    });
+    qsa('[data-env-review]', node).forEach(button => button.onclick = () => {
+      const target = targets[Number(button.dataset.envReview)];
+      const card = button.closest('[data-env-card]');
+      const confirmNode = qs('[data-env-confirm]', card);
+      if (target.environment === 'development' && !target.probe_ok) {
+        toast('Local DEV можно открыть только после успешной проверки endpoint.');
+        return;
+      }
+      confirmNode.innerHTML = `<div class="admin-env-confirm"><strong>Перед переходом</strong>${environmentMetaHtml(target)}<p class="cab-sub">В новой вкладке потребуется отдельная аутентификация.</p><button class="btn primary" data-env-open="1">Открыть ${esc(target.environment.toUpperCase())} в новой вкладке</button></div>`;
+      const open = qs('[data-env-open]', confirmNode); if (open) open.onclick = () => openEnvironmentOrigin(target);
+    });
+    const compare = qs('#admin-env-compare', node);
+    if (compare) compare.onclick = () => {
+      const rows = targets.filter(target => ['canary', 'production'].includes(target.environment) && target.open_allowed);
+      if (!rows.length) { toast('Canary и Production origins не настроены.'); return; }
+      rows.forEach(openEnvironmentOrigin);
+    };
+  }
+
+  async function renderEnvironmentSwitcherInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка environments…</div>';
+    try { renderEnvironmentTargets(node, await API.http.adminEnvironmentTargets()); }
+    catch (e) { renderError(node, e, () => renderEnvironmentSwitcherInto(node)); }
+  }
+
+  async function showEnvironmentSwitcher() {
+    if (!hasAdminCapability('environment.switch')) return;
+    const d = drawer('<h3>Environment Switcher</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>');
+    await renderEnvironmentSwitcherInto(qs('.drawer-b', d));
+  }
+
+  async function renderDelegatedUsersInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка users…</div>';
+    try {
+      const data = await API.http.authUsers();
+      const users = data.users || [];
+      node.innerHTML = `<div class="finance-note">Делегированный users.manage не позволяет выдавать тарифные или административные grants.</div><div class="list">${users.map(u => `<div class="row"><div class="row-main"><div class="row-title">${esc(userLabel(u))}${u.is_owner ? ' <span class="badge trial">owner</span>' : ''}</div><div class="row-sub">${esc(u.status || '')} · ${esc(u.role || '')} · ${esc(u.username ? '@' + u.username : String(u.user_id || ''))}</div></div>${u.is_owner ? '' : `<button class="btn sm ghost" data-delegated-user="${esc(u.user_id)}">Детали</button>`}</div><div data-delegated-detail="${esc(u.user_id)}" hidden></div>`).join('') || '<div class="empty-state">Пользователей нет.</div>'}</div>`;
+      qsa('[data-delegated-user]', node).forEach(button => button.onclick = async () => {
+        const detail = qs(`[data-delegated-detail="${button.dataset.delegatedUser}"]`, node);
+        if (!detail) return;
+        detail.hidden = !detail.hidden;
+        if (!detail.hidden) await renderUserDetail(detail, button.dataset.delegatedUser, node);
+      });
+    } catch (e) { renderError(node, e, () => renderDelegatedUsersInto(node)); }
+  }
+
+  async function renderAdminOperationsInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Проверка operations…</div>';
+    try {
+      const data = await API.http.adminOperations();
+      const worker = data.worker || {};
+      const telegram = data.telegram || {};
+      const connector = data.connector || {};
+      const canExecute = hasAdminCapability('operations.execute');
+      node.innerHTML = `<div class="grid cols-3"><div class="kpi"><span>Worker</span><strong>${esc(worker.status || (worker.running ? 'running' : 'unknown'))}</strong></div><div class="kpi"><span>Telegram</span><strong>${esc(telegram.status || (telegram.ok ? 'ok' : 'unknown'))}</strong></div><div class="kpi"><span>Connector</span><strong>${esc(connector.status || (connector.ok ? 'ok' : 'unknown'))}</strong></div></div>
+        <div class="section-title">Безопасные операции</div><div class="flex gap-sm wrap"><button class="btn ghost" id="admin-diagnostics">Диагностика</button><button class="btn ghost" id="admin-env-status">Состояние environment</button>${hasAdminCapability('connectors.manage') ? '<button class="btn ghost" id="admin-telegram">Telegram / Connector</button>' : ''}</div>
+        ${canExecute ? `<div class="section-title">Операции с подтверждением</div><div class="flex gap-sm wrap"><button class="btn danger" id="admin-restart">Перезапустить backend</button><button class="btn ghost" id="admin-ai-unload">Освободить AI memory</button><button class="btn ghost" id="admin-catalog-refresh">Обновить каталог</button><button class="btn ghost" id="admin-margin-refresh">Пересчитать маржу</button></div>` : '<div class="finance-note">operations.execute не выдан: restart/recovery controls скрыты.</div>'}`;
+      const diagnostics = qs('#admin-diagnostics', node); if (diagnostics) diagnostics.onclick = () => { closeDrawer(); showDiagnostics(); };
+      const env = qs('#admin-env-status', node); if (env) env.onclick = () => { closeDrawer(); showEnvironment(false); };
+      const telegramButton = qs('#admin-telegram', node); if (telegramButton) telegramButton.onclick = () => { closeDrawer(); showTelegram(); };
+      const restart = qs('#admin-restart', node); if (restart) restart.onclick = () => { if (confirm('Перезапустить backend?')) action('Backend restart', () => API.http.restartServer(), 'Backend перезапускается').catch(() => {}); };
+      const unload = qs('#admin-ai-unload', node); if (unload) unload.onclick = () => action('AI memory', () => API.http.aiBootstrapUnload({ stop_server: true }), 'AI memory освобождена').catch(() => {});
+      const catalog = qs('#admin-catalog-refresh', node); if (catalog) catalog.onclick = () => action('Каталог', () => API.http.refreshCatalog(), 'Каталог обновлён').catch(() => {});
+      const margins = qs('#admin-margin-refresh', node); if (margins) margins.onclick = () => action('Маржа', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => {});
+    } catch (e) { renderError(node, e, () => renderAdminOperationsInto(node)); }
+  }
+
+  function adminOverviewHtml(data) {
+    const deployment = data.deployment || {};
+    const caps = data.admin_capabilities || {};
+    const catalog = data.admin_capability_catalog || [];
+    return `<div class="grid cols-3"><div class="kpi"><span>Environment</span><strong>${esc(deployment.deployment_environment || deployment.environment || '—')}</strong></div><div class="kpi"><span>Version</span><strong>${esc(deployment.app_version || '—')}</strong></div><div class="kpi"><span>Commit</span><strong class="mono">${esc((deployment.git_commit_sha || '').slice(0, 12) || '—')}</strong></div></div><div class="finance-note"><strong>Security contract:</strong> secrets не выдаются; между environments не переносятся credentials, cookies, CSRF и browser storage.</div><div class="section-title">Эффективные capabilities</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)} <span class="cab-sub mono">${esc(c.id)}</span></span><span class="badge ${caps[c.id] ? 'live' : 'archived'}">${caps[c.id] ? 'разрешено' : 'нет'}</span></div>`).join('')}</div>`;
+  }
+
+  async function renderAdminModule(node, moduleId, overview) {
+    if (moduleId === 'overview') { node.innerHTML = adminOverviewHtml(overview); return; }
+    if (moduleId === 'users') { return CURRENT_AUTH && CURRENT_AUTH.is_owner ? renderUsersInto(node) : renderDelegatedUsersInto(node); }
+    if (moduleId === 'operations') return renderAdminOperationsInto(node);
+    if (moduleId === 'environments') return renderEnvironmentSwitcherInto(node);
+    if (moduleId === 'monitoring') return renderMonitoringInto(node);
+    if (moduleId === 'requests') return renderRequestsInto(node);
+    if (moduleId === 'subscriptions') {
+      node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+      try { return renderPlansInto(node, await API.http.authMe()); }
+      catch (e) { return renderError(node, e, () => renderAdminModule(node, moduleId, overview)); }
+    }
+    if (moduleId === 'invites') return renderInvitesInto(node);
+    if (moduleId === 'payment') return renderPaymentInto(node);
+    if (moduleId === 'ai-ratings') return renderAiRatingsInto(node);
+    if (moduleId === 'journal') return renderJournalInto(node);
+    if (moduleId === 'staging') return renderStagingInto(node);
+    if (moduleId === 'connectors') {
+      node.innerHTML = '<div class="finance-note">Секреты и токены здесь не показываются. Доступны только configured/health/session status и явные действия.</div><button class="btn primary" id="admin-open-connectors">Открыть Telegram / Connector</button>';
+      qs('#admin-open-connectors', node).onclick = () => { closeDrawer(); showTelegram(); };
+      return;
+    }
+    const capability = ((overview.modules || []).find(row => row.id === moduleId) || {}).capability || '';
+    node.innerHTML = `<div class="cab-card"><h4>${esc(((overview.modules || []).find(row => row.id === moduleId) || {}).label || moduleId)}</h4><p class="cab-sub">Shell модуля доступен по capability <span class="mono">${esc(capability)}</span>. Доменные workflow подключаются в своей плановой фазе.</p></div>`;
+  }
+
+  async function openAdminPanel(initialModule) {
+    if (!hasAdminCapability('admin.view')) { toast('Admin Panel недоступна.'); return; }
+    const d = drawer('<h3>Admin Panel</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка capabilities…</div>');
+    d.classList.add('wide');
+    const body = qs('.drawer-b', d);
+    try {
+      const overview = await API.http.adminOverview();
+      CURRENT_AUTH.admin_capabilities = overview.admin_capabilities || {};
+      const modules = overview.modules || [];
+      const start = modules.some(row => row.id === initialModule) ? initialModule : 'overview';
+      body.innerHTML = `<div class="admin-shell"><nav class="admin-modules">${modules.map(row => `<button class="admin-module" data-admin-module="${esc(row.id)}"><span>${esc(row.label)}</span><small class="mono">${esc(row.capability)}</small></button>`).join('')}</nav><main class="admin-module-body" id="admin-module-body"></main></div>`;
+      const moduleBody = qs('#admin-module-body', body);
+      const select = async id => {
+        qsa('[data-admin-module]', body).forEach(button => button.classList.toggle('on', button.dataset.adminModule === id));
+        await renderAdminModule(moduleBody, id, overview);
+      };
+      qsa('[data-admin-module]', body).forEach(button => button.onclick = () => select(button.dataset.adminModule));
+      await select(start);
+    } catch (e) { renderError(body, e, () => { closeDrawer(); openAdminPanel(initialModule); }); }
+  }
+
+  function wireAdminEnvironmentButton() {
+    const right = qs('.tb-right');
+    if (!right) return;
+    let button = qs('#admin-env-switcher');
+    if (!hasAdminCapability('environment.switch')) { if (button) button.remove(); return; }
+    if (!button) {
+      button = el('<button class="btn sm ghost admin-env-button" id="admin-env-switcher" type="button"></button>');
+      const more = qs('#tb-more', right);
+      right.insertBefore(button, more || right.firstChild);
+    }
+    const runtime = (CURRENT_AUTH && CURRENT_AUTH.runtime) || {};
+    const runtimeDeployment = runtime.deployment || runtime;
+    const environment = (BUILD_IDENTITY && BUILD_IDENTITY.environment)
+      || document.documentElement.dataset.deploymentEnvironment
+      || runtimeDeployment.deployment_environment
+      || runtimeDeployment.environment
+      || 'ENV';
+    button.textContent = environment.toUpperCase();
+    button.title = 'Environment Switcher';
+    button.onclick = () => showEnvironmentSwitcher();
+  }
+
   function wireTopbar() {
-    const offline = !window.API || API.config.offline;
-    const legacyUrl = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/';
     const more = qs('#tb-more');
     if (more) more.onclick = (e) => {
       e.stopPropagation();
       const systemItems = [
         { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
-        { icon: 'play', label: 'Запустить всё окружение', onClick: () => showEnvironment(true) },
-        { icon: 'cpu', label: 'Состояние окружения', onClick: () => showEnvironment(false) },
-        { icon: 'cpu', label: 'Диагностика системы', onClick: () => showDiagnostics() },
+        ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Admin Panel', onClick: () => openAdminPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
-        { icon: 'telegram', label: 'Telegram', onClick: () => showTelegram() },
-        { icon: 'refresh', label: 'Перезапустить backend', onClick: () => {
-          if (offline) { toast('Перезапуск backend недоступен в офлайн-превью'); return; }
-          if (!confirm('Перезапустить python-backend? Активные HTTP-запросы прервутся.')) return;
-          action('Перезапуск python-backend', () => API.http.restartServer(), 'Backend перезапускается').then(() => setTimeout(() => location.reload(), 1800)).catch(() => {});
-        } },
-        { icon: 'eraser', label: 'Освободить память ИИ', onClick: () => action('Выгрузка моделей LM Studio', () => API.http.aiBootstrapUnload({ stop_server: true }), 'Память LM Studio освобождена').catch(() => { }) },
-        { icon: 'refresh', label: 'Обновить каталог стратегий', onClick: () => action('Обновление каталога стратегий', () => API.http.refreshCatalog(), 'Каталог обновлён').catch(() => { }) },
-        { icon: 'coins', label: 'Пересчитать маржу', onClick: () => action('Обновление маржинальных требований', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => { }) },
         { divider: true },
-        { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = withMiniAppContext(legacyUrl); } },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
       ];
-      const ownerOnly = new Set(['Запустить всё окружение', 'Состояние окружения', 'Диагностика системы', 'Telegram', 'Перезапустить backend', 'Освободить память ИИ', 'Обновить каталог стратегий', 'Пересчитать маржу', 'Перейти в старый интерфейс']);
-      let visibleItems = systemItems;
-      if (window.API && API.config.miniApp) visibleItems = systemItems.filter(item => item.label === 'Настройки дизайна');
-      else if (!CURRENT_AUTH || !CURRENT_AUTH.is_owner) visibleItems = systemItems.filter(item => item.divider || !ownerOnly.has(item.label));
-      menu(more, visibleItems);
+      menu(more, systemItems);
     };
+    wireAdminEnvironmentButton();
   }
 
   function environmentHtml(result) {
@@ -5186,6 +5416,6 @@
     return true;
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

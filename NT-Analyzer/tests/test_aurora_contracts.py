@@ -241,6 +241,15 @@ def test_live_static_handler_routes_csp_and_assets():
                 assert response.status == 200
                 assert marker in body
                 assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+                assert "http://127.0.0.1:*" in response.headers["Content-Security-Policy"]
+
+        with urllib.request.urlopen(base + "/api/runtime/env", timeout=5) as response:
+            runtime = json.loads(response.read().decode("utf-8"))
+            assert response.status == 200
+            assert response.headers["Access-Control-Allow-Origin"] == "*"
+            assert runtime.get("environment") or runtime.get("deployment")
+            assert "data_root" not in runtime
+            assert "test_auth_enabled" not in runtime
 
         request = urllib.request.Request(base + "/ui/ops.html", method="GET")
         opener = urllib.request.build_opener(urllib.request.HTTPHandler())
@@ -372,6 +381,50 @@ def test_aurora_keeps_legacy_operational_capabilities_wired():
     assert "API.http.setRuntimeStrategyDisplay" in strategies
     for method in ("aiPerformance", "aiCalendar", "aiCompileSourceStatus", "aiCurrent", "aiUserResearchScan"):
         assert f"API.http.{method}" in ai_lab
+
+
+def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+
+    menu = ui.split("function wireTopbar()", 1)[1].split("function environmentHtml", 1)[0]
+    assert "hasAdminCapability('admin.view')" in menu
+    assert "label: 'Admin Panel'" in menu
+    for legacy_action in (
+        "Запустить всё окружение",
+        "Диагностика системы",
+        "Перезапустить backend",
+        "Перейти в старый интерфейс",
+    ):
+        assert legacy_action not in menu
+
+    cabinet = ui.split("function renderCabinet", 1)[1].split("async function renderAiRatingsInto", 1)[0]
+    assert "const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']]" in cabinet
+    assert "['users'," not in cabinet
+    assert "['operations'," not in cabinet
+
+    for path in (
+        "/api/admin/overview",
+        "/api/admin/environment-targets",
+        "/api/admin/operations",
+        "/admin-permission",
+    ):
+        assert path in api
+    assert ".admin-shell" in css and ".admin-env-grid" in css
+
+
+def test_environment_switcher_never_transfers_browser_credentials() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    switcher = ui.split("async function probeEnvironmentTarget", 1)[1].split(
+        "async function renderDelegatedUsersInto", 1,
+    )[0]
+    assert "credentials: 'omit'" in switcher
+    assert "'_blank', 'noopener,noreferrer'" in switcher
+    assert "origin + '/ui/'" in switcher
+    assert "withMiniAppContext" not in switcher
+    assert "localStorage.getItem" not in switcher
+    assert "telegramInitData" not in switcher
 
 
 def test_aurora_trading_exposes_reconnect_modeling_control():

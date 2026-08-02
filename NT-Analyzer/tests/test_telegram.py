@@ -129,13 +129,18 @@ def test_connection_transition_does_not_duplicate_vitek_notification(monkeypatch
     assert not any(item[0] == "nt_connection" for item in notifications)
 
 
-def test_aurora_menu_exposes_only_telegram_label() -> None:
+def test_aurora_telegram_controls_live_only_in_capability_gated_admin_panel() -> None:
     from pathlib import Path
 
-    ui = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
-    api = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "api.js").read_text(encoding="utf-8")
-    assert "label: 'Telegram'" in ui
+    root = Path(__file__).resolve().parents[1]
+    ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (root / "app" / "static" / "aurora" / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (root / "app" / "server.py").read_text(encoding="utf-8")
+    topbar = ui.split("function wireTopbar()", 1)[1].split("function environmentHtml", 1)[0]
+    assert "label: 'Telegram'" not in topbar
     assert "Интеграции и Telegram" not in ui
+    assert "hasAdminCapability('connectors.manage')" in ui
+    assert '"label": "Connectors and Telegram", "capability": "connectors.manage"' in server
     assert "telegramSaveToken" in api and "/api/telegram/test" in api
 
 

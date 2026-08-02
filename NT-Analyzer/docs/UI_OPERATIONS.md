@@ -1,12 +1,14 @@
 # Aurora operator guide
 
-Актуально на 2026-07-14.
+История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — описать новый личный menu/cabinet, Admin Panel и безопасный Environment Switcher.
+
+Актуально на 2026-08-02.
 
 ## Start and navigation
 
-Run `start.ps1`. The launcher opens `/ui/`, which is Aurora. The classic UI is
-not deleted: use `Системные действия -> Перейти в старый интерфейс`. Classic has
-one `Новый интерфейс` link back to `/ui/`.
+Run `start.ps1`. The launcher opens `/ui/`, where the user first chooses the
+beginner or professional contour. The classic UI remains available at
+`/ui/legacy/`; it has one `Новый интерфейс` link back to `/ui/`.
 
 The top bar is shared by every page:
 
@@ -14,8 +16,14 @@ The top bar is shared by every page:
 - Market state and countdown use Pacific Time and CME daily/weekend pauses.
 - The account chip selects any non-system account, including disconnected live
   accounts. Live remains read-only.
-- The three-dot menu contains environment start/status, diagnostics, backend
-  restart, LM memory release, catalog/margin refresh and classic UI.
+- The three-dot menu is personal: `Кабинет`, capability-gated `Admin Panel`,
+  design settings and logout. System operations are not exposed there.
+- `Кабинет` contains only profile and plan self-service. Users, monitoring,
+  connectors, operations and other owner controls live in Admin Panel modules.
+- A compact environment button appears only with `environment.switch`. It shows
+  environment/build/readiness warnings and opens another configured origin in a
+  new tab without copying cookies, CSRF, tokens or browser storage. Local DEV is
+  enabled only after a successful loopback endpoint identity check.
 
 ## Вход и общий чат
 
@@ -38,7 +46,7 @@ Aurora и Telegram используют один `conversation_id`; поруче
 Финансовый ответ Марины всегда начинается с названия периода и точных дат
 `from — to`; число операций без этой подписи нельзя сравнивать с другим экраном.
 
-Владелец открывает `Кабинет → Пользователи → Детали`, чтобы увидеть активные
+Владелец открывает `Admin Panel → Users and sessions → Детали`, чтобы увидеть активные
 сессии и нагрузку вкладок. Там можно перезагрузить выбранную вкладку, немедленно
 завершить одну или все browser-cookie сессии и запросить снимок экрана.
 Те же действия доступны для самого владельца. ID в строке владельца — это ID

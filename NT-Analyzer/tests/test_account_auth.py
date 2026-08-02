@@ -11,7 +11,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, secure_store, workspaces
+from app import account_auth, permissions, secure_store, workspaces
 from app import server as server_mod
 
 
@@ -369,6 +369,43 @@ def test_set_user_permission_override(auth_store) -> None:
     assert "ai_lab" not in detail["user"].get("permission_overrides", {})
     with pytest.raises(account_auth.AccountAuthError):
         account_auth.set_user_permission(999, 42, "not_a_capability", True)
+
+
+def test_owner_grants_expiring_admin_capability_and_staff_cannot_delegate(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    account_auth.set_user_admin_permission(
+        999,
+        42,
+        "users.manage",
+        True,
+        expires_at_utc="2099-01-01T00:00:00Z",
+    )
+    detail = account_auth.user_detail(42, 42)
+    grant = detail["user"]["admin_permission_grants"]["users.manage"]
+    assert grant["enabled"] is True
+    assert grant["expires_at_utc"] == "2099-01-01T00:00:00Z"
+    assert permissions.resolve_admin_capabilities(detail["user"])["users.manage"] is True
+    assert {row["user_id"] for row in account_auth.list_users(42)["users"]} == {42, 999}
+
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.set_user_admin_permission(42, 42, "admin.view", True)
+    assert exc.value.status == 403
+
+    account_auth.set_user_admin_permission(999, 42, "users.manage", False)
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.list_users(42)
+    assert exc.value.status == 403
+
+
+def test_admin_grant_rejects_invalid_enabled_and_expired_timestamp(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    with pytest.raises(account_auth.AccountAuthError):
+        account_auth.set_user_admin_permission(999, 42, "admin.view", "true")
+    with pytest.raises(account_auth.AccountAuthError):
+        account_auth.set_user_admin_permission(
+            999, 42, "admin.view", True,
+            expires_at_utc="2020-01-01T00:00:00Z",
+        )
 
 
 def test_record_login_history_and_throttle(auth_store) -> None:

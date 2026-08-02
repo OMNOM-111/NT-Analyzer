@@ -252,7 +252,7 @@ def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None
 # blocks injected inline script while inline style attributes remain allowed.
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self'; connect-src 'self'; media-src 'self' blob:; "
+    "script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*; media-src 'self' blob:; "
     "base-uri 'none'; form-action 'self'; "
     "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
@@ -305,9 +305,156 @@ _OWNER_ONLY_API_PREFIXES = (
 )
 
 
-def _is_owner_only_api_path(path: str) -> bool:
+def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
     value = str(path or "")
+    # A small, audited subset of the former owner-only surface is now governed
+    # by explicit administrative capabilities.  Everything else under these
+    # prefixes remains owner-only.
+    if permissions.required_admin_capability(value, method):
+        return False
     return value == "/api/server/restart" or value.startswith(_OWNER_ONLY_API_PREFIXES)
+
+
+_ADMIN_MODULES = (
+    {"id": "overview", "label": "Overview", "capability": "admin.view"},
+    {"id": "users", "label": "Users and sessions", "capability": "users.manage"},
+    {"id": "workspaces", "label": "Workspaces and memberships", "capability": "workspaces.manage"},
+    {"id": "connectors", "label": "Connectors and Telegram", "capability": "connectors.manage"},
+    {"id": "operations", "label": "Operations", "capability": "operations.view"},
+    {"id": "releases", "label": "Release Center", "capability": "releases.view"},
+    {"id": "environments", "label": "Environment Switcher", "capability": "environment.switch"},
+    {"id": "security", "label": "Audit and security", "capability": "operations.view"},
+    {"id": "docs-global", "label": "Global documents", "capability": "docs.manage_global"},
+    {"id": "docs-workspace", "label": "Workspace documents", "capability": "docs.manage_workspace"},
+    {"id": "monitoring", "label": "User monitoring", "capability": "users.manage", "owner_only": True},
+    {"id": "requests", "label": "Access requests", "capability": "admin.view", "owner_only": True},
+    {"id": "subscriptions", "label": "Subscriptions and grants", "capability": "admin.view", "owner_only": True},
+    {"id": "invites", "label": "Invitations", "capability": "admin.view", "owner_only": True},
+    {"id": "payment", "label": "Payment configuration", "capability": "admin.view", "owner_only": True},
+    {"id": "ai-ratings", "label": "AI ratings", "capability": "admin.view", "owner_only": True},
+    {"id": "journal", "label": "Owner journal", "capability": "admin.view", "owner_only": True},
+    {"id": "staging", "label": "Development QA", "capability": "admin.view", "owner_only": True},
+)
+
+
+def _admin_overview_payload(context: Dict[str, Any]) -> Dict[str, Any]:
+    caps = context.get("admin_capabilities")
+    caps = caps if isinstance(caps, dict) else {}
+    modules = [
+        dict(row) for row in _ADMIN_MODULES
+        if caps.get(str(row["capability"]))
+        and (not row.get("owner_only") or context.get("is_owner"))
+    ]
+    return {
+        "ok": True,
+        "actor": {
+            "user_id": context.get("user_id") or "",
+            "is_owner": bool(context.get("is_owner")),
+            "kind": "owner" if context.get("is_owner") else "delegated_admin",
+        },
+        "modules": modules,
+        "admin_capabilities": {
+            cid: bool(caps.get(cid)) for cid in permissions.ADMIN_CAPABILITY_IDS
+        },
+        "admin_capability_catalog": permissions.admin_capability_catalog(),
+        "deployment": runtime_env.public_status(),
+        "security_contract": {
+            "secrets_exposed": False,
+            "credentials_transfer_between_environments": False,
+            "session_isolation": "origin-bound cookies, CSRF and browser storage",
+        },
+    }
+
+
+def _validated_environment_origin(environment: str, value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        return ""
+    if environment in {runtime_env.CANARY, runtime_env.PRODUCTION} and (
+        parsed.scheme != "https" or port not in {None, 443}
+    ):
+        return ""
+    if environment == runtime_env.DEVELOPMENT and host not in {
+        "127.0.0.1", "localhost", "::1",
+    }:
+        return ""
+    default_port = (
+        (parsed.scheme == "http" and port in {None, 80})
+        or (parsed.scheme == "https" and port in {None, 443})
+    )
+    normalized_port = "" if default_port else f":{port}"
+    bracketed_host = f"[{host}]" if ":" in host else host
+    return f"{parsed.scheme}://{bracketed_host}{normalized_port}"
+
+
+def _admin_environment_targets() -> Dict[str, Any]:
+    active = runtime_env.deployment_environment()
+    deployment = runtime_env.public_status()
+    configured = {
+        runtime_env.DEVELOPMENT: os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN"),
+        runtime_env.CANARY: os.environ.get("STRATFORGE_CANARY_ORIGIN"),
+        runtime_env.PRODUCTION: os.environ.get("STRATFORGE_PRODUCTION_ORIGIN"),
+    }
+    rows = []
+    for environment in (
+        runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION,
+    ):
+        current = environment == active
+        supplied = str(configured.get(environment) or "").strip()
+        origin = _validated_environment_origin(environment, supplied)
+        warnings = []
+        if supplied and not origin:
+            warnings.append("Configured origin was rejected by the safety policy.")
+        if not current and not origin:
+            warnings.append("Target origin is not configured in this environment.")
+        if environment == runtime_env.DEVELOPMENT and not current:
+            warnings.append("Local Development becomes active only after a browser reachability check.")
+        if not current:
+            warnings.append("Target metadata is read only from the target origin after opening it.")
+        rows.append({
+            "environment": environment,
+            "current": current,
+            "configured": bool(current or origin),
+            "origin": "" if current else origin,
+            "open_allowed": bool(current or (origin and environment != runtime_env.DEVELOPMENT)),
+            "requires_reachability_probe": bool(
+                environment == runtime_env.DEVELOPMENT and not current and origin
+            ),
+            "health": "reachable" if current else "unknown",
+            "readiness": "current_server" if current else "unknown",
+            "version": str(deployment.get("app_version") or "") if current else "",
+            "commit": str(deployment.get("git_commit_sha") or "") if current else "",
+            "build_id": str(deployment.get("build_id") or "") if current else "",
+            "release_channel": str(deployment.get("release_channel") or "") if current else "",
+            "warnings": warnings,
+        })
+    return {
+        "ok": True,
+        "active_environment": active,
+        "targets": rows,
+        "transition_contract": {
+            "new_tab": True,
+            "credentials_transfer": False,
+            "tokens_in_url": False,
+            "local_storage_transfer": False,
+        },
+    }
 
 
 _BILLING_PROMO_POSTS = {
@@ -1354,6 +1501,10 @@ class Handler(BaseHTTPRequestHandler):
                     capability_id: bool(context.get("is_owner"))
                     for capability_id in permissions.CAPABILITY_IDS
                 },
+                "admin_capabilities": {
+                    capability_id: bool(context.get("is_owner"))
+                    for capability_id in permissions.ADMIN_CAPABILITY_IDS
+                },
                 "ux_mode": "professional" if context.get("is_owner") else str(
                     (context.get("user") or {}).get("ux_mode") or ""
                 ),
@@ -1366,9 +1517,15 @@ class Handler(BaseHTTPRequestHandler):
             context["capabilities"] = {
                 capability_id: True for capability_id in permissions.CAPABILITY_IDS
             }
+            context["admin_capabilities"] = {
+                capability_id: True for capability_id in permissions.ADMIN_CAPABILITY_IDS
+            }
             context["ux_mode"] = "professional"
         else:
             context["capabilities"] = dict(resolved.get("capabilities") or {})
+            context["admin_capabilities"] = dict(
+                resolved.get("admin_capabilities") or {}
+            )
             context["ux_mode"] = str(resolved.get("ux_mode") or "")
         context["_permissions"] = resolved
         return context
@@ -1414,6 +1571,8 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _api_action_class(self, path: str, method: str) -> str:
+        if permissions.required_admin_capability(path, method):
+            return "owner"
         if path.startswith("/api/auth/"):
             # Session/profile reads are ordinary authenticated UI polling.
             # Keeping them in the small login/mutation bucket makes a healthy
@@ -1539,21 +1698,23 @@ class Handler(BaseHTTPRequestHandler):
                         account, include_contact=True, include_avatar=True)
                 self._remote_context = self._decorate_workspace_context(self._remote_context)
                 method = self.command.upper()
+                admin_route = bool(permissions.required_admin_capability(path, method))
                 role = str(self._remote_context.get("role") or "read_only")
                 workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
                 membership_role = str(self._remote_context.get("membership_role") or "viewer")
                 personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
                 if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                         and membership_role not in workspaces.WRITE_ROLES
-                        and not _is_self_service_post(path)):
+                        and not _is_self_service_post(path) and not admin_route):
                     raise telegram_remote.RemoteAccessError(
                         "В этой рабочей области доступно только наблюдение.", 403,
                         self._remote_context,
                     )
                 if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
+                        and not admin_route
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
-                if _is_owner_only_api_path(path) and not self._remote_context["is_owner"]:
+                if _is_owner_only_api_path(path, method) and not self._remote_context["is_owner"]:
                     raise telegram_remote.RemoteAccessError(
                         "Это действие разрешено только владельцу.", 403,
                         self._remote_context,
@@ -1587,20 +1748,22 @@ class Handler(BaseHTTPRequestHandler):
             return False
         context = self._decorate_workspace_context(context)
         method = self.command.upper()
+        admin_route = bool(permissions.required_admin_capability(path, method))
         role = str(context.get("role") or "read_only")
         workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
         membership_role = str(context.get("membership_role") or "viewer")
         personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
         if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                 and membership_role not in workspaces.WRITE_ROLES
-                and not _is_self_service_post(path)):
+                and not _is_self_service_post(path) and not admin_route):
             self._err(HTTPStatus.FORBIDDEN, "В этой рабочей области доступно только наблюдение.")
             return False
         if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
+            and not admin_route
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
-        if _is_owner_only_api_path(path) and not context.get("is_owner"):
+        if _is_owner_only_api_path(path, method) and not context.get("is_owner"):
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
         try:
@@ -1727,6 +1890,8 @@ class Handler(BaseHTTPRequestHandler):
         payload["features"] = perm["nav"]
         payload["capabilities"] = perm["capabilities"]
         payload["capability_catalog"] = permissions.capability_catalog()
+        payload["admin_capabilities"] = perm["admin_capabilities"]
+        payload["admin_capability_catalog"] = permissions.admin_capability_catalog()
         payload["plan_id"] = perm["plan_id"]
         payload["free_preview"] = perm["free_preview"]
         payload["locked_nav"] = perm["locked_nav"]
@@ -1932,6 +2097,31 @@ class Handler(BaseHTTPRequestHandler):
                 sent = False
         return {"ok": bool(sent), "sent_to": "owner"}
 
+    def _admin_operations_payload(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        payload = observability.dashboard()
+        payload["worker"] = (
+            production_workers.status()
+            if runtime_env.is_production() and runtime_env.environment_explicit()
+            else local_worker.status()
+        )
+        try:
+            payload["telegram"] = (
+                production_telegram.get_queue().status()
+                if runtime_env.is_production() and runtime_env.environment_explicit()
+                else telegram_service.status()
+            )
+        except production_telegram.StorageError as exc:
+            payload["telegram"] = {"ok": False, "code": exc.code}
+        try:
+            payload["connector"] = connector_protocol.list_installations(
+                context.get("user_id"),
+                workspace_id=str(context.get("workspace_id") or ""),
+            )
+        except connector_protocol.ConnectorProtocolError as exc:
+            payload["connector"] = {"ok": False, "code": exc.code}
+        return payload
+
     def _cabinet_payload(self) -> Dict[str, Any]:
         context = getattr(self, "_remote_context", None) or {}
         uid = context.get("user_id")
@@ -1969,6 +2159,11 @@ class Handler(BaseHTTPRequestHandler):
             perm = permissions.resolve(
                 permission_user, None if is_owner else subscription,
             )
+        admin_capabilities = perm.get("admin_capabilities")
+        if not isinstance(admin_capabilities, dict):
+            # Keep older/mocked request contexts compatible while still deriving
+            # the new control-plane grants from the authenticated user record.
+            admin_capabilities = permissions.resolve_admin_capabilities(permission_user)
         nav_features = perm["nav"]
         if isinstance(user, dict):
             user = {**user, "features": nav_features}
@@ -1987,6 +2182,8 @@ class Handler(BaseHTTPRequestHandler):
             "feature_catalog": account_auth.feature_catalog(),
             "capabilities": perm["capabilities"],
             "capability_catalog": permissions.capability_catalog(),
+            "admin_capabilities": admin_capabilities,
+            "admin_capability_catalog": permissions.admin_capability_catalog(),
             "plan_id": perm["plan_id"],
             "free_preview": perm["free_preview"],
             "locked_nav": perm["locked_nav"],
@@ -2698,11 +2895,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/runtime/env":
-            # Public enough for UI banners; no secrets.
+            # Public, secret-free build identity for UI banners and the
+            # credential-free Environment Switcher probe. Never return the
+            # Development-only status payload here: it contains local paths and
+            # operational flags that must not become cross-origin readable.
             self._json(
                 HTTPStatus.OK,
-                runtime_env.status() if runtime_env.is_development()
-                else runtime_env.public_status(),
+                runtime_env.public_status(),
+                # Public, secret-free build identity is intentionally readable
+                # cross-origin by the credential-free Environment Switcher.
+                # Wildcard CORS cannot carry cookies and this endpoint never
+                # accepts credentials or mutates state.
+                headers={"Access-Control-Allow-Origin": "*"},
             )
             return
 
@@ -2715,6 +2919,40 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/") and not self._authorize_api(path):
+            return
+
+        if path == "/api/admin/overview":
+            self._json(
+                HTTPStatus.OK,
+                _admin_overview_payload(
+                    getattr(self, "_remote_context", None) or {},
+                ),
+            )
+            return
+
+        if path == "/api/admin/environment-targets":
+            payload = _admin_environment_targets()
+            deployment = getattr(self.server, "deployment_config", None)
+            if deployment is None:
+                deployment = runtime_env.deployment_config()
+            readiness = service_readiness.readiness_payload(
+                deployment,
+                probes=getattr(self.server, "readiness_probes", {}),
+            )
+            for target in payload["targets"]:
+                if target.get("current"):
+                    target["readiness"] = str(readiness.get("status") or "unknown")
+                    target["health"] = "reachable"
+                    target["warnings"].extend(
+                        str(check.get("code") or name)
+                        for name, check in (readiness.get("checks") or {}).items()
+                        if not check.get("ok")
+                    )
+            self._json(HTTPStatus.OK, payload)
+            return
+
+        if path == "/api/admin/operations":
+            self._json(HTTPStatus.OK, self._admin_operations_payload())
             return
 
         if path.startswith("/api/community/attachment/"):
@@ -3347,6 +3585,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = account_auth.list_users(
                     (getattr(self, "_remote_context", None) or {}).get("user_id"))
+                out["admin_capability_catalog"] = permissions.admin_capability_catalog()
                 for row in out.get("users") or []:
                     if row.get("is_owner"):
                         continue
@@ -3380,6 +3619,8 @@ class Handler(BaseHTTPRequestHandler):
                     detail["entitlements"] = entitlements
                     detail["capabilities"] = perm["capabilities"]
                     detail["capability_catalog"] = permissions.capability_catalog()
+                    detail["admin_capabilities"] = perm["admin_capabilities"]
+                    detail["admin_capability_catalog"] = permissions.admin_capability_catalog()
                     detail["nt_connection"] = self._user_nt_info(target, bool(user.get("is_owner")))
                     detail["public_plans"] = subscriptions.list_plans().get("public_plans") or []
                     self._json(HTTPStatus.OK, detail)
@@ -3512,33 +3753,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/owner/operations":
-            context = getattr(self, "_remote_context", None) or {}
-            if not context.get("is_owner"):
-                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
-                return
-            payload = observability.dashboard()
-            payload["worker"] = (
-                production_workers.status()
-                if runtime_env.is_production()
-                and runtime_env.environment_explicit()
-                else local_worker.status()
-            )
-            try:
-                payload["telegram"] = (
-                    production_telegram.get_queue().status()
-                    if runtime_env.is_production() and runtime_env.environment_explicit()
-                    else telegram_service.status()
-                )
-            except production_telegram.StorageError as exc:
-                payload["telegram"] = {"ok": False, "code": exc.code}
-            try:
-                payload["connector"] = connector_protocol.list_installations(
-                    context.get("user_id"),
-                    workspace_id=str(context.get("workspace_id") or ""),
-                )
-            except connector_protocol.ConnectorProtocolError as exc:
-                payload["connector"] = {"ok": False, "code": exc.code}
-            self._json(HTTPStatus.OK, payload)
+            self._json(HTTPStatus.OK, self._admin_operations_payload())
             return
 
         if path.startswith("/api/bridge/commands/"):
@@ -6585,6 +6800,14 @@ class Handler(BaseHTTPRequestHandler):
                     out = account_auth.set_user_feature(actor, parts_auth[3], str(body.get("feature") or ""), bool(body.get("enabled")))
                 elif parts_auth[4] == "permission":
                     out = account_auth.set_user_permission(actor, parts_auth[3], str(body.get("capability") or ""), body.get("enabled"))
+                elif parts_auth[4] == "admin-permission":
+                    out = account_auth.set_user_admin_permission(
+                        actor,
+                        parts_auth[3],
+                        str(body.get("capability") or ""),
+                        body.get("enabled"),
+                        expires_at_utc=body.get("expires_at_utc"),
+                    )
                 elif parts_auth[4] == "status":
                     out = account_auth.set_user_status(actor, parts_auth[3], str(body.get("status") or ""))
                 elif parts_auth[4] == "sessions":
