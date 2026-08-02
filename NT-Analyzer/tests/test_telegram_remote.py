@@ -199,6 +199,85 @@ def test_public_host_requires_init_data_and_accepts_whitelisted_user(isolated, m
         srv.server_close()
 
 
+@pytest.mark.parametrize(
+    ("browser_uuid", "state_merged"),
+    [
+        ("2f53c640-497e-4d91-8f3b-37a7496f5e80", True),
+        ("1ee2356e-d4e5-47ae-8ca0-49f3e8d4f2a0", False),
+    ],
+)
+def test_browser_session_merge_requires_matching_canonical_uuid(
+    monkeypatch, browser_uuid, state_merged,
+) -> None:
+    remote_uuid = "2f53c640-497e-4d91-8f3b-37a7496f5e80"
+    elevated_until = time.time() + 600
+    remote_context = {
+        "source": telegram_remote.SOURCE,
+        "user_id": 42,
+        "role": "read_only",
+        "is_owner": False,
+        "user": {"id": remote_uuid},
+    }
+
+    class Request:
+        command = "GET"
+        headers = {telegram_remote.INIT_DATA_HEADER: "signed-init-data"}
+
+        def _is_remote_api_request(self):
+            return True
+
+        def _request_ips(self):
+            return "", ""
+
+        def _cookie_value(self, _name):
+            return "browser-session"
+
+        def _decorate_workspace_context(self, value):
+            return value
+
+        def _check_api_rate_limit(self, _context, _path):
+            return True
+
+        def _err(self, *_args, **_kwargs):
+            raise AssertionError("authorization unexpectedly failed")
+
+    monkeypatch.setattr(server_mod.account_auth, "auth_required", lambda: True)
+    monkeypatch.setattr(
+        server_mod.telegram_remote, "authorize", lambda *_args, **_kwargs: dict(remote_context),
+    )
+    monkeypatch.setattr(
+        server_mod.account_auth, "authenticate_session",
+        lambda _token: {
+            "user_id": 42,
+            "user_uuid": browser_uuid,
+            "session_id": "sess_browser",
+            "nt_elevated_until": elevated_until,
+        },
+    )
+    monkeypatch.setattr(
+        server_mod.account_auth, "user_uuid_for_legacy_id",
+        lambda user_id: remote_uuid if int(user_id) == 42 else "",
+    )
+    monkeypatch.setattr(server_mod.permissions, "enforce", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        server_mod.permissions, "required_admin_capability", lambda *_args, **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        server_mod.account_auth, "path_requires_nt_dual_auth", lambda *_args, **_kwargs: False,
+    )
+
+    request = Request()
+
+    assert server_mod.Handler._authorize_api(request, "/api/health") is True
+    assert request._remote_context["user_uuid"] == remote_uuid
+    if state_merged:
+        assert request._remote_context["session_id"] == "sess_browser"
+        assert request._remote_context["nt_elevated_until"] == elevated_until
+    else:
+        assert "session_id" not in request._remote_context
+        assert "nt_elevated_until" not in request._remote_context
+
+
 def test_aurora_bundle_carries_init_data_and_mobile_contract() -> None:
     root = server_mod.STATIC_DIR / "aurora"
     api = (root / "assets" / "api.js").read_text(encoding="utf-8")

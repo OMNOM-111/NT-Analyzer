@@ -144,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260721-stage8-operations1"}, versions
+    assert set(versions.values()) == {"20260802-unified-identity1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -155,6 +155,22 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert set(versions.values()) == {"20260802-environment-identity1"}, versions
+
+
+def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+
+    assert "user.id || user.user_id" in ui
+    assert "const telegramIdentity" in ui
+    assert "auth-provider-start" in ui
+    assert "authGoogleLoginStart" in api
+    assert "authEmailStart" in api
+    assert "authEmailVerify" in api
+    assert "authEmailLinkStart" in api
+    assert "authEmailLinkVerify" in api
+    assert "accept_terms: details.accept_terms" in ui
+    assert 'id="auth-email-verify-accept"' in ui
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

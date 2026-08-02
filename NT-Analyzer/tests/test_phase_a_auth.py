@@ -210,7 +210,7 @@ def test_staging_virtual_user_impersonation_and_return(phase_a_store, monkeypatc
     token = session["session_token"]
     restored = account_auth.end_impersonation(token, owner_id=999)
     assert restored["restored_owner"] is True
-    assert restored["user"]["user_id"] == 999
+    assert restored["user"]["id"] == account_auth.user_uuid_for_legacy_id(999)
 
 
 def test_impersonation_blocked_in_production(phase_a_store, monkeypatch):

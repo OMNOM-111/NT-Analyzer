@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 
@@ -135,6 +136,74 @@ def test_message_idempotency_is_workspace_bound(community_store):
     assert duplicate["deduplicated"] is True
     assert duplicate["message"]["message_id"] == first["message"]["message_id"]
     assert other_workspace["message"]["message_id"] != first["message"]["message_id"]
+
+
+def test_message_identity_uuid_dual_write_and_legacy_backfill(community_store, monkeypatch):
+    owner_uuid = str(uuid.uuid4())
+    alice_uuid = str(uuid.uuid4())
+    bob_uuid = str(uuid.uuid4())
+    workspace = "ws_alpha_12345678"
+    identities = {1: owner_uuid, 42: alice_uuid, 99: bob_uuid}
+    monkeypatch.setattr(
+        community,
+        "_resolved_user_uuid",
+        lambda user_id, preferred="": str(preferred or identities.get(int(user_id or 0), "")),
+    )
+    community._store_path().write_text(json.dumps({
+        "version": 1,
+        "accounts": [{"workspace_id": workspace, "user_id": 42}],
+        "messages": [{"message_id": "cmsg_legacy", "workspace_id": workspace, "user_id": 42}],
+        "posts": [{"workspace_id": workspace, "user_id": 42}],
+        "strategies": [{"strategy_id": "cstr_legacy", "workspace_id": workspace, "user_id": 99}],
+        "copies": [{"workspace_id": workspace, "from_user_id": 99, "to_user_id": 42}],
+        "reports": [{"workspace_id": workspace, "from_user_id": 42}],
+        "shared_reports": [{"workspace_id": workspace, "user_id": 42}],
+        "requests": [{"workspace_id": workspace, "from_user_id": 42, "recipient_user_id": 99}],
+        "blocks": [{"workspace_id": workspace, "user_id": 99, "by_owner_id": 1}],
+    }), encoding="utf-8")
+
+    community.feed(workspace_id=workspace)
+    migrated = community._load()
+    assert migrated["accounts"][0]["user_uuid"] == alice_uuid
+    assert migrated["messages"][0]["user_uuid"] == alice_uuid
+    assert migrated["posts"][0]["user_uuid"] == alice_uuid
+    assert migrated["strategies"][0]["user_uuid"] == bob_uuid
+    assert migrated["copies"][0]["from_user_uuid"] == bob_uuid
+    assert migrated["copies"][0]["to_user_uuid"] == alice_uuid
+    assert migrated["reports"][0]["from_user_uuid"] == alice_uuid
+    assert migrated["shared_reports"][0]["user_uuid"] == alice_uuid
+    assert migrated["requests"][0]["from_user_uuid"] == alice_uuid
+    assert migrated["requests"][0]["recipient_user_uuid"] == bob_uuid
+    assert migrated["blocks"][0]["user_uuid"] == bob_uuid
+    assert migrated["blocks"][0]["by_owner_uuid"] == owner_uuid
+
+    message = community.post_message(
+        42, text="uuid", workspace_id=workspace, user_uuid=alice_uuid,
+    )["message"]
+    assert message["user_id"] == 42
+    assert message["user_uuid"] == alice_uuid
+    account = community._load()["accounts"][0]
+    assert account["user_id"] == 42
+    assert account["user_uuid"] == alice_uuid
+    report = community.share_report(42, title="UUID report", workspace_id=workspace, user_uuid=alice_uuid)
+    request = community.create_request(
+        42, title="UUID request", recipient_user_id=99, workspace_id=workspace, user_uuid=alice_uuid,
+    )
+    strategy = community.publish_strategy(42, title="UUID strategy", workspace_id=workspace, user_uuid=alice_uuid)
+    copied = community.copy_strategy(42, "cstr_legacy", workspace_id=workspace, user_uuid=alice_uuid)
+    abuse = community.report_abuse(42, target_id="cmsg_legacy", workspace_id=workspace, user_uuid=alice_uuid)
+    community.moderate_block(1, 42, workspace_id="ws_beta_123456789", owner_user_uuid=owner_uuid)
+
+    assert report["report"]["user_uuid"] == alice_uuid
+    assert request["request"]["from_user_uuid"] == alice_uuid
+    assert request["request"]["recipient_user_uuid"] == bob_uuid
+    assert strategy["strategy"]["user_uuid"] == alice_uuid
+    assert copied["copy"]["from_user_uuid"] == bob_uuid
+    assert copied["copy"]["to_user_uuid"] == alice_uuid
+    assert abuse["report"]["from_user_uuid"] == alice_uuid
+    latest_block = community._load()["blocks"][-1]
+    assert latest_block["user_uuid"] == alice_uuid
+    assert latest_block["by_owner_uuid"] == owner_uuid
 
 
 def test_channels_and_threads_stay_inside_one_workspace_and_channel(community_store):

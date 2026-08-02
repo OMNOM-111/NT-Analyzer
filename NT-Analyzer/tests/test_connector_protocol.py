@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app import connector_protocol
+from app import account_auth, connector_protocol
 from app import secure_store
 from app import server as server_mod
 from app import subscriptions
@@ -96,6 +96,7 @@ def connector_store(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "development"))
     monkeypatch.delenv("NTA_APP_ENV", raising=False)
     monkeypatch.delenv("NTA_ENV", raising=False)
+    monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(connector_protocol, "_root", lambda: tmp_path)
@@ -103,6 +104,18 @@ def connector_store(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test encrypted store")
     monkeypatch.setattr(secure_store, "_protect", lambda value: value[::-1])
     monkeypatch.setattr(secure_store, "_unprotect", lambda value: value[::-1])
+    account_auth._write_doc({
+        "version": 3,
+        "users": [
+            {"user_id": 42, "legacy_user_id": 42,
+             "user_uuid": "71900420-731c-4ee9-b842-1b0045781f2a",
+             "first_name": "Ada", "status": "active", "is_owner": False},
+            {"user_id": 7, "legacy_user_id": 7,
+             "user_uuid": "805e497b-45fb-4ad5-a96b-c148d09ccfbd",
+             "first_name": "Grace", "status": "active", "is_owner": False},
+        ],
+        "auth_identities": [], "challenges": [], "sessions": [],
+    })
     subscriptions._write_doc({
         "version": 1,
         "vouchers": [],
@@ -136,6 +149,64 @@ def connector_store(monkeypatch, tmp_path: Path):
     with server_mod._API_RATE_LOCK:
         server_mod._CONNECTOR_RATE.clear()
     return {42: ws_42, 7: ws_7, "root": tmp_path}
+
+
+def test_phase3_connector_identity_backfill_preserves_legacy_mappings(connector_store) -> None:
+    user_uuid = account_auth.user_uuid_for_legacy_id(42)
+    connector_protocol._write_doc({
+        "schema_version": 1,
+        "enrollments": [{
+            "enrollment_id": "enr_phase3", "created_by_user_id": 42,
+        }],
+        "installations": [{
+            "installation_id": "inst_phase3", "enrolled_by_user_id": 42,
+        }],
+        "sessions": [{
+            "session_id": "csess_phase3", "installation_id": "inst_phase3",
+        }],
+        "commands": [{
+            "command_id": "cmd_phase3", "installation_id": "inst_phase3",
+            "issued_by_user_id": 42,
+        }],
+        "results": [],
+    })
+
+    migrated = connector_protocol._read_doc()
+
+    assert migrated["enrollments"][0]["created_by_user_id"] == 42
+    assert migrated["enrollments"][0]["created_by_user_uuid"] == user_uuid
+    assert migrated["installations"][0]["enrolled_by_user_id"] == 42
+    assert migrated["installations"][0]["user_id"] == 42
+    assert migrated["installations"][0]["user_uuid"] == user_uuid
+    assert migrated["sessions"][0]["user_id"] == 42
+    assert migrated["sessions"][0]["user_uuid"] == user_uuid
+    assert migrated["commands"][0]["issued_by_user_id"] == 42
+    assert migrated["commands"][0]["issued_by_user_uuid"] == user_uuid
+    assert migrated["commands"][0]["user_uuid"] == user_uuid
+
+
+def test_phase3_connector_creation_dual_writes_uuid_companions(connector_store) -> None:
+    workspace = connector_store[42]
+    user_uuid = account_auth.user_uuid_for_legacy_id(42)
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    installation = connector_protocol.list_installations(
+        42, workspace_id=workspace["workspace_id"],
+    )["connections"][0]
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    command = connector_protocol.queue_command(
+        42,
+        workspace_id=workspace["workspace_id"],
+        connection_id=welcome["connection_id"],
+        capability="telemetry",
+        idempotency_key="phase3-connector-command-01",
+        payload={"command": "ping"},
+    )["command"]
+    document = connector_protocol._read_doc()
+
+    assert installation["user_uuid"] == user_uuid
+    assert command["user_uuid"] == user_uuid
+    assert command["issued_by_user_uuid"] == user_uuid
+    assert document["sessions"][0]["user_uuid"] == user_uuid
 
 
 def _http_json(base: str, path: str, body: dict, *, token: str = ""):

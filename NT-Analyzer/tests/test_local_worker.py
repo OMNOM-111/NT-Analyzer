@@ -144,7 +144,7 @@ def test_schema_v2_columns_are_present(tmp_path: Path, monkeypatch) -> None:
             "SELECT value FROM meta WHERE key='schema_version'",
         ).fetchone()["value"]
     assert {"worker_id", "heartbeat_at_utc", "deadline_at"} <= columns
-    assert version == "2"
+    assert version == str(durable.SCHEMA_VERSION)
 
 
 def test_ai_message_job_is_workspace_bound_idempotent_and_runs_outside_http(

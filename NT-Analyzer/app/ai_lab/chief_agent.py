@@ -491,6 +491,23 @@ def _conversation_path() -> Path:
 DEFAULT_CONVERSATION_ID = "default"
 
 
+def _scope_user_uuid(scope: Dict[str, Any], user_id: int) -> str:
+    user = scope.get("user") if isinstance(scope.get("user"), dict) else {}
+    candidate = scope.get("user_uuid") or user.get("user_uuid") or user.get("id")
+    try:
+        from .. import auth_identity
+        user_uuid = auth_identity.normalize_user_uuid(candidate)
+    except Exception:
+        user_uuid = ""
+    if user_uuid:
+        return user_uuid
+    try:
+        from .. import account_auth
+        return account_auth.user_uuid_for_legacy_id(user_id)
+    except Exception:
+        return ""
+
+
 def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Normalize an optional user/workspace scope for chat history storage.
 
@@ -513,6 +530,7 @@ def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dic
     safe_workspace = re.sub(r"[^A-Za-z0-9_-]", "", workspace_id)[:96]
     if user_id <= 0 or not safe_workspace:
         raise ChiefAgentError("Для AI-чата нужна активная рабочая область пользователя.")
+    user_uuid = _scope_user_uuid(scope, user_id)
     role = str(scope.get("membership_role") or membership.get("role") or scope.get("role") or "").strip()[:40]
     display_name = " ".join(str(scope.get("display_name") or "").split())[:120]
     workspace_kind = str(scope.get("workspace_kind") or active.get("kind") or "")[:40]
@@ -527,7 +545,7 @@ def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dic
         runtime_dir = str(runtime_env.data_path(
             "tenants", safe_workspace, "runtime", project_root=paths.PROJECT_ROOT,
         ))
-    return {
+    normalized = {
         "scope_id": f"u{user_id}__{safe_workspace}",
         "user_id": user_id,
         "workspace_id": safe_workspace,
@@ -538,6 +556,9 @@ def _normalize_conversation_scope(scope: Optional[Dict[str, Any]] = None) -> Dic
         "is_owner": bool(scope.get("is_owner")),
         "display_name": display_name,
     }
+    if user_uuid:
+        normalized["user_uuid"] = user_uuid
+    return normalized
 
 
 def _explicit_production() -> bool:
@@ -631,6 +652,38 @@ def _conversation_memory_archive_path(scope: Optional[Dict[str, Any]]) -> Path:
     return paths.REGISTRY_DIR / "orchestrator_memory_archive.jsonl"
 
 
+def _backfill_scoped_identity_rows(rows: List[Dict[str, Any]], *, path: Path,
+                                   scope: Optional[Dict[str, Any]]) -> bool:
+    info = _normalize_conversation_scope(scope)
+    user_uuid = str(info.get("user_uuid") or "")
+    if not user_uuid:
+        return False
+    user_scoped_path = False
+    root = _scoped_conversation_root(scope)
+    if root is not None:
+        try:
+            path.resolve().relative_to(root.resolve())
+            user_scoped_path = True
+        except ValueError:
+            pass
+    changed = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_user_id = str(row.get("user_id") or "")
+        if row_user_id and row_user_id != str(info["user_id"]):
+            continue
+        if not row_user_id and not user_scoped_path:
+            continue
+        if not row_user_id:
+            row["user_id"] = info["user_id"]
+            changed = True
+        if row.get("user_uuid") != user_uuid:
+            row["user_uuid"] = user_uuid
+            changed = True
+    return changed
+
+
 def _remember_user_memory(text: str, *, kind: str, scope: Optional[Dict[str, Any]],
                           source_message_id: str = "", context: str = "") -> Dict[str, Any]:
     clean = _redact_sensitive(str(text or "").strip())[:4000]
@@ -645,20 +698,28 @@ def _remember_user_memory(text: str, *, kind: str, scope: Optional[Dict[str, Any
         "user_id": info.get("user_id") if info else "",
         "workspace_id": info.get("workspace_id") if info else "",
     }
+    if info.get("user_uuid"):
+        rec["user_uuid"] = info["user_uuid"]
     append_jsonl(_user_memory_path(scope), rec)
     return rec
 
 
 def _user_memories(scope: Optional[Dict[str, Any]], limit: int = 30) -> List[Dict[str, Any]]:
     path = _user_memory_path(scope)
-    return read_jsonl(path)[-max(1, min(int(limit or 30), 100)):] if path.is_file() else []
+    if not path.is_file():
+        return []
+    with _LOCK:
+        rows = read_jsonl(path)
+        if _backfill_scoped_identity_rows(rows, path=path, scope=scope):
+            write_jsonl_atomic(path, rows)
+    return rows[-max(1, min(int(limit or 30), 100)):]
 
 
 def _archive_conversation_memory(conversation_id: str,
                                  scope: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Save a compact, idempotent transcript summary when a topic is closed."""
     cid = _safe_conversation_id(conversation_id)
-    rows = _read_conversation(500, path=_conversation_file(cid, scope=scope))
+    rows = _read_conversation(500, path=_conversation_file(cid, scope=scope), scope=scope)
     dialogue = [row for row in rows if row.get("role") in {"user", "assistant"}]
     if not dialogue:
         return None
@@ -680,6 +741,8 @@ def _archive_conversation_memory(conversation_id: str,
         "user_id": info.get("user_id") if info else "",
         "workspace_id": info.get("workspace_id") if info else "",
     }
+    if info.get("user_uuid"):
+        record["user_uuid"] = info["user_uuid"]
     archive_path = _conversation_memory_archive_path(scope)
     with _LOCK:
         existing = read_jsonl(archive_path) if archive_path.is_file() else []
@@ -693,7 +756,13 @@ def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, limit: int = 30,
     """Build one workspace-private memory packet shared by every model in a turn."""
     explicit = _user_memories(scope, limit)
     archive_path = _conversation_memory_archive_path(scope)
-    archived = read_jsonl(archive_path)[-10:] if archive_path.is_file() else []
+    archived: List[Dict[str, Any]] = []
+    if archive_path.is_file():
+        with _LOCK:
+            archived = read_jsonl(archive_path)
+            if _backfill_scoped_identity_rows(archived, path=archive_path, scope=scope):
+                write_jsonl_atomic(archive_path, archived)
+        archived = archived[-10:]
     candidates = [*explicit, *archived]
     entries: List[Dict[str, Any]] = []
     used, seen = 0, set()
@@ -746,7 +815,7 @@ def migrate_legacy_conversation_to_scope(conversation_id: str,
         return {"ok": True, "conversation_id": cid, "migrated": 0}
     with _LOCK:
         legacy = _read_conversation(500, path=legacy_path)
-        current = _read_conversation(500, path=scoped_path)
+        current = _read_conversation(500, path=scoped_path, scope=scope)
         known = {str(row.get("message_id") or "") for row in current if row.get("message_id")}
         added: List[Dict[str, Any]] = []
         for row in legacy:
@@ -761,6 +830,8 @@ def migrate_legacy_conversation_to_scope(conversation_id: str,
                 "membership_role": scope_info["membership_role"],
                 "actor_is_owner": bool(scope_info.get("is_owner")),
             })
+            if scope_info.get("user_uuid"):
+                migrated["user_uuid"] = scope_info["user_uuid"]
             added.append(migrated)
             if message_id:
                 known.add(message_id)
@@ -853,6 +924,8 @@ def migrate_owner_legacy_conversations_to_scope(
                 "workspace_id": info["workspace_id"],
                 "membership_role": info["membership_role"],
             })
+            if info.get("user_uuid"):
+                current["user_uuid"] = info["user_uuid"]
             current.setdefault("title", "Новый чат")
             current.setdefault("created_at_utc", _now())
             current.setdefault("updated_at_utc", current["created_at_utc"])
@@ -878,7 +951,12 @@ def migrate_owner_legacy_conversations_to_scope(
 
 def _read_index(scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     doc = read_json(_index_path(scope), default={})
-    return dict(doc) if isinstance(doc, dict) else {}
+    result = dict(doc) if isinstance(doc, dict) else {}
+    rows = result.get("conversations")
+    if isinstance(rows, list) and _backfill_scoped_identity_rows(
+            rows, path=_index_path(scope), scope=scope):
+        _write_index(result, scope=scope)
+    return result
 
 
 def _write_index(doc: Dict[str, Any], *, scope: Optional[Dict[str, Any]] = None) -> None:
@@ -896,6 +974,7 @@ def _record_conversation_durable_best_effort(row: Dict[str, Any],
             "scope_id": scope_id,
             "conversation_id": cid,
             "user_id": row.get("user_id") or (info or {}).get("user_id") or "",
+            "user_uuid": row.get("user_uuid") or (info or {}).get("user_uuid") or "",
             "workspace_id": row.get("workspace_id") or (info or {}).get("workspace_id") or "",
             "membership_role": row.get("membership_role") or (info or {}).get("membership_role") or "",
             "title": row.get("title") or ("Основной чат" if cid == DEFAULT_CONVERSATION_ID else "Чат"),
@@ -959,6 +1038,8 @@ def create_conversation(title: str = "", *, conversation_id: str = "",
                 "workspace_id": scope_info["workspace_id"],
                 "membership_role": scope_info["membership_role"],
             })
+            if scope_info.get("user_uuid"):
+                rec["user_uuid"] = scope_info["user_uuid"]
         conversations.append(rec)
         index["conversations"] = conversations[-200:]
         _write_index(index, scope=scope)
@@ -1006,11 +1087,12 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
             ) or {}
             count = message_count
             if count is None:
-                count = len(_read_conversation(500, path=_conversation_file(cid, scope=scope)))
+                count = len(_read_conversation(500, path=_conversation_file(cid, scope=scope), scope=scope))
             _record_conversation_durable_best_effort({
                 "conversation_id": cid,
                 "conversation_scope_id": scope_info["scope_id"],
                 "user_id": scope_info["user_id"],
+                "user_uuid": scope_info.get("user_uuid") or "",
                 "workspace_id": scope_info["workspace_id"],
                 "membership_role": scope_info["membership_role"],
                 "title": "Основной чат",
@@ -1026,7 +1108,7 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
     if title_hint:
         # Reading the transcript also repairs old auto-title rows that used to
         # follow the latest message: the first owner request is authoritative.
-        for message in _read_conversation(500, path=_conversation_file(cid, scope=scope)):
+        for message in _read_conversation(500, path=_conversation_file(cid, scope=scope), scope=scope):
             if message.get("role") == "user" and str(message.get("content") or "").strip():
                 first_request = str(message["content"])
                 break
@@ -1050,6 +1132,8 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
                     "workspace_id": scope_info["workspace_id"],
                     "membership_role": scope_info["membership_role"],
                 })
+                if scope_info.get("user_uuid"):
+                    row["user_uuid"] = scope_info["user_uuid"]
             conversations.append(row)
         row["updated_at_utc"] = _now()
         if message_count is not None:
@@ -1372,7 +1456,7 @@ def _finalize_legacy_conversation_titles(scope: Optional[Dict[str, Any]] = None)
                 continue
             cid = _safe_conversation_id(row.get("conversation_id"))
             first_request = ""
-            for message in _read_conversation(500, path=_conversation_file(cid, scope=scope)):
+            for message in _read_conversation(500, path=_conversation_file(cid, scope=scope), scope=scope):
                 if message.get("role") == "user" and str(message.get("content") or "").strip():
                     first_request = str(message["content"])
                     break
@@ -1403,7 +1487,9 @@ def list_conversations(*, scope: Optional[Dict[str, Any]] = None) -> List[Dict[s
     scope_key = _conversation_scope_key(scope)
     index = _finalize_legacy_conversation_titles(scope)
     conversations = [dict(row) for row in (index.get("conversations") or [])]
-    default_msgs = _read_conversation(500, path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope))
+    default_msgs = _read_conversation(
+        500, path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope), scope=scope,
+    )
     default_updated = default_msgs[-1].get("timestamp_utc") if default_msgs else ""
     default_row = {
         "conversation_id": DEFAULT_CONVERSATION_ID,
@@ -1458,7 +1544,7 @@ def conversation_messages(conversation_id: str, limit: int = 200,
                           *, scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     path = _conversation_file(conversation_id, scope=scope)
     _apply_auto_fulfillment(path)
-    return _read_conversation(limit, path=path)
+    return _read_conversation(limit, path=path, scope=scope)
 
 
 _RATING_ROLE_ALIASES = {
@@ -1685,7 +1771,9 @@ def announce_chart_task(*, conversation_id: str, instruction: str = "",
         doubts=[], path=path, scope=scope,
     )
     _set_conversation_work_state(cid, "in_progress", "Поручение принято оператором графиков", scope=scope)
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
+    _touch_conversation(
+        cid, message_count=len(_read_conversation(500, path=path, scope=scope)), scope=scope,
+    )
     if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
         try:
             from .. import telegram_service
@@ -1731,7 +1819,9 @@ def report_chart_snapshot(*, conversation_id: str, text: str,
     )
     title = _conversation_title(cid, scope=scope)
     try:
-        _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
+        _touch_conversation(
+            cid, message_count=len(_read_conversation(500, path=path, scope=scope)), scope=scope,
+        )
     except Exception:
         pass
     if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
@@ -1786,7 +1876,7 @@ def report_task_update(*, conversation_id: str, text: str,
         doubts=[], path=path, scope=scope,
     )
     _touch_conversation(
-        cid, message_count=len(_read_conversation(500, path=path)), scope=scope,
+        cid, message_count=len(_read_conversation(500, path=path, scope=scope)), scope=scope,
     )
     state = "completed" if close else (
         "awaiting_owner" if action_status in {"needs_input", "waiting_review"}
@@ -1828,7 +1918,9 @@ def report_user_screenshot(*, conversation_id: str, text: str,
         doubts=[], attachments=[{"type": "image", "url": image_url, "caption": caption}],
         path=path, scope=scope,
     )
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=path)), scope=scope)
+    _touch_conversation(
+        cid, message_count=len(_read_conversation(500, path=path, scope=scope)), scope=scope,
+    )
     _set_conversation_work_state(cid, "open", "Снимок пользователя получен", scope=scope)
     return {"ok": True, "conversation_id": cid, "message": message}
 
@@ -1922,18 +2014,22 @@ def _conversation_title(conversation_id: str, *, scope: Optional[Dict[str, Any]]
     return "Чат"
 
 
-def _read_conversation(limit: int = 80, *, path: Optional[Path] = None) -> List[Dict[str, Any]]:
+def _read_conversation(limit: int = 80, *, path: Optional[Path] = None,
+                       scope: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     path = path or _conversation_path()
     if not path.is_file():
         return []
-    rows: List[Dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
-        try:
-            row = json.loads(raw)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
+    with _LOCK:
+        rows: List[Dict[str, Any]] = []
+        for raw in path.read_text(encoding="utf-8-sig").splitlines():
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        if _backfill_scoped_identity_rows(rows, path=path, scope=scope):
+            write_jsonl_atomic(path, rows)
     return rows[-max(1, min(int(limit), 500)):]
 
 
@@ -2015,6 +2111,8 @@ def _append_conversation(role: str, content: str, *, source: str,
             "actor_name": scope_info.get("display_name") or "",
             "actor_is_owner": bool(scope_info.get("is_owner")),
         })
+        if scope_info.get("user_uuid"):
+            rec["user_uuid"] = scope_info["user_uuid"]
     if role == "assistant":
         rec["rating_event_id"] = _rating_event_id(rec)
     # Image/file attachments (e.g. chart snapshots) reference stored files by URL;
@@ -4387,7 +4485,7 @@ def _execute_internal_task_impl(task: Dict[str, Any], *, conversation_id: str,
             "role": row.get("role"), "content": row.get("content"),
             "actions": row.get("actions") or [], "agent_name": row.get("agent_name") or "",
         }
-        for row in _read_conversation(16, path=_conversation_file(cid, scope=scope))
+        for row in _read_conversation(16, path=_conversation_file(cid, scope=scope), scope=scope)
     ]
     from . import domain_agents
     management = domain_agents.resolve_management(str(agent or "manager"), instruction)
@@ -4572,7 +4670,9 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
         actions=actions, doubts=[], request_id=request_id,
         path=conv_path, scope=scope,
     )
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
+    _touch_conversation(
+        cid, message_count=len(_read_conversation(500, path=conv_path, scope=scope)), scope=scope,
+    )
     kind = str(vitek_result.get("kind") or "status")
     counts = vitek_result.get("counts") if isinstance(vitek_result.get("counts"), dict) else {}
     if kind == "task" or any(row.get("status") in {"queued", "running"} for row in actions):
@@ -4669,7 +4769,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     existing_user: Optional[Dict[str, Any]] = None
     if request_key:
         request_rows = [
-            row for row in _read_conversation(500, path=conv_path)
+            row for row in _read_conversation(500, path=conv_path, scope=scope)
             if str(row.get("request_id") or "") == request_key
         ]
         existing_assistant = next(
@@ -4729,7 +4829,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             "role": row.get("role"), "content": row.get("content"),
             "actions": row.get("actions") or [], "agent_name": row.get("agent_name") or "",
         }
-        for row in _read_conversation(16, path=conv_path)[:-1]
+        for row in _read_conversation(16, path=conv_path, scope=scope)[:-1]
     ]
     intent = intent_classifier.resolve_intent(clean, routing_history, use_model=True)
     capability = str(intent.get("capability") or "")
@@ -4841,7 +4941,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             attachments=attachments, request_id=request_key,
             path=conv_path, scope=scope,
         )
-        _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
+        _touch_conversation(
+            cid, message_count=len(_read_conversation(500, path=conv_path, scope=scope)), scope=scope,
+        )
         with _LOCK:
             state = _load()
             state["last_model"] = model
@@ -5121,7 +5223,9 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     )
     work_state, work_detail = _conversation_work_state(action_results, reply)
     _set_conversation_work_state(cid, work_state, work_detail, scope=scope)
-    _touch_conversation(cid, message_count=len(_read_conversation(500, path=conv_path)), scope=scope)
+    _touch_conversation(
+        cid, message_count=len(_read_conversation(500, path=conv_path, scope=scope)), scope=scope,
+    )
     with _LOCK:
         state = _load()
         state["last_model"] = model
@@ -5386,6 +5490,7 @@ def status(*, scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             mission["status"] = "finishing" if runner.run_status(scope=scope_info or None) else "deadline_reached"
     last_messages = _read_conversation(
         80, path=_conversation_file(DEFAULT_CONVERSATION_ID, scope=scope_info or None),
+        scope=scope_info or None,
     )
     owner_view = bool(not scope_info or scope_info.get("is_owner"))
     orchestrator_info = None if not chief else {

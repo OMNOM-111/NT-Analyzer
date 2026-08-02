@@ -1131,9 +1131,9 @@
     if (old) old.remove();
     if (!auth || !auth.impersonating) return;
     const user = auth.user || {};
-    const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.user_id || 'пользователь';
+    const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.id || user.user_id || 'пользователь';
     const bar = el(`<div id="impersonation-banner" class="impersonation-banner" role="status">
-      <strong>Тестовый режим.</strong> Вы вошли как пользователь: ${esc(label)} (id ${esc(user.user_id || '')}).
+      <strong>Тестовый режим.</strong> Вы вошли как пользователь: ${esc(label)} (id ${esc(user.id || user.user_id || '')}).
       <button type="button" class="btn sm" id="impersonation-return">Вернуться в админку</button>
     </div>`);
     document.body.appendChild(bar);
@@ -1364,13 +1364,13 @@
 
   // ---- avatars + personal / owner cabinet -----------------------------------
   function hashCode(str) { let h = 0; for (let i = 0; i < String(str).length; i++) { h = (h << 5) - h + String(str).charCodeAt(i); h |= 0; } return h; }
-  function userLabel(user) { user = user || {}; return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || ('ID ' + (user.user_id || '')); }
+  function userLabel(user) { user = user || {}; return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Пользователь'; }
   function avatarHtml(user, cls) {
     user = user || {};
     const url = user.avatar_data_url || user.avatar_url || '';
     const label = userLabel(user);
     const initials = (label.trim().split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('') || '·').toUpperCase();
-    const hue = Math.abs(hashCode(String(user.user_id || label))) % 360;
+    const hue = Math.abs(hashCode(String(user.id || user.user_id || label))) % 360;
     if (url) return `<span class="avatar ${cls || ''}"><img src="${esc(url)}" alt="" referrerpolicy="no-referrer"></span>`;
     return `<span class="avatar ${cls || ''}" style="--av-h:${hue}">${esc(initials)}</span>`;
   }
@@ -1978,6 +1978,7 @@
       const sub = d.subscription || {};
       const planLabel = (sub.plan && sub.plan.label) || 'Free Preview';
       const ntMode = nt.mode === 'own_ninjatrader' ? 'Свой NinjaTrader' : 'Наблюдение за владельцем';
+      const telegramIdentity = (u.linked_providers || []).find(item => item && item.provider === 'telegram');
       const permissionsHtml = u.is_owner
         ? '<div class="finance-note">У владельца всегда полный доступ. Индивидуальные переключатели разрешений для него не требуются.</div>'
         : (canGrant
@@ -1998,7 +1999,7 @@
           <div class="cab-kv"><span class="k">Регистрация</span><span class="v">${esc(shortDt(u.created_at_utc) || '—')}</span></div>
           <div class="cab-kv"><span class="k">Подтверждён</span><span class="v">${esc(shortDt(u.approved_at_utc) || '—')}</span></div>
           <div class="cab-kv"><span class="k">Телефон</span><span class="v">${esc(u.phone_mask || '—')} ${u.phone_verified_at_utc ? '✓' : ''}</span></div>
-          <div class="cab-kv"><span class="k">Telegram</span><span class="v">${u.username ? '@' + esc(u.username) : 'ID ' + esc(u.user_id)}</span></div>
+          <div class="cab-kv"><span class="k">Telegram</span><span class="v">${u.username ? '@' + esc(u.username) : esc((telegramIdentity && telegramIdentity.label) || 'Telegram привязан')}</span></div>
           <div class="cab-kv"><span class="k">Последний вход</span><span class="v">${esc(shortDt(u.last_login_at_utc) || '—')}${u.last_login_device ? ' · ' + esc(u.last_login_device) : ''}${u.last_login_machine ? ' · ' + esc(u.last_login_machine) : ''}</span></div>
           <div class="cab-kv"><span class="k">NinjaTrader</span><span class="v">${esc(ntMode)}${nt.workspace ? ' · ' + esc(nt.workspace) : ''} ${nt.connected ? '<span class="badge live">подключён</span>' : '<span class="badge pending">нет</span>'}</span></div>
         </div>
@@ -2796,7 +2797,7 @@
   }
 
   function loginCard(inner) {
-    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Telegram user id · requestContact · подтверждение владельца<br>Персональные данные защищены Windows DPAPI</div></section></div>`;
+    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · Telegram, Google или e-mail · подтверждение владельца<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
   }
 
   async function showTermsModal() {
@@ -2817,14 +2818,56 @@
     const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
     if (!content) return;
     let polling = null;
+    let providers = (initialError && initialError.providers) || {};
+    const initialMessage = typeof initialError === 'string'
+      ? initialError
+      : (initialError && initialError.status && ![401, 403].includes(Number(initialError.status)) ? initialError.message : '');
     const stopPolling = () => { if (polling) clearInterval(polling); polling = null; };
     const renderStart = (message) => {
       stopPolling();
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Вход через Telegram</h1><p>Каждый пользователь входит под собственным аккаунтом. Для нового аккаунта обязательны номер Telegram, профиль и личное разрешение владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start">Авторизоваться через Telegram</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button>`);
+      const telegram = providers.telegram || {};
+      const google = providers.google || {};
+      const email = providers.email || {};
+      const telegramDisabled = telegram.available === false;
+      const googleEnabled = !!(google.available || google.test_auth_fallback);
+      const emailEnabled = !!email.available;
+      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход в StratForge</h1><p>Выберите свой способ входа. Новый профиль откроется только после личного подтверждения владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-provider-terms">условия использования</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button></div>`);
       const button = qs('#auth-start', content);
       if (button) button.onclick = async () => {
         button.disabled = true;
         try { renderWaiting(await API.http.authLoginStart()); }
+        catch (error) { renderStart(error.message || String(error)); }
+      };
+      const terms = qs('#auth-provider-terms', content);
+      if (terms) terms.onclick = () => showTermsModal();
+      const profile = () => ({
+        email: (qs('#auth-login-email', content) || {}).value || '',
+        first_name: (qs('#auth-login-first', content) || {}).value || '',
+        last_name: (qs('#auth-login-last', content) || {}).value || '',
+        accept_terms: !!((qs('#auth-provider-accept', content) || {}).checked),
+      });
+      const googleButton = qs('#auth-google-start', content);
+      if (googleButton && googleEnabled) googleButton.onclick = async () => {
+        const details = profile();
+        googleButton.disabled = true;
+        try {
+          if (google.available) {
+            const out = await API.http.authGoogleLoginStart({ return_path: location.pathname || '/ui/', accept_terms: details.accept_terms });
+            if (out.auth_url) location.href = out.auth_url;
+            else throw new Error('Google не вернул ссылку входа');
+          } else {
+            const out = await API.http.testAuthGoogleLogin({ email: details.email, google_name: [details.first_name, details.last_name].filter(Boolean).join(' '), accept_terms: details.accept_terms });
+            if (out.status === 'authenticated') { location.reload(); return; }
+            if (out.challenge_id) renderWaiting({ challenge_id: out.challenge_id }, out);
+          }
+        } catch (error) { renderStart(error.message || String(error)); }
+      };
+      const emailForm = qs('#auth-email-start-form', content);
+      if (emailForm && emailEnabled) emailForm.onsubmit = async (event) => {
+        event.preventDefault();
+        const details = profile();
+        const submit = emailForm.querySelector('button[type="submit"]'); submit.disabled = true;
+        try { renderEmailCode(await API.http.authEmailStart({ email: details.email }), details); }
         catch (error) { renderStart(error.message || String(error)); }
       };
       const back = qs('#auth-back-preview', content);
@@ -2852,6 +2895,33 @@
         } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
       };
     };
+    const renderEmailCode = (started, profile) => {
+      stopPolling();
+      const testCode = String((started || {}).test_code || '');
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Подтвердите e-mail</h1><p>${testCode ? 'Development test-backend: используйте показанный одноразовый код.' : 'Код отправлен через настроенного почтового провайдера.'}</p></div>${testCode ? `<div class="finance-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : ''}<form id="auth-email-verify-form" class="auth-form"><div class="field"><label for="auth-email-code">Одноразовый код</label><input id="auth-email-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="${esc(testCode)}"></div><label class="auth-terms"><input type="checkbox" id="auth-email-verify-accept" ${profile.accept_terms ? 'checked' : ''}> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-email-verify-terms">условия использования</button>.</span></label><button class="btn primary auth-main-action" type="submit">Подтвердить e-mail</button></form><button class="btn ghost auth-main-action" id="auth-email-back" type="button">Другой способ входа</button>`);
+      const form = qs('#auth-email-verify-form', content);
+      const terms = qs('#auth-email-verify-terms', form); if (terms) terms.onclick = () => showTermsModal();
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
+        try {
+          const out = await API.http.authEmailVerify({
+            challenge_id: started.challenge_id,
+            code: (qs('#auth-email-code', form) || {}).value || '',
+            profile: Object.assign({}, profile, {
+              accept_terms: !!((qs('#auth-email-verify-accept', form) || {}).checked),
+            }),
+          });
+          if (out.status === 'authenticated') { location.reload(); return; }
+          if (out.challenge_id) { renderWaiting({ challenge_id: out.challenge_id }, out); return; }
+          renderStart('Не удалось завершить вход по e-mail.');
+        } catch (error) {
+          submit.disabled = false;
+          toast('Ошибка: ' + (error.message || error));
+        }
+      };
+      const back = qs('#auth-email-back', content); if (back) back.onclick = () => renderStart('');
+    };
     const check = async (challengeId) => {
       try {
         const state = await API.http.authLoginStatus(challengeId);
@@ -2869,7 +2939,7 @@
       if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
       const pendingOwner = status === 'pending_owner';
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем в чате бота.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}${manual ? `<div class="finance-note"><strong>Если Telegram открылся без подтверждения:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Начать заново</button>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}${manual ? `<div class="finance-note"><strong>Если Telegram открылся без подтверждения:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
@@ -2913,12 +2983,26 @@
       };
     };
     // Mini App: Telegram identity is already proven — show profile form.
-    // Desktop: start with Telegram bot confirmation, then profile.
+    // Desktop: offer Telegram, Google and the explicitly configured e-mail backend.
     // The welcome/promo screen is shown BEFORE this function is called.
     if (window.API && API.config && API.config.miniApp) {
-      renderMiniAppRegister(initialError && initialError.status && initialError.status !== 401 && initialError.status !== 403 ? initialError.message : '');
+      renderMiniAppRegister(initialMessage);
     } else {
-      renderStart(initialError && initialError.status !== 401 ? initialError.message : '');
+      let callbackChallenge = '';
+      try {
+        const params = new URLSearchParams(location.search || '');
+        callbackChallenge = String(params.get('auth_challenge') || '');
+        if (callbackChallenge) {
+          params.delete('auth_challenge');
+          history.replaceState({}, '', location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash);
+        }
+      } catch (e) { callbackChallenge = ''; }
+      if (callbackChallenge) renderWaiting({ challenge_id: callbackChallenge }, { status: 'pending_owner' });
+      else renderStart(initialMessage);
+      API.http.authProviders({ retries: 0 }).then((out) => {
+        providers = (out && out.providers) || providers;
+        if (!callbackChallenge && qs('#auth-provider-start', content)) renderStart(initialMessage);
+      }).catch(() => { /* Telegram remains available as compatibility fallback. */ });
     }
   }
 

@@ -1668,11 +1668,18 @@ class Handler(BaseHTTPRequestHandler):
                 # Telegram initData authenticates the Mini App request, while
                 # the protected browser session carries device-scoped step-up
                 # state. Merge it only when both identities are identical.
+                remote_user_uuid = account_auth.user_uuid_for_legacy_id(
+                    self._remote_context.get("user_id"),
+                )
+                if remote_user_uuid:
+                    self._remote_context["user_uuid"] = remote_user_uuid
                 browser_session = account_auth.authenticate_session(
                     self._cookie_value(account_auth.SESSION_COOKIE)
                 )
                 if (browser_session and str(browser_session.get("user_id") or "")
-                        == str(self._remote_context.get("user_id") or "")):
+                        == str(self._remote_context.get("user_id") or "")
+                        and remote_user_uuid
+                        and str(browser_session.get("user_uuid") or "") == remote_user_uuid):
                     for key in (
                         "session_id", "device_id", "csrf_hash", "csrf_token",
                         "nt_elevated_until", "impersonating",
@@ -1932,7 +1939,7 @@ class Handler(BaseHTTPRequestHandler):
             "active_membership": membership,
             "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
         }
-        return {
+        scope = {
             "user_id": context.get("user_id"),
             "workspace_id": active.get("workspace_id"),
             "workspace_kind": active.get("kind") or "",
@@ -1942,6 +1949,36 @@ class Handler(BaseHTTPRequestHandler):
             "is_owner": bool(context.get("is_owner")),
             "display_name": display,
             "capabilities": context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {},
+        }
+        user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
+        if not user_uuid:
+            user_uuid = account_auth.user_uuid_for_legacy_id(context.get("user_id"))
+        if user_uuid:
+            scope["user_uuid"] = user_uuid
+        return scope
+
+    def _auth_providers_payload(self) -> Dict[str, Any]:
+        settings = telegram_service.load_settings()
+        bot_username = str(settings.get("bot_username") or "").strip().lstrip("@")
+        google = google_auth.status()
+        email = account_auth.email_auth_status()
+        return {
+            "ok": True,
+            "identity_model": "uuid",
+            "owner_approval_required": True,
+            "providers": {
+                "telegram": {
+                    "available": bool(bot_username),
+                    "configured": bool(bot_username),
+                    "bot_username": bot_username,
+                },
+                "google": {
+                    "available": bool(google.get("configured")),
+                    "configured": bool(google.get("configured")),
+                    "test_auth_fallback": bool(google.get("test_auth_fallback")),
+                },
+                "email": email,
+            },
         }
 
     def _auth_status(self) -> None:
@@ -1998,13 +2035,15 @@ class Handler(BaseHTTPRequestHandler):
                         "auth_required": account_auth.auth_required(),
                         "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
                         "storage": account_auth.storage_status(),
+                        "providers": self._auth_providers_payload()["providers"],
                     })
                     return
                 self._json(HTTPStatus.UNAUTHORIZED, {
-                    "error": "Требуется вход через Telegram.", "authenticated": False,
+                    "error": "Требуется вход.", "authenticated": False,
                     "auth_required": account_auth.auth_required(),
                     "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
                     "storage": account_auth.storage_status(),
+                    "providers": self._auth_providers_payload()["providers"],
                 })
                 return
             payload = {
@@ -2022,6 +2061,7 @@ class Handler(BaseHTTPRequestHandler):
                 "impersonator_owner_id": context.get("impersonator_owner_id"),
                 "runtime": runtime_env.status(),
                 "google_oauth": google_auth.status(),
+                "providers": self._auth_providers_payload()["providers"],
             }
             self._json(HTTPStatus.OK, self._augment_permissions(context, payload))
         except (account_auth.AccountAuthError, telegram_remote.RemoteAccessError) as exc:
@@ -2223,19 +2263,21 @@ class Handler(BaseHTTPRequestHandler):
         if uid <= 0:
             self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход."); return
         body = self._read_body() or {}
-        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
-        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
-        redirect_uri = str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
         try:
             out = google_auth.start_link(
                 user_id=uid,
-                redirect_uri=redirect_uri,
+                redirect_uri=self._google_redirect_uri(body),
                 return_path=str(body.get("return_path") or "/ui/"),
             )
             self._json(HTTPStatus.OK, out)
         except google_auth.GoogleAuthError as exc:
             self._err(exc.status, str(exc))
+
+    def _google_redirect_uri(self, body: Dict[str, Any]) -> str:
+        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
+        return str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
 
     def _google_oauth_callback(self, qs: Dict[str, Any]) -> None:
         code = str((qs.get("code") or [""])[0] or "")
@@ -2246,17 +2288,36 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             identity = google_auth.exchange_code(code=code, state=state)
-            account_auth.link_google_identity(
-                identity["user_id"],
-                google_sub=identity["google_sub"],
-                google_email=identity.get("google_email") or "",
-                google_name=identity.get("google_name") or "",
-                source="google_oauth",
-            )
             path = str(identity.get("return_path") or "/ui/")
-            if not path.startswith("/"):
-                path = "/ui/"
-            self._html_redirect(path + ("&" if "?" in path else "?") + "google_linked=1")
+            if identity.get("purpose") == "login":
+                tunnel_ip, forwarded_ip = self._request_ips()
+                out = account_auth.login_via_google_identity(
+                    google_sub=identity["google_sub"],
+                    google_email=identity.get("google_email") or "",
+                    google_name=identity.get("google_name") or "",
+                    email_verified=bool(identity.get("email_verified")),
+                    accept_terms=bool(identity.get("accept_terms")),
+                    ip=forwarded_ip or tunnel_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call,
+                    owner_chat_id=str(os.environ.get(telegram_service.CHAT_ENV) or ""),
+                )
+                token = str(out.pop("session_token", ""))
+                if token:
+                    self._set_session_cookie(token)
+                    suffix = "google_login=1"
+                else:
+                    suffix = "auth_challenge=" + urllib.parse.quote(str(out.get("challenge_id") or ""))
+            else:
+                account_auth.link_google_identity(
+                    identity["user_id"],
+                    google_sub=identity["google_sub"],
+                    google_email=identity.get("google_email") or "",
+                    google_name=identity.get("google_name") or "",
+                    source="google_oauth",
+                )
+                suffix = "google_linked=1"
+            self._html_redirect(path + ("&" if "?" in path else "?") + suffix)
         except (google_auth.GoogleAuthError, account_auth.AccountAuthError) as exc:
             self._html_redirect("/ui/?google_error=" + urllib.parse.quote(str(exc)[:180]))
 
@@ -2560,18 +2621,58 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
+            elif path == "/api/auth/google/login/start":
+                out = google_auth.start_login(
+                    redirect_uri=self._google_redirect_uri(body),
+                    return_path=str(body.get("return_path") or "/ui/"),
+                    accept_terms=bool(body.get("accept_terms")),
+                )
+            elif path == "/api/auth/email/start":
+                out = account_auth.start_email_auth(
+                    body.get("email"), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    purpose="login",
+                )
+            elif path == "/api/auth/email/verify":
+                out = account_auth.verify_email_auth(
+                    body.get("challenge_id"), code=body.get("code"),
+                    magic_token=body.get("magic_token"),
+                    profile=body.get("profile") or body,
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                )
+                if out.get("status") == "authenticated":
+                    self._set_session_cookie(str(out.pop("session_token")))
+            elif path == "/api/auth/test/google-login":
+                runtime_env.require_test_auth()
+                identity = google_auth.fake_identity(
+                    google_sub=str(body.get("google_sub") or ""),
+                    email=str(body.get("email") or ""),
+                )
+                out = account_auth.login_via_google_identity(
+                    google_sub=identity["google_sub"],
+                    google_email=identity["google_email"],
+                    google_name=str(body.get("google_name") or identity.get("google_name") or ""),
+                    email_verified=True,
+                    accept_terms=bool(body.get("accept_terms")),
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                )
+                if out.get("status") == "authenticated":
+                    self._set_session_cookie(str(out.pop("session_token")))
             else:
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
             self._json(HTTPStatus.OK, out)
-        except account_auth.AccountAuthError as exc:
-            self._err(exc.status, str(exc))
+        except (account_auth.AccountAuthError, google_auth.GoogleAuthError,
+                runtime_env.RuntimeEnvError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc), code=getattr(exc, "code", "") or "")
 
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
         context = getattr(self, "_remote_context", None) or {}
         if context.get("source") == telegram_remote.SOURCE:
             return True
-        if context.get("source") == "desktop_session":
+        if context.get("csrf_hash"):
             if not account_auth.verify_csrf(context, str(self.headers.get("X-CSRF-Token") or "")):
                 self._err(HTTPStatus.FORBIDDEN, "CSRF token отсутствует или недействителен.")
                 return False
@@ -2877,6 +2978,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/status":
             self._auth_status()
+            return
+
+        if path == "/api/auth/providers":
+            self._json(HTTPStatus.OK, self._auth_providers_payload())
             return
 
         if path == "/api/legal/terms":
@@ -6169,7 +6274,11 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
 
-        if path in {"/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile"}:
+        if path in {
+            "/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile",
+            "/api/auth/google/login/start", "/api/auth/email/start",
+            "/api/auth/email/verify", "/api/auth/test/google-login",
+        }:
             self._auth_public_post(path)
             return
 
@@ -6223,6 +6332,32 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_local_post():
                 return
             self._google_oauth_start()
+            return
+
+        if path in {"/api/auth/email/link/start", "/api/auth/email/link/verify"}:
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            tunnel_ip, forwarded_ip = self._request_ips()
+            try:
+                if path.endswith("/start"):
+                    out = account_auth.start_email_auth(
+                        body.get("email"), ip=forwarded_ip or tunnel_ip,
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        purpose="link", actor_user_id=context.get("user_id"),
+                    )
+                else:
+                    out = account_auth.verify_email_auth(
+                        body.get("challenge_id"), code=body.get("code"),
+                        magic_token=body.get("magic_token"),
+                        ip=forwarded_ip or tunnel_ip,
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        actor_user_id=context.get("user_id"),
+                    )
+                self._json(HTTPStatus.OK, out)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/auth/nt-confirm/start":
@@ -6365,6 +6500,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.post_message(
                     context.get("user_id"),
@@ -6375,6 +6511,7 @@ class Handler(BaseHTTPRequestHandler):
                     channel_id=str(body.get("channel_id") or "general"),
                     thread_root_id=str(body.get("thread_root_id") or ""),
                     attachments=body.get("attachments"),
+                    user_uuid=user_uuid,
                 )
                 try:
                     out["telegram_mirror"] = bool(not out.get("deduplicated") and
@@ -6398,6 +6535,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.share_report(
                     context.get("user_id"),
@@ -6408,6 +6546,7 @@ class Handler(BaseHTTPRequestHandler):
                     workspace_id=str(context.get("workspace_id") or ""),
                     channel_id=str(body.get("channel_id") or "reports"),
                     attachments=body.get("attachments"),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6420,6 +6559,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.create_request(
                     context.get("user_id"),
@@ -6430,6 +6570,7 @@ class Handler(BaseHTTPRequestHandler):
                     display_name=str(user.get("first_name") or user.get("username") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     channel_id=str(body.get("channel_id") or "reports"),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6442,6 +6583,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.publish_strategy(
                     context.get("user_id"),
@@ -6451,6 +6593,7 @@ class Handler(BaseHTTPRequestHandler):
                     display_name=str(user.get("first_name") or user.get("username") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6462,12 +6605,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.copy_strategy(
                     context.get("user_id"),
                     str(body.get("strategy_id") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6479,12 +6625,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.report_abuse(
                     context.get("user_id"),
                     target_id=str(body.get("target_id") or ""),
                     reason=str(body.get("reason") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:

@@ -24,6 +24,7 @@ _LOCK = threading.RLock()
 _DOC_CACHE_KEY: Optional[tuple[str, int, int]] = None
 _DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
 PAIRING_TTL_SEC = 10 * 60
+WORKSPACE_STORE_VERSION = 2
 WORKSPACE_ROLES = {"owner", "admin", "operator", "viewer", "developer"}
 WRITE_ROLES = {"owner", "admin", "operator", "developer"}
 ENTITLEMENT_OK = {"promo_grant", "trial", "active"}
@@ -57,7 +58,80 @@ def _now_iso() -> str:
 
 
 def _default_doc() -> Dict[str, Any]:
-    return {"version": 1, "workspaces": [], "memberships": [], "active_workspaces": {}, "connections": [], "pairings": []}
+    return {
+        "version": WORKSPACE_STORE_VERSION,
+        "workspaces": [],
+        "memberships": [],
+        "active_workspaces": {},
+        "active_workspaces_by_uuid": {},
+        "connections": [],
+        "pairings": [],
+        "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
+    }
+
+
+def _user_uuid_for_legacy_id(user_id: Any) -> str:
+    try:
+        from . import account_auth
+        return account_auth.user_uuid_for_legacy_id(user_id)
+    except Exception:
+        return ""
+
+
+def _backfill_user_uuid(row: Dict[str, Any], legacy_key: str, uuid_key: str) -> bool:
+    user_uuid = _user_uuid_for_legacy_id(row.get(legacy_key))
+    if not user_uuid or row.get(uuid_key) == user_uuid:
+        return False
+    row[uuid_key] = user_uuid
+    return True
+
+
+def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    changed = False
+    for key in ("workspaces", "memberships", "connections", "pairings"):
+        if not isinstance(doc.get(key), list):
+            doc[key] = []
+            changed = True
+    if not isinstance(doc.get("active_workspaces"), dict):
+        doc["active_workspaces"] = {}
+        changed = True
+    if not isinstance(doc.get("active_workspaces_by_uuid"), dict):
+        doc["active_workspaces_by_uuid"] = {}
+        changed = True
+    for row in doc["workspaces"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "owner_user_id", "owner_user_uuid") or changed
+    for row in doc["memberships"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+            changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
+    for row in doc["connections"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "owner_user_id", "owner_user_uuid") or changed
+    for row in doc["pairings"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
+    active_by_uuid = doc["active_workspaces_by_uuid"]
+    for raw_user_id, workspace_id in doc["active_workspaces"].items():
+        user_uuid = _user_uuid_for_legacy_id(raw_user_id)
+        if user_uuid and active_by_uuid.get(user_uuid) != workspace_id:
+            active_by_uuid[user_uuid] = workspace_id
+            changed = True
+    identity_schema = doc.get("identity_schema") if isinstance(doc.get("identity_schema"), dict) else {}
+    expected_schema = dict(identity_schema)
+    expected_schema.update({
+        "stage": "dual_write",
+        "canonical_key": "user_uuid",
+        "legacy_key": "user_id",
+    })
+    if expected_schema != identity_schema:
+        expected_schema.setdefault("migrated_at_utc", _now_iso())
+        doc["identity_schema"] = expected_schema
+        changed = True
+    if int(doc.get("version") or 1) < WORKSPACE_STORE_VERSION:
+        doc["version"] = WORKSPACE_STORE_VERSION
+        changed = True
+    return doc, changed
 
 
 def _doc_cache_key(path: Path) -> Optional[tuple[str, int, int]]:
@@ -104,7 +178,7 @@ def _read_doc() -> Dict[str, Any]:
                 doc[key] = []
         if not isinstance(doc.get("active_workspaces"), dict):
             doc["active_workspaces"] = {}
-        return doc
+        return _migrate_doc(doc)[0]
     path = _store_path()
     cache_key = _doc_cache_key(path)
     if cache_key is None:
@@ -112,7 +186,10 @@ def _read_doc() -> Dict[str, Any]:
         return _default_doc()
     with _LOCK:
         if _DOC_CACHE_KEY == cache_key and _DOC_CACHE_DOC is not None:
-            return copy.deepcopy(_DOC_CACHE_DOC)
+            cached, changed = _migrate_doc(copy.deepcopy(_DOC_CACHE_DOC))
+            if changed:
+                _write_doc(cached)
+            return cached
     try:
         raw = path.read_bytes()
         if not raw.startswith(_MAGIC):
@@ -132,6 +209,10 @@ def _read_doc() -> Dict[str, Any]:
             doc[key] = []
     if not isinstance(doc.get("active_workspaces"), dict):
         doc["active_workspaces"] = {}
+    doc, changed = _migrate_doc(doc)
+    if changed:
+        _write_doc(doc)
+        return doc
     _cache_doc(path, doc)
     return doc
 
@@ -152,6 +233,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    doc, _ = _migrate_doc(doc)
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
@@ -318,7 +400,10 @@ def _ensure_owner_workspace_doc(doc: Dict[str, Any], owner_id: int) -> tuple[Dic
 def _public_membership(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not row:
         return {}
-    return {key: row.get(key) for key in ("workspace_id", "user_id", "role", "created_by_user_id", "created_at_utc", "revoked_at_utc")}
+    return {key: row.get(key) for key in (
+        "workspace_id", "user_id", "user_uuid", "role", "created_by_user_id",
+        "created_by_user_uuid", "created_at_utc", "revoked_at_utc",
+    )}
 
 
 def _public_workspace(row: Dict[str, Any], membership: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -327,6 +412,7 @@ def _public_workspace(row: Dict[str, Any], membership: Optional[Dict[str, Any]] 
         "workspace_id": row.get("workspace_id"),
         "kind": kind,
         "owner_user_id": row.get("owner_user_id"),
+        "owner_user_uuid": row.get("owner_user_uuid") or "",
         "display_name": row.get("display_name") or "Workspace",
         "status": row.get("status") or "active",
         "entitlement_id": row.get("entitlement_id") or "",
@@ -667,7 +753,7 @@ def complete_bridge_pairing(user_id: Any, *, code: Any, device_id: str = "", bri
 
 def _public_connection(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key: row.get(key) for key in (
-        "connection_id", "workspace_id", "owner_user_id", "device_id", "bridge_instance_id",
+        "connection_id", "workspace_id", "owner_user_id", "owner_user_uuid", "device_id", "bridge_instance_id",
         "machine_label", "mode", "status", "capabilities", "created_at_utc",
         "last_heartbeat_utc", "revoked_at_utc", "account_names",
     )}

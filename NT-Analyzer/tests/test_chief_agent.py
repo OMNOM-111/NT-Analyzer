@@ -463,6 +463,7 @@ def test_scoped_conversation_metadata_is_indexed_in_sqlite(tmp_path, monkeypatch
     monkeypatch.setenv("NT_ANALYZER_SQLITE_PATH", str(tmp_path / "durable.sqlite3"))
     scope = {
         "user_id": 101,
+        "user_uuid": "f4640a81-71fc-4273-8e5c-5028b25d3c9b",
         "workspace_id": "ws_personal_AAAAAAAA",
         "membership_role": "owner",
         "is_owner": True,
@@ -475,6 +476,7 @@ def test_scoped_conversation_metadata_is_indexed_in_sqlite(tmp_path, monkeypatch
     assert row is not None
     assert row["workspace_id"] == "ws_personal_AAAAAAAA"
     assert row["user_id"] == "101"
+    assert row["user_uuid"] == scope["user_uuid"]
     assert row["title"] == "Risk review"
 
     chief_agent.rename_conversation("C-META", "Renamed", scope=scope)
@@ -729,6 +731,58 @@ def test_legacy_telegram_transcript_migrates_into_scoped_chat(tmp_path, monkeypa
     assert second["migrated"] == 0
     assert {row["content"] for row in rows} == {"из Telegram", "из приложения"}
     assert all(row.get("conversation_scope_id") == "u42__ws_owner" for row in rows)
+
+
+def test_phase3_scoped_conversation_identity_backfill_preserves_legacy_rows(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 42,
+        "user_uuid": "abcc9d6b-ae11-4c9e-9ca8-1ceb0cedba24",
+        "workspace_id": "ws_owner",
+        "membership_role": "owner",
+        "is_owner": True,
+    }
+    cid = "C-PHASE3-IDENTITY"
+    path = chief_agent._conversation_file(cid, scope=scope)
+    chief_agent._append_conversation("user", "legacy identity row", source="app", path=path)
+
+    migrated = chief_agent.conversation_messages(cid, scope=scope)
+    created = chief_agent._append_conversation("assistant", "new identity row", source="app", scope=scope, path=path)
+
+    assert migrated[0]["user_id"] == 42
+    assert migrated[0]["user_uuid"] == scope["user_uuid"]
+    assert created["user_id"] == 42
+    assert created["user_uuid"] == scope["user_uuid"]
+    assert chief_agent._normalize_conversation_scope(scope)["scope_id"] == "u42__ws_owner"
+
+
+def test_phase3_scoped_dialogue_auxiliary_records_backfill_identity(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    scope = {
+        "user_id": 42,
+        "user_uuid": "abcc9d6b-ae11-4c9e-9ca8-1ceb0cedba24",
+        "workspace_id": "ws_owner",
+        "membership_role": "owner",
+        "is_owner": True,
+    }
+    chief_agent.write_json_atomic(chief_agent._index_path(scope), {
+        "conversations": [{"conversation_id": "C-INDEX", "user_id": 42}],
+    })
+    chief_agent.write_jsonl_atomic(chief_agent._user_memory_path(scope), [{
+        "memory_id": "MEM-OLD", "user_id": 42, "text": "legacy memory",
+    }])
+    chief_agent.write_jsonl_atomic(chief_agent._conversation_memory_archive_path(scope), [{
+        "memory_id": "ARC-OLD", "conversation_id": "C-ARCHIVE", "user_id": 42,
+    }])
+
+    index = chief_agent._read_index(scope)
+    memories = chief_agent._user_memories(scope)
+    bundle = chief_agent._shared_memory_bundle(scope)
+    bundled = {row["memory_id"]: row for row in bundle["entries"]}
+
+    assert index["conversations"][0]["user_uuid"] == scope["user_uuid"]
+    assert memories[0]["user_uuid"] == scope["user_uuid"]
+    assert bundled["ARC-OLD"]["user_uuid"] == scope["user_uuid"]
 
 
 def test_owner_workspace_restores_complete_legacy_chat_list_once(tmp_path, monkeypatch) -> None:

@@ -15,6 +15,7 @@ from app import account_auth, secure_store, server as server_mod, subscriptions,
 
 @pytest.fixture
 def subscription_store(monkeypatch, tmp_path):
+    monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(secure_store, "available", lambda: True)
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test DPAPI")
@@ -82,6 +83,70 @@ def test_entitlement_store_read_cache_is_isolated_and_updates_on_write(subscript
     subscriptions._write_doc(updated)
     assert subscriptions._read_doc()["entitlements"][0]["plan_id"] == "pro"
     assert len(decrypts) == 1
+
+
+def test_phase3_entitlement_identity_backfill_preserves_legacy_references(subscription_store) -> None:
+    owner_uuid = "5d9a7d97-22f6-44ad-8ddd-77f0f390d0a3"
+    user_uuid = "c3fafab6-551e-4f39-b641-1e8675504ce7"
+    account_auth._write_doc({
+        "version": 3,
+        "users": [
+            {"user_id": 999, "legacy_user_id": 999, "user_uuid": owner_uuid,
+             "first_name": "Owner", "status": "active", "is_owner": True},
+            {"user_id": 42, "legacy_user_id": 42, "user_uuid": user_uuid,
+             "first_name": "Ada", "status": "active", "is_owner": False},
+        ],
+        "auth_identities": [], "challenges": [], "sessions": [],
+    })
+    subscriptions._write_doc({
+        "version": 1,
+        "vouchers": [{
+            "voucher_id": "vch_phase3", "created_by_user_id": 999,
+            "allowed_telegram_ids": [42],
+            "redemptions": [{"user_id": 42, "entitlement_id": "ent_phase3"}],
+        }],
+        "entitlements": [{"entitlement_id": "ent_phase3", "user_id": 42, "plan_id": "pro"}],
+        "plan_overrides": {}, "payment_config": {}, "paypal": {},
+        "payment_requests": [{
+            "request_id": "pr_phase3", "user_id": 42, "resolver_user_id": 999,
+        }],
+    })
+
+    migrated = subscriptions._read_doc()
+
+    assert migrated["entitlements"][0]["user_id"] == 42
+    assert migrated["entitlements"][0]["user_uuid"] == user_uuid
+    assert migrated["vouchers"][0]["created_by_user_id"] == 999
+    assert migrated["vouchers"][0]["created_by_user_uuid"] == owner_uuid
+    assert migrated["vouchers"][0]["allowed_user_uuids"] == [user_uuid]
+    assert migrated["vouchers"][0]["redemptions"][0]["user_uuid"] == user_uuid
+    assert migrated["payment_requests"][0]["user_uuid"] == user_uuid
+    assert migrated["payment_requests"][0]["resolver_user_uuid"] == owner_uuid
+
+
+def test_phase3_entitlement_creation_dual_writes_uuid_companions(subscription_store) -> None:
+    owner_uuid = "a079ebcd-59b3-497a-a92e-b6b3af1eb85d"
+    user_uuid = "ae44650f-d71d-4696-a931-2894d7b0ea79"
+    account_auth._write_doc({
+        "version": 3,
+        "users": [
+            {"user_id": 999, "legacy_user_id": 999, "user_uuid": owner_uuid,
+             "first_name": "Owner", "status": "active", "is_owner": True},
+            {"user_id": 42, "legacy_user_id": 42, "user_uuid": user_uuid,
+             "first_name": "Ada", "status": "active", "is_owner": False},
+        ],
+        "auth_identities": [], "challenges": [], "sessions": [],
+    })
+
+    voucher = subscriptions.create_voucher(999, {
+        "label": "Phase 3", "grant_plan_id": "pro", "allowed_telegram_ids": [42],
+    })["voucher"]
+    entitlement = subscriptions.grant_plan(999, 42, "pro")["entitlement"]
+
+    assert voucher["created_by_user_uuid"] == owner_uuid
+    assert voucher["allowed_user_uuids"] == [user_uuid]
+    assert entitlement["user_id"] == 42
+    assert entitlement["user_uuid"] == user_uuid
 
 
 def test_owner_creates_and_user_redeems_developer_free_voucher(subscription_store) -> None:

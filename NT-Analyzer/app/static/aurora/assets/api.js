@@ -279,6 +279,7 @@
   // Endpoint map mirrors app/server.py exactly.
   const http = {
     authStatus: (o) => getJSON('/api/auth/status', o),
+    authProviders: (o) => getJSON('/api/auth/providers', o),
     authLoginStart: () => send('/api/auth/login/start', 'POST', {}),
     authLoginStatus: async (challengeId) => {
       const data = await send('/api/auth/login/status', 'POST', { challenge_id: challengeId });
@@ -286,6 +287,11 @@
       return data;
     },
     authProfile: (challengeId, profile) => send('/api/auth/profile', 'POST', { challenge_id: challengeId, profile }),
+    authGoogleLoginStart: (body) => send('/api/auth/google/login/start', 'POST', body || {}),
+    authEmailStart: (body) => send('/api/auth/email/start', 'POST', body || {}),
+    authEmailVerify: (body) => send('/api/auth/email/verify', 'POST', body || {}),
+    authEmailLinkStart: (body) => send('/api/auth/email/link/start', 'POST', body || {}),
+    authEmailLinkVerify: (body) => send('/api/auth/email/link/verify', 'POST', body || {}),
     miniappRegister: (body) => send('/api/auth/miniapp/register', 'POST', body || {}),
     legalTerms: (o) => getJSON('/api/legal/terms', o),
     authLogout: () => send('/api/auth/logout', 'POST', {}),
@@ -325,6 +331,7 @@
     testAuthVirtualUser: (body) => send('/api/auth/test/virtual-user', 'POST', body || {}),
     testAuthLogin: (userId) => send('/api/auth/test/login', 'POST', { user_id: userId }),
     testAuthGoogleLink: (body) => send('/api/auth/test/google-link', 'POST', body || {}),
+    testAuthGoogleLogin: (body) => send('/api/auth/test/google-login', 'POST', body || {}),
     runtimeEnv: (o) => getJSON('/api/runtime/env', o),
     adminOverview: (o) => getJSON('/api/admin/overview', o),
     adminEnvironmentTargets: (o) => getJSON('/api/admin/environment-targets', o),
