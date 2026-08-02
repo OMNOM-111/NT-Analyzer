@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-02T20:27:30Z; внёс `GitHub Copilot`; scope: Phase 3 closeout — записать PR #9, cross-platform CI, merge commit и удаление task branch.
+
 История поправки: 2026-08-02T20:22:26Z; внёс `GitHub Copilot`; scope: Phase 3 — закрыть UUID session/Mini App merge gap и обновить final validation evidence.
 
 История поправки: 2026-08-02T20:10:39Z; внёс `GitHub Copilot`; scope: Phase 3 — зафиксировать UUID identity implementation, local validation evidence и границу PostgreSQL acceptance.
@@ -14,7 +16,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T20:22:26Z
+Обновлено: 2026-08-02T20:27:30Z
 
 ## Baseline
 
@@ -34,7 +36,7 @@
 | 0 | STAGE CLOSED | merged/deleted | `fe38c3b7`; [PR #6](https://github.com/OMNOM-111/NT-Analyzer/pull/6) | Принятые решения зафиксированы в ADR; CI PASS |
 | 1 | STAGE CLOSED | merged/deleted | `f4bcb3fc`; [PR #7](https://github.com/OMNOM-111/NT-Analyzer/pull/7) | Environment metadata, version, badges, owner icons; CI PASS |
 | 2 | STAGE CLOSED | merged/deleted | `ca65be2e`; [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; CI PASS |
-| 3 | IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING | `phase/3-unified-identity` | pending | UUID identity, provider abstraction и dual-write compatibility |
+| 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
 | 4 | PENDING | `phase/4-trusted-devices` | pending | Devices и step-up |
 | 5 | PENDING | `phase/5-personal-nt-security` | pending | Personal NT security |
 | 6 | PENDING | `phase/6-agent-resource-queue` | pending | Agent allocation и NT lease |
@@ -96,6 +98,7 @@
 - Local migration behavior: DPAPI stores и scoped JSONL/SQLite documents lazily backfill UUID companions without removing numeric references. Account-store v2 migration creates a recoverable encrypted backup before persisting v3 dual-write data.
 - PostgreSQL source migration: `0005_identity_uuid.sql` является additive expand/backfill/dual-write migration: UUID companions, `sf_auth_identities`, backfill, generated triggers and nonvalidated foreign keys. It contains no destructive contract or `DROP` statements.
 - Local validation: focused Phase 3 suite `249 passed`; Community `14 passed`; account auth `35 passed`; final repository regression `925 passed, 31 skipped`. `python -B -m compileall -q app tests`, `node --check app/static/aurora/assets/ui.js`, release static scan (CSP/SECRETS/MARKDOWN) and `git diff --check` passed.
+- CI/PR: [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) merged; [Actions run 30765531139](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30765531139) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
 - PostgreSQL acceptance: skipped safely because isolated `STRATFORGE_TEST_POSTGRES_ADMIN_URL` and `STRATFORGE_TEST_POSTGRES_URL` were absent. No PostgreSQL migration was applied.
 - Deployment boundary: no destructive contract, Production migration, Canary deployment or Production deployment was performed; no Production secrets, DNS, bot/email credentials or databases were accessed.
-- Git closeout: pending selective staging, commit, PR, required CI and merge verification. Generated `data/development/durable/nt_analyzer.sqlite3` and unrelated governance-rendered changes are excluded from the Phase 3 delivery.
+- Git closeout: implementation `2266fc99`; merge `7fb34762`; task branch удалена локально и на origin; integration совпадает с origin after merge. Generated `data/development/durable/nt_analyzer.sqlite3` and unrelated governance-rendered changes remained outside the Phase 3 delivery.
