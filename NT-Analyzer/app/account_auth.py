@@ -1,7 +1,10 @@
-"""Telegram-backed accounts and desktop browser sessions.
+"""Unified accounts and desktop browser sessions.
 
-Identity is anchored to Telegram ``user.id`` (login factor). Google OAuth is
-**not** required for ordinary app use (demo, practice, community, AI, etc.).
+The canonical internal identity is an opaque UUID. Telegram ``user.id``,
+Google ``sub`` and a normalized verified email are external provider subjects.
+The legacy numeric ``user_id`` remains dual-written during the expand/cutover
+window so existing workspaces, conversations and Connector records keep their
+references. Google OAuth is **not** required for ordinary app use.
 Google + a fresh Telegram confirmation are required only before NinjaTrader
 control actions (personal bridge, live/paper commands that drive NT) — see
 ``nt_action_gate`` / ``require_nt_dual_auth``.
@@ -25,6 +28,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 from collections import defaultdict, deque
@@ -32,7 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-from . import legal, runtime_env, secure_store
+from . import auth_identity, legal, runtime_env, secure_store
 
 
 SESSION_COOKIE = "sf_session"
@@ -44,7 +48,11 @@ IMPERSONATION_TTL_SEC = 4 * 60 * 60
 NT_STEP_UP_TTL_SEC = 30 * 60
 NT_CONFIRM_TTL_SEC = 10 * 60
 UX_MODES = ("beginner", "professional")
-ACCOUNT_STORE_VERSION = 2
+ACCOUNT_STORE_VERSION = 3
+EMAIL_CHALLENGE_TTL_SEC = 10 * 60
+EMAIL_MAX_ATTEMPTS = 5
+EXTERNAL_LEGACY_ID_FLOOR = 8_000_000_000_000_000
+EXTERNAL_LEGACY_ID_CEILING = 8_900_000_000_000_000
 ROLES = {"read_only", "full_control", "owner"}
 # Owner-toggleable capabilities. The ids match the Aurora navigation ids so the
 # client can gate the left rail directly. ``personal_nt`` gates the "connect my
@@ -149,7 +157,193 @@ def _normalized_future_utc(value: Any) -> str:
 
 
 def _default_doc() -> Dict[str, Any]:
-    return {"version": ACCOUNT_STORE_VERSION, "users": [], "challenges": [], "sessions": []}
+    return {
+        "version": ACCOUNT_STORE_VERSION,
+        "users": [],
+        "auth_identities": [],
+        "challenges": [],
+        "sessions": [],
+        "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
+    }
+
+
+def _identity_rows(doc: Dict[str, Any]) -> list[Dict[str, Any]]:
+    rows = doc.get("auth_identities")
+    if not isinstance(rows, list):
+        rows = []
+        doc["auth_identities"] = rows
+    return rows
+
+
+def _user_uuid(user: Optional[Dict[str, Any]]) -> str:
+    return auth_identity.normalize_user_uuid((user or {}).get("user_uuid"))
+
+
+def _identity(
+    doc: Dict[str, Any], provider: Any, subject: Any,
+) -> Optional[Dict[str, Any]]:
+    try:
+        provider_id = auth_identity.normalize_provider(provider)
+        normalized = auth_identity.normalize_subject(provider_id, subject)
+    except auth_identity.IdentityError:
+        return None
+    for row in _identity_rows(doc):
+        if not isinstance(row, dict):
+            continue
+        try:
+            row_provider = auth_identity.normalize_provider(row.get("provider"))
+            row_subject = auth_identity.normalize_subject(row_provider, row.get("provider_subject"))
+        except auth_identity.IdentityError:
+            continue
+        if row_provider == provider_id and hmac.compare_digest(row_subject, normalized):
+            return row
+    return None
+
+
+def _identities_for_user(doc: Dict[str, Any], user: Dict[str, Any]) -> list[Dict[str, Any]]:
+    canonical = _user_uuid(user)
+    if not canonical:
+        return []
+    return [
+        row for row in _identity_rows(doc)
+        if isinstance(row, dict) and hmac.compare_digest(
+            auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical,
+        )
+    ]
+
+
+def _link_identity_in_doc(
+    doc: Dict[str, Any],
+    user: Dict[str, Any],
+    *,
+    provider: Any,
+    subject: Any,
+    verified_at_utc: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    source: str = "migration",
+    touch: bool = True,
+) -> Dict[str, Any]:
+    try:
+        provider_id = auth_identity.normalize_provider(provider)
+        normalized = auth_identity.normalize_subject(provider_id, subject)
+    except auth_identity.IdentityError as exc:
+        raise AccountAuthError(str(exc), 400, code="identity_invalid") from None
+    canonical = _user_uuid(user)
+    if not canonical:
+        canonical = auth_identity.new_user_uuid()
+        user["user_uuid"] = canonical
+    existing = _identity(doc, provider_id, normalized)
+    if existing is not None and not hmac.compare_digest(
+        auth_identity.normalize_user_uuid(existing.get("user_uuid")), canonical,
+    ):
+        raise AccountAuthError(
+            "Этот способ входа уже связан с другим профилем.", 409,
+            code="identity_already_linked",
+        )
+    now = _now_iso()
+    if existing is None:
+        existing = {
+            "identity_id": auth_identity.deterministic_identity_id(provider_id, normalized),
+            "user_uuid": canonical,
+            "legacy_user_id": int(user.get("user_id") or 0),
+            "provider": provider_id,
+            "provider_subject": normalized,
+            "linked_at_utc": now,
+            "verified_at_utc": str(verified_at_utc or now),
+            "last_used_at_utc": now if touch else "",
+            "link_source": str(source or "migration")[:60],
+            "metadata": dict(metadata or {}),
+        }
+        _identity_rows(doc).append(existing)
+    else:
+        if touch:
+            existing["last_used_at_utc"] = now
+        if verified_at_utc and not existing.get("verified_at_utc"):
+            existing["verified_at_utc"] = str(verified_at_utc)
+        if metadata:
+            current = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+            current.update(dict(metadata))
+            existing["metadata"] = current
+    return existing
+
+
+def _allocate_external_legacy_user_id(doc: Dict[str, Any]) -> int:
+    used = {int(row.get("user_id") or 0) for row in doc.get("users") or [] if isinstance(row, dict)}
+    span = EXTERNAL_LEGACY_ID_CEILING - EXTERNAL_LEGACY_ID_FLOOR
+    for _ in range(64):
+        candidate = EXTERNAL_LEGACY_ID_FLOOR + secrets.randbelow(span)
+        if candidate not in used:
+            return candidate
+    raise AccountAuthError("Не удалось выделить compatibility id.", 503, code="legacy_id_exhausted")
+
+
+def _sync_user_identity_summary(doc: Dict[str, Any], user: Dict[str, Any]) -> None:
+    identities = sorted(
+        _identities_for_user(doc, user),
+        key=lambda row: (str(row.get("provider") or ""), str(row.get("linked_at_utc") or "")),
+    )
+    user["linked_providers"] = [
+        auth_identity.public_identity(row, user=user) for row in identities
+    ]
+    user["identity_count"] = len(identities)
+
+
+def _telegram_subject_for_user(doc: Dict[str, Any], user: Dict[str, Any]) -> int:
+    for row in _identities_for_user(doc, user):
+        if str(row.get("provider") or "") != "telegram":
+            continue
+        try:
+            return int(auth_identity.normalize_subject("telegram", row.get("provider_subject")))
+        except (auth_identity.IdentityError, TypeError, ValueError):
+            return 0
+    try:
+        return int(user.get("telegram_user_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def telegram_subject_for_user(user_id: Any) -> int:
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return 0
+    with _LOCK:
+        doc = _read_doc_reference()
+        user = _user(doc, uid)
+        return _telegram_subject_for_user(doc, user) if user else 0
+
+
+def user_uuid_for_legacy_id(user_id: Any) -> str:
+    """Resolve a compatibility BIGINT account key to its canonical UUID."""
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if uid <= 0:
+        return ""
+    with _LOCK:
+        user = _user(_read_doc_reference(), uid)
+        return _user_uuid(user) if user else ""
+
+
+def _identity_migration_backup(path: Path) -> None:
+    if not path.is_file():
+        return
+    backup = path.with_name(path.name + ".identity-v2-backup")
+    if backup.exists():
+        return
+    try:
+        shutil.copy2(path, backup)
+        try:
+            os.chmod(backup, 0o600)
+        except OSError:
+            pass
+    except OSError as exc:
+        raise AccountAuthError(
+            f"Не удалось создать encrypted backup перед UUID migration: {exc}",
+            503,
+            code="identity_backup_failed",
+        ) from None
 
 
 def _migrate_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,6 +358,7 @@ def _migrate_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         version = int(doc.get("version") or 1)
     except (TypeError, ValueError):
         version = 1
+    legacy_identity_model = version < 3
     if version < 2:
         for user in doc.get("users") or []:
             if not isinstance(user, dict):
@@ -171,7 +366,89 @@ def _migrate_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
             if str(user.get("ux_mode") or "").strip().lower() not in UX_MODES:
                 user["ux_mode"] = "professional"
                 user["ux_mode_migrated_at_utc"] = _now_iso()
-        doc["version"] = ACCOUNT_STORE_VERSION
+    if not isinstance(doc.get("auth_identities"), list):
+        doc["auth_identities"] = []
+    migrated_at = str((doc.get("identity_schema") or {}).get("migrated_at_utc") or "")
+    for user in doc.get("users") or []:
+        if not isinstance(user, dict):
+            continue
+        try:
+            legacy_id = int(user.get("user_id") or user.get("legacy_user_id") or 0)
+        except (TypeError, ValueError):
+            legacy_id = 0
+        if legacy_id <= 0:
+            raise AccountAuthError("Account store contains an invalid legacy user id.", 500)
+        user["user_id"] = legacy_id
+        user["legacy_user_id"] = legacy_id
+        canonical = _user_uuid(user)
+        if not canonical:
+            canonical = auth_identity.new_user_uuid()
+            user["user_uuid"] = canonical
+        telegram_subject = str(user.get("telegram_user_id") or "").strip()
+        if legacy_identity_model and not user.get("is_virtual"):
+            telegram_subject = str(legacy_id)
+        if telegram_subject:
+            user["telegram_user_id"] = int(telegram_subject)
+            _link_identity_in_doc(
+                doc,
+                user,
+                provider="telegram",
+                subject=telegram_subject,
+                verified_at_utc=str(user.get("phone_verified_at_utc") or user.get("created_at_utc") or _now_iso()),
+                metadata={"username": str(user.get("username") or "")},
+                source="v2_backfill" if legacy_identity_model else "dual_write_repair",
+                touch=False,
+            )
+        elif legacy_identity_model and user.get("is_virtual"):
+            _link_identity_in_doc(
+                doc,
+                user,
+                provider="test",
+                subject=f"legacy-{legacy_id}",
+                verified_at_utc=str(user.get("created_at_utc") or _now_iso()),
+                source="v2_backfill",
+                touch=False,
+            )
+        google_sub = str(user.get("google_sub") or "").strip()
+        if google_sub:
+            _link_identity_in_doc(
+                doc,
+                user,
+                provider="google",
+                subject=google_sub,
+                verified_at_utc=str(user.get("google_linked_at_utc") or _now_iso()),
+                metadata={"email": str(user.get("google_email") or "").casefold()},
+                source="legacy_google_backfill",
+                touch=False,
+            )
+    by_legacy = {
+        int(user.get("user_id") or 0): _user_uuid(user)
+        for user in doc.get("users") or [] if isinstance(user, dict)
+    }
+    for collection in ("sessions", "challenges"):
+        rows = doc.get(collection)
+        if not isinstance(rows, list):
+            rows = []
+            doc[collection] = rows
+        for row in rows:
+            if not isinstance(row, dict) or auth_identity.normalize_user_uuid(row.get("user_uuid")):
+                continue
+            try:
+                legacy_id = int(row.get("user_id") or 0)
+            except (TypeError, ValueError):
+                legacy_id = 0
+            if legacy_id in by_legacy:
+                row["user_uuid"] = by_legacy[legacy_id]
+    for user in doc.get("users") or []:
+        if isinstance(user, dict):
+            _sync_user_identity_summary(doc, user)
+    doc["identity_schema"] = {
+        "stage": "dual_write",
+        "canonical_key": "user_uuid",
+        "legacy_key": "user_id",
+        "migrated_at_utc": migrated_at or _now_iso(),
+    }
+    doc["version"] = ACCOUNT_STORE_VERSION
     return doc
 
 
@@ -228,7 +505,7 @@ def _read_doc() -> Dict[str, Any]:
             ) from None
         if not isinstance(doc, dict):
             raise AccountAuthError("Production account repository returned invalid data.", 500)
-        for key in ("users", "challenges", "sessions"):
+        for key in ("users", "auth_identities", "challenges", "sessions"):
             if not isinstance(doc.get(key), list):
                 doc[key] = []
         return _migrate_doc(doc)
@@ -259,10 +536,20 @@ def _read_doc() -> Dict[str, Any]:
         raise AccountAuthError(f"Не удалось прочитать защищённые аккаунты: {exc}", 500) from None
     if not isinstance(doc, dict):
         raise AccountAuthError("Защищённое хранилище аккаунтов повреждено.", 500)
-    for key in ("users", "challenges", "sessions"):
+    for key in ("users", "auth_identities", "challenges", "sessions"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
+    try:
+        original_version = int(doc.get("version") or 1)
+    except (TypeError, ValueError):
+        original_version = 1
     doc = _migrate_doc(doc)
+    if original_version < ACCOUNT_STORE_VERSION:
+        # The encrypted source remains recoverable byte-for-byte until a later
+        # owner-approved contract phase removes the legacy mapping.
+        _identity_migration_backup(path)
+        _write_doc(doc)
+        return doc
     _cache_doc(path, doc)
     return doc
 
@@ -288,6 +575,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    doc = _migrate_doc(copy.deepcopy(doc))
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
@@ -760,6 +1048,16 @@ def _user(doc: Dict[str, Any], user_id: int) -> Optional[Dict[str, Any]]:
     return next((row for row in doc["users"] if int(row.get("user_id") or 0) == int(user_id)), None)
 
 
+def _user_by_uuid(doc: Dict[str, Any], user_uuid: Any) -> Optional[Dict[str, Any]]:
+    canonical = auth_identity.normalize_user_uuid(user_uuid)
+    if not canonical:
+        return None
+    return next((
+        row for row in doc.get("users") or []
+        if isinstance(row, dict) and hmac.compare_digest(_user_uuid(row), canonical)
+    ), None)
+
+
 def _profile_complete(user: Dict[str, Any]) -> bool:
     return bool(user.get("first_name") and user.get("last_name") and user.get("email"))
 
@@ -820,16 +1118,24 @@ def _avatar_data_url(user: Dict[str, Any]) -> str:
 
 
 def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
-                 include_avatar: bool = False) -> Dict[str, Any]:
+                 include_avatar: bool = False, include_legacy: bool = False) -> Dict[str, Any]:
     out = {key: user.get(key) for key in (
-        "user_id", "username", "first_name", "last_name", "role", "status",
+        "username", "first_name", "last_name", "role", "status",
         "is_owner", "created_at_utc", "approved_at_utc", "revoked_at_utc",
         "last_login_at_utc", "phone_verified_at_utc",
         "last_login_source", "last_login_device", "last_login_machine",
         "last_login_device_id", "blocked_at_utc",
-        "google_linked_at_utc", "google_email", "is_virtual", "virtual_preset",
-        "ux_mode",
+        "google_linked_at_utc", "google_email", "email_verified_at_utc",
+        "primary_login_provider", "is_virtual", "virtual_preset", "ux_mode",
     )}
+    out["id"] = str(user.get("user_uuid") or "")
+    if include_legacy:
+        out["user_id"] = int(user.get("user_id") or 0)
+        out["legacy_user_id"] = int(user.get("legacy_user_id") or user.get("user_id") or 0)
+        out["telegram_user_id"] = int(user.get("telegram_user_id") or 0)
+    out["linked_providers"] = [
+        dict(row) for row in (user.get("linked_providers") or []) if isinstance(row, dict)
+    ]
     out["profile_complete"] = _profile_complete(user)
     out["google_linked"] = bool(str(user.get("google_sub") or "").strip())
     # needs_google = informational for NT actions only; never a login blocker.
@@ -1080,19 +1386,36 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
             legacy_user = next((row for row in legacy.get("users") or [] if int(row.get("user_id") or 0) == uid), {})
             existing = {
                 "user_id": uid,
+                "legacy_user_id": uid,
+                "user_uuid": auth_identity.new_user_uuid(),
+                "telegram_user_id": uid,
                 "username": str(legacy_user.get("username") or ""),
                 "first_name": str(legacy_user.get("first_name") or ""),
                 "last_name": str(legacy_user.get("last_name") or ""),
                 "email": "", "phone": "", "phone_hash": str(legacy.get("owner_phone_hash") or ""),
                 "role": "owner", "status": "active", "is_owner": True,
+                "primary_login_provider": "telegram",
                 "created_at_utc": _now_iso(), "approved_at_utc": _now_iso(), "revoked_at_utc": "",
             }
             doc["users"].append(existing)
             changed = True
         else:
+            if int(existing.get("telegram_user_id") or 0) != uid:
+                existing["telegram_user_id"] = uid
+                changed = True
             if existing.get("role") != "owner" or not existing.get("is_owner") or existing.get("status") != "active":
                 existing.update({"role": "owner", "is_owner": True, "status": "active", "revoked_at_utc": ""})
                 changed = True
+        if _identity(doc, "telegram", str(uid)) is None:
+            _link_identity_in_doc(
+                doc, existing, provider="telegram", subject=str(uid),
+                verified_at_utc=str(existing.get("phone_verified_at_utc") or _now_iso()),
+                metadata={"username": str(existing.get("username") or "")},
+                source="owner_bootstrap",
+                touch=False,
+            )
+            changed = True
+        _sync_user_identity_summary(doc, existing)
         if changed:
             _write_doc(doc)
         return _public_user(existing, include_contact=True, include_avatar=True)
@@ -1153,7 +1476,10 @@ def list_users(owner_id: Any) -> Dict[str, Any]:
         _require_admin_capability_in_doc(doc, owner_id, "users.manage")
         users = sorted(doc["users"], key=lambda row: (not bool(row.get("is_owner")), str(row.get("created_at_utc") or "")))
         return {
-            "users": [_public_user(row, include_contact=True, include_avatar=True) for row in users],
+            "users": [
+                _public_user(row, include_contact=True, include_avatar=True, include_legacy=True)
+                for row in users
+            ],
             "feature_catalog": feature_catalog(),
             "storage": storage_status(),
         }
@@ -1290,7 +1616,7 @@ def user_detail(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
-        pub = _public_user(user, include_contact=True, include_avatar=True)
+        pub = _public_user(user, include_contact=True, include_avatar=True, include_legacy=True)
         history = user.get("login_history") if isinstance(user.get("login_history"), list) else []
         pub["login_history"] = list(reversed(history))[:20]
         pub["blocked_at_utc"] = str(user.get("blocked_at_utc") or "")
@@ -1578,11 +1904,15 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             raise AccountAuthError("Доступ к StratForge AI ограничен владельцем.", 403)
         if user is None:
             user = {
-                "user_id": uid, "username": str(tg_user.get("username") or ""),
+                "user_id": uid, "legacy_user_id": uid,
+                "user_uuid": auth_identity.new_user_uuid(),
+                "telegram_user_id": uid,
+                "username": str(tg_user.get("username") or ""),
                 "first_name": fn, "last_name": ln, "email": em,
                 "phone": "", "phone_hash": "",
                 "role": "owner" if is_owner else "read_only",
                 "status": "active" if is_owner else "pending", "is_owner": is_owner,
+                "primary_login_provider": "telegram",
                 "created_at_utc": now,
                 "approved_at_utc": now if is_owner else "",
                 "revoked_at_utc": "",
@@ -1605,9 +1935,17 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
                 pass  # returning active user — keep access
             else:
                 user["status"] = "pending"
+            user["telegram_user_id"] = uid
         user["terms_accepted_at_utc"] = now
         user["terms_version"] = legal.TERMS_VERSION
         user["identity_verified_via"] = "mini_app_initdata"
+        _link_identity_in_doc(
+            doc, user, provider="telegram", subject=str(uid),
+            verified_at_utc=now,
+            metadata={"username": str(user.get("username") or "")},
+            source="telegram_mini_app",
+        )
+        _sync_user_identity_summary(doc, user)
         _append_login(user, source="telegram_mini_app", user_agent="Telegram Mini App", email=em)
 
         status_out = "active" if user.get("status") == "active" else "pending_owner"
@@ -1615,7 +1953,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             challenge_id = secrets.token_urlsafe(24)
             doc["challenges"].append({
                 "challenge_id": challenge_id, "code": "", "status": "pending_owner",
-                "user_id": uid, "created_at_utc": now,
+                "user_id": uid, "user_uuid": _user_uuid(user), "created_at_utc": now,
                 "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
                 "source": "mini_app_register",
             })
@@ -1644,15 +1982,28 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
 def _send_owner_approval(api_call: Callable[..., Any], owner_chat_id: str,
                          user: Dict[str, Any], challenge_id: str) -> None:
     label = html.escape(f"{user.get('first_name', '')} {user.get('last_name', '')}".strip())
+    provider = str(user.get("primary_login_provider") or "telegram").lower()
+    provider_label = {"telegram": "Telegram", "google": "Google", "email": "Email OTP"}.get(
+        provider, provider,
+    )
+    telegram_id = int(user.get("telegram_user_id") or 0)
+    telegram_line = (
+        f"Telegram user id: <code>{telegram_id}</code>\n"
+        if telegram_id else "Telegram: <i>не привязан</i>\n"
+    )
+    username_line = (
+        f"Username: @{html.escape(str(user.get('username') or '—'))}\n"
+        if telegram_id else ""
+    )
     api_call("sendMessage", {
         "chat_id": owner_chat_id, "parse_mode": "HTML",
         "text": (
             "🔐 <b>Новый аккаунт StratForge AI</b>\n"
             f"Пользователь: <b>{label}</b>\n"
-            f"Telegram user id: <code>{int(user.get('user_id') or 0)}</code>\n"
-            f"Username: @{html.escape(str(user.get('username') or '—'))}\n"
+            f"Первичная identity: <b>{html.escape(provider_label)}</b>\n"
+            f"{telegram_line}{username_line}"
             f"E-mail: <code>{html.escape(str(user.get('email') or ''))}</code>\n"
-            "Телефон подтверждён через requestContact.\n\n"
+            "Provider identity подтверждена; совпадение email само по себе аккаунты не объединяет.\n\n"
             "Только ваше личное подтверждение активирует аккаунт."
         ),
         "reply_markup": {"inline_keyboard": [[
@@ -1724,9 +2075,11 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 return True
             uid = int(revoke_match.group(1))
             try:
+                telegram_id = telegram_subject_for_user(uid)
                 update_user(actor, uid, revoke=True)
                 api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Аккаунт отозван."})
-                api_call("sendMessage", {"chat_id": uid, "text": "⛔ Владелец отозвал ваш аккаунт StratForge AI."})
+                if telegram_id:
+                    api_call("sendMessage", {"chat_id": telegram_id, "text": "⛔ Владелец отозвал ваш аккаунт StratForge AI."})
             except AccountAuthError as exc:
                 api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": str(exc), "show_alert": True})
             return True
@@ -1749,14 +2102,31 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             allowed = match.group(1) == "allow"
             if allowed:
                 user.update({"status": "active", "role": "read_only", "approved_at_utc": _now_iso(), "revoked_at_utc": ""})
-                challenge["status"] = "login_approved"
+                next_challenge_status = "login_approved"
             else:
                 user.update({"status": "denied", "revoked_at_utc": _now_iso()})
-                challenge["status"] = "denied"
+                next_challenge_status = "denied"
+            # A user can legitimately retry an external-provider login while the
+            # first owner request is still pending. Approve or deny every live
+            # request for that canonical account so no polling window hangs.
+            challenge_user_id = int(user.get("user_id") or 0)
+            now_epoch = time.time()
+            for pending in doc.get("challenges") or []:
+                if not isinstance(pending, dict):
+                    continue
+                if int(pending.get("user_id") or 0) != challenge_user_id:
+                    continue
+                if str(pending.get("status") or "") != "pending_owner":
+                    continue
+                if float(pending.get("expires_at") or 0) <= now_epoch:
+                    continue
+                pending["status"] = next_challenge_status
+            telegram_id = _telegram_subject_for_user(doc, user)
             _write_doc(doc)
             uid = int(user["user_id"])
         api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Аккаунт разрешён." if allowed else "Запрос отклонён."})
-        api_call("sendMessage", {"chat_id": uid, "text": "✅ Аккаунт StratForge AI активирован." if allowed else "⛔ Владелец отклонил создание аккаунта."})
+        if telegram_id:
+            api_call("sendMessage", {"chat_id": telegram_id, "text": "✅ Аккаунт StratForge AI активирован." if allowed else "⛔ Владелец отклонил создание аккаунта."})
         _audit("account_approved" if allowed else "account_denied", owner_id=actor, user_id=uid)
         return True
 
@@ -1836,10 +2206,14 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 return True
             if user is None:
                 user = {
-                    "user_id": uid, "username": str(tg.get("username") or ""),
+                    "user_id": uid, "legacy_user_id": uid,
+                    "user_uuid": auth_identity.new_user_uuid(),
+                    "telegram_user_id": uid,
+                    "username": str(tg.get("username") or ""),
                     "first_name": str(tg.get("first_name") or ""), "last_name": str(tg.get("last_name") or ""),
                     "email": "", "phone": phone, "phone_hash": _phone_hash(phone),
                     "role": "read_only", "status": "pending", "is_owner": str(uid) == str(owner_chat_id),
+                    "primary_login_provider": "telegram",
                     "created_at_utc": _now_iso(), "approved_at_utc": "", "revoked_at_utc": "",
                 }
                 if user["is_owner"]:
@@ -1849,12 +2223,21 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 user.update({
                     "username": str(tg.get("username") or user.get("username") or ""),
                     "phone": phone, "phone_hash": _phone_hash(phone), "phone_verified_at_utc": _now_iso(),
+                    "telegram_user_id": uid,
                 })
                 if not user.get("first_name"):
                     user["first_name"] = str(tg.get("first_name") or "")
                 if not user.get("last_name"):
                     user["last_name"] = str(tg.get("last_name") or "")
             user["phone_verified_at_utc"] = _now_iso()
+            _link_identity_in_doc(
+                doc, user, provider="telegram", subject=str(uid),
+                verified_at_utc=str(user.get("phone_verified_at_utc") or _now_iso()),
+                metadata={"username": str(user.get("username") or "")},
+                source="telegram_contact",
+            )
+            _sync_user_identity_summary(doc, user)
+            challenge["user_uuid"] = _user_uuid(user)
             prior_status = str(user.get("status") or "")
             if user.get("status") in {"revoked", "denied", "blocked"}:
                 # Owner explicitly removed access — re-verification does not restore it.
@@ -1889,13 +2272,25 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
 def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str) -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
-        challenge = _challenge(doc, challenge_id=str(challenge_id or ""), statuses=("login_approved",))
+        challenge = _challenge(
+            doc,
+            challenge_id=str(challenge_id or ""),
+            statuses=("login_approved", "pending_owner"),
+        )
         if challenge is None:
             return login_state(challenge_id)
         uid = int(challenge.get("user_id") or 0)
         user = _user(doc, uid)
+        if str(challenge.get("status") or "") == "pending_owner":
+            if not user or user.get("status") != "active" or not _profile_complete(user):
+                return login_state(challenge_id)
+            # Compatibility for an approval completed from another concurrently
+            # issued challenge for the same account.
+            challenge["status"] = "login_approved"
         if not user or user.get("status") != "active" or not _profile_complete(user):
             raise AccountAuthError("Аккаунт ещё не активирован.", 403)
+        provider = str(challenge.get("provider") or "").strip().lower()
+        source = f"{provider}_login" if provider in auth_identity.LOGIN_PROVIDERS else "desktop_session"
         token = secrets.token_urlsafe(48)
         csrf = secrets.token_urlsafe(32)
         now = time.time()
@@ -1903,14 +2298,16 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str)
             "session_id": "sess_" + secrets.token_hex(8),
             "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
             "csrf_token": csrf,
-            "user_id": uid, "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
+            "user_id": uid, "user_uuid": _user_uuid(user),
+            "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(), "revoked": False,
             "device_id": _device_id(user_agent), "client": _device_label(user_agent),
             "machine": _machine_label(), "ip": _mask_ip(ip),
+            "source": source,
         })
         challenge["status"] = "consumed"
-        _append_login(user, source="desktop_session", ip=ip, user_agent=user_agent)
+        _append_login(user, source=source, ip=ip, user_agent=user_agent)
         _cleanup(doc)
         _write_doc(doc)
     _audit("login_succeeded", user_id=uid, ip=ip)
@@ -1934,6 +2331,7 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         ctx = {
             "source": str(session.get("source") or "desktop_session"),
             "user_id": int(user["user_id"]),
+            "user_uuid": _user_uuid(user),
             "role": str(user.get("role") or "read_only"),
             "is_owner": bool(user.get("is_owner")),
             "username": str(user.get("username") or ""),
@@ -1971,6 +2369,13 @@ def start_nt_telegram_confirm(
         user = _user(doc, uid)
         if not user or user.get("status") != "active":
             raise AccountAuthError("Аккаунт не активен.", 403)
+        telegram_id = _telegram_subject_for_user(doc, user)
+        if not user.get("is_owner") and not telegram_id:
+            raise AccountAuthError(
+                "Для подтверждения NinjaTrader сначала привяжите Telegram.",
+                403,
+                code="nt_telegram_link_required",
+            )
         if dual_auth_enforced() and not google_linked(user) and not user.get("is_owner"):
             raise AccountAuthError(
                 "Сначала подключите Google-аккаунт, затем подтвердите действие в Telegram.",
@@ -1998,6 +2403,7 @@ def start_nt_telegram_confirm(
             "kind": "nt_step_up",
             "purpose": str(purpose or "ninjatrader")[:40],
             "user_id": uid,
+            "user_uuid": _user_uuid(user),
             "session_id": sid[:80],
             "created_at_utc": _now_iso(),
             "expires_at": time.time() + NT_CONFIRM_TTL_SEC,
@@ -2008,7 +2414,7 @@ def start_nt_telegram_confirm(
     if api_call is not None and not public.get("is_owner"):
         try:
             api_call("sendMessage", {
-                "chat_id": uid,
+                "chat_id": telegram_id,
                 "text": (
                     "🔐 <b>Подтверждение NinjaTrader</b>\n"
                     "Запрошен доступ к управлению NinjaTrader в StratForge.\n"
@@ -2203,6 +2609,9 @@ def _find_user_by_google(doc: Dict[str, Any], google_sub: str) -> Optional[Dict[
     sub = str(google_sub or "").strip()
     if not sub:
         return None
+    identity = _identity(doc, "google", sub)
+    if identity is not None:
+        return _user_by_uuid(doc, identity.get("user_uuid"))
     for user in doc.get("users") or []:
         if hmac.compare_digest(str(user.get("google_sub") or ""), sub):
             return user
@@ -2241,6 +2650,16 @@ def link_google_identity(
         user["google_name"] = str(google_name or "")[:120]
         user["google_linked_at_utc"] = _now_iso()
         user["google_link_source"] = str(source or "google_oauth")[:40]
+        _link_identity_in_doc(
+            doc,
+            user,
+            provider="google",
+            subject=sub,
+            verified_at_utc=str(user.get("google_linked_at_utc") or _now_iso()),
+            metadata={"email": email, "name": str(google_name or "")[:120]},
+            source=source,
+        )
+        _sync_user_identity_summary(doc, user)
         if email and not str(user.get("email") or "").strip():
             user["email"] = email
         _write_doc(doc)
@@ -2258,11 +2677,29 @@ def unlink_google_identity(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
+        identities = _identities_for_user(doc, user)
+        remaining_login = [
+            row for row in identities
+            if str(row.get("provider") or "") in auth_identity.LOGIN_PROVIDERS
+            and str(row.get("provider") or "") != "google"
+        ]
+        if not remaining_login:
+            raise AccountAuthError("Нельзя удалить последний способ входа.", 409)
+        canonical = _user_uuid(user)
+        doc["auth_identities"] = [
+            row for row in _identity_rows(doc)
+            if not (
+                isinstance(row, dict)
+                and hmac.compare_digest(auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical)
+                and str(row.get("provider") or "") == "google"
+            )
+        ]
         user["google_sub"] = ""
         user["google_email"] = ""
         user["google_name"] = ""
         user["google_linked_at_utc"] = ""
         user["google_unlinked_at_utc"] = _now_iso()
+        _sync_user_identity_summary(doc, user)
         _write_doc(doc)
         public = _public_user(user, include_contact=True)
     _audit("google_unlinked", user_id=uid, owner_id=int(owner_id))
@@ -2304,6 +2741,7 @@ def create_session_for_user(
             "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
             "csrf_token": csrf,
             "user_id": uid,
+            "user_uuid": _user_uuid(user),
             "created_at_utc": _now_iso(),
             "expires_at": now + ttl,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
@@ -2338,6 +2776,374 @@ def create_session_for_user(
         "user": public,
         "needs_google": user_needs_google(user),
         "impersonating": bool(impersonator_owner_id),
+    }
+
+
+def email_auth_status() -> Dict[str, Any]:
+    test_backend = bool(runtime_env.is_development() and runtime_env.test_auth_enabled())
+    configured_provider = str(os.environ.get("NTA_EMAIL_AUTH_PROVIDER") or "").strip().lower()
+    return {
+        "available": test_backend,
+        "operational": test_backend,
+        "provider": "development_test" if test_backend else (configured_provider or "unconfigured"),
+        "test_backend": test_backend,
+        "production_ready": False,
+        "code": "ok" if test_backend else "transactional_provider_not_configured",
+    }
+
+
+def _email_code_hash(challenge_id: str, salt: str, code: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        str(code or "").encode("ascii", errors="ignore"),
+        (str(challenge_id) + ":" + str(salt)).encode("utf-8"),
+        120_000,
+    ).hex()
+
+
+def start_email_auth(
+    email: Any,
+    *,
+    ip: str,
+    user_agent: str = "",
+    purpose: str = "login",
+    actor_user_id: Any = 0,
+) -> Dict[str, Any]:
+    status = email_auth_status()
+    if not status["available"]:
+        raise AccountAuthError(
+            "Email login недоступен: transactional provider не настроен.",
+            503,
+            code="email_provider_unavailable",
+        )
+    _login_rate(ip)
+    normalized = _valid_email(email)
+    purpose_id = str(purpose or "login").strip().lower()
+    if purpose_id not in {"login", "link"}:
+        raise AccountAuthError("Недопустимая цель email challenge.")
+    try:
+        actor_id = int(actor_user_id or 0)
+    except (TypeError, ValueError):
+        actor_id = 0
+    if purpose_id == "link" and actor_id <= 0:
+        raise AccountAuthError("Для привязки email требуется активная сессия.", 401)
+    challenge_id = secrets.token_urlsafe(24)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    salt = secrets.token_hex(16)
+    magic_token = secrets.token_urlsafe(32)
+    with _LOCK:
+        doc = _read_doc()
+        _cleanup(doc)
+        actor = _user(doc, actor_id) if actor_id else None
+        if purpose_id == "link" and (not actor or actor.get("status") != "active"):
+            raise AccountAuthError("Аккаунт для привязки email не активен.", 403)
+        doc["challenges"].append({
+            "challenge_id": challenge_id,
+            "kind": "provider_auth",
+            "provider": "email",
+            "purpose": purpose_id,
+            "provider_subject": normalized,
+            "status": "email_code_sent",
+            "user_id": actor_id or None,
+            "user_uuid": _user_uuid(actor) if actor else "",
+            "code_salt": salt,
+            "code_hash": _email_code_hash(challenge_id, salt, code),
+            "magic_token_hash": hashlib.sha256(magic_token.encode("utf-8")).hexdigest(),
+            "attempts": 0,
+            "created_at_utc": _now_iso(),
+            "expires_at": time.time() + EMAIL_CHALLENGE_TTL_SEC,
+            "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
+            "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
+        })
+        _write_doc(doc)
+    _audit(
+        "email_auth_started",
+        user_id=actor_id,
+        ip=ip,
+        extra={"purpose": purpose_id, "email_hash": hashlib.sha256(normalized.encode()).hexdigest()},
+    )
+    # Test credentials are disclosed only behind the explicit Development test
+    # auth gate. A real provider integration must deliver them out-of-band.
+    return {
+        "ok": True,
+        "challenge_id": challenge_id,
+        "status": "email_code_sent",
+        "expires_in_sec": EMAIL_CHALLENGE_TTL_SEC,
+        "delivery": "development_test",
+        "test_code": code,
+        "test_magic_token": magic_token,
+    }
+
+
+def _email_challenge_verified(
+    challenge: Dict[str, Any], *, code: Any = "", magic_token: Any = "",
+) -> bool:
+    supplied_magic = str(magic_token or "").strip()
+    if supplied_magic:
+        return hmac.compare_digest(
+            str(challenge.get("magic_token_hash") or ""),
+            hashlib.sha256(supplied_magic.encode("utf-8")).hexdigest(),
+        )
+    supplied_code = str(code or "").strip()
+    if not re.fullmatch(r"[0-9]{6}", supplied_code):
+        return False
+    expected = _email_code_hash(
+        str(challenge.get("challenge_id") or ""),
+        str(challenge.get("code_salt") or ""),
+        supplied_code,
+    )
+    return hmac.compare_digest(str(challenge.get("code_hash") or ""), expected)
+
+
+def _new_external_user(
+    doc: Dict[str, Any], *, provider: str, first_name: str, last_name: str,
+    email: str,
+) -> Dict[str, Any]:
+    legacy_id = _allocate_external_legacy_user_id(doc)
+    now = _now_iso()
+    user = {
+        "user_id": legacy_id,
+        "legacy_user_id": legacy_id,
+        "user_uuid": auth_identity.new_user_uuid(),
+        "username": "",
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "email_verified_at_utc": now,
+        "phone": "",
+        "phone_hash": "",
+        "role": "read_only",
+        "status": "pending",
+        "is_owner": False,
+        "primary_login_provider": provider,
+        "identity_verified_via": provider,
+        "created_at_utc": now,
+        "approved_at_utc": "",
+        "revoked_at_utc": "",
+        "terms_accepted_at_utc": now,
+        "terms_version": legal.TERMS_VERSION,
+    }
+    doc["users"].append(user)
+    return user
+
+
+def verify_email_auth(
+    challenge_id: Any,
+    *,
+    code: Any = "",
+    magic_token: Any = "",
+    profile: Optional[Dict[str, Any]] = None,
+    ip: str,
+    user_agent: str = "",
+    actor_user_id: Any = 0,
+    api_call: Optional[Callable[..., Any]] = None,
+    owner_chat_id: str = "",
+) -> Dict[str, Any]:
+    profile = profile if isinstance(profile, dict) else {}
+    cid = str(challenge_id or "")
+    try:
+        actor_id = int(actor_user_id or 0)
+    except (TypeError, ValueError):
+        actor_id = 0
+    notify: Optional[Tuple[Dict[str, Any], str]] = None
+    active_uid = 0
+    verified_uid = 0
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(doc, challenge_id=cid, statuses=("email_code_sent",))
+        if challenge is None or str(challenge.get("provider") or "") != "email":
+            raise AccountAuthError("Email challenge истёк или уже использован.", 410)
+        challenge["attempts"] = int(challenge.get("attempts") or 0) + 1
+        if challenge["attempts"] > EMAIL_MAX_ATTEMPTS or not _email_challenge_verified(
+            challenge, code=code, magic_token=magic_token,
+        ):
+            if challenge["attempts"] >= EMAIL_MAX_ATTEMPTS:
+                challenge["status"] = "denied"
+            _write_doc(doc)
+            raise AccountAuthError("Неверный или истёкший email code.", 401, code="email_code_invalid")
+        email = auth_identity.normalize_subject("email", challenge.get("provider_subject"))
+        purpose = str(challenge.get("purpose") or "login")
+        if purpose == "link":
+            expected_actor = int(challenge.get("user_id") or 0)
+            if actor_id <= 0 or actor_id != expected_actor:
+                raise AccountAuthError("Чужой email link challenge.", 403)
+            user = _user(doc, actor_id)
+            if not user or user.get("status") != "active":
+                raise AccountAuthError("Аккаунт не активен.", 403)
+            _link_identity_in_doc(
+                doc, user, provider="email", subject=email,
+                verified_at_utc=_now_iso(), metadata={"email": email}, source="email_otp_link",
+            )
+            user["email_verified_at_utc"] = _now_iso()
+            if not str(user.get("email") or "").strip():
+                user["email"] = email
+            _sync_user_identity_summary(doc, user)
+            challenge["status"] = "consumed"
+            _write_doc(doc)
+            public = _public_user(user, include_contact=True, include_avatar=True)
+            _audit("email_linked", user_id=actor_id, ip=ip)
+            return {"ok": True, "status": "linked", "user": public}
+
+        identity = _identity(doc, "email", email)
+        user = _user_by_uuid(doc, identity.get("user_uuid")) if identity else None
+        if user is None:
+            if not bool(profile.get("accept_terms")):
+                raise AccountAuthError("Необходимо принять условия использования.")
+            first_name = _clean_name(profile.get("first_name"), "Имя")
+            last_name = _clean_name(profile.get("last_name"), "Фамилия")
+            user = _new_external_user(
+                doc, provider="email", first_name=first_name,
+                last_name=last_name, email=email,
+            )
+            _link_identity_in_doc(
+                doc, user, provider="email", subject=email,
+                verified_at_utc=_now_iso(), metadata={"email": email}, source="email_otp_login",
+            )
+            notify = (dict(user), cid)
+        elif user.get("status") in {"revoked", "denied", "blocked", "deleted"}:
+            challenge["status"] = "account_blocked"
+            _write_doc(doc)
+            raise AccountAuthError("Доступ к аккаунту ограничен владельцем.", 403)
+        else:
+            _link_identity_in_doc(
+                doc, user, provider="email", subject=email,
+                verified_at_utc=_now_iso(), metadata={"email": email}, source="email_otp_login",
+            )
+            user["email_verified_at_utc"] = user.get("email_verified_at_utc") or _now_iso()
+        challenge["user_id"] = int(user.get("user_id") or 0)
+        challenge["user_uuid"] = _user_uuid(user)
+        verified_uid = int(user.get("user_id") or 0)
+        _sync_user_identity_summary(doc, user)
+        if user.get("status") == "active":
+            challenge["status"] = "login_approved"
+            active_uid = int(user.get("user_id") or 0)
+        else:
+            challenge["status"] = "pending_owner"
+            challenge["expires_at"] = time.time() + OWNER_APPROVAL_TTL_SEC
+        public = _public_user(user, include_contact=True, include_avatar=True)
+        _write_doc(doc)
+    if notify and api_call is not None:
+        try:
+            _send_owner_approval(api_call, owner_chat_id, notify[0], notify[1])
+        except Exception:
+            pass
+    if active_uid:
+        return create_session_for_challenge(cid, ip=ip, user_agent=user_agent)
+    _audit("email_identity_verified", user_id=verified_uid, ip=ip)
+    state = login_state(cid)
+    state["user"] = public
+    return state
+
+
+def login_via_google_identity(
+    *,
+    google_sub: Any,
+    google_email: Any,
+    google_name: Any = "",
+    email_verified: bool,
+    accept_terms: bool,
+    ip: str,
+    user_agent: str = "",
+    api_call: Optional[Callable[..., Any]] = None,
+    owner_chat_id: str = "",
+) -> Dict[str, Any]:
+    sub = str(google_sub or "").strip()
+    if not sub:
+        raise AccountAuthError("Google identity не содержит subject.", 400)
+    if not email_verified:
+        raise AccountAuthError("Email Google не подтверждён.", 403)
+    email = _valid_email(google_email)
+    notify: Optional[Tuple[Dict[str, Any], str]] = None
+    active_uid = 0
+    with _LOCK:
+        doc = _read_doc()
+        identity = _identity(doc, "google", sub)
+        user = _user_by_uuid(doc, identity.get("user_uuid")) if identity else None
+        if user is None:
+            if not accept_terms:
+                raise AccountAuthError("Необходимо принять условия использования.")
+            parts = " ".join(str(google_name or "").strip().split()).split(" ")
+            local = email.split("@", 1)[0]
+            first_name = _clean_name(parts[0] if parts and parts[0] else local, "Имя")
+            last_name = _clean_name(" ".join(parts[1:]) if len(parts) > 1 else "—", "Фамилия")
+            user = _new_external_user(
+                doc, provider="google", first_name=first_name,
+                last_name=last_name, email=email,
+            )
+            user["google_sub"] = sub
+            user["google_email"] = email
+            user["google_name"] = str(google_name or "")[:120]
+            user["google_linked_at_utc"] = _now_iso()
+            user["google_link_source"] = "google_login"
+            _link_identity_in_doc(
+                doc, user, provider="google", subject=sub,
+                verified_at_utc=_now_iso(),
+                metadata={"email": email, "name": str(google_name or "")[:120]},
+                source="google_login",
+            )
+            challenge_id = secrets.token_urlsafe(24)
+            doc["challenges"].append({
+                "challenge_id": challenge_id,
+                "code": "",
+                "status": "pending_owner",
+                "kind": "provider_auth",
+                "provider": "google",
+                "purpose": "login",
+                "user_id": int(user["user_id"]),
+                "user_uuid": _user_uuid(user),
+                "created_at_utc": _now_iso(),
+                "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
+            })
+            notify = (dict(user), challenge_id)
+        elif user.get("status") in {"revoked", "denied", "blocked", "deleted"}:
+            raise AccountAuthError("Доступ к аккаунту ограничен владельцем.", 403)
+        else:
+            user["google_sub"] = sub
+            user["google_email"] = email
+            user["google_name"] = str(google_name or user.get("google_name") or "")[:120]
+            user["google_linked_at_utc"] = user.get("google_linked_at_utc") or _now_iso()
+            user["email_verified_at_utc"] = user.get("email_verified_at_utc") or _now_iso()
+            _link_identity_in_doc(
+                doc, user, provider="google", subject=sub,
+                verified_at_utc=_now_iso(),
+                metadata={"email": email, "name": str(google_name or "")[:120]},
+                source="google_login",
+            )
+            if user.get("status") == "active":
+                active_uid = int(user.get("user_id") or 0)
+                challenge_id = ""
+            else:
+                challenge_id = secrets.token_urlsafe(24)
+                doc["challenges"].append({
+                    "challenge_id": challenge_id,
+                    "code": "",
+                    "status": "pending_owner",
+                    "kind": "provider_auth",
+                    "provider": "google",
+                    "purpose": "login",
+                    "user_id": int(user["user_id"]),
+                    "user_uuid": _user_uuid(user),
+                    "created_at_utc": _now_iso(),
+                    "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
+                })
+        _sync_user_identity_summary(doc, user)
+        _write_doc(doc)
+    if notify and api_call is not None:
+        try:
+            _send_owner_approval(api_call, owner_chat_id, notify[0], notify[1])
+        except Exception:
+            pass
+    if active_uid:
+        return create_session_for_user(
+            active_uid, ip=ip, user_agent=user_agent,
+            source="google_login", require_google=False,
+        )
+    _audit("google_login_pending", user_id=int(user.get("user_id") or 0), ip=ip)
+    return {
+        "ok": True,
+        "status": "pending_owner",
+        "challenge_id": challenge_id,
+        "user": _public_user(user, include_contact=True, include_avatar=True),
     }
 
 
@@ -2376,6 +3182,8 @@ def create_or_update_virtual_user(
         if user is None:
             user = {
                 "user_id": uid,
+                "legacy_user_id": uid,
+                "user_uuid": auth_identity.new_user_uuid(),
                 "username": str(username or f"virtual_{uid}")[:64],
                 "first_name": str(first_name or "Virtual")[:80],
                 "last_name": str(last_name or "")[:80],
@@ -2389,6 +3197,7 @@ def create_or_update_virtual_user(
                 "approved_at_utc": _now_iso() if status_id == "active" else "",
                 "revoked_at_utc": "",
                 "is_virtual": bool(virtual),
+                "primary_login_provider": "test",
                 "virtual_preset": str(preset or "")[:40],
                 "ux_mode": mode,
             }
@@ -2420,12 +3229,32 @@ def create_or_update_virtual_user(
             user["google_email"] = str(google_email or email or f"virtual{uid}@staging.stratforge.local").lower()
             user["google_linked_at_utc"] = user.get("google_linked_at_utc") or _now_iso()
             user["google_link_source"] = "test_auth"
+            _link_identity_in_doc(
+                doc, user, provider="google", subject=user["google_sub"],
+                verified_at_utc=str(user.get("google_linked_at_utc") or _now_iso()),
+                metadata={"email": user["google_email"]}, source="test_auth",
+            )
         else:
             user["google_sub"] = ""
             user["google_email"] = ""
             user["google_linked_at_utc"] = ""
+            canonical = _user_uuid(user)
+            doc["auth_identities"] = [
+                row for row in _identity_rows(doc)
+                if not (
+                    isinstance(row, dict)
+                    and hmac.compare_digest(auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical)
+                    and str(row.get("provider") or "") == "google"
+                )
+            ]
+        _link_identity_in_doc(
+            doc, user, provider="test", subject=f"virtual-{uid}",
+            verified_at_utc=str(user.get("created_at_utc") or _now_iso()),
+            source="test_auth",
+        )
+        _sync_user_identity_summary(doc, user)
         _write_doc(doc)
-        public = _public_user(user, include_contact=True, include_avatar=True)
+        public = _public_user(user, include_contact=True, include_avatar=True, include_legacy=True)
     _audit("virtual_user_upsert", user_id=uid, extra={"preset": preset, "ux_mode": mode})
     return public
 
@@ -2435,7 +3264,7 @@ def list_virtual_users() -> list[Dict[str, Any]]:
     with _LOCK:
         doc = _read_doc()
         return [
-            _public_user(user, include_contact=True)
+            _public_user(user, include_contact=True, include_legacy=True)
             for user in doc.get("users") or []
             if user.get("is_virtual")
         ]

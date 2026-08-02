@@ -108,6 +108,13 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _uuid(value: Any) -> Optional[str]:
+    try:
+        return str(uuid.UUID(str(value or "")))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _timestamp(value: Any) -> Optional[datetime]:
     if value in (None, "", 0, 0.0):
         return None
@@ -308,35 +315,109 @@ class DocumentRepository:
     def _sync_auth(self, conn: Any, doc: Dict[str, Any]) -> None:
         users = [row for row in doc.get("users", []) if isinstance(row, dict) and _int(row.get("user_id")) > 0]
         user_ids = [_int(row["user_id"]) for row in users]
+        user_uuids: Dict[int, str] = {}
+        identity_ids: list[str] = []
         for row in users:
             user_id = _int(row["user_id"])
+            user_uuid = _uuid(row.get("user_uuid"))
+            if not user_uuid:
+                raise StorageConstraintError("Auth user UUID is required during the identity transition.")
+            user_uuids[user_id] = user_uuid
             conn.execute(
                 """
-                INSERT INTO sf_users(user_id,status,is_owner,document,created_at,updated_at)
-                VALUES(%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),clock_timestamp())
-                ON CONFLICT(user_id) DO UPDATE SET status=EXCLUDED.status,
+                INSERT INTO sf_users(user_id,user_uuid,status,is_owner,document,created_at,updated_at)
+                VALUES(%s,%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),clock_timestamp())
+                ON CONFLICT(user_id) DO UPDATE SET user_uuid=EXCLUDED.user_uuid,
+                  status=EXCLUDED.status,
                   is_owner=EXCLUDED.is_owner,document=EXCLUDED.document,updated_at=clock_timestamp()
                 """,
-                (user_id, _status(row.get("status"), {"pending","active","blocked","revoked","deleted"}, "active"),
+                (user_id, user_uuid,
+                 _status(row.get("status"), {"pending","active","blocked","revoked","deleted"}, "active"),
                  bool(row.get("is_owner") or str(row.get("role") or "").lower() == "owner"),
                  _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
+        for row in [item for item in doc.get("auth_identities", []) if isinstance(item, dict)]:
+            provider = str(row.get("provider") or "").strip().lower()
+            if provider not in {"telegram", "google", "email"}:
+                continue
+            identity_id = _uuid(row.get("identity_id"))
+            user_uuid = _uuid(row.get("user_uuid"))
+            legacy_user_id = _int(row.get("legacy_user_id"))
+            subject = str(row.get("provider_subject") or "").strip()
+            if not identity_id or not user_uuid or not subject or user_uuids.get(legacy_user_id) != user_uuid:
+                raise StorageConstraintError("Auth identity does not match its canonical user UUID.")
+            identity_ids.append(identity_id)
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            normalized_email = str(metadata.get("email") or "").strip().lower() or None
+            persisted = conn.execute(
+                """
+                INSERT INTO sf_auth_identities(
+                  identity_id,user_uuid,legacy_user_id,provider,provider_subject,
+                  normalized_email,verified_at,linked_at,last_used_at,revoked_at,document
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),%s,%s,%s)
+                ON CONFLICT (provider, provider_subject) DO UPDATE SET
+                  legacy_user_id=EXCLUDED.legacy_user_id,
+                  normalized_email=EXCLUDED.normalized_email,
+                  verified_at=EXCLUDED.verified_at,
+                  linked_at=EXCLUDED.linked_at,
+                  last_used_at=EXCLUDED.last_used_at,
+                  revoked_at=EXCLUDED.revoked_at,
+                  document=EXCLUDED.document
+                WHERE sf_auth_identities.user_uuid=EXCLUDED.user_uuid
+                RETURNING user_uuid
+                """,
+                (
+                    identity_id, user_uuid, legacy_user_id, provider, subject,
+                    normalized_email, _timestamp(row.get("verified_at_utc")),
+                    _timestamp(row.get("linked_at_utc")), _timestamp(row.get("last_used_at_utc")),
+                    _timestamp(row.get("revoked_at_utc")), _jsonb(row),
+                ),
+            ).fetchone()
+            if not persisted or _uuid(persisted.get("user_uuid")) != user_uuid:
+                raise StorageConstraintError(
+                    "Provider identity is already linked to a different UUID user."
+                )
+        if user_ids:
+            conn.execute(
+                """
+                UPDATE sf_auth_identities
+                SET revoked_at=clock_timestamp(),
+                    document=document || jsonb_build_object('revoked_reason', 'source_unlinked')
+                WHERE legacy_user_id = ANY(%s)
+                  AND revoked_at IS NULL
+                  AND NOT (identity_id = ANY(%s))
+                """,
+                (user_ids, identity_ids),
+            )
+            conn.execute(
+                "DELETE FROM sf_auth_identities WHERE NOT (legacy_user_id = ANY(%s))",
+                (user_ids,),
+            )
+        else:
+            conn.execute("DELETE FROM sf_auth_identities")
         challenges = [row for row in doc.get("challenges", []) if isinstance(row, dict)]
         challenge_ids: list[str] = []
         for row in challenges:
             key = str(row.get("challenge_id") or _stable_key("challenge", row))[:160]
             challenge_ids.append(key)
             user_id = _int(row.get("user_id")) or None
+            user_uuid = _uuid(row.get("user_uuid")) or user_uuids.get(user_id or 0)
             conn.execute(
                 """
-                INSERT INTO sf_auth_challenges(challenge_id,user_id,expires_at,consumed,document)
-                VALUES(%s,%s,%s,%s,%s)
+                INSERT INTO sf_auth_challenges(challenge_id,user_id,user_uuid,expires_at,consumed,document)
+                VALUES(%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(challenge_id) DO UPDATE SET user_id=EXCLUDED.user_id,
+                  user_uuid=EXCLUDED.user_uuid,
                   expires_at=EXCLUDED.expires_at,consumed=EXCLUDED.consumed,document=EXCLUDED.document
                 """,
-                (key, user_id, _timestamp(row.get("expires_at")), bool(row.get("consumed")), _jsonb(row)),
+                (key, user_id, user_uuid, _timestamp(row.get("expires_at")),
+                 bool(row.get("consumed")), _jsonb(row)),
             )
-        sessions = [row for row in doc.get("sessions", []) if isinstance(row, dict) and _int(row.get("user_id")) > 0]
+        sessions = [
+            row for row in doc.get("sessions", [])
+            if isinstance(row, dict) and _int(row.get("user_id")) > 0
+        ]
         session_ids: list[str] = []
         for row in sessions:
             token_hash = str(row.get("token_hash") or "").lower()
@@ -344,16 +425,29 @@ class DocumentRepository:
                 raise StorageConstraintError("Auth session token hash is invalid.")
             key = str(row.get("session_id") or f"sess_{token_hash[:32]}")[:160]
             session_ids.append(key)
+            user_id = _int(row["user_id"])
+            user_uuid = _uuid(row.get("user_uuid")) or user_uuids.get(user_id)
+            if not user_uuid:
+                raise StorageConstraintError("Auth session UUID is required during the identity transition.")
             conn.execute(
                 """
-                INSERT INTO sf_auth_sessions(session_id,user_id,token_hash,revoked,expires_at,document,updated_at)
-                VALUES(%s,%s,%s,%s,%s,%s,clock_timestamp())
-                ON CONFLICT(session_id) DO UPDATE SET user_id=EXCLUDED.user_id,
-                  token_hash=EXCLUDED.token_hash,revoked=EXCLUDED.revoked,
-                  expires_at=EXCLUDED.expires_at,document=EXCLUDED.document,updated_at=clock_timestamp()
+                INSERT INTO sf_auth_sessions(
+                  session_id,user_id,user_uuid,token_hash,revoked,expires_at,document,updated_at
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,clock_timestamp())
+                ON CONFLICT(session_id) DO UPDATE SET
+                  user_id=EXCLUDED.user_id,
+                  user_uuid=EXCLUDED.user_uuid,
+                  token_hash=EXCLUDED.token_hash,
+                  revoked=EXCLUDED.revoked,
+                  expires_at=EXCLUDED.expires_at,
+                  document=EXCLUDED.document,
+                  updated_at=clock_timestamp()
                 """,
-                (key, _int(row["user_id"]), token_hash, bool(row.get("revoked")),
-                 _timestamp(row.get("expires_at")), _jsonb(row)),
+                (
+                    key, user_id, user_uuid, token_hash, bool(row.get("revoked")),
+                    _timestamp(row.get("expires_at")), _jsonb(row),
+                ),
             )
         self._delete_missing(conn, "sf_auth_challenges", "challenge_id", challenge_ids)
         self._delete_missing(conn, "sf_auth_sessions", "session_id", session_ids)

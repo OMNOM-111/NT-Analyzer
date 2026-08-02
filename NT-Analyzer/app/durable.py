@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from . import runtime_env
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_DB_NAME = "nt_analyzer.sqlite3"
 _LOCK = threading.RLock()
 
@@ -90,6 +90,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           scope_id TEXT NOT NULL DEFAULT '',
           conversation_id TEXT NOT NULL,
           user_id TEXT NOT NULL DEFAULT '',
+                    user_uuid TEXT NOT NULL DEFAULT '',
           workspace_id TEXT NOT NULL DEFAULT '',
           membership_role TEXT NOT NULL DEFAULT '',
           title TEXT NOT NULL DEFAULT '',
@@ -154,6 +155,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     ):
         if name not in worker_columns:
             conn.execute(f"ALTER TABLE worker_jobs ADD COLUMN {name} {definition}")
+    chat_columns = {
+        str(row["name"]) for row in conn.execute("PRAGMA table_info(chat_conversations)").fetchall()
+    }
+    if "user_uuid" not in chat_columns:
+        conn.execute("ALTER TABLE chat_conversations ADD COLUMN user_uuid TEXT NOT NULL DEFAULT ''")
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
         (str(SCHEMA_VERSION),),
@@ -340,12 +346,13 @@ def record_chat_conversation(root: Optional[Path], payload: Dict[str, Any]) -> D
             conn.execute(
                 """
                 INSERT INTO chat_conversations(
-                  scope_id, conversation_id, user_id, workspace_id,
+                                    scope_id, conversation_id, user_id, user_uuid, workspace_id,
                   membership_role, title, message_count, work_state, closed,
                   created_at_utc, updated_at_utc, path
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(scope_id, conversation_id) DO UPDATE SET
                   user_id=excluded.user_id,
+                                    user_uuid=excluded.user_uuid,
                   workspace_id=excluded.workspace_id,
                   membership_role=excluded.membership_role,
                   title=excluded.title,
@@ -360,6 +367,7 @@ def record_chat_conversation(root: Optional[Path], payload: Dict[str, Any]) -> D
                     scope_id,
                     conversation_id,
                     str(payload.get("user_id") or ""),
+                    str(payload.get("user_uuid") or ""),
                     str(payload.get("workspace_id") or ""),
                     str(payload.get("membership_role") or ""),
                     str(payload.get("title") or ""),

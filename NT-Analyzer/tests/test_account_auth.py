@@ -7,12 +7,15 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from http.server import ThreadingHTTPServer
 
 import pytest
 
 from app import account_auth, permissions, secure_store, workspaces
 from app import server as server_mod
+from app.production_storage import MigrationRunner
+from app.production_storage.core import DocumentRepository
 
 
 @pytest.fixture
@@ -468,7 +471,7 @@ def test_register_via_telegram_waits_for_owner(auth_store) -> None:
         {"id": 42, "first_name": "Ada", "username": "ada"},
         email="ada@example.com", accept_terms=True, api_call=api, owner_chat_id="999")
     assert out["status"] == "pending_owner" and out["authenticated"] is False
-    assert out["user"]["user_id"] == 42 and out["user"]["status"] == "pending"
+    assert uuid.UUID(out["user"]["id"]) and out["user"]["status"] == "pending"
     assert out["challenge_id"]
     assert account_auth.find_active_user(42) is None
     # Owner gets allow/deny buttons.
@@ -538,7 +541,425 @@ def test_foreign_dpapi_account_store_is_quarantined(auth_store, monkeypatch) -> 
 
     doc = account_auth._read_doc()
 
-    assert doc == {"version": 2, "users": [], "challenges": [], "sessions": []}
+    assert doc == account_auth._default_doc()
     assert not path.exists()
     assert list(path.parent.glob("accounts.dpapi.unreadable-*.bak"))
     assert (path.parent / "accounts.dpapi.recovery.json").is_file()
+
+
+def test_uuid_backfill_keeps_legacy_account_and_session_references(auth_store) -> None:
+    token = "x" * 64
+    legacy = {
+        "version": 2,
+        "users": [{
+            "user_id": 42,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.com",
+            "role": "read_only",
+            "status": "active",
+            "is_owner": False,
+            "created_at_utc": "2026-08-01T00:00:00Z",
+        }],
+        "challenges": [{"challenge_id": "legacy-challenge", "user_id": 42}],
+        "sessions": [{
+            "session_id": "sess_legacy",
+            "user_id": 42,
+            "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+            "expires_at": time.time() + 3600,
+            "revoked": False,
+        }],
+    }
+    path = account_auth._store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encrypted = secure_store._protect(json.dumps(legacy).encode("utf-8"))
+    path.write_bytes(account_auth._MAGIC + base64.b64encode(encrypted))
+
+    migrated = account_auth._read_doc()
+    user = migrated["users"][0]
+    user_uuid = str(uuid.UUID(str(user["user_uuid"])))
+
+    assert user["user_id"] == 42
+    assert user["legacy_user_id"] == 42
+    assert user["first_name"] == "Ada"
+    assert user["last_name"] == "Lovelace"
+    assert migrated["sessions"][0]["user_id"] == 42
+    assert migrated["sessions"][0]["user_uuid"] == user_uuid
+    assert migrated["challenges"][0]["user_uuid"] == user_uuid
+    assert [(row["provider"], row["provider_subject"]) for row in migrated["auth_identities"]] == [
+        ("telegram", "42"),
+    ]
+    assert account_auth.authenticate_session(token)["user_uuid"] == user_uuid
+    assert account_auth._read_doc() == migrated
+    assert path.with_name(path.name + ".identity-v2-backup").is_file()
+
+
+def test_phase3_identity_expand_migration_is_non_destructive() -> None:
+    migrations = {row["version"]: row for row in MigrationRunner.migrations()}
+
+    assert 5 in migrations
+    sql = str(migrations[5]["sql"]).lower()
+    assert "drop " not in sql
+    assert "create table if not exists sf_auth_identities" in sql
+    assert "on conflict (provider, provider_subject)" in sql
+    assert "update sf_users" in sql
+    for table in (
+        "sf_auth_sessions",
+        "sf_workspaces",
+        "sf_workspace_memberships",
+        "sf_connector_installations",
+        "sf_entitlements",
+        "sf_audit_events",
+    ):
+        assert f"alter table {table}" in sql
+    assert "'sf_audit_events', 'sf_artifacts'" in sql
+    assert "sf_identity_dual_write_' || table_name" in sql
+    assert "sf_identity_' || table_name || '_user_uuid_fk" in sql
+
+
+def test_phase3_auth_storage_sync_dual_writes_uuid_identity() -> None:
+    user_uuid = str(uuid.uuid4())
+    identity_id = str(uuid.uuid4())
+
+    class RecordingResult:
+        def __init__(self, row=None) -> None:
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def execute(self, statement, parameters=()):
+            normalized = " ".join(str(statement).split())
+            values = tuple(parameters or ())
+            self.calls.append((normalized, values))
+            if "INSERT INTO sf_auth_identities" in normalized:
+                return RecordingResult({"user_uuid": user_uuid})
+            return RecordingResult()
+
+    document = {
+        "users": [{
+            "user_id": 42,
+            "user_uuid": user_uuid,
+            "status": "active",
+            "is_owner": False,
+        }],
+        "auth_identities": [{
+            "identity_id": identity_id,
+            "user_uuid": user_uuid,
+            "legacy_user_id": 42,
+            "provider": "telegram",
+            "provider_subject": "42",
+            "linked_at_utc": "2026-08-02T00:00:00Z",
+            "verified_at_utc": "2026-08-02T00:00:00Z",
+            "metadata": {},
+        }],
+        "challenges": [{"challenge_id": "challenge_phase3", "user_id": 42, "user_uuid": user_uuid}],
+        "sessions": [{
+            "session_id": "sess_phase3",
+            "user_id": 42,
+            "user_uuid": user_uuid,
+            "token_hash": hashlib.sha256(b"phase3").hexdigest(),
+            "expires_at": time.time() + 3600,
+        }],
+    }
+    connection = RecordingConnection()
+    repository = object.__new__(DocumentRepository)
+
+    repository._sync_auth(connection, document)
+
+    user_insert = next(statement for statement in connection.calls if "INSERT INTO sf_users" in statement[0])
+    identity_insert = next(statement for statement in connection.calls if "INSERT INTO sf_auth_identities" in statement[0])
+    challenge_insert = next(statement for statement in connection.calls if "INSERT INTO sf_auth_challenges" in statement[0])
+    session_insert = next(statement for statement in connection.calls if "INSERT INTO sf_auth_sessions" in statement[0])
+    assert "user_uuid" in user_insert[0] and user_uuid in user_insert[1]
+    assert "user_uuid" in identity_insert[0] and user_uuid in identity_insert[1]
+    assert "user_uuid" in challenge_insert[0] and user_uuid in challenge_insert[1]
+    assert "user_uuid" in session_insert[0] and user_uuid in session_insert[1]
+
+
+def test_phase3_auth_storage_sync_soft_revokes_unlinked_provider_identity(auth_store) -> None:
+    user_uuid = str(uuid.uuid4())
+    telegram_identity_id = str(uuid.uuid4())
+    google_identity_id = str(uuid.uuid4())
+
+    class RecordingResult:
+        def fetchone(self):
+            return {"user_uuid": user_uuid}
+
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def execute(self, statement, parameters=()):
+            self.calls.append((" ".join(str(statement).split()), tuple(parameters or ())))
+            return RecordingResult()
+
+    account_auth._write_doc({
+        "version": 3,
+        "users": [
+            {
+                "user_id": 999, "legacy_user_id": 999,
+                "user_uuid": str(uuid.uuid4()), "first_name": "Owner",
+                "status": "active", "is_owner": True,
+            },
+            {
+                "user_id": 42, "legacy_user_id": 42, "user_uuid": user_uuid,
+                "first_name": "Ada", "status": "active", "is_owner": False,
+                "google_sub": "google-ada",
+            },
+        ],
+        "auth_identities": [
+            {
+                "identity_id": telegram_identity_id, "user_uuid": user_uuid,
+                "legacy_user_id": 42, "provider": "telegram", "provider_subject": "42",
+                "linked_at_utc": "2026-08-02T00:00:00Z", "metadata": {},
+            },
+            {
+                "identity_id": google_identity_id, "user_uuid": user_uuid,
+                "legacy_user_id": 42, "provider": "google", "provider_subject": "google-ada",
+                "linked_at_utc": "2026-08-02T00:00:00Z", "metadata": {},
+            },
+        ],
+        "challenges": [], "sessions": [],
+    })
+    account_auth.unlink_google_identity(999, 42)
+    connection = RecordingConnection()
+
+    object.__new__(DocumentRepository)._sync_auth(connection, account_auth._read_doc())
+
+    revoke = next(
+        (statement, values)
+        for statement, values in connection.calls
+        if "UPDATE sf_auth_identities" in statement and "revoked_at" in statement
+    )
+    assert "NOT (identity_id = ANY(%s))" in revoke[0]
+    assert 42 in revoke[1][0]
+    assert telegram_identity_id in revoke[1][1]
+    assert google_identity_id not in revoke[1][1]
+
+
+def test_phase3_public_user_uses_uuid_without_legacy_identity(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    document = account_auth._read_doc()
+    user = account_auth._user(document, 42)
+    assert user is not None
+
+    public = account_auth._public_user(user, include_contact=True)
+    admin = next(row for row in account_auth.list_users(999)["users"] if row["user_id"] == 42)
+
+    assert str(uuid.UUID(public["id"])) == public["id"]
+    assert "user_id" not in public
+    assert "legacy_user_id" not in public
+    assert "telegram_user_id" not in public
+    assert admin["user_id"] == 42
+    assert admin["legacy_user_id"] == 42
+
+
+def test_phase3_email_otp_login_requires_approval_then_reuses_identity(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+
+    started = account_auth.start_email_auth("ada@example.com", ip="127.0.0.1")
+    pending = account_auth.verify_email_auth(
+        started["challenge_id"], code=started["test_code"],
+        profile={"first_name": "Ada", "last_name": "Lovelace", "accept_terms": True},
+        ip="127.0.0.1", user_agent="pytest", api_call=api, owner_chat_id="999",
+    )
+    assert pending["status"] == "pending_owner"
+    user_uuid = pending["user"]["id"]
+    allow = next(
+        button["callback_data"]
+        for _method, payload in calls
+        for row in (payload.get("reply_markup") or {}).get("inline_keyboard") or []
+        for button in row
+        if str(button.get("callback_data") or "").startswith("account_allow:")
+    )
+    assert account_auth.process_update({"callback_query": {
+        "id": "email-allow", "data": allow, "from": {"id": 999},
+    }}, api_call=api, owner_chat_id="999")
+
+    returning = account_auth.start_email_auth("ADA@example.com", ip="127.0.0.1")
+    authenticated = account_auth.verify_email_auth(
+        returning["challenge_id"], code=returning["test_code"],
+        ip="127.0.0.1", user_agent="pytest",
+    )
+    assert authenticated["status"] == "authenticated"
+    assert authenticated["user"]["id"] == user_uuid
+    assert account_auth.authenticate_session(authenticated["session_token"])["user_uuid"] == user_uuid
+
+
+def test_phase3_google_login_requires_approval_then_reuses_identity(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+
+    pending = account_auth.login_via_google_identity(
+        google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
+        email_verified=True, accept_terms=True, ip="127.0.0.1", user_agent="pytest",
+        api_call=api, owner_chat_id="999",
+    )
+    assert pending["status"] == "pending_owner"
+    user_uuid = pending["user"]["id"]
+    allow = next(
+        button["callback_data"]
+        for _method, payload in calls
+        for row in (payload.get("reply_markup") or {}).get("inline_keyboard") or []
+        for button in row
+        if str(button.get("callback_data") or "").startswith("account_allow:")
+    )
+    assert account_auth.process_update({"callback_query": {
+        "id": "google-allow", "data": allow, "from": {"id": 999},
+    }}, api_call=api, owner_chat_id="999")
+
+    authenticated = account_auth.login_via_google_identity(
+        google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
+        email_verified=True, accept_terms=False, ip="127.0.0.1", user_agent="pytest",
+    )
+    assert authenticated["status"] == "authenticated"
+    assert authenticated["user"]["id"] == user_uuid
+    assert {row["provider"] for row in authenticated["user"]["linked_providers"]} == {"google"}
+
+
+def test_phase3_same_email_does_not_merge_telegram_and_email_accounts(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    account_auth.ensure_owner(999)
+    account_auth.register_via_telegram(
+        {"id": 42, "first_name": "Ada", "username": "ada"},
+        email="shared@example.com", accept_terms=True, owner_chat_id="999",
+    )
+    telegram_user = account_auth._user(account_auth._read_doc(), 42)
+    assert telegram_user is not None
+
+    started = account_auth.start_email_auth("shared@example.com", ip="127.0.0.1")
+    pending = account_auth.verify_email_auth(
+        started["challenge_id"], code=started["test_code"],
+        profile={"first_name": "Ada", "last_name": "Email", "accept_terms": True},
+        ip="127.0.0.1", user_agent="pytest",
+    )
+
+    assert pending["status"] == "pending_owner"
+    assert pending["user"]["id"] != telegram_user["user_uuid"]
+    identities = account_auth._read_doc()["auth_identities"]
+    assert {(row["provider"], row["user_uuid"]) for row in identities if row["provider"] in {"telegram", "email"}} >= {
+        ("telegram", telegram_user["user_uuid"]),
+        ("email", pending["user"]["id"]),
+    }
+
+
+def test_phase3_google_link_keeps_account_uuid_and_rejects_owned_subject(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    user = account_auth._user(account_auth._read_doc(), 42)
+    assert user is not None
+    user_uuid = user["user_uuid"]
+    session = account_auth.create_session_for_user(
+        42, ip="127.0.0.1", user_agent="pytest", require_google=False,
+    )
+
+    linked = account_auth.link_google_identity(
+        42, google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
+    )
+
+    assert linked["user"]["id"] == user_uuid
+    assert account_auth.authenticate_session(session["session_token"])["user_uuid"] == user_uuid
+    assert {row["provider"] for row in linked["user"]["linked_providers"]} == {"google", "telegram"}
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.link_google_identity(
+            999, google_sub="google-ada", google_email="owner@gmail.example",
+        )
+    assert exc.value.status == 409
+    google_rows = [
+        row for row in account_auth._read_doc()["auth_identities"]
+        if row.get("provider") == "google" and row.get("provider_subject") == "google-ada"
+    ]
+    assert len(google_rows) == 1
+    assert google_rows[0]["user_uuid"] == user_uuid
+
+
+def test_phase3_email_link_otp_keeps_existing_account_uuid(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    _seed_owner_and_user(auth_store)
+    user = account_auth._user(account_auth._read_doc(), 42)
+    assert user is not None
+
+    started = account_auth.start_email_auth(
+        "ada.link@gmail.example", ip="127.0.0.1", purpose="link", actor_user_id=42,
+    )
+    linked = account_auth.verify_email_auth(
+        started["challenge_id"], code=started["test_code"], ip="127.0.0.1",
+        user_agent="pytest", actor_user_id=42,
+    )
+
+    assert linked["status"] == "linked"
+    assert linked["user"]["id"] == user["user_uuid"]
+    identities = account_auth._read_doc()["auth_identities"]
+    assert any(
+        row.get("provider") == "email"
+        and row.get("provider_subject") == "ada.link@gmail.example"
+        and row.get("user_uuid") == user["user_uuid"]
+        for row in identities
+    )
+
+
+def test_phase3_unlink_google_rejects_last_usable_login(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    pending = account_auth.login_via_google_identity(
+        google_sub="google-only", google_email="only@gmail.example", google_name="Only Google",
+        email_verified=True, accept_terms=True, ip="127.0.0.1", user_agent="pytest",
+    )
+    user_uuid = pending["user"]["id"]
+    user = next(
+        row for row in account_auth._read_doc()["users"] if row.get("user_uuid") == user_uuid
+    )
+    account_auth.set_user_status(999, user["user_id"], "active")
+
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.unlink_google_identity(999, user["user_id"])
+
+    assert exc.value.status == 409
+
+
+def test_phase3_relinked_google_identity_clears_durable_revocation(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+    user = account_auth._user(account_auth._read_doc(), 42)
+    assert user is not None
+    account_auth.link_google_identity(
+        42, google_sub="google-relink", google_email="relink@gmail.example",
+    )
+    account_auth.unlink_google_identity(999, 42)
+    account_auth.link_google_identity(
+        42, google_sub="google-relink", google_email="relink@gmail.example",
+    )
+
+    class RecordingResult:
+        def __init__(self, row=None) -> None:
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def execute(self, statement, parameters=()):
+            normalized = " ".join(str(statement).split())
+            values = tuple(parameters or ())
+            self.calls.append((normalized, values))
+            if "INSERT INTO sf_auth_identities" in normalized:
+                return RecordingResult({"user_uuid": values[1]})
+            return RecordingResult()
+
+    connection = RecordingConnection()
+    object.__new__(DocumentRepository)._sync_auth(connection, account_auth._read_doc())
+    google_insert = next(
+        (statement, values)
+        for statement, values in connection.calls
+        if "INSERT INTO sf_auth_identities" in statement and values[3] == "google"
+    )
+
+    assert "revoked_at=EXCLUDED.revoked_at" in google_insert[0]
+    assert google_insert[1][-2] is None

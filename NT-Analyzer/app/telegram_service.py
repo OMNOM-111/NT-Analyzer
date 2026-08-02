@@ -1858,6 +1858,9 @@ def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int =
             "is_owner": bool(user.get("is_owner")),
             "display_name": display_name,
         }
+        user_uuid = str(user.get("user_uuid") or "").strip()
+        if user_uuid:
+            scope["user_uuid"] = user_uuid
         # A named topic belongs to one user's private app dialogue.  The default
         # topic is workspace-shared by design, but a named owner dialogue must
         # never be exposed to another member of the same Telegram group.
@@ -1888,12 +1891,16 @@ def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int =
     if user_id <= 0 or not workspace_id:
         return None
     role = str(row.get("membership_role") or "").strip()
-    return {
+    scope = {
         "user_id": user_id,
         "workspace_id": workspace_id,
         "membership_role": role,
         "is_owner": role == "owner",
     }
+    user_uuid = str(row.get("user_uuid") or "").strip()
+    if user_uuid:
+        scope["user_uuid"] = user_uuid
+    return scope
 
 
 def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,

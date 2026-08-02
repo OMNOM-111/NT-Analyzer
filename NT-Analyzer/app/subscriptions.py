@@ -33,6 +33,7 @@ _LOCK = threading.RLock()
 # copies so callers cannot mutate privilege state without an explicit write.
 _DOC_CACHE_KEY: Optional[Tuple[str, int, int]] = None
 _DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
+ENTITLEMENT_STORE_VERSION = 2
 
 # Canonical subscription privilege catalog. Owner edits the plan matrix over
 # these ids; each plan enables a subset. Ordered for display.
@@ -209,7 +210,92 @@ def _now_iso() -> str:
 
 
 def _default_doc() -> Dict[str, Any]:
-    return {"version": 1, "vouchers": [], "entitlements": [], "plan_overrides": {}, "payment_config": {}, "paypal": {}, "payment_requests": []}
+    return {
+        "version": ENTITLEMENT_STORE_VERSION,
+        "vouchers": [],
+        "entitlements": [],
+        "plan_overrides": {},
+        "payment_config": {},
+        "paypal": {},
+        "payment_requests": [],
+        "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
+    }
+
+
+def _user_uuid_for_legacy_id(user_id: Any) -> str:
+    try:
+        from . import account_auth
+        return account_auth.user_uuid_for_legacy_id(user_id)
+    except Exception:
+        return ""
+
+
+def _backfill_user_uuid(row: Dict[str, Any], legacy_key: str, uuid_key: str) -> bool:
+    user_uuid = _user_uuid_for_legacy_id(row.get(legacy_key))
+    if not user_uuid or row.get(uuid_key) == user_uuid:
+        return False
+    row[uuid_key] = user_uuid
+    return True
+
+
+def _resolved_user_uuids(values: Iterable[Any]) -> list[str]:
+    resolved: list[str] = []
+    for value in values:
+        user_uuid = _user_uuid_for_legacy_id(value)
+        if user_uuid and user_uuid not in resolved:
+            resolved.append(user_uuid)
+    return resolved
+
+
+def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    changed = False
+    for key in ("vouchers", "entitlements", "payment_requests"):
+        if not isinstance(doc.get(key), list):
+            doc[key] = []
+            changed = True
+    for key in ("plan_overrides", "payment_config", "paypal"):
+        if not isinstance(doc.get(key), dict):
+            doc[key] = {}
+            changed = True
+    for row in doc["entitlements"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+    for row in doc["vouchers"]:
+        if not isinstance(row, dict):
+            continue
+        changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
+        existing_allowed = [str(value) for value in row.get("allowed_user_uuids") or [] if str(value)]
+        resolved_allowed = _resolved_user_uuids(row.get("allowed_telegram_ids") or [])
+        allowed_uuids = list(dict.fromkeys([*existing_allowed, *resolved_allowed]))
+        if allowed_uuids != existing_allowed:
+            row["allowed_user_uuids"] = allowed_uuids
+            changed = True
+        for redemption in row.get("redemptions") or []:
+            if isinstance(redemption, dict):
+                changed = _backfill_user_uuid(redemption, "user_id", "user_uuid") or changed
+    for row in doc["payment_requests"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+            changed = _backfill_user_uuid(row, "resolver_user_id", "resolver_user_uuid") or changed
+    identity_schema = doc.get("identity_schema") if isinstance(doc.get("identity_schema"), dict) else {}
+    expected_schema = dict(identity_schema)
+    expected_schema.update({
+        "stage": "dual_write",
+        "canonical_key": "user_uuid",
+        "legacy_key": "user_id",
+    })
+    if expected_schema != identity_schema:
+        expected_schema.setdefault("migrated_at_utc", _now_iso())
+        doc["identity_schema"] = expected_schema
+        changed = True
+    try:
+        version = int(doc.get("version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version < ENTITLEMENT_STORE_VERSION:
+        doc["version"] = ENTITLEMENT_STORE_VERSION
+        changed = True
+    return doc, changed
 
 
 def _read_doc() -> Dict[str, Any]:
@@ -235,7 +321,7 @@ def _read_doc() -> Dict[str, Any]:
             doc["paypal"] = {}
         if not isinstance(doc.get("payment_requests"), list):
             doc["payment_requests"] = []
-        return doc
+        return _migrate_doc(doc)[0]
     path = _store_path()
     cache_key = _doc_cache_key(path)
     if cache_key is None:
@@ -243,7 +329,10 @@ def _read_doc() -> Dict[str, Any]:
         return _default_doc()
     with _LOCK:
         if _DOC_CACHE_KEY == cache_key and _DOC_CACHE_DOC is not None:
-            return copy.deepcopy(_DOC_CACHE_DOC)
+            cached, changed = _migrate_doc(copy.deepcopy(_DOC_CACHE_DOC))
+            if changed:
+                _write_doc(cached)
+            return cached
     try:
         raw = path.read_bytes()
         if not raw.startswith(_MAGIC):
@@ -269,6 +358,10 @@ def _read_doc() -> Dict[str, Any]:
         doc["paypal"] = {}
     if not isinstance(doc.get("payment_requests"), list):
         doc["payment_requests"] = []
+    doc, changed = _migrate_doc(doc)
+    if changed:
+        _write_doc(doc)
+        return doc
     _cache_doc(path, doc)
     return doc
 
@@ -297,6 +390,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
+    doc, _ = _migrate_doc(doc)
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
@@ -1052,12 +1146,12 @@ def _public_voucher(row: Dict[str, Any]) -> Dict[str, Any]:
     out = {key: row.get(key) for key in (
         "voucher_id", "label", "status", "grant_plan_id", "discount_percent",
         "grant_duration_days", "usage_limit", "used_count", "per_user_limit",
-        "expires_at_utc", "allowed_telegram_ids", "allowed_email_domains",
-        "created_by_user_id", "created_at_utc", "paused_at_utc", "revoked_at_utc",
+        "expires_at_utc", "allowed_telegram_ids", "allowed_user_uuids", "allowed_email_domains",
+        "created_by_user_id", "created_by_user_uuid", "created_at_utc", "paused_at_utc", "revoked_at_utc",
     )}
     redemptions = row.get("redemptions") if isinstance(row.get("redemptions"), list) else []
     out["redemptions"] = [
-        {"user_id": r.get("user_id"), "entitlement_id": r.get("entitlement_id"),
+        {"user_id": r.get("user_id"), "user_uuid": r.get("user_uuid") or "", "entitlement_id": r.get("entitlement_id"),
          "redeemed_at_utc": r.get("redeemed_at_utc")}
         for r in redemptions if isinstance(r, dict)
     ]
@@ -1069,6 +1163,7 @@ def _public_entitlement(row: Dict[str, Any], overrides: Optional[Dict[str, Any]]
     return {
         "entitlement_id": row.get("entitlement_id"),
         "user_id": row.get("user_id"),
+        "user_uuid": row.get("user_uuid") or "",
         "workspace_id": row.get("workspace_id") or "",
         "plan_id": plan_id,
         "plan": _effective_plan(plan_id, overrides),
