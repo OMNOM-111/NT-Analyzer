@@ -77,7 +77,7 @@ def test_admin_operations_dashboard_uses_capability_contract():
     cabinet = ui.split("function renderCabinet", 1)[1].split(
         "async function renderAiRatingsInto", 1,
     )[0]
-    assert "const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']]" in cabinet
+    assert "const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
     assert "['operations'," not in cabinet
 
 

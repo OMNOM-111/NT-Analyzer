@@ -51,6 +51,9 @@ UX_MODES = ("beginner", "professional")
 ACCOUNT_STORE_VERSION = 3
 EMAIL_CHALLENGE_TTL_SEC = 10 * 60
 EMAIL_MAX_ATTEMPTS = 5
+# Session revoke reasons that keep a short notice window so the client can show
+# a clear "session ended" message instead of a bare 401.
+_REVOKE_NOTICE_REASONS = frozenset({"admin", "device_revoked", "device_rejected"})
 EXTERNAL_LEGACY_ID_FLOOR = 8_000_000_000_000_000
 EXTERNAL_LEGACY_ID_CEILING = 8_900_000_000_000_000
 ROLES = {"read_only", "full_control", "owner"}
@@ -163,6 +166,8 @@ def _default_doc() -> Dict[str, Any]:
         "auth_identities": [],
         "challenges": [],
         "sessions": [],
+        "trusted_devices": [],
+        "security_challenges": [],
         "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
     }
 
@@ -1044,6 +1049,30 @@ def _append_login(user: Dict[str, Any], *, source: str, ip: str = "",
     user["login_history"] = history[-20:]
 
 
+def _observe_session_device(
+    doc: Dict[str, Any], session: Dict[str, Any], user: Dict[str, Any], *,
+    ip: str = "", user_agent: str = "", source: str = "",
+    connector_installation_id: str = "",
+) -> list:
+    """Register the trusted device for a new session (Phase 4).
+
+    Deferred import avoids an import cycle: ``security_devices`` depends on this
+    module's store helpers. Returns audit events for the caller to emit after
+    the document is persisted. Impersonation sessions never register a device.
+    """
+    if session.get("impersonator_owner_id"):
+        return []
+    try:
+        from . import security_devices
+        return security_devices.observe_session(
+            doc, session, user, ip=ip, user_agent=user_agent, source=source,
+            connector_installation_id=connector_installation_id,
+        )
+    except Exception:
+        # Device correlation must never block a legitimate login.
+        return []
+
+
 def _user(doc: Dict[str, Any], user_id: int) -> Optional[Dict[str, Any]]:
     return next((row for row in doc["users"] if int(row.get("user_id") or 0) == int(user_id)), None)
 
@@ -1704,7 +1733,7 @@ def _cleanup(doc: Dict[str, Any]) -> None:
             continue
         # Retain admin-revoked rows briefly so /api/auth/status can return a clear code.
         notice_until = float(row.get("revoke_notice_until") or 0)
-        if row.get("revoked") and row.get("revoked_reason") == "admin" and notice_until > now:
+        if row.get("revoked") and row.get("revoked_reason") in _REVOKE_NOTICE_REASONS and notice_until > now:
             kept_sessions.append(row)
     doc["sessions"] = kept_sessions[-200:]
 
@@ -2308,9 +2337,14 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str)
         })
         challenge["status"] = "consumed"
         _append_login(user, source=source, ip=ip, user_agent=user_agent)
+        device_events = _observe_session_device(
+            doc, doc["sessions"][-1], user, ip=ip, user_agent=user_agent, source=source,
+        )
         _cleanup(doc)
         _write_doc(doc)
     _audit("login_succeeded", user_id=uid, ip=ip)
+    for _event, _extra in device_events:
+        _audit(_event, user_id=uid, ip=ip, extra=_extra)
     return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True, include_avatar=True)}
 
 
@@ -2539,10 +2573,18 @@ def session_auth_failure(token: str) -> Optional[Dict[str, Any]]:
         for row in doc.get("sessions") or []:
             if not hmac.compare_digest(str(row.get("token_hash") or ""), digest):
                 continue
-            if row.get("revoked") and row.get("revoked_reason") == "admin":
+            if row.get("revoked") and row.get("revoked_reason") in _REVOKE_NOTICE_REASONS:
                 notice_until = float(row.get("revoke_notice_until") or 0)
                 if notice_until and notice_until < now:
                     return None
+                reason = str(row.get("revoked_reason") or "")
+                if reason in {"device_revoked", "device_rejected"}:
+                    return {
+                        "code": "session_device_revoked",
+                        "error": "Устройство отозвано. Сессия завершена.",
+                        "revoked_at_utc": str(row.get("revoked_at_utc") or ""),
+                        "user_id": int(row.get("user_id") or 0),
+                    }
                 return {
                     "code": "session_admin_revoked",
                     "error": "Сессия завершена администратором.",
@@ -2759,6 +2801,10 @@ def create_session_for_user(
             row["impersonation_preset"] = str(impersonation_preset or "")[:40]
         doc["sessions"].append(row)
         _append_login(user, source=str(source or "desktop_session"), ip=ip, user_agent=user_agent)
+        device_events = _observe_session_device(
+            doc, row, user, ip=ip, user_agent=user_agent,
+            source=str(source or "desktop_session"),
+        )
         _cleanup(doc)
         _write_doc(doc)
         public = _public_user(user, include_contact=True, include_avatar=True)
@@ -2769,6 +2815,8 @@ def create_session_for_user(
         ip=ip,
         extra={"source": source},
     )
+    for _event, _extra in device_events:
+        _audit(_event, user_id=uid, ip=ip, extra=_extra)
     return {
         "status": "authenticated",
         "session_token": token,

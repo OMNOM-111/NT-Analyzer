@@ -2592,12 +2592,99 @@
       };
     });
   }
+  const SEC_DEVICE_ICONS = { phone: '📱', tablet: '📲', desktop: '🖥️', browser: '🌐', connector: '🔌' };
+  const SEC_STATUS = {
+    pending: ['pending', 'Ожидает подтверждения'],
+    trusted: ['live', 'Доверенное'],
+    revoked: ['failed', 'Отозвано'],
+    expired: ['archived', 'Истекло'],
+  };
+  const SEC_PROVIDER_LABEL = { telegram: 'Telegram', email: 'e-mail', google: 'Google' };
+
+  function securityDeviceRow(device) {
+    const icon = SEC_DEVICE_ICONS[device.device_type] || '🌐';
+    const [badgeCls, statusLabel] = SEC_STATUS[device.status] || ['archived', device.status];
+    const meta = [device.os_family && (device.os_version ? device.os_family + ' ' + device.os_version : device.os_family), device.client]
+      .filter(Boolean).map(esc).join(' · ');
+    const confirmed = device.confirmation_provider
+      ? `<span class="row-sub">Подтверждено через ${esc(SEC_PROVIDER_LABEL[device.confirmation_provider] || device.confirmation_provider)}</span>` : '';
+    const seen = [device.last_auth_at_utc && ('вход ' + esc(device.last_auth_at_utc)), device.last_region && ('регион ' + esc(device.last_region))]
+      .filter(Boolean).join(' · ');
+    let actions = '';
+    if (device.status === 'pending') {
+      actions = `<button class="btn sm primary" data-sec-approve="${esc(device.device_id)}">Подтвердить</button>
+                 <button class="btn sm ghost" data-sec-reject="${esc(device.device_id)}">Отклонить</button>`;
+    } else if (device.status === 'trusted') {
+      actions = `<button class="btn sm ghost" data-sec-revoke="${esc(device.device_id)}">Отозвать</button>`;
+    }
+    return `<div class="row"><div class="row-main"><div class="row-title">${icon} ${esc(device.display_name || 'Устройство')} <span class="badge ${badgeCls}">${esc(statusLabel)}</span></div>
+      ${meta ? `<div class="row-sub">${meta}</div>` : ''}${confirmed}${seen ? `<div class="row-sub">${esc(seen)}</div>` : ''}</div>
+      <div class="row-actions">${actions}</div></div>`;
+  }
+
+  async function renderSecurityInto(cb, me) {
+    cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка устройств…</div>';
+    let data;
+    try { data = await API.http.accountSecurity(); }
+    catch (e) { renderError(cb, e, () => renderSecurityInto(cb, me)); return; }
+    const devices = data.devices || [];
+    const identities = data.identities || [];
+    const providers = data.step_up_providers || [];
+    const provNote = providers.length
+      ? `Каналы подтверждения: ${providers.map(p => esc(SEC_PROVIDER_LABEL[p] || p)).join(', ')}.`
+      : 'Нет подтверждённого канала. Привяжите Telegram или e-mail, чтобы подтверждать устройства.';
+    const idChips = identities.length
+      ? identities.map(i => `<span class="chip-tag">${esc(SEC_PROVIDER_LABEL[i.provider] || i.provider)}${i.label ? ' · ' + esc(i.label) : ''}${i.verified ? ' ✓' : ''}</span>`).join('')
+      : '<span class="cab-sub">Нет привязанных способов входа</span>';
+    cb.innerHTML = `
+      <div class="cab-card"><h4>Способы входа</h4><div class="chips-in">${idChips}</div>
+        <div class="cab-sub">Внутренний идентификатор аккаунта — UUID. Способы входа не объединяются автоматически по совпадению e-mail.</div></div>
+      <div class="cab-card"><h4>Устройства</h4>
+        <div class="finance-note">${provNote} Новое устройство появляется как «Ожидает подтверждения» и не становится доверенным автоматически. Отзыв немедленно завершает сессии только этого устройства.</div>
+        <div class="list" id="sec-devices">${devices.length ? devices.map(securityDeviceRow).join('') : '<div class="muted">Устройства не найдены</div>'}</div>
+      </div>`;
+    const reload = () => renderSecurityInto(cb, me);
+    const busy = (btn, fn) => async () => {
+      btn.disabled = true;
+      try { await fn(); toast('Готово'); reload(); }
+      catch (e) { reportError(e); btn.disabled = false; }
+    };
+    qsa('[data-sec-approve]', cb).forEach(btn => {
+      btn.onclick = busy(btn, async () => {
+        const deviceId = btn.dataset.secApprove;
+        const started = await API.http.accountSecurityChallenge({ purpose: 'device_confirm', device_id: deviceId });
+        let code = started.test_code || '';
+        if (!code) {
+          code = (prompt('Введите код подтверждения, отправленный через ' + (SEC_PROVIDER_LABEL[started.provider] || started.provider) + ':') || '').trim();
+          if (!code) throw new Error('Код не введён.');
+        }
+        await API.http.accountDeviceApprove({ device_id: deviceId, challenge_id: started.challenge_id, code });
+      });
+    });
+    qsa('[data-sec-reject]', cb).forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Отклонить это устройство? Его текущие сессии будут завершены.')) return;
+        btn.disabled = true;
+        try { await API.http.accountDeviceReject(btn.dataset.secReject); toast('Устройство отклонено'); renderSecurityInto(cb, me); }
+        catch (e) { reportError(e); btn.disabled = false; }
+      };
+    });
+    qsa('[data-sec-revoke]', cb).forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Отозвать это устройство? Сессии только этого устройства сразу завершатся.')) return;
+        btn.disabled = true;
+        try { await API.http.accountDeviceRevoke(btn.dataset.secRevoke); toast('Устройство отозвано'); renderSecurityInto(cb, me); }
+        catch (e) { reportError(e); btn.disabled = false; }
+      };
+    });
+  }
+
   function renderCabinet(body, me, tab) {
     const header = cabinetHeader(me);
     // Cabinet is personal self-service only. System operations, user
     // management, monitoring and owner controls live in the capability-gated
     // Admin Panel.
-    const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']];
+    const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
     const cb = qs('#cab-body', body);
@@ -2610,6 +2697,7 @@
       else if (t === 'staging') renderStagingInto(cb);
       else if (t === 'requests') renderRequestsInto(cb);
       else if (t === 'plans') renderPlansInto(cb, me);
+      else if (t === 'security') renderSecurityInto(cb, me);
       else if (t === 'invites') renderInvitesInto(cb);
       else if (t === 'payment') renderPaymentInto(cb);
       else if (t === 'journal') renderJournalInto(cb);

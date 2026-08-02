@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-02T21:54:12Z; внёс `GitHub Copilot`; scope: Phase 4 — зафиксировать trusted-device registry, step-up challenges, migration 0006 и локальный verification evidence.
+
 История поправки: 2026-08-02T20:27:30Z; внёс `GitHub Copilot`; scope: Phase 3 closeout — записать PR #9, cross-platform CI, merge commit и удаление task branch.
 
 История поправки: 2026-08-02T20:22:26Z; внёс `GitHub Copilot`; scope: Phase 3 — закрыть UUID session/Mini App merge gap и обновить final validation evidence.
@@ -16,7 +18,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T20:27:30Z
+Обновлено: 2026-08-02T21:54:12Z
 
 ## Baseline
 
@@ -37,7 +39,7 @@
 | 1 | STAGE CLOSED | merged/deleted | `f4bcb3fc`; [PR #7](https://github.com/OMNOM-111/NT-Analyzer/pull/7) | Environment metadata, version, badges, owner icons; CI PASS |
 | 2 | STAGE CLOSED | merged/deleted | `ca65be2e`; [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; CI PASS |
 | 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
-| 4 | PENDING | `phase/4-trusted-devices` | pending | Devices и step-up |
+| 4 | IMPLEMENTATION COMPLETE | `phase/4-trusted-devices` | pending PR | Trusted devices, step-up challenges, migration 0006 |
 | 5 | PENDING | `phase/5-personal-nt-security` | pending | Personal NT security |
 | 6 | PENDING | `phase/6-agent-resource-queue` | pending | Agent allocation и NT lease |
 | 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
@@ -102,3 +104,17 @@
 - PostgreSQL acceptance: skipped safely because isolated `STRATFORGE_TEST_POSTGRES_ADMIN_URL` and `STRATFORGE_TEST_POSTGRES_URL` were absent. No PostgreSQL migration was applied.
 - Deployment boundary: no destructive contract, Production migration, Canary deployment or Production deployment was performed; no Production secrets, DNS, bot/email credentials or databases were accessed.
 - Git closeout: implementation `2266fc99`; merge `7fb34762`; task branch удалена локально и на origin; integration совпадает с origin after merge. Generated `data/development/durable/nt_analyzer.sqlite3` and unrelated governance-rendered changes remained outside the Phase 3 delivery.
+
+## Phase 4 evidence
+
+- Components: изолированный `app/security_devices.py` (trusted-device registry + step-up challenges); session-correlation hook `account_auth._observe_session_device` в обоих путях создания сессии; device-revoke notice в `session_auth_failure`/`_cleanup`; self-service HTTP-контур `/api/account/security`, `/api/account/devices` и mutation-эндпоинты в `app/server.py`; Aurora cabinet вкладка `Безопасность` в `app/static/aurora/assets/ui.js` и клиенты в `api.js`.
+- Data model: `app/production_storage/migrations/0006_trusted_devices.sql` — additive expand-only. Создаёт `sf_trusted_devices` (device_id UUID, user_uuid canonical, legacy_user_id для RLS-scope, masked audit_metadata) и `sf_security_challenges` (challenge_id, purpose/provider/environment binding, PBKDF2 `code_hash`+`code_salt`, attempts/max_attempts). RLS enable/force + `sf_scope_global() OR legacy_user_id = sf_scope_user()`; нет `DROP`, нет contract.
+- Lifecycle: устройство имеет случайный UUID и server-side статус `pending -> trusted -> revoked|expired`. Новая сессия регистрируется как `pending` и никогда не становится trusted автоматически; revoked/expired fingerprint не переиспользуется. Trust выдаётся только после подтверждения challenge через telegram/email/google verified email.
+- Security invariants (проверены тестами): cross-user read/approve/reject/revoke закрыт (device_not_found); legacy numeric id не обходит UUID ownership; совпадение email/IP/UA/fingerprint не выдаёт trust; challenge одноразовый, purpose/device/environment/user-bound, attempt-capped, replay-safe; concurrent consume даёт единственного победителя; revoked-устройство завершает только свои сессии; чужие устройства и другой пользователь не затронуты; legacy-сессии без device продолжают авторизацию (нет mass lockout); секреты/OTP/raw fingerprint/raw IP не попадают в public API или audit.
+- Audit events: `device.pending/approved/rejected/revoked`, `security.challenge_created/succeeded/failed/expired/denied`, `session.revoked_by_device` через `account_auth._audit`; код и токены в audit не пишутся.
+- Backward compatibility / rollback: expand-only. Rollback Phase 4 останавливает approval новых устройств и оставляет session/device/challenge records и UUID identity mapping нетронутыми; revoked не возвращается в trusted; existing sessions не очищаются.
+- Local validation: focused Phase 4 suite `29 passed`; auth-related suites (`test_phase_a_auth`, `test_account_auth`, `test_permissions`, `test_nt_dual_auth`) `70 passed`; final repository regression `954 passed, 31 skipped`. `python -B -m compileall -q app tests`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN — все PASS; `git diff --check` — только CRLF-нормализация на посторонних governance/docs файлах, без whitespace-ошибок в Phase 4 файлах.
+- PostgreSQL acceptance: migration 0006 покрыта статическим контрактным тестом без БД; live acceptance пропущен безопасно, потому что `STRATFORGE_TEST_POSTGRES_ADMIN_URL`/`STRATFORGE_TEST_POSTGRES_URL` отсутствовали. Никакая PostgreSQL migration не применялась к Production или Canary.
+- Deployment boundary: Production не изменялась; Canary не изменялся; deployment не выполнялся; main не затронут; Production secrets, DNS, bot/email credentials и базы данных не использовались.
+- Residual: реальная доставка кода через Telegram/email — owner gate (в Development test-auth код echo только за явным gate); production email provider остаётся отдельным решением. Посторонние dirty/untracked файлы (`data/development/durable/nt_analyzer.sqlite3`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) не трогались и не включались в commit.
+- CI/PR: pending (заполняется в closeout после Windows/Linux CI PASS и merge).

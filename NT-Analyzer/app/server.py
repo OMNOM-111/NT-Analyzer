@@ -54,6 +54,7 @@ if __package__ is None or __package__ == "":
     from app import production_telegram  # type: ignore[no-redef]
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
+    from app import security_devices  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -134,6 +135,7 @@ else:
     from . import production_telegram
     from . import tunnel_manager
     from . import account_auth
+    from . import security_devices
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -285,6 +287,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/practice/")
         or path.startswith("/api/community/")
         or path.startswith("/api/auth/nt-confirm/")
+        or path.startswith("/api/account/")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
     )
@@ -2667,6 +2670,76 @@ class Handler(BaseHTTPRequestHandler):
                 runtime_env.RuntimeEnvError) as exc:
             self._err(getattr(exc, "status", 400), str(exc), code=getattr(exc, "code", "") or "")
 
+    def _account_security_post(self, path: str) -> None:
+        """Self-service trusted-device and step-up mutations (Phase 4).
+
+        Every action is authenticated (session/CSRF), scoped to the caller's own
+        account by ``user_id`` and re-checks device ownership server-side. Hiding
+        a button is never the authorization boundary.
+        """
+        routes = {
+            "/api/account/security/challenge",
+            "/api/account/security/challenge/confirm",
+            "/api/account/devices/approve",
+            "/api/account/devices/reject",
+            "/api/account/devices/revoke",
+        }
+        if path not in routes:
+            self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
+            return
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        tunnel_ip, forwarded_ip = self._request_ips()
+        ip = forwarded_ip or tunnel_ip
+        try:
+            if path == "/api/account/security/challenge":
+                out = security_devices.create_challenge(
+                    user_id=user_id,
+                    purpose=str(body.get("purpose") or ""),
+                    device_id=str(body.get("device_id") or ""),
+                    provider=str(body.get("provider") or ""),
+                    ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/account/security/challenge/confirm":
+                out = security_devices.confirm_challenge(
+                    user_id=user_id,
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/devices/approve":
+                out = security_devices.approve_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/devices/reject":
+                out = security_devices.reject_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            else:
+                out = security_devices.revoke_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            self._json(HTTPStatus.OK, out)
+        except security_devices.SecurityDeviceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
         context = getattr(self, "_remote_context", None) or {}
@@ -3024,6 +3097,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/") and not self._authorize_api(path):
+            return
+
+        if path in {"/api/account/security", "/api/account/devices"}:
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                if path.endswith("/security"):
+                    payload = security_devices.account_security(context.get("user_id"))
+                else:
+                    payload = security_devices.list_devices(context.get("user_id"))
+                self._json(HTTPStatus.OK, payload)
+            except security_devices.SecurityDeviceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
             return
 
         if path == "/api/admin/overview":
@@ -6326,6 +6411,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if not self._authorize_api(path):
+            return
+
+        if path.startswith("/api/account/"):
+            self._account_security_post(path)
             return
 
         if path == "/api/auth/google/start":
