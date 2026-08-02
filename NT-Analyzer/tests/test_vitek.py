@@ -10,6 +10,9 @@ from app import jobqueue, vitek
 
 
 def _isolate(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
     monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
     monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "background.json")
     monkeypatch.setattr(vitek, "_supervisor_state_path", lambda: tmp_path / "backend-supervisor.json")
