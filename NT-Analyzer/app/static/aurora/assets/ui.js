@@ -1225,6 +1225,33 @@
     }
   }
 
+  async function ntStepUp(action) {
+    // Phase 5: obtain a single-use step-up grant for a critical NinjaTrader
+    // action (pairing, revoke, default account, capability change, unlink).
+    // In Development test-auth the server echoes the code; otherwise the user
+    // enters the code delivered via Telegram or e-mail (never SMS).
+    try {
+      const started = await API.http.accountNtStepUpStart({ action });
+      let code = started.test_code || '';
+      if (!code) {
+        const via = started.provider === 'google' ? 'Google e-mail' : (started.provider === 'email' ? 'e-mail' : 'Telegram');
+        code = (prompt('Введите код подтверждения, отправленный через ' + via + ' (это не SMS):') || '').trim();
+        if (!code) { toast('Код не введён'); return null; }
+      }
+      await API.http.accountNtStepUpConfirm({ challenge_id: started.challenge_id, code });
+      return started.challenge_id;
+    } catch (e) {
+      const posture = (e && e.payload && e.payload.onboarding) || null;
+      const steps = posture && Array.isArray(posture.onboarding) ? posture.onboarding : [];
+      if (steps.length) {
+        toast(steps[0].message || 'Подтвердите Telegram и e-mail для личного NinjaTrader');
+      } else {
+        reportError(e);
+      }
+      return null;
+    }
+  }
+
   function maybeHandleGoogleReturn() {
     try {
       const params = new URLSearchParams(location.search || '');
@@ -1814,7 +1841,13 @@
         pair.disabled = true;
         try {
           if (!(await ensureNtDualAuth(me))) return;
-          const out = await API.http.bridgePairStart({ machine_label: 'Мой компьютер', transport: connectorMode ? 'production_connector' : 'local_development' });
+          const stepUp = me.is_owner ? '' : await ntStepUp('pairing');
+          if (!me.is_owner && !stepUp) return;
+          const out = await API.http.bridgePairStart({
+            machine_label: 'Мой компьютер',
+            transport: connectorMode ? 'production_connector' : 'local_development',
+            step_up_challenge_id: stepUp || '',
+          });
           showCode(out && out.code, 'Код подключения');
           if (connectorMode && out && out.pairing_uri && confirm('Код скопирован. Открыть установленный StratForge Connector?')) {
             location.href = out.pairing_uri;
@@ -1828,8 +1861,13 @@
         const id = btn.getAttribute('data-nt-revoke');
         if (!id || !confirm('Отозвать эту установку NinjaTrader? Текущая сессия и ожидающие команды будут остановлены.')) return;
         btn.disabled = true;
-        try { await API.http.bridgeConnectionRevoke(id); toast('Установка отозвана'); await renderNinjaInto(node, me); }
-        catch (e) { reportError(e); btn.disabled = false; }
+        try {
+          const stepUp = me.is_owner ? '' : await ntStepUp('connector_revoke');
+          if (!me.is_owner && !stepUp) { btn.disabled = false; return; }
+          await API.http.bridgeConnectionRevoke(id, { step_up_challenge_id: stepUp || '' });
+          toast('Установка отозвана');
+          await renderNinjaInto(node, me);
+        } catch (e) { reportError(e); btn.disabled = false; }
       });
       const observe = qs('#nt-observe', node);
       if (observe) observe.onclick = async () => { const ownerWs = (rows.find(r => r.uses_owner_runtime) || {}).workspace_id; if (!ownerWs) return; try { await API.http.workspaceSelect(ownerWs); toast('Вернулись к наблюдению'); location.reload(); } catch (e) { reportError(e); } };
@@ -2624,8 +2662,13 @@
 
   async function renderSecurityInto(cb, me) {
     cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка устройств…</div>';
-    let data;
-    try { data = await API.http.accountSecurity(); }
+    let data, nt = null;
+    try {
+      [data, nt] = await Promise.all([
+        API.http.accountSecurity(),
+        API.http.accountNtSecurity().catch(() => null),
+      ]);
+    }
     catch (e) { renderError(cb, e, () => renderSecurityInto(cb, me)); return; }
     const devices = data.devices || [];
     const identities = data.identities || [];
@@ -2636,7 +2679,21 @@
     const idChips = identities.length
       ? identities.map(i => `<span class="chip-tag">${esc(SEC_PROVIDER_LABEL[i.provider] || i.provider)}${i.label ? ' · ' + esc(i.label) : ''}${i.verified ? ' ✓' : ''}</span>`).join('')
       : '<span class="cab-sub">Нет привязанных способов входа</span>';
-    cb.innerHTML = `
+    let ntCard = '';
+    if (nt && nt.factors && !nt.is_owner) {
+      const factorRow = (ok, label) => `<span class="chip-tag">${ok ? '✓' : '•'} ${esc(label)}</span>`;
+      const onboardingHtml = (nt.onboarding || []).map(o =>
+        `<div class="finance-note"><strong>${esc(o.title)}</strong><br>${esc(o.message)}</div>`).join('');
+      const via = nt.email_factor_via && nt.email_factor_via !== 'owner'
+        ? ` (через ${esc(SEC_PROVIDER_LABEL[nt.email_factor_via] || nt.email_factor_via)})` : '';
+      ntCard = `<div class="cab-card"><h4>Личный NinjaTrader — безопасность</h4>
+        <div class="chips-in">${factorRow(nt.factors.telegram, 'Telegram')}${factorRow(nt.factors.email, 'e-mail' + via)}</div>
+        <div class="cab-kv"><span class="k">Готовность</span><span class="v"><span class="badge ${nt.ready ? 'live' : 'pending'}">${nt.ready ? 'готово к подключению' : 'нужны факторы'}</span></span></div>
+        ${nt.ready
+          ? '<div class="cab-sub">Обязательны подтверждённый Telegram и verified e-mail; критические действия дополнительно требуют step-up. E-mail-код — не SMS.</div>'
+          : onboardingHtml}</div>`;
+    }
+    cb.innerHTML = ntCard + `
       <div class="cab-card"><h4>Способы входа</h4><div class="chips-in">${idChips}</div>
         <div class="cab-sub">Внутренний идентификатор аккаунта — UUID. Способы входа не объединяются автоматически по совпадению e-mail.</div></div>
       <div class="cab-card"><h4>Устройства</h4>

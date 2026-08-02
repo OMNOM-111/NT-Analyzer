@@ -787,7 +787,11 @@ def nt_action_gate(
         }
     google_req = dual_auth_enforced()
     tg_req = telegram_nt_confirm_required()
-    g_ok = (not google_req) or google_linked(user)
+    # Phase 5: the independent identity factor is a verified email, satisfiable
+    # by a verified email login identity or a safely linked Google verified
+    # email. ``email_factor_ok`` is precomputed by ``require_nt_dual_auth`` from
+    # the encrypted store; direct callers fall back to the Google link.
+    g_ok = (not google_req) or bool(user.get("email_factor_ok")) or google_linked(user)
     sess = session
     if sess is None and context:
         # Elevation flag may be mirrored onto auth context.
@@ -810,7 +814,7 @@ def nt_action_gate(
         code = "nt_google_required"
         message = (
             "Чтобы управлять NinjaTrader (личный или рабочий контур), "
-            "подключите Google-аккаунт. Остальные разделы доступны без Google."
+            "подтвердите e-mail или подключите Google. Остальные разделы доступны без этого."
         )
     elif not tg_ok:
         code = "nt_telegram_confirm_required"
@@ -820,6 +824,7 @@ def nt_action_gate(
         )
     return {
         "ok": ready, "ready": ready, "google_ok": g_ok, "telegram_ok": tg_ok,
+        "email_factor_ok": g_ok,
         "google_required": google_req, "telegram_confirm_required": tg_req,
         "google_linked": google_linked(user),
         "code": code, "message": message,
@@ -843,12 +848,17 @@ def require_nt_dual_auth(context: Optional[Dict[str, Any]]) -> None:
     raw_user: Optional[Dict[str, Any]] = None
     if uid > 0:
         with _LOCK:
-            stored = _user(_read_doc(), uid)
+            doc = _read_doc()
+            stored = _user(doc, uid)
             if stored is not None:
                 raw_user = dict(stored)
                 # Never trust a client/public google_linked without google_sub in store.
                 if not str(raw_user.get("google_sub") or "").strip():
                     raw_user["google_linked"] = False
+                # Phase 5: a verified email login identity also satisfies the
+                # independent identity factor (not only Google).
+                from . import personal_nt_security
+                raw_user["email_factor_ok"] = personal_nt_security.email_factor_ok(doc, stored)
                 context["user"] = raw_user
     gate = nt_action_gate(raw_user, context=context)
     if not gate.get("ok"):
@@ -2746,6 +2756,76 @@ def unlink_google_identity(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         public = _public_user(user, include_contact=True)
     _audit("google_unlinked", user_id=uid, owner_id=int(owner_id))
     return {"ok": True, "user": public}
+
+
+def list_account_identities(user_id: Any) -> Dict[str, Any]:
+    """Self-service: the caller's own linked login methods (masked)."""
+    uid = int(user_id or 0)
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        rows = [
+            auth_identity.public_identity(row, user=user)
+            for row in _identities_for_user(doc, user)
+        ]
+    return {"ok": True, "identities": rows}
+
+
+def unlink_identity_self(user_id: Any, *, identity_id: str) -> Dict[str, Any]:
+    """Self-service unlink of one of the caller's own login methods.
+
+    Ownership is enforced by canonical UUID: an ``identity_id`` that does not
+    belong to this account is simply not found. The last usable login method can
+    never be removed.
+    """
+    uid = int(user_id or 0)
+    target = str(identity_id or "").strip()
+    if not target:
+        raise AccountAuthError("Не указан способ входа.", 400, code="identity_required")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        canonical = _user_uuid(user)
+        identities = _identities_for_user(doc, user)
+        row = next(
+            (r for r in identities if hmac.compare_digest(str(r.get("identity_id") or ""), target)),
+            None,
+        )
+        if row is None:
+            raise AccountAuthError("Способ входа не найден.", 404, code="identity_not_found")
+        provider = str(row.get("provider") or "")
+        remaining_login = [
+            r for r in identities
+            if str(r.get("provider") or "") in auth_identity.LOGIN_PROVIDERS
+            and not hmac.compare_digest(str(r.get("identity_id") or ""), target)
+        ]
+        if not remaining_login:
+            raise AccountAuthError(
+                "Нельзя удалить последний способ входа.", 409, code="last_login_method",
+            )
+        doc["auth_identities"] = [
+            r for r in _identity_rows(doc)
+            if not (
+                isinstance(r, dict)
+                and hmac.compare_digest(str(r.get("identity_id") or ""), target)
+                and hmac.compare_digest(auth_identity.normalize_user_uuid(r.get("user_uuid")), canonical)
+            )
+        ]
+        if provider == "google":
+            user["google_sub"] = ""
+            user["google_email"] = ""
+            user["google_name"] = ""
+            user["google_linked_at_utc"] = ""
+            user["google_unlinked_at_utc"] = _now_iso()
+        _sync_user_identity_summary(doc, user)
+        _write_doc(doc)
+        public = _public_user(user, include_contact=True)
+    _audit("identity_unlinked", user_id=uid, extra={"provider": provider, "identity_id": target})
+    return {"ok": True, "user": public, "provider": provider}
 
 
 def create_session_for_user(

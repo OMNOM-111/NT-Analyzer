@@ -856,6 +856,58 @@ def revoke_connection(user_id: Any, connection_id: Any) -> Dict[str, Any]:
     return {"ok": True, "connection": _public_connection(conn)}
 
 
+_ALLOWED_CONNECTION_CAPS = ("accounts_read", "paper_commands", "live_read", "live_commands")
+
+
+def set_default_connection(user_id: Any, connection_id: Any) -> Dict[str, Any]:
+    """Make one active connection the workspace default runtime (step-up gated)."""
+    user = int(user_id or 0)
+    target = str(connection_id or "").strip()
+    with _LOCK:
+        doc = _read_doc()
+        conn = next(
+            (row for row in doc["connections"]
+             if str(row.get("connection_id") or "") == target and not row.get("revoked_at_utc")),
+            None,
+        )
+        if conn is None:
+            raise WorkspaceError("Подключение не найдено.", 404)
+        workspace_row, member = _active_workspace_doc(doc, user, str(conn.get("workspace_id") or ""))
+        _require_workspace_writer(member)
+        workspace_row["default_runtime_connection_id"] = target
+        workspace_row["updated_at_utc"] = _now_iso()
+        _write_doc(doc)
+    _audit("bridge_default_connection_set", user_id=user, workspace_id=workspace_row["workspace_id"], connection_id=target)
+    return {"ok": True, "connection": _public_connection(conn), "workspace": _public_workspace(workspace_row, member)}
+
+
+def set_connection_capabilities(
+    user_id: Any, connection_id: Any, capabilities: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """Set the granted capabilities of an active connection (step-up gated)."""
+    user = int(user_id or 0)
+    target = str(connection_id or "").strip()
+    requested = [str(v) for v in (capabilities or []) if str(v) in _ALLOWED_CONNECTION_CAPS]
+    if not requested:
+        raise WorkspaceError("Не указаны допустимые возможности.", 400)
+    with _LOCK:
+        doc = _read_doc()
+        conn = next(
+            (row for row in doc["connections"]
+             if str(row.get("connection_id") or "") == target and not row.get("revoked_at_utc")),
+            None,
+        )
+        if conn is None:
+            raise WorkspaceError("Подключение не найдено.", 404)
+        workspace_row, member = _active_workspace_doc(doc, user, str(conn.get("workspace_id") or ""))
+        _require_workspace_writer(member)
+        conn["capabilities"] = sorted(set(requested), key=_ALLOWED_CONNECTION_CAPS.index)
+        conn["capabilities_updated_at_utc"] = _now_iso()
+        _write_doc(doc)
+    _audit("bridge_connection_capabilities_set", user_id=user, workspace_id=workspace_row["workspace_id"], connection_id=target)
+    return {"ok": True, "connection": _public_connection(conn)}
+
+
 def _ledger_path(workspace_id: str) -> Path:
     return _tenant_root(workspace_id) / "statements" / "account_ledger.json"
 
