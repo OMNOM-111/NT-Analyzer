@@ -19,11 +19,45 @@ def _entitlement(plan_id: str) -> dict:
 def test_owner_has_all_capabilities() -> None:
     perm = permissions.resolve({"is_owner": True})
     assert all(perm["capabilities"].values())
+    assert all(perm["admin_capabilities"].values())
     assert all(value for key, value in perm["nav"].items() if key != "practice")
     assert perm["nav"]["practice"] is False
     assert perm["free_preview"] is False
     assert perm["locked_nav"] == []
     assert perm["plan_id"] == "founder"
+
+
+def test_subscription_never_grants_admin_capabilities() -> None:
+    perm = permissions.resolve(
+        {"is_owner": False, "ux_mode": "professional"},
+        _entitlement("pro"),
+    )
+    assert not any(perm["admin_capabilities"].values())
+
+
+def test_delegated_admin_grants_are_explicit_and_expire() -> None:
+    user = {
+        "is_owner": False,
+        "ux_mode": "professional",
+        "admin_permission_grants": {
+            "admin.view": {
+                "enabled": True,
+                "granted_at_utc": "2026-01-01T00:00:00Z",
+                "expires_at_utc": "2030-01-01T00:00:00Z",
+            },
+            "operations.execute": {
+                "enabled": True,
+                "granted_at_utc": "2025-01-01T00:00:00Z",
+                "expires_at_utc": "2025-02-01T00:00:00Z",
+            },
+            # Unstructured values must fail closed.
+            "users.manage": True,
+        },
+    }
+    caps = permissions.resolve_admin_capabilities(user, now=1_800_000_000)
+    assert caps["admin.view"] is True
+    assert caps["operations.execute"] is False
+    assert caps["users.manage"] is False
 
 
 def test_free_preview_when_no_entitlement() -> None:
@@ -107,6 +141,28 @@ def test_required_capability_prefix_match() -> None:
     assert permissions.required_capability("/api/governance/summary") == "documents"
     assert permissions.required_capability("/api/bridge/pair/start") == "personal_nt"
     assert permissions.required_capability("/api/bridge/setup") is None
+
+
+def test_required_admin_capability_is_method_aware() -> None:
+    assert permissions.required_admin_capability("/api/admin/overview") == "admin.view"
+    assert permissions.required_admin_capability("/api/admin/environment-targets") == "environment.switch"
+    assert permissions.required_admin_capability("/api/auth/users/42") == "users.manage"
+    assert permissions.required_admin_capability("/api/diagnostics") == "operations.view"
+    assert permissions.required_admin_capability("/api/server/restart", "POST") == "operations.execute"
+    assert permissions.required_admin_capability("/api/worker/jobs", "GET") == "operations.view"
+    assert permissions.required_admin_capability("/api/worker/jobs", "POST") == "operations.execute"
+
+
+def test_admin_endpoint_requires_separate_explicit_capability() -> None:
+    context = {
+        "is_owner": False,
+        "user": {"ux_mode": "professional"},
+        "capabilities": {cid: True for cid in permissions.CAPABILITY_IDS},
+        "admin_capabilities": {"admin.view": True, "operations.view": False},
+    }
+    permissions.enforce("/api/admin/overview", context)
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/diagnostics", context)
 
 
 def test_enforce_owner_bypasses() -> None:

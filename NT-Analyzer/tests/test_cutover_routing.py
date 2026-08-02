@@ -64,16 +64,21 @@ def test_aurora_page_controllers_call_real_endpoints():
         assert "(демо)" not in js, f"{fname} must not contain demo placeholders"
 
 
-def test_owner_operations_dashboard_uses_authorized_existing_contract():
+def test_admin_operations_dashboard_uses_capability_contract():
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    permissions = (ROOT / "app" / "permissions.py").read_text(encoding="utf-8")
     api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
-    assert 'path == "/api/owner/operations"' in server
-    assert 'if not context.get("is_owner"):' in server
-    assert "payload = observability.dashboard()" in server
-    assert "ownerOperations: (o) => getJSON('/api/owner/operations', o)" in api
-    assert "renderOperationsInto" in ui
-    assert "['operations', 'Операции']" in ui
+    assert 'path == "/api/admin/operations"' in server
+    assert 'self._admin_operations_payload()' in server
+    assert '("/api/admin/operations", "operations.view")' in permissions
+    assert "adminOperations: (o) => getJSON('/api/admin/operations', o)" in api
+    assert "renderAdminOperationsInto" in ui
+    cabinet = ui.split("function renderCabinet", 1)[1].split(
+        "async function renderAiRatingsInto", 1,
+    )[0]
+    assert "const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']]" in cabinet
+    assert "['operations'," not in cabinet
 
 
 def test_server_routes_aurora_primary_and_legacy():
@@ -94,6 +99,7 @@ def test_server_routes_aurora_primary_and_legacy():
     assert '"/accounting.html": "/ui/performance.html"' in server
     # Uniform CSP response header that blocks inline scripts.
     assert "STATIC_CSP" in server and "script-src 'self'" in server
+    assert "http://127.0.0.1:*" in server and "http://localhost:*" in server
     assert 'self.send_header("Content-Security-Policy", STATIC_CSP)' in server
 
 

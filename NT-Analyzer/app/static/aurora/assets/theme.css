@@ -427,6 +427,30 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .chip.mono { font-family: var(--mono); letter-spacing: .3px; }
 .chip-account { font: inherit; cursor: pointer; max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-chip { font: inherit; cursor: pointer; padding-left: 4px; gap: 7px; }
+.admin-env-button { min-width: 54px; font-family: var(--mono); letter-spacing: .5px; }
+
+/* Capability-gated Admin Panel. Personal cabinet styles remain separate. */
+.admin-shell { display: grid; grid-template-columns: minmax(190px, 230px) minmax(0, 1fr); gap: 18px; min-height: 520px; }
+.admin-modules { display: flex; flex-direction: column; gap: 5px; align-self: start; position: sticky; top: 0; }
+.admin-module { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--tx-2); text-align: left; cursor: pointer; }
+.admin-module:hover { background: var(--bg-3); color: var(--tx); }
+.admin-module.on { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand-ink); }
+.admin-module small { color: var(--tx-4); font-size: 9px; overflow-wrap: anywhere; }
+.admin-module-body { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.admin-grant-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 230px) auto; align-items: center; gap: 12px; padding: 9px 11px; border-bottom: 1px solid var(--line); }
+.admin-grant-row:last-child { border-bottom: 0; }
+.admin-grant-row input[type="datetime-local"] { min-width: 0; width: 100%; }
+.admin-env-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.admin-env-card { display: flex; flex-direction: column; gap: 13px; margin: 0; }
+.admin-env-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.admin-env-head > span { overflow-wrap: anywhere; text-align: right; }
+.admin-env-meta { display: grid; gap: 6px; }
+.admin-env-meta > div { display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; }
+.admin-env-meta span { color: var(--tx-3); }
+.admin-env-meta strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.admin-env-warnings { display: flex; flex-direction: column; gap: 5px; color: var(--warn); font-size: 11px; }
+.admin-env-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--warn); border-radius: var(--r-md); background: var(--warn-soft); }
+.admin-env-confirm .admin-env-meta { margin: 10px 0; }
 
 /* Avatars (Telegram photo or initials) */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; font-weight: 700; font-size: 11px; color: #fff; background: hsl(var(--av-h, 210) 42% 34%); letter-spacing: .2px; }
@@ -1173,6 +1197,11 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
   .panel-b { padding: 14px; }
   .drawer { width: 100vw; }
   .drawer-resize, .drawer-tools [data-drawer-size] { display: none; }
+  .admin-shell { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .admin-modules { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
+  .admin-module { flex: 0 0 170px; }
+  .admin-env-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-grant-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Phone — left rail becomes a fixed bottom nav (off-canvas pattern) */
