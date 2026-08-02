@@ -176,14 +176,16 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         for item in prerelease.split(".") if item
     ):
         raise RuntimeError("--version must be semantic versioning")
-    if args.production and args.channel not in {"canary", "stable"}:
-        raise RuntimeError("Production server release must be canary or stable")
-    if not args.production and args.channel != "development":
-        raise RuntimeError("non-Production server release must remain development")
+    if args.production and args.channel not in {"beta", "stable"}:
+        raise RuntimeError("Production-trust server release must be beta or stable")
+    if not args.production and args.channel != "dev":
+        raise RuntimeError("development-trust server release must remain dev")
 
     identity = json.loads((ROOT / "VERSION.json").read_text(encoding="utf-8"))
     if str(identity.get("version") or "") != args.version:
         raise RuntimeError("--version must match VERSION.json")
+    if str(identity.get("channel") or "") != args.channel:
+        raise RuntimeError("--channel must match VERSION.json")
     revision, dirty = _git_state(ROOT)
     if dirty:
         raise RuntimeError("Server release requires a clean Git worktree")
@@ -221,15 +223,25 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         for path in sorted((bundle / "app" / "production_storage" / "migrations").glob("*.sql"))
     ]
     built_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    build_id = f"sf-{args.version}-{revision[:12]}-{built_at.replace(':', '').replace('-', '')}"
+    deployable_environments = (
+        ["canary", "production"] if args.production else ["development"]
+    )
     manifest = {
         "schema_version": 1,
         "product": "StratForge Server",
         "version": args.version,
         "channel": args.channel,
+        "app_version": args.version,
+        "release_channel": args.channel,
+        "build_id": build_id,
+        "git_commit_sha": revision,
+        "build_timestamp_utc": built_at,
+        "dirty": False,
+        "deployable_environments": deployable_environments,
         "trust_tier": trust_tier,
         "source_revision": revision,
         "built_at_utc": built_at,
-        "environment": "production" if args.production else "development",
         "python": ">=3.11,<3.14",
         "database_migrations": migrations,
         "rollback": {
@@ -272,6 +284,13 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "ok": True,
         "version": args.version,
         "channel": args.channel,
+        "app_version": args.version,
+        "release_channel": args.channel,
+        "build_id": build_id,
+        "git_commit_sha": revision,
+        "build_timestamp_utc": built_at,
+        "dirty": False,
+        "deployable_environments": deployable_environments,
         "trust_tier": trust_tier,
         "source_revision": revision,
         "manifest_sha256": _sha256(manifest_path),
@@ -294,9 +313,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument(
-        "--channel", choices=("development", "canary", "stable"), default="development",
+        "--channel", choices=("dev", "beta", "stable"), default="dev",
     )
-    parser.add_argument("--production", action="store_true")
+    parser.add_argument(
+        "--production", action="store_true",
+        help="sign for immutable Canary-to-Production promotion",
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     try:

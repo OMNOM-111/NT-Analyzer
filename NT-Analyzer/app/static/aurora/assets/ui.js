@@ -60,38 +60,85 @@
   let CURRENT_AUTH = null;
   let BUILD_IDENTITY = null;
 
+  const RELEASE_ICONS = {
+    dev: 'brand/stratforge-dev.png',
+    canary: 'brand/stratforge-canary.png',
+    beta: 'brand/stratforge-beta.png',
+    stable: 'brand/stratforge-mark.png',
+  };
+
+  function releasePresentation(environment, channel) {
+    if (environment === 'development' && channel === 'dev') {
+      return { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev', icon: RELEASE_ICONS.dev };
+    }
+    if (environment === 'canary' && ['beta', 'stable'].includes(channel)) {
+      return { short: 'CANARY', full: 'CANARY', cls: 'canary', icon: RELEASE_ICONS.canary };
+    }
+    if (environment === 'production' && channel === 'beta') {
+      return { short: 'BETA', full: 'ПУБЛИЧНАЯ БЕТА', cls: 'beta', icon: RELEASE_ICONS.beta };
+    }
+    if (environment === 'production' && channel === 'stable') {
+      return { short: '', full: 'PRODUCTION', cls: 'stable', icon: RELEASE_ICONS.stable };
+    }
+    return null;
+  }
+
+  function applyReleaseIcon(path) {
+    qsa('[data-release-icon]').forEach(node => { node.src = path; });
+    let favicon = document.querySelector('link[rel~="icon"]');
+    if (!favicon) {
+      favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      document.head.appendChild(favicon);
+    }
+    favicon.href = path === RELEASE_ICONS.stable ? 'brand/stratforge-icon.ico' : path;
+  }
+
   function applyBuildIdentity(payload) {
     const source = payload || {};
     const deployment = source.deployment && typeof source.deployment === 'object'
       ? source.deployment : source;
-    const environment = String(deployment.environment || source.deployment_environment || '').toLowerCase();
+    const environment = String(deployment.deployment_environment || deployment.environment || source.deployment_environment || '').toLowerCase();
     const channel = String(deployment.release_channel || '').toLowerCase();
-    const version = String(deployment.build_version || '').trim();
-    const buildDate = String(deployment.build_date || '').trim();
-    if (!version || !buildDate || !['development', 'canary', 'stable'].includes(channel)) return;
-    const labels = {
-      development: { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev' },
-      canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ', cls: 'canary' },
-      stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ', cls: 'stable' },
+    const version = String(deployment.app_version || deployment.build_version || '').trim();
+    const timestamp = String(deployment.build_timestamp_utc || '').trim();
+    const buildId = String(deployment.build_id || '').trim();
+    const gitSha = String(deployment.git_commit_sha || '').trim();
+    const artifactSha = String(deployment.artifact_sha256 || '').trim();
+    const dirty = deployment.dirty === true;
+    const label = releasePresentation(environment, channel);
+    if (!version || !timestamp || !gitSha || !label) return;
+    const shortSha = gitSha.slice(0, 7);
+    const visibleParts = [`v${version}`, shortSha];
+    if (dirty) visibleParts.push('dirty');
+    BUILD_IDENTITY = {
+      environment, channel, version, timestamp, buildId, gitSha, artifactSha, dirty, label,
     };
-    const label = labels[channel];
-    const dateParts = buildDate.split('-');
-    const visibleDate = dateParts.length === 3
-      ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}` : buildDate;
-    BUILD_IDENTITY = { environment, channel, version, buildDate, label };
+    document.documentElement.dataset.deploymentEnvironment = environment;
     document.documentElement.dataset.releaseChannel = channel;
     qsa('[data-release-badge]').forEach(badge => {
-      badge.classList.remove('pending', 'dev', 'canary', 'stable');
+      badge.classList.remove('pending', 'dev', 'canary', 'beta', 'stable');
       badge.classList.add(label.cls);
+      badge.hidden = !label.short;
       badge.textContent = label.short;
-      badge.title = `${label.full} — ${environment === 'development' ? 'локальная версия для доработки' : 'серверный релиз'}`;
+      badge.title = label.short ? `${label.full} — ${environment}` : '';
     });
     qsa('[data-build-meta]').forEach(meta => {
-      meta.textContent = `v${version} · от ${visibleDate}`;
-      meta.title = `${label.full}: версия ${version}, сборка от ${visibleDate}`;
+      meta.textContent = visibleParts.join(' · ');
+      meta.title = [
+        `APP_VERSION=${version}`,
+        `DEPLOYMENT_ENV=${environment}`,
+        `RELEASE_CHANNEL=${channel}`,
+        `BUILD_ID=${buildId || 'local-source'}`,
+        `GIT_COMMIT_SHA=${gitSha}`,
+        `ARTIFACT_SHA256=${artifactSha || 'not-applicable'}`,
+        `BUILD_TIMESTAMP_UTC=${timestamp}`,
+        `dirty=${dirty}`,
+      ].join('\n');
     });
-    const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|STABLE)\]\s*/, '');
-    document.title = `[${label.short}] ${baseTitle}`;
+    applyReleaseIcon(label.icon);
+    const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|BETA|STABLE)\]\s*/, '');
+    document.title = label.short ? `[${label.short}] ${baseTitle}` : baseTitle;
   }
 
   async function refreshBuildIdentity(seed) {
@@ -798,7 +845,7 @@
 
     const rail = el(`<nav class="rail">
       <a class="rail-brand" href="index.html" title="${APP_NAME}">
-        <span class="rail-logo"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}"></span>
+        <span class="rail-logo"><img class="rail-logo-mark" src="${BRAND_MARK}" alt="${APP_NAME}" data-release-icon></span>
         <span class="rail-brand-tx"><span class="rail-brand-name-row"><span class="rail-brand-name">${APP_NAME}</span><span class="rail-release-badge pending" id="app-release-badge" data-release-badge>…</span></span><span class="rail-brand-version" id="app-build-meta" data-build-meta>версия определяется…</span><span class="rail-brand-sub">Strategy command center</span></span>
       </a>
       <div class="rail-nav">

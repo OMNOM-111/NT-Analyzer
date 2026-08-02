@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "version": "0.9.0-dev.10",
-  "channel": "development",
+  "version": "0.10.0-dev.1",
+  "channel": "dev",
   "status": "in_development",
-  "build_date": "2026-07-28"
+  "build_date": "2026-08-02",
+  "build_timestamp_utc": "2026-08-02T01:35:50Z"
 }

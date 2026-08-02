@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import struct
 import subprocess
 import threading
 import urllib.error
@@ -152,7 +154,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260721-build-identity1"}, versions
+    assert set(versions.values()) == {"20260802-environment-identity1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -165,19 +167,47 @@ def test_build_identity_is_visible_and_never_guessed_client_side():
 
     assert 'id="app-release-badge" data-release-badge' in ui
     assert 'id="app-build-meta" data-build-meta' in ui
-    assert "development: { short: 'DEV', full: 'РАЗРАБОТКА'" in ui
-    assert "canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ'" in ui
-    assert "stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ'" in ui
+    assert "environment === 'development' && channel === 'dev'" in ui
+    assert "short: 'DEV', full: 'РАЗРАБОТКА'" in ui
+    assert "environment === 'canary' && ['beta', 'stable'].includes(channel)" in ui
+    assert "short: 'CANARY', full: 'CANARY'" in ui
+    assert "environment === 'production' && channel === 'beta'" in ui
+    assert "short: 'BETA', full: 'ПУБЛИЧНАЯ БЕТА'" in ui
+    assert "environment === 'production' && channel === 'stable'" in ui
+    assert "return { short: '', full: 'PRODUCTION'" in ui
     assert "deployment.release_channel || ''" in ui
-    assert "environment === 'development' ? 'development'" not in ui
-    assert "v${version} · от ${visibleDate}" in ui
+    assert "deployment.app_version || deployment.build_version" in ui
+    assert "deployment.build_timestamp_utc" in ui
+    assert "deployment.git_commit_sha" in ui
+    assert "deployment.artifact_sha256" in ui
+    assert "deployment.dirty === true" in ui
+    assert "visibleParts.join(' · ')" in ui
+    assert "badge.hidden = !label.short" in ui
+    assert "data-release-icon" in ui
     assert 'id="mode-entry-release-badge"' in entry
     assert 'id="mode-entry-build-meta"' in entry
+    assert "data-release-icon" in entry
     assert "API.http.runtimeEnv" in entry_js
     assert "never guess a channel" in entry_js
     assert ".rail-release-badge.dev" in theme
     assert ".rail-release-badge.canary" in theme
-    assert ".rail-release-badge.stable" in theme
+    assert ".rail-release-badge.beta" in theme
+    assert ".rail-release-badge.stable[hidden]" in theme
+
+
+def test_release_icon_assets_match_owner_sources_and_png_contract():
+    expected = {
+        "stratforge-dev.png": "B6F8473D19F4AC9823952A99F6271F5A7C6E55B67165B644AFCA7FACB3AE5F66",
+        "stratforge-canary.png": "931B71761AD7001822AA989F9F6329A7F5047B1477FC8D2D5FD66379959131D9",
+        "stratforge-beta.png": "F887F976B4FB572646E5AD3DC8A1FB8C89B7234A96E30F94EE708ED276CBE9D3",
+    }
+
+    for name, digest in expected.items():
+        payload = (AURORA / "brand" / name).read_bytes()
+        assert payload[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", payload[16:24]) == (1254, 1254)
+        assert payload[24:26] == bytes((8, 2))  # 24-bit RGB, no alpha channel.
+        assert hashlib.sha256(payload).hexdigest().upper() == digest
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():

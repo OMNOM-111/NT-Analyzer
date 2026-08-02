@@ -48,6 +48,21 @@ def _project_root() -> Path:
     return Path(configured).resolve() if configured else Path(__file__).resolve().parents[1]
 
 
+def _checkout_identity(project_root: Path) -> tuple[str, bool]:
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=project_root, check=True,
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain"], cwd=project_root, check=True,
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return "0" * 40, True
+    return revision, dirty
+
+
 def configure_development_profile(
     root: Optional[Path] = None,
     *,
@@ -67,12 +82,12 @@ def configure_development_profile(
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"VERSION.json is missing or invalid: {exc}") from exc
     if not isinstance(version, dict) or (
-        str(version.get("channel") or "") != "development"
+        str(version.get("channel") or "") != "dev"
         or str(version.get("status") or "") != "in_development"
     ):
         raise RuntimeError(
             "Persistent local launcher requires VERSION.json "
-            "channel=development and status=in_development."
+            "channel=dev and status=in_development."
         )
     from urllib.parse import urlparse
 
@@ -81,14 +96,32 @@ def configure_development_profile(
         raise RuntimeError("Development public origin must be an HTTPS origin without a path.")
     hostname = parsed.hostname.lower()
     computer = str(os.environ.get("COMPUTERNAME") or "local").strip() or "local"
+    revision, dirty = _checkout_identity(project_root)
+    app_version = str(version.get("version") or "")
+    build_timestamp = str(version.get("build_timestamp_utc") or "").strip()
+    if not build_timestamp and version.get("build_date"):
+        build_timestamp = f"{version['build_date']}T00:00:00Z"
     values = {
+        "DEPLOYMENT_ENV": "development",
         "STRATFORGE_ENV": "development",
         "STRATFORGE_INSTANCE_ID": f"stratforge-dev-{computer}",
         "STRATFORGE_DEPLOYMENT_ROLE": "all-in-one",
         "STRATFORGE_CONFIG_PROFILE": "local-development",
-        "STRATFORGE_BUILD_VERSION": str(version.get("version") or ""),
+        "APP_VERSION": app_version,
+        "STRATFORGE_BUILD_VERSION": app_version,
         "STRATFORGE_BUILD_DATE": str(version.get("build_date") or ""),
-        "STRATFORGE_RELEASE_CHANNEL": "development",
+        "BUILD_TIMESTAMP_UTC": build_timestamp,
+        "STRATFORGE_BUILD_TIMESTAMP_UTC": build_timestamp,
+        "RELEASE_CHANNEL": "dev",
+        "STRATFORGE_RELEASE_CHANNEL": "dev",
+        "BUILD_ID": f"dev-{app_version}-{revision[:12]}",
+        "STRATFORGE_BUILD_ID": f"dev-{app_version}-{revision[:12]}",
+        "GIT_COMMIT_SHA": revision,
+        "STRATFORGE_GIT_COMMIT_SHA": revision,
+        "ARTIFACT_SHA256": "",
+        "STRATFORGE_ARTIFACT_SHA256": "",
+        "DIRTY": "1" if dirty else "0",
+        "STRATFORGE_BUILD_DIRTY": "1" if dirty else "0",
         "STRATFORGE_REGION": "local",
         "STRATFORGE_BIND_HOST": "127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS": f"127.0.0.1,localhost,{hostname}",
@@ -107,8 +140,8 @@ def configure_development_profile(
         "NT_ANALYZER_ROOT": str(project_root),
         "NTA_VITEK_BACKGROUND": "1",
     }
-    if not values["STRATFORGE_BUILD_VERSION"] or not values["STRATFORGE_BUILD_DATE"]:
-        raise RuntimeError("VERSION.json must define version and build_date.")
+    if not values["APP_VERSION"] or not values["BUILD_TIMESTAMP_UTC"]:
+        raise RuntimeError("VERSION.json must define version and build_timestamp_utc.")
     if apply_environment:
         os.environ.update(values)
     return values

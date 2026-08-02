@@ -357,19 +357,27 @@ def test_real_application_modules_route_production_state_to_postgres_only(
     data_root.mkdir()
     artifact_root.mkdir()
     for key in (
+        "STRATFORGE_ENV", "STRATFORGE_BUILD_VERSION", "STRATFORGE_BUILD_DATE",
+        "STRATFORGE_RELEASE_CHANNEL", "STRATFORGE_BUILD_TIMESTAMP_UTC",
+        "STRATFORGE_BUILD_ID", "STRATFORGE_GIT_COMMIT_SHA",
+        "STRATFORGE_ARTIFACT_SHA256", "STRATFORGE_BUILD_DIRTY",
         "NTA_APP_ENV", "NTA_ENV", "NTA_TEST_BYPASS_AUTH", "NTA_ENABLE_TEST_AUTH",
         "NTA_ENABLE_IMPERSONATION", "NTA_DISABLE_RATE_LIMIT",
         "NTA_ALLOW_LIVE_ORDERS", "NTA_ALLOW_REAL_PAYMENTS",
     ):
         monkeypatch.delenv(key, raising=False)
     values = {
-        "STRATFORGE_ENV": "production",
+        "DEPLOYMENT_ENV": "production",
         "STRATFORGE_INSTANCE_ID": "stratforge-prod-stage6-test",
         "STRATFORGE_DEPLOYMENT_ROLE": "all-in-one",
         "STRATFORGE_CONFIG_PROFILE": "production-primary",
-        "STRATFORGE_BUILD_VERSION": "1.0.0-test",
-        "STRATFORGE_BUILD_DATE": "2026-07-21",
-        "STRATFORGE_RELEASE_CHANNEL": "stable",
+        "APP_VERSION": "1.0.0-test",
+        "RELEASE_CHANNEL": "stable",
+        "BUILD_ID": "sf-1.0.0-test-storage",
+        "GIT_COMMIT_SHA": "a" * 40,
+        "ARTIFACT_SHA256": "B" * 64,
+        "BUILD_TIMESTAMP_UTC": "2026-07-21T12:34:56Z",
+        "DIRTY": "0",
         "STRATFORGE_REGION": "primary",
         "STRATFORGE_BIND_HOST": "127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS": "app.stratforges.com",

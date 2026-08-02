@@ -8,36 +8,76 @@
   let auth = null;
   let currentMode = '';
 
+  const RELEASE_ICONS = {
+    dev: 'brand/stratforge-dev.png',
+    canary: 'brand/stratforge-canary.png',
+    beta: 'brand/stratforge-beta.png',
+    stable: 'brand/stratforge-mark.png',
+  };
+
+  function releasePresentation(environment, channel) {
+    if (environment === 'development' && channel === 'dev') {
+      return { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev', icon: RELEASE_ICONS.dev };
+    }
+    if (environment === 'canary' && ['beta', 'stable'].includes(channel)) {
+      return { short: 'CANARY', full: 'CANARY', cls: 'canary', icon: RELEASE_ICONS.canary };
+    }
+    if (environment === 'production' && channel === 'beta') {
+      return { short: 'BETA', full: 'ПУБЛИЧНАЯ БЕТА', cls: 'beta', icon: RELEASE_ICONS.beta };
+    }
+    if (environment === 'production' && channel === 'stable') {
+      return { short: '', full: 'PRODUCTION', cls: 'stable', icon: RELEASE_ICONS.stable };
+    }
+    return null;
+  }
+
   function applyBuildIdentity(payload) {
     const source = payload || {};
     const deployment = source.deployment && typeof source.deployment === 'object'
       ? source.deployment : source;
+    const environment = String(deployment.deployment_environment || deployment.environment || source.deployment_environment || '').toLowerCase();
     const channel = String(deployment.release_channel || '').toLowerCase();
-    const version = String(deployment.build_version || '').trim();
-    const buildDate = String(deployment.build_date || '').trim();
-    const labels = {
-      development: { short: 'DEV', full: 'РАЗРАБОТКА', cls: 'dev' },
-      canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ', cls: 'canary' },
-      stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ', cls: 'stable' },
-    };
-    if (!version || !buildDate || !labels[channel]) return;
-    const label = labels[channel];
-    const parts = buildDate.split('-');
-    const visibleDate = parts.length === 3
-      ? `${parts[2]}.${parts[1]}.${parts[0]}` : buildDate;
+    const version = String(deployment.app_version || deployment.build_version || '').trim();
+    const timestamp = String(deployment.build_timestamp_utc || '').trim();
+    const buildId = String(deployment.build_id || '').trim();
+    const gitSha = String(deployment.git_commit_sha || '').trim();
+    const artifactSha = String(deployment.artifact_sha256 || '').trim();
+    const dirty = deployment.dirty === true;
+    const label = releasePresentation(environment, channel);
+    if (!version || !timestamp || !gitSha || !label) return;
+    const visibleParts = [`v${version}`, gitSha.slice(0, 7)];
+    if (dirty) visibleParts.push('dirty');
     const badge = document.getElementById('mode-entry-release-badge');
     const meta = document.getElementById('mode-entry-build-meta');
     if (badge) {
       badge.className = `rail-release-badge ${label.cls}`;
+      badge.hidden = !label.short;
       badge.textContent = label.short;
-      badge.title = label.full;
+      badge.title = label.short ? `${label.full} — ${environment}` : '';
     }
     if (meta) {
-      meta.textContent = `v${version} · от ${visibleDate}`;
-      meta.title = `${label.full}: версия ${version}, сборка от ${visibleDate}`;
+      meta.textContent = visibleParts.join(' · ');
+      meta.title = [
+        `APP_VERSION=${version}`,
+        `DEPLOYMENT_ENV=${environment}`,
+        `RELEASE_CHANNEL=${channel}`,
+        `BUILD_ID=${buildId || 'local-source'}`,
+        `GIT_COMMIT_SHA=${gitSha}`,
+        `ARTIFACT_SHA256=${artifactSha || 'not-applicable'}`,
+        `BUILD_TIMESTAMP_UTC=${timestamp}`,
+        `dirty=${dirty}`,
+      ].join('\n');
     }
+    const brand = document.querySelector('[data-release-icon]');
+    if (brand) brand.src = label.icon;
+    const favicon = document.querySelector('link[rel~="icon"]');
+    if (favicon) favicon.href = label.icon === RELEASE_ICONS.stable
+      ? 'brand/stratforge-icon.ico' : label.icon;
+    document.documentElement.dataset.deploymentEnvironment = environment;
     document.documentElement.dataset.releaseChannel = channel;
-    document.title = `[${label.short}] Выбор режима — StratForge AI`;
+    document.title = label.short
+      ? `[${label.short}] Выбор режима — StratForge AI`
+      : 'Выбор режима — StratForge AI';
   }
 
   async function loadBuildIdentity() {
