@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-02T03:06:47Z
+Дата актуализации: 2026-08-02T03:17:45Z
 
 ## Короткое предисловие
 
@@ -38,6 +38,7 @@
 
 ## Последние поправки
 
+- Поправка 10 · 2026-08-02T03:17:45Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `pending` -> `PR #8 merged at ca65be2e; task branch deleted`
 - Поправка 9 · 2026-08-02T03:06:47Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 Admin Panel: Administrative authorization: `owner-only controls mixed with product UI` -> `separate explicit expiring grants and server-side capability checks`; Personal UI: `system actions in three-dot menu and cabinet tabs` -> `personal menu/cabinet plus capability-gated Admin Panel`
 - Поправка 8 · 2026-08-02T02:17:26Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `PR pending` -> `PR #7 merged at f4bcb3fc; task branch deleted`
 - Поправка 7 · 2026-08-02T01:55:27Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 environment metadata: Environment и release metadata: `production|development; development|canary|stable; partial build identity` -> `development|canary|production; dev|beta|stable; complete build identity`; UI labels and icons: `DEV|CANARY|STABLE derived from channel` -> `DEV|CANARY|BETA derived from env/channel; stable Production unlabelled`

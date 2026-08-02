@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-02T03:17:45Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 closeout — записать PR, cross-platform CI, merge commit и удаление task branch.
+
 История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — зафиксировать capability-gated Admin Panel, изолированный Environment Switcher и локальный verification evidence.
 
 История поправки: 2026-08-02T02:17:26Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 1 closeout — зафиксировать PR, CI, merge commit, artifact evidence и удаление task branch.
@@ -8,7 +10,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T03:06:47Z
+Обновлено: 2026-08-02T03:17:45Z
 
 ## Baseline
 
@@ -27,7 +29,7 @@
 |---|---|---|---|---|
 | 0 | STAGE CLOSED | merged/deleted | `fe38c3b7`; [PR #6](https://github.com/OMNOM-111/NT-Analyzer/pull/6) | Принятые решения зафиксированы в ADR; CI PASS |
 | 1 | STAGE CLOSED | merged/deleted | `f4bcb3fc`; [PR #7](https://github.com/OMNOM-111/NT-Analyzer/pull/7) | Environment metadata, version, badges, owner icons; CI PASS |
-| 2 | IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING | `phase/2-admin-panel` | pending PR | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; local tests PASS |
+| 2 | STAGE CLOSED | merged/deleted | `ca65be2e`; [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; CI PASS |
 | 3 | PENDING | `phase/3-unified-identity` | pending | UUID identity и provider abstraction |
 | 4 | PENDING | `phase/4-trusted-devices` | pending | Devices и step-up |
 | 5 | PENDING | `phase/5-personal-nt-security` | pending | Personal NT security |
@@ -78,4 +80,5 @@
 - Migrations: none.
 - Rollback: revert Phase 2 implementation commit; schema rollback не требуется; legacy operations endpoint остаётся совместимым.
 - Environment impact: изменён код и UI Development checkout; Canary/Production deployment, secrets, DNS, DB и bot/email credentials не затронуты.
-- Git closeout: commit, PR, cross-platform CI, merge и удаление task branch ожидаются.
+- CI/PR: [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) merged; run `30730281079`; Static gates PASS; Ubuntu `900 passed, 31 skipped`; Windows `900 passed, 31 skipped`.
+- Git closeout: implementation `2f33726f`; merge `ca65be2e`; task branch удалена локально и на origin; integration совпадает с origin после merge.
