@@ -55,6 +55,7 @@ if __package__ is None or __package__ == "":
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
     from app import security_devices  # type: ignore[no-redef]
+    from app import personal_nt_security  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -136,6 +137,7 @@ else:
     from . import tunnel_manager
     from . import account_auth
     from . import security_devices
+    from . import personal_nt_security
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -2740,6 +2742,115 @@ class Handler(BaseHTTPRequestHandler):
         except security_devices.SecurityDeviceError as exc:
             self._err(exc.status, str(exc), code=exc.code)
 
+    def _personal_nt_error(self, exc: "personal_nt_security.PersonalNtSecurityError") -> None:
+        payload: Dict[str, Any] = {"error": str(exc), "code": exc.code}
+        if exc.onboarding is not None:
+            payload["onboarding"] = exc.onboarding
+        if exc.action:
+            payload["action"] = exc.action
+        self._json(exc.status, payload)
+
+    def _personal_nt_gate(
+        self, action: str, *, require_ready: bool, challenge_id: str = "",
+    ) -> bool:
+        """Enforce personal-NT factors and/or a single-use step-up grant.
+
+        Writes the error response and returns False when the gate is not met,
+        so critical NinjaTrader actions cannot proceed without a fresh, bound
+        confirmation (owner is exempt inside the security module).
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        _, forwarded_ip = self._request_ips()
+        try:
+            if require_ready:
+                personal_nt_security.require_ready_and_step_up(
+                    context.get("user_id"), action=action,
+                    challenge_id=challenge_id, ip=forwarded_ip,
+                )
+            else:
+                personal_nt_security.require_step_up(
+                    context.get("user_id"), action=action,
+                    challenge_id=challenge_id, ip=forwarded_ip,
+                )
+            return True
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+            return False
+
+    def _personal_nt_require_ready(self) -> bool:
+        """Require both personal-NT factors without consuming a step-up grant."""
+        context = getattr(self, "_remote_context", None) or {}
+        try:
+            personal_nt_security.require_ready(context.get("user_id"))
+            return True
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+            return False
+
+    def _account_nt_security_post(self, path: str) -> None:
+        """Self-service personal-NT security: step-up start/confirm, unlink."""
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        _, forwarded_ip = self._request_ips()
+        try:
+            if path == "/api/account/nt-security/step-up/start":
+                out = personal_nt_security.begin_step_up(
+                    user_id, action=str(body.get("action") or ""),
+                    provider=str(body.get("provider") or ""), ip=forwarded_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/account/nt-security/step-up/confirm":
+                out = security_devices.confirm_challenge(
+                    user_id=user_id,
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=forwarded_ip,
+                )
+                # A confirmed personal-NT step-up also refreshes this session's
+                # NT elevation so the paired critical action clears the dual-auth
+                # gate with a single confirmation.
+                if out.get("purpose") == security_devices.PURPOSE_STEP_UP and context.get("session_id"):
+                    try:
+                        account_auth.elevate_session_for_nt(
+                            str(context.get("session_id") or ""), user_id=user_id,
+                        )
+                    except account_auth.AccountAuthError:
+                        pass
+            elif path == "/api/account/identities/unlink":
+                # Removing a login method is a critical action: require step-up.
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_UNLINK_METHOD, require_ready=False,
+                    challenge_id=str(body.get("step_up_challenge_id") or ""),
+                ):
+                    return
+                out = account_auth.unlink_identity_self(
+                    user_id, identity_id=str(body.get("identity_id") or ""),
+                )
+            elif path == "/api/account/nt-security/step-up/staging":
+                out = personal_nt_security.grant_step_up_staging(
+                    user_id, action=str(body.get("action") or ""),
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+        except security_devices.SecurityDeviceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+        except account_auth.AccountAuthError as exc:
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+        except runtime_env.RuntimeEnvError as exc:
+            self._err(getattr(exc, "status", 403), str(exc), code=getattr(exc, "code", "") or "")
+
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
         context = getattr(self, "_remote_context", None) or {}
@@ -3109,6 +3220,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, payload)
             except security_devices.SecurityDeviceError as exc:
                 self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/account/nt-security":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, personal_nt_security.security_posture(context.get("user_id")))
+            except personal_nt_security.PersonalNtSecurityError as exc:
+                self._personal_nt_error(exc)
+            return
+
+        if path == "/api/account/identities":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, account_auth.list_account_identities(context.get("user_id")))
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/admin/overview":
@@ -6413,6 +6540,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorize_api(path):
             return
 
+        if path in {
+            "/api/account/nt-security/step-up/start",
+            "/api/account/nt-security/step-up/confirm",
+            "/api/account/nt-security/step-up/staging",
+            "/api/account/identities/unlink",
+        }:
+            self._account_nt_security_post(path)
+            return
+
         if path.startswith("/api/account/"):
             self._account_security_post(path)
             return
@@ -7151,6 +7287,12 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             context = getattr(self, "_remote_context", None) or {}
+            # Phase 5: personal-NT pairing needs both factors + a fresh step-up.
+            if not self._personal_nt_gate(
+                personal_nt_security.ACTION_PAIRING, require_ready=True,
+                challenge_id=str(body.get("step_up_challenge_id") or ""),
+            ):
+                return
             try:
                 use_connector = (
                     runtime_env.environment_explicit() and runtime_env.is_production()
@@ -7181,6 +7323,9 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             context = getattr(self, "_remote_context", None) or {}
+            # Factors must still be present to finish binding a personal device.
+            if not self._personal_nt_require_ready():
+                return
             try:
                 if runtime_env.environment_explicit() and runtime_env.is_production():
                     raise connector_protocol.ConnectorProtocolError(
@@ -7228,23 +7373,55 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_local_post():
                 return
             parts_bridge = [urllib.parse.unquote(p) for p in path.split("/") if p]
-            if len(parts_bridge) != 5 or parts_bridge[4] != "revoke":
+            if len(parts_bridge) != 5 or parts_bridge[4] not in {"revoke", "default", "capabilities"}:
                 self._err(HTTPStatus.NOT_FOUND, f"no bridge route: {path}"); return
+            action_kind = parts_bridge[4]
+            connection_id = parts_bridge[3]
             context = getattr(self, "_remote_context", None) or {}
+            body = self._read_body() or {}
+            step_up_challenge = str(body.get("step_up_challenge_id") or "")
+            # Phase 5 step-up: revoke, default-account and capability changes are
+            # all critical NinjaTrader actions.
+            if action_kind == "revoke":
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_CONNECTOR_REVOKE, require_ready=False,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
+            elif action_kind == "default":
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_DEFAULT_ACCOUNT, require_ready=True,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
+            else:  # capabilities
+                requested_caps = [str(v) for v in (body.get("capabilities") or [])]
+                raises_live = any(cap in {"live_commands", "live_read"} for cap in requested_caps)
+                if raises_live and not self._personal_nt_gate(
+                    personal_nt_security.ACTION_TRADING_CAPABILITY, require_ready=True,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
             try:
-                body = self._read_body() or {}
                 use_connector = (
                     runtime_env.environment_explicit() and runtime_env.is_production()
                 ) or str(body.get("transport") or "") == "production_connector"
-                out = (
-                    connector_protocol.revoke_installation(
-                        context.get("user_id"),
-                        parts_bridge[3],
-                        workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                if action_kind == "revoke":
+                    out = (
+                        connector_protocol.revoke_installation(
+                            context.get("user_id"),
+                            connection_id,
+                            workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                        )
+                        if use_connector
+                        else workspaces.revoke_connection(context.get("user_id"), connection_id)
                     )
-                    if use_connector
-                    else workspaces.revoke_connection(context.get("user_id"), parts_bridge[3])
-                )
+                elif action_kind == "default":
+                    out = workspaces.set_default_connection(context.get("user_id"), connection_id)
+                else:
+                    out = workspaces.set_connection_capabilities(
+                        context.get("user_id"), connection_id, body.get("capabilities") or [],
+                    )
                 self._json(HTTPStatus.OK, out)
             except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
                 self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")

@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, secure_store, server as server_mod, subscriptions, workspaces
+from app import account_auth, personal_nt_security, secure_store, server as server_mod, subscriptions, workspaces
 
 
 @pytest.fixture
@@ -190,7 +190,9 @@ def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: st
             {
                 "user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com",
                 "role": "full_control", "status": "active", "is_owner": False,
-                # NT control (bridge pair) requires Google + elevated Telegram confirm.
+                # NT control (bridge pair) requires a verified email factor (Google
+                # here), a confirmed Telegram factor and an elevated Telegram confirm.
+                "telegram_user_id": 42,
                 "google_sub": "google-dev-42", "google_email": "dev@gmail.com",
                 "google_linked_at_utc": "2026-07-15T00:00:00Z",
             },
@@ -305,6 +307,23 @@ def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatc
         assert blocked.value.code == 403
         err_body = json.loads(blocked.value.read().decode("utf-8"))
         assert err_body.get("code") == "nt_google_required"
+
+        # Phase 5: a personal-NT pairing needs both factors and a fresh, single-
+        # use step-up grant. Inject a confirmed grant directly (no test-auth here).
+        grant_doc = account_auth._read_doc()
+        grant_user = account_auth._user(grant_doc, 42)
+        grant_doc.setdefault("security_challenges", []).append({
+            "challenge_id": "grant_pair_42",
+            "user_uuid": account_auth._user_uuid(grant_user),
+            "legacy_user_id": 42,
+            "purpose": "step_up",
+            "action": "pairing",
+            "environment": personal_nt_security._current_environment(),
+            "status": "consumed",
+            "consumed_at_utc": account_auth._now_iso(),
+            "expires_at": time.time() + 600,
+        })
+        account_auth._write_doc(grant_doc)
 
         pairing = _json_request(base, "/api/bridge/pair/start", method="POST", token=user_token, csrf=user_csrf, body={
             "machine_label": "Dev PC",

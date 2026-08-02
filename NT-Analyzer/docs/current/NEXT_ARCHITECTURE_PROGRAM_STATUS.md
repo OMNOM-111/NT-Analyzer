@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-02T23:01:01Z; внёс `GitHub Copilot`; scope: Phase 5 — зафиксировать personal NinjaTrader security (Telegram + verified email factors, per-action step-up), migration 0007 и локальный verification evidence.
+
 История поправки: 2026-08-02T22:01:10Z; внёс `GitHub Copilot`; scope: Phase 4 closeout — записать PR #10, cross-platform CI run 30769037213, merge commit 4c60df6c и удаление task branch.
 
 История поправки: 2026-08-02T21:54:12Z; внёс `GitHub Copilot`; scope: Phase 4 — зафиксировать trusted-device registry, step-up challenges, migration 0006 и локальный verification evidence.
@@ -20,7 +22,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T22:01:10Z
+Обновлено: 2026-08-02T23:01:01Z
 
 ## Baseline
 
@@ -42,7 +44,7 @@
 | 2 | STAGE CLOSED | merged/deleted | `ca65be2e`; [PR #8](https://github.com/OMNOM-111/NT-Analyzer/pull/8) | Admin Panel, explicit expiring grants и origin-isolated Environment Switcher; CI PASS |
 | 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
-| 5 | PENDING | `phase/5-personal-nt-security` | pending | Personal NT security |
+| 5 | IMPLEMENTATION COMPLETE | `phase/5-personal-nt-security` | pending PR | Personal NT security: two-factor + per-action step-up |
 | 6 | PENDING | `phase/6-agent-resource-queue` | pending | Agent allocation и NT lease |
 | 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
 | 8 | PENDING | `phase/8-release-center` | pending | Release Center |
@@ -121,3 +123,20 @@
 - Residual: реальная доставка кода через Telegram/email — owner gate (в Development test-auth код echo только за явным gate); production email provider остаётся отдельным решением. Посторонние dirty/untracked файлы (`data/development/durable/nt_analyzer.sqlite3`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) не трогались и не включались в commit.
 - CI/PR: [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) merged; [Actions run 30769037213](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30769037213) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
 - Git closeout: implementation `2ec986b4`; merge `4c60df6c`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 4 delivery.
+
+## Phase 5 evidence
+
+- Components: изолированный `app/personal_nt_security.py` (factors + per-action step-up); generalized identity factor и email-фактор в `account_auth.nt_action_gate`/`require_nt_dual_auth`; self-service `unlink_identity_self`/`list_account_identities`; `security_devices` challenge получил `action`-binding; `workspaces.set_default_connection`/`set_connection_capabilities`; server API и Aurora onboarding/step-up UI.
+- Factor model: личный NinjaTrader требует подтверждённый Telegram И verified email. Verified email login identity или безопасно привязанный Google verified email закрывают email-фактор; Telegram остаётся обязательным независимым каналом. Owner exempt.
+- Step-up model: подтверждённый `step_up` challenge (Phase 4 machinery + `action`) становится single-use grant, привязанным к (user UUID, action, deployment environment). Критическое действие расходует ровно один grant; grant нельзя переиграть, использовать для другого action, перенести между окружениями или применить другим пользователем. Grant TTL 10 минут от consumption. Development test-auth helper выдаёт grant без реального кода, чтобы owner/developer тесты не блокировались.
+- Guarded actions: pairing (`/api/bridge/pair/start` + connector enroll, require ready + step-up), pair complete (require ready), connector revoke (step-up), default account change (ready + step-up), trading capability raise до live (ready + step-up), self-service identity unlink (step-up + last-method guard). Owner exempt.
+- Data model: `app/production_storage/migrations/0007_step_up_actions.sql` — additive expand-only: `ALTER TABLE sf_security_challenges ADD action, step_up_used_at` + partial index + length check. Нет `DROP`, нет contract.
+- API: `GET /api/account/nt-security`, `GET /api/account/identities`; `POST /api/account/nt-security/step-up/{start,confirm,staging}`, `POST /api/account/identities/unlink`; `POST /api/bridge/connections/{id}/{default,capabilities}`. Все self-service, server-side authorization по user_id/UUID.
+- Security invariants (проверены тестами): missing Telegram/email → onboarding; Google verified email = email-фактор; email OTP identity = email-фактор; pairing без grant отклоняется; step-up single-use; action/environment/user binding; cross-user grant не работает; challenge_id binding; unlink последнего способа входа запрещён; cross-user unlink → not found; owner exempt; staging helper. E-mail код не называется SMS.
+- Audit: `security.step_up_consumed`, `identity_unlinked`, `bridge_default_connection_set`, `bridge_connection_capabilities_set`; step-up challenge lifecycle через Phase 4 `security.*` events. Коды/токены в audit не пишутся.
+- Backward compatibility / rollback: expand-only. Существующие Telegram-пользователи и NT-команды не сломаны; email-фактор generalization additive; rollback останавливает новые pairing/critical-action approvals и оставляет challenge/grant/identity records и UUID mapping нетронутыми; revoked не возвращается.
+- Local validation: focused Phase 5 suite `30 passed`; regression-sensitive suites (`test_workspaces`, `test_nt_dual_auth`, `test_phase_a_auth`, `test_permissions`, `test_phase4_trusted_devices`) `77 passed`; final repository regression `984 passed, 31 skipped`. `python -B -m compileall -q app tests`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN и `git diff --check` (Phase 5 файлы) — PASS.
+- PostgreSQL acceptance: migration 0007 покрыта статическим контрактным тестом; live acceptance пропущен безопасно (нет `STRATFORGE_TEST_POSTGRES_*`). Никакая migration не применялась к Production или Canary.
+- Deployment boundary: Production не изменялась; Canary не изменялся; deployment не выполнялся; main не затронут; Production secrets, DNS, bot/email credentials и базы данных не использовались.
+- Residual: реальная доставка step-up кода через Telegram/email — owner gate (Development test-auth echo только за явным gate); production email provider — отдельное решение. Посторонние dirty/untracked файлы (`data/development/durable/nt_analyzer.sqlite3`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) не трогались и не включались в commit.
+- CI/PR: pending (заполняется в closeout после Windows/Linux CI PASS и merge).

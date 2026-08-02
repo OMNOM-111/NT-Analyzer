@@ -466,6 +466,7 @@ def create_challenge(
     purpose: str,
     device_id: str = "",
     provider: str = "",
+    action: str = "",
     ip: str = "",
     user_agent: str = "",
 ) -> Dict[str, Any]:
@@ -530,6 +531,7 @@ def create_challenge(
             "device_id": target_device_id,
             "purpose": purpose_id,
             "provider": provider_id,
+            "action": str(action or "")[:40],
             "environment": environment,
             "code_salt": salt,
             "code_hash": _code_hash(challenge_id, salt, code),
@@ -829,6 +831,7 @@ def confirm_challenge(
             result["revoked_sessions"] = revoked
         else:
             result["step_up"] = True
+            result["action"] = str(challenge.get("action") or "")
         account_auth._write_doc(doc)
     for event, extra in events:
         account_auth._audit(event, user_id=uid, ip=ip, extra=extra)
