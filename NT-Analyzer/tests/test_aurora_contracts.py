@@ -416,7 +416,7 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
         assert legacy_action not in menu
 
     cabinet = ui.split("function renderCabinet", 1)[1].split("async function renderAiRatingsInto", 1)[0]
-    assert "const tabs = [['profile', 'Профиль'], ['plans', 'Тарифы']]" in cabinet
+    assert "const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
     assert "['users'," not in cabinet
     assert "['operations'," not in cabinet
 
