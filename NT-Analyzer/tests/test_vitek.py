@@ -272,6 +272,7 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(path: str, *, body=None):
         raw = json.dumps(body).encode("utf-8") if body is not None else None
@@ -279,7 +280,7 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
             base + path, data=raw, method="POST" if raw is not None else "GET",
             headers={"Content-Type": "application/json"} if raw is not None else {},
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with opener.open(req, timeout=5) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
 
     try:
@@ -341,13 +342,14 @@ def test_vitek_non_conversation_posts_do_not_require_ai_workspace(tmp_path, monk
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     host, port = srv.server_address
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         request = urllib.request.Request(
             f"http://{host}:{port}/api/vitek/reconcile",
             data=json.dumps({"apply": False}).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with opener.open(request, timeout=5) as response:
             payload = json.load(response)
         assert payload["ok"] is True and payload["mode"] == "preview"
     finally:
