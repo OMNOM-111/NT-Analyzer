@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
@@ -9,7 +10,20 @@ from http.server import ThreadingHTTPServer
 from app import jobqueue, vitek
 
 
+def _open_json(opener, request):
+    try:
+        with opener.open(request, timeout=5) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise AssertionError(f"HTTP {exc.code} from {request.full_url}: {body}") from exc
+
+
 def _isolate(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setattr(vitek, "_state_path", lambda: tmp_path / "vitek.json")
     monkeypatch.setattr(vitek, "_service_marker_path", lambda: tmp_path / "background.json")
     monkeypatch.setattr(vitek, "_supervisor_state_path", lambda: tmp_path / "backend-supervisor.json")
@@ -269,6 +283,7 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def request(path: str, *, body=None):
         raw = json.dumps(body).encode("utf-8") if body is not None else None
@@ -276,8 +291,7 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
             base + path, data=raw, method="POST" if raw is not None else "GET",
             headers={"Content-Type": "application/json"} if raw is not None else {},
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
+        return _open_json(opener, req)
 
     try:
         code, current = request("/api/vitek/status")
@@ -338,14 +352,14 @@ def test_vitek_non_conversation_posts_do_not_require_ai_workspace(tmp_path, monk
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     host, port = srv.server_address
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         request = urllib.request.Request(
             f"http://{host}:{port}/api/vitek/reconcile",
             data=json.dumps({"apply": False}).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            payload = json.load(response)
+        _, payload = _open_json(opener, request)
         assert payload["ok"] is True and payload["mode"] == "preview"
     finally:
         srv.shutdown()

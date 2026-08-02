@@ -74,6 +74,7 @@ def test_preflight_passes_a_complete_isolated_layout(tmp_path: Path, monkeypatch
     (tmp_path / "objects").mkdir()
     env_file = tmp_path / "production.env"
     env_file.write_text(_environment(data_root), encoding="utf-8")
+    env_file.chmod(0o600)
 
     result = production_preflight.run_preflight(
         app_root=app_root,
