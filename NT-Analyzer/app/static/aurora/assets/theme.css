@@ -318,9 +318,10 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
   letter-spacing: .45px; border: 1px solid var(--line-2); color: var(--tx-2);
   background: var(--bg-3); white-space: nowrap;
 }
-.rail-release-badge.dev { color: #b9a7ff; border-color: rgba(139, 112, 255, .38); background: rgba(109, 78, 220, .16); }
-.rail-release-badge.canary { color: #ffd18a; border-color: rgba(255, 173, 66, .38); background: rgba(196, 112, 20, .16); }
-.rail-release-badge.stable { color: #86ecc0; border-color: rgba(54, 211, 153, .34); background: rgba(35, 153, 111, .14); }
+.rail-release-badge.dev { color: #ffd0a0; border-color: rgba(255, 137, 48, .48); background: rgba(211, 91, 14, .20); }
+.rail-release-badge.canary { color: #ffe09b; border-color: rgba(244, 184, 61, .52); background: rgba(190, 126, 11, .20); }
+.rail-release-badge.beta { color: #f2c2ff; border-color: rgba(193, 102, 255, .48); background: linear-gradient(105deg, rgba(116, 69, 214, .22), rgba(224, 103, 34, .20)); }
+.rail-release-badge.stable[hidden] { display: none !important; }
 .rail-brand-version { margin-top: 1px; font-size: 8.5px; line-height: 1.2; color: var(--tx-3); font-weight: 650; white-space: nowrap; }
 .rail-brand-sub { font-size: 10.5px; color: var(--tx-3); font-weight: 600; white-space: nowrap; }
 .rail-nav { display: flex; flex-direction: column; gap: 3px; width: 100%; flex: 1; }

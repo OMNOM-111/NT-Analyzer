@@ -7650,6 +7650,10 @@ def run(port: Optional[int] = None) -> None:
         f"instance={deployment.instance_id} "
         f"role={deployment.deployment_role} "
         f"build={deployment.build_version} "
+        f"build_id={deployment.build_id} "
+        f"git={deployment.git_commit_sha[:12]} "
+        f"channel={deployment.release_channel} "
+        f"dirty={str(deployment.dirty).lower()} "
         f"test_auth={env['test_auth_enabled']} "
         f"impersonation={env['impersonation_enabled']}"
     )

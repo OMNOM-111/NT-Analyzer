@@ -141,6 +141,10 @@
 /NT-Analyzer/data/ai_lab/registry/orchestrator_conversation.jsonl
 /NT-Analyzer/data/ai_lab/registry/orchestrator_conversations.json
 
+# Fail-closed placeholder roots used when remote deployment state is not configured.
+/NT-Analyzer/.stratforge-production-data-disabled/
+/NT-Analyzer/.stratforge-canary-data-disabled/
+
 # Local closeout artifacts. Preserve on disk or in artifact storage; do not commit.
 /NT-Analyzer/dev10-reconstructed-rollback.bundle
 /NT-Analyzer/docs.zip
