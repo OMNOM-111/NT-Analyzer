@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-02T01:55:27Z
+Дата актуализации: 2026-08-02T02:17:26Z
 
 ## Короткое предисловие
 
@@ -38,8 +38,8 @@
 
 ## Последние поправки
 
+- Поправка 8 · 2026-08-02T02:17:26Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `PR pending` -> `PR #7 merged at f4bcb3fc; task branch deleted`
 - Поправка 7 · 2026-08-02T01:55:27Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 environment metadata: Environment и release metadata: `production|development; development|canary|stable; partial build identity` -> `development|canary|production; dev|beta|stable; complete build identity`; UI labels and icons: `DEV|CANARY|STABLE derived from channel` -> `DEV|CANARY|BETA derived from env/channel; stable Production unlabelled`
 - Поправка 6 · 2026-08-02T00:53:55Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 0 ADR package: Принятые ADR: `audit recommendations only` -> `owner-approved ADR 0001-0007`; Журнал Phase 0-10: `absent` -> `docs/current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md`
 - Поправка 5 · 2026-08-01T23:47:37Z · `GPT-5.5 через Codex по запросу owner` · Stage 10 Repository Hygiene Closeout documentation: Новые документы closeout: `absent` -> `git-workflow.md; task-closeout-protocol.md; repository-hygiene.md`; Архитектурный отчёт скопирован в репозиторий: `external desktop report only` -> `docs/current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md`
 - Поправка 4 · 2026-07-03T11:38:10Z · `owner` · GOV-AI-018 — безопасный reconnect NinjaTrader: Новый закон: `GOV-AI-001..017` -> `GOV-AI-001..018`
-- Поправка 3 · 2026-07-03T06:00:00Z · `owner` · GOV-AI-015..016 — сильная модель и полный контекст: Новые законы: `GOV-AI-001..014` -> `GOV-AI-001..016`
