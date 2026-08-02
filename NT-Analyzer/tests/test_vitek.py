@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 
 from app import jobqueue, vitek
+
+
+def _open_json(opener, request):
+    try:
+        with opener.open(request, timeout=5) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise AssertionError(f"HTTP {exc.code} from {request.full_url}: {body}") from exc
 
 
 def _isolate(monkeypatch, tmp_path) -> None:
@@ -280,8 +290,7 @@ def test_vitek_http_status_windows_and_plan_routes(tmp_path, monkeypatch) -> Non
             base + path, data=raw, method="POST" if raw is not None else "GET",
             headers={"Content-Type": "application/json"} if raw is not None else {},
         )
-        with opener.open(req, timeout=5) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
+        return _open_json(opener, req)
 
     try:
         code, current = request("/api/vitek/status")
@@ -349,8 +358,7 @@ def test_vitek_non_conversation_posts_do_not_require_ai_workspace(tmp_path, monk
             data=json.dumps({"apply": False}).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with opener.open(request, timeout=5) as response:
-            payload = json.load(response)
+        _, payload = _open_json(opener, request)
         assert payload["ok"] is True and payload["mode"] == "preview"
     finally:
         srv.shutdown()
