@@ -200,5 +200,8 @@ and its routes are inert unless the Release Center is used.
 
 ## 18. Commit / PR / CI / merge evidence
 
-- Implementation commit, PR, CI (Static / Ubuntu / Windows) and merge commit are
-  recorded at closeout.
+- Implementation commit: `4d529f49` on `phase/8-release-center` (from integration `66ae6c7a`).
+- PR: [#14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) → base `release/0.10.0-next-architecture`.
+- CI ([Actions run 30807581743](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30807581743)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
+- Merge commit: `4efddb42`; task branch `phase/8-release-center` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
+- Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 8 delivery.

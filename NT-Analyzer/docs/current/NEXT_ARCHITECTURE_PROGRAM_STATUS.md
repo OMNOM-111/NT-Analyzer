@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T13:37:51Z; внёс `GitHub Copilot`; scope: Phase 8 closeout — записать PR #14, cross-platform CI run 30807581743, merge commit 4efddb42 и удаление task branch (external Canary/Production acceptance остаётся owner gate).
+
 История поправки: 2026-08-03T06:58:46Z; внёс `GitHub Copilot`; scope: Phase 8 — зафиксировать реализацию Release Center (immutable-artifact promotion state machine, migration 0009, API, UI, dry-run adapter; external Canary/Production acceptance pending owner approval).
 
 История поправки: 2026-08-03T03:55:03Z; внёс `GitHub Copilot`; scope: Phase 7 closeout — записать PR #13, cross-platform CI run 30782625524, merge commit 5955f2e5 и удаление task branch (external Canary acceptance остаётся owner gate).
@@ -34,7 +36,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T06:58:46Z
+Обновлено: 2026-08-03T13:37:51Z
 
 ## Baseline
 
@@ -59,7 +61,7 @@
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
-| 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | `phase/8-release-center` | pending | Release Center: immutable-artifact promotion state machine + migration 0009 |
+| 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
 | 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
 
@@ -202,4 +204,4 @@ Status: **IMPLEMENTATION COMPLETE; REAL CANARY DEPLOYMENT / PRODUCTION PROMOTION
 - External checks intentionally NOT run: реальный Canary/Production deployment; SSH/Cloudflare/DNS/systemd/реальные DB команды; реальные signing keys/Production credentials/Telegram/Connector; применение migration к реальным DB. Browser QA не запускался (workspace stability policy).
 - Migrations: `0009_release_center.sql` (additive expand-only). Rollback: revert Phase 8 implementation/merge commit; таблицы пустые, data rollback не требуется; `app/release_center.py` инертен без использования.
 - Environment impact: изменён только код, UI и миграция-исходник. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets/signing keys, реальные Telegram credentials и реальные Connector sessions не затронуты.
-- CI/PR/Git closeout: записывается при closeout (base `release/0.10.0-next-architecture`).
+- CI/PR/Git closeout: [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) merged; [Actions run 30807581743](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30807581743) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `4d529f49`; merge `4efddb42`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 8 delivery. External Canary/Production acceptance (реальный Canary deployment и exact-artifact Production promotion) остаётся owner gate; этап не STAGE CLOSED.
