@@ -2,7 +2,7 @@
 
 История поправки: 2026-08-03T14:52:33Z; внёс `GitHub Copilot`; scope: Phase 9 — зафиксировать реализацию blue-green deployment tooling (fail-closed dry-run engine, migration 0010, Release Center integration, rehearsal API/UI, deploy templates, runbook, тесты; реальный blue-green deployment и exact-artifact Production promotion остаются owner gate).
 
-**Status: Phase 9 — IMPLEMENTATION COMPLETE; REAL BLUE-GREEN DEPLOYMENT / PRODUCTION PROMOTION ACCEPTANCE PENDING OWNER APPROVAL.**
+**Status: Phase 9 — IMPLEMENTATION CLOSED; GIT CLOSEOUT COMPLETE; EXTERNAL BLUE-GREEN / PRODUCTION DEPLOYMENT ACCEPTANCE PENDING OWNER APPROVAL.**
 This is explicitly **NOT STAGE CLOSED**: no real Canary deployment, no real
 exact-artifact Production promotion and no real blue-green traffic switch were
 executed against real infrastructure.
@@ -225,12 +225,9 @@ are inert without an explicit real executor and operator action.
 
 ## 18. Commit / PR / CI / merge evidence
 
-- Implementation commit: recorded in `NEXT_ARCHITECTURE_PROGRAM_STATUS.md` on
-  merge/closeout.
-- PR, cross-platform CI run and merge commit: to be recorded in the Phase 9
-  closeout once CI passes and the owner confirms the merge.
-- Extraneous dirty/untracked files (`data/catalog/margins.json`,
-  `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`,
-  `data/development/integrations/`, `data/governance-rendered/*`,
-  `docs/AGENT_PERSONAS.md`, `docs/governance/*`) are preserved on disk and remain
-  outside the Phase 9 delivery.
+- Implementation commit: `86b0ed4e` on `phase/9-blue-green` (from integration `34db249a`).
+- PR: [#15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) → base `release/0.10.0-next-architecture`.
+- CI ([Actions run 30825143931](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30825143931)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS. The Node.js 20 deprecation annotation on `actions/checkout@v4`/`actions/setup-python@v5` is non-blocking (checks SUCCESS).
+- Merge commit: `3a787c6a`; task branch `phase/9-blue-green` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
+- Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 9 delivery.
+- Real blue-green/Production acceptance (a real separate Canary deployment and a real exact-artifact Production blue-green promotion against real infrastructure) remains an owner-gated external step; the stage is not STAGE CLOSED.
