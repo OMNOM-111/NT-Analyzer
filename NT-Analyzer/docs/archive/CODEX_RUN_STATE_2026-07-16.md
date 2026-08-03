@@ -8,7 +8,7 @@ Last checkpoint: 2026-07-18 04:15 PT
 > placed the Student/Professional choice before the Aurora shell, and passed an
 > isolated staging visual check of guest, Student, reset/deposit, safe-offline
 > ticket, Community and Professional rail. See
-> [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md)
+> [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](audits/2026-07-18-product-contours.md)
 > for the authoritative current product boundary.
 
 ## Git

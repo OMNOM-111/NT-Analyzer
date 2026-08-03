@@ -10,7 +10,7 @@ The external result of every step stays `pending`, never a real `pass`. Real
 Canary deployment and exact-artifact Production promotion remain owner-gated.
 
 The deployment templates live in
-[deploy/production/blue-green/README.md](../deploy/production/blue-green/README.md).
+[deploy/production/blue-green/README.md](../../deploy/production/blue-green/README.md).
 
 ## Preconditions
 

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | **Сотрудники приложения** (Витёк, Управляющий, Марина…) | чат Aurora / Telegram | этот файл + карточки ниже |
 | **API Agents / ключи** (OpenAI, Azure, DeepSeek…) | `/ui/ai-agents.html` | [AI_LAB_CLOUD_AGENTS.md](AI_LAB_CLOUD_AGENTS.md) |
-| **Каналы разработки** (Cursor, Codex, Claude…) | репозиторий | [governance/ROLES.md](governance/ROLES.md) |
+| **Каналы разработки** (Cursor, Codex, Claude…) | репозиторий | [governance/ROLES.md](../governance/ROLES.md) |
 
 Имя «Марина» — стабильная персона над Auto-маршрутизатором. Ключ в AI Agents —
 отдельная учётная запись провайдера. Это разные сущности.
@@ -26,17 +26,17 @@
             └─ специалисты: Марина · Толик · Никита · Иван
 ```
 
-Личности, манера и голоса: [AGENT_PERSONAS.md](AGENT_PERSONAS.md).
+Личности, манера и голоса: [AGENT_PERSONAS.md](../AGENT_PERSONAS.md).
 `StratForge Orchestrator` — название **технического шлюза** (`chief_agent.handle_message`),
 а не отдельный начальник над Витьком. Подробности маршрутизации:
 [CHIEF_AI_AGENT.md](CHIEF_AI_AGENT.md). Поведение Витька, события, отдых, API:
-[VITEK.md](VITEK.md). Публичный тон ответов: [AI_DIALOGUE_CONTRACT.md](AI_DIALOGUE_CONTRACT.md).
+[VITEK.md](../VITEK.md). Публичный тон ответов: [AI_DIALOGUE_CONTRACT.md](../AI_DIALOGUE_CONTRACT.md).
 
 ## Кто за что отвечает
 
 | Участник | Роль | Как вызвать | Канон |
 | --- | --- | --- | --- |
-| **Виктор / Витёк** | итог перед владельцем, поручения, инциденты | по умолчанию; `Витёк, …` | [VITEK.md](VITEK.md) |
+| **Виктор / Витёк** | итог перед владельцем, поручения, инциденты | по умолчанию; `Витёк, …` | [VITEK.md](../VITEK.md) |
 | **Управляющий** | координация, важные решения, `critical` | `Управляющий, …` или меню «Максимальная» | [AI_MANAGEMENT.md](AI_MANAGEMENT.md) |
 | **Заместитель** | средние задачи, `standard` | `Заместитель, …` / «Стандартная» | [AI_MANAGEMENT.md](AI_MANAGEMENT.md) |
 | **Секретарь** | быстрые справки, `light` | `Секретарь, …` / «Быстрая» | [AI_MANAGEMENT.md](AI_MANAGEMENT.md) |
@@ -58,9 +58,9 @@
 4. Профильный специалист или управленческий ярус / Orchestrator.
 5. Один публичный ответ с именем фактического собеседника; `single_response=true`.
 
-Законы: [LOCAL_AI_LAWS.md](governance/LOCAL_AI_LAWS.md) (`GOV-AI-*` про capability,
+Законы: [LOCAL_AI_LAWS.md](../governance/LOCAL_AI_LAWS.md) (`GOV-AI-*` про capability,
 anti-refusal, authorship). Восстановление стратегии из карантина:
-[STRATEGY_RECOVERY.md](STRATEGY_RECOVERY.md).
+[STRATEGY_RECOVERY.md](../strategies/STRATEGY_RECOVERY.md).
 
 ## Аватары
 
@@ -113,7 +113,7 @@ Speech-модели даже при `disabled` (чтобы роутер чата
 статус `TTS готов: Azure gpt-4o-mini-tts`, synthesize Виктора/Марины → `audio/mpeg`.
 Chat-ключи (GPT-4.1, Gemini, gpt-5-mini без TTS-деплоя) по-прежнему не дают голос.
 
-Стандартные голоса (обоснование: [AGENT_PERSONAS.md](AGENT_PERSONAS.md)):
+Стандартные голоса (обоснование: [AGENT_PERSONAS.md](../AGENT_PERSONAS.md)):
 
 | id | Пол | Voice | Speed | Характер |
 | --- | --- | --- | --- | --- |
@@ -134,16 +134,16 @@ Chat-ключи (GPT-4.1, Gemini, gpt-5-mini без TTS-деплоя) по-пр�
 | `marina` / `tolik` / `nikita` / `ivan` | специалисты |
 | `manager` | Управляющий; Секретарь и Заместитель — тот же файл |
 
-Подробнее: [`Agents/README.md`](../../Agents/README.md).
+Подробнее: [`Agents/README.md`](../../../Agents/README.md).
 Модуль: `app/ai_lab/agent_tts.py`.
 
 ## Связанные технические документы
 
 - [AI_LAB_CLOUD_AGENTS.md](AI_LAB_CLOUD_AGENTS.md) — ключи, роли pipeline, бюджеты
-- [AI_STRATEGY_LAB_QUALITY.md](AI_STRATEGY_LAB_QUALITY.md) / [AI_STRATEGY_LAB_RUN_CONTROLS.md](AI_STRATEGY_LAB_RUN_CONTROLS.md) — sandbox AI Lab
+- [AI_STRATEGY_LAB_QUALITY.md](../strategies/AI_STRATEGY_LAB_QUALITY.md) / [AI_STRATEGY_LAB_RUN_CONTROLS.md](../strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md) — sandbox AI Lab
 - [AI_LAB_COMPETITIVE_FEEDBACK.md](AI_LAB_COMPETITIVE_FEEDBACK.md) — feedback ledger
-- [AI_AGENT_STACK_RESEARCH_2026-07-01.md](AI_AGENT_STACK_RESEARCH_2026-07-01.md) — **архивный** benchmark (не operating guide)
-- [PRODUCTION_READINESS_2026-07-13.md](PRODUCTION_READINESS_2026-07-13.md) — release-аудит
+- [AI_AGENT_STACK_RESEARCH_2026-07-01.md](../archive/AI_AGENT_STACK_RESEARCH_2026-07-01.md) — **архивный** benchmark (не operating guide)
+- [PRODUCTION_READINESS_2026-07-13.md](../archive/PRODUCTION_READINESS_2026-07-13.md) — release-аудит
 
 Исходники персон: `app/ai_lab/domain_agents.py` (`PERSONAS`, `MANAGEMENT`).
 Диалог: `app/ai_lab/dialogue_policy.py`. Шлюз: `app/ai_lab/chief_agent.py`.

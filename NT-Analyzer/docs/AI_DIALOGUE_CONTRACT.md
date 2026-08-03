@@ -4,7 +4,7 @@
 права действий живут отдельно; этот документ не расширяет allowlist.
 
 Исходник: `app/ai_lab/dialogue_policy.py` (`OWNER_DIALOGUE_POLICY`,
-`clean_public_reply`, `compact_model_reply`). Карта агентов: [AGENTS.md](AGENTS.md).
+`clean_public_reply`, `compact_model_reply`). Карта агентов: [AGENTS.md](agents/AGENTS.md).
 
 ## Иерархия и авторство
 

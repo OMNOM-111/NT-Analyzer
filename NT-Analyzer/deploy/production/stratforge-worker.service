@@ -1,6 +1,6 @@
 [Unit]
 Description=StratForge Production Workers
-Documentation=file:%h/apps/stratforge/current/docs/PRODUCTION_WORKER_RUNBOOK.md
+Documentation=file:%h/apps/stratforge/current/docs/operations/PRODUCTION_WORKER_RUNBOOK.md
 After=network-online.target postgresql.service
 Wants=network-online.target
 StartLimitIntervalSec=300

@@ -3,7 +3,7 @@ name: Market Data Resilience
 overview: "IMPLEMENTATION PARTIAL; AUTOMATED GATES PASS / LIVE VISUAL+100-USER+ACCEPTANCE PENDING / PRODUCTION FAILOVER BLOCKED. Same-origin browser WSS; PostgreSQL+Redis production standard; localhost Bridge IPC only. Never claim ENGINEERING COMPLETE until live and visually accepted."
 todos:
   - id: phase0-baseline
-    content: "Phase 0: baseline instrumentation + docs/MARKET_DATA_BASELINE_2026-07-16.md"
+    content: "Phase 0: baseline instrumentation + docs/archive/MARKET_DATA_BASELINE_2026-07-16.md"
     status: completed
   - id: docs-platform
     content: "Docs: DATA_PLATFORM, CACHE_FANOUT, 100_USER, VISUAL_ACCEPTANCE, PG_REDIS migration"
@@ -123,7 +123,7 @@ flowchart LR
 | Результат | Измеренная схема до рефакторинга: polling, JSON snapshots, full re-send, sync file I/O, тяжёлые операции в MD callback |
 | Автотесты | `tests/test_market_data_baseline.py` |
 | Ручная проверка | 5–15 мин MNQ+MGC при активном рынке (если сессия закрыта — зафиксировать synthetic + code-path audit) |
-| Артефакт | `docs/MARKET_DATA_BASELINE_2026-07-16.md` + data-flow схема |
+| Артефакт | `docs/archive/MARKET_DATA_BASELINE_2026-07-16.md` + data-flow схема |
 | Блокирующие зависимости | нет |
 | Критерий завершения | p50/p95/p99 по доступным стадиям + список bottleneck зафиксированы |
 
@@ -162,7 +162,7 @@ flowchart LR
 | Результат | Auth token, `protocol_version`, `connection_id`, `subscription_id`, heartbeat, reconnect, bounded queue, queue depth, dropped, backpressure, clean shutdown, audit. **Нет** неаутентифицированного endpoint |
 | Автотесты | reject without token; heartbeat timeout; reconnect; clean shutdown |
 | Ручная проверка | Bridge connect → events in ring |
-| Артефакт | `docs/MARKET_DATA_IPC.md` |
+| Артефакт | `docs/architecture/MARKET_DATA_IPC.md` |
 | Блокирующие зависимости | Phase 1–2 |
 | Критерий завершения | unauthenticated connect всегда rejected |
 

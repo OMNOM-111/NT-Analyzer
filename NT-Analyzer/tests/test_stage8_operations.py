@@ -284,7 +284,7 @@ class TestProductionTelegramStructure:
         unit = (root / "deploy" / "production" / "stratforge-telegram.service").read_text(
             encoding="utf-8",
         )
-        runbook = (root / "docs" / "PRODUCTION_TELEGRAM_RUNBOOK.md").read_text(
+        runbook = (root / "docs" / "operations" / "PRODUCTION_TELEGRAM_RUNBOOK.md").read_text(
             encoding="utf-8",
         )
         assert "STRATFORGE_DEPLOYMENT_ROLE=telegram" in unit
@@ -302,7 +302,7 @@ class TestOperationsDeployment:
         timer = (root / "deploy" / "production" / "stratforge-operations.timer").read_text(
             encoding="utf-8",
         )
-        runbook = (root / "docs" / "PRODUCTION_OPERATIONS_RUNBOOK.md").read_text(
+        runbook = (root / "docs" / "operations" / "PRODUCTION_OPERATIONS_RUNBOOK.md").read_text(
             encoding="utf-8",
         )
         assert "STRATFORGE_DEPLOYMENT_ROLE=worker" in service

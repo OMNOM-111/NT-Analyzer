@@ -22,11 +22,11 @@ Install the API, worker, Telegram and Cloudflare units
 service/timer (`stratforge-operations.service`,
 `stratforge-operations.timer`) under `~/.config/systemd/user/`, place
 the protected configuration under `~/.config/stratforge/`, and follow
-`docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md` plus
-`docs/PRODUCTION_STORAGE_RUNBOOK.md`,
-`docs/PRODUCTION_TELEGRAM_RUNBOOK.md` and
-`docs/PRODUCTION_WORKER_RUNBOOK.md` and
-`docs/PRODUCTION_OPERATIONS_RUNBOOK.md`. Apply the checksum-confirmed schema before
+`docs/operations/PRODUCTION_DEPLOYMENT_RUNBOOK.md` plus
+`docs/operations/PRODUCTION_STORAGE_RUNBOOK.md`,
+`docs/operations/PRODUCTION_TELEGRAM_RUNBOOK.md` and
+`docs/operations/PRODUCTION_WORKER_RUNBOOK.md` and
+`docs/operations/PRODUCTION_OPERATIONS_RUNBOOK.md`. Apply the checksum-confirmed schema before
 starting API/workers. The service preflight validates the
 PostgreSQL runtime role/TLS contract and an isolated writable artifact root;
 temporary database reachability remains a readiness check. Do not expose port 18765, RDP,

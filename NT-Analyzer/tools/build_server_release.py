@@ -39,23 +39,23 @@ _INCLUDED_FILES = (
     "README-RUN-MODES.md",
     "VERSION.json",
     "requirements.txt",
-    "docs/AI_STRATEGY_LAB_QUALITY.md",
-    "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
-    "docs/CONNECTOR_INSTALL_GUIDE.md",
-    "docs/CONNECTOR_PROTOCOL_V1.md",
-    "docs/MARKET_DATA_PRODUCTION_RUNBOOK.md",
-    "docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md",
-    "docs/PRODUCTION_OPERATIONS_RUNBOOK.md",
-    "docs/PRODUCTION_STORAGE_RUNBOOK.md",
-    "docs/PRODUCTION_TELEGRAM_RUNBOOK.md",
-    "docs/PRODUCTION_WORKER_RUNBOOK.md",
-    "docs/risk-profile.md",
+    "docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
+    "docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+    "docs/operations/CONNECTOR_INSTALL_GUIDE.md",
+    "docs/architecture/CONNECTOR_PROTOCOL_V1.md",
+    "docs/operations/MARKET_DATA_PRODUCTION_RUNBOOK.md",
+    "docs/operations/PRODUCTION_DEPLOYMENT_RUNBOOK.md",
+    "docs/operations/PRODUCTION_OPERATIONS_RUNBOOK.md",
+    "docs/operations/PRODUCTION_STORAGE_RUNBOOK.md",
+    "docs/operations/PRODUCTION_TELEGRAM_RUNBOOK.md",
+    "docs/operations/PRODUCTION_WORKER_RUNBOOK.md",
+    "docs/strategies/risk-profile.md",
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
     "tools/release_static_scan.py",
     "tools/verify_server_release.py",
 )
-_EXCLUDED_FILES = {"docs/AGENTS.md", "docs/AI_DIALOGUE_CONTRACT.md"}
+_EXCLUDED_FILES = {"docs/agents/AGENTS.md", "docs/AI_DIALOGUE_CONTRACT.md"}
 
 
 def _run(command: list[str], *, cwd: Path) -> str:

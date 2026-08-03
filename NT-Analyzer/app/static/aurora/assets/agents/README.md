@@ -4,7 +4,7 @@ One webm per agent. UI shows paused frame; hover and live reply play it.
 
 In StratForge Orchestrator chat, hovering an assistant message face also
 reads the message aloud (OpenAI Speech `tts-1` by default; browser
-`speechSynthesis` fallback). See `docs/AGENTS.md` § avatar TTS and
+`speechSynthesis` fallback). See `docs/agents/AGENTS.md` § avatar TTS and
 `app/ai_lab/agent_tts.py`.
 
 Masters: repo `/Agents/<Имя>/`.

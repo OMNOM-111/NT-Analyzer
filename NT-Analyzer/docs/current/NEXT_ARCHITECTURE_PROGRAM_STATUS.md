@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — фактический перенос документации (git mv + обновление ссылок), language policy, changelog, final requirements matrix, strategy-spec verification, version readiness. КОРРЕКЦИЯ: Phase 10 не объявляется полностью закрытой — модель workspace/strategy specification revision NOT IMPLEMENTED.
+
 История поправки: 2026-08-03T15:52:54Z; внёс `GitHub Copilot`; scope: Phase 10 closeout — записать PR #16, cross-platform CI run 30829268990, merge commit bd4fbc47 и удаление task branch (implementation closed, git closeout complete).
 
 История поправки: 2026-08-03T15:45:33Z; внёс `GitHub Copilot`; scope: Phase 10 — зафиксировать канонический docs-tree + migration map, ужесточение governance amendment workflow (owner / docs.manage_global на запись), strategy-override scope invariant и тесты.
@@ -44,7 +46,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T15:52:54Z
+Обновлено: 2026-08-03T16:53:14Z
 
 ## Baseline
 
@@ -71,7 +73,7 @@
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
-| 10 | IMPLEMENTATION CLOSED | merged/deleted | `bd4fbc47`; [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | Canonical docs-tree + migration map; governance write теперь owner/docs.manage_global; strategy-override scope invariant; CI PASS |
+| 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. **NOT IMPLEMENTED: strategy-spec revision module** — см. requirements matrix |
 
 ## Phase 0 evidence
 
@@ -249,3 +251,16 @@ Status: **IMPLEMENTATION COMPLETE.** Полное evidence: `docs/current/PHASE_
 ### Phase 10 closeout
 
 - [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) merged; [Actions run 30829268990](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30829268990) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `25fffb42`; merge `bd4fbc47`; task branch `phase/10-documentation` удалена локально и на origin; integration совпадает с origin after merge. **IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE**. Физическое массовое перемещение документов по `docs/DOCS_STRUCTURE.md` выполняется owner-approved шагами (миграционная карта = требуемая зависимость).
+
+## Phase 10B evidence
+
+Status: **Phase 10 NOT fully closed.** Полное evidence: `docs/current/PHASE_10B_DOCUMENTATION_FINALIZATION_EVIDENCE.md`; полный аудит требований: `docs/current/NEXT_ARCHITECTURE_FINAL_REQUIREMENTS_MATRIX.md`.
+
+- Актуальный отчёт Phase 10A преждевременно объявил Phase 10 закрытой. Phase 10B выполняет фактическую работу: `git mv` ~55 документов в канонические каталоги (`agents/architecture/operations/strategies/product/changelog/archive` + `archive/audits`) с обновлением всех markdown-ссылок, release-manifest (`tools/build_server_release.py` + `tests/test_server_release.py`), 3 runbook-path тестов, systemd unit'ов, `.gitattributes`, code comments и repo/user docs.
+- Не перемещены (owner-gated, `docs/REQUIRES_OWNER_CLASSIFICATION.md`): `AGENT_PERSONAS.md` (stray dirty), `VITEK.md`+`AI_DIALOGUE_CONTRACT.md` (ссылаются как siblings из dirty AGENT_PERSONAS.md), дублирующийся `repository-hygiene.md` (расходящийся контент).
+- Language: `docs/LOCALIZATION.md` — русский canonical source; не переводятся API/классы/поля/команды/пути/идентификаторы/код; смысл законов не меняется; без расходящейся английской копии. Governance и agent docs уже на русском; полная нормализация technical docs — follow-up.
+- Changelog: `docs/changelog/NEXT_ARCHITECTURE_CHANGELOG.md` (User/Admin/Security/Infra&Releases/Externally-blocked/Not-yet-in-Production/Not-implemented; dry-run/mock не выдаются за operational).
+- Strategy specs: safety invariant IMPLEMENTED+tested; workspace fork PARTIAL (`community.copy_strategy`); полная модель `strategy.spec.manage`/`sf_document_revisions` **NOT IMPLEMENTED** (крупный продуктовый модуль) → Phase 10 не закрывается полностью.
+- Version: `VERSION.json` = `0.10.0-dev.1`; next dev suffix `0.10.0-dev.2`; `0.10.0-beta.1` **NOT READY** (incomplete requirement + external gates); env/channel/SemVer не смешаны; VERSION.json не менялся.
+- Residuals (honest, non-CI): governance law `source_refs` + generated rendered files цитируют pre-move пути (provenance, regenerate); archive-internal historical cross-refs. Local gates: full regression 1148 passed / 31 skipped; compileall / node --check / static scan CSP/SECRETS/MARKDOWN / git diff --check PASS.
+- CI/PR/merge/clean-checkout evidence — записывается в Phase 10B closeout.

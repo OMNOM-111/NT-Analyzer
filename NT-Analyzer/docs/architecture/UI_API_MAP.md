@@ -57,7 +57,7 @@ Orchestrator — единым внутренним шлюзом. Единств�
   `POST .../voice/reset`, `POST .../voice/preview`,
   `GET /api/ai-lab/tts/catalog`, `POST /api/ai-lab/tts/openai-key`.
   UI: страница AI Agents → «Голоса сотрудников».
-  Канон: [AGENTS.md](AGENTS.md) § озвучка. Хранение:
+  Канон: [AGENTS.md](../agents/AGENTS.md) § озвучка. Хранение:
   `data/integrations/agent_voices.json` (без секретов).
   **2026-07-16:** подключён Azure Student `gpt-4o-mini-tts`
   (`AGT-B8F24346E288`); chat-модели (GPT-4.1 / Gemini / gpt-5-mini) ≠ TTS.

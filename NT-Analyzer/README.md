@@ -62,7 +62,7 @@ Telegram Mini App через HTTPS-туннель: доступ выдаётся
 проверке Telegram-контакта и явному подтверждению владельца. Whitelist,
 роли и мгновенный отзыв находятся в том же экране Telegram. Live-торговля
 из Mini App запрещена, а paper/demo сохраняет backend-подтверждения.
-Полная настройка: `docs/TELEGRAM_MINI_APP.md`.
+Полная настройка: `docs/architecture/TELEGRAM_MINI_APP.md`.
 
 Дежурный контролёр **Витёк** ведёт инциденты и задачи, принимает решения из
 Telegram или приложения, показывает временные окна стратегий и продолжает
@@ -98,11 +98,11 @@ backup и создаёт новый локальный store после повт
 
 План перехода от одного владельческого контура к отдельным пользователям,
 подпискам, промокодам и личным NinjaTrader-подключениям описан в
-`docs/MULTI_USER_ACCOUNT_ARCHITECTURE.md`.
+`docs/architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md`.
 Текущий технический backlog по отказоустойчивости, безопасности и
-производительности: `docs/RESILIENCE_SECURITY_BACKLOG_2026-07-10.md`.
+производительности: `docs/archive/RESILIENCE_SECURITY_BACKLOG_2026-07-10.md`.
 Фактический статус последнего полного аудита, команды проверки и оставшиеся
-неблокирующие ограничения: `docs/PRODUCTION_READINESS_2026-07-13.md`.
+неблокирующие ограничения: `docs/archive/PRODUCTION_READINESS_2026-07-13.md`.
 
 ## Облачный fallback AI Lab
 
@@ -111,9 +111,9 @@ DeepSeek/Gemini ключей, назначения «роль → модель»
 таблица цен и жёсткие лимиты `$20/месяц`, `$0.50/run`. Контур по умолчанию
 выключен и вызывается только после локальной неудачи; API не может изменить
 arbitration verdict или получить доступ к paper/live. Инструкция:
-`docs/AI_LAB_CLOUD_AGENTS.md`. Актуальная role-aware production-схема,
+`docs/agents/AI_LAB_CLOUD_AGENTS.md`. Актуальная role-aware production-схема,
 benchmark, стоимость и результаты historical-only циклов:
-`docs/AI_AGENT_STACK_RESEARCH_2026-07-01.md`.
+`docs/archive/AI_AGENT_STACK_RESEARCH_2026-07-01.md`.
 
 ## Обновление bridge
 

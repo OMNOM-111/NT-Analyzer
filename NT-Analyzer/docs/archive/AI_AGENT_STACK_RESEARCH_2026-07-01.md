@@ -1,8 +1,8 @@
 # AI agent stack: benchmark, routing and operating result
 
 > **Archive / historical snapshot (2026-07-01).** Не operating guide.
-> Актуальные роли, ключи и бюджеты: [AI_LAB_CLOUD_AGENTS.md](AI_LAB_CLOUD_AGENTS.md).
-> Карта сотрудников приложения: [AGENTS.md](AGENTS.md).
+> Актуальные роли, ключи и бюджеты: [AI_LAB_CLOUD_AGENTS.md](../agents/AI_LAB_CLOUD_AGENTS.md).
+> Карта сотрудников приложения: [AGENTS.md](../agents/AGENTS.md).
 
 Date: 2026-07-01. Scope: historical-only StratForge AI Lab. No paper/live
 authority and no automatic promotion authority were granted to any model.
