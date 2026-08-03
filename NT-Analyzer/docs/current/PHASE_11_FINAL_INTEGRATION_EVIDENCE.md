@@ -112,3 +112,23 @@ personal NinjaTrader / общий owner-training NinjaTrader): loopback-owner by
 
 Готовность: локальный код и UI приведены к рабочему состоянию для ручной проверки
 owner; повторный аудит может выполняться с этой ветки.
+
+## Git closeout
+
+- Implementation commit `198ba9dc` на `phase/11-final-integration-corrections`.
+- [PR #18](https://github.com/OMNOM-111/NT-Analyzer/pull/18) →
+  `release/0.10.0-next-architecture`; merge commit `8b6a2643`; task branch
+  удалена локально и на origin.
+- CI [Actions run 30857565524](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30857565524)
+  SUCCESS: Static gates, Tests (ubuntu-latest), Tests (windows-latest) — все PASS.
+- Clean-worktree verification из `origin/phase/11-final-integration-corrections`
+  (детач, без локальных stray-файлов): git status чист до и после; full regression
+  **1175 passed / 31 skipped**; `compileall` / `node --check` (ui.js, api.js) /
+  `release_static_scan` (CSP+SECRETS+MARKDOWN) / `git diff --check` — PASS.
+- `main`, Canary, Production, DNS, Cloudflare, реальные secrets и сервер не
+  затронуты. Финальный PR в `main` не создавался.
+
+**Phase 11 IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE.** Внешние acceptance-гейты
+(изолированная PostgreSQL-приёмка — BLOCKED, реальный Canary/Production deploy,
+blue-green switch, реальные Telegram/Connector/email/данные рынка) остаются
+PENDING/BLOCKED и не выдаются за PASS.

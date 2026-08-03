@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T22:23:53Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11 closeout — PR #18, CI run 30857565524 (SUCCESS), merge commit 8b6a2643, clean-worktree verification (1175 passed / 31 skipped), удаление task branch. Phase 11 IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE.
+
 История поправки: 2026-08-03T22:02:42Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11 — финальная интеграционная доводка и browser-QA: реализован модуль ревизий спецификаций (strategy.spec.manage, миграция 0011, doc_specs, API/UI, тесты), Account Security UI, русификация+группировка Admin Panel, восстановление переключателя старого интерфейса, починка иконок DEV/CANARY/BETA и CSP-ошибки, детерминированный governance-рендер, per-env cookie/LS namespaces, loopback-owner в локальном DEV, PostgreSQL-приёмочный kit (BLOCKED — external DB). Full regression 1175 passed / 31 skipped.
 
 История поправки: 2026-08-03T17:10:34Z; внёс `GitHub Copilot`; scope: Phase 10B closeout — записать PR #17, cross-platform CI run 30834935279, merge commit 753d2271, clean-checkout verification (1148 passed / 31 skipped) и удаление task branch. Phase 10 остаётся NOT fully closed (strategy-spec revision module NOT IMPLEMENTED).
@@ -280,3 +282,10 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - **Browser-QA фиксы:** иконки DEV/CANARY/BETA (404 → 200, Aurora-brand route), CSP-ошибка `[::1]` убрана (header + 14 html), восстановлен переключатель «Перейти в старый интерфейс», локальный DEV = loopback owner.
 - **F7 BLOCKED — EXTERNAL TEST DATABASE REQUIRED:** `deploy/testing/` (provision SQL, env example, runner Windows/Linux, backup/restore, README). Suite запускается при заданных `STRATFORGE_TEST_POSTGRES_*` DSN.
 - Локальные гейты: full regression **1175 passed / 31 skipped**; compileall / node --check / static scan CSP+SECRETS+MARKDOWN / git diff --check — PASS. CI/PR/merge/clean-checkout записываются в Phase 11 closeout после CI PASS.
+
+### Phase 11 closeout
+
+- Implementation `198ba9dc`; [PR #18](https://github.com/OMNOM-111/NT-Analyzer/pull/18) merged; merge commit `8b6a2643`; task branch `phase/11-final-integration-corrections` удалена локально и на origin; integration совпадает с origin (`8b6a2643`).
+- CI [Actions run 30857565524](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30857565524) SUCCESS (Static gates, Tests ubuntu-latest, Tests windows-latest — PASS).
+- Clean-worktree verification (detach из origin, без stray): git status чист до и после; full regression 1175 passed / 31 skipped; compileall / node --check / static scan / git diff --check PASS.
+- **Phase 11 IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE.** F1 (strategy-spec revision module) снял главный incomplete-пункт Phase 10B. Внешние гейты (PostgreSQL — BLOCKED, реальный Canary/Production/blue-green, реальные Telegram/Connector/email/market-data) остаются PENDING/BLOCKED. `main`/Canary/Production/DNS/Cloudflare/secrets не затронуты; финальный PR в `main` не создавался.
