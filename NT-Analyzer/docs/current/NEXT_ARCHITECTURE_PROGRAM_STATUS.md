@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T14:52:33Z; внёс `GitHub Copilot`; scope: Phase 9 — зафиксировать реализацию blue-green deployment tooling (fail-closed dry-run engine `app/blue_green.py`, migration 0010, Release Center integration, rehearsal API/UI, deploy templates и runbook; реальный blue-green deployment и exact-artifact Production promotion остаются owner gate).
+
 История поправки: 2026-08-03T13:37:51Z; внёс `GitHub Copilot`; scope: Phase 8 closeout — записать PR #14, cross-platform CI run 30807581743, merge commit 4efddb42 и удаление task branch (external Canary/Production acceptance остаётся owner gate).
 
 История поправки: 2026-08-03T06:58:46Z; внёс `GitHub Copilot`; scope: Phase 8 — зафиксировать реализацию Release Center (immutable-artifact promotion state machine, migration 0009, API, UI, dry-run adapter; external Canary/Production acceptance pending owner approval).
@@ -36,7 +38,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T13:37:51Z
+Обновлено: 2026-08-03T14:52:33Z
 
 ## Baseline
 
@@ -62,7 +64,7 @@
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
-| 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
+| 9 | IMPLEMENTATION COMPLETE (external blue-green/Production acceptance pending) | `phase/9-blue-green` | pending merge | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; local gates PASS |
 | 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
 
 ## Phase 0 evidence
@@ -205,3 +207,20 @@ Status: **IMPLEMENTATION COMPLETE; REAL CANARY DEPLOYMENT / PRODUCTION PROMOTION
 - Migrations: `0009_release_center.sql` (additive expand-only). Rollback: revert Phase 8 implementation/merge commit; таблицы пустые, data rollback не требуется; `app/release_center.py` инертен без использования.
 - Environment impact: изменён только код, UI и миграция-исходник. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets/signing keys, реальные Telegram credentials и реальные Connector sessions не затронуты.
 - CI/PR/Git closeout: [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) merged; [Actions run 30807581743](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30807581743) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `4d529f49`; merge `4efddb42`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 8 delivery. External Canary/Production acceptance (реальный Canary deployment и exact-artifact Production promotion) остаётся owner gate; этап не STAGE CLOSED.
+
+## Phase 9 evidence
+
+Status: **IMPLEMENTATION COMPLETE; REAL BLUE-GREEN DEPLOYMENT / PRODUCTION PROMOTION ACCEPTANCE PENDING OWNER APPROVAL — NOT STAGE CLOSED.** Полное evidence: `docs/current/PHASE_9_BLUE_GREEN_IMPLEMENTATION_EVIDENCE.md`.
+
+- Components: новый `app/blue_green.py` (fail-closed dry-run blue-green engine: symlink slot-model, expand→migrate→contract классификация миграций, graceful worker-drain, webhook/outbox replay-dedupe, green-readiness gate через `service_readiness`, traffic-switch и rollback-switch планы, maintenance-window записи, ordered deployment plan, rehearsal); `app/production_storage/migrations/0010_blue_green_deploy_steps.sql`; интеграция в `app/release_center.py` (deploy step log + maintenance записи, rollback traffic-switch evidence, `rehearse_blue_green`); server rehearsal endpoint; Aurora `Центр релизов` blue-green UI; deploy templates `deploy/production/blue-green/*` и `docs/PRODUCTION_BLUE_GREEN_RUNBOOK.md`.
+- Blue-green mechanism (owner decision #7 — symlink/current-release switch): два слота `blue`/`green` и атомарная символьная ссылка `current`. Ordered plan: `prepare_green → expand_migrate → start_green → green_readiness → drain_blue → switch_traffic → verify_live → contract_migrate`. Только online-safe expand-миграции идут до переключения; destructive contract-миграции откладываются до стабильного green. Rollback — обратное переключение символьной ссылки на предыдущий совместимый слот с сохранением persistent data.
+- Fail-closed dry-run: реальный executor не подключён; `deployment_strategy.real_available=False` всегда; именованный `STRATFORGE_BLUEGREEN_EXECUTOR` → `blocked` с PENDING; без него → локальный `dry_run` с PENDING. Release Center оставляет Production в `production_deploying`; `production_live` достигается только отдельным owner-подтверждением `mark-production-live` — dry-run не подделывает live-deploy. Отсутствие инфраструктуры = PENDING/BLOCKED, не PASS.
+- Migration compatibility: `classify_migrations` делит миграции на expand (additive/online-safe) и contract (drop table/column/constraint, alter column type, set not null, rename, truncate, delete). Guarded `DROP POLICY/INDEX/TRIGGER/FUNCTION IF EXISTS` — online-safe. В dry-run без целевой БД pending-набор неизвестен → expand-стадия честно `pending` (весь исторический набор не считается pending). Консервативная классификация проверена на реальном наборе (0004 `SET NOT NULL` = contract).
+- Data model: migration 0010 — `sf_release_deploy_steps` (deployment/candidate FKs, environment, strategy, stage, ordinal, status, active/target slot, redacted evidence) и `sf_maintenance_windows` (candidate FK, environment, kind, state, reason, timestamps, redacted document); additive expand-only; global RLS `sf_scope_global()`. `latest_version` = 10 (auto-discovered). Никаких signing keys/tokens/credentials/абсолютных host-путей в БД, UI, логах или evidence.
+- Permissions: rehearsal `POST /api/admin/releases/{id}/rehearse-bluegreen` = `releases.deploy_canary` (новых capability не вводилось). Owner — полный доступ; delegated admin — только явный grant; ordinary user — server-side denial.
+- Local validation: focused `tests/test_phase9_blue_green.py` `43 passed`; full regression `1136 passed, 31 skipped`. `python -m compileall -q app tools tests`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN, `git diff --check` — PASS.
+- Errors fixed: (1) тест rollback стартовал из `production_deploying`, что запрещено картой переходов Phase 8 — путь исправлен через owner-confirmed `mark-production-live` (Phase 8 guard не менялся, без scope creep); (2) `test_migration_0010_is_additive` падал из-за литералов «DROP TABLE»/«DROP COLUMN» в комментарии миграции — комментарий переформулирован как в 0009, схема осталась additive.
+- External checks intentionally NOT run: реальный Canary/Production deployment; реальный blue-green traffic switch; SSH/systemd/symlink switch/Cloudflare/DNS/реальные DB команды; реальные signing keys/Production credentials/Telegram/Connector; применение migration к реальным DB. Browser QA не запускался (workspace stability policy).
+- Migrations: `0010_blue_green_deploy_steps.sql` (additive expand-only). Rollback: revert Phase 9 implementation/merge commit; таблицы пустые, data rollback не требуется; `app/blue_green.py` инертен без развёртывания/репетиции; deploy templates инертны без явного executor и действия оператора.
+- Environment impact: изменён только код, UI, миграция-исходник и deploy templates/runbook. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets/signing keys, реальные Telegram credentials и реальные Connector sessions не затронуты.
+- CI/PR/Git closeout: implementation commit, PR в `release/0.10.0-next-architecture`, cross-platform CI и merge commit будут записаны в Phase 9 closeout после CI PASS и owner merge confirmation. Посторонние dirty/untracked файлы (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) сохранены на диске и остались вне Phase 9 delivery. External blue-green/Production acceptance остаётся owner gate; этап не STAGE CLOSED.

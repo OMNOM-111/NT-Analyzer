@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# StratForge blue-green release switch — REFERENCE TEMPLATE (Phase 9).
+#
+# This is a secret-free example only. It performs the atomic "current" symlink
+# switch between the blue and green release slots. It refuses to run unless the
+# operator explicitly sets STRATFORGE_BLUEGREEN_CONFIRM=1, and it never contains
+# credentials, DSNs, tokens or signing keys. The Release Center runs a fail-closed
+# dry-run in this phase; wiring a real executor is deferred to a later phase.
+#
+# Usage (example):
+#   APP_ROOT="$HOME/apps/stratforge" TARGET_SLOT=green TARGET_BUILD_ID=<build_id> \
+#   STRATFORGE_BLUEGREEN_CONFIRM=1 ./switch-release.sh.example
+set -euo pipefail
+
+APP_ROOT="${APP_ROOT:-$HOME/apps/stratforge}"
+RELEASES_DIR="${APP_ROOT}/releases"
+CURRENT_LINK="${APP_ROOT}/current"
+TARGET_SLOT="${TARGET_SLOT:-green}"
+TARGET_BUILD_ID="${TARGET_BUILD_ID:-}"
+
+if [[ "${TARGET_SLOT}" != "blue" && "${TARGET_SLOT}" != "green" ]]; then
+  echo "ERROR: TARGET_SLOT must be 'blue' or 'green'." >&2
+  exit 2
+fi
+if [[ -z "${TARGET_BUILD_ID}" ]]; then
+  echo "ERROR: TARGET_BUILD_ID (the verified, promoted artifact build id) is required." >&2
+  exit 2
+fi
+
+TARGET_RELEASE="${RELEASES_DIR}/${TARGET_BUILD_ID}"
+
+echo "Planned blue-green switch:"
+echo "  app_root      = ${APP_ROOT}"
+echo "  target_slot   = ${TARGET_SLOT}"
+echo "  target_build  = ${TARGET_BUILD_ID}"
+echo "  current_link  = ${CURRENT_LINK} -> ${TARGET_RELEASE}"
+
+if [[ "${STRATFORGE_BLUEGREEN_CONFIRM:-0}" != "1" ]]; then
+  echo "DRY-RUN: set STRATFORGE_BLUEGREEN_CONFIRM=1 to apply. Nothing was changed." >&2
+  exit 0
+fi
+
+if [[ ! -d "${TARGET_RELEASE}" ]]; then
+  echo "ERROR: target release directory does not exist: ${TARGET_RELEASE}" >&2
+  exit 3
+fi
+
+# Atomic, reversible symlink swap (ln -sfn replaces the link in place).
+ln -sfn "${TARGET_RELEASE}" "${CURRENT_LINK}"
+echo "Switched ${CURRENT_LINK} -> ${TARGET_RELEASE}"
+
+# Reload the user service so the new slot serves traffic. Adjust unit names to
+# your install; drain outgoing workers before this step.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user reload stratforge.service || systemctl --user restart stratforge.service
+fi
+echo "Done. Verify readiness, then defer contract migrations until green is stable."

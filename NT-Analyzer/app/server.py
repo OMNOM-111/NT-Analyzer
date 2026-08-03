@@ -3096,6 +3096,14 @@ class Handler(BaseHTTPRequestHandler):
                 to_artifact_id=str(body.get("to_artifact_id") or ""),
                 reason=str(body.get("reason") or ""), idempotency_key=idem,
                 step_up_challenge_id=challenge))
+        elif action == "rehearse-bluegreen":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.rehearse_blue_green(
+                actor=actor, candidate_id=candidate_id,
+                environment=str(body.get("environment") or "production"),
+                drain=body.get("drain") if isinstance(body.get("drain"), dict) else None,
+                idempotency_key=idem))
         elif action == "step-up":
             self._json(HTTPStatus.OK, release_center.begin_step_up(
                 actor, action=str(body.get("action") or ""),

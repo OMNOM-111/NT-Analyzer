@@ -4006,6 +4006,11 @@
     const approvals = (detail.approvals || []).map(ap => `<div class="row-sub mono">approval ${esc(ap.status)} · artifact ${esc(shortSha(ap.artifact_sha256))} · by ${esc(ap.approved_by_legacy_id)}</div>`).join('') || '<div class="empty-state">Одобрений нет.</div>';
     const rollbacks = (detail.rollbacks || []).map(rb => `<div class="row-sub mono">rollback -> ${esc(shortSha(rb.to_artifact_id))} · ${esc(rb.reason || '')}</div>`).join('') || '<div class="empty-state">Откатов нет.</div>';
     const events = (detail.events || []).slice(-20).map(ev => `<div class="row-sub mono">${esc(ev.created_at_utc)} · ${esc(ev.event_type)} (${esc(ev.from_state)}→${esc(ev.to_state)})</div>`).join('') || '';
+    const bg = detail.blue_green || {};
+    const stepBadge = st => (st === 'dry_run' ? 'trial' : (st === 'blocked' ? 'failed' : (st === 'skipped' ? 'archived' : (st === 'pass' ? 'live' : 'archived'))));
+    const steps = (detail.deploy_steps || []).map(sp => `<div class="feat-row"><span class="mono">${esc(sp.ordinal)}. ${esc(sp.stage)} <span class="cab-sub">(${esc(sp.environment)} ${esc(sp.active_slot || '?')}→${esc(sp.target_slot || '?')})</span></span><span class="badge ${stepBadge(sp.status)}">${esc(sp.status)}</span></div>`).join('') || '<div class="empty-state">Шагов деплоя пока нет (blue-green появляется при развёртывании/репетиции).</div>';
+    const maint = (detail.maintenance || []).map(m => `<div class="row-sub mono">${esc(m.environment)} · ${esc(m.kind)} · ${esc(m.state)} · ${esc(m.reason || '')}</div>`).join('') || '<div class="empty-state">Окон обслуживания нет.</div>';
+    const rehearsals = (detail.rehearsals || []).slice(-5).map(h => `<div class="row-sub mono">${esc(h.created_at_utc)} · ${esc(h.environment)} · online_safe=${h.online_safe ? 'да' : 'нет'}${(h.blocked_stages || []).length ? ' · blocked: ' + esc((h.blocked_stages || []).join(', ')) : ''}</div>`).join('') || '<div class="empty-state">Репетиций нет.</div>';
     body.innerHTML = `
       <div class="grid cols-3">
         <div class="kpi"><span>Состояние</span><strong>${esc(s.state)}</strong></div>
@@ -4019,6 +4024,13 @@
       <div class="flex gap-sm wrap" id="rc-actions"></div>
       <div class="cab-sub" id="rc-action-msg"></div>
       <div class="section-title">Развёртывания</div><div class="list">${deployments}</div>
+      <div class="section-title">Blue-green деплой</div>
+      <div class="finance-note"><strong>${esc(bg.strategy || 'blue_green_symlink')}</strong> · режим <strong>${esc(bg.mode || 'dry_run')}</strong> · слоты ${esc((bg.slots || ['blue', 'green']).join('/'))} · символьная ссылка «${esc(bg.current_link || 'current')}». Реальный executor не подключён: expand→migrate→contract, дренаж воркеров и переключение трафика планируются как dry-run, внешний результат остаётся PENDING.</div>
+      <div class="flex gap-sm wrap" id="rc-bg-actions"></div>
+      <div class="cab-sub" id="rc-bg-msg"></div>
+      <div class="cap-panel">${steps}</div>
+      <div class="section-title">Окна обслуживания</div><div>${maint}</div>
+      <div class="section-title">Репетиции blue-green</div><div>${rehearsals}</div>
       <div class="section-title">Проверки Canary</div><div class="cap-panel">${checks}</div>
       <div class="section-title">Одобрения</div><div>${approvals}</div>
       <div class="section-title">Откаты</div><div>${rollbacks}</div>
@@ -4032,6 +4044,24 @@
       actions.appendChild(btn);
     });
     if (!actions.children.length) actions.innerHTML = '<span class="cab-sub">Нет доступных переходов для вашей роли в этом состоянии.</span>';
+    const bgActions = qs('#rc-bg-actions', body);
+    const bgMsg = qs('#rc-bg-msg', body);
+    if (bgActions && (a.build_id || s.build_id) && hasAdminCapability('releases.deploy_canary')) {
+      ['production', 'canary'].forEach(env => {
+        const btn = el('<button class="btn ghost sm"></button>');
+        btn.textContent = 'Репетиция blue-green (' + env + ')';
+        btn.onclick = async () => {
+          if (bgMsg) bgMsg.textContent = 'Репетирую (dry-run)…';
+          try {
+            const out = await API.http.adminReleaseRehearse(candidateId, { environment: env, idempotency_key: releaseKey() });
+            const r = out.rehearsal || {};
+            toast('Репетиция готова: online_safe=' + (r.online_safe ? 'да' : 'нет'));
+            openReleaseDetail(candidateId);
+          } catch (e) { if (bgMsg) bgMsg.textContent = e.message || String(e); }
+        };
+        bgActions.appendChild(btn);
+      });
+    }
   }
 
   async function runReleaseAction(candidateId, action, critical, detail, body) {

@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import account_auth, observability, runtime_env, secure_store
+from . import account_auth, blue_green, observability, runtime_env, secure_store
 
 
 # --------------------------------------------------------------------------- #
@@ -186,6 +186,10 @@ def _default_doc() -> Dict[str, Any]:
         "rollbacks": [],
         "notifications": [],
         "events": [],
+        # Phase 9: blue-green deployment step log + maintenance-window records.
+        "deploy_steps": [],
+        "maintenance": [],
+        "rehearsals": [],
         "idempotency": {},
         "seq": 0,
     }
@@ -196,7 +200,8 @@ def _normalize(doc: Dict[str, Any]) -> Dict[str, Any]:
         return _default_doc()
     base = _default_doc()
     for key in ("candidates", "artifacts", "deployments", "checks", "approvals",
-                "rollbacks", "notifications", "events"):
+                "rollbacks", "notifications", "events", "deploy_steps",
+                "maintenance", "rehearsals"):
         rows = doc.get(key)
         base[key] = rows if isinstance(rows, list) else []
     base["idempotency"] = doc.get("idempotency") if isinstance(doc.get("idempotency"), dict) else {}
@@ -534,6 +539,7 @@ def list_releases() -> Dict[str, Any]:
         "ok": True,
         "environment": runtime_env.deployment_environment(),
         "adapter": _adapter_status(),
+        "blue_green": blue_green.deployment_strategy(),
         "schedule_options": schedule_options(),
         "releases": [_candidate_summary(doc, c) for c in rows],
     }
@@ -552,6 +558,9 @@ def get_release(candidate_id: str) -> Dict[str, Any]:
     rollbacks = [r for r in doc["rollbacks"] if str(r.get("candidate_id")) == cid]
     notifications = [n for n in doc["notifications"] if str(n.get("candidate_id")) == cid]
     events = [e for e in doc["events"] if str(e.get("candidate_id")) == cid]
+    deploy_steps = [s for s in doc["deploy_steps"] if str(s.get("candidate_id")) == cid]
+    maintenance = [m for m in doc["maintenance"] if str(m.get("candidate_id")) == cid]
+    rehearsals = [h for h in doc["rehearsals"] if str(h.get("candidate_id")) == cid]
     return {
         "ok": True,
         "summary": _candidate_summary(doc, candidate),
@@ -562,8 +571,12 @@ def get_release(candidate_id: str) -> Dict[str, Any]:
         "rollbacks": rollbacks,
         "notifications": notifications,
         "events": sorted(events, key=lambda e: int(e.get("seq") or 0)),
+        "deploy_steps": sorted(deploy_steps, key=lambda s: int(s.get("ordinal") or 0)),
+        "maintenance": maintenance,
+        "rehearsals": rehearsals,
         "available_transitions": sorted(_TRANSITIONS.get(str(candidate.get("state") or ""), frozenset())),
         "adapter": _adapter_status(),
+        "blue_green": blue_green.deployment_strategy(),
     }
 
 
@@ -608,7 +621,12 @@ def _adapter_status() -> Dict[str, Any]:
 
 
 def _run_deploy_adapter(environment: str, artifact: Dict[str, Any]) -> Dict[str, Any]:
-    """Fail-closed deployment. A real adapter is never executed in this phase."""
+    """Fail-closed deployment. A real adapter is never executed in this phase.
+
+    The deployment mechanism is the Phase 9 blue-green engine
+    (:mod:`app.blue_green`), which produces the ordered slot/drain/switch plan as
+    a dry-run. Missing external infrastructure stays PENDING and never a PASS.
+    """
     status = _adapter_status()
     if status["real_configured"]:
         # A real adapter name was requested but the real blue-green executor does
@@ -619,14 +637,45 @@ def _run_deploy_adapter(environment: str, artifact: Dict[str, Any]) -> Dict[str,
             "external_result": "pending",
             "note": "real deployment executor not available in this phase",
         }
-    return {
-        "status": "dry_run",
-        "adapter": "dry_run",
-        "external_result": "pending",
-        "environment": environment,
-        "artifact_id": artifact.get("artifact_id"),
-        "note": "no external infrastructure was contacted",
-    }
+    return blue_green.execute_deployment(environment, artifact)
+
+
+def _record_deploy_plan(
+    doc: Dict[str, Any], candidate: Dict[str, Any], deployment: Dict[str, Any],
+    outcome: Dict[str, Any],
+) -> None:
+    """Persist the blue-green deployment step log + maintenance window."""
+    environment = str(deployment.get("environment") or "")
+    active_slot = str(outcome.get("active_slot") or "")
+    target_slot = str(outcome.get("target_slot") or "")
+    for step in outcome.get("steps") or []:
+        doc["deploy_steps"].append({
+            "step_id": _new_id("stp"),
+            "deployment_id": deployment.get("deployment_id"),
+            "candidate_id": candidate.get("candidate_id"),
+            "environment": environment,
+            "strategy": str(outcome.get("strategy") or "blue_green_symlink"),
+            "stage": str(step.get("stage") or ""),
+            "ordinal": int(step.get("ordinal") or 0),
+            "status": str(step.get("status") or ""),
+            "active_slot": active_slot,
+            "target_slot": target_slot,
+            "evidence": step.get("evidence") or {},
+            "created_at_utc": _now_iso(),
+        })
+    window = outcome.get("maintenance_window")
+    if isinstance(window, dict):
+        doc["maintenance"].append({
+            "window_id": _new_id("mwn"),
+            "candidate_id": candidate.get("candidate_id"),
+            "environment": window.get("environment") or environment,
+            "kind": window.get("kind") or "deploy",
+            "state": window.get("state") or "planned",
+            "reason": window.get("reason") or "",
+            "scheduled_for_utc": window.get("scheduled_for_utc") or "",
+            "document": {k: observability.redact(v, key=k) for k, v in window.items()},
+            "created_at_utc": _now_iso(),
+        })
 
 
 # --------------------------------------------------------------------------- #
@@ -951,6 +1000,7 @@ def deploy_canary(
         deployment["state"] = "deploying"
         deployment["document"] = outcome
         doc["deployments"].append(deployment)
+        _record_deploy_plan(doc, candidate, deployment, outcome)
         _record_notification(doc, candidate["candidate_id"], "deploy_started", environment=ENVIRONMENT_CANARY)
         _transition(doc, candidate, STATE_CANARY_DEPLOYING, actor=actor,
                     event_type="release.canary_deploy_requested", idempotency_key=key,
@@ -1171,6 +1221,7 @@ def promote_production(
         deployment["state"] = "deploying"
         deployment["document"] = outcome
         doc["deployments"].append(deployment)
+        _record_deploy_plan(doc, candidate, deployment, outcome)
         _record_notification(doc, candidate["candidate_id"], "deploy_started", environment=ENVIRONMENT_PRODUCTION)
         _transition(doc, candidate, STATE_PRODUCTION_DEPLOYING, actor=actor,
                     event_type="release.production_deploy_requested", idempotency_key=key,
@@ -1258,6 +1309,9 @@ def rollback_production(
                 409, code="rollback_incompatible",
             )
         current = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or "")) or {}
+        switch = blue_green.plan_rollback_switch(
+            to_build_id=str(target.get("build_id") or ""), reason=str(reason or ""),
+        )
         rollback = {
             "rollback_id": _new_id("rbk"),
             "candidate_id": candidate["candidate_id"],
@@ -1267,7 +1321,7 @@ def rollback_production(
             "requested_by_user_uuid": _actor_uuid(actor),
             "requested_by_legacy_id": _actor_id(actor),
             "reason": str(reason or "")[:500],
-            "evidence": {"to_build_id": target.get("build_id")},
+            "evidence": {"to_build_id": target.get("build_id"), "traffic_switch": switch},
             "idempotency_key": key,
             "created_at_utc": _now_iso(),
         }
@@ -1298,6 +1352,53 @@ def cancel_release(*, actor: Any, candidate_id: str, reason: str = "", idempoten
         out = {"ok": True, "state": STATE_CANCELLED}
         _remember(doc, key, f"cancel:{candidate_id}", out)
         _write_doc(doc)
+    return out
+
+
+def rehearse_blue_green(
+    *, actor: Any, candidate_id: str, environment: str = ENVIRONMENT_PRODUCTION,
+    drain: Optional[Dict[str, Any]] = None, idempotency_key: str,
+) -> Dict[str, Any]:
+    """Dry-run blue-green rehearsal for a built artifact — no state change.
+
+    Evaluates the full slot / expand-migrate / drain / switch / rollback plan
+    without deploying, migrating, draining or switching anything. Safe to repeat.
+    """
+    key = _validate_idempotency_key(idempotency_key)
+    env = str(environment or ENVIRONMENT_PRODUCTION).strip().lower()
+    if env not in {ENVIRONMENT_CANARY, ENVIRONMENT_PRODUCTION}:
+        raise ReleaseCenterError("Недопустимое окружение rehearsal.", 400, code="environment_invalid")
+    with _LOCK:
+        doc = _read_doc()
+        candidate = _find(doc["candidates"], "candidate_id", str(candidate_id or ""))
+        if candidate is None:
+            raise ReleaseCenterError("Release candidate не найден.", 404, code="candidate_not_found")
+        cached = _idempotent(doc, key, f"rehearse:{candidate_id}")
+        if cached:
+            return cached
+        artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
+        if not artifact:
+            raise ReleaseCenterError("Artifact ещё не собран.", 409, code="artifact_missing")
+        plan = blue_green.rehearse(env, artifact, drain=drain)
+        record = {
+            "rehearsal_id": _new_id("reh"),
+            "candidate_id": candidate["candidate_id"],
+            "artifact_id": artifact["artifact_id"],
+            "environment": env,
+            "online_safe": bool(plan.get("online_safe")),
+            "blocked_stages": list(plan.get("blocked_stages") or []),
+            "requested_by_user_uuid": _actor_uuid(actor),
+            "requested_by_legacy_id": _actor_id(actor),
+            "document": {k: observability.redact(v, key=k) for k, v in plan.items()},
+            "created_at_utc": _now_iso(),
+        }
+        doc["rehearsals"].append(record)
+        out = {"ok": True, "rehearsal": plan, "rehearsal_id": record["rehearsal_id"]}
+        _remember(doc, key, f"rehearse:{candidate_id}", out)
+        _write_doc(doc)
+    _audit("release.blue_green_rehearsed", candidate_id=candidate_id,
+           actor_id=_actor_id(actor), environment=env,
+           online_safe=bool(plan.get("online_safe")))
     return out
 
 
