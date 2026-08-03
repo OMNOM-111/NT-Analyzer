@@ -60,6 +60,7 @@ if __package__ is None or __package__ == "":
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
     from app import dev_preview  # type: ignore[no-redef]
+    from app import release_center  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -145,6 +146,7 @@ else:
     from . import ninjatrader_resources
     from . import agent_allocation
     from . import dev_preview
+    from . import release_center
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -2969,6 +2971,146 @@ class Handler(BaseHTTPRequestHandler):
         except dev_preview.DevPreviewError as exc:
             self._err(exc.status, str(exc), code=exc.code)
 
+    # ---- Release Center (Phase 8) -------------------------------------------
+    def _release_context(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        caps = context.get("admin_capabilities")
+        if not isinstance(caps, dict):
+            caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+            context = {**context, "admin_capabilities": caps}
+        return context
+
+    def _require_release_capability(self, context: Dict[str, Any], capability: str) -> bool:
+        if context.get("is_owner"):
+            return True
+        caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        if caps.get(capability):
+            return True
+        self._err(HTTPStatus.FORBIDDEN, "Недостаточно прав для этого действия Release Center.",
+                  code="release_capability_required")
+        return False
+
+    def _releases_get(self, path: str) -> None:
+        try:
+            if path == "/api/admin/releases":
+                self._json(HTTPStatus.OK, release_center.list_releases())
+                return
+            prefix = "/api/admin/releases/"
+            if path.startswith(prefix):
+                candidate_id = path[len(prefix):].strip("/")
+                self._json(HTTPStatus.OK, release_center.get_release(candidate_id))
+                return
+            self._err(HTTPStatus.NOT_FOUND, "no release route", code="release_route_not_found")
+        except release_center.ReleaseCenterError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _releases_post(self, path: str) -> None:
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = self._release_context()
+        actor = {"user_id": context.get("user_id"), "is_owner": bool(context.get("is_owner"))}
+        parts = path[len("/api/admin/releases"):].strip("/").split("/")
+        try:
+            if path == "/api/admin/releases/candidates":
+                if not self._require_release_capability(context, "releases.create"):
+                    return
+                self._json(HTTPStatus.OK, release_center.create_candidate(
+                    actor=actor,
+                    app_version=str(body.get("app_version") or ""),
+                    release_channel=str(body.get("release_channel") or ""),
+                    git_commit_sha=str(body.get("git_commit_sha") or ""),
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                ))
+                return
+            # /api/admin/releases/{id}/{action}
+            if len(parts) != 2:
+                self._err(HTTPStatus.NOT_FOUND, "no release route", code="release_route_not_found")
+                return
+            candidate_id, action = parts[0], parts[1]
+            self._release_action(context, actor, candidate_id, action, body)
+        except release_center.ReleaseCenterError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _release_action(self, context, actor, candidate_id, action, body) -> None:
+        idem = str(body.get("idempotency_key") or "")
+        challenge = str(body.get("step_up_challenge_id") or "")
+        if action == "build":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.build_release(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "verify":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.verify_release(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "deploy-canary":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.deploy_canary(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "record-canary-check":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.record_canary_check(
+                actor=actor, candidate_id=candidate_id,
+                name=str(body.get("name") or ""), result=str(body.get("result") or ""),
+                evidence=body.get("evidence") if isinstance(body.get("evidence"), dict) else None,
+                final=bool(body.get("final")), idempotency_key=idem))
+        elif action == "approve-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.approve_production(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "schedule-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.schedule_production(
+                actor=actor, candidate_id=candidate_id,
+                mode=str(body.get("mode") or "now"), explicit_utc=str(body.get("explicit_utc") or ""),
+                idempotency_key=idem))
+        elif action == "promote-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.promote_production(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "mark-production-live":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.mark_production_live(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "rollback-production":
+            if not self._require_release_capability(context, "releases.rollback_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.rollback_production(
+                actor=actor, candidate_id=candidate_id,
+                to_artifact_id=str(body.get("to_artifact_id") or ""),
+                reason=str(body.get("reason") or ""), idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "step-up":
+            self._json(HTTPStatus.OK, release_center.begin_step_up(
+                actor, action=str(body.get("action") or ""),
+                provider=str(body.get("provider") or ""),
+                ip=str(self._request_ips()[1] or self._request_ips()[0] or ""),
+                user_agent=str(self.headers.get("User-Agent") or "release-center")))
+        elif action == "cancel":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.cancel_release(
+                actor=actor, candidate_id=candidate_id,
+                reason=str(body.get("reason") or ""), idempotency_key=idem))
+        else:
+            self._err(HTTPStatus.NOT_FOUND, "no release action", code="release_action_not_found")
+
     def _account_nt_security_post(self, path: str) -> None:
         """Self-service personal-NT security: step-up start/confirm, unlink."""
         if not self._check_local_post():
@@ -3465,6 +3607,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, dev_preview.status(context.get("user_id")))
             except dev_preview.DevPreviewError as exc:
                 self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/admin/releases" or path.startswith("/api/admin/releases/"):
+            self._releases_get(path)
             return
 
         if path == "/api/admin/overview":
@@ -6788,6 +6934,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/dev/preview/") or path == "/api/dev/bootstrap/mint":
             self._dev_preview_post(path)
+            return
+
+        if path.startswith("/api/admin/releases"):
+            self._releases_post(path)
             return
 
         if path == "/api/auth/google/start":
