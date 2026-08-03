@@ -1759,6 +1759,23 @@
       ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
   }
 
+  async function renderSharedQueueInto(node) {
+    // Anonymized shared owner-training NinjaTrader status: free / busy / queued
+    // and the caller's own position only — never another user's identity.
+    try {
+      const st = await API.http.ntResourceStatus();
+      if (!st || st.resource_kind !== 'shared_owner_training') { node.innerHTML = ''; return; }
+      const badge = st.state === 'busy' ? '<span class="badge pending">выполняется бэктест</span>'
+        : (st.state === 'queued' ? '<span class="badge pending">в очереди</span>'
+        : '<span class="badge live">свободен</span>');
+      const yours = st.your_job && st.your_job.state === 'queued'
+        ? `<div class="cab-sub">Ваша позиция в очереди: <strong>${esc(st.your_job.position)}</strong></div>` : '';
+      const msg = st.message ? `<div class="finance-note">${esc(st.message)}</div>` : '';
+      const upsell = st.upsell ? `<div class="cab-sub">${esc(st.upsell)}</div>` : '';
+      node.innerHTML = `<div class="cab-kv"><span class="k">Общий NinjaTrader</span><span class="v">${badge}</span></div>${yours}${msg}${upsell}`;
+    } catch (e) { node.innerHTML = ''; }
+  }
+
   async function renderNinjaInto(node, me) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Проверка…</div>';
     try {
@@ -1781,6 +1798,7 @@
       let inner = dualNote + areaSwitch;
       if (active.uses_owner_runtime && !connectorMode) {
         inner += `<div class="cab-sub">Сейчас вы наблюдаете за реальным аккаунтом владельца (только просмотр). Наблюдение не требует Google.</div>`;
+        inner += `<div id="nt-shared-queue"></div>`;
         inner += canPersonal
           ? `<div class="dchart-actions"><button class="btn primary" id="nt-connect">Подключить свой NinjaTrader</button></div>`
           : `<div class="cab-sub">Свой NinjaTrader доступен на тарифах «Стандарт» и выше.</div>`;
@@ -1822,6 +1840,8 @@
         inner += `<div class="dchart-actions"><button class="btn ghost" id="nt-dual">Пройти Google + Telegram для NT</button></div>`;
       }
       node.innerHTML = inner;
+      const sharedQueue = qs('#nt-shared-queue', node);
+      if (sharedQueue) renderSharedQueueInto(sharedQueue);
       const areaSel = qs('#nt-area', node);
       if (areaSel) areaSel.onchange = async () => { try { await API.http.workspaceSelect(areaSel.value); toast('Область переключена'); location.reload(); } catch (e) { reportError(e); } };
       const dualBtn = qs('#nt-dual', node);

@@ -56,6 +56,8 @@ if __package__ is None or __package__ == "":
     from app import account_auth  # type: ignore[no-redef]
     from app import security_devices  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
+    from app import ninjatrader_resources  # type: ignore[no-redef]
+    from app import agent_allocation  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -138,6 +140,8 @@ else:
     from . import account_auth
     from . import security_devices
     from . import personal_nt_security
+    from . import ninjatrader_resources
+    from . import agent_allocation
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -290,6 +294,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/community/")
         or path.startswith("/api/auth/nt-confirm/")
         or path.startswith("/api/account/")
+        or path.startswith("/api/ninjatrader/jobs")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
     )
@@ -2787,6 +2792,64 @@ class Handler(BaseHTTPRequestHandler):
             self._personal_nt_error(exc)
             return False
 
+    def _ninjatrader_post(self, path: str) -> None:
+        """Phase 6: shared/personal NinjaTrader job queue and durable lease.
+
+        User-facing routes (jobs enqueue/cancel) are self-service and scoped to
+        the caller's own workspace. Worker routes (claim/heartbeat/release/
+        recover) are capability-gated at ``_authorize_api``; heartbeat/release
+        additionally prove possession of the server-issued lease token.
+        """
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        is_owner = bool(context.get("is_owner"))
+        admin_caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        can_admin = bool(is_owner or admin_caps.get("operations.execute") or admin_caps.get("operations.view"))
+        parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+        try:
+            if path == "/api/ninjatrader/jobs":
+                out = ninjatrader_resources.enqueue_job(
+                    user_id,
+                    operation_kind=str(body.get("operation_kind") or ""),
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                    workspace_id=str(body.get("workspace_id") or ""),
+                    parallel_group=str(body.get("parallel_group") or "exclusive"),
+                    is_owner=is_owner,
+                )
+            elif len(parts) == 4 and parts[2] == "jobs" and path.endswith("/cancel"):
+                out = ninjatrader_resources.cancel_job(
+                    user_id, job_id=parts[3], is_owner=is_owner, can_admin=can_admin,
+                )
+            elif path == "/api/ninjatrader/worker/claim":
+                out = ninjatrader_resources.claim_next(str(body.get("resource_id") or ""))
+            elif path == "/api/ninjatrader/worker/heartbeat":
+                out = ninjatrader_resources.heartbeat(
+                    str(body.get("job_id") or ""), lease_token=str(body.get("lease_token") or ""),
+                )
+            elif path == "/api/ninjatrader/worker/release":
+                out = ninjatrader_resources.release(
+                    str(body.get("job_id") or ""), lease_token=str(body.get("lease_token") or ""),
+                    outcome=str(body.get("outcome") or "released"),
+                )
+            elif path == "/api/ninjatrader/worker/recover":
+                out = ninjatrader_resources.recover_expired(str(body.get("resource_id") or ""))
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no ninjatrader route", code="nt_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except ninjatrader_resources.NinjaTraderResourceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+        except workspaces.WorkspaceError as exc:
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+
     def _account_nt_security_post(self, path: str) -> None:
         """Self-service personal-NT security: step-up start/confirm, unlink."""
         if not self._check_local_post():
@@ -3236,6 +3299,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, account_auth.list_account_identities(context.get("user_id")))
             except account_auth.AccountAuthError as exc:
                 self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/ninjatrader/resource":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, ninjatrader_resources.resource_status(
+                    context.get("user_id"),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or ""),
+                    is_owner=bool(context.get("is_owner")),
+                ))
+            except ninjatrader_resources.NinjaTraderResourceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/ninjatrader/allocation":
+            context = getattr(self, "_remote_context", None) or {}
+            self._json(HTTPStatus.OK, agent_allocation.allocation_status(context))
+            return
+
+        if path == "/api/admin/ninjatrader/resources":
+            try:
+                self._json(HTTPStatus.OK, ninjatrader_resources.admin_resource_detail(
+                    resource_id=str(qs.get("resource_id", [""])[0] or ""),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or ""),
+                ))
+            except ninjatrader_resources.NinjaTraderResourceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
             return
 
         if path == "/api/admin/overview":
@@ -6551,6 +6641,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/account/"):
             self._account_security_post(path)
+            return
+
+        if path.startswith("/api/ninjatrader/"):
+            self._ninjatrader_post(path)
             return
 
         if path == "/api/auth/google/start":

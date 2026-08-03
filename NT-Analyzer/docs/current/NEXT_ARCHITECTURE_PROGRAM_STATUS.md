@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T02:19:36Z; внёс `GitHub Copilot`; scope: Phase 6 — зафиксировать agent allocation и durable shared-NinjaTrader resource lease/queue, migration 0008 и локальный verification evidence.
+
 История поправки: 2026-08-02T23:06:34Z; внёс `GitHub Copilot`; scope: Phase 5 closeout — записать PR #11, cross-platform CI run 30771449462, merge commit 1b4249cc и удаление task branch.
 
 История поправки: 2026-08-02T23:01:01Z; внёс `GitHub Copilot`; scope: Phase 5 — зафиксировать personal NinjaTrader security (Telegram + verified email factors, per-action step-up), migration 0007 и локальный verification evidence.
@@ -24,7 +26,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-02T23:06:34Z
+Обновлено: 2026-08-03T02:19:36Z
 
 ## Baseline
 
@@ -47,7 +49,7 @@
 | 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
-| 6 | PENDING | `phase/6-agent-resource-queue` | pending | Agent allocation и NT lease |
+| 6 | IMPLEMENTATION COMPLETE | `phase/6-agent-allocation-nt-queue` | pending PR | Agent allocation и durable NinjaTrader lease/queue |
 | 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
 | 8 | PENDING | `phase/8-release-center` | pending | Release Center |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
@@ -143,3 +145,19 @@
 - Residual: реальная доставка step-up кода через Telegram/email — owner gate (Development test-auth echo только за явным gate); production email provider — отдельное решение. Посторонние dirty/untracked файлы (`data/development/durable/nt_analyzer.sqlite3`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) не трогались и не включались в commit.
 - CI/PR: [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) merged; [Actions run 30771449462](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30771449462) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
 - Git closeout: implementation `5506704f`; merge `1b4249cc`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 5 delivery.
+
+## Phase 6 evidence
+
+- Components: новый `app/ninjatrader_resources.py` (durable resource lease + FIFO очередь поверх workspace store) и `app/agent_allocation.py` (детерминированное распределение агентов); server API `/api/ninjatrader/*` и `/api/admin/ninjatrader/resources`; capability-gating в `app/permissions.py`; Aurora anonymized shared-NT queue UI.
+- Agent allocation (ADR-0006): personal NinjaTrader workspace → изолированная Agent Team (`Управляющий` + специалисты Толик/Иван/Никита/Марина), scoped к workspace/Connector/accounts, без fallback на owner runtime; owner-training user → один ограниченный `Координатор` ниже Виктора, только training/backtest, без owner team и admin; owner → полная команда. Аллокация определяется workspace kind + entitlement + connection type, не глобальным аккаунтом.
+- Resource lease: `NinjaTraderResourceLease` states queued/active/released/expired/cancelled/failed. Атомарный acquire под workspace lock; один активный exclusive lease на shared owner-training resource; FIFO по `queue_seq`; idempotency по (resource, user UUID, key); TTL + heartbeat + crash recovery + cancel + expiration; read-only параллелизм только для явного `readonly` из proven allow-list (`telemetry_read`); read-write lock semantics. Personal job привязан к personal resource и никогда не использует owner-training runtime.
+- Token discipline: lease token генерируется server-side, возвращается worker-у один раз; хранится только sha256 hash, не логируется; client-provided token не доверяется; heartbeat/release проверяют hash; ownership (workspace/user/resource) проверяется server-side по UUID.
+- Anonymized UI: обычный пользователь видит только свободен/выполняется/в очереди, свою позицию и upsell личного NinjaTrader — без чужой identity, workspace, account, strategy, job metadata или token. Owner/admin detail защищён `operations.view`/`operations.execute` server-side.
+- Data model: `app/production_storage/migrations/0008_ninjatrader_resource_leases.sql` — additive expand-only: `sf_ninjatrader_resource_leases` с RLS (`sf_scope_global() OR workspace_id = sf_scope_workspace() OR requested_by_legacy_id = sf_scope_user()`), partial unique idx «один active exclusive на resource» и idempotency idx, masked document metadata. Нет `DROP`, нет contract. Agent allocation детерминирована и не требует таблицы.
+- Security invariants (проверены тестами): два конфликтующих owner-training job не active одновременно; read-only не параллелен без явного parallel_group; personal job без owner-runtime fallback; чужой workspace/lease недоступен; нельзя отменить чужой job; idempotency retry не создаёт дубль; expired lease безопасно восстанавливается; stale token не работает после release/expire; неверный heartbeat отклоняется; worker crash не блокирует навсегда; cancel/expiration не приводят к двойному выполнению; queue position не раскрывает identity; admin detail capability-gated; ordinary user не получает полную Agent Team; UUID boundaries Phase 3–5 сохранены.
+- Local validation: focused Phase 6 suite `29 passed`; routing/permission suites (`test_workspaces`, `test_permissions`, `test_cutover_routing`, `test_aurora_contracts`) `73 passed`; final repository regression `1013 passed, 31 skipped`. `python -B -m compileall -q app tests`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN и `git diff --check` (Phase 6 файлы) — PASS.
+- PostgreSQL acceptance: migration 0008 покрыта статическим контрактным тестом; live acceptance пропущен безопасно (нет `STRATFORGE_TEST_POSTGRES_*`). Никакая migration не применялась к Production или Canary; очереди и NinjaTrader не изменялись.
+- Deployment boundary: Production не изменялась; Canary не изменялся; deployment не выполнялся; main не затронут; Production secrets, DNS, bot/email credentials, реальный Connector pairing и базы данных не использовались.
+- Rollback: expand-only. Остановка scheduling новых shared jobs и безопасная отмена queued jobs; active leases дожидаются или истекают; audit и job history сохраняются; personal NT mappings не теряются; personal jobs не получают owner-runtime fallback.
+- Residual / owner decision (non-blocking): персона `Координатор` взята из ADR-0006 (утверждена). Реальная интеграция с исполнением backtest/optimization в orchestrator/worker остаётся последующей работой; текущая фаза даёт durable lease/queue контракт и allocation policy.
+- CI/PR: pending (заполняется в closeout после Windows/Linux CI PASS и merge).
