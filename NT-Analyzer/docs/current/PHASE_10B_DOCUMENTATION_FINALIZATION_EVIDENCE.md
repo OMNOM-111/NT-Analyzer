@@ -2,7 +2,7 @@
 
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — зафиксировать фактический перенос документации (git mv + обновление ссылок), политику языка, changelog, requirements matrix, strategy-spec verification и version readiness; честно отметить незакрытые требования.
 
-**Status: Phase 10 — NOT fully closed.** Phase 10A delivered the canonical tree
+**Status: Phase 10 — NOT fully closed; Phase 10B GIT CLOSEOUT COMPLETE.** Phase 10A delivered the canonical tree
 spec + migration map + governance hardening. Phase 10B performs the actual
 document relocation and the honest completeness audit. One concrete requirement
 (the workspace/strategy specification revision module) remains **NOT
@@ -125,6 +125,15 @@ migration change in Phase 10B.
 
 ## 11. Commit / PR / CI / merge / clean-checkout evidence
 
-Recorded at closeout (implementation commit, PR, CI run, merge commit, clean
-worktree verification). Extraneous dirty/untracked files were preserved and kept
-outside the delivery.
+- Implementation commit: `d1087f59` on `phase/10b-documentation-finalization` (from integration `f0028ace`).
+- PR: [#17](https://github.com/OMNOM-111/NT-Analyzer/pull/17) → base `release/0.10.0-next-architecture`.
+- CI ([Actions run 30834935279](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30834935279)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
+- Merge commit: `753d2271`; task branch deleted locally and on origin; integration in sync with origin after merge.
+- **Clean-checkout verification** (detached worktree from `origin/release/0.10.0-next-architecture` at `753d2271`, no local stray files):
+  - full `pytest -q` → **1148 passed, 31 skipped**;
+  - `compileall app tools tests` → PASS; `node --check` ui.js + api.js → PASS;
+  - `release_static_scan.py` → CSP OK, SECRETS OK, MARKDOWN OK;
+  - `git diff --check` → clean (only CRLF notices on app-regenerated governance renders);
+  - the checked-out tree was clean before the run; the 8 files modified after the run are governance/runtime files the app regenerates on import (not committed-content issues).
+  - SKIPPED / EXTERNAL (not counted as PASS): the 31 skips are live-PostgreSQL migration/acceptance suites (need `STRATFORGE_TEST_POSTGRES_*`) and other environment-gated suites; real Canary/Production deployment, real blue-green switch, real Telegram/Connector/email provider and browser QA were **not run** (owner-gated / policy).
+- Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/*`, `data/governance-rendered/*`, `data/ai_lab/registry/orchestrator_*`, `docs/AGENT_PERSONAS.md`, `docs/governance/{LAWS,LOCAL_AI_LAWS,OVERVIEW,SYNC_MAP}.md`) were preserved on disk and kept outside the Phase 10B delivery.

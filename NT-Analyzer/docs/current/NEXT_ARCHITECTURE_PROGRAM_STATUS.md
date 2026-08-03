@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T17:10:34Z; внёс `GitHub Copilot`; scope: Phase 10B closeout — записать PR #17, cross-platform CI run 30834935279, merge commit 753d2271, clean-checkout verification (1148 passed / 31 skipped) и удаление task branch. Phase 10 остаётся NOT fully closed (strategy-spec revision module NOT IMPLEMENTED).
+
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — фактический перенос документации (git mv + обновление ссылок), language policy, changelog, final requirements matrix, strategy-spec verification, version readiness. КОРРЕКЦИЯ: Phase 10 не объявляется полностью закрытой — модель workspace/strategy specification revision NOT IMPLEMENTED.
 
 История поправки: 2026-08-03T15:52:54Z; внёс `GitHub Copilot`; scope: Phase 10 closeout — записать PR #16, cross-platform CI run 30829268990, merge commit bd4fbc47 и удаление task branch (implementation closed, git closeout complete).
@@ -46,7 +48,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T16:53:14Z
+Обновлено: 2026-08-03T17:10:34Z
 
 ## Baseline
 
@@ -263,4 +265,4 @@ Status: **Phase 10 NOT fully closed.** Полное evidence: `docs/current/PHAS
 - Strategy specs: safety invariant IMPLEMENTED+tested; workspace fork PARTIAL (`community.copy_strategy`); полная модель `strategy.spec.manage`/`sf_document_revisions` **NOT IMPLEMENTED** (крупный продуктовый модуль) → Phase 10 не закрывается полностью.
 - Version: `VERSION.json` = `0.10.0-dev.1`; next dev suffix `0.10.0-dev.2`; `0.10.0-beta.1` **NOT READY** (incomplete requirement + external gates); env/channel/SemVer не смешаны; VERSION.json не менялся.
 - Residuals (honest, non-CI): governance law `source_refs` + generated rendered files цитируют pre-move пути (provenance, regenerate); archive-internal historical cross-refs. Local gates: full regression 1148 passed / 31 skipped; compileall / node --check / static scan CSP/SECRETS/MARKDOWN / git diff --check PASS.
-- CI/PR/merge/clean-checkout evidence — записывается в Phase 10B closeout.
+- CI/PR/merge/clean-checkout: [PR #17](https://github.com/OMNOM-111/NT-Analyzer/pull/17) merged; [Actions run 30834935279](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30834935279) SUCCESS (Static gates, Ubuntu, Windows PASS); implementation `d1087f59`; merge `753d2271`; task branch удалена локально и на origin. Clean-checkout из `origin/release/0.10.0-next-architecture` (без локальных stray): full regression 1148 passed / 31 skipped, compileall / node --check / static scan CSP+SECRETS+MARKDOWN / git diff --check — PASS. SKIPPED/EXTERNAL (не PASS): live-PostgreSQL suites, реальный Canary/Production deploy, blue-green switch, реальные Telegram/Connector/email provider, browser QA. **Phase 10B GIT CLOSEOUT COMPLETE; Phase 10 NOT fully closed.**
