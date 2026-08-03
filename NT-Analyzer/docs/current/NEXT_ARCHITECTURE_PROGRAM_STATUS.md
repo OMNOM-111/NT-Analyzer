@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T02:26:18Z; внёс `GitHub Copilot`; scope: Phase 6 closeout — записать PR #12, cross-platform CI run 30779156395, merge commit 93b1fced и удаление task branch.
+
 История поправки: 2026-08-03T02:19:36Z; внёс `GitHub Copilot`; scope: Phase 6 — зафиксировать agent allocation и durable shared-NinjaTrader resource lease/queue, migration 0008 и локальный verification evidence.
 
 История поправки: 2026-08-02T23:06:34Z; внёс `GitHub Copilot`; scope: Phase 5 closeout — записать PR #11, cross-platform CI run 30771449462, merge commit 1b4249cc и удаление task branch.
@@ -26,7 +28,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T02:19:36Z
+Обновлено: 2026-08-03T02:26:18Z
 
 ## Baseline
 
@@ -49,7 +51,7 @@
 | 3 | STAGE CLOSED | merged/deleted | `7fb34762`; [PR #9](https://github.com/OMNOM-111/NT-Analyzer/pull/9) | UUID identity, provider abstraction и dual-write compatibility; CI PASS |
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
-| 6 | IMPLEMENTATION COMPLETE | `phase/6-agent-allocation-nt-queue` | pending PR | Agent allocation и durable NinjaTrader lease/queue |
+| 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
 | 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
 | 8 | PENDING | `phase/8-release-center` | pending | Release Center |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
@@ -160,4 +162,5 @@
 - Deployment boundary: Production не изменялась; Canary не изменялся; deployment не выполнялся; main не затронут; Production secrets, DNS, bot/email credentials, реальный Connector pairing и базы данных не использовались.
 - Rollback: expand-only. Остановка scheduling новых shared jobs и безопасная отмена queued jobs; active leases дожидаются или истекают; audit и job history сохраняются; personal NT mappings не теряются; personal jobs не получают owner-runtime fallback.
 - Residual / owner decision (non-blocking): персона `Координатор` взята из ADR-0006 (утверждена). Реальная интеграция с исполнением backtest/optimization в orchestrator/worker остаётся последующей работой; текущая фаза даёт durable lease/queue контракт и allocation policy.
-- CI/PR: pending (заполняется в closeout после Windows/Linux CI PASS и merge).
+- CI/PR: [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) merged; [Actions run 30779156395](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30779156395) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
+- Git closeout: implementation `7f3dba64`; merge `93b1fced`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 6 delivery.
