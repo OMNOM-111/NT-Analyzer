@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T15:52:54Z; внёс `GitHub Copilot`; scope: Phase 10 closeout — записать PR #16, cross-platform CI run 30829268990, merge commit bd4fbc47 и удаление task branch (implementation closed, git closeout complete).
+
 История поправки: 2026-08-03T15:45:33Z; внёс `GitHub Copilot`; scope: Phase 10 — зафиксировать канонический docs-tree + migration map, ужесточение governance amendment workflow (owner / docs.manage_global на запись), strategy-override scope invariant и тесты.
 
 История поправки: 2026-08-03T15:12:00Z; внёс `GitHub Copilot`; scope: Phase 9 closeout — записать PR #15, cross-platform CI run 30825143931, merge commit 3a787c6a и удаление task branch (implementation closed, git closeout complete; external blue-green/Production deployment acceptance остаётся owner gate).
@@ -42,7 +44,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T15:45:33Z
+Обновлено: 2026-08-03T15:52:54Z
 
 ## Baseline
 
@@ -69,7 +71,7 @@
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
-| 10 | IMPLEMENTATION COMPLETE | `phase/10-documentation` | pending merge | Canonical docs-tree + migration map; governance write теперь owner/docs.manage_global; strategy-override scope invariant; CI ожидается |
+| 10 | IMPLEMENTATION CLOSED | merged/deleted | `bd4fbc47`; [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | Canonical docs-tree + migration map; governance write теперь owner/docs.manage_global; strategy-override scope invariant; CI PASS |
 
 ## Phase 0 evidence
 
@@ -243,3 +245,7 @@ Status: **IMPLEMENTATION COMPLETE.** Полное evidence: `docs/current/PHASE_
 - Rollback: revert Phase 10 implementation/merge commit; каталоги/READMEs/`DOCS_STRUCTURE.md` additive; guard — один серверный метод; schema/migration в Phase 10 не менялись.
 - Environment impact: изменён только `app/server.py` + docs. Production/Canary/main, реальные базы, secrets, DNS/Cloudflare не затронуты.
 - CI/PR/Git closeout: implementation commit, PR в `release/0.10.0-next-architecture`, cross-platform CI и merge commit будут записаны в Phase 10 closeout после CI PASS. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 10 delivery.
+
+### Phase 10 closeout
+
+- [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) merged; [Actions run 30829268990](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30829268990) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `25fffb42`; merge `bd4fbc47`; task branch `phase/10-documentation` удалена локально и на origin; integration совпадает с origin after merge. **IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE**. Физическое массовое перемещение документов по `docs/DOCS_STRUCTURE.md` выполняется owner-approved шагами (миграционная карта = требуемая зависимость).

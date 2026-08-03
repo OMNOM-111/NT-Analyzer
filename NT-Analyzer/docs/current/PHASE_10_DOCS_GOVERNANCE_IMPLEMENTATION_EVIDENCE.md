@@ -2,7 +2,7 @@
 
 История поправки: 2026-08-03T15:45:33Z; внёс `GitHub Copilot`; scope: Phase 10 — зафиксировать реализацию канонического docs-tree + migration map, ужесточение governance amendment workflow (owner / docs.manage_global на запись), strategy-override scope invariant и тесты.
 
-**Status: Phase 10 — IMPLEMENTATION COMPLETE.**
+**Status: Phase 10 — IMPLEMENTATION CLOSED; GIT CLOSEOUT COMPLETE.**
 Documentation reorganization is delivered as a canonical tree + an
 owner-reviewable migration map; the physical relocation of already-referenced
 files is executed in owner-approved steps (the map is the required
@@ -155,10 +155,8 @@ change was made in Phase 10.
 
 ## 13. Commit / PR / CI / merge evidence
 
-- Implementation commit, PR to `release/0.10.0-next-architecture`, cross-platform
-  CI run and merge commit are recorded in the Phase 10 closeout below on merge.
-- Extraneous dirty/untracked files (`data/catalog/margins.json`,
-  `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`,
-  `data/development/integrations/`, `data/governance-rendered/*`,
-  `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remain
-  outside the Phase 10 delivery.
+- Implementation commit: `25fffb42` on `phase/10-documentation` (from integration `68137c44`).
+- PR: [#16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) → base `release/0.10.0-next-architecture`.
+- CI ([Actions run 30829268990](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30829268990)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
+- Merge commit: `bd4fbc47`; task branch `phase/10-documentation` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
+- Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 10 delivery.
