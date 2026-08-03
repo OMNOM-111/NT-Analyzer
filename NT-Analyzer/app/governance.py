@@ -15,7 +15,6 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-from zoneinfo import ZoneInfo
 
 from . import runtime_env
 
@@ -26,11 +25,6 @@ PROJECT_OWNER = "Черевко Дмитро"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _project_local_date() -> str:
-    """Return the owner's calendar date used by operator-facing documents."""
-    return datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()
 
 
 def project_root() -> Path:
@@ -107,16 +101,24 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _write_if_changed(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def _write_text(path: Path, content: str) -> None:
+    _write_if_changed(path, content.rstrip() + "\n")
+
+
+def _write_if_changed(path: Path, content: str) -> None:
+    # Generated governance files are rewritten on every backend start. Writing
+    # only when the rendered bytes actually differ keeps a clean checkout clean
+    # after a deterministic render (Phase 11 clean-checkout requirement).
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            return
+    except (OSError, UnicodeDecodeError):
+        pass
+    path.write_text(content, encoding="utf-8")
 
 
 def _preview_text(value: str, limit: int = 220) -> str:
@@ -143,7 +145,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": 2000,
         "source_refs": [
             "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-            "NT-Analyzer/docs/risk-profile.md",
+            "NT-Analyzer/docs/strategies/risk-profile.md",
         ],
         "dynamic_targets": [
             "app/jobqueue.py research gate",
@@ -195,7 +197,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": 1.90,
         "source_refs": [
             "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
         ],
         "dynamic_targets": [
@@ -222,7 +224,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": 1,
         "source_refs": [
             "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
         ],
         "dynamic_targets": [
@@ -247,7 +249,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": "High",
         "source_refs": [
             "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         ],
         "dynamic_targets": [
             "app/jobqueue.py validation",
@@ -286,7 +288,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": True,
         "source_refs": [
             "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-            "NT-Analyzer/docs/risk-profile.md",
+            "NT-Analyzer/docs/strategies/risk-profile.md",
         ],
         "dynamic_targets": [
             "ui backtest risk profile defaults",
@@ -362,8 +364,8 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean",
         "value": True,
         "source_refs": [
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
         ],
         "dynamic_targets": [
@@ -383,7 +385,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean",
         "value": True,
         "source_refs": [
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
         ],
         "dynamic_targets": [
@@ -402,7 +404,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean",
         "value": True,
         "source_refs": [
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
         ],
         "dynamic_targets": [
@@ -440,7 +442,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "value": True,
         "source_refs": [
             "NT-Analyzer/ai_lab/prompts/system_coder.txt",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         ],
         "dynamic_targets": [
             "app/ai_lab/generator.py",
@@ -477,7 +479,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "summary": "Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.",
         "kind": "boolean",
         "value": True,
-        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "source_refs": ["NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"],
         "dynamic_targets": [
             "app/ai_lab/cloud_agents.py",
             "app/ai_lab/orchestrator.py",
@@ -494,7 +496,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "summary": "Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.",
         "kind": "string",
         "value": "20.00 USD/month; 0.50 USD/run",
-        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "source_refs": ["NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"],
         "dynamic_targets": ["app/ai_lab/cloud_agents.py", "ui AI Lab cloud-agent settings"],
         "review_targets": ["provider invoice versus local cost audit"],
     },
@@ -508,8 +510,8 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "kind": "boolean",
         "value": True,
         "source_refs": [
-            "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md",
-            "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+            "NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md",
+            "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         ],
         "dynamic_targets": ["app/ai_lab/cloud_agents.py", "app/ai_lab/orchestrator.py"],
         "review_targets": [],
@@ -523,7 +525,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "summary": "Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.",
         "kind": "boolean",
         "value": True,
-        "source_refs": ["NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"],
+        "source_refs": ["NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"],
         "dynamic_targets": ["app/local_secrets.py", "app/ai_lab/cloud_agents.py"],
         "review_targets": [],
     },
@@ -581,7 +583,7 @@ DEFAULT_LAWS: List[Dict[str, Any]] = [
         "title": "ИИ-роли улучшаются через конкурентную обратную связь",
         "summary": "Роли Analyst/Coder/Judge/Reviewer сравниваются по проверяемому результату; слабый ответ не наказывается, а получает детальный feedback и временно меньший приоритет следующего вызова, пока не восстановит качество.",
         "kind": "boolean", "value": True,
-        "source_refs": ["NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
+        "source_refs": ["NT-Analyzer/docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md"],
         "dynamic_targets": ["governance docs", "docs/AI_LAB_COMPETITIVE_FEEDBACK.md"],
         "review_targets": ["app/ai_lab/agent_router.py role ranking", "agent usage/feedback ledger", "AI Lab UI feedback report"],
     },
@@ -1143,6 +1145,23 @@ def _history_line(entry: Dict[str, Any]) -> str:
     )
 
 
+def _governance_updated_at() -> str:
+    """Deterministic "last updated" stamp for generated governance documents.
+
+    Generated docs are re-rendered on every backend start and on import. Using
+    the wall-clock render date would dirty a clean checkout on the next calendar
+    day; instead we use the latest recorded governance mutation time (the laws
+    document plus the amendment journal), so a mere restart / re-render never
+    changes the rendered bytes (Phase 11 deterministic-render requirement).
+    """
+    doc = _read_json(laws_path(), _default_laws_doc())
+    if not isinstance(doc, dict):
+        doc = _default_laws_doc()
+    times = [str(doc.get("updated_at_utc") or "")]
+    times.extend(str(row.get("ts_utc") or "") for row in read_change_log(limit=5))
+    return max((value for value in times if value), default="не указана")
+
+
 def _render_laws_markdown(audience: str) -> str:
     doc = _read_json(laws_path(), _default_laws_doc())
     if not isinstance(doc, dict):
@@ -1157,7 +1176,7 @@ def _render_laws_markdown(audience: str) -> str:
         if audience == "project"
         else "Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox."
     )
-    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_project_local_date()}", "", subtitle]
+    parts: List[str] = [f"# {title}", "", f"Дата актуализации: {_governance_updated_at()}", "", subtitle]
     current_group = None
     for law in selected:
         group = str(law.get("group") or "")
@@ -1195,7 +1214,7 @@ def _render_sync_map_markdown() -> str:
     parts = [
         "# SYNC_MAP",
         "",
-        f"Дата актуализации: {_project_local_date()}",
+        f"Дата актуализации: {_governance_updated_at()}",
         "",
         "Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.",
         "",

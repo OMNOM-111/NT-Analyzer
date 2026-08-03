@@ -406,14 +406,17 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
 
     menu = ui.split("function wireTopbar()", 1)[1].split("function environmentHtml", 1)[0]
     assert "hasAdminCapability('admin.view')" in menu
-    assert "label: 'Admin Panel'" in menu
+    assert "label: 'Панель администратора'" in menu
+    # System OPERATIONS actions moved to the Admin Panel → Operations module.
+    # The legacy-interface switch is navigation and stays in the menu (restored
+    # per owner request in the Phase 11 final integration pass).
     for legacy_action in (
         "Запустить всё окружение",
         "Диагностика системы",
         "Перезапустить backend",
-        "Перейти в старый интерфейс",
     ):
         assert legacy_action not in menu
+    assert "Перейти в старый интерфейс" in menu
 
     cabinet = ui.split("function renderCabinet", 1)[1].split("async function renderAiRatingsInto", 1)[0]
     assert "const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet

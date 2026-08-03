@@ -185,12 +185,13 @@ def test_session_cookie_name_unchanged_for_development(monkeypatch):
     assert runtime_env.session_cookie_name() == "sf_session"
 
 
-def test_session_cookie_name_unchanged_for_production(monkeypatch, tmp_path):
+def test_session_cookie_name_is_isolated_for_production(monkeypatch, tmp_path):
+    # Phase 11: Production has its own distinct cookie name, not the dev default.
     _production_env(monkeypatch, tmp_path)
-    assert runtime_env.session_cookie_name() == "sf_session"
+    assert runtime_env.session_cookie_name() == "sf_production_session"
 
 
-def test_local_storage_namespace_only_canary(monkeypatch, tmp_path):
+def test_local_storage_namespace_distinct_per_environment(monkeypatch, tmp_path):
     _canary_env(monkeypatch, tmp_path)
     assert runtime_env.local_storage_namespace() == "canary"
     monkeypatch.setenv("DEPLOYMENT_ENV", "development")

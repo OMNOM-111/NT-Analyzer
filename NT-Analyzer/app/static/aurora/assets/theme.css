@@ -436,6 +436,8 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .admin-module:hover { background: var(--bg-3); color: var(--tx); }
 .admin-module.on { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand-ink); }
 .admin-module small { color: var(--tx-4); font-size: 9px; overflow-wrap: anywhere; }
+.admin-module-group { padding: 12px 12px 4px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-4); }
+.admin-module-group:first-child { padding-top: 2px; }
 .admin-module-body { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .admin-grant-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 230px) auto; align-items: center; gap: 12px; padding: 9px 11px; border-bottom: 1px solid var(--line); }
 .admin-grant-row:last-child { border-bottom: 0; }

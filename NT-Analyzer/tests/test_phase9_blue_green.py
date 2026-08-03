@@ -469,4 +469,4 @@ def test_migration_set_still_starts_at_one_and_is_contiguous():
 
     versions = [row["version"] for row in MigrationRunner.migrations()]
     assert versions == list(range(1, len(versions) + 1))
-    assert versions[-1] == 10
+    assert versions[-1] == 11

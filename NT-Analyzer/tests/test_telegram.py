@@ -140,7 +140,7 @@ def test_aurora_telegram_controls_live_only_in_capability_gated_admin_panel() ->
     assert "label: 'Telegram'" not in topbar
     assert "Интеграции и Telegram" not in ui
     assert "hasAdminCapability('connectors.manage')" in ui
-    assert '"label": "Connectors and Telegram", "capability": "connectors.manage"' in server
+    assert '"label": "Коннекторы и Telegram", "capability": "connectors.manage"' in server
     assert "telegramSaveToken" in api and "/api/telegram/test" in api
 
 

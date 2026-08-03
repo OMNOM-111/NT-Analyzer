@@ -138,6 +138,12 @@ def configure_development_profile(
         "STRATFORGE_LIVE_TRADING_ALLOWED": "0",
         "STRATFORGE_REAL_PAYMENTS_ALLOWED": "0",
         "NT_ANALYZER_ROOT": str(project_root),
+        # Local Development is a single-operator loopback sandbox: grant the
+        # owner session automatically without Telegram so the app never opens in
+        # guest mode on the owner's own machine. This bypass is loopback-only
+        # (see server._authorize_api / _is_remote_api_request) and is hard
+        # rejected in Production by runtime_env.assert_startup_safe().
+        "NTA_TEST_BYPASS_AUTH": "1",
         "NTA_VITEK_BACKGROUND": "1",
     }
     if not values["APP_VERSION"] or not values["BUILD_TIMESTAMP_UTC"]:

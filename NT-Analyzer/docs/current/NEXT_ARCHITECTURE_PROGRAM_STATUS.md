@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T22:02:42Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11 — финальная интеграционная доводка и browser-QA: реализован модуль ревизий спецификаций (strategy.spec.manage, миграция 0011, doc_specs, API/UI, тесты), Account Security UI, русификация+группировка Admin Panel, восстановление переключателя старого интерфейса, починка иконок DEV/CANARY/BETA и CSP-ошибки, детерминированный governance-рендер, per-env cookie/LS namespaces, loopback-owner в локальном DEV, PostgreSQL-приёмочный kit (BLOCKED — external DB). Full regression 1175 passed / 31 skipped.
+
 История поправки: 2026-08-03T17:10:34Z; внёс `GitHub Copilot`; scope: Phase 10B closeout — записать PR #17, cross-platform CI run 30834935279, merge commit 753d2271, clean-checkout verification (1148 passed / 31 skipped) и удаление task branch. Phase 10 остаётся NOT fully closed (strategy-spec revision module NOT IMPLEMENTED).
 
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — фактический перенос документации (git mv + обновление ссылок), language policy, changelog, final requirements matrix, strategy-spec verification, version readiness. КОРРЕКЦИЯ: Phase 10 не объявляется полностью закрытой — модель workspace/strategy specification revision NOT IMPLEMENTED.
@@ -266,3 +268,15 @@ Status: **Phase 10 NOT fully closed.** Полное evidence: `docs/current/PHAS
 - Version: `VERSION.json` = `0.10.0-dev.1`; next dev suffix `0.10.0-dev.2`; `0.10.0-beta.1` **NOT READY** (incomplete requirement + external gates); env/channel/SemVer не смешаны; VERSION.json не менялся.
 - Residuals (honest, non-CI): governance law `source_refs` + generated rendered files цитируют pre-move пути (provenance, regenerate); archive-internal historical cross-refs. Local gates: full regression 1148 passed / 31 skipped; compileall / node --check / static scan CSP/SECRETS/MARKDOWN / git diff --check PASS.
 - CI/PR/merge/clean-checkout: [PR #17](https://github.com/OMNOM-111/NT-Analyzer/pull/17) merged; [Actions run 30834935279](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30834935279) SUCCESS (Static gates, Ubuntu, Windows PASS); implementation `d1087f59`; merge `753d2271`; task branch удалена локально и на origin. Clean-checkout из `origin/release/0.10.0-next-architecture` (без локальных stray): full regression 1148 passed / 31 skipped, compileall / node --check / static scan CSP+SECRETS+MARKDOWN / git diff --check — PASS. SKIPPED/EXTERNAL (не PASS): live-PostgreSQL suites, реальный Canary/Production deploy, blue-green switch, реальные Telegram/Connector/email provider, browser QA. **Phase 10B GIT CLOSEOUT COMPLETE; Phase 10 NOT fully closed.**
+
+## Phase 11 evidence
+
+Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDENCE.md`.
+Ветка `phase/11-final-integration-corrections` от `release/0.10.0-next-architecture` (`e3d1d6bd`). `main`/Canary/Production/DNS/Cloudflare/secrets/сервер не затронуты; финальный PR в `main` не создаётся.
+
+- Закрыты внутренние замечания аудита GPT-5.5 (`PASS WITH CONDITIONS`) плюс расширенный owner-запрос на полный функциональный/визуальный аудит приложения.
+- **F1 IMPLEMENTED:** модуль ревизий спецификаций рабочих областей/стратегий — право `strategy.spec.manage`, миграция `0011_document_specifications.sql` (`sf_documents`+`sf_document_revisions`, RLS, GRANT для `stratforge_app`), `app/doc_specs.py`, API `/api/documents*`, UI-модуль, история версий + revert, запрет менять global governance/safety-limits из workspace/strategy; тесты `test_phase11_doc_specs.py`. Это снимает пункт «strategy-spec revision module NOT IMPLEMENTED» из Phase 10B.
+- **F2–F6 DONE:** Account Security UI (привязка/unlink/step-up/last-method); Admin Panel — русификация + группировка, убраны placeholder-модули без backend, реальные workflow для документов; dirty-state — идемпотентный + детерминированный governance-рендер, dev runtime dirs в `.gitignore`; `source_refs` обновлены; per-env cookie/LS namespaces (guard `environment_explicit()`) + ADR-0008.
+- **Browser-QA фиксы:** иконки DEV/CANARY/BETA (404 → 200, Aurora-brand route), CSP-ошибка `[::1]` убрана (header + 14 html), восстановлен переключатель «Перейти в старый интерфейс», локальный DEV = loopback owner.
+- **F7 BLOCKED — EXTERNAL TEST DATABASE REQUIRED:** `deploy/testing/` (provision SQL, env example, runner Windows/Linux, backup/restore, README). Suite запускается при заданных `STRATFORGE_TEST_POSTGRES_*` DSN.
+- Локальные гейты: full regression **1175 passed / 31 skipped**; compileall / node --check / static scan CSP+SECRETS+MARKDOWN / git diff --check — PASS. CI/PR/merge/clean-checkout записываются в Phase 11 closeout после CI PASS.
