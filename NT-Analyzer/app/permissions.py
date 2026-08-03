@@ -142,11 +142,13 @@ ROUTE_CAPABILITY = (
 # authorized independently from subscription capabilities.
 ADMIN_ROUTE_CAPABILITY = (
     ("/api/admin/environment-targets", "environment.switch"),
+    ("/api/admin/ninjatrader", "operations.view"),
     ("/api/admin/operations", "operations.view"),
     ("/api/admin/", "admin.view"),
     ("/api/auth/users", "users.manage"),
     ("/api/owner/support/", "users.manage"),
     ("/api/owner/operations", "operations.view"),
+    ("/api/ninjatrader/worker/", "operations.execute"),
     ("/api/telegram/", "connectors.manage"),
     ("/api/diagnostics", "operations.view"),
     ("/api/server/restart", "operations.execute"),
