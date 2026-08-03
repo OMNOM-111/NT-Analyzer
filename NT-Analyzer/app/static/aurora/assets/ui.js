@@ -3871,6 +3871,200 @@
     await renderEnvironmentSwitcherInto(qs('.drawer-b', d));
   }
 
+  // ---- Release Center (Phase 8) ---------------------------------------------
+  function releaseKey() {
+    return 'ui-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function releaseStateClass(state) {
+    if (['production_live', 'canary_passed'].includes(state)) return 'live';
+    if (['build_failed', 'canary_failed', 'production_failed'].includes(state)) return 'failed';
+    if (['rolled_back', 'superseded', 'cancelled'].includes(state)) return 'archived';
+    return 'trial';
+  }
+
+  function shortSha(value) { return String(value || '').slice(0, 12) || '—'; }
+
+  function renderReleaseRow(r) {
+    return `<div class="row" data-release-row="${esc(r.candidate_id)}">
+      <div class="row-main">
+        <div class="row-title">v${esc(r.app_version)} <span class="badge">${esc(r.release_channel)}</span>
+          <span class="badge ${releaseStateClass(r.state)}">${esc(r.state)}</span></div>
+        <div class="row-sub mono">commit ${esc(shortSha(r.git_commit_sha))} · build ${esc(r.build_id || '—')} · artifact ${esc(shortSha(r.artifact_sha256))} · подпись ${esc(r.signature_status || '—')}</div>
+        <div class="row-sub">Canary: ${esc(r.canary_state || '—')} · Production: ${esc(r.production_state || '—')}${r.failure_reason ? ' · <span class="orch-err">' + esc(r.failure_reason) + '</span>' : ''}</div>
+      </div>
+      <button class="btn sm ghost" data-release-open="${esc(r.candidate_id)}">Детали</button>
+    </div>`;
+  }
+
+  async function renderReleaseCenterInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка релизов…</div>';
+    let data;
+    try { data = await API.http.adminReleases(); }
+    catch (e) { return renderError(node, e, () => renderReleaseCenterInto(node)); }
+    const adapter = data.adapter || {};
+    const rows = data.releases || [];
+    const canCreate = hasAdminCapability('releases.create');
+    node.innerHTML = `
+      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. Развёртывание в этой фазе выполняется в режиме <strong>${esc(adapter.mode || 'dry_run')}</strong>; реальный executor не подключён, поэтому внешний результат остаётся PENDING, а не PASS.</div>
+      <div class="flex gap-sm">
+        ${canCreate ? '<button class="btn primary" id="rc-new">Новый релиз-кандидат</button>' : ''}
+        <button class="btn ghost" id="rc-refresh">Обновить</button>
+      </div>
+      <div id="rc-new-form" hidden></div>
+      <div class="section-title">Релизы</div>
+      <div class="list" id="rc-list">${rows.map(renderReleaseRow).join('') || '<div class="empty-state">Кандидатов пока нет.</div>'}</div>`;
+    const refresh = qs('#rc-refresh', node);
+    if (refresh) refresh.onclick = () => renderReleaseCenterInto(node);
+    const newBtn = qs('#rc-new', node);
+    const form = qs('#rc-new-form', node);
+    if (newBtn && form) newBtn.onclick = () => {
+      form.hidden = !form.hidden;
+      if (form.hidden) { form.innerHTML = ''; return; }
+      form.innerHTML = `<div class="cab-card"><h4>Новый кандидат</h4>
+        <div class="cab-sub">Кандидат создаётся только из чистого выбранного commit. Грязное рабочее дерево отклоняется сервером.</div>
+        <label class="field"><span>Версия (semver)</span><input id="rc-version" type="text" placeholder="0.10.0-dev.1"></label>
+        <label class="field"><span>Канал</span><select id="rc-channel"><option value="dev">dev</option><option value="beta">beta</option><option value="stable">stable</option></select></label>
+        <label class="field"><span>Commit SHA (пусто = текущий HEAD)</span><input id="rc-commit" type="text" class="mono" placeholder="HEAD"></label>
+        <div class="flex gap-sm"><button class="btn primary" id="rc-create">Создать</button></div>
+        <div class="cab-sub" id="rc-create-msg"></div></div>`;
+      const create = qs('#rc-create', form);
+      if (create) create.onclick = async () => {
+        const msg = qs('#rc-create-msg', form);
+        create.disabled = true;
+        if (msg) msg.textContent = 'Создаю…';
+        try {
+          await API.http.adminReleaseCreate({
+            app_version: (qs('#rc-version', form).value || '').trim(),
+            release_channel: qs('#rc-channel', form).value,
+            git_commit_sha: (qs('#rc-commit', form).value || '').trim(),
+            idempotency_key: releaseKey(),
+          });
+          toast('Кандидат создан');
+          renderReleaseCenterInto(node);
+        } catch (e) { if (msg) msg.textContent = e.message || String(e); create.disabled = false; }
+      };
+    };
+    qsa('[data-release-open]', node).forEach(btn => {
+      btn.onclick = () => openReleaseDetail(btn.dataset.releaseOpen);
+    });
+  }
+
+  function releaseConfirm(action, detail) {
+    const s = detail.summary || {};
+    const lines = [
+      `Действие: ${action}`,
+      `Версия: v${s.app_version} (${s.release_channel})`,
+      `Commit: ${s.git_commit_sha || '—'}`,
+      `Build ID: ${s.build_id || '—'}`,
+      `Artifact SHA: ${s.artifact_sha256 || '—'}`,
+      `Manifest SHA: ${s.manifest_sha256 || '—'}`,
+      `Подпись: ${s.signature_status || '—'}`,
+      `Canary: ${s.canary_state || '—'} · Production: ${s.production_state || '—'}`,
+      '',
+      'Реальное развёртывание не выполняется (dry-run). Продолжить?',
+    ];
+    return window.confirm(lines.join('\n'));
+  }
+
+  function releaseActionButtons(detail) {
+    const s = detail.summary || {};
+    const state = s.state;
+    const btns = [];
+    const has = c => hasAdminCapability(c);
+    if (state === 'draft' && has('releases.create')) btns.push(['build', 'Собрать артефакт', false]);
+    if (state === 'built' && has('releases.create')) btns.push(['verify', 'Проверить подпись', false]);
+    if (state === 'signed' && has('releases.deploy_canary')) btns.push(['deploy-canary', 'Развернуть в Canary', true]);
+    if (state === 'canary_checking' && has('releases.deploy_canary')) {
+      btns.push(['record-canary-check:pass', 'Отметить проверку: PASS (final)', false]);
+      btns.push(['record-canary-check:fail', 'Отметить проверку: FAIL', false]);
+    }
+    if (state === 'canary_passed' && has('releases.promote_production')) btns.push(['approve-production', 'Одобрить Production', true]);
+    if (state === 'approved_for_production' && has('releases.promote_production')) {
+      btns.push(['schedule-production', 'Запланировать', false]);
+      btns.push(['promote-production', 'Продвинуть в Production', true]);
+    }
+    if (state === 'production_scheduled' && has('releases.promote_production')) btns.push(['promote-production', 'Продвинуть в Production', true]);
+    if (state === 'production_deploying' && has('releases.promote_production')) btns.push(['mark-production-live', 'Подтвердить production_live', true]);
+    if (['production_live', 'production_deploying', 'production_failed'].includes(state) && has('releases.rollback_production')) btns.push(['rollback-production', 'Откатить Production', true]);
+    if (!['production_live', 'rolled_back', 'superseded', 'cancelled'].includes(state) && has('releases.create')) btns.push(['cancel', 'Отменить', false]);
+    return btns;
+  }
+
+  async function openReleaseDetail(candidateId) {
+    const d = drawer('<h3>Релиз</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>');
+    d.classList.add('wide');
+    const body = qs('.drawer-b', d);
+    let detail;
+    try { detail = await API.http.adminRelease(candidateId); }
+    catch (e) { return renderError(body, e, () => openReleaseDetail(candidateId)); }
+    const s = detail.summary || {};
+    const a = detail.artifact || {};
+    const kv = (k, v) => `<div class="admin-env-meta"><div><span>${esc(k)}</span><strong class="mono">${esc(v || '—')}</strong></div></div>`;
+    const deployments = (detail.deployments || []).map(dep => `<div class="row"><div class="row-main"><div class="row-title">${esc(dep.environment)} · <span class="badge ${releaseStateClass(dep.state)}">${esc(dep.state)}</span></div><div class="row-sub mono">artifact ${esc(shortSha(dep.artifact_sha256))} · adapter ${esc(dep.adapter)} · ${esc((dep.document || {}).external_result || '')}</div></div></div>`).join('') || '<div class="empty-state">Нет развёртываний.</div>';
+    const checks = (detail.checks || []).map(c => `<div class="feat-row"><span>${esc(c.name)}</span><span class="badge ${c.result === 'pass' ? 'live' : (c.result === 'fail' ? 'failed' : 'archived')}">${esc(c.result)}</span></div>`).join('') || '<div class="empty-state">Проверок нет.</div>';
+    const approvals = (detail.approvals || []).map(ap => `<div class="row-sub mono">approval ${esc(ap.status)} · artifact ${esc(shortSha(ap.artifact_sha256))} · by ${esc(ap.approved_by_legacy_id)}</div>`).join('') || '<div class="empty-state">Одобрений нет.</div>';
+    const rollbacks = (detail.rollbacks || []).map(rb => `<div class="row-sub mono">rollback -> ${esc(shortSha(rb.to_artifact_id))} · ${esc(rb.reason || '')}</div>`).join('') || '<div class="empty-state">Откатов нет.</div>';
+    const events = (detail.events || []).slice(-20).map(ev => `<div class="row-sub mono">${esc(ev.created_at_utc)} · ${esc(ev.event_type)} (${esc(ev.from_state)}→${esc(ev.to_state)})</div>`).join('') || '';
+    body.innerHTML = `
+      <div class="grid cols-3">
+        <div class="kpi"><span>Состояние</span><strong>${esc(s.state)}</strong></div>
+        <div class="kpi"><span>Версия</span><strong>v${esc(s.app_version)} ${esc(s.release_channel)}</strong></div>
+        <div class="kpi"><span>Подпись</span><strong>${esc(a.signature_status || s.signature_status || '—')}</strong></div>
+      </div>
+      ${s.failure_reason ? `<div class="finance-note"><strong>Ошибка:</strong> ${esc(s.failure_reason)}</div>` : ''}
+      <div class="section-title">Артефакт</div>
+      ${kv('Build ID', a.build_id || s.build_id)}${kv('Commit', a.git_commit_sha || s.git_commit_sha)}${kv('Artifact SHA-256', a.artifact_sha256 || s.artifact_sha256)}${kv('Manifest SHA-256', a.manifest_sha256 || s.manifest_sha256)}${kv('Trust tier', a.trust_tier)}${kv('Immutable', a.immutable ? 'да' : '—')}
+      <div class="section-title">Действия</div>
+      <div class="flex gap-sm wrap" id="rc-actions"></div>
+      <div class="cab-sub" id="rc-action-msg"></div>
+      <div class="section-title">Развёртывания</div><div class="list">${deployments}</div>
+      <div class="section-title">Проверки Canary</div><div class="cap-panel">${checks}</div>
+      <div class="section-title">Одобрения</div><div>${approvals}</div>
+      <div class="section-title">Откаты</div><div>${rollbacks}</div>
+      <div class="section-title">История</div><div>${events}</div>`;
+    const actions = qs('#rc-actions', body);
+    const msg = qs('#rc-action-msg', body);
+    releaseActionButtons(detail).forEach(([action, label, critical]) => {
+      const btn = el(`<button class="btn ${critical ? 'primary' : 'ghost'} sm"></button>`);
+      btn.textContent = label;
+      btn.onclick = () => runReleaseAction(candidateId, action, critical, detail, body);
+      actions.appendChild(btn);
+    });
+    if (!actions.children.length) actions.innerHTML = '<span class="cab-sub">Нет доступных переходов для вашей роли в этом состоянии.</span>';
+  }
+
+  async function runReleaseAction(candidateId, action, critical, detail, body) {
+    const msg = qs('#rc-action-msg', body);
+    if (critical && !releaseConfirm(action, detail)) return;
+    let realAction = action;
+    const payload = { idempotency_key: releaseKey() };
+    if (action.startsWith('record-canary-check:')) {
+      realAction = 'record-canary-check';
+      const result = action.split(':')[1];
+      payload.name = 'acceptance';
+      payload.result = result;
+      payload.final = result === 'pass';
+    } else if (action === 'schedule-production') {
+      const mode = window.prompt('Режим расписания: now / in_5m / in_15m / explicit', 'now') || 'now';
+      payload.mode = mode.trim();
+      if (payload.mode === 'explicit') payload.explicit_utc = (window.prompt('Время UTC (ISO-8601)', '') || '').trim();
+    } else if (action === 'rollback-production') {
+      payload.to_artifact_id = (window.prompt('artifact_id для отката (ранее развёрнутый в Production)', (detail.summary || {}).artifact_id || '') || '').trim();
+      payload.reason = (window.prompt('Причина отката', '') || '').trim();
+    }
+    if (msg) msg.textContent = 'Выполняю…';
+    try {
+      await API.http.adminReleaseAction(candidateId, realAction, payload);
+      toast('Готово');
+      openReleaseDetail(candidateId);
+    } catch (e) {
+      if (e && e.code === 'step_up_required') {
+        if (msg) msg.textContent = 'Требуется подтверждение действия (step-up). Владелец освобождён; делегированному администратору нужно подтвердить действие.';
+      } else if (msg) { msg.textContent = e.message || String(e); }
+    }
+  }
+
   async function renderDelegatedUsersInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка users…</div>';
     try {
@@ -3919,6 +4113,7 @@
     if (moduleId === 'users') { return CURRENT_AUTH && CURRENT_AUTH.is_owner ? renderUsersInto(node) : renderDelegatedUsersInto(node); }
     if (moduleId === 'operations') return renderAdminOperationsInto(node);
     if (moduleId === 'environments') return renderEnvironmentSwitcherInto(node);
+    if (moduleId === 'releases') return renderReleaseCenterInto(node);
     if (moduleId === 'monitoring') return renderMonitoringInto(node);
     if (moduleId === 'requests') return renderRequestsInto(node);
     if (moduleId === 'subscriptions') {

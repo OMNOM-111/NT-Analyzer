@@ -142,6 +142,7 @@ ROUTE_CAPABILITY = (
 # authorized independently from subscription capabilities.
 ADMIN_ROUTE_CAPABILITY = (
     ("/api/admin/environment-targets", "environment.switch"),
+    ("/api/admin/releases", "releases.view"),
     ("/api/admin/ninjatrader", "operations.view"),
     ("/api/admin/operations", "operations.view"),
     ("/api/admin/", "admin.view"),

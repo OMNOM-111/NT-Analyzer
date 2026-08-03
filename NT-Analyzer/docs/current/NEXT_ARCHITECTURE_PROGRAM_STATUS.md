@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T06:58:46Z; внёс `GitHub Copilot`; scope: Phase 8 — зафиксировать реализацию Release Center (immutable-artifact promotion state machine, migration 0009, API, UI, dry-run adapter; external Canary/Production acceptance pending owner approval).
+
 История поправки: 2026-08-03T03:55:03Z; внёс `GitHub Copilot`; scope: Phase 7 closeout — записать PR #13, cross-platform CI run 30782625524, merge commit 5955f2e5 и удаление task branch (external Canary acceptance остаётся owner gate).
 
 История поправки: 2026-08-03T03:42:05Z; внёс `GitHub Copilot`; scope: Phase 7 — зафиксировать реализацию изолированного Canary-контура и Developer Preview / View-As (implementation complete, external Canary acceptance pending owner approval).
@@ -32,7 +34,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T03:55:03Z
+Обновлено: 2026-08-03T06:58:46Z
 
 ## Baseline
 
@@ -57,7 +59,7 @@
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
-| 8 | PENDING | `phase/8-release-center` | pending | Release Center |
+| 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | `phase/8-release-center` | pending | Release Center: immutable-artifact promotion state machine + migration 0009 |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
 | 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
 
@@ -184,3 +186,20 @@ Status: **IMPLEMENTATION COMPLETE; REAL CANARY PROVISIONING AND EXTERNAL ACCEPTA
 - Rollback: revert Phase 7 implementation/merge commit; schema rollback не требуется; `deploy/canary/*` и `app/dev_preview.py` инертны без явной конфигурации `DEPLOYMENT_ENV=canary`/`development`.
 - Environment impact: изменён только код, Development/Canary конфигурационные templates и UI. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets, реальные Telegram credentials и реальные Connector sessions не затронуты.
 - CI/PR/Git closeout: [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) merged; [Actions run 30782625524](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30782625524) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `2a4f4839`; merge `5955f2e5`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 7 delivery. External Canary acceptance (real DB/DNS/tunnel/Telegram/Connector) остаётся owner gate; этап не STAGE CLOSED.
+
+## Phase 8 evidence
+
+Status: **IMPLEMENTATION COMPLETE; REAL CANARY DEPLOYMENT / PRODUCTION PROMOTION ACCEPTANCE PENDING OWNER APPROVAL — NOT STAGE CLOSED.** Полное evidence: `docs/current/PHASE_8_RELEASE_CENTER_IMPLEMENTATION_EVIDENCE.md`.
+
+- Components: новый `app/release_center.py` (immutable-artifact promotion state machine, exact-artifact invariants, encrypted/Postgres document store, redacted audit, fail-closed dry-run deployment adapter, scheduling, notifications, step-up); `app/production_storage/migrations/0009_release_center.sql` (8 таблиц, additive expand-only, global-scope RLS); server API + per-action permissions + step-up; Aurora `Центр релизов` UI (`ui.js`/`api.js`).
+- State machine: `draft → building → built → signed → canary_deploying → canary_checking → canary_passed → approved_for_production → production_scheduled → production_deploying → production_live`; failure/terminal `build_failed`, `canary_failed`, `production_failed`, `rolled_back`, `superseded`, `cancelled`. Каждый переход валидируется server-side по allow-map (пропущенные/обратные отклоняются), имеет idempotency key, capability, step-up для критических действий, audit с actor UUID и timestamp; повтор запроса не создаёт двойной deployment/approval.
+- Data model: migration 0009 — `sf_release_artifacts/candidates/deployments/checks/approvals/rollbacks/notifications/events`; UUID, app_version, channel, build_id, commit, artifact/manifest SHA-256, signature status, evidence JSON, failure reason, idempotency; global RLS `sf_scope_global()`; unique `(artifact_sha256, manifest_sha256, git_commit_sha, build_id)`; idempotency и one-active-deployment unique indexes. Никаких signing keys/tokens/credentials в БД, UI, логах или evidence. `latest_version` = 9 (auto-discovered).
+- Exact-artifact controls (проверены тестами): dirty worktree не создаёт публикуемый кандидат/сборку; artifact immutable после сборки; verify требует `verified` подпись и замораживает fingerprint; любой дрейф artifact/manifest/commit/build после подписи отклоняется; Canary и Production ссылаются на один fingerprint; Production promotion требует совпадающего Canary pass, живого owner approval, привязанного к тому же fingerprint, и свежего step-up; rollback только на ранее развёрнутый в Production artifact.
+- Deployment adapter: fail-closed dry-run. Реальный executor не подключён (Phase 9); внешний результат всегда PENDING, `production_live` достигается только отдельным owner-подтверждением `mark-production-live` — dry-run не может подделать live-deploy. Scheduling: now/in_5m/in_15m/explicit; «после закрытия рынка» отключено (`market_calendar_unavailable`) до утверждённого календаря — owner decision зафиксирован. Notifications: записи scheduled_update/warn_5m/warn_60s/deploy_started/deploy_successful/deploy_failed/rollback/reload_available без реальной отправки.
+- Permissions: `releases.view/create/deploy_canary/promote_production/rollback_production`. Owner — полный доступ; delegated admin — только явные grants; ordinary user не видит Release Center и получает server-side denial. Route gate `/api/admin/releases` = `releases.view`, per-action capability в handler.
+- Local validation: focused `tests/test_phase8_release_center.py` `34 passed`; full regression `1093 passed, 31 skipped`. `python -m compileall -q app tools tests`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN, `git diff --check` — PASS.
+- Errors fixed: 20 фокусных тестов сначала падали из-за idempotency-ключей короче 8 символов (инвариант, совпадающий с migration CHECK); ключи в тестах удлинены, product assertions не ослаблены.
+- External checks intentionally NOT run: реальный Canary/Production deployment; SSH/Cloudflare/DNS/systemd/реальные DB команды; реальные signing keys/Production credentials/Telegram/Connector; применение migration к реальным DB. Browser QA не запускался (workspace stability policy).
+- Migrations: `0009_release_center.sql` (additive expand-only). Rollback: revert Phase 8 implementation/merge commit; таблицы пустые, data rollback не требуется; `app/release_center.py` инертен без использования.
+- Environment impact: изменён только код, UI и миграция-исходник. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets/signing keys, реальные Telegram credentials и реальные Connector sessions не затронуты.
+- CI/PR/Git closeout: записывается при closeout (base `release/0.10.0-next-architecture`).
