@@ -6723,7 +6723,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
+    def _require_governance_manage(self) -> bool:
+        """Global governance mutations require owner or ``docs.manage_global``.
+
+        GET reads stay at the read-level ``documents`` capability; only writes to
+        the single global governance store (laws / markdown documents) are
+        restricted. There is no workspace-scoped governance store, and strategy
+        profile updates cannot reach governance, so this closes the last gap in
+        the Phase 10 invariant: global governance can never be modified by a
+        workspace or strategy override, only by the owner (or an explicitly
+        delegated ``docs.manage_global`` administrator).
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        if context.get("is_owner"):
+            return True
+        caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+        if isinstance(caps, dict) and caps.get("docs.manage_global"):
+            return True
+        self._err(
+            HTTPStatus.FORBIDDEN,
+            "Изменение глобального управления доступно только владельцу или администратору с правом docs.manage_global.",
+            code="governance_manage_required",
+        )
+        return False
+
     def _governance_post(self, path: str, body: Dict[str, Any]) -> None:
+        if not self._require_governance_manage():
+            return
         parts = [p for p in path.split("/") if p]
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "governance":
             if parts[2] == "laws":
