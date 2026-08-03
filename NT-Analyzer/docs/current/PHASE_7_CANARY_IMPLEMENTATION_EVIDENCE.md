@@ -183,7 +183,8 @@ real Telegram credentials and real Connector sessions were **not** touched.
 
 ## 12. Commit / PR / CI / merge evidence
 
-- Implementation commit: recorded at closeout.
-- PR: recorded at closeout (base `release/0.10.0-next-architecture`).
-- CI (Static / Ubuntu / Windows): recorded at closeout.
-- Merge commit and branch deletion: recorded at closeout.
+- Implementation commit: `2a4f4839` on `phase/7-canary-environment` (from integration `89ccb3db`).
+- PR: [#13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) → base `release/0.10.0-next-architecture`.
+- CI ([Actions run 30782625524](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30782625524)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
+- Merge commit: `5955f2e5`; task branch `phase/7-canary-environment` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
+- Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 7 delivery.

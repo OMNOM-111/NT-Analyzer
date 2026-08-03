@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T03:55:03Z; внёс `GitHub Copilot`; scope: Phase 7 closeout — записать PR #13, cross-platform CI run 30782625524, merge commit 5955f2e5 и удаление task branch (external Canary acceptance остаётся owner gate).
+
 История поправки: 2026-08-03T03:42:05Z; внёс `GitHub Copilot`; scope: Phase 7 — зафиксировать реализацию изолированного Canary-контура и Developer Preview / View-As (implementation complete, external Canary acceptance pending owner approval).
 
 История поправки: 2026-08-03T02:26:18Z; внёс `GitHub Copilot`; scope: Phase 6 closeout — записать PR #12, cross-platform CI run 30779156395, merge commit 93b1fced и удаление task branch.
@@ -30,7 +32,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T03:42:05Z
+Обновлено: 2026-08-03T03:55:03Z
 
 ## Baseline
 
@@ -54,7 +56,7 @@
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
-| 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | `phase/7-canary-environment` | pending | Изолированный Canary-контур + Developer Preview / View-As без deployment |
+| 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | PENDING | `phase/8-release-center` | pending | Release Center |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
 | 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
@@ -181,4 +183,4 @@ Status: **IMPLEMENTATION COMPLETE; REAL CANARY PROVISIONING AND EXTERNAL ACCEPTA
 - Migrations: none (Canary использует существующую схему).
 - Rollback: revert Phase 7 implementation/merge commit; schema rollback не требуется; `deploy/canary/*` и `app/dev_preview.py` инертны без явной конфигурации `DEPLOYMENT_ENV=canary`/`development`.
 - Environment impact: изменён только код, Development/Canary конфигурационные templates и UI. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets, реальные Telegram credentials и реальные Connector sessions не затронуты.
-- CI/PR/Git closeout: записывается при closeout (base `release/0.10.0-next-architecture`).
+- CI/PR/Git closeout: [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) merged; [Actions run 30782625524](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30782625524) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `2a4f4839`; merge `5955f2e5`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 7 delivery. External Canary acceptance (real DB/DNS/tunnel/Telegram/Connector) остаётся owner gate; этап не STAGE CLOSED.
