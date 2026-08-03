@@ -22,6 +22,7 @@ from __future__ import annotations
 import errno
 import copy
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -58,6 +59,7 @@ if __package__ is None or __package__ == "":
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
+    from app import dev_preview  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -142,6 +144,7 @@ else:
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
+    from . import dev_preview
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -1350,6 +1353,27 @@ class Handler(BaseHTTPRequestHandler):
         forwarded = str(self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
         return tunnel_ip, forwarded
 
+    @staticmethod
+    def _is_loopback_ip(value: str) -> bool:
+        raw = str(value or "").strip().lower()
+        if not raw:
+            return False
+        if raw in {"localhost", "::1", "0:0:0:0:0:0:0:1"}:
+            return True
+        try:
+            return ipaddress.ip_address(raw).is_loopback
+        except ValueError:
+            return False
+
+    def _self_origin(self) -> str:
+        host = self._request_hostname(self.headers.get("Host") or "") or "127.0.0.1"
+        scheme = "https" if (
+            self._is_remote_api_request()
+            or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        ) else "http"
+        raw_host = str(self.headers.get("Host") or host)
+        return f"{scheme}://{raw_host}"
+
     def _connector_bearer_token(self) -> str:
         raw = str(self.headers.get("Authorization") or "").strip()
         match = re.fullmatch(r"Bearer ([A-Za-z0-9_-]{40,160})", raw)
@@ -1413,15 +1437,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _set_session_cookie(self, token: str) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        # Canary uses an isolated cookie so cross-environment tokens are never
+        # accepted; Development/Production keep the canonical name.
         value = (
-            f"{account_auth.SESSION_COOKIE}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
+            f"{runtime_env.session_cookie_name()}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
             f"HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         )
         self._extra_headers.append(("Set-Cookie", value))
 
     def _clear_session_cookie(self) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
-        value = f"{account_auth.SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        value = f"{runtime_env.session_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         self._extra_headers.append(("Set-Cookie", value))
 
     @staticmethod
@@ -1684,7 +1710,7 @@ class Handler(BaseHTTPRequestHandler):
                 if remote_user_uuid:
                     self._remote_context["user_uuid"] = remote_user_uuid
                 browser_session = account_auth.authenticate_session(
-                    self._cookie_value(account_auth.SESSION_COOKIE)
+                    self._cookie_value(runtime_env.session_cookie_name())
                 )
                 if (browser_session and str(browser_session.get("user_id") or "")
                         == str(self._remote_context.get("user_id") or "")
@@ -1756,7 +1782,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         try:
             context = account_auth.authenticate_session(
-                self._cookie_value(account_auth.SESSION_COOKIE),
+                self._cookie_value(runtime_env.session_cookie_name()),
             )
         except account_auth.AccountAuthError as exc:
             self._err(exc.status, str(exc), code=getattr(exc, "code", "") or ""); return False
@@ -2032,11 +2058,11 @@ class Handler(BaseHTTPRequestHandler):
                     user_agent=str(self.headers.get("User-Agent") or ""),
                     throttle_sec=6 * 3600)
             else:
-                context = account_auth.authenticate_session(self._cookie_value(account_auth.SESSION_COOKIE))
+                context = account_auth.authenticate_session(self._cookie_value(runtime_env.session_cookie_name()))
             if context:
                 context = self._decorate_workspace_context(context)
             if not context:
-                failure = account_auth.session_auth_failure(self._cookie_value(account_auth.SESSION_COOKIE))
+                failure = account_auth.session_auth_failure(self._cookie_value(runtime_env.session_cookie_name()))
                 if failure:
                     self._clear_session_cookie()
                     self._json(HTTPStatus.UNAUTHORIZED, {
@@ -2448,7 +2474,7 @@ class Handler(BaseHTTPRequestHandler):
         tunnel_ip, forwarded_ip = self._request_ips()
         try:
             out = account_auth.end_impersonation(
-                self._cookie_value(account_auth.SESSION_COOKIE),
+                self._cookie_value(runtime_env.session_cookie_name()),
                 owner_id=owner_id,
                 ip=forwarded_ip or tunnel_ip,
                 user_agent=str(self.headers.get("User-Agent") or "owner-return"),
@@ -2850,6 +2876,99 @@ class Handler(BaseHTTPRequestHandler):
         except workspaces.WorkspaceError as exc:
             self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
 
+    def _dev_bootstrap_redeem(self, qs: Dict[str, Any]) -> None:
+        """Public Development-only redeem: single-use loopback bootstrap link."""
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        token = str((qs.get("token") or [""])[0] or "")
+        try:
+            out = dev_preview.redeem_bootstrap_token(
+                token, is_loopback=is_loopback, ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-bootstrap"),
+            )
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._set_session_cookie(str(out.get("session_token") or ""))
+        # Redirect to the app without leaving the token in the address bar.
+        self.send_response(HTTPStatus.SEE_OTHER)
+        for name, value in self._extra_headers:
+            self.send_header(name, value)
+        self.send_header("Location", "/ui/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _dev_preview_return(self) -> None:
+        """Public Development-only, loopback-only return to the owner session."""
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        if not is_loopback:
+            self._err(HTTPStatus.FORBIDDEN, "loopback required", code="loopback_required")
+            return
+        try:
+            out = dev_preview.return_to_developer(
+                ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+            )
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._set_session_cookie(str(out.get("session_token") or ""))
+        self.send_response(HTTPStatus.SEE_OTHER)
+        for name, value in self._extra_headers:
+            self.send_header(name, value)
+        self.send_header("Location", "/ui/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _dev_preview_post(self, path: str) -> None:
+        """Developer-only View-As and bootstrap-mint (Development, owner-gated)."""
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        tunnel_ip, forwarded_ip = self._request_ips()
+        ip = str(forwarded_ip or tunnel_ip or "127.0.0.1")
+        try:
+            if path == "/api/dev/preview/view-as":
+                out = dev_preview.start_view_as(
+                    user_id, str(body.get("persona") or ""), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or "dev-preview"),
+                )
+                if out.get("clear_session"):
+                    self._clear_session_cookie()
+                elif out.get("session_token"):
+                    self._set_session_cookie(str(out.get("session_token")))
+                    out.pop("session_token", None)
+            elif path == "/api/dev/preview/exit":
+                out = dev_preview.exit_view_as(
+                    user_id, self._cookie_value(runtime_env.session_cookie_name()), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+                )
+                if out.get("session_token"):
+                    self._set_session_cookie(str(out.get("session_token")))
+                    out.pop("session_token", None)
+            elif path == "/api/dev/preview/reset-personas":
+                out = dev_preview.reset_personas()
+            elif path == "/api/dev/bootstrap/mint":
+                out = dev_preview.mint_bootstrap_token(
+                    user_id, origin=self._self_origin(),
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no dev preview route", code="dev_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
     def _account_nt_security_post(self, path: str) -> None:
         """Self-service personal-NT security: step-up start/confirm, unlink."""
         if not self._check_local_post():
@@ -3246,6 +3365,18 @@ class Handler(BaseHTTPRequestHandler):
             self._google_oauth_callback(qs)
             return
 
+        if path == "/api/dev/bootstrap/redeem":
+            # Public, Development-only, loopback-only single-use bootstrap link so
+            # a separate automation browser can obtain a real owner session.
+            self._dev_bootstrap_redeem(qs)
+            return
+
+        if path == "/api/dev/preview/return":
+            # Loopback return to the developer session from any persona (works
+            # even for the unauthenticated persona which holds no session).
+            self._dev_preview_return()
+            return
+
         if path == "/api/runtime/env":
             # Public, secret-free build identity for UI banners and the
             # credential-free Environment Switcher probe. Never return the
@@ -3325,6 +3456,14 @@ class Handler(BaseHTTPRequestHandler):
                     workspace_id=str(qs.get("workspace_id", [""])[0] or ""),
                 ))
             except ninjatrader_resources.NinjaTraderResourceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/dev/preview/status":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, dev_preview.status(context.get("user_id")))
+            except dev_preview.DevPreviewError as exc:
                 self._err(exc.status, str(exc), code=exc.code)
             return
 
@@ -6647,6 +6786,10 @@ class Handler(BaseHTTPRequestHandler):
             self._ninjatrader_post(path)
             return
 
+        if path.startswith("/api/dev/preview/") or path == "/api/dev/bootstrap/mint":
+            self._dev_preview_post(path)
+            return
+
         if path == "/api/auth/google/start":
             if not self._check_local_post():
                 return
@@ -7104,7 +7247,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/logout":
             if not self._check_local_post():
                 return
-            account_auth.revoke_session(self._cookie_value(account_auth.SESSION_COOKIE))
+            account_auth.revoke_session(self._cookie_value(runtime_env.session_cookie_name()))
             self._clear_session_cookie()
             self._json(HTTPStatus.OK, {"ok": True})
             return

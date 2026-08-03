@@ -60,6 +60,22 @@
   let CURRENT_AUTH = null;
   let BUILD_IDENTITY = null;
 
+  // ---- per-environment localStorage namespace --------------------------------
+  // Canary keys are prefixed so the Canary contour never shares persisted UI
+  // state with Development or Production even inside the same browser. The
+  // namespace is derived synchronously from the origin host (browsers already
+  // isolate localStorage per origin; this is defence in depth). Development and
+  // Production keep their historical unprefixed keys, so no migration is needed.
+  function lsNamespace() {
+    try {
+      const host = String(location.hostname || '').toLowerCase();
+      if (host === 'canary.stratforges.com' || host.startsWith('canary.')) return 'canary';
+    } catch (e) { /* ignore */ }
+    return '';
+  }
+  const LS_NS = lsNamespace();
+  function lsKey(name) { return LS_NS ? `${LS_NS}:${name}` : String(name); }
+
   const RELEASE_ICONS = {
     dev: 'brand/stratforge-dev.png',
     canary: 'brand/stratforge-canary.png',
@@ -150,7 +166,7 @@
   }
 
   // ---- app theme (auto / dark / light) ---------------------------------------
-  const THEME_KEY = 'app.theme';
+  const THEME_KEY = lsKey('app.theme');
   function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } }
   function applyTheme(mode) {
     const m = (mode === 'dark' || mode === 'light') ? mode : 'auto';
@@ -164,9 +180,9 @@
   applyTheme(loadTheme());  // apply immediately to avoid a flash before shell builds
 
   // ---- design settings: animated background · UI density · reduced motion -----
-  const BG_KEY = 'app.bg';               // 'off' | 'subtle' | 'medium'
-  const DENSITY_KEY = 'app.density';     // 'comfortable' | 'compact'
-  const MOTION_KEY = 'app.reduceMotion'; // 'auto' | 'on' | 'off'
+  const BG_KEY = lsKey('app.bg');               // 'off' | 'subtle' | 'medium'
+  const DENSITY_KEY = lsKey('app.density');     // 'comfortable' | 'compact'
+  const MOTION_KEY = lsKey('app.reduceMotion'); // 'auto' | 'on' | 'off'
   function loadBg() { try { return localStorage.getItem(BG_KEY) || 'subtle'; } catch (e) { return 'subtle'; } }
   function setBg(v) {
     const m = (v === 'off' || v === 'medium') ? v : 'subtle';
@@ -903,13 +919,14 @@
     wireA11y();
     wireMiniAppNavigation();
     wireRailResize(rail, app);
+    renderDevPreviewBanner();
     requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
   }
 
   // ---- Rail (sidebar) drag-resize ------------------------------------------
   // The handle is a 6px transparent strip on the right border of the rail.
   // Width is clamped to 140..340px and persisted to localStorage.
-  const RAIL_W_KEY = 'ui.rail-width';
+  const RAIL_W_KEY = lsKey('ui.rail-width');
   const RAIL_W_MIN = 140, RAIL_W_MAX = 340, RAIL_W_DEFAULT = 240;
   function applyRailWidth(w, app) {
     const clamped = Math.round(Math.max(RAIL_W_MIN, Math.min(RAIL_W_MAX, w)));
@@ -1145,6 +1162,126 @@
         toast('Возврат в админку');
         setTimeout(() => location.reload(), 400);
       } catch (e) { reportError(e); btn.disabled = false; }
+    };
+  }
+
+  // ---- Developer Preview / View As (Development only) ------------------------
+  // The active persona label is kept in sessionStorage so the persistent
+  // "VIEW AS" banner survives the reload that swaps the preview session cookie,
+  // and even renders on the logged-out (unauthenticated persona) screen. It is
+  // never a permission source: real server-side permissions come from the
+  // preview session the server minted. The Development-only, loopback-only
+  // return route restores the developer session for any persona.
+  const DEV_VIEW_AS_KEY = 'sf.dev.viewAs';
+
+  function devPreviewLabel() {
+    try { return sessionStorage.getItem(DEV_VIEW_AS_KEY) || ''; } catch (e) { return ''; }
+  }
+  function setDevPreviewLabel(label) {
+    try {
+      if (label) sessionStorage.setItem(DEV_VIEW_AS_KEY, label);
+      else sessionStorage.removeItem(DEV_VIEW_AS_KEY);
+    } catch (e) { /* ignore */ }
+  }
+
+  function devEnvironment() {
+    const runtime = (CURRENT_AUTH && CURRENT_AUTH.runtime) || {};
+    const deployment = runtime.deployment || runtime;
+    return String(
+      (BUILD_IDENTITY && BUILD_IDENTITY.environment)
+      || deployment.deployment_environment || deployment.environment || ''
+    ).toLowerCase();
+  }
+
+  function isDevelopmentEnv() {
+    const runtime = (CURRENT_AUTH && CURRENT_AUTH.runtime) || {};
+    return devEnvironment() === 'development' || !!runtime.test_auth_enabled;
+  }
+
+  function devPreviewAvailable() {
+    return isDevelopmentEnv() && !!(CURRENT_AUTH && CURRENT_AUTH.is_owner);
+  }
+
+  function renderDevPreviewBanner() {
+    const old = qs('#dev-view-as-banner');
+    if (old) old.remove();
+    const label = devPreviewLabel();
+    // Only Development ever shows the banner; it is absent/forbidden elsewhere.
+    if (!label || (CURRENT_AUTH && !isDevelopmentEnv())) return;
+    const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner" role="status" aria-live="polite">
+      <span class="dev-view-as-tag">VIEW AS</span>
+      <span class="dev-view-as-role">${esc(label)}</span>
+      <span class="dev-view-as-note">Просмотр глазами роли. Реальные права не изменены.</span>
+      <a class="btn sm" id="dev-view-as-return" href="/api/dev/preview/return">Вернуться к разработчику</a>
+    </div>`);
+    document.body.appendChild(bar);
+    document.documentElement.classList.add('dev-view-as-active');
+    const back = qs('#dev-view-as-return', bar);
+    if (back) back.onclick = () => { setDevPreviewLabel(''); };
+  }
+
+  function wireDevPreviewButton() {
+    const right = qs('.tb-right');
+    if (!right) return;
+    let button = qs('#dev-preview-button');
+    if (!devPreviewAvailable()) { if (button) button.remove(); return; }
+    if (!button) {
+      button = el('<button class="btn sm ghost" id="dev-preview-button" type="button" title="Developer Preview / View As">Preview</button>');
+      const more = qs('#tb-more', right);
+      right.insertBefore(button, more || right.firstChild);
+    }
+    button.onclick = () => openDevPreviewPanel();
+  }
+
+  async function openDevPreviewPanel() {
+    const d = drawer('<h3>Developer Preview</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>');
+    const body = qs('.drawer-b', d);
+    let status;
+    try { status = await API.http.devPreviewStatus(); }
+    catch (e) { return renderError(body, e, () => { closeDrawer(); openDevPreviewPanel(); }); }
+    const personas = Array.isArray(status.personas) ? status.personas : [];
+    body.innerHTML = `
+      <div class="finance-note"><strong>Только Development.</strong> Переключатель показывает приложение глазами роли, применяя реальные серверные права выбранной роли. Реальные роли и права не меняются. В Canary и Production функция отключена.</div>
+      <div class="section-title">Смотреть как</div>
+      <div class="dev-persona-grid">${personas.map(p => `<button class="btn ghost dev-persona" data-persona="${esc(p.id)}"><strong>${esc(p.label)}</strong><span class="cab-sub">${esc(p.description || '')}</span></button>`).join('')}</div>
+      <div class="section-title">Открыть Development как разработчик</div>
+      <div class="finance-note">Создаёт одноразовую ссылку для входа как владелец из отдельного браузера. Ссылка действует только с localhost и один раз.</div>
+      <div class="flex gap-sm"><button class="btn" id="dev-bootstrap-mint">Получить ссылку</button></div>
+      <div id="dev-bootstrap-url" class="dev-bootstrap-url" hidden></div>
+      <div class="section-title">Обслуживание</div>
+      <div class="flex gap-sm"><button class="btn ghost" id="dev-personas-reset">Сбросить тестовые персоны</button></div>`;
+    qsa('.dev-persona', body).forEach(btn => {
+      btn.onclick = async () => {
+        const persona = btn.dataset.persona;
+        const label = (btn.querySelector('strong') || {}).textContent || persona;
+        qsa('.dev-persona', body).forEach(b => { b.disabled = true; });
+        try {
+          await API.http.devPreviewViewAs(persona);
+          setDevPreviewLabel(label);
+          toast('Предпросмотр роли активирован');
+          setTimeout(() => location.reload(), 300);
+        } catch (e) { reportError(e); qsa('.dev-persona', body).forEach(b => { b.disabled = false; }); }
+      };
+    });
+    const mint = qs('#dev-bootstrap-mint', body);
+    if (mint) mint.onclick = async () => {
+      mint.disabled = true;
+      try {
+        const out = await API.http.devBootstrapMint();
+        const target = qs('#dev-bootstrap-url', body);
+        if (target) {
+          target.hidden = false;
+          target.innerHTML = `<code class="mono">${esc(out.url || out.token || '')}</code><div class="cab-sub">Одноразовая ссылка. Действует ${esc(String(out.expires_in_sec || ''))} сек. Откройте её в отдельном браузере на этом компьютере.</div>`;
+        }
+      } catch (e) { reportError(e); }
+      finally { mint.disabled = false; }
+    };
+    const reset = qs('#dev-personas-reset', body);
+    if (reset) reset.onclick = async () => {
+      reset.disabled = true;
+      try { await API.http.devPreviewResetPersonas(); toast('Тестовые персоны сброшены'); }
+      catch (e) { reportError(e); }
+      finally { reset.disabled = false; }
     };
   }
 
@@ -1661,7 +1798,7 @@
     toast((label || 'Код') + ': ' + code);
     try { if (navigator.clipboard) navigator.clipboard.writeText(code); } catch (e) { /* clipboard may be blocked */ }
   }
-  const REF_KEY = 'app.ref';
+  const REF_KEY = lsKey('app.ref');
   function captureReferral() {
     let code = '';
     try {
@@ -3860,6 +3997,8 @@
       menu(more, systemItems);
     };
     wireAdminEnvironmentButton();
+    wireDevPreviewButton();
+    renderDevPreviewBanner();
   }
 
   function environmentHtml(result) {
@@ -4699,8 +4838,8 @@
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null,
   };
-  const ORCH_KEY = 'orch.currentConversationId';
-  const ORCH_SKIN_KEY = 'orch.skin';
+  const ORCH_KEY = lsKey('orch.currentConversationId');
+  const ORCH_SKIN_KEY = lsKey('orch.skin');
   const ORCH_SKIN_LEGACY = {
     ledger: 'terminal', pulse: 'slate', atelier: 'studio', mica: 'glass', signal: 'day',
   };

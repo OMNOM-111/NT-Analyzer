@@ -1,0 +1,35 @@
+[Unit]
+Description=StratForge Canary API
+Documentation=file:%h/apps/stratforge-canary/current/deploy/canary/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/stratforge-canary/current
+EnvironmentFile=%h/.config/stratforge/canary.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=%h/apps/stratforge-canary/current/.venv/bin/python tools/production_preflight.py --app-root %h/apps/stratforge-canary/current --skip-runtime-binaries
+ExecStart=%h/apps/stratforge-canary/current/.venv/bin/python -m app.server 18766
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=90
+KillSignal=SIGTERM
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

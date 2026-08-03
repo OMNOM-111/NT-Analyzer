@@ -1,0 +1,14 @@
+[Unit]
+Description=Schedule StratForge Canary Operations Maintenance
+Documentation=file:%h/apps/stratforge-canary/current/deploy/canary/README.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+RandomizedDelaySec=10s
+Persistent=true
+Unit=stratforge-canary-operations.service
+
+[Install]
+WantedBy=timers.target
