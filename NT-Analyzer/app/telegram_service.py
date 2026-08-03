@@ -1143,16 +1143,23 @@ def _send_raw_direct(text: str, *, silent: bool = False,
 def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = None,
               chat_id: Optional[str] = None, dedupe_key: str = "",
               parse_mode: str = "HTML") -> Dict[str, Any]:
+    # Non-Production environments prepend a visible contour marker so a Canary or
+    # Development bot can never be mistaken for the Production owner bot. The
+    # marker is empty in Production, so its wording is unchanged there.
+    marker = runtime_env.telegram_environment_marker()
+    body = str(text or "")
+    if marker and not body.startswith(marker):
+        body = marker + body
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import production_telegram
         queued = production_telegram.enqueue_text(
-            text, silent=silent, thread_id=thread_id,
+            body, silent=silent, thread_id=thread_id,
             chat_id=str(chat_id or ""), dedupe_key=dedupe_key,
             parse_mode=parse_mode,
         )
         return {**queued, "delivery": "production_outbox"}
     return _send_raw_direct(
-        text, silent=silent, thread_id=thread_id,
+        body, silent=silent, thread_id=thread_id,
         chat_id=chat_id, parse_mode=parse_mode,
     )
 

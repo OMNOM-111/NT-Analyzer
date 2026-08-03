@@ -546,6 +546,23 @@ def _find_installation(doc: Dict[str, Any], installation_id: str) -> Dict[str, A
     return row
 
 
+def _assert_environment(installation: Mapping[str, Any]) -> None:
+    """Fail-closed: an installation may only be used in the environment that
+    enrolled it. A Canary Connector must never be driven from Production (and
+    vice-versa). Installations enrolled before environment stamping (empty
+    field) are grandfathered and adopt the current environment on next write.
+    """
+    stamped = str(installation.get("deployment_environment") or "").strip()
+    if not stamped:
+        return
+    if stamped != runtime_env.deployment_environment():
+        raise ConnectorProtocolError(
+            "Connector installation принадлежит другому окружению.",
+            403,
+            "connector_environment_mismatch",
+        )
+
+
 def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
     return {name: copy.deepcopy(row.get(name)) for name in (
         "installation_id",
@@ -768,6 +785,7 @@ def enroll_device(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "public_key_fingerprint": fingerprint,
             "connector_version": connector_version,
             "protocol_version": PROTOCOL_VERSION,
+            "deployment_environment": runtime_env.deployment_environment(),
             "nt_version": nt_version,
             "ninja_instance_id": ninja_instance_id,
             "created_at_utc": _now_iso(now),
@@ -858,6 +876,7 @@ def issue_challenge(payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "Connector installation отозвана.", 403, "installation_revoked",
             )
+        _assert_environment(installation)
         if not hmac.compare_digest(
             str(installation.get("public_key_fingerprint") or ""), fingerprint,
         ):
@@ -935,6 +954,7 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "Connector installation отозвана.", 403, "installation_revoked",
             )
+        _assert_environment(installation)
         if not hmac.compare_digest(
             str(installation.get("workspace_id") or ""),
             str(payload.get("workspace_id") or ""),
@@ -993,6 +1013,7 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "connector_version": connector_version,
             "nt_version": nt_version,
             "ninja_instance_id": ninja_instance_id,
+            "deployment_environment": runtime_env.deployment_environment(),
             "last_hello_utc": _now_iso(now),
             "last_heartbeat_utc": _now_iso(now),
             "last_heartbeat_at": now,
@@ -1066,6 +1087,7 @@ def _authenticate_session(
         raise ConnectorProtocolError(
             "Connector installation отозвана.", 403, "installation_revoked",
         )
+    _assert_environment(installation)
     return session, installation
 
 

@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T03:42:05Z; внёс `GitHub Copilot`; scope: Phase 7 — зафиксировать реализацию изолированного Canary-контура и Developer Preview / View-As (implementation complete, external Canary acceptance pending owner approval).
+
 История поправки: 2026-08-03T02:26:18Z; внёс `GitHub Copilot`; scope: Phase 6 closeout — записать PR #12, cross-platform CI run 30779156395, merge commit 93b1fced и удаление task branch.
 
 История поправки: 2026-08-03T02:19:36Z; внёс `GitHub Copilot`; scope: Phase 6 — зафиксировать agent allocation и durable shared-NinjaTrader resource lease/queue, migration 0008 и локальный verification evidence.
@@ -28,7 +30,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T02:26:18Z
+Обновлено: 2026-08-03T03:42:05Z
 
 ## Baseline
 
@@ -52,7 +54,7 @@
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
-| 7 | PENDING | `phase/7-canary-environment` | pending | Canary config без deployment |
+| 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | `phase/7-canary-environment` | pending | Изолированный Canary-контур + Developer Preview / View-As без deployment |
 | 8 | PENDING | `phase/8-release-center` | pending | Release Center |
 | 9 | PENDING | `phase/9-blue-green` | pending | Blue-green tooling без deployment |
 | 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
@@ -164,3 +166,19 @@
 - Residual / owner decision (non-blocking): персона `Координатор` взята из ADR-0006 (утверждена). Реальная интеграция с исполнением backtest/optimization в orchestrator/worker остаётся последующей работой; текущая фаза даёт durable lease/queue контракт и allocation policy.
 - CI/PR: [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) merged; [Actions run 30779156395](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30779156395) SUCCESS; Static gates, Ubuntu tests и Windows tests PASS.
 - Git closeout: implementation `7f3dba64`; merge `93b1fced`; task branch удалена локально и на origin; integration совпадает с origin after merge. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 6 delivery.
+
+## Phase 7 evidence
+
+Status: **IMPLEMENTATION COMPLETE; REAL CANARY PROVISIONING AND EXTERNAL ACCEPTANCE PENDING OWNER APPROVAL — NOT STAGE CLOSED.** Полное evidence: `docs/current/PHASE_7_CANARY_IMPLEMENTATION_EVIDENCE.md`.
+
+- Components: `app/runtime_env.py` (per-environment cookie/local-storage/telegram namespaces + fail-closed `assert_environment_isolation`, wired в `assert_startup_safe`); `app/server.py` (per-environment session cookie name + dev preview/bootstrap routes); `app/telegram_service.py` (environment marker в исходящих сообщениях); `app/connector_protocol.py` (environment-stamped installations + cross-environment rejection); `app/service_readiness.py` (Canary держится того же control-plane readiness контракта, что и Production); `tools/production_preflight.py` (named `environment_isolation` check); `deploy/canary/*` (secret-free Linux Canary templates + runbook); новый `app/dev_preview.py` и Aurora `ui.js`/`api.js`/`theme.css`.
+- Isolation contract: Canary имеет отдельные database/queue/object-storage/telegram/cookie/signing/log/instance identities, origin `https://canary.stratforges.com`, обязательный `STRATFORGE_CANARY_DATA_ROOT`, cookie `sf_canary_session`, local-storage namespace `canary` и `[CANARY] ` Telegram marking. Любое совпадение identity/DSN/data-root/allowed-hosts с Production reference identifiers отклоняется fail-closed на старте и в preflight; симметричный guard защищает Production от объявленного Canary bot id. Connector installation привязана к окружению и отклоняется при cross-environment использовании (`connector_environment_mismatch`).
+- Developer Preview / View-As: Development-only. Owner видит приложение глазами роли через реальные серверные права выбранной persona без изменения реальных ролей; persistent `VIEW AS` marking; быстрый возврат к developer session (loopback return работает и для unauthenticated persona). Single-use, time-boxed, loopback-only, hash-only bootstrap открывает Development как владелец из отдельного браузера. Developer persona получает только `admin.view`/`operations.view`/`environment.switch`, не owner set. Fail-closed в Canary/Production; в Production dev bootstrap и View-As отсутствуют; audit не содержит raw token. В Canary нет dev-login bypass — доступ только через реальный Canary account + capability grants.
+- Local validation: focused `tests/test_phase7_canary_isolation.py` `28 passed` + `tests/test_phase7_dev_preview.py` `18 passed`; final repository regression `1059 passed, 31 skipped`. `python -m compileall -q app tools`, `node --check` (ui.js/api.js), release static scan CSP/SECRETS/MARKDOWN и `git diff --check` — PASS.
+- Errors fixed: пять тестов с hand-rolled `Request` doubles сломались после введения per-environment cookie name — cookie sites переведены на прямой `runtime_env.session_cookie_name()` и wrapper удалён; bootstrap replay возвращал `token_not_found` вместо `token_used` — использованный токен сохраняется до следующего mint. Оба покрыты регрессией/фокусными тестами.
+- External checks intentionally NOT run: реальный Canary/Production deployment; Cloudflare/DNS; создание реальной Canary DB; применение migrations к реальным DB; реальный Telegram webhook/token; реальный Connector pairing; изменение сервера. Browser QA не запускался (workspace stability policy).
+- Missing infra (owner-gated): изолированная Canary PostgreSQL DB/DSN, Canary Cloudflare tunnel + `canary.stratforges.com` DNS, отдельный Canary Telegram bot token/webhook secret, Canary Connector контур.
+- Migrations: none (Canary использует существующую схему).
+- Rollback: revert Phase 7 implementation/merge commit; schema rollback не требуется; `deploy/canary/*` и `app/dev_preview.py` инертны без явной конфигурации `DEPLOYMENT_ENV=canary`/`development`.
+- Environment impact: изменён только код, Development/Canary конфигурационные templates и UI. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets, реальные Telegram credentials и реальные Connector sessions не затронуты.
+- CI/PR/Git closeout: записывается при closeout (base `release/0.10.0-next-architecture`).

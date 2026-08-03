@@ -105,6 +105,14 @@ def run_preflight(
             checks.append(_check("typed_config", False, "rejected"))
             return {"ok": False, "checks": checks}
 
+        if config.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}:
+            try:
+                runtime_env.assert_environment_isolation(config)
+                checks.append(_check("environment_isolation", True, "ok"))
+            except runtime_env.RuntimeEnvError:
+                checks.append(_check("environment_isolation", False, "collision"))
+                return {"ok": False, "checks": checks}
+
         if config.environment == runtime_env.PRODUCTION:
             try:
                 storage_router.assert_production_storage_safe()

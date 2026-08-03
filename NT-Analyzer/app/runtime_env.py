@@ -952,7 +952,9 @@ def assert_startup_safe() -> DeploymentConfig:
         raise RuntimeEnvError(
             "NTA_TEST_BYPASS_AUTH=1 запрещён в Canary/Production startup.", 503,
         )
-    return deployment_config(strict=True)
+    config = deployment_config(strict=True)
+    assert_environment_isolation(config)
+    return config
 
 
 def require_staging(feature: str = "эта функция") -> None:
@@ -979,4 +981,108 @@ def require_impersonation() -> None:
         raise RuntimeEnvError(
             "Impersonation выключен (NTA_ENABLE_IMPERSONATION=0).",
             403,
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Phase 7: cross-environment isolation, namespaces and markers.
+# --------------------------------------------------------------------------- #
+# When a Canary process declares the Production reference identities it must
+# never share, any collision fails startup closed. The references carry no
+# secrets — only namespace/identity strings.
+_PRODUCTION_REFERENCE_ENVS: Dict[str, str] = {
+    "database_id": "STRATFORGE_PRODUCTION_DATABASE_ID",
+    "queue_id": "STRATFORGE_PRODUCTION_QUEUE_ID",
+    "object_storage_id": "STRATFORGE_PRODUCTION_OBJECT_STORAGE_ID",
+    "telegram_bot_id": "STRATFORGE_PRODUCTION_TELEGRAM_BOT_ID",
+    "cookie_namespace": "STRATFORGE_PRODUCTION_COOKIE_NAMESPACE",
+    "signing_key_id": "STRATFORGE_PRODUCTION_SIGNING_KEY_ID",
+    "log_namespace": "STRATFORGE_PRODUCTION_LOG_NAMESPACE",
+    "instance_id": "STRATFORGE_PRODUCTION_INSTANCE_ID",
+    "public_origin": "STRATFORGE_PRODUCTION_PUBLIC_ORIGIN",
+}
+
+
+def session_cookie_name() -> str:
+    """Per-environment session cookie name.
+
+    Canary uses an isolated cookie so a Production (or Development) session token
+    is never presented to, or accepted by, the Canary contour. Development and
+    Production keep the canonical ``sf_session`` name (unchanged behaviour).
+    """
+    return "sf_canary_session" if deployment_environment() == CANARY else "sf_session"
+
+
+def local_storage_namespace() -> str:
+    """Browser local-storage key prefix. Only Canary is namespaced."""
+    return CANARY if deployment_environment() == CANARY else ""
+
+
+def telegram_environment_marker() -> str:
+    """Prefix for outgoing Telegram messages. Production is unmarked."""
+    env = deployment_environment()
+    if env == CANARY:
+        return "[CANARY] "
+    if env == DEVELOPMENT:
+        return "[DEV] "
+    return ""
+
+
+def _reference_collision(field: str, current: str, env_name: str) -> None:
+    reference = str(os.environ.get(env_name) or "").strip()
+    if reference and current and reference.casefold() == current.casefold():
+        raise RuntimeEnvError(
+            f"Canary {field} совпадает с Production ({env_name}); "
+            "окружения обязаны быть полностью изолированы.",
+            503,
+        )
+
+
+def assert_environment_isolation(config: Optional[DeploymentConfig] = None) -> None:
+    """Fail-closed guard that Canary never overlaps with Production.
+
+    Rejects a shared database DSN/id, queue/storage/telegram/cookie/signing/log
+    namespace, instance id, public origin or data root. References carry no
+    secrets. A no-op outside Canary except a symmetric Production guard.
+    """
+    config = config or deployment_config(strict=False)
+    env = config.environment
+    if env == PRODUCTION:
+        # A Production process must never carry a declared Canary identity.
+        canary_bot = str(os.environ.get("STRATFORGE_CANARY_TELEGRAM_BOT_ID") or "").strip()
+        if canary_bot and config.telegram_bot_id and canary_bot.casefold() == config.telegram_bot_id.casefold():
+            raise RuntimeEnvError(
+                "Production telegram_bot_id совпадает с Canary; окружения должны быть изолированы.",
+                503,
+            )
+        return
+    if env != CANARY:
+        return
+    for field, env_name in _PRODUCTION_REFERENCE_ENVS.items():
+        _reference_collision(field, str(getattr(config, field, "") or "").strip(), env_name)
+    canary_dsn = str(os.environ.get("STRATFORGE_DATABASE_URL") or "").strip()
+    prod_dsn = str(os.environ.get("STRATFORGE_PRODUCTION_DATABASE_URL") or "").strip()
+    if canary_dsn and prod_dsn and canary_dsn.casefold() == prod_dsn.casefold():
+        raise RuntimeEnvError(
+            "Canary STRATFORGE_DATABASE_URL совпадает с Production; отдельная база обязательна.",
+            503,
+        )
+    prod_root = str(os.environ.get("STRATFORGE_PRODUCTION_DATA_ROOT") or "").strip()
+    if prod_root:
+        try:
+            same = Path(config.data_root).resolve() == Path(prod_root).resolve()
+        except (OSError, ValueError):
+            same = str(config.data_root).strip().casefold() == prod_root.casefold()
+        if same:
+            raise RuntimeEnvError(
+                "Canary data root совпадает с Production data root.", 503,
+            )
+    prod_hosts = {
+        host.strip().casefold()
+        for host in str(os.environ.get("STRATFORGE_PRODUCTION_ALLOWED_HOSTS") or "").split(",")
+        if host.strip()
+    }
+    if prod_hosts and any(host.casefold() in prod_hosts for host in config.allowed_hosts):
+        raise RuntimeEnvError(
+            "Canary allowed-hosts пересекается с Production allowed-hosts.", 503,
         )

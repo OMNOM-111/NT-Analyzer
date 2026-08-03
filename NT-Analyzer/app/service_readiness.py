@@ -63,10 +63,11 @@ def readiness_payload(
 ) -> Dict[str, Any]:
     """Return a bounded, secret-free readiness view.
 
-    Production remains not-ready until every authoritative control-plane
-    component registers a real probe.  Later stages replace these missing
-    probes as PostgreSQL, the durable queue, signing keys and Connector control
-    plane are enabled.
+    Production and Canary remain not-ready until every authoritative
+    control-plane component registers a real probe.  Later stages replace these
+    missing probes as PostgreSQL, the durable queue, signing keys and Connector
+    control plane are enabled.  Canary is held to the same readiness contract so
+    it can never report ready while sharing or missing an isolated dependency.
     """
     floor = int(
         minimum_free_mb
@@ -78,7 +79,7 @@ def readiness_payload(
         "data_root": _data_root_check(config, max(1, floor)),
     }
     registered = dict(probes or {})
-    if config.environment == "production":
+    if config.environment in {"production", "canary"}:
         for name in PRODUCTION_COMPONENTS:
             checks[name] = _run_probe(registered.get(name))
     ok = all(bool(check.get("ok")) for check in checks.values())
