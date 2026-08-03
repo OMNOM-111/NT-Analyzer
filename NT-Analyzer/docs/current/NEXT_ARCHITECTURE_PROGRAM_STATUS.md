@@ -1,5 +1,7 @@
 # Next Architecture Program Status
 
+История поправки: 2026-08-03T15:45:33Z; внёс `GitHub Copilot`; scope: Phase 10 — зафиксировать канонический docs-tree + migration map, ужесточение governance amendment workflow (owner / docs.manage_global на запись), strategy-override scope invariant и тесты.
+
 История поправки: 2026-08-03T15:12:00Z; внёс `GitHub Copilot`; scope: Phase 9 closeout — записать PR #15, cross-platform CI run 30825143931, merge commit 3a787c6a и удаление task branch (implementation closed, git closeout complete; external blue-green/Production deployment acceptance остаётся owner gate).
 
 История поправки: 2026-08-03T14:52:33Z; внёс `GitHub Copilot`; scope: Phase 9 — зафиксировать реализацию blue-green deployment tooling (fail-closed dry-run engine `app/blue_green.py`, migration 0010, Release Center integration, rehearsal API/UI, deploy templates и runbook; реальный blue-green deployment и exact-artifact Production promotion остаются owner gate).
@@ -40,7 +42,7 @@
 
 История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
 
-Обновлено: 2026-08-03T15:12:00Z
+Обновлено: 2026-08-03T15:45:33Z
 
 ## Baseline
 
@@ -67,7 +69,7 @@
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
-| 10 | PENDING | `phase/10-documentation` | pending | Canonical docs и amendment workflow |
+| 10 | IMPLEMENTATION COMPLETE | `phase/10-documentation` | pending merge | Canonical docs-tree + migration map; governance write теперь owner/docs.manage_global; strategy-override scope invariant; CI ожидается |
 
 ## Phase 0 evidence
 
@@ -226,3 +228,18 @@ Status: **IMPLEMENTATION COMPLETE; REAL BLUE-GREEN DEPLOYMENT / PRODUCTION PROMO
 - Migrations: `0010_blue_green_deploy_steps.sql` (additive expand-only). Rollback: revert Phase 9 implementation/merge commit; таблицы пустые, data rollback не требуется; `app/blue_green.py` инертен без развёртывания/репетиции; deploy templates инертны без явного executor и действия оператора.
 - Environment impact: изменён только код, UI, миграция-исходник и deploy templates/runbook. Production и Canary серверы, Cloudflare, DNS, реальные базы, реальные secrets/signing keys, реальные Telegram credentials и реальные Connector sessions не затронуты.
 - CI/PR/Git closeout: [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) merged; [Actions run 30825143931](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30825143931) SUCCESS (Static gates, Ubuntu tests, Windows tests PASS); implementation `86b0ed4e`; merge `3a787c6a`; task branch `phase/9-blue-green` удалена локально и на origin; integration совпадает с origin after merge. **IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE**; external blue-green/Production deployment acceptance (реальный Canary deployment и exact-artifact Production blue-green promotion) остаётся owner gate — этап не STAGE CLOSED. Посторонние dirty/untracked файлы (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) сохранены на диске и остались вне Phase 9 delivery.
+
+## Phase 10 evidence
+
+Status: **IMPLEMENTATION COMPLETE.** Полное evidence: `docs/current/PHASE_10_DOCS_GOVERNANCE_IMPLEMENTATION_EVIDENCE.md`.
+
+- Components: канонический docs-tree + migration map `docs/DOCS_STRUCTURE.md`; новые каталоги `docs/{security,product,agents,strategies,changelog,archive,archive/audits}` с index READMEs; ужесточение governance amendment workflow в `app/server.py` (`_require_governance_manage`); `tests/test_phase10_docs_governance.py`.
+- Canonical tree (acceptance: current vs target separated): создан `docs/{current,architecture,operations,security,product,agents,strategies,governance,changelog,adr,archive}` (+ `archive/audits`, `schemas`). `docs/current/` — только активная next-architecture программа; dated audits маппятся в `docs/archive/`. `docs/DOCS_STRUCTURE.md` — authoritative migration map (каждый loose-документ → целевой каталог, список из ~14 dated audits в archive, rename `PRODUCT_MODES...2026-07-18 → archive/audits/2026-07-18-product-contours.md`).
+- Staged relocation: физический перенос уже-ссылающихся документов НЕ выполняется в этой фазе — у dated audits **32 inbound-ссылки в 21 файле** (включая repo-root `README.md`, `STRATFORGE_ГЕНЕРАЛЬНЫЙ_ПЛАН.md`, `docs/AGENTS.md`). Plan требует owner-approved migration map как зависимость. Phase 10 отдаёт tree + map на owner-approval; каждый `git mv` + reference-rewrite выполняется owner-approved шагом, проверяется markdown link audit, ни один перенос не оставляет битую ссылку.
+- Governance amendment workflow (acceptance + owner decision #9): `POST /api/governance/laws|documents` раньше был защищён только read-level `documents`; теперь `_require_governance_manage` требует owner ИЛИ `docs.manage_global` (high-risk grant, по умолчанию только у owner), иначе `403 governance_manage_required`. GET-чтение остаётся на `documents`. Amendment journal (`data/governance/change_log.jsonl`: actor/reason/ts_utc/amendment_no/changes) без изменений и уже совместим.
+- Global governance не изменяется workspace/strategy override (acceptance): governance — единый глобальный store; `update_law`/`update_markdown_document` не принимают workspace/tenant/scope; `jobqueue.update_strategy_profile` имеет строгий allowlist без governance-полей и не вызывает `governance.update_*`; stores `data/governance/` и `data/profiles/` disjoint; запись governance дополнительно owner/`docs.manage_global`-gated на HTTP-границе.
+- Local validation: focused `tests/test_phase10_docs_governance.py` `12 passed`; regression-sensitive suites `94 passed`; full regression `1148 passed, 31 skipped`. `python -m compileall -q app tools tests`, release static scan CSP/SECRETS/MARKDOWN, `git diff --check` — PASS.
+- Errors: none (governance guard не регрессировал ни один suite; единственный governance HTTP-тест — GET, не затронут).
+- Rollback: revert Phase 10 implementation/merge commit; каталоги/READMEs/`DOCS_STRUCTURE.md` additive; guard — один серверный метод; schema/migration в Phase 10 не менялись.
+- Environment impact: изменён только `app/server.py` + docs. Production/Canary/main, реальные базы, secrets, DNS/Cloudflare не затронуты.
+- CI/PR/Git closeout: implementation commit, PR в `release/0.10.0-next-architecture`, cross-platform CI и merge commit будут записаны в Phase 10 closeout после CI PASS. Посторонние dirty/untracked файлы сохранены на диске и остались вне Phase 10 delivery.
