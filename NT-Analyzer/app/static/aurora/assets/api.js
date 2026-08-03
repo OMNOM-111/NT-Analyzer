@@ -346,6 +346,7 @@
     adminRelease: (id, o) => getJSON('/api/admin/releases/' + encodeURIComponent(id), o),
     adminReleaseCreate: (body) => send('/api/admin/releases/candidates', 'POST', body || {}),
     adminReleaseAction: (id, action, body) => send('/api/admin/releases/' + encodeURIComponent(id) + '/' + action, 'POST', body || {}),
+    adminReleaseRehearse: (id, body) => send('/api/admin/releases/' + encodeURIComponent(id) + '/rehearse-bluegreen', 'POST', body || {}),
     authUxMode: (body) => send('/api/auth/ux-mode', 'POST', body || {}),
     authAvatarRefresh: () => send('/api/auth/avatar/refresh', 'POST', {}),
     accountSecurity: (o) => getJSON('/api/account/security', o),
