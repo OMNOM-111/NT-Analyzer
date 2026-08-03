@@ -61,15 +61,17 @@
   let BUILD_IDENTITY = null;
 
   // ---- per-environment localStorage namespace --------------------------------
-  // Canary keys are prefixed so the Canary contour never shares persisted UI
-  // state with Development or Production even inside the same browser. The
-  // namespace is derived synchronously from the origin host (browsers already
-  // isolate localStorage per origin; this is defence in depth). Development and
-  // Production keep their historical unprefixed keys, so no migration is needed.
+  // Each environment prefixes its persisted UI state so no two contours share
+  // local-storage even inside the same browser or a shared parent domain. The
+  // namespace is derived synchronously from the origin host (defence in depth on
+  // top of the browser's per-origin isolation). Canary and Production use
+  // explicit prefixes; Development (localhost) keeps bare keys, so no migration
+  // is needed. Mirrors app/runtime_env.local_storage_namespace().
   function lsNamespace() {
     try {
       const host = String(location.hostname || '').toLowerCase();
       if (host === 'canary.stratforges.com' || host.startsWith('canary.')) return 'canary';
+      if (host === 'stratforges.com' || host === 'www.stratforges.com' || host.endsWith('.stratforges.com')) return 'production';
     } catch (e) { /* ignore */ }
     return '';
   }
@@ -2833,9 +2835,32 @@
     const provNote = providers.length
       ? `Каналы подтверждения: ${providers.map(p => esc(SEC_PROVIDER_LABEL[p] || p)).join(', ')}.`
       : 'Нет подтверждённого канала. Привяжите Telegram или e-mail, чтобы подтверждать устройства.';
-    const idChips = identities.length
-      ? identities.map(i => `<span class="chip-tag">${esc(SEC_PROVIDER_LABEL[i.provider] || i.provider)}${i.label ? ' · ' + esc(i.label) : ''}${i.verified ? ' ✓' : ''}</span>`).join('')
-      : '<span class="cab-sub">Нет привязанных способов входа</span>';
+    const LOGIN_PROVIDERS = ['telegram', 'google', 'email'];
+    const linkedSet = new Set(identities.map(i => String(i.provider || '')));
+    const loginCount = identities.filter(i => LOGIN_PROVIDERS.includes(String(i.provider || ''))).length;
+    const idRows = identities.length
+      ? identities.map(i => {
+          const prov = String(i.provider || '');
+          const isLogin = LOGIN_PROVIDERS.includes(prov);
+          const isLast = isLogin && loginCount <= 1;
+          const label = `${esc(SEC_PROVIDER_LABEL[prov] || prov)}${i.label ? ' · ' + esc(i.label) : ''}`;
+          const meta = `${i.verified ? '<span class="badge live">подтверждён</span>' : '<span class="badge pending">не подтверждён</span>'}`;
+          const action = isLast
+            ? '<span class="cab-sub" title="Это единственный способ войти в аккаунт. Сначала привяжите другой способ входа.">Последний способ входа — нельзя отвязать</span>'
+            : `<button class="btn ghost" data-id-unlink="${esc(i.identity_id)}" data-id-prov="${esc(prov)}">Отвязать</button>`;
+          return `<div class="sec-id-row flex between items-center gap-sm" style="padding:8px 0;border-bottom:1px solid var(--line,rgba(255,255,255,.06))">
+            <div class="flex col gap-xs"><span class="chip-tag">${label}</span>${meta}</div>${action}</div>`;
+        }).join('')
+      : '<div class="muted">Нет привязанных способов входа</div>';
+    const addButtons = [];
+    if (!linkedSet.has('email')) addButtons.push('<button class="btn" data-id-link="email">Привязать e-mail</button>');
+    if (!linkedSet.has('google')) addButtons.push('<button class="btn" data-id-link="google">Привязать Google</button>');
+    const telegramNote = !linkedSet.has('telegram')
+      ? '<div class="cab-sub">Telegram привязывается автоматически при входе через Telegram-бота.</div>' : '';
+    const addSection = (addButtons.length || telegramNote)
+      ? `<div class="flex gap-sm wrap" style="margin-top:10px">${addButtons.join('')}</div>${telegramNote}`
+      : '<div class="cab-sub" style="margin-top:10px">Все доступные способы входа привязаны.</div>';
+
     let ntCard = '';
     if (nt && nt.factors && !nt.is_owner) {
       const factorRow = (ok, label) => `<span class="chip-tag">${ok ? '✓' : '•'} ${esc(label)}</span>`;
@@ -2851,8 +2876,9 @@
           : onboardingHtml}</div>`;
     }
     cb.innerHTML = ntCard + `
-      <div class="cab-card"><h4>Способы входа</h4><div class="chips-in">${idChips}</div>
-        <div class="cab-sub">Внутренний идентификатор аккаунта — UUID. Способы входа не объединяются автоматически по совпадению e-mail.</div></div>
+      <div class="cab-card"><h4>Способы входа</h4><div class="list" id="sec-identities">${idRows}</div>
+        <div class="cab-sub">Внутренний идентификатор аккаунта — UUID. Способы входа не объединяются автоматически по совпадению e-mail. Последний способ входа удалить нельзя.</div>
+        ${addSection}</div>
       <div class="cab-card"><h4>Устройства</h4>
         <div class="finance-note">${provNote} Новое устройство появляется как «Ожидает подтверждения» и не становится доверенным автоматически. Отзыв немедленно завершает сессии только этого устройства.</div>
         <div class="list" id="sec-devices">${devices.length ? devices.map(securityDeviceRow).join('') : '<div class="muted">Устройства не найдены</div>'}</div>
@@ -2863,6 +2889,45 @@
       try { await fn(); toast('Готово'); reload(); }
       catch (e) { reportError(e); btn.disabled = false; }
     };
+    qsa('[data-id-unlink]', cb).forEach(btn => {
+      btn.onclick = async () => {
+        const prov = SEC_PROVIDER_LABEL[btn.dataset.idProv] || btn.dataset.idProv;
+        if (!confirm(`Отвязать способ входа «${prov}»? Войти через него больше не получится, пока вы не привяжете его заново.`)) return;
+        btn.disabled = true;
+        try {
+          await API.http.accountIdentityUnlink({ identity_id: btn.dataset.idUnlink });
+          toast('Способ входа отвязан'); reload();
+        } catch (e) {
+          if (e && (e.code === 'last_login_method' || e.status === 409)) {
+            toast('Нельзя удалить последний способ входа. Сначала привяжите другой.');
+          } else { reportError(e); }
+          btn.disabled = false;
+        }
+      };
+    });
+    qsa('[data-id-link]', cb).forEach(btn => {
+      const provider = btn.dataset.idLink;
+      if (provider === 'google') {
+        btn.onclick = busy(btn, async () => {
+          const out = await API.http.authGoogleLinkStart({ return_path: location.pathname + location.search });
+          if (out && out.auth_url) { location.href = out.auth_url; }
+          else throw new Error('Google-линковка недоступна.');
+        });
+      } else if (provider === 'email') {
+        btn.onclick = busy(btn, async () => {
+          const email = (prompt('E-mail для привязки:') || '').trim();
+          if (!email) throw new Error('E-mail не введён.');
+          const started = await API.http.authEmailLinkStart({ email });
+          let code = started.test_code || '';
+          if (!code) {
+            code = (prompt('Введите код, отправленный на ' + email + ':') || '').trim();
+            if (!code) throw new Error('Код не введён.');
+          }
+          await API.http.authEmailLinkVerify({ challenge_id: started.challenge_id, code });
+        });
+      }
+    });
+
     qsa('[data-sec-approve]', cb).forEach(btn => {
       btn.onclick = busy(btn, async () => {
         const deviceId = btn.dataset.secApprove;
@@ -4138,6 +4203,140 @@
     return `<div class="grid cols-3"><div class="kpi"><span>Environment</span><strong>${esc(deployment.deployment_environment || deployment.environment || '—')}</strong></div><div class="kpi"><span>Version</span><strong>${esc(deployment.app_version || '—')}</strong></div><div class="kpi"><span>Commit</span><strong class="mono">${esc((deployment.git_commit_sha || '').slice(0, 12) || '—')}</strong></div></div><div class="finance-note"><strong>Security contract:</strong> secrets не выдаются; между environments не переносятся credentials, cookies, CSRF и browser storage.</div><div class="section-title">Эффективные capabilities</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)} <span class="cab-sub mono">${esc(c.id)}</span></span><span class="badge ${caps[c.id] ? 'live' : 'archived'}">${caps[c.id] ? 'разрешено' : 'нет'}</span></div>`).join('')}</div>`;
   }
 
+  const DOC_STATUS_BADGE = { draft: 'trial', review: 'pending', approved: 'pending', published: 'live', superseded: 'archived' };
+
+  async function renderAdminDocsGlobalInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка governance…</div>';
+    try {
+      const data = await API.http.governanceSummary();
+      const docs = data.documents || [];
+      const history = data.history || [];
+      const canManage = hasAdminCapability('docs.manage_global');
+      node.innerHTML = `
+        <div class="finance-note">Глобальные governance-документы и законы. Менять их может только владелец или администратор с правом <span class="mono">docs.manage_global</span>. Рабочие области и стратегии не могут изменить эти документы или safety-limits.</div>
+        <div class="section-title">Документы</div>
+        <div class="list" id="gov-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.id)}</div><div class="row-sub mono">${esc(d.rel_path || d.id)}${d.editable_kind && d.editable_kind !== 'none' ? ' · editable' : ' · read-only'}</div></div><button class="btn sm ghost" data-gov-doc="${esc(d.id)}">${canManage && d.editable_kind === 'markdown' ? 'Открыть' : 'Просмотр'}</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
+        <div id="gov-editor"></div>
+        <div class="section-title">Журнал поправок</div>
+        <div class="list">${history.slice(0, 40).map(h => `<div class="row"><div class="row-main"><div class="row-title">Поправка ${esc(h.amendment_no || '')} · ${esc(h.entity_title || h.entity_id || '')}</div><div class="row-sub">${esc(h.ts_utc || '')} · ${esc(h.actor || '')}${h.reason ? ' · ' + esc(h.reason) : ''}</div></div></div>`).join('') || '<div class="empty-state">Поправок пока нет.</div>'}</div>`;
+      qsa('[data-gov-doc]', node).forEach(btn => btn.onclick = () => openGovernanceDoc(node, btn.dataset.govDoc, canManage));
+    } catch (e) { renderError(node, e, () => renderAdminDocsGlobalInto(node)); }
+  }
+
+  async function openGovernanceDoc(node, docId, canManage) {
+    const editor = qs('#gov-editor', node);
+    if (!editor) return;
+    editor.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документа…</div>';
+    try {
+      const doc = await API.http.governanceDocument(docId);
+      const editable = canManage && String(doc.editable_kind || '') === 'markdown';
+      if (String(doc.editable_kind || '') === 'laws') {
+        editor.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || docId)}</h4><pre class="mono" style="white-space:pre-wrap;max-height:320px;overflow:auto">${esc(doc.content || '')}</pre><div class="cab-sub">Законы и safety-limits меняются точечно через процесс поправок владельца, а не свободным текстом.</div></div>`;
+        return;
+      }
+      editor.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || docId)}</h4>
+        <textarea id="gov-doc-text" rows="14" class="mono" style="width:100%" ${editable ? '' : 'readonly'}>${esc(doc.content || '')}</textarea>
+        ${editable ? `<label class="field"><span>Причина изменения</span><input id="gov-doc-reason" placeholder="Зачем меняется документ"></label><div class="flex gap-sm" style="margin-top:8px"><button class="btn primary" id="gov-doc-save">Сохранить</button></div>` : '<div class="cab-sub">Только просмотр: нужен owner или право docs.manage_global.</div>'}
+        <div id="gov-doc-msg" class="cab-sub"></div></div>`;
+      const save = qs('#gov-doc-save', editor);
+      if (save) save.onclick = async () => {
+        const content = qs('#gov-doc-text', editor).value;
+        const reason = (qs('#gov-doc-reason', editor).value || '').trim();
+        const msg = qs('#gov-doc-msg', editor);
+        save.disabled = true; if (msg) msg.textContent = 'Сохраняю…';
+        try {
+          await API.http.saveDocument(docId, { content, actor: 'ui', reason });
+          toast('Документ сохранён'); renderAdminDocsGlobalInto(node);
+        } catch (err) { if (msg) msg.textContent = err.message || String(err); save.disabled = false; }
+      };
+    } catch (e) { editor.innerHTML = `<div class="empty-state">${esc(e.message || String(e))}</div>`; }
+  }
+
+  async function renderAdminDocsWorkspaceInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документов…</div>';
+    try {
+      const data = await API.http.documentsList('');
+      const docs = data.documents || [];
+      node.innerHTML = `
+        <div class="finance-note">Документы (спецификации) рабочих областей и стратегий. Нужно право <span class="mono">strategy.spec.manage</span> (или docs.manage_workspace). Видны только документы вашей рабочей области; глобальные governance-документы и safety-limits отсюда изменить нельзя.</div>
+        <div class="cab-card"><h4>Создать документ</h4>
+          <div class="grid cols-2">
+            <label class="field"><span>Область</span><select id="ws-doc-scope"><option value="workspace">workspace</option><option value="strategy">strategy</option></select></label>
+            <label class="field"><span>Workspace ID</span><input id="ws-doc-ws" placeholder="ws_…"></label>
+            <label class="field"><span>Strategy ID (для strategy)</span><input id="ws-doc-strat" placeholder="необязательно"></label>
+            <label class="field"><span>Slug</span><input id="ws-doc-slug" placeholder="playbook"></label>
+            <label class="field" style="grid-column:1/-1"><span>Заголовок</span><input id="ws-doc-title" placeholder="Название документа"></label>
+          </div>
+          <div class="flex gap-sm" style="margin-top:8px"><button class="btn primary" id="ws-doc-create">Создать черновик</button></div>
+          <div id="ws-doc-create-msg" class="cab-sub"></div>
+        </div>
+        <div class="section-title">Документы</div>
+        <div class="list" id="ws-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.slug)} <span class="badge ${DOC_STATUS_BADGE[d.published_revision ? 'published' : (d.latest_status || 'draft')] || 'trial'}">${d.published_revision ? 'v' + d.published_revision : (d.latest_status || 'draft')}</span></div><div class="row-sub mono">${esc(d.scope_type)}${d.workspace_id ? ' · ' + esc(d.workspace_id) : ''} · ${esc(d.slug)} · ревизий: ${d.revision_count || 0}</div></div><button class="btn sm ghost" data-ws-doc="${esc(d.document_id)}">Открыть</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
+        <div id="ws-doc-detail"></div>`;
+      const create = qs('#ws-doc-create', node);
+      if (create) create.onclick = async () => {
+        const msg = qs('#ws-doc-create-msg', node);
+        const body = {
+          scope_type: qs('#ws-doc-scope', node).value,
+          workspace_id: (qs('#ws-doc-ws', node).value || '').trim(),
+          strategy_id: (qs('#ws-doc-strat', node).value || '').trim(),
+          slug: (qs('#ws-doc-slug', node).value || '').trim(),
+          title: (qs('#ws-doc-title', node).value || '').trim(),
+        };
+        create.disabled = true; if (msg) msg.textContent = 'Создаю…';
+        try {
+          await API.http.documentCreate(body);
+          toast('Документ создан'); renderAdminDocsWorkspaceInto(node);
+        } catch (e) { if (msg) msg.textContent = e.message || String(e); create.disabled = false; }
+      };
+      qsa('[data-ws-doc]', node).forEach(btn => btn.onclick = () => openWorkspaceDoc(node, btn.dataset.wsDoc));
+    } catch (e) { renderError(node, e, () => renderAdminDocsWorkspaceInto(node)); }
+  }
+
+  async function openWorkspaceDoc(node, docId) {
+    const detail = qs('#ws-doc-detail', node);
+    if (!detail) return;
+    detail.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    try {
+      const data = await API.http.documentGet(docId);
+      const doc = data.document || {};
+      const revs = data.revisions || [];
+      const openRev = revs.find(r => ['draft', 'review', 'approved'].includes(r.status));
+      const revAction = (r) => {
+        const btns = [];
+        if (r.status === 'draft') btns.push(`<button class="btn sm ghost" data-rev-act="submit" data-rev-id="${esc(r.revision_id)}">На review</button>`);
+        if (r.status === 'review') btns.push(`<button class="btn sm ghost" data-rev-act="approve" data-rev-id="${esc(r.revision_id)}">Одобрить</button>`);
+        if (r.status === 'approved') btns.push(`<button class="btn sm primary" data-rev-act="publish" data-rev-id="${esc(r.revision_id)}">Опубликовать</button>`);
+        return btns.join('');
+      };
+      detail.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || doc.slug)}</h4>
+        <div class="cab-sub mono">${esc(doc.scope_type)}${doc.workspace_id ? ' · ' + esc(doc.workspace_id) : ''} · ${esc(doc.slug)}</div>
+        <div class="list" style="margin-top:8px">${revs.map(r => `<div class="row"><div class="row-main"><div class="row-title">Ревизия ${esc(r.revision)} <span class="badge ${DOC_STATUS_BADGE[r.status] || 'trial'}">${esc(r.status)}</span></div><div class="row-sub">${esc(r.created_at_utc || '')}${r.reason ? ' · ' + esc(r.reason) : ''}${r.reverted_from_revision ? ' · откат к r' + esc(r.reverted_from_revision) : ''}</div></div><div class="flex gap-xs">${revAction(r)}</div></div>`).join('') || '<div class="empty-state">Ревизий нет.</div>'}</div>
+        <div class="flex gap-sm wrap" style="margin-top:8px">${openRev ? '' : `<button class="btn" data-doc-newrev="1">Новая ревизия</button>`}<button class="btn ghost" data-doc-revert="1">Откатить к ревизии…</button></div>
+        <div id="ws-doc-detail-msg" class="cab-sub"></div></div>`;
+      const msg = qs('#ws-doc-detail-msg', detail);
+      const run = async (fn) => {
+        if (msg) msg.textContent = 'Выполняю…';
+        try { await fn(); toast('Готово'); openWorkspaceDoc(node, docId); renderAdminDocsWorkspaceInto(node); }
+        catch (e) { if (msg) msg.textContent = e.message || String(e); }
+      };
+      qsa('[data-rev-act]', detail).forEach(btn => btn.onclick = () => run(() =>
+        API.http.documentRevisionAction(btn.dataset.revId, btn.dataset.revAct, {})));
+      const newRev = qs('[data-doc-newrev]', detail);
+      if (newRev) newRev.onclick = () => {
+        const bodyText = (prompt('Текст новой ревизии:') || '').trim();
+        if (!bodyText) return;
+        run(() => API.http.documentRevise(docId, { content: { body: bodyText } }));
+      };
+      const revert = qs('[data-doc-revert]', detail);
+      if (revert) revert.onclick = () => {
+        const to = parseInt(prompt('Номер ревизии, к которой откатить:') || '0', 10);
+        if (!to) return;
+        run(() => API.http.documentRevert(docId, { to_revision: to }));
+      };
+    } catch (e) { detail.innerHTML = `<div class="empty-state">${esc(e.message || String(e))}</div>`; }
+  }
+
   async function renderAdminModule(node, moduleId, overview) {
     if (moduleId === 'overview') { node.innerHTML = adminOverviewHtml(overview); return; }
     if (moduleId === 'users') { return CURRENT_AUTH && CURRENT_AUTH.is_owner ? renderUsersInto(node) : renderDelegatedUsersInto(node); }
@@ -4146,6 +4345,8 @@
     if (moduleId === 'releases') return renderReleaseCenterInto(node);
     if (moduleId === 'monitoring') return renderMonitoringInto(node);
     if (moduleId === 'requests') return renderRequestsInto(node);
+    if (moduleId === 'docs-global') return renderAdminDocsGlobalInto(node);
+    if (moduleId === 'docs-workspace') return renderAdminDocsWorkspaceInto(node);
     if (moduleId === 'subscriptions') {
       node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
       try { return renderPlansInto(node, await API.http.authMe()); }
@@ -4161,13 +4362,13 @@
       qs('#admin-open-connectors', node).onclick = () => { closeDrawer(); showTelegram(); };
       return;
     }
-    const capability = ((overview.modules || []).find(row => row.id === moduleId) || {}).capability || '';
-    node.innerHTML = `<div class="cab-card"><h4>${esc(((overview.modules || []).find(row => row.id === moduleId) || {}).label || moduleId)}</h4><p class="cab-sub">Shell модуля доступен по capability <span class="mono">${esc(capability)}</span>. Доменные workflow подключаются в своей плановой фазе.</p></div>`;
+    const meta = (overview.modules || []).find(row => row.id === moduleId) || {};
+    node.innerHTML = `<div class="cab-card"><h4>${esc(meta.label || moduleId)}</h4><p class="cab-sub">Для этого раздела пока нет отдельного интерфейса. Он появится в списке только когда за ним будет реальный backend-workflow.</p></div>`;
   }
 
   async function openAdminPanel(initialModule) {
-    if (!hasAdminCapability('admin.view')) { toast('Admin Panel недоступна.'); return; }
-    const d = drawer('<h3>Admin Panel</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка capabilities…</div>');
+    if (!hasAdminCapability('admin.view')) { toast('Панель администратора недоступна.'); return; }
+    const d = drawer('<h3>Панель администратора</h3>', '<div class="state-loading"><span class="spinner"></span>Загрузка прав доступа…</div>');
     d.classList.add('wide');
     const body = qs('.drawer-b', d);
     try {
@@ -4175,7 +4376,18 @@
       CURRENT_AUTH.admin_capabilities = overview.admin_capabilities || {};
       const modules = overview.modules || [];
       const start = modules.some(row => row.id === initialModule) ? initialModule : 'overview';
-      body.innerHTML = `<div class="admin-shell"><nav class="admin-modules">${modules.map(row => `<button class="admin-module" data-admin-module="${esc(row.id)}"><span>${esc(row.label)}</span><small class="mono">${esc(row.capability)}</small></button>`).join('')}</nav><main class="admin-module-body" id="admin-module-body"></main></div>`;
+      const groupOrder = [];
+      const grouped = new Map();
+      modules.forEach(row => {
+        const g = row.group || '';
+        if (!grouped.has(g)) { grouped.set(g, []); groupOrder.push(g); }
+        grouped.get(g).push(row);
+      });
+      const navHtml = groupOrder.map(g => {
+        const items = grouped.get(g).map(row => `<button class="admin-module" data-admin-module="${esc(row.id)}" title="${esc(row.capability)}"><span>${esc(row.label)}</span></button>`).join('');
+        return (g ? `<div class="admin-module-group">${esc(g)}</div>` : '') + items;
+      }).join('');
+      body.innerHTML = `<div class="admin-shell"><nav class="admin-modules">${navHtml}</nav><main class="admin-module-body" id="admin-module-body"></main></div>`;
       const moduleBody = qs('#admin-module-body', body);
       const select = async id => {
         qsa('[data-admin-module]', body).forEach(button => button.classList.toggle('on', button.dataset.adminModule === id));
@@ -4214,8 +4426,9 @@
       e.stopPropagation();
       const systemItems = [
         { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
-        ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Admin Panel', onClick: () => openAdminPanel() }] : []),
+        ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Панель администратора', onClick: () => openAdminPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
+        { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/'; } },
         { divider: true },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
       ];

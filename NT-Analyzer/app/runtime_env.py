@@ -1004,18 +1004,48 @@ _PRODUCTION_REFERENCE_ENVS: Dict[str, str] = {
 
 
 def session_cookie_name() -> str:
-    """Per-environment session cookie name.
+    """Per-environment session cookie name (distinct for every environment).
 
-    Canary uses an isolated cookie so a Production (or Development) session token
-    is never presented to, or accepted by, the Canary contour. Development and
-    Production keep the canonical ``sf_session`` name (unchanged behaviour).
+    Development, Canary and Production each use a distinct cookie name so a
+    session token minted for one contour can never be presented to, or accepted
+    by, another — even when two contours share a registrable parent domain (for
+    example ``canary.stratforges.com`` and ``stratforges.com``), where browser
+    origin isolation alone would not scope a domain-wide cookie. See
+    ``docs/adr/0008-environment-cookie-and-storage-isolation.md`` for the threat
+    analysis. Distinct names apply only when the environment is *explicitly*
+    selected (a real deployed Canary/Production always sets it explicitly); an
+    implicit / unset environment — local development and the test suite — keeps
+    the canonical ``sf_session`` name so existing local sessions and the test
+    suite are unaffected. Production is not yet deployed, so naming it explicitly
+    does not break any existing session migration.
     """
-    return "sf_canary_session" if deployment_environment() == CANARY else "sf_session"
+    if environment_explicit():
+        env = deployment_environment()
+        if env == CANARY:
+            return "sf_canary_session"
+        if env == PRODUCTION:
+            return "sf_production_session"
+    return "sf_session"
 
 
 def local_storage_namespace() -> str:
-    """Browser local-storage key prefix. Only Canary is namespaced."""
-    return CANARY if deployment_environment() == CANARY else ""
+    """Browser local-storage key prefix, distinct per environment.
+
+    Defence in depth on top of browser per-origin storage isolation: each
+    environment prefixes its persisted UI state so two contours never read each
+    other's local-storage even inside the same browser or a shared parent
+    domain. Distinct prefixes apply only when the environment is explicitly
+    selected (a real deployed Canary/Production always sets it explicitly); an
+    implicit / unset environment — local development and the test suite — keeps
+    bare keys (unchanged).
+    """
+    if environment_explicit():
+        env = deployment_environment()
+        if env == CANARY:
+            return CANARY
+        if env == PRODUCTION:
+            return PRODUCTION
+    return ""
 
 
 def telegram_environment_marker() -> str:

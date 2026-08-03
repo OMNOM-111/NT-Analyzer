@@ -14,7 +14,7 @@
       "value": 2000,
       "source_refs": [
         "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-        "NT-Analyzer/docs/risk-profile.md"
+        "NT-Analyzer/docs/strategies/risk-profile.md"
       ],
       "dynamic_targets": [
         "app/jobqueue.py research gate",
@@ -66,7 +66,7 @@
       "value": 1.9,
       "source_refs": [
         "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         "NT-Analyzer/ai_lab/prompts/system_coder.txt"
       ],
       "dynamic_targets": [
@@ -93,7 +93,7 @@
       "value": 1,
       "source_refs": [
         "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         "NT-Analyzer/ai_lab/prompts/system_coder.txt"
       ],
       "dynamic_targets": [
@@ -118,7 +118,7 @@
       "value": "High",
       "source_refs": [
         "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md"
       ],
       "dynamic_targets": [
         "app/jobqueue.py validation",
@@ -157,7 +157,7 @@
       "value": true,
       "source_refs": [
         "РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md",
-        "NT-Analyzer/docs/risk-profile.md"
+        "NT-Analyzer/docs/strategies/risk-profile.md"
       ],
       "dynamic_targets": [
         "ui backtest risk profile defaults",
@@ -233,8 +233,8 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         "NT-Analyzer/ai_lab/prompts/system_coder.txt"
       ],
       "dynamic_targets": [
@@ -254,7 +254,7 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
         "NT-Analyzer/ai_lab/prompts/system_coder.txt"
       ],
       "dynamic_targets": [
@@ -273,7 +273,7 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
         "NT-Analyzer/ai_lab/prompts/system_coder.txt"
       ],
       "dynamic_targets": [
@@ -311,7 +311,7 @@
       "value": true,
       "source_refs": [
         "NT-Analyzer/ai_lab/prompts/system_coder.txt",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md"
       ],
       "dynamic_targets": [
         "app/ai_lab/generator.py",
@@ -349,7 +349,7 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+        "NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"
       ],
       "dynamic_targets": [
         "app/ai_lab/cloud_agents.py",
@@ -368,7 +368,7 @@
       "kind": "string",
       "value": "20.00 USD/month; 0.50 USD/run",
       "source_refs": [
-        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+        "NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"
       ],
       "dynamic_targets": [
         "app/ai_lab/cloud_agents.py",
@@ -388,8 +388,8 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md",
-        "NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md"
+        "NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md",
+        "NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md"
       ],
       "dynamic_targets": [
         "app/ai_lab/cloud_agents.py",
@@ -407,7 +407,7 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md"
+        "NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md"
       ],
       "dynamic_targets": [
         "app/local_secrets.py",
@@ -503,7 +503,7 @@
       "kind": "boolean",
       "value": true,
       "source_refs": [
-        "NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md"
+        "NT-Analyzer/docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md"
       ],
       "dynamic_targets": [
         "governance docs",

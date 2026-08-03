@@ -61,6 +61,7 @@ if __package__ is None or __package__ == "":
     from app import agent_allocation  # type: ignore[no-redef]
     from app import dev_preview  # type: ignore[no-redef]
     from app import release_center  # type: ignore[no-redef]
+    from app import doc_specs  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -147,6 +148,7 @@ else:
     from . import agent_allocation
     from . import dev_preview
     from . import release_center
+    from . import doc_specs
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -265,7 +267,7 @@ def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None
 # blocks injected inline script while inline style attributes remain allowed.
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*; media-src 'self' blob:; "
+    "script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; "
     "base-uri 'none'; form-action 'self'; "
     "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
@@ -331,24 +333,22 @@ def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
 
 
 _ADMIN_MODULES = (
-    {"id": "overview", "label": "Overview", "capability": "admin.view"},
-    {"id": "users", "label": "Users and sessions", "capability": "users.manage"},
-    {"id": "workspaces", "label": "Workspaces and memberships", "capability": "workspaces.manage"},
-    {"id": "connectors", "label": "Connectors and Telegram", "capability": "connectors.manage"},
-    {"id": "operations", "label": "Operations", "capability": "operations.view"},
-    {"id": "releases", "label": "Release Center", "capability": "releases.view"},
-    {"id": "environments", "label": "Environment Switcher", "capability": "environment.switch"},
-    {"id": "security", "label": "Audit and security", "capability": "operations.view"},
-    {"id": "docs-global", "label": "Global documents", "capability": "docs.manage_global"},
-    {"id": "docs-workspace", "label": "Workspace documents", "capability": "docs.manage_workspace"},
-    {"id": "monitoring", "label": "User monitoring", "capability": "users.manage", "owner_only": True},
-    {"id": "requests", "label": "Access requests", "capability": "admin.view", "owner_only": True},
-    {"id": "subscriptions", "label": "Subscriptions and grants", "capability": "admin.view", "owner_only": True},
-    {"id": "invites", "label": "Invitations", "capability": "admin.view", "owner_only": True},
-    {"id": "payment", "label": "Payment configuration", "capability": "admin.view", "owner_only": True},
-    {"id": "ai-ratings", "label": "AI ratings", "capability": "admin.view", "owner_only": True},
-    {"id": "journal", "label": "Owner journal", "capability": "admin.view", "owner_only": True},
-    {"id": "staging", "label": "Development QA", "capability": "admin.view", "owner_only": True},
+    {"id": "overview", "label": "Обзор", "capability": "admin.view", "group": ""},
+    {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage", "group": "Доступ и пользователи"},
+    {"id": "connectors", "label": "Коннекторы и Telegram", "capability": "connectors.manage", "group": "Операции"},
+    {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view", "group": "Операции"},
+    {"id": "releases", "label": "Центр релизов", "capability": "releases.view", "group": "Релизы и окружения"},
+    {"id": "environments", "label": "Переключение окружений", "capability": "environment.switch", "group": "Релизы и окружения"},
+    {"id": "docs-global", "label": "Глобальные документы", "capability": "docs.manage_global", "group": "Документы"},
+    {"id": "docs-workspace", "label": "Документы рабочих областей", "capability": "docs.manage_workspace", "group": "Документы"},
+    {"id": "monitoring", "label": "Мониторинг пользователей", "capability": "users.manage", "owner_only": True, "group": "Владелец"},
+    {"id": "requests", "label": "Запросы доступа", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "subscriptions", "label": "Подписки и гранты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "invites", "label": "Приглашения", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "payment", "label": "Настройки оплаты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "ai-ratings", "label": "Оценки ИИ", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "journal", "label": "Журнал владельца", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
 )
 
 
@@ -3119,6 +3119,77 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._err(HTTPStatus.NOT_FOUND, "no release action", code="release_action_not_found")
 
+    # ---- Document specifications (Phase 11) ---------------------------------
+    def _doc_context(self):
+        context = self._release_context()
+        actor = {"user_id": context.get("user_id"), "is_owner": bool(context.get("is_owner"))}
+        caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        ws = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        workspace_id = str(context.get("workspace_id") or ws.get("workspace_id") or "")
+        return actor, caps, workspace_id
+
+    def _documents_get(self, path: str) -> None:
+        actor, caps, aws = self._doc_context()
+        try:
+            if path == "/api/documents":
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                self._json(HTTPStatus.OK, doc_specs.list_documents(
+                    actor=actor, admin_caps=caps, actor_workspace_id=aws,
+                    scope_type=str(qs.get("scope_type", [""])[0] or ""),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or "")))
+                return
+            prefix = "/api/documents/"
+            if path.startswith(prefix):
+                self._json(HTTPStatus.OK, doc_specs.get_document(
+                    actor=actor, document_id=path[len(prefix):].strip("/"),
+                    admin_caps=caps, actor_workspace_id=aws))
+                return
+            self._err(HTTPStatus.NOT_FOUND, "no document route", code="document_route_not_found")
+        except doc_specs.DocSpecError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _documents_post(self, path: str) -> None:
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        actor, caps, aws = self._doc_context()
+        kw = dict(admin_caps=caps, actor_workspace_id=aws)
+        try:
+            if path == "/api/documents":
+                self._json(HTTPStatus.OK, doc_specs.create_document(
+                    actor=actor, scope_type=str(body.get("scope_type") or ""),
+                    slug=str(body.get("slug") or ""), title=str(body.get("title") or ""),
+                    content=body.get("content"), workspace_id=str(body.get("workspace_id") or ""),
+                    strategy_id=str(body.get("strategy_id") or ""), reason=str(body.get("reason") or ""), **kw))
+                return
+            parts = path[len("/api/documents/"):].strip("/").split("/")
+            if len(parts) == 2 and parts[1] == "revisions":
+                self._json(HTTPStatus.OK, doc_specs.create_revision(
+                    actor=actor, document_id=parts[0], content=body.get("content"),
+                    reason=str(body.get("reason") or ""), **kw))
+                return
+            if len(parts) == 2 and parts[1] == "revert":
+                self._json(HTTPStatus.OK, doc_specs.revert_document(
+                    actor=actor, document_id=parts[0], to_revision=int(body.get("to_revision") or 0),
+                    reason=str(body.get("reason") or ""), **kw))
+                return
+            if len(parts) == 3 and parts[0] == "revisions":
+                rid, act = parts[1], parts[2]
+                if act == "submit":
+                    self._json(HTTPStatus.OK, doc_specs.submit_revision(actor=actor, revision_id=rid, **kw)); return
+                if act == "approve":
+                    self._json(HTTPStatus.OK, doc_specs.approve_revision(actor=actor, revision_id=rid, **kw)); return
+                if act == "publish":
+                    self._json(HTTPStatus.OK, doc_specs.publish_revision(actor=actor, revision_id=rid, **kw)); return
+            self._err(HTTPStatus.NOT_FOUND, "no document action", code="document_action_not_found")
+        except doc_specs.DocSpecError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
     def _account_nt_security_post(self, path: str) -> None:
         """Self-service personal-NT security: step-up start/confirm, unlink."""
         if not self._check_local_post():
@@ -3621,6 +3692,10 @@ class Handler(BaseHTTPRequestHandler):
             self._releases_get(path)
             return
 
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            self._documents_get(path)
+            return
+
         if path == "/api/admin/overview":
             self._json(
                 HTTPStatus.OK,
@@ -3718,7 +3793,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
                 "/mode-entry.html",
             }
-            if rel in _new_pages or rel.startswith("/assets/"):
+            if rel in _new_pages or rel.startswith("/assets/") or rel.startswith("/brand/"):
                 self._serve_static("aurora/mode-entry.html" if rel == "/" else "aurora" + rel)
                 return
             # Fallback: any other path resolves against the static root (legacy-named files).
@@ -6972,6 +7047,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/admin/releases"):
             self._releases_post(path)
+            return
+
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            self._documents_post(path)
             return
 
         if path == "/api/auth/google/start":

@@ -41,20 +41,21 @@ CAPABILITY_IDS = tuple(c["id"] for c in CAPABILITIES)
 # expire.  This separation prevents a plan edit or promo redemption from ever
 # opening the control plane by accident.
 ADMIN_CAPABILITIES = (
-    {"id": "admin.view", "label": "Admin Panel", "risk": "read"},
-    {"id": "users.manage", "label": "Users and sessions", "risk": "high"},
-    {"id": "workspaces.manage", "label": "Workspaces and memberships", "risk": "high"},
-    {"id": "connectors.manage", "label": "Connector and Telegram configuration", "risk": "high"},
-    {"id": "operations.view", "label": "Operations and diagnostics", "risk": "read"},
-    {"id": "operations.execute", "label": "Restart and recovery operations", "risk": "critical"},
-    {"id": "releases.view", "label": "Release Center", "risk": "read"},
-    {"id": "releases.create", "label": "Create releases", "risk": "high"},
-    {"id": "releases.deploy_canary", "label": "Deploy to Canary", "risk": "critical"},
-    {"id": "releases.promote_production", "label": "Promote to Production", "risk": "critical"},
-    {"id": "releases.rollback_production", "label": "Rollback Production", "risk": "critical"},
-    {"id": "environment.switch", "label": "Environment Switcher", "risk": "high"},
-    {"id": "docs.manage_global", "label": "Manage global documents", "risk": "high"},
-    {"id": "docs.manage_workspace", "label": "Manage workspace documents", "risk": "high"},
+    {"id": "admin.view", "label": "Панель администратора", "risk": "read"},
+    {"id": "users.manage", "label": "Пользователи и сессии", "risk": "high"},
+    {"id": "workspaces.manage", "label": "Рабочие области и участники", "risk": "high"},
+    {"id": "connectors.manage", "label": "Коннекторы и Telegram", "risk": "high"},
+    {"id": "operations.view", "label": "Операции и диагностика", "risk": "read"},
+    {"id": "operations.execute", "label": "Перезапуск и восстановление", "risk": "critical"},
+    {"id": "releases.view", "label": "Центр релизов", "risk": "read"},
+    {"id": "releases.create", "label": "Создание релизов", "risk": "high"},
+    {"id": "releases.deploy_canary", "label": "Развёртывание в Canary", "risk": "critical"},
+    {"id": "releases.promote_production", "label": "Промоушен в Production", "risk": "critical"},
+    {"id": "releases.rollback_production", "label": "Откат Production", "risk": "critical"},
+    {"id": "environment.switch", "label": "Переключение окружений", "risk": "high"},
+    {"id": "docs.manage_global", "label": "Управление глобальными документами", "risk": "high"},
+    {"id": "docs.manage_workspace", "label": "Управление документами рабочих областей", "risk": "high"},
+    {"id": "strategy.spec.manage", "label": "Управление спецификациями стратегий и областей", "risk": "high"},
 )
 ADMIN_CAPABILITY_IDS = tuple(c["id"] for c in ADMIN_CAPABILITIES)
 

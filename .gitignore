@@ -112,6 +112,13 @@
 /NT-Analyzer/docs/audit/
 /NT-Analyzer/docs/CEO/
 
+# Development data-root runtime artifacts (durable DB, audit, integrations).
+# These are created on demand and must never appear as tracked working-tree
+# changes after a test run (Phase 11 clean-checkout requirement).
+/NT-Analyzer/data/development/durable/
+/NT-Analyzer/data/development/audit/
+/NT-Analyzer/data/development/integrations/
+
 # AI Strategy Lab generated/runtime artifacts. Keep source prompts, schemas,
 # reference docs, and app code in Git; keep experiment history and model IO local.
 /NT-Analyzer/ai_lab/experiments/
