@@ -3,7 +3,7 @@
    A single REAL ASYNCHRONOUS HTTP layer (window.API.http.*) calling the actual
    /api/* endpoints from app/server.py (no invented endpoints). Every page uses
    this layer; each method returns a Promise of the real backend shape (see
-   docs/UI_API_MAP.md). Production loads NO mock data.
+   docs/architecture/UI_API_MAP.md). Production loads NO mock data.
    ===================================================================== */
 (function () {
   const isFile = location.protocol === 'file:';

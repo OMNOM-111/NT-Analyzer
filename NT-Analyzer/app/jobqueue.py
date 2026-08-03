@@ -1,7 +1,7 @@
 """
 NT-Analyzer file-queue helpers (shared by CLI and backend).
 
-Contract mirrors docs/job-schema.md and tools/enqueue-smoke-job.ps1:
+Contract mirrors docs/architecture/job-schema.md and tools/enqueue-smoke-job.ps1:
 
     pending/.staging/<job_id>/job.json.tmp -> job.json (rename)
                               ^

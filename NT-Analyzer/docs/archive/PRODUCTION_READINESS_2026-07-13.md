@@ -124,5 +124,5 @@ Backend остался жив. Поэтому пункты выше остают
 `StratForge Vitek` поддерживает backend и событийный worker после входа в
 систему, не открывая браузер. Состояние доступно через `GET /api/health`, лог —
 `logs/vitek-background.log`. Основные инструкции:
-[Витёк](VITEK.md), [операции Aurora](UI_OPERATIONS.md),
-[Telegram Mini App](TELEGRAM_MINI_APP.md).
+[Витёк](../VITEK.md), [операции Aurora](../operations/UI_OPERATIONS.md),
+[Telegram Mini App](../architecture/TELEGRAM_MINI_APP.md).

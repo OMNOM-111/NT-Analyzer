@@ -21,7 +21,7 @@ TEAM_PERSONAL = "personal_team"
 TEAM_OWNER_TRAINING = "owner_training_coordinator"
 TEAM_OWNER = "owner_team"
 
-# Approved personas (docs/AGENTS.md hierarchy; ADR-0006 for the coordinator).
+# Approved personas (docs/agents/AGENTS.md hierarchy; ADR-0006 for the coordinator).
 OWNER_COORDINATOR = "Управляющий"
 OWNER_TRAINING_COORDINATOR = "Координатор"  # ADR-0006: below Виктор, limited
 PERSONAL_TEAM_AGENTS = ("Управляющий", "Толик", "Иван", "Никита", "Марина")

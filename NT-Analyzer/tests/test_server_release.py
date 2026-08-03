@@ -25,12 +25,12 @@ def test_server_release_selection_is_runtime_bounded() -> None:
     assert "app/server.py" in selected
     assert "app/production_telegram.py" in selected
     assert "deploy/production/stratforge-operations.timer" in selected
-    assert "docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md" in selected
+    assert "docs/operations/PRODUCTION_DEPLOYMENT_RUNBOOK.md" in selected
     assert "tools/production_preflight.py" in selected
     assert "tools/verify_server_release.py" in selected
     assert "tests/test_server_release.py" not in selected
     assert "bridge/NTAnalyzerBridge.csproj" not in selected
-    assert "docs/AGENTS.md" not in selected
+    assert "docs/agents/AGENTS.md" not in selected
     assert "docs/AI_DIALOGUE_CONTRACT.md" not in selected
 
 

@@ -7,7 +7,7 @@
 озвучивает текст сообщения голосом **профиля этого сотрудника** (Azure
 `gpt-4o-mini-tts` / OpenAI Speech или browser fallback). Настройка: страница
 AI Agents → «Голоса сотрудников». Канон:
-[NT-Analyzer/docs/AGENTS.md](../NT-Analyzer/docs/AGENTS.md)
+[NT-Analyzer/docs/agents/AGENTS.md](../NT-Analyzer/docs/agents/AGENTS.md)
 § «Озвучка сообщения» (обновлено 2026-07-16: Azure Speech-агент).
 
 Исходники: папка `Agents/` в корне репозитория.
@@ -26,4 +26,4 @@ AI Agents → «Голоса сотрудников». Канон:
 `NT-Analyzer/app/static/aurora/assets/agents/<id>/speaking.webm`
 
 После замены исходников скопируйте файл как `speaking.webm`.
-Карта: [NT-Analyzer/docs/AGENTS.md](../NT-Analyzer/docs/AGENTS.md).
+Карта: [NT-Analyzer/docs/agents/AGENTS.md](../NT-Analyzer/docs/agents/AGENTS.md).

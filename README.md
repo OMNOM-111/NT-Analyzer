@@ -78,7 +78,7 @@ cd NT-Analyzer
 
 The watchdog does not open a browser. See
 `NT-Analyzer/docs/VITEK.md` and
-`NT-Analyzer/docs/PRODUCTION_READINESS_2026-07-13.md`.
+`NT-Analyzer/docs/archive/PRODUCTION_READINESS_2026-07-13.md`.
 
 External model connections are configured locally at
 `http://127.0.0.1:8765/ui/ai-agents.html`. API keys are encrypted with Windows

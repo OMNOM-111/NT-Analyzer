@@ -6,7 +6,7 @@ Release base commit: `73e005e038f91b5766193004705a891ee204be0d`
 Acceptance status: **BLOCKED — not approved for production release**
 
 Current product-contour addendum (2026-07-18): see
-[PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md).
+[PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](audits/2026-07-18-product-contours.md).
 It supersedes the former Micro/Scaled Live product path: the current code has a
 real pre-shell Student/Professional entry, removes Micro Live entirely and has
 isolated staging visual evidence for guest, Student, Community and Professional

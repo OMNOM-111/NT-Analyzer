@@ -132,6 +132,6 @@ Strategy Analyzer, TopStep/платёжный/broker sandbox и любые ре�
 этому набору файлы. Следующий этап — не «чинить Micro», а отдельно планировать
 TopStep-parity Student terminal и credentialed внешние интеграции.
 
-Связанные документы: [LAST_CHANGE_AUDIT_2026-07-17.md](LAST_CHANGE_AUDIT_2026-07-17.md),
-[STRATFORGE_RELEASE_AUDIT_2026-07-15.md](STRATFORGE_RELEASE_AUDIT_2026-07-15.md),
-[STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md](../STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md).
+Связанные документы: [LAST_CHANGE_AUDIT_2026-07-17.md](../LAST_CHANGE_AUDIT_2026-07-17.md),
+[STRATFORGE_RELEASE_AUDIT_2026-07-15.md](../STRATFORGE_RELEASE_AUDIT_2026-07-15.md),
+[STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md](../../../STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md).

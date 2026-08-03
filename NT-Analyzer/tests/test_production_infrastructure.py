@@ -196,6 +196,7 @@ def test_restore_runbook_uses_migration_owned_isolated_database() -> None:
     runbook = (
         Path(__file__).resolve().parents[1]
         / "docs"
+        / "operations"
         / "PRODUCTION_STORAGE_RUNBOOK.md"
     ).read_text(encoding="utf-8")
 

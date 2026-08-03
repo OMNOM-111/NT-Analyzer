@@ -25,7 +25,7 @@ The lifecycle board reads these via ``/api/ai-lab/lifecycle`` so an AI strategy
 appears under the "AI / LM Studio" branch and moves between the four columns as
 its status advances. Rule: every started idea must be driven to a terminal
 stage (approved or archived) — never left dangling mid-pipeline. See
-``docs/STRATEGY_LIFECYCLE.md``.
+``docs/strategies/STRATEGY_LIFECYCLE.md``.
 """
 
 from __future__ import annotations

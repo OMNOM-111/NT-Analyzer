@@ -2,7 +2,7 @@
 
 Актуально на 2026-07-02. Универсальный реестр теперь подключён непосредственно к
 historical-only AI Lab через role-aware router. Итоговый benchmark и фактические
-замеры: `docs/AI_AGENT_STACK_RESEARCH_2026-07-01.md`.
+замеры: `docs/archive/AI_AGENT_STACK_RESEARCH_2026-07-01.md`.
 
 1. универсальный реестр **AI Agents / API Keys** для ручного подключения и
    проверки OpenAI, Microsoft Foundry / Azure OpenAI, DeepSeek, OpenRouter,
@@ -133,7 +133,7 @@ Router уже выполняет failover: `429`, quota, timeout и `5xx` вкл
 | LM Studio coder (локально) | 900 с |
 
 Переопределение через env: `AI_LAB_TIMEOUT_<OPERATION>=<seconds>`.
-Подробная таблица: `docs/CHIEF_AI_AGENT.md` → раздел «Политика таймаутов».
+Подробная таблица: `docs/agents/CHIEF_AI_AGENT.md` → раздел «Политика таймаутов».
 
 ## DeepSeek V4 Flash, V4 Pro и StratForge Orchestrator
 

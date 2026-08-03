@@ -68,7 +68,7 @@ class AgentTtsError(ValueError):
 # Defaults & presets (documented baseline voices)
 # ---------------------------------------------------------------------------
 
-# Rationale (docs/AGENTS.md § voice profiles):
+# Rationale (docs/agents/AGENTS.md § voice profiles):
 # vitek — deep confident male (onyx); marina — calm precise female (nova);
 # tolik — measured male analyst (echo); nikita — energetic male (ash);
 # ivan — clear practical male (alloy); manager — strict executive (sage);

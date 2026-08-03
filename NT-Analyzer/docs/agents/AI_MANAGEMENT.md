@@ -35,5 +35,5 @@
 ```
 
 Секретарь и Заместитель — те же управленческие дорожки с меньшей сложностью.
-Публичный тон: [AI_DIALOGUE_CONTRACT.md](AI_DIALOGUE_CONTRACT.md). Таймауты и
+Публичный тон: [AI_DIALOGUE_CONTRACT.md](../AI_DIALOGUE_CONTRACT.md). Таймауты и
 failover моделей: [CHIEF_AI_AGENT.md](CHIEF_AI_AGENT.md).

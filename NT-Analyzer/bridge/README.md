@@ -21,7 +21,7 @@ fallback-runner в сборке нет.
 `project_root`. Он открывает только outbound HTTPS к canonical origin,
 генерирует P-256 device key в DPAPI CurrentUser, выполняет signed
 challenge/hello, heartbeat и bounded long-poll. Broker credentials серверу не
-передаются; live commands выключены. Контракт: `../docs/CONNECTOR_PROTOCOL_V1.md`.
+передаются; live commands выключены. Контракт: `../docs/architecture/CONNECTOR_PROTOCOL_V1.md`.
 
 ## Сборка
 

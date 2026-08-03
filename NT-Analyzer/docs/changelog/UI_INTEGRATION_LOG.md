@@ -15,12 +15,12 @@ Append-only. Newest entries at the bottom.
   - `git_status.txt`, `git_HEAD.txt` (HEAD = `e7123a427d45205ab1b8f75738a475a370d37638`).
   - `project_snapshot\` — full project copy incl. `.git` (3066 files).
   - `legacy_static_snapshot\` — copy of `NT-Analyzer/app/static` (18 files) + `legacy_static_sha256.txt` (SHA-256 manifest). File count verified src=dst=18.
-- **Restore:** see `docs/UI_ROUTES_AND_ROLLBACK.md` → "Восстановление из backup".
+- **Restore:** see `docs/architecture/UI_ROUTES_AND_ROLLBACK.md` → "Восстановление из backup".
 
 ## 2026-06-27 — Phase 1: Baseline + Inventory
 
 - Baseline tests: `python -m pytest -q` → **12 passed** (31.78s). Captured to `%TEMP%\nt_pytest_baseline.txt`.
-- Read the REAL backend (`app/server.py`) to build a ground-truth endpoint map (see `docs/UI_API_MAP.md`).
+- Read the REAL backend (`app/server.py`) to build a ground-truth endpoint map (see `docs/architecture/UI_API_MAP.md`).
 - Routing facts (server.py):
   - `GET /` → 302 `/ui/`.
   - `GET /ui` + rest → `_serve_static(rel)`; `rel="/"` → `index.html`; extensionless paths get `.html` fallback. STATIC_DIR = `app/static`.
@@ -33,7 +33,7 @@ Append-only. Newest entries at the bottom.
   - `/api/performance/day` → does not exist; day data derived from `GET /api/performance`.
 
 ### Decision log (conservative choices)
-- **Do not flip the production default to the mock UI until pages are wired to real data.** Reason: the new pages still render `window.MOCK`; making a mock dashboard the `/ui/` default would degrade a working app and "imitate success", which the task forbids. The cutover (new → `/ui/`, old → `/ui/legacy/`) is prepared and documented as the final step after per-page wiring (`docs/UI_ROUTES_AND_ROLLBACK.md`).
+- **Do not flip the production default to the mock UI until pages are wired to real data.** Reason: the new pages still render `window.MOCK`; making a mock dashboard the `/ui/` default would degrade a working app and "imitate success", which the task forbids. The cutover (new → `/ui/`, old → `/ui/legacy/`) is prepared and documented as the final step after per-page wiring (`docs/architecture/UI_ROUTES_AND_ROLLBACK.md`).
 - **`api.js` becomes a real async adapter** over the actual endpoints, with a `window.MOCK` fallback used ONLY when served from `file://` (the offline design preview). Production HTML will not ship `mock.js`.
 - **Legacy UI is preserved verbatim** (full functional depth) and reachable; nothing in `app/static` is deleted.
 

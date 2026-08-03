@@ -3,7 +3,7 @@
 Branch: `codex/stratforge-release-20260716`
 Audit status: **repository implementation and owner desktop contour reconciled; automated/browser gates pass; external production acceptance blocked**
 
-Product-contour follow-up (2026-07-18): [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md)
+Product-contour follow-up (2026-07-18): [PRODUCT_MODES_AND_CONTOURS_AUDIT_2026-07-18.md](audits/2026-07-18-product-contours.md)
 records the implemented separate Student/Professional boot-flow, removal of the
 unapproved Micro Live contour, safe virtual-quote handling and Community
 workspace additions. It distinguishes those completed cleanup items from the

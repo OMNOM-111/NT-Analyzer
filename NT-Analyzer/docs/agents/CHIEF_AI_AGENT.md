@@ -3,7 +3,7 @@
 Актуально на 2026-07-15.
 
 Карта сотрудников и аватары: [AGENTS.md](AGENTS.md). Поведение Витька как
-правой руки: [VITEK.md](VITEK.md). Тон ответов: [AI_DIALOGUE_CONTRACT.md](AI_DIALOGUE_CONTRACT.md).
+правой руки: [VITEK.md](../VITEK.md). Тон ответов: [AI_DIALOGUE_CONTRACT.md](../AI_DIALOGUE_CONTRACT.md).
 Ярусы Секретарь / Заместитель / Управляющий: [AI_MANAGEMENT.md](AI_MANAGEMENT.md).
 
 ## Управленческий контракт

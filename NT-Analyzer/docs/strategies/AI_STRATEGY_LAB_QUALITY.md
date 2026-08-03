@@ -54,7 +54,7 @@ AI Lab остаётся local-first. После некорректного ло�
 циклов — `compile_error_fixer_fallback`. Оба пути по умолчанию выключены,
 требуют отдельного API-ключа и разрешения, ограничены `$20/месяц` и
 `$0.50/run`. Cloud output снова проходит все deterministic gates и не имеет
-права на verdict. Полный контракт: `docs/AI_LAB_CLOUD_AGENTS.md`.
+права на verdict. Полный контракт: `docs/agents/AI_LAB_CLOUD_AGENTS.md`.
 
 ## Competitive feedback для AI-ролей
 
@@ -64,7 +64,7 @@ Analyst, Coder, Judge и Reviewer могут сравниваться внутр
 arbitration и честность `unclear/reject/no_signal`. Слабый ответ получает
 feedback и временно меньший приоритет следующего вызова, но честный отказ при
 недостатке данных не считается браком. Полный контракт и MVP внедрения:
-`docs/AI_LAB_COMPETITIVE_FEEDBACK.md`.
+`docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md`.
 
 ## Реальные E2E результаты
 

@@ -9,7 +9,7 @@ using NTAnalyzerBridge.Util;
 namespace NTAnalyzerBridge.Reporting
 {
     /// <summary>
-    /// Assembles result.json per docs/job-schema.md, contract v0.1.
+    /// Assembles result.json per docs/architecture/job-schema.md, contract v0.1.
     ///
     /// The result is intentionally self-sufficient: it does NOT reference
     /// job.json by file path — every field needed to understand the run
