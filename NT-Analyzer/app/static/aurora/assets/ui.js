@@ -102,7 +102,11 @@
   }
 
   function applyReleaseIcon(path) {
-    qsa('[data-release-icon]').forEach(node => { node.src = path; });
+    // The rail/brand logo always uses the clean transparent mark. The release
+    // variant (a dark square app-icon with a ribbon) is only meaningful as the
+    // browser tab favicon — placing it inside the rail produced a boxed
+    // "picture-in-a-square" look. The environment is already shown by the
+    // coloured DEV/CANARY/BETA text badge next to the brand name.
     let favicon = document.querySelector('link[rel~="icon"]');
     if (!favicon) {
       favicon = document.createElement('link');
@@ -3833,12 +3837,21 @@
 
   function environmentMetaHtml(target) {
     const warnings = Array.isArray(target.warnings) ? target.warnings : [];
+    const healthRu = {
+      reachable: 'доступен', unknown: 'неизвестно', unreachable: 'недоступен', error: 'ошибка',
+    };
+    const readyRu = {
+      ready: 'готов', unknown: 'неизвестно', current_server: 'текущий сервер',
+      'runtime endpoint reachable': 'endpoint доступен', not_ready: 'не готов',
+    };
+    const health = String(target.health || 'unknown');
+    const readiness = String(target.readiness || 'unknown');
     return `<div class="admin-env-meta">
       <div><span>Версия</span><strong>${esc(target.version || 'неизвестно')}</strong></div>
       <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || 'неизвестно')}</strong></div>
       <div><span>Build</span><strong class="mono">${esc(target.build_id || 'неизвестно')}</strong></div>
-      <div><span>Health</span><strong>${esc(target.health || 'unknown')}</strong></div>
-      <div><span>Readiness</span><strong>${esc(target.readiness || 'unknown')}</strong></div>
+      <div><span>Состояние</span><strong>${esc(healthRu[health] || health)}</strong></div>
+      <div><span>Готовность</span><strong>${esc(readyRu[readiness] || readiness)}</strong></div>
     </div>${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
   }
 
@@ -3886,7 +3899,7 @@
         <div class="admin-env-head"><div><span class="badge ${target.current ? 'live' : (target.configured ? 'pending' : 'archived')}">${esc(target.environment.toUpperCase())}</span>${target.current ? '<span class="cab-sub"> текущая</span>' : ''}</div><span class="mono cab-sub">${esc(target.current ? location.origin : (target.origin || 'origin не задан'))}</span></div>
         <div data-env-meta>${environmentMetaHtml(target)}</div>
         <div class="flex gap-sm wrap">
-          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Проверить endpoint</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
+          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Проверить доступность</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
         </div><div data-env-confirm></div>
       </section>`).join('')}</div>
       <div class="flex gap-sm wrap"><button class="btn ghost" id="admin-env-compare">Сравнить Canary / Production в отдельных вкладках</button></div>`;
@@ -4200,7 +4213,7 @@
     const deployment = data.deployment || {};
     const caps = data.admin_capabilities || {};
     const catalog = data.admin_capability_catalog || [];
-    return `<div class="grid cols-3"><div class="kpi"><span>Environment</span><strong>${esc(deployment.deployment_environment || deployment.environment || '—')}</strong></div><div class="kpi"><span>Version</span><strong>${esc(deployment.app_version || '—')}</strong></div><div class="kpi"><span>Commit</span><strong class="mono">${esc((deployment.git_commit_sha || '').slice(0, 12) || '—')}</strong></div></div><div class="finance-note"><strong>Security contract:</strong> secrets не выдаются; между environments не переносятся credentials, cookies, CSRF и browser storage.</div><div class="section-title">Эффективные capabilities</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)} <span class="cab-sub mono">${esc(c.id)}</span></span><span class="badge ${caps[c.id] ? 'live' : 'archived'}">${caps[c.id] ? 'разрешено' : 'нет'}</span></div>`).join('')}</div>`;
+    return `<div class="grid cols-3"><div class="kpi"><span>Среда</span><strong>${esc(deployment.deployment_environment || deployment.environment || '—')}</strong></div><div class="kpi"><span>Версия</span><strong>${esc(deployment.app_version || '—')}</strong></div><div class="kpi"><span>Commit</span><strong class="mono">${esc((deployment.git_commit_sha || '').slice(0, 12) || '—')}</strong></div></div><div class="finance-note"><strong>Контракт безопасности:</strong> секреты не выдаются; между средами не переносятся учётные данные, cookies, CSRF-токены и хранилище браузера.</div><div class="section-title">Действующие права доступа</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)} <span class="cab-sub mono">${esc(c.id)}</span></span><span class="badge ${caps[c.id] ? 'live' : 'archived'}">${caps[c.id] ? 'разрешено' : 'нет'}</span></div>`).join('')}</div>`;
   }
 
   const DOC_STATUS_BADGE = { draft: 'trial', review: 'pending', approved: 'pending', published: 'live', superseded: 'archived' };
@@ -4214,9 +4227,9 @@
       const canManage = hasAdminCapability('docs.manage_global');
       node.innerHTML = `
         <div class="finance-note">Глобальные governance-документы и законы. Менять их может только владелец или администратор с правом <span class="mono">docs.manage_global</span>. Рабочие области и стратегии не могут изменить эти документы или safety-limits.</div>
-        <div class="section-title">Документы</div>
-        <div class="list" id="gov-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.id)}</div><div class="row-sub mono">${esc(d.rel_path || d.id)}${d.editable_kind && d.editable_kind !== 'none' ? ' · editable' : ' · read-only'}</div></div><button class="btn sm ghost" data-gov-doc="${esc(d.id)}">${canManage && d.editable_kind === 'markdown' ? 'Открыть' : 'Просмотр'}</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
         <div id="gov-editor"></div>
+        <div class="section-title">Документы</div>
+        <div class="list" id="gov-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.id)}</div><div class="row-sub mono">${esc(d.rel_path || d.id)}${d.editable_kind && d.editable_kind !== 'none' ? ' · редактируемый' : ' · только чтение'}</div></div><button class="btn sm ghost" data-gov-doc="${esc(d.id)}">${canManage && d.editable_kind === 'markdown' ? 'Открыть' : 'Просмотр'}</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
         <div class="section-title">Журнал поправок</div>
         <div class="list">${history.slice(0, 40).map(h => `<div class="row"><div class="row-main"><div class="row-title">Поправка ${esc(h.amendment_no || '')} · ${esc(h.entity_title || h.entity_id || '')}</div><div class="row-sub">${esc(h.ts_utc || '')} · ${esc(h.actor || '')}${h.reason ? ' · ' + esc(h.reason) : ''}</div></div></div>`).join('') || '<div class="empty-state">Поправок пока нет.</div>'}</div>`;
       qsa('[data-gov-doc]', node).forEach(btn => btn.onclick = () => openGovernanceDoc(node, btn.dataset.govDoc, canManage));
@@ -4227,6 +4240,7 @@
     const editor = qs('#gov-editor', node);
     if (!editor) return;
     editor.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документа…</div>';
+    editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     try {
       const doc = await API.http.governanceDocument(docId);
       const editable = canManage && String(doc.editable_kind || '') === 'markdown';
@@ -4259,6 +4273,7 @@
       const docs = data.documents || [];
       node.innerHTML = `
         <div class="finance-note">Документы (спецификации) рабочих областей и стратегий. Нужно право <span class="mono">strategy.spec.manage</span> (или docs.manage_workspace). Видны только документы вашей рабочей области; глобальные governance-документы и safety-limits отсюда изменить нельзя.</div>
+        <div id="ws-doc-detail"></div>
         <div class="cab-card"><h4>Создать документ</h4>
           <div class="grid cols-2">
             <label class="field"><span>Область</span><select id="ws-doc-scope"><option value="workspace">workspace</option><option value="strategy">strategy</option></select></label>
@@ -4271,8 +4286,7 @@
           <div id="ws-doc-create-msg" class="cab-sub"></div>
         </div>
         <div class="section-title">Документы</div>
-        <div class="list" id="ws-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.slug)} <span class="badge ${DOC_STATUS_BADGE[d.published_revision ? 'published' : (d.latest_status || 'draft')] || 'trial'}">${d.published_revision ? 'v' + d.published_revision : (d.latest_status || 'draft')}</span></div><div class="row-sub mono">${esc(d.scope_type)}${d.workspace_id ? ' · ' + esc(d.workspace_id) : ''} · ${esc(d.slug)} · ревизий: ${d.revision_count || 0}</div></div><button class="btn sm ghost" data-ws-doc="${esc(d.document_id)}">Открыть</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
-        <div id="ws-doc-detail"></div>`;
+        <div class="list" id="ws-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.slug)} <span class="badge ${DOC_STATUS_BADGE[d.published_revision ? 'published' : (d.latest_status || 'draft')] || 'trial'}">${d.published_revision ? 'v' + d.published_revision : (d.latest_status || 'draft')}</span></div><div class="row-sub mono">${esc(d.scope_type)}${d.workspace_id ? ' · ' + esc(d.workspace_id) : ''} · ${esc(d.slug)} · ревизий: ${d.revision_count || 0}</div></div><button class="btn sm ghost" data-ws-doc="${esc(d.document_id)}">Открыть</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>`;
       const create = qs('#ws-doc-create', node);
       if (create) create.onclick = async () => {
         const msg = qs('#ws-doc-create-msg', node);
@@ -4297,6 +4311,7 @@
     const detail = qs('#ws-doc-detail', node);
     if (!detail) return;
     detail.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     try {
       const data = await API.http.documentGet(docId);
       const doc = data.document || {};

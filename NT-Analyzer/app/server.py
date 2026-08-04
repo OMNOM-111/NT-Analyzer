@@ -437,13 +437,13 @@ def _admin_environment_targets() -> Dict[str, Any]:
         origin = _validated_environment_origin(environment, supplied)
         warnings = []
         if supplied and not origin:
-            warnings.append("Configured origin was rejected by the safety policy.")
+            warnings.append("Настроенный origin отклонён политикой безопасности.")
         if not current and not origin:
-            warnings.append("Target origin is not configured in this environment.")
+            warnings.append("Origin для этой среды не настроен.")
         if environment == runtime_env.DEVELOPMENT and not current:
-            warnings.append("Local Development becomes active only after a browser reachability check.")
+            warnings.append("Локальная разработка активируется только после проверки доступности в браузере.")
         if not current:
-            warnings.append("Target metadata is read only from the target origin after opening it.")
+            warnings.append("Метаданные среды читаются только после её открытия по целевому origin.")
         rows.append({
             "environment": environment,
             "current": current,

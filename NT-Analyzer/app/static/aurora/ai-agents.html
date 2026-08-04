@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'self'; object-src 'none'">
-<title>AI Agents / API Keys — StratForge AI</title>
+<title>AI-агенты и ключи доступа — StratForge AI</title>
 <link rel="stylesheet" href="assets/theme.css?v=20260802-environment-identity1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
@@ -32,16 +32,16 @@
   @media(max-width:700px){ .agent-form-grid { grid-template-columns:minmax(0,1fr); } .agent-form-grid .wide { grid-column:auto; } }
 </style>
 </head>
-<body data-page="agents" data-title="AI Agents / API Keys" data-kicker="StratForge AI · Безопасные подключения">
+<body data-page="agents" data-title="AI-агенты и ключи доступа" data-kicker="StratForge AI · Безопасные подключения">
 
   <section class="hero">
     <div class="flex between wrap gap-lg" style="align-items:flex-start">
       <div>
-        <div class="kick">AI Agents / API Keys</div>
+        <div class="kick">AI-агенты и ключи доступа</div>
         <h1>Агенты, ключи, квоты и расходы</h1>
-        <p>Ключи шифруются локально Windows DPAPI. Grant/credit и budget — разные величины: кредит показывает доступный ресурс, а дневной и месячный лимиты ограничивают скорость расходования. Ниже — голоса сотрудников Orchestrator: они независимы от модели, которая пишет текст.</p>
+        <p>Ключи шифруются локально Windows DPAPI. Grant/credit и budget — разные величины: кредит показывает доступный ресурс, а дневной и месячный лимиты ограничивают скорость расходования. Ниже — голоса сотрудников оркестратора: они независимы от модели, которая пишет текст.</p>
       </div>
-      <button class="btn primary" id="agent-add">Add Model</button>
+      <button class="btn primary" id="agent-add">Добавить модель</button>
     </div>
   </section>
 
@@ -49,7 +49,7 @@
 
   <section class="panel">
     <div class="panel-h">
-      <h2>Голоса сотрудников Orchestrator</h2>
+      <h2>Голоса сотрудников оркестратора</h2>
       <span class="sub">настройки · пресеты · предпрослушивание</span>
       <div class="spacer"></div>
       <span class="badge" id="voice-key-badge"><span class="dot"></span>TTS</span>
@@ -69,13 +69,13 @@
   </section>
 
   <section class="panel">
-    <div class="panel-h"><h2>Connection Test</h2><span class="sub">явный короткий платный запрос</span></div>
+    <div class="panel-h"><h2>Проверка подключения</h2><span class="sub">явный короткий платный запрос</span></div>
     <div class="panel-b col gap-lg">
       <div class="grid cols-2">
         <div class="field"><label for="test-agent">Агент</label><select id="test-agent"></select></div>
-        <div class="field"><label for="test-prompt">Test prompt</label><input id="test-prompt" maxlength="1000" value="Reply with exactly: CONNECTION_OK"></div>
+        <div class="field"><label for="test-prompt">Тестовый запрос</label><input id="test-prompt" maxlength="1000" value="Reply with exactly: CONNECTION_OK"></div>
       </div>
-      <div class="flex wrap gap-sm"><button class="btn primary" id="test-send">Test Connection</button><span class="row-sub" id="test-estimate">Нулевой budget — режим наблюдения без блокировки. В журнал попадут только tokens/cost/status.</span></div>
+      <div class="flex wrap gap-sm"><button class="btn primary" id="test-send">Проверить подключение</button><span class="row-sub" id="test-estimate">Нулевой budget — режим наблюдения без блокировки. В журнал попадут только tokens/cost/status.</span></div>
       <pre class="logbox agent-test-result" id="test-result">Выберите агента и запустите проверку.</pre>
     </div>
   </section>
@@ -83,7 +83,7 @@
   <section class="panel">
     <div class="panel-h"><h2>Настроенные агенты</h2><span class="sub" id="agent-count"></span></div>
     <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Model</th><th>Account / quota</th><th>API key</th><th>Usage / limits</th><th>Grant / credit</th><th>Статус</th><th>Действия</th></tr></thead>
+      <thead><tr><th>Модель</th><th>Аккаунт / квота</th><th>API-ключ</th><th>Расход / лимиты</th><th>Грант / кредит</th><th>Статус</th><th>Действия</th></tr></thead>
       <tbody id="agent-body"></tbody>
     </table></div></div>
   </section>
@@ -99,7 +99,7 @@
   <section class="panel">
     <div class="panel-h"><h2>Тарифы моделей</h2><span class="sub">USD / 1M tokens · пример: 25k input + 3k output</span></div>
     <div class="panel-b tight"><div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Provider / model</th><th class="num">Input</th><th class="num">Cached input</th><th class="num">Output</th><th class="num">Пример запроса</th><th>Источник</th></tr></thead>
+      <thead><tr><th>Провайдер / модель</th><th class="num">Вход</th><th class="num">Кэш. вход</th><th class="num">Выход</th><th class="num">Пример запроса</th><th>Источник</th></tr></thead>
       <tbody id="pricing-body"></tbody>
     </table></div><div class="finance-note" style="margin:12px">Цены больше не вводятся при добавлении модели. Они берутся из централизованного catalog; пока тариф не внесён, приложение честно показывает tokens и пометку «цена не настроена», а не выдуманные $0.</div></div>
   </section>
@@ -110,13 +110,13 @@
       <div class="panel-b tight"><div class="list" id="account-usage"></div></div>
     </section>
     <section class="panel">
-      <div class="panel-h"><h2>Расход по models</h2></div>
+      <div class="panel-h"><h2>Расход по моделям</h2></div>
       <div class="panel-b tight"><div class="list" id="model-usage"></div></div>
     </section>
   </div>
 
   <section class="panel">
-    <div class="panel-h"><h2>Usage log</h2><span class="sub">без ключей и prompt content</span></div>
+    <div class="panel-h"><h2>Журнал запросов</h2><span class="sub">без ключей и текста запросов</span></div>
     <div class="panel-b tight"><div class="tbl-wrap" style="max-height:420px"><table class="tbl">
       <thead><tr><th>Время</th><th>Пользователь</th><th>Agent</th><th>Provider / model</th><th>Status</th><th class="num">Input</th><th class="num">Provider/app cache</th><th class="num">Output</th><th class="num">Total</th><th class="num">Cost</th></tr></thead>
       <tbody id="usage-body"></tbody>

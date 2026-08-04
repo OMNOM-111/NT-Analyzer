@@ -27,8 +27,8 @@ UI.ready(async function () {
       ['Модели', totals.agents || 0, ''],
       ['Аккаунты / ключи', accounts.size, 'info'],
       ['Включены', totals.enabled || 0, totals.enabled ? 'pos' : ''],
-      ['Provider cache', `${Number(totals.provider_cache_hit_pct || 0).toFixed(1)}%`, Number(totals.provider_cache_hit_pct || 0) >= 50 ? 'pos' : ''],
-      ['Effective cache', `${Number(totals.cache_hit_pct || 0).toFixed(1)}%`, Number(totals.cache_hit_pct || 0) >= 50 ? 'pos' : ''],
+      ['Кеш провайдера', `${Number(totals.provider_cache_hit_pct || 0).toFixed(1)}%`, Number(totals.provider_cache_hit_pct || 0) >= 50 ? 'pos' : ''],
+      ['Эффективный кеш', `${Number(totals.cache_hit_pct || 0).toFixed(1)}%`, Number(totals.cache_hit_pct || 0) >= 50 ? 'pos' : ''],
       ['Известный расход / месяц', usd(totals.spend_month_usd, 6), 'warn'],
     ].map(row => `<div class="kpi"><div class="kpi-label">${row[0]}</div><div class="kpi-val sm ${row[2]}">${UI.esc(row[1])}</div></div>`).join('');
     UI.qs('#storage-badge').className = `badge ${state.storage?.available ? 'live' : 'failed'}`;
@@ -54,12 +54,12 @@ UI.ready(async function () {
       const budget = agent.budget_mode === 'monitor_only'
         ? `<strong>${usd(agent.spend_month_usd, 6)}</strong><div class="row-sub">monitoring · без блокирующего лимита</div>`
         : `${dayBudget}${monthBudget}`;
-      return `<tr><td><strong>${UI.esc(agent.model)}</strong><div class="row-sub">${UI.esc(provider.label)} · ${UI.esc(agent.endpoint_type)}</div><div class="row-sub">роль: ${UI.esc(roleById(agent.role).label)}</div></td><td><strong>${UI.esc(agent.account_name)}</strong><div class="row-sub">${UI.esc(billing.label)} · pool ${UI.esc(agent.rotation_group || '—')} · priority ${Number(agent.priority || 100)}</div></td><td><span class="mono">${UI.esc(agent.key_mask || 'не настроен')}</span><div class="row-sub">${agent.key_configured ? 'Windows DPAPI' : UI.esc(agent.key_storage_error || '')}</div></td><td>${budget}<div class="row-sub">${UI.esc(pricing)}</div></td><td><strong>${credit}</strong><div class="row-sub">общий для ${Number(agent.account_models || 1)} моделей этого аккаунта</div></td><td><span class="badge ${agent.enabled ? 'live' : 'archived'}"><span class="dot"></span>${agent.enabled ? 'enabled' : 'disabled'}</span>${agent.disabled_reason && agent.disabled_reason !== 'disabled_by_operator' ? `<div class="row-sub">${UI.esc(agent.disabled_reason)}</div>` : ''}${agent.last_test ? `<div class="row-sub">test: ${agent.last_test.ok ? 'OK' : 'error'} · ${fmtDate(agent.last_test.tested_at_utc)}</div>` : ''}</td><td><div class="agent-actions"><button class="btn sm" data-agent-test="${UI.esc(agent.id)}">Test Connection</button><button class="btn sm" data-agent-edit="${UI.esc(agent.id)}">Edit Agent</button><button class="btn sm ${agent.enabled ? 'danger' : 'primary'}" data-agent-toggle="${UI.esc(agent.id)}" data-enabled="${agent.enabled ? '1' : '0'}">${agent.enabled ? 'Disable Agent' : 'Enable Agent'}</button>${provider.supports_balance_sync ? `<button class="btn sm" data-agent-balance="${UI.esc(agent.id)}">Sync credit</button>` : ''}<button class="btn sm danger" data-agent-delete="${UI.esc(agent.id)}">Delete Agent</button></div></td></tr>`;
-    }).join('') : '<tr><td colspan="7"><div class="empty-state">Моделей пока нет. Нажмите Add Model; технические параметры будут определены автоматически.</div></td></tr>';
+      return `<tr><td><strong>${UI.esc(agent.model)}</strong><div class="row-sub">${UI.esc(provider.label)} · ${UI.esc(agent.endpoint_type)}</div><div class="row-sub">роль: ${UI.esc(roleById(agent.role).label)}</div></td><td><strong>${UI.esc(agent.account_name)}</strong><div class="row-sub">${UI.esc(billing.label)} · pool ${UI.esc(agent.rotation_group || '—')} · priority ${Number(agent.priority || 100)}</div></td><td><span class="mono">${UI.esc(agent.key_mask || 'не настроен')}</span><div class="row-sub">${agent.key_configured ? 'Windows DPAPI' : UI.esc(agent.key_storage_error || '')}</div></td><td>${budget}<div class="row-sub">${UI.esc(pricing)}</div></td><td><strong>${credit}</strong><div class="row-sub">общий для ${Number(agent.account_models || 1)} моделей этого аккаунта</div></td><td><span class="badge ${agent.enabled ? 'live' : 'archived'}"><span class="dot"></span>${agent.enabled ? 'включён' : 'выключен'}</span>${agent.disabled_reason && agent.disabled_reason !== 'disabled_by_operator' ? `<div class="row-sub">${UI.esc(agent.disabled_reason)}</div>` : ''}${agent.last_test ? `<div class="row-sub">тест: ${agent.last_test.ok ? 'OK' : 'ошибка'} · ${fmtDate(agent.last_test.tested_at_utc)}</div>` : ''}</td><td><div class="agent-actions"><button class="btn sm" data-agent-test="${UI.esc(agent.id)}">Проверка</button><button class="btn sm" data-agent-edit="${UI.esc(agent.id)}">Изменить</button><button class="btn sm ${agent.enabled ? 'danger' : 'primary'}" data-agent-toggle="${UI.esc(agent.id)}" data-enabled="${agent.enabled ? '1' : '0'}">${agent.enabled ? 'Выключить' : 'Включить'}</button>${provider.supports_balance_sync ? `<button class="btn sm" data-agent-balance="${UI.esc(agent.id)}">Синхр. кредит</button>` : ''}<button class="btn sm danger" data-agent-delete="${UI.esc(agent.id)}">Удалить</button></div></td></tr>`;
+    }).join('') : '<tr><td colspan="7"><div class="empty-state">Моделей пока нет. Нажмите «Добавить модель»; технические параметры будут определены автоматически.</div></td></tr>';
 
     const routes = state.routing?.roles || {};
     UI.qs('#routing-body').innerHTML = Object.keys(routes).length
-      ? Object.entries(routes).map(([role, rows]) => `<tr><td><strong>${UI.esc(roleById(role).label)}</strong></td><td>${rows.length ? rows.map((row, index) => `<div class="row-sub"><strong>${index + 1}.</strong> ${UI.esc(row.account_name || '')} · <span class="mono">${UI.esc(row.model || '')}</span></div>`).join('') : '<span class="row-sub">нет enabled-модели</span>'}</td><td><span class="badge archived">advisory / sandbox</span></td></tr>`).join('')
+      ? Object.entries(routes).map(([role, rows]) => `<tr><td><strong>${UI.esc(roleById(role).label)}</strong></td><td>${rows.length ? rows.map((row, index) => `<div class="row-sub"><strong>${index + 1}.</strong> ${UI.esc(row.account_name || '')} · <span class="mono">${UI.esc(row.model || '')}</span></div>`).join('') : '<span class="row-sub">нет включённой модели</span>'}</td><td><span class="badge archived">консультативно / песочница</span></td></tr>`).join('')
       : '<tr><td colspan="3"><div class="empty-state">Маршруты пока не рассчитаны.</div></td></tr>';
 
     UI.qs('#pricing-body').innerHTML = agents.length ? agents.map(agent => {
@@ -70,7 +70,7 @@ UI.ready(async function () {
       const output = free ? '$0' : known ? usd(agent.output_price_usd_per_m, 6) : '—';
       const example = free ? '$0 · free tier' : known ? usd(Number(agent.input_price_usd_per_m || 0) * .025 + Number(agent.output_price_usd_per_m || 0) * .003, 6) : 'будет рассчитано после catalog';
       const priceUrl = agent.pricing_source_url || provider.pricing_url;
-      const source = priceUrl ? `<a class="btn sm" href="${UI.esc(priceUrl)}" target="_blank" rel="noopener noreferrer">Official pricing</a>` : 'Custom provider';
+      const source = priceUrl ? `<a class="btn sm" href="${UI.esc(priceUrl)}" target="_blank" rel="noopener noreferrer">Официальные тарифы</a>` : 'Свой провайдер';
       return `<tr><td><strong>${UI.esc(provider.label)}</strong><div class="row-sub mono">${UI.esc(agent.model)}</div></td><td class="num">${input}</td><td class="num">${free ? '$0' : known && agent.cached_input_price_usd_per_m != null ? usd(agent.cached_input_price_usd_per_m, 6) : '—'}</td><td class="num">${output}</td><td class="num"><strong>${example}</strong></td><td>${source}</td></tr>`;
     }).join('') : '<tr><td colspan="6"><div class="empty-state">После добавления модели здесь появится её режим тарификации.</div></td></tr>';
 
@@ -79,7 +79,7 @@ UI.ready(async function () {
     select.innerHTML = agents.length ? agents.map(agent => `<option value="${UI.esc(agent.id)}">${UI.esc(agent.account_name)} · ${UI.esc(agent.model)}</option>`).join('') : '<option value="">нет моделей</option>';
     if (agents.some(agent => agent.id === previous)) select.value = previous;
     UI.qs('#test-send').disabled = !agents.length;
-    UI.qs('#usage-body').innerHTML = (state.usage || []).length ? state.usage.slice().reverse().map(row => `<tr><td>${fmtDate(row.timestamp_utc)}</td><td><strong>${UI.esc(row.user_name || (row.user_id ? `ID ${row.user_id}` : 'system'))}</strong><div class="row-sub">${UI.esc(row.workspace_id || '')}</div></td><td><strong>${UI.esc(row.agent_name || row.agent_id || '—')}</strong><div class="row-sub">${UI.esc(row.account_name || '')}${row.request_role ? ` · ${UI.esc(row.request_role)}` : ''}</div></td><td>${UI.esc(row.provider || '—')}<div class="row-sub mono">${UI.esc(row.actual_model || row.model || '')}</div></td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span>${row.purpose ? `<div class="row-sub">${UI.esc(row.purpose)}</div>` : ''}${row.error ? `<div class="row-sub">${UI.esc(row.error)}</div>` : ''}</td><td class="num">${Number(row.input_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.cached_input_tokens || 0).toLocaleString('ru-RU')}<div class="row-sub">${Number(row.input_tokens || 0) ? (Number(row.cached_input_tokens || 0) / Number(row.input_tokens || 1) * 100).toFixed(1) : '0.0'}%${row.application_cache_hit ? ` · app saved ${Number(row.application_cache_saved_input_tokens || 0).toLocaleString('ru-RU')}` : ''}</div></td><td class="num">${Number(row.output_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${costText(row)}</td></tr>`).join('') : '<tr><td colspan="10"><div class="empty-state">Usage log пуст.</div></td></tr>';
+    UI.qs('#usage-body').innerHTML = (state.usage || []).length ? state.usage.slice().reverse().map(row => `<tr><td>${fmtDate(row.timestamp_utc)}</td><td><strong>${UI.esc(row.user_name || (row.user_id ? `ID ${row.user_id}` : 'system'))}</strong><div class="row-sub">${UI.esc(row.workspace_id || '')}</div></td><td><strong>${UI.esc(row.agent_name || row.agent_id || '—')}</strong><div class="row-sub">${UI.esc(row.account_name || '')}${row.request_role ? ` · ${UI.esc(row.request_role)}` : ''}</div></td><td>${UI.esc(row.provider || '—')}<div class="row-sub mono">${UI.esc(row.actual_model || row.model || '')}</div></td><td><span class="badge ${row.status === 'success' ? 'live' : 'failed'}">${UI.esc(row.status || '—')}</span>${row.purpose ? `<div class="row-sub">${UI.esc(row.purpose)}</div>` : ''}${row.error ? `<div class="row-sub">${UI.esc(row.error)}</div>` : ''}</td><td class="num">${Number(row.input_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.cached_input_tokens || 0).toLocaleString('ru-RU')}<div class="row-sub">${Number(row.input_tokens || 0) ? (Number(row.cached_input_tokens || 0) / Number(row.input_tokens || 1) * 100).toFixed(1) : '0.0'}%${row.application_cache_hit ? ` · app saved ${Number(row.application_cache_saved_input_tokens || 0).toLocaleString('ru-RU')}` : ''}</div></td><td class="num">${Number(row.output_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${Number(row.total_tokens || 0).toLocaleString('ru-RU')}</td><td class="num">${costText(row)}</td></tr>`).join('') : '<tr><td colspan="10"><div class="empty-state">Журнал запросов пуст.</div></td></tr>';
     renderBuckets('#account-usage', state.by_account || [], 'Запросов по аккаунтам пока нет.');
     renderBuckets('#model-usage', state.by_model || [], 'Запросов по моделям пока нет.');
     wireRows();
@@ -100,21 +100,21 @@ UI.ready(async function () {
     const providerOptions = state.providers.map(row => `<option value="${UI.esc(row.id)}" ${agent?.provider === row.id ? 'selected' : ''}>${UI.esc(row.label)}</option>`).join('');
     const billingOptions = state.billing_modes.map(row => `<option value="${UI.esc(row.id)}" ${agent?.billing_mode === row.id ? 'selected' : ''}>${UI.esc(row.label)}</option>`).join('');
     const roleOptions = state.roles.map(row => `<option value="${UI.esc(row.id)}" ${(agent?.role || 'general') === row.id ? 'selected' : ''}>${UI.esc(row.label)}</option>`).join('');
-    const d = UI.drawer(`<h3>${editing ? 'Edit Model' : 'Add Model'}</h3>`, `
-      <div class="finance-note"><strong>Минимальная настройка:</strong> выберите provider, укажите аккаунт/квоту, model и API key. Endpoint type, auth, цены и блокирующие бюджеты приложение определяет само. Ключ после сохранения показывается только маской.</div>
+    const d = UI.drawer(`<h3>${editing ? 'Изменить модель' : 'Добавить модель'}</h3>`, `
+      <div class="finance-note"><strong>Минимальная настройка:</strong> выберите провайдера, укажите аккаунт/квоту, модель и API-ключ. Тип endpoint, авторизацию, цены и блокирующие бюджеты приложение определяет само. Ключ после сохранения показывается только маской.</div>
       <div class="agent-form-grid">
-        <div class="field"><label for="af-provider">Provider</label><select id="af-provider">${providerOptions}</select></div>
-        <div class="field"><label for="af-account">Аккаунт / квота / API key</label><input id="af-account" maxlength="120" value="${UI.esc(agent?.account_name || '')}" placeholder="Azure Student Grant ($100)"></div>
-        <div class="field"><label for="af-model">Model / deployment name</label><input id="af-model" maxlength="180" value="${UI.esc(agent?.model || '')}" placeholder="gpt-5-mini"></div>
-        <div class="field"><label for="af-key">${editing ? 'Новый API key (пусто = оставить текущий)' : 'API key'}</label><input id="af-key" type="password" autocomplete="new-password" placeholder="вставьте ключ только здесь"></div>
-        <div class="field wide" id="af-base-field"><label for="af-base">Resource endpoint</label><input id="af-base" maxlength="500" value="${UI.esc(agent?.base_url || '')}" placeholder="базовый URL или полный endpoint из portal"></div>
+        <div class="field"><label for="af-provider">Провайдер</label><select id="af-provider">${providerOptions}</select></div>
+        <div class="field"><label for="af-account">Аккаунт / квота / API-ключ</label><input id="af-account" maxlength="120" value="${UI.esc(agent?.account_name || '')}" placeholder="Azure Student Grant ($100)"></div>
+        <div class="field"><label for="af-model">Модель / имя развёртывания</label><input id="af-model" maxlength="180" value="${UI.esc(agent?.model || '')}" placeholder="gpt-5-mini"></div>
+        <div class="field"><label for="af-key">${editing ? 'Новый API-ключ (пусто = оставить текущий)' : 'API-ключ'}</label><input id="af-key" type="password" autocomplete="new-password" placeholder="вставьте ключ только здесь"></div>
+        <div class="field wide" id="af-base-field"><label for="af-base">Адрес ресурса (endpoint)</label><input id="af-base" maxlength="500" value="${UI.esc(agent?.base_url || '')}" placeholder="базовый URL или полный endpoint из portal"></div>
         <div class="field"><label for="af-billing">Тип квоты</label><select id="af-billing">${billingOptions}</select></div>
-        <div class="field" id="af-credit-field"><label for="af-credit">Общий credit аккаунта, USD</label><input id="af-credit" type="number" min="0" step="0.01" value="${agent?.credit_total_usd ?? 0}"></div>
-        <div class="field wide"><label class="telegram-setting"><span class="telegram-setting-copy"><strong>Enabled</strong><small>Нулевой budget означает monitoring-only и больше не блокирует тест.</small></span><input id="af-enabled" type="checkbox" ${agent?.enabled ? 'checked' : ''}><span class="telegram-switch"></span></label></div>
+        <div class="field" id="af-credit-field"><label for="af-credit">Общий кредит аккаунта, USD</label><input id="af-credit" type="number" min="0" step="0.01" value="${agent?.credit_total_usd ?? 0}"></div>
+        <div class="field wide"><label class="telegram-setting"><span class="telegram-setting-copy"><strong>Включена</strong><small>Нулевой budget означает monitoring-only и больше не блокирует тест.</small></span><input id="af-enabled" type="checkbox" ${agent?.enabled ? 'checked' : ''}><span class="telegram-switch"></span></label></div>
       </div>
-      <details><summary>Маршрутизация и назначение — можно настроить позже</summary><div class="agent-form-grid" style="margin-top:12px"><div class="field"><label for="af-pool">Rotation pool</label><input id="af-pool" maxlength="80" value="${UI.esc(agent?.rotation_group || '')}" placeholder="gemini-free"></div><div class="field"><label for="af-priority">Priority</label><input id="af-priority" type="number" min="1" max="1000" value="${Number(agent?.priority || 100)}"></div><div class="field"><label for="af-role">Role</label><select id="af-role">${roleOptions}</select></div><div class="field"><label for="af-purpose">Purpose</label><input id="af-purpose" maxlength="500" value="${UI.esc(agent?.purpose || '')}"></div></div></details>
+      <details><summary>Маршрутизация и назначение — можно настроить позже</summary><div class="agent-form-grid" style="margin-top:12px"><div class="field"><label for="af-pool">Пул ротации</label><input id="af-pool" maxlength="80" value="${UI.esc(agent?.rotation_group || '')}" placeholder="gemini-free"></div><div class="field"><label for="af-priority">Приоритет</label><input id="af-priority" type="number" min="1" max="1000" value="${Number(agent?.priority || 100)}"></div><div class="field"><label for="af-role">Роль</label><select id="af-role">${roleOptions}</select></div><div class="field"><label for="af-purpose">Назначение</label><input id="af-purpose" maxlength="500" value="${UI.esc(agent?.purpose || '')}"></div></div></details>
       <div class="finance-note" id="af-provider-note"></div>
-      <div class="flex wrap gap-sm"><button class="btn primary" id="af-save">${editing ? 'Save Model' : 'Add Model'}</button><button class="btn ghost" data-close-drawer>Cancel</button></div>`);
+      <div class="flex wrap gap-sm"><button class="btn primary" id="af-save">${editing ? 'Сохранить модель' : 'Добавить модель'}</button><button class="btn ghost" data-close-drawer>Отмена</button></div>`);
     const body = UI.qs('.drawer-b', d);
     const provider = UI.qs('#af-provider', body), base = UI.qs('#af-base', body), billing = UI.qs('#af-billing', body);
     const modelInput = UI.qs('#af-model', body);
@@ -150,7 +150,7 @@ UI.ready(async function () {
       const save = UI.qs('#af-save', body); save.disabled = true;
       try {
         if (editing) await API.http.aiAgentUpdate(agent.id, payload); else await API.http.aiAgentCreate(payload);
-        keyInput.value = ''; UI.toast(editing ? 'Model updated' : 'Model added'); UI.closeDrawer(); await load();
+        keyInput.value = ''; UI.toast(editing ? 'Модель обновлена' : 'Модель добавлена'); UI.closeDrawer(); await load();
       } catch (error) { save.disabled = false; UI.reportError(error); }
     };
   }
@@ -165,7 +165,7 @@ UI.ready(async function () {
       const result = await API.http.aiAgentTest(agentId, UI.qs('#test-prompt').value.trim());
       const cost = agent.pricing_status === 'unpriced' ? 'Cost: цена ещё не внесена в централизованный catalog' : `Cost: ${usd(result.cost_usd, 8)}`;
       UI.qs('#test-result').textContent = result.ok ? `${result.response}\n\n${result.input_tokens} input + ${result.output_tokens} output = ${result.total_tokens} tokens\n${cost} · ${Number(result.elapsed_sec || 0).toFixed(2)} sec` : `ERROR: ${result.error}`;
-      UI.toast(result.ok ? 'Connection test passed' : 'Connection test failed'); await load();
+      UI.toast(result.ok ? 'Проверка подключения пройдена' : 'Проверка подключения не пройдена'); await load();
     } catch (error) { UI.qs('#test-result').textContent = `ERROR: ${error.message}`; UI.reportError(error); }
     finally { button.disabled = false; }
   }
@@ -175,16 +175,16 @@ UI.ready(async function () {
     UI.qsa('[data-agent-test]').forEach(button => button.onclick = () => { UI.qs('#test-agent').value = button.dataset.agentTest; runTest(button.dataset.agentTest); });
     UI.qsa('[data-agent-toggle]').forEach(button => button.onclick = async () => {
       const enable = button.dataset.enabled !== '1';
-      if (!confirm(`${enable ? 'Enable' : 'Disable'} model?`)) return;
-      try { await API.http.aiAgentToggle(button.dataset.agentToggle, enable); UI.toast(enable ? 'Model enabled' : 'Model disabled'); await load(); } catch (error) { UI.reportError(error); }
+      if (!confirm(`${enable ? 'Включить' : 'Выключить'} модель?`)) return;
+      try { await API.http.aiAgentToggle(button.dataset.agentToggle, enable); UI.toast(enable ? 'Модель включена' : 'Модель выключена'); await load(); } catch (error) { UI.reportError(error); }
     });
     UI.qsa('[data-agent-delete]').forEach(button => button.onclick = async () => {
       const agent = state.agents.find(row => row.id === button.dataset.agentDelete);
-      if (!confirm(`Delete Model ${agent?.model || ''}? Зашифрованный ключ также будет удалён.`)) return;
-      try { await API.http.aiAgentDelete(button.dataset.agentDelete); UI.toast('Model deleted'); await load(); } catch (error) { UI.reportError(error); }
+      if (!confirm(`Удалить модель ${agent?.model || ''}? Зашифрованный ключ также будет удалён.`)) return;
+      try { await API.http.aiAgentDelete(button.dataset.agentDelete); UI.toast('Модель удалена'); await load(); } catch (error) { UI.reportError(error); }
     });
     UI.qsa('[data-agent-balance]').forEach(button => button.onclick = async () => {
-      try { await API.http.aiAgentSyncBalance(button.dataset.agentBalance); UI.toast('Credit balance synchronized'); await load(); } catch (error) { UI.reportError(error); }
+      try { await API.http.aiAgentSyncBalance(button.dataset.agentBalance); UI.toast('Баланс кредита синхронизирован'); await load(); } catch (error) { UI.reportError(error); }
     });
   }
 
@@ -238,7 +238,7 @@ UI.ready(async function () {
     if (!grid) return;
     if (badge) {
       badge.className = `badge ${voiceState.key_configured ? 'live' : 'archived'}`;
-      badge.innerHTML = `<span class="dot"></span>${voiceState.key_configured ? 'OpenAI TTS' : 'browser fallback'}`;
+      badge.innerHTML = `<span class="dot"></span>${voiceState.key_configured ? 'OpenAI TTS' : 'браузерная озвучка'}`;
     }
     const rows = voiceState.agents || [];
     if (!rows.length) {
@@ -410,7 +410,7 @@ UI.ready(async function () {
       try {
         const result = await API.http.domainAgentVoicePreview(agentId, payload);
         await playVoiceResult(result, row.preview_phrase || '', payload.voice);
-        status.textContent = voiceState.key_configured ? 'Предпрослушивание' : 'Browser fallback';
+        status.textContent = voiceState.key_configured ? 'Предпрослушивание' : 'Браузерная озвучка';
         status.className = voiceState.key_configured ? 'voice-status ok' : 'voice-status warn';
       } catch (error) {
         status.textContent = error.message || 'Ошибка'; status.className = 'voice-status err';
