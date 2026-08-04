@@ -4420,6 +4420,31 @@
     button.onclick = () => showEnvironmentSwitcher();
   }
 
+  function isDevelopmentEnv() {
+    const env = (BUILD_IDENTITY && BUILD_IDENTITY.environment)
+      || document.documentElement.dataset.deploymentEnvironment || '';
+    return String(env).toLowerCase() === 'development';
+  }
+
+  // Development-only: switch the localhost session between the owner and the
+  // Claude / GPT service accounts (separate audit, same workspace + data).
+  function devServiceMenuItems() {
+    if (!isDevelopmentEnv()) return [];
+    const loginAs = async (actor, label) => {
+      try {
+        await API.http.devServiceLogin(actor);
+        toast(actor === 'owner' ? 'Сессия владельца' : ('Служебный вход: ' + label));
+        location.reload();
+      } catch (e) { reportError(e); }
+    };
+    return [
+      { divider: true },
+      { icon: 'cpu', label: 'Войти как Claude (dev)', onClick: () => loginAs('claude', 'Claude') },
+      { icon: 'cpu', label: 'Войти как GPT (dev)', onClick: () => loginAs('gpt', 'GPT') },
+      { icon: 'users', label: 'Вернуться к владельцу (dev)', onClick: () => loginAs('owner', 'владелец') },
+    ];
+  }
+
   function wireTopbar() {
     const more = qs('#tb-more');
     if (more) more.onclick = (e) => {
@@ -4428,6 +4453,7 @@
         { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
         ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Панель администратора', onClick: () => openAdminPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
+        ...devServiceMenuItems(),
         { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/'; } },
         { divider: true },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },

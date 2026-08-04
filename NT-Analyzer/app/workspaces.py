@@ -453,6 +453,34 @@ def ensure_training_membership(user_id: Any, owner_id: Any) -> None:
             _ensure_tenant_dirs(str(owner_workspace["workspace_id"]))
 
 
+def ensure_service_membership(user_id: Any, owner_id: Any) -> str:
+    """Bind a Development service account to the owner's workspace as an owner.
+
+    Unlike ``ensure_training_membership`` (which adds ordinary members as
+    viewers), a Claude/GPT service account is granted the ``owner`` workspace
+    role so it works on exactly the owner's runtime data. Development only; the
+    caller (``dev_service_accounts``) is gated to localhost.
+    """
+    user = int(user_id or 0)
+    owner = int(owner_id or 0)
+    if user <= 0 or owner <= 0:
+        raise WorkspaceError("Service membership requires user and owner.", 400)
+    with _LOCK:
+        doc = _read_doc()
+        owner_workspace, changed = _ensure_owner_workspace_doc(doc, owner)
+        workspace_id = str(owner_workspace["workspace_id"])
+        changed = _ensure_membership(
+            doc, workspace_id=workspace_id, user_id=user, role="owner", created_by=owner,
+        ) or changed
+        if str(doc["active_workspaces"].get(str(user)) or "") != workspace_id:
+            doc["active_workspaces"][str(user)] = workspace_id
+            changed = True
+        if changed:
+            _write_doc(doc)
+            _ensure_tenant_dirs(workspace_id)
+    return workspace_id
+
+
 def _is_expired(expires_at_utc: Any) -> bool:
     text = str(expires_at_utc or "").strip()
     if not text:

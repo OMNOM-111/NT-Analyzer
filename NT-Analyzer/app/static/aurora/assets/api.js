@@ -343,6 +343,7 @@
     devPreviewExit: () => send('/api/dev/preview/exit', 'POST', {}),
     devPreviewResetPersonas: () => send('/api/dev/preview/reset-personas', 'POST', {}),
     devBootstrapMint: () => send('/api/dev/bootstrap/mint', 'POST', {}),
+    devServiceLogin: (actor) => send('/api/dev/service-login', 'POST', { actor }),
     adminReleases: (o) => getJSON('/api/admin/releases', o),
     adminRelease: (id, o) => getJSON('/api/admin/releases/' + encodeURIComponent(id), o),
     adminReleaseCreate: (body) => send('/api/admin/releases/candidates', 'POST', body || {}),

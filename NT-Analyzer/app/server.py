@@ -60,6 +60,7 @@ if __package__ is None or __package__ == "":
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
     from app import dev_preview  # type: ignore[no-redef]
+    from app import dev_service_accounts  # type: ignore[no-redef]
     from app import release_center  # type: ignore[no-redef]
     from app import doc_specs  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
@@ -147,6 +148,7 @@ else:
     from . import ninjatrader_resources
     from . import agent_allocation
     from . import dev_preview
+    from . import dev_service_accounts
     from . import release_center
     from . import doc_specs
     from . import subscriptions
@@ -1475,18 +1477,64 @@ class Handler(BaseHTTPRequestHandler):
         return any(host and host not in _ALLOWED_ORIGIN_HOSTS for host in hosts)
 
     def _local_owner_context(self) -> Dict[str, Any]:
-        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        owner_env = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
         user: Dict[str, Any] = {}
-        if owner_id:
-            user = account_auth.ensure_owner(owner_id) or {}
+        owner_id = int(owner_env or 0)
+        if owner_env:
+            try:
+                user = account_auth.ensure_owner(owner_env) or {}
+            except account_auth.AccountAuthError:
+                user = {}
+        if not user:
+            # Fall back to the canonical owner already saved in the local store
+            # so a localhost dev session shows the real owner profile and data
+            # (accounts, strategies, NinjaTrader, agents) instead of an empty
+            # synthetic scope, even when NTA_TELEGRAM_CHAT_ID is not exported.
+            resolved_id = account_auth.primary_owner_id()
+            if resolved_id > 0:
+                owner_id = resolved_id
+                user = account_auth.primary_owner() or {}
         return self._decorate_workspace_context({
-            "source": "local", "user_id": int(owner_id or 0),
+            "source": "local", "user_id": owner_id,
             "role": "owner", "is_owner": True,
             "csrf_token": "", "user": user,
+            "_owner_scope_id": owner_id,
+        })
+
+    def _dev_service_context(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        """Context for a localhost Claude/GPT service session.
+
+        Owner-equivalent authority over the owner's workspace/data (via the
+        pre-established owner-role membership), but a distinct ``user_id`` so
+        every action is audited under the service account, not the human owner.
+        """
+        uid = int(session.get("user_id") or 0)
+        actor = dev_service_accounts.actor_for_uid(uid)
+        spec = dev_service_accounts.SERVICE_ACCOUNTS.get(actor, {})
+        user = account_auth.find_active_user(uid) or {
+            "user_id": uid,
+            "first_name": spec.get("first_name", "Service"),
+            "last_name": spec.get("last_name", ""),
+            "username": spec.get("username", ""),
+            "role": "owner", "status": "active",
+            "is_owner": False, "is_service_account": True,
+            "ux_mode": "professional",
+        }
+        return self._decorate_workspace_context({
+            "source": "dev_service", "user_id": uid,
+            "role": "owner", "is_owner": True, "user": user,
+            "session_id": str(session.get("session_id") or ""),
+            "csrf_token": str(session.get("csrf_token") or ""),
+            "service_actor": actor,
+            "_owner_scope_id": 0,
         })
 
     def _decorate_workspace_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        scope_override = context.get("_owner_scope_id")
+        if scope_override is None:
+            owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        else:
+            owner_id = str(scope_override or "")
         try:
             workspace_context = workspaces.context_for_user(
                 context.get("user_id"),
@@ -1688,6 +1736,17 @@ class Handler(BaseHTTPRequestHandler):
         # auth is disabled. Otherwise every Mini App visitor would inherit full
         # owner access (the reported "instant access" security hole).
         if not account_auth.auth_required() and not self._is_remote_api_request():
+            # Localhost dev: honor an explicit Claude/GPT service session so their
+            # actions are audited separately; otherwise default to the owner.
+            if dev_service_accounts.available():
+                session = account_auth.authenticate_session(
+                    self._cookie_value(runtime_env.session_cookie_name()))
+                if session and dev_service_accounts.is_service_uid(session.get("user_id")):
+                    try:
+                        self._remote_context = self._dev_service_context(session)
+                    except account_auth.AccountAuthError as exc:
+                        self._err(exc.status, str(exc)); return False
+                    return True
             try:
                 self._remote_context = self._local_owner_context()
             except account_auth.AccountAuthError as exc:
@@ -2924,6 +2983,49 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", "/ui/")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _dev_service_login(self) -> None:
+        """Localhost-only Claude/GPT service login (Development only).
+
+        Never available in Canary/Production (``dev_service_accounts.available``)
+        and only from a loopback client. ``actor='owner'`` (or empty) clears the
+        service session to return to the human owner.
+        """
+        if not self._check_local_post():
+            return
+        if not dev_service_accounts.available():
+            self._err(HTTPStatus.FORBIDDEN, "Служебный вход доступен только в Development.",
+                      code="dev_only")
+            return
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        if not is_loopback:
+            self._err(HTTPStatus.FORBIDDEN, "Служебный вход возможен только с localhost.",
+                      code="loopback_required")
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        actor = str(body.get("actor") or "").strip().lower()
+        if actor in {"", "owner"}:
+            self._clear_session_cookie()
+            self._json(HTTPStatus.OK, {"ok": True, "actor": "owner"})
+            return
+        try:
+            out = dev_service_accounts.login(
+                actor, is_loopback=is_loopback, ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-service"))
+        except dev_service_accounts.DevServiceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        token = str(out.pop("session_token", ""))
+        if token:
+            self._set_session_cookie(token)
+        self._json(HTTPStatus.OK, out)
 
     def _dev_preview_post(self, path: str) -> None:
         """Developer-only View-As and bootstrap-mint (Development, owner-gated)."""
@@ -7043,6 +7145,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/dev/preview/") or path == "/api/dev/bootstrap/mint":
             self._dev_preview_post(path)
+            return
+
+        if path == "/api/dev/service-login":
+            self._dev_service_login()
             return
 
         if path.startswith("/api/admin/releases"):

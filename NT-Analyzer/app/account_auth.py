@@ -1460,6 +1460,94 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
         return _public_user(existing, include_contact=True, include_avatar=True)
 
 
+def _primary_owner_row() -> Optional[Dict[str, Any]]:
+    configured = str(os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
+    with _LOCK:
+        doc = _read_doc_reference()
+        owners = [
+            u for u in (doc.get("users") or [])
+            if isinstance(u, dict) and u.get("is_owner") and u.get("status") == "active"
+        ]
+    if not owners:
+        return None
+    if configured:
+        match = next((u for u in owners if str(u.get("user_id") or "") == configured), None)
+        if match:
+            return match
+    named = [u for u in owners if str(u.get("first_name") or "").strip()]
+    return min(named or owners, key=lambda u: int(u.get("user_id") or 0))
+
+
+def primary_owner_id() -> int:
+    """Return the canonical local owner's legacy user id (0 if none)."""
+    row = _primary_owner_row()
+    return int((row or {}).get("user_id") or 0)
+
+
+def primary_owner() -> Optional[Dict[str, Any]]:
+    """Return the canonical local owner account (Development convenience).
+
+    Prefers the owner whose id matches ``NTA_TELEGRAM_CHAT_ID``, then any active
+    owner that has a real name, then the lowest active owner id. Used to give a
+    localhost Development session the real owner profile and data even when the
+    Telegram chat id is not exported into the environment, instead of falling
+    back to an empty synthetic ``ws_local_owner`` scope.
+    """
+    row = _primary_owner_row()
+    if row is None:
+        return None
+    return _public_user(row, include_contact=True, include_avatar=True)
+
+
+def ensure_service_account_user(
+    user_id: int, *, first_name: str, last_name: str = "", username: str = "",
+) -> Dict[str, Any]:
+    """Create/refresh a Development-only service account (Claude/GPT).
+
+    The row itself is not a global owner; owner-equivalent authority is granted
+    only inside the localhost Development request context. A distinct ``user_id``
+    keeps every audit record attributable to the service account rather than the
+    human owner. Never available outside Development.
+    """
+    runtime_env.require_staging("Service accounts")
+    uid = int(user_id)
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        now = _now_iso()
+        if user is None:
+            user = {
+                "user_id": uid,
+                "legacy_user_id": uid,
+                "user_uuid": auth_identity.new_user_uuid(),
+                "username": str(username or f"service_{uid}")[:64],
+                "first_name": str(first_name or "Service")[:80],
+                "last_name": str(last_name or "")[:80],
+                "email": "", "phone": "", "phone_hash": "",
+                "role": "read_only", "status": "active", "is_owner": False,
+                "is_service_account": True,
+                "primary_login_provider": "dev_service",
+                "created_at_utc": now, "approved_at_utc": now, "revoked_at_utc": "",
+                "ux_mode": "professional",
+                "terms_accepted_at_utc": now,
+                "terms_version": str(getattr(legal, "TERMS_VERSION", "1") or "1"),
+            }
+            doc["users"].append(user)
+        else:
+            user.update({
+                "first_name": str(first_name or user.get("first_name") or "Service")[:80],
+                "last_name": str(last_name or user.get("last_name") or "")[:80],
+                "status": "active", "is_service_account": True,
+                "primary_login_provider": "dev_service",
+                "revoked_at_utc": "",
+            })
+            if not user.get("approved_at_utc"):
+                user["approved_at_utc"] = now
+        _sync_user_identity_summary(doc, user)
+        _write_doc(doc)
+        return _public_user(user, include_contact=True)
+
+
 def find_active_user(user_id: Any) -> Optional[Dict[str, Any]]:
     try:
         uid = int(user_id)
