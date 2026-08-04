@@ -764,6 +764,18 @@ def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
     assert "API.http.governanceHistory" in js
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
+
+
+def test_admin_panel_module_switching_uses_stale_render_guard():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "let renderSeq = 0;" in ui
+    assert "const seq = ++renderSeq;" in ui
+    assert "admin-module-render" in ui
+    assert "moduleBody.replaceChildren(container);" in ui
+    assert "await renderAdminModule(container, id, overview);" in ui
+    assert "renderAdminModule(moduleBody, id, overview)" not in ui
+
+
 def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
     from pathlib import Path
 
