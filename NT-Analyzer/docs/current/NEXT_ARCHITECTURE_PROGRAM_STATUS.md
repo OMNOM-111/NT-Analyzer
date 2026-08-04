@@ -297,3 +297,10 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - **Каноническое локальное хранилище + настоящий owner-профиль.** Локальная Development-версия использует существующий канонический data root (`STRATFORGE_DEVELOPMENT_DATA_ROOT=<repo>/data`, как в supervised dev-профиле) и реального владельца. `account_auth.primary_owner()`/`primary_owner_id()` резолвят настоящего owner из локального стора, `server._local_owner_context` использует его вместо пустого synthetic `ws_local_owner`, а `_decorate_workspace_context` уважает `_owner_scope_id`. Проверено в браузере: имя владельца, роль, workspace `ws_owner_training_*`, 22 стратегии и NinjaTrader-Bridge снова отображаются.
 - **Dev-only служебные аккаунты Claude/GPT.** `app/dev_service_accounts.py` + `POST /api/dev/service-login`: отдельные аккаунты с owner-правами к тому же workspace и данным (owner-роль в workspace владельца, `uses_owner_runtime`), но с отдельным `user_id` и отдельным audit (`data/audit/dev-service-accounts.jsonl`). Вход обходит Telegram только на localhost и невозможен в Canary/Production (`dev_service_accounts.available()`=is_development + loopback-guard). UI-переключатель (dev-only) в системном меню. Reserved id band внутри JS safe-integer range.
 - Тесты: `tests/test_phase11c_dev_service_accounts.py` (9). Full regression **1184 passed / 31 skipped**; compileall / node --check / static scan / git diff --check PASS. `main`/Canary/Production не затронуты.
+
+### Phase 11c closeout
+
+- Implementation `3ded4518`; [PR #19](https://github.com/OMNOM-111/NT-Analyzer/pull/19) merged; merge commit `178493c0`; task branch `phase/11c-local-dev-owner-storage` удалена локально и на origin.
+- CI [Actions run 30872561331](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30872561331) SUCCESS (Static gates, Tests ubuntu-latest, Tests windows-latest — PASS).
+- Clean-worktree verification (detach из origin, clean env): git status чист до и после; full regression 1184 passed / 31 skipped; compileall / node --check / static scan / git diff --check PASS.
+- **Phase 11c GIT CLOSEOUT COMPLETE.** `main`/Canary/Production/DNS/Cloudflare/secrets не затронуты.
