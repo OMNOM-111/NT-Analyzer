@@ -4404,9 +4404,17 @@
       }).join('');
       body.innerHTML = `<div class="admin-shell"><nav class="admin-modules">${navHtml}</nav><main class="admin-module-body" id="admin-module-body"></main></div>`;
       const moduleBody = qs('#admin-module-body', body);
+      let renderSeq = 0;
       const select = async id => {
+        const seq = ++renderSeq;
         qsa('[data-admin-module]', body).forEach(button => button.classList.toggle('on', button.dataset.adminModule === id));
-        await renderAdminModule(moduleBody, id, overview);
+        const container = el('<div class="admin-module-render"></div>');
+        moduleBody.replaceChildren(container);
+        try {
+          await renderAdminModule(container, id, overview);
+        } catch (e) {
+          if (seq === renderSeq) renderError(container, e, () => select(id));
+        }
       };
       qsa('[data-admin-module]', body).forEach(button => button.onclick = () => select(button.dataset.adminModule));
       await select(start);
