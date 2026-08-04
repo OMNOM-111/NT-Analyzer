@@ -255,7 +255,7 @@ UI.ready(async function () {
     const node = UI.qs('#side-next');
     const next = filtered().filter(i => new Date(i.event_time_utc) >= now && sev(i) === 'high')[0];
     if (!next) {
-      node.innerHTML = '<div class="side-h">Ближайшее high-impact</div><div class="side-row m">Нет предстоящих событий высокого влияния.</div>';
+      node.innerHTML = '<div class="side-h">Ближайшее важное событие</div><div class="side-row m">Нет предстоящих событий высокого влияния.</div>';
       return;
     }
     const ms = new Date(next.event_time_utc) - now;
@@ -263,7 +263,7 @@ UI.ready(async function () {
     if (ms <= 120 * 60000) { node.innerHTML = ''; return; }
     const e = eta(ms), p = pt(next.event_time_utc);
     const why = WHY[next.category] || '';
-    node.innerHTML = `<div class="side-h"><span class="dot s-high" style="width:8px;height:8px;border-radius:50%"></span>Ближайшее high-impact</div>
+    node.innerHTML = `<div class="side-h"><span class="dot s-high" style="width:8px;height:8px;border-radius:50%"></span>Ближайшее важное событие</div>
       <div class="kpi neg" style="margin:0">
         <div class="kpi-top"><span class="kpi-label">${UI.esc(next.title)}</span></div>
         <div class="kpi-val sm">${UI.esc(e.txt)}</div>
@@ -390,7 +390,7 @@ UI.ready(async function () {
     if (text.includes('bls')) return { label: 'BLS', cls: 'src-bls' };
     if (text.includes('labor') || text.includes('dol')) return { label: 'DOL', cls: 'src-dol' };
     if (text.includes('alpha vantage')) return { label: 'AV', cls: 'src-av' };
-    return { label: 'NEWS', cls: 'src-generic' };
+    return { label: 'НОВОСТЬ', cls: 'src-generic' };
   }
 
   function agentThumbHtml(item) {
@@ -412,7 +412,7 @@ UI.ready(async function () {
     const rows = agent.items || [];
     const s = agent.summary || {};
     const now = Date.now();
-    summaryNode.textContent = `${s.total || rows.length} значимых · high ${s.high || 0}`;
+    summaryNode.textContent = `${s.total || rows.length} значимых · важных ${s.high || 0}`;
     if (!rows.length) {
       node.innerHTML = '<div class="empty-state">Значимых опубликованных или предстоящих событий пока нет.</div>';
       return;
@@ -432,7 +432,7 @@ UI.ready(async function () {
         ${agentThumbHtml(item)}
         <div class="news-agent-instruments">${agentInstrumentTags(item)}</div>
         <div class="news-agent-title">${item.kind === 'upcoming' ? '⏱ ' : '📰 '}${title}</div>
-        <div class="news-agent-meta"><span class="impact-badge ${UI.esc(item.severity || 'low')}">${UI.esc(String(item.severity || '').toUpperCase())}</span><span>${UI.esc(item.source || 'источник')}</span><span>${UI.esc(status)}</span></div>
+        <div class="news-agent-meta"><span class="impact-badge ${UI.esc(item.severity || 'low')}">${UI.esc({ high: 'ВАЖНО', medium: 'СРЕДН.', low: 'НИЗК.' }[item.severity] || String(item.severity || '').toUpperCase())}</span><span>${UI.esc(item.source || 'источник')}</span><span>${UI.esc(status)}</span></div>
         <div class="news-agent-time">${UI.esc(agentWhen(item, now))} · ${UI.esc(agentRelevance(item, now))}</div>
         <div class="news-agent-reco"><strong>Рекомендация:</strong> ${UI.esc(recommendation)}</div>
         <details class="news-agent-details">

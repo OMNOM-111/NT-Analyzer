@@ -190,7 +190,7 @@ def record_accounts(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "provenance": "derived_from_net_liquidation_minus_runtime_pnl_delta",
                         "classification_status": "needs_review",
                         "actor": "system",
-                        "note": "Не классифицировано: источник не предоставляет broker cash transactions.",
+                        "note": "Не классифицировано: источник не предоставляет движения по счёту у брокера.",
                     }
                     account.setdefault("events", []).append(event)
                     new_events.append({"account_name": name, "event_id": event["event_id"]})

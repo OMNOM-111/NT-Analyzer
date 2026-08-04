@@ -300,7 +300,7 @@ function renderKpis(box, account, month, year, coverage, ai) {
   const balance = account && Number(account.net_liquidation);
   const na = '<span class="muted">нет данных</span>';
   const kpis = [
-    { label: 'Баланс выбранного счёта', val: Number.isFinite(balance) ? UI.money(balance) : na, cls: 'info', icon: 'wallet', foot: account ? `${UI.esc(account.account_name)} · ${ovAccountConnected(account) ? 'подключён' : 'offline'}` : 'счёт недоступен' },
+    { label: 'Баланс выбранного счёта', val: Number.isFinite(balance) ? UI.money(balance) : na, cls: 'info', icon: 'wallet', foot: account ? `${UI.esc(account.account_name)} · ${ovAccountConnected(account) ? 'подключён' : 'офлайн'}` : 'счёт недоступен' },
     { label: 'Торговый P&L · месяц', val: month ? UI.money(monthSum.pnl || 0, { sign: true }) : na, cls: month ? UI.pnlClass(monthSum.pnl || 0) : '', icon: 'coins', foot: month ? `${monthSum.trades || 0} зачтённых сделок` : 'источник недоступен' },
     { label: 'Торговый P&L · год', val: year ? UI.money(yearSum.pnl || 0, { sign: true }) : na, cls: year ? UI.pnlClass(yearSum.pnl || 0) : '', icon: 'spark', foot: year ? `WR ${UI.pct(yearSum.win_rate || 0)} · PF ${yearSum.profit_factor == null ? '—' : Number(yearSum.profit_factor).toFixed(2)}` : 'источник недоступен' },
     { label: 'Макс. просадка · год', val: year ? UI.money(drawdown) : na, cls: drawdown < 0 ? 'neg' : '', icon: 'chart', foot: 'только результат стратегий' },
@@ -357,7 +357,7 @@ function renderAccountOverview(accounts, selected, history) {
   if (sub) sub.textContent = selected ? `${selected.account_name} · баланс отдельно от результата стратегий` : 'нет доступного счёта';
   cards.innerHTML = accounts.length ? accounts.map(account => {
     const active = selected && account.account_name === selected.account_name;
-    return `<article class="account-card ${active ? 'active' : ''}"><div class="flex between"><strong>${UI.esc(account.account_name)}</strong><span class="badge ${ovAccountConnected(account) ? 'live' : 'archived'}"><span class="dot"></span>${ovAccountConnected(account) ? 'online' : 'offline'}</span></div><div class="account-money">${UI.money(Number(account.net_liquidation || 0))}</div><div class="row-sub">Cash ${UI.money(Number(account.cash_value || 0))} · Realized ${UI.money(Number(account.realized_pnl || 0), { sign: true })} · ${account.is_live ? 'LIVE' : 'DEMO'}</div></article>`;
+    return `<article class="account-card ${active ? 'active' : ''}"><div class="flex between"><strong>${UI.esc(account.account_name)}</strong><span class="badge ${ovAccountConnected(account) ? 'live' : 'archived'}"><span class="dot"></span>${ovAccountConnected(account) ? 'онлайн' : 'офлайн'}</span></div><div class="account-money">${UI.money(Number(account.net_liquidation || 0))}</div><div class="row-sub">Cash ${UI.money(Number(account.cash_value || 0))} · Realized ${UI.money(Number(account.realized_pnl || 0), { sign: true })} · ${account.is_live ? 'LIVE' : 'DEMO'}</div></article>`;
   }).join('') : '<div class="empty-state">Счета не получены от NinjaTrader.</div>';
 
   const ledger = ((history && history.accounts) || []).find(row => selected && row.account_name === selected.account_name);
@@ -377,7 +377,7 @@ function renderAccountOverview(accounts, selected, history) {
   const deposits = classified.filter(event => event.kind === 'deposit').reduce((sum, event) => sum + Number(event.amount || 0), 0);
   const withdrawals = classified.filter(event => ['withdrawal', 'fee'].includes(event.kind)).reduce((sum, event) => sum + Number(event.amount || 0), 0);
   const review = events.filter(event => event.classification_status === 'needs_review').length;
-  note.innerHTML = `<div><strong>Внешние движения:</strong> пополнения ${UI.money(deposits)} · выводы/комиссии ${UI.money(withdrawals)}${review ? ` · <span class="warn">${review} требуют классификации</span>` : ''}</div><div class="muted">Движения средств не включаются в торговый P&L. Источник broker cash transactions пока недоступен; ручные и импортированные операции имеют отдельный аудит.</div>`;
+  note.innerHTML = `<div><strong>Внешние движения:</strong> пополнения ${UI.money(deposits)} · выводы/комиссии ${UI.money(withdrawals)}${review ? ` · <span class="warn">${review} требуют классификации</span>` : ''}</div><div class="muted">Движения средств не включаются в торговый P&L. Источник движений по счёту у брокера пока недоступен; ручные и импортированные операции имеют отдельный аудит.</div>`;
 }
 
 function wireRhythm(year) {

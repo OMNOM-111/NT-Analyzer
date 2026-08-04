@@ -31,9 +31,9 @@ UI.ready(async function () {
   }
   function accountCard(a) {
     const connected = String(a.connection_status || '').toLowerCase() === 'connected';
-    return `<div class="kpi"><div class="kpi-top"><span class="kpi-label">${UI.esc(a.display_name || a.account_name)}</span><span class="badge ${!connected ? 'archived' : a.is_live ? 'failed' : 'demo'}">${a.is_live ? 'LIVE' : (a.account_mode || 'paper')} · ${connected ? 'connected' : 'offline'}</span></div>
+    return `<div class="kpi"><div class="kpi-top"><span class="kpi-label">${UI.esc(a.display_name || a.account_name)}</span><span class="badge ${!connected ? 'archived' : a.is_live ? 'failed' : 'demo'}">${a.is_live ? 'LIVE' : (a.account_mode || 'paper')} · ${connected ? 'подключён' : 'офлайн'}</span></div>
       <div class="kpi-val sm">${UI.money(a.net_liquidation || a.cash_value || 0)}</div>
-      <div class="kpi-foot">реализ. <b class="${UI.pnlClass(a.realized_pnl || 0)}">${UI.money(a.realized_pnl || 0, { sign: true })}</b> · нереализ. <b class="${UI.pnlClass(a.unrealized_pnl || 0)}">${UI.money(a.unrealized_pnl || 0, { sign: true })}</b> · ${UI.esc(a.connection_status || '')}</div></div>`;
+      <div class="kpi-foot">реализ. <b class="${UI.pnlClass(a.realized_pnl || 0)}">${UI.money(a.realized_pnl || 0, { sign: true })}</b> · нереализ. <b class="${UI.pnlClass(a.unrealized_pnl || 0)}">${UI.money(a.unrealized_pnl || 0, { sign: true })}</b>${a.connection_status ? ' · ' + (connected ? 'подключён' : 'отключён') : ''}</div></div>`;
   }
 
   async function loadAccountAnalytics() {
@@ -43,7 +43,7 @@ UI.ready(async function () {
     const chartBox = UI.qs('#account-pnl-box');
     const ledgerBody = UI.qs('#account-ledger-body');
     if (!account) { UI.renderEmpty(kpis, 'Нет доступного торгового счёта.'); chartBox.innerHTML = ''; ledgerBody.innerHTML = '<tr><td colspan="7"><div class="empty-state">Счёт не выбран.</div></td></tr>'; return; }
-    UI.qs('#account-analytics-sub').textContent = `${account.account_name} · ${account.is_live ? 'LIVE' : (account.account_mode || 'paper')} · ${account.connection_status || ''}`;
+    UI.qs('#account-analytics-sub').textContent = `${account.account_name} · ${account.is_live ? 'LIVE' : (account.account_mode || 'paper')}${account.connection_status ? ' · ' + (String(account.connection_status).toLowerCase() === 'connected' ? 'подключён' : 'отключён') : ''}`;
     let perf, history;
     try {
       [perf, history] = await Promise.all([

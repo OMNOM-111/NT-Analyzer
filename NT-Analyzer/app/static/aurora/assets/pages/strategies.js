@@ -167,7 +167,7 @@ UI.ready(async function () {
     const cs = (coverage && coverage.summary) || {};
     const rs = (registry && registry.summary) || {};
     kpiBox.innerHTML = [
-      { label: 'Portfolio roots', val: rs.roots != null ? rs.roots : ((coverage && coverage.instruments) || []).length, cls: 'pos', icon: 'layers', foot: `${rs.active || 0} активных ячеек · ${runtimeRoots.length || 0} roots в каталоге` },
+      { label: 'Корни портфеля', val: rs.roots != null ? rs.roots : ((coverage && coverage.instruments) || []).length, cls: 'pos', icon: 'layers', foot: `${rs.active || 0} активных ячеек · ${runtimeRoots.length || 0} roots в каталоге` },
       { label: 'Готовых профилей', val: ready, cls: 'info', icon: 'strategies', foot: 'ready + paper-ready' },
       { label: 'Утверждено для демо', val: demoLc, cls: '', icon: 'check', foot: 'жизненный цикл' },
       { label: 'AI-эксперименты', val: aiCards.length, cls: 'warn', icon: 'ai', foot: 'архив AI Lab' },
