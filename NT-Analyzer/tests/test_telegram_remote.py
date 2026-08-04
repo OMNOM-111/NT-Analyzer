@@ -226,6 +226,10 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
         def _is_remote_api_request(self):
             return True
 
+        def _local_owner_bypass_allowed(self):
+            # A remote (Mini App) request is never a local owner/service bypass.
+            return False
+
         def _request_ips(self):
             return "", ""
 

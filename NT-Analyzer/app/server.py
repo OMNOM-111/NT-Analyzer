@@ -1476,6 +1476,35 @@ class Handler(BaseHTTPRequestHandler):
         ]
         return any(host and host not in _ALLOWED_ORIGIN_HOSTS for host in hosts)
 
+    def _local_owner_bypass_allowed(self) -> bool:
+        """Whether this request may auto-resolve the owner/service without Telegram.
+
+        This is the localhost convenience that lets the checked-out Development
+        build open the real owner profile on 127.0.0.1 with no Telegram step and
+        with the canonical data root. It is fail-closed for anything that is not
+        physically local and is impossible in an explicitly-selected
+        Canary/Production deployment:
+          * the request must not be a remote/Mini App request (no Telegram
+            initData, only loopback origin hosts), and
+          * the transport peer and any forwarded-for must be a loopback IP, and
+          * an explicitly-configured Canary/Production environment can never
+            reach this path (hard invariant, independent of any flag or config),
+          * otherwise it is allowed when the environment is Development (the
+            local default, no flag needed) or the explicit test bypass is set.
+        """
+        if self._is_remote_api_request():
+            return False
+        tunnel_ip, forwarded_ip = self._request_ips()
+        if not self._is_loopback_ip(tunnel_ip):
+            return False
+        if forwarded_ip and not self._is_loopback_ip(forwarded_ip):
+            return False
+        environment = runtime_env.deployment_environment()
+        if (environment in (runtime_env.CANARY, runtime_env.PRODUCTION)
+                and runtime_env.environment_explicit()):
+            return False
+        return environment == runtime_env.DEVELOPMENT or not account_auth.auth_required()
+
     def _local_owner_context(self) -> Dict[str, Any]:
         owner_env = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
         user: Dict[str, Any] = {}
@@ -1734,24 +1763,37 @@ class Handler(BaseHTTPRequestHandler):
         # Mini App tunnel or anything carrying Telegram initData — must ALWAYS be
         # authenticated against the approved account allowlist, even when desktop
         # auth is disabled. Otherwise every Mini App visitor would inherit full
-        # owner access (the reported "instant access" security hole).
-        if not account_auth.auth_required() and not self._is_remote_api_request():
-            # Localhost dev: honor an explicit Claude/GPT service session so their
-            # actions are audited separately; otherwise default to the owner.
+        # owner access (the reported "instant access" security hole). On the
+        # checked-out Development build this path is the default (no flag needed);
+        # Canary/Production can never reach it (see _local_owner_bypass_allowed).
+        if self._local_owner_bypass_allowed():
+            # Localhost desktop convenience. Only when NO session cookie is
+            # present (a fresh desktop shell) do we open the canonical owner
+            # without a Telegram login. A Claude/GPT service session gets its
+            # audited owner-scoped context; any other session — valid, revoked
+            # or otherwise — falls through to the normal authenticated path so
+            # its real role/permissions or error are enforced, never masked as
+            # the owner.
+            cookie = self._cookie_value(runtime_env.session_cookie_name())
+            if not cookie:
+                try:
+                    self._remote_context = self._local_owner_context()
+                except account_auth.AccountAuthError as exc:
+                    self._err(exc.status, str(exc)); return False
+                return True
             if dev_service_accounts.available():
-                session = account_auth.authenticate_session(
-                    self._cookie_value(runtime_env.session_cookie_name()))
+                try:
+                    session = account_auth.authenticate_session(cookie)
+                except account_auth.AccountAuthError:
+                    session = None
                 if session and dev_service_accounts.is_service_uid(session.get("user_id")):
                     try:
                         self._remote_context = self._dev_service_context(session)
                     except account_auth.AccountAuthError as exc:
                         self._err(exc.status, str(exc)); return False
                     return True
-            try:
-                self._remote_context = self._local_owner_context()
-            except account_auth.AccountAuthError as exc:
-                self._err(exc.status, str(exc)); return False
-            return True
+            # A regular localhost session (valid or rejected): fall through to
+            # the normal authenticated-session path below.
         tunnel_ip, forwarded_ip = self._request_ips()
         init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
         if init_data:
@@ -2080,22 +2122,41 @@ class Handler(BaseHTTPRequestHandler):
 
     def _auth_status(self) -> None:
         try:
-            # Fast-path: no auth required AND the request is genuinely local
-            # (loopback desktop, no Telegram initData, no public tunnel host).
-            # Return the local-owner context so the desktop shell loads without a
-            # Telegram login. Remote requests never take this path — they are
-            # always authenticated below so Mini App visitors can't inherit owner.
-            if not account_auth.auth_required() and not self._is_remote_api_request():
-                context = self._local_owner_context()
-                self._json(HTTPStatus.OK, self._augment_permissions(context, {
-                    "authenticated": True, "source": context.get("source"),
-                    "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
-                    "csrf_token": "", "user": context.get("user") or {},
-                    "workspaces": context.get("workspaces") or [],
-                    "active_workspace": context.get("active_workspace") or {},
-                    "active_membership": context.get("active_membership") or {},
-                }))
-                return
+            # Fast-path: the request is genuinely local (loopback desktop, no
+            # Telegram initData, no public tunnel host) AND either the explicit
+            # test bypass is active or this is the Development build. Return the
+            # local-owner context so the desktop shell loads without a Telegram
+            # login. Remote requests never take this path — they are always
+            # authenticated below so Mini App visitors can't inherit owner.
+            if self._local_owner_bypass_allowed():
+                # Open the owner ONLY when no session cookie is present (a fresh
+                # desktop shell). A Claude/GPT service session gets its context;
+                # any other session — valid, revoked or otherwise — falls through
+                # to the normal status path so its real status/error is surfaced
+                # (matches _authorize_api).
+                cookie = self._cookie_value(runtime_env.session_cookie_name())
+                context = None
+                if not cookie:
+                    context = self._local_owner_context()
+                elif dev_service_accounts.available():
+                    try:
+                        session = account_auth.authenticate_session(cookie)
+                    except account_auth.AccountAuthError:
+                        session = None
+                    if session and dev_service_accounts.is_service_uid(session.get("user_id")):
+                        context = self._dev_service_context(session)
+                if context is not None:
+                    self._json(HTTPStatus.OK, self._augment_permissions(context, {
+                        "authenticated": True, "source": context.get("source"),
+                        "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
+                        "csrf_token": "", "user": context.get("user") or {},
+                        "workspaces": context.get("workspaces") or [],
+                        "active_workspace": context.get("active_workspace") or {},
+                        "active_membership": context.get("active_membership") or {},
+                    }))
+                    return
+                # A regular localhost session (valid or rejected): fall through
+                # to the normal status path below.
             owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
             account_auth.ensure_owner(owner_id)
             init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
