@@ -512,9 +512,9 @@ def test_connector_device_classification(store):
 # --------------------------------------------------------------------------- #
 # HTTP contract.
 # --------------------------------------------------------------------------- #
-def _request(base, path, *, token="", csrf="", method="GET", body=None):
+def _request(base, path, *, token="", csrf="", method="GET", body=None, origin=""):
     data = None
-    headers = {"Origin": base}
+    headers = {"Origin": origin or base}
     if token:
         headers["Cookie"] = f"{account_auth.SESSION_COOKIE}={token}"
     if csrf:
@@ -546,9 +546,10 @@ def test_http_security_page_scoped_and_authz(store):
         assert len(page["devices"]) == 1
         device_id = page["devices"][0]["device_id"]
 
-        # Unauthenticated read is server-denied, not just hidden.
+        # Unauthenticated read is server-denied for a remote request (on the
+        # localhost desktop build a no-cookie request resolves to the owner).
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _request(base, "/api/account/security")
+            _request(base, "/api/account/security", origin="https://app.stratforge.example")
         assert exc.value.code == 401
 
         # A mutation without CSRF is rejected server-side.

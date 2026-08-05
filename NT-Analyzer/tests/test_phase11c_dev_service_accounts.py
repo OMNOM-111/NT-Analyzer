@@ -152,3 +152,51 @@ def test_server_wires_loopback_service_session_and_login_guards():
     assert "dev_service_accounts.available()" in login
     assert "loopback_required" in login
     assert 'path == "/api/dev/service-login"' in src
+
+
+def test_local_owner_bypass_is_loopback_only_and_never_explicit_prod(monkeypatch):
+    """The desktop owner/service auto-login is Development + loopback only.
+
+    Development on 127.0.0.1 resolves the owner without a flag (fixes the
+    Telegram-login-on-restart regression), endpoint tests keep the explicit
+    test bypass, and an explicitly-selected Canary/Production deployment can
+    never auto-login — whatever any flag or config reports.
+    """
+    from app import server as server_mod
+    from app import runtime_env
+
+    class FakeRequest:
+        remote = False
+        ips = ("127.0.0.1", "")
+        _is_loopback_ip = staticmethod(server_mod.Handler._is_loopback_ip)
+
+        def _is_remote_api_request(self):
+            return self.remote
+
+        def _request_ips(self):
+            return self.ips
+
+    def allowed(*, env, explicit, auth_required, remote=False, ips=("127.0.0.1", "")):
+        monkeypatch.setattr(server_mod.runtime_env, "deployment_environment", lambda: env)
+        monkeypatch.setattr(server_mod.runtime_env, "environment_explicit", lambda: explicit)
+        monkeypatch.setattr(server_mod.account_auth, "auth_required", lambda: auth_required)
+        req = FakeRequest()
+        req.remote = remote
+        req.ips = ips
+        return server_mod.Handler._local_owner_bypass_allowed(req)
+
+    # Development loopback → owner auto-login even without any bypass flag.
+    assert allowed(env=runtime_env.DEVELOPMENT, explicit=True, auth_required=True) is True
+    assert allowed(env=runtime_env.DEVELOPMENT, explicit=False, auth_required=True) is True
+    # Endpoint tests: default (implicit production) env + explicit test bypass.
+    assert allowed(env=runtime_env.PRODUCTION, explicit=False, auth_required=False) is True
+    # Hard invariant: an explicit Canary/Production deployment never bypasses,
+    # even if auth is somehow reported as not required.
+    assert allowed(env=runtime_env.CANARY, explicit=True, auth_required=False) is False
+    assert allowed(env=runtime_env.PRODUCTION, explicit=True, auth_required=False) is False
+    assert allowed(env=runtime_env.CANARY, explicit=True, auth_required=True) is False
+    # Remote / Mini App requests are never local.
+    assert allowed(env=runtime_env.DEVELOPMENT, explicit=True, auth_required=True, remote=True) is False
+    # Non-loopback client / forwarded IP is rejected even in Development.
+    assert allowed(env=runtime_env.DEVELOPMENT, explicit=True, auth_required=True, ips=("10.0.0.9", "")) is False
+    assert allowed(env=runtime_env.DEVELOPMENT, explicit=True, auth_required=True, ips=("127.0.0.1", "8.8.8.8")) is False

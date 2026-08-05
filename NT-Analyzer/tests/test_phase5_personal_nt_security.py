@@ -324,9 +324,9 @@ def _login(uid: int) -> str:
     return out["session_token"]
 
 
-def _request(base, path, *, token="", csrf="", method="GET", body=None):
+def _request(base, path, *, token="", csrf="", method="GET", body=None, origin=""):
     data = None
-    headers = {"Origin": base}
+    headers = {"Origin": origin or base}
     if token:
         headers["Cookie"] = f"{account_auth.SESSION_COOKIE}={token}"
     if csrf:
@@ -354,7 +354,7 @@ def test_http_nt_security_posture_scoped(store):
         assert page["factors"]["telegram"] is True
         assert page["factors"]["email"] is False
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _request(base, "/api/account/nt-security")
+            _request(base, "/api/account/nt-security", origin="https://app.stratforge.example")
         assert exc.value.code == 401
     finally:
         server.shutdown()
