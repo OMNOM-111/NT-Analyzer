@@ -421,20 +421,29 @@ def _compatible_bool(primary: str, legacy: str) -> bool:
 
 
 def test_auth_enabled() -> bool:
-    """Test auth may run only in development with explicit opt-in."""
+    """Test auth (virtual users) is the local Development QA default.
+
+    Available only in Development (never Canary/Production), on by default so
+    the checked-out localhost build can drive persona/identity QA without an
+    extra flag. An explicit ``NTA_ENABLE_TEST_AUTH=0`` still turns it off.
+    """
     if not is_development():
         return False
-    return str(os.environ.get("NTA_ENABLE_TEST_AUTH") or "").strip() == "1"
+    return str(os.environ.get("NTA_ENABLE_TEST_AUTH") or "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
 
 
 def impersonation_enabled() -> bool:
-    """Owner impersonation is development-only."""
+    """Owner impersonation ("open as persona") is the local Development QA default.
+
+    Development-only (never Canary/Production), on by default so the owner can
+    view the app as any persona on 127.0.0.1 without switching the server to
+    staging. An explicit ``NTA_ENABLE_IMPERSONATION=0`` still turns it off.
+    """
     if not is_development():
         return False
-    # Preserve the historical staging default while new development starts
-    # fail-closed unless it opts in.
-    default = "1" if app_env() == STAGING else "0"
-    flag = str(os.environ.get("NTA_ENABLE_IMPERSONATION") or default).strip().lower()
+    flag = str(os.environ.get("NTA_ENABLE_IMPERSONATION") or "1").strip().lower()
     return flag not in {"0", "false", "no", "off"}
 
 

@@ -144,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260802-unified-identity1"}, versions
+    assert set(versions.values()) == {"20260812-phase12-owner1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -154,7 +154,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260802-environment-identity1"}, versions
+    assert set(versions.values()) == {"20260812-phase12-owner1"}, versions
 
 
 def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():

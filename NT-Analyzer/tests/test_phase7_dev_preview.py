@@ -70,8 +70,9 @@ def test_dev_preview_disabled_outside_development(dev_store, monkeypatch, env):
         assert excinfo.value.code == "dev_preview_disabled"
 
 
-def test_dev_preview_disabled_without_test_auth_flag(dev_store, monkeypatch):
-    monkeypatch.delenv("NTA_ENABLE_TEST_AUTH", raising=False)
+def test_dev_preview_disabled_when_test_auth_explicitly_off(dev_store, monkeypatch):
+    # Development QA is default-on; it is disabled only when explicitly turned off.
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "0")
     with pytest.raises(dev_preview.DevPreviewError) as excinfo:
         dev_preview.status(999)
     assert excinfo.value.code == "dev_preview_disabled"

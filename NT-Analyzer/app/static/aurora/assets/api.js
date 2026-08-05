@@ -321,6 +321,7 @@
     ownerGoogleMigration: (o) => getJSON('/api/owner/google-migration', o),
     ownerImpersonate: (userId, preset) => send('/api/owner/impersonate', 'POST', { user_id: userId, preset: preset || '' }),
     ownerImpersonateEnd: () => send('/api/owner/impersonate/end', 'POST', {}),
+    ownerAgentTeamGrant: (userId, action) => send('/api/owner/agents/team-grant', 'POST', { user_id: userId, action: action || 'grant' }),
     ownerGoogleSecrets: (body) => send('/api/owner/google/secrets', 'POST', body || {}),
     googleAuthStatus: (o) => getJSON('/api/auth/google/status', o),
     googleAuthStart: (body) => send('/api/auth/google/start', 'POST', body || {}),

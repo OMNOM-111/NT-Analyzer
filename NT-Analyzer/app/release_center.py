@@ -541,6 +541,7 @@ def list_releases() -> Dict[str, Any]:
         "adapter": _adapter_status(),
         "blue_green": blue_green.deployment_strategy(),
         "schedule_options": schedule_options(),
+        "notification_preview": notification_preview(),
         "releases": [_candidate_summary(doc, c) for c in rows],
     }
 
@@ -686,6 +687,44 @@ def schedule_options() -> Dict[str, Any]:
         "explicit_offsets": list(SCHEDULE_OFFSETS_SEC.keys()),
         "explicit_time_supported": True,
         "market_close": dict(MARKET_CLOSE_OPTION),
+    }
+
+
+def notification_preview(app_version: str = "", release_channel: str = "") -> Dict[str, Any]:
+    """Rendered, send-free preview of every update notification/banner message.
+
+    This never sends a real Telegram message or Production banner: it only
+    returns the canonical text for each notification kind so the interface can
+    preview the top update banner ("через 5 минут", "через 60 секунд",
+    "обновление завершено") without any external infrastructure.
+    """
+    ver = str(app_version or "").strip()
+    label = f"v{ver}" if ver else "новая версия"
+    previews = [
+        {"kind": "scheduled_update", "title": "Запланировано обновление",
+         "message": f"Обновление до {label} запланировано."},
+        {"kind": "warn_5m", "title": "Обновление через 5 минут",
+         "message": f"Приложение обновится до {label} через 5 минут. Сохраните работу."},
+        {"kind": "warn_60s", "title": "Обновление через 60 секунд",
+         "message": f"Обновление до {label} начнётся через 60 секунд."},
+        {"kind": "deploy_started", "title": "Обновление началось",
+         "message": "Идёт обновление приложения…"},
+        {"kind": "deploy_successful", "title": "Обновление завершено",
+         "message": f"Приложение обновлено до {label}. Обновите страницу, чтобы применить."},
+        {"kind": "reload_available", "title": "Доступна новая версия",
+         "message": "Доступна новая версия приложения. Обновите страницу."},
+    ]
+    adapter = _adapter_status()
+    return {
+        "ok": True,
+        "previews": previews,
+        # Real delivery needs configured Canary/Production infrastructure; it is
+        # never available in this phase, so a preview is never a real send.
+        "real_send_available": bool(adapter.get("real_available")),
+        "note": (
+            "Предпросмотр текста уведомлений и верхнего баннера обновления. "
+            "Реальная отправка недоступна без настроенной инфраструктуры Canary/Production."
+        ),
     }
 
 

@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from . import account_auth, google_auth, runtime_env
+from . import account_auth, agent_allocation, google_auth, runtime_env, workspaces
 
 
 class TestAuthError(RuntimeError):
@@ -89,6 +89,50 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "onboarding_complete": True,
         "ux_mode": "professional",
     },
+    # Owner-acceptance personas (Phase 12): open the app as each user shape.
+    "ordinary": {
+        "label": "Обычный пользователь",
+        "status": "active",
+        "role": "full_control",
+        "plan_hint": "pro",
+        "google_linked": True,
+        "onboarding_complete": True,
+        "ux_mode": "professional",
+        "persona": "ordinary",
+    },
+    "developer": {
+        "label": "Разработчик (полная команда агентов)",
+        "status": "active",
+        "role": "full_control",
+        "plan_hint": "pro",
+        "google_linked": True,
+        "onboarding_complete": True,
+        "ux_mode": "professional",
+        "persona": "developer",
+        "capabilities": ["agents.team.full"],
+    },
+    "personal_nt": {
+        "label": "Свой NinjaTrader (личный контур)",
+        "status": "active",
+        "role": "full_control",
+        "plan_hint": "pro",
+        "google_linked": True,
+        "onboarding_complete": True,
+        "ux_mode": "professional",
+        "persona": "personal_nt",
+        "nt_mode": "personal",
+    },
+    "shared_nt": {
+        "label": "Общий NinjaTrader владельца",
+        "status": "active",
+        "role": "read_only",
+        "plan_hint": "free_preview",
+        "google_linked": True,
+        "onboarding_complete": True,
+        "ux_mode": "professional",
+        "persona": "shared_nt",
+        "nt_mode": "shared",
+    },
 }
 
 
@@ -143,7 +187,26 @@ def create_virtual_user(
         terms_accepted=True,
         ux_mode=spec.get("ux_mode") if "ux_mode" in spec else None,
     )
-    return {"ok": True, "preset": preset_key, "user": user}
+    # Persona wiring (Phase 12): personal vs shared NinjaTrader workspace and any
+    # persona-granted capabilities (e.g. the developer full agent team).
+    nt_mode = str(spec.get("nt_mode") or "").strip().lower()
+    owner_id = account_auth.primary_owner_id()
+    workspace = ""
+    try:
+        if nt_mode == "shared" and owner_id > 0:
+            workspace = workspaces.ensure_service_membership(uid, owner_id)
+        elif nt_mode == "personal":
+            personal = workspaces.ensure_personal_workspace(uid, require_entitlement=False)
+            workspace = str((personal or {}).get("workspace_id") or "")
+    except Exception:  # noqa: BLE001 — QA harness must degrade, not crash
+        workspace = ""
+    for capability in (spec.get("capabilities") or []):
+        try:
+            agent_allocation.grant_team_capability(uid, str(capability), granted_by=owner_id)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "preset": preset_key, "user": user, "nt_mode": nt_mode,
+            "workspace_id": workspace, "persona": str(spec.get("persona") or preset_key)}
 
 
 def _alloc_virtual_telegram_id() -> int:

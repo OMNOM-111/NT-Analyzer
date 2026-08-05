@@ -1226,6 +1226,43 @@
     if (back) back.onclick = () => { setDevPreviewLabel(''); };
   }
 
+  // Update-banner preview (item 6): renders the top update banner using the
+  // canonical notification text, cycling through a sequence when asked. This is
+  // a preview only — it never triggers a real send or reload.
+  let _updateBannerTimer = null;
+  function showUpdateBannerPreview(items, note, sequence) {
+    const list = (items || []).filter(Boolean);
+    if (!list.length) return;
+    if (_updateBannerTimer) { clearTimeout(_updateBannerTimer); _updateBannerTimer = null; }
+    const old = qs('#update-preview-banner');
+    if (old) old.remove();
+    const bar = el(`<div id="update-preview-banner" class="update-preview-banner" role="status" aria-live="polite">
+      <span class="upb-tag">ПРЕДПРОСМОТР</span>
+      <span class="upb-main"><strong class="upb-title"></strong><span class="upb-msg"></span></span>
+      <button class="btn sm ghost" id="upb-close" type="button">Закрыть</button>
+    </div>`);
+    document.body.appendChild(bar);
+    const titleEl = qs('.upb-title', bar);
+    const msgEl = qs('.upb-msg', bar);
+    let idx = 0;
+    const show = () => {
+      const item = list[idx];
+      if (titleEl) titleEl.textContent = item.title || 'Обновление';
+      if (msgEl) msgEl.textContent = ' — ' + (item.message || '');
+      bar.classList.toggle('upb-done', item.kind === 'deploy_successful' || item.kind === 'reload_available');
+      if (sequence && idx < list.length - 1) {
+        idx += 1;
+        _updateBannerTimer = setTimeout(show, 2600);
+      }
+    };
+    show();
+    const close = qs('#upb-close', bar);
+    if (close) close.onclick = () => { if (_updateBannerTimer) clearTimeout(_updateBannerTimer); bar.remove(); };
+    if (!sequence) {
+      _updateBannerTimer = setTimeout(() => { if (document.body.contains(bar)) bar.remove(); }, 8000);
+    }
+  }
+
   function wireDevPreviewButton() {
     const right = qs('.tb-right');
     if (!right) return;
@@ -2794,6 +2831,10 @@
     });
   }
   const SEC_DEVICE_ICONS = { phone: '📱', tablet: '📲', desktop: '🖥️', browser: '🌐', connector: '🔌' };
+  const SEC_DEVICE_TYPE_LABEL = {
+    phone: 'Телефон', tablet: 'Планшет', desktop: 'Компьютер',
+    browser: 'Браузер', connector: 'Коннектор NinjaTrader',
+  };
   const SEC_STATUS = {
     pending: ['pending', 'Ожидает подтверждения'],
     trusted: ['live', 'Доверенное'],
@@ -2802,25 +2843,77 @@
   };
   const SEC_PROVIDER_LABEL = { telegram: 'Telegram', email: 'e-mail', google: 'Google' };
 
+  // Relative-time label for an ISO/UTC string, with an absolute title on hover.
+  function secWhen(iso) {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return esc(String(iso));
+    const min = Math.round((Date.now() - t) / 60000);
+    let rel;
+    if (min < 0) rel = 'только что';
+    else if (min < 1) rel = 'только что';
+    else if (min < 60) rel = `${min} мин назад`;
+    else if (min < 1440) rel = `${Math.floor(min / 60)} ч назад`;
+    else rel = `${Math.floor(min / 1440)} дн назад`;
+    let abs = iso;
+    try { abs = new Date(t).toLocaleString(); } catch (_) { /* keep iso */ }
+    return `<span title="${esc(abs)}">${esc(rel)}</span>`;
+  }
+
   function securityDeviceRow(device) {
-    const icon = SEC_DEVICE_ICONS[device.device_type] || '🌐';
+    const type = String(device.device_type || 'browser');
+    const icon = SEC_DEVICE_ICONS[type] || '🌐';
+    const typeLabel = SEC_DEVICE_TYPE_LABEL[type] || 'Устройство';
     const [badgeCls, statusLabel] = SEC_STATUS[device.status] || ['archived', device.status];
-    const meta = [device.os_family && (device.os_version ? device.os_family + ' ' + device.os_version : device.os_family), device.client]
-      .filter(Boolean).map(esc).join(' · ');
-    const confirmed = device.confirmation_provider
-      ? `<span class="row-sub">Подтверждено через ${esc(SEC_PROVIDER_LABEL[device.confirmation_provider] || device.confirmation_provider)}</span>` : '';
-    const seen = [device.last_auth_at_utc && ('вход ' + esc(device.last_auth_at_utc)), device.last_region && ('регион ' + esc(device.last_region))]
-      .filter(Boolean).join(' · ');
-    let actions = '';
+    const online = !!device.online;
+    const onlineDot = `<span class="dev-online ${online ? 'on' : 'off'}" title="${online ? 'Есть активная сессия' : 'Нет активной сессии'}">${online ? '● в сети' : '○ не в сети'}</span>`;
+    const os = device.os_family
+      ? (device.os_version ? device.os_family + ' ' + device.os_version : device.os_family) : '';
+    // A Connector shows its own client/app; browsers/computers show the client label.
+    const clientLabel = type === 'connector' ? 'Приложение' : 'Браузер / приложение';
+    const kv = [];
+    if (os) kv.push([type === 'connector' ? 'Хост-ОС' : 'ОС', os]);
+    if (device.client) kv.push([clientLabel, device.client]);
+    if (device.app_version) kv.push(['Версия', device.app_version]);
+    kv.push(['Первый вход', device.first_seen_at_utc ? secWhen(device.first_seen_at_utc) : '—', true]);
+    kv.push(['Последняя активность', device.last_seen_at_utc ? secWhen(device.last_seen_at_utc) : '—', true]);
+    if (device.confirmation_provider) {
+      kv.push(['Подтверждено через', SEC_PROVIDER_LABEL[device.confirmation_provider] || device.confirmation_provider]);
+    }
+    const kvHtml = kv.map(([k, v, raw]) =>
+      `<div class="dev-kv-item"><span class="k">${esc(k)}</span><span class="v">${raw ? v : esc(String(v))}</span></div>`).join('');
+    // Details drawer: internal, non-tracking identifiers only (no hardware id).
+    const detailRows = [
+      ['Внутренний ID устройства', device.device_id || '—'],
+      type === 'connector' && device.connector_installation_id
+        ? ['ID установки Connector', device.connector_installation_id] : null,
+      device.last_region ? ['Последний регион (маскирован)', device.last_region] : null,
+      device.last_auth_at_utc ? ['Последний вход', device.last_auth_at_utc] : null,
+      device.expires_at_utc ? ['Доверие истекает', device.expires_at_utc] : null,
+      device.revoked_at_utc ? ['Отозвано', device.revoked_at_utc] : null,
+    ].filter(Boolean);
+    const detailsHtml = detailRows.map(([k, v]) =>
+      `<div class="dev-detail-item"><span class="k">${esc(k)}</span><span class="v mono">${esc(String(v))}</span></div>`).join('');
+    let actions = `<button class="btn sm ghost" data-sec-details="${esc(device.device_id)}">Подробнее</button>`;
     if (device.status === 'pending') {
-      actions = `<button class="btn sm primary" data-sec-approve="${esc(device.device_id)}">Подтвердить</button>
+      actions += `<button class="btn sm primary" data-sec-approve="${esc(device.device_id)}">Подтвердить</button>
                  <button class="btn sm ghost" data-sec-reject="${esc(device.device_id)}">Отклонить</button>`;
     } else if (device.status === 'trusted') {
-      actions = `<button class="btn sm ghost" data-sec-revoke="${esc(device.device_id)}">Отозвать</button>`;
+      actions += `<button class="btn sm ghost" data-sec-revoke="${esc(device.device_id)}">Отозвать</button>`;
     }
-    return `<div class="row"><div class="row-main"><div class="row-title">${icon} ${esc(device.display_name || 'Устройство')} <span class="badge ${badgeCls}">${esc(statusLabel)}</span></div>
-      ${meta ? `<div class="row-sub">${meta}</div>` : ''}${confirmed}${seen ? `<div class="row-sub">${esc(seen)}</div>` : ''}</div>
-      <div class="row-actions">${actions}</div></div>`;
+    return `<div class="device-card dev-${esc(type)}" data-device-card="${esc(device.device_id)}">
+      <div class="device-card-head">
+        <span class="dev-ic">${icon}</span>
+        <div class="dev-headmain">
+          <div class="dev-name">${esc(device.display_name || 'Устройство')} ${onlineDot}</div>
+          <div class="dev-type">${esc(typeLabel)}${os ? ' · ' + esc(os) : ''}</div>
+        </div>
+        <span class="badge ${badgeCls}">${esc(statusLabel)}</span>
+      </div>
+      <div class="device-kv">${kvHtml}</div>
+      <div class="device-actions">${actions}</div>
+      <div class="device-details" data-device-details="${esc(device.device_id)}" hidden>${detailsHtml}</div>
+    </div>`;
   }
 
   async function renderSecurityInto(cb, me) {
@@ -2884,8 +2977,8 @@
         <div class="cab-sub">Внутренний идентификатор аккаунта — UUID. Способы входа не объединяются автоматически по совпадению e-mail. Последний способ входа удалить нельзя.</div>
         ${addSection}</div>
       <div class="cab-card"><h4>Устройства</h4>
-        <div class="finance-note">${provNote} Новое устройство появляется как «Ожидает подтверждения» и не становится доверенным автоматически. Отзыв немедленно завершает сессии только этого устройства.</div>
-        <div class="list" id="sec-devices">${devices.length ? devices.map(securityDeviceRow).join('') : '<div class="muted">Устройства не найдены</div>'}</div>
+        <div class="finance-note">${provNote} Новое устройство появляется как «Ожидает подтверждения» и не становится доверенным автоматически. Каждое устройство — отдельная карточка с внутренним ID (UUID), без «железного» идентификатора. Повторные входы одного устройства не создают дублей. Отзыв немедленно завершает сессии только этого устройства.</div>
+        <div class="device-grid" id="sec-devices">${devices.length ? devices.map(securityDeviceRow).join('') : '<div class="muted">Устройства не найдены</div>'}</div>
       </div>`;
     const reload = () => renderSecurityInto(cb, me);
     const busy = (btn, fn) => async () => {
@@ -2932,6 +3025,17 @@
       }
     });
 
+    qsa('[data-sec-details]', cb).forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.secDetails;
+        const safe = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+        const panel = qs(`[data-device-details="${safe}"]`, cb);
+        if (!panel) return;
+        const open = panel.hasAttribute('hidden');
+        if (open) { panel.removeAttribute('hidden'); btn.textContent = 'Скрыть'; }
+        else { panel.setAttribute('hidden', ''); btn.textContent = 'Подробнее'; }
+      };
+    });
     qsa('[data-sec-approve]', cb).forEach(btn => {
       btn.onclick = busy(btn, async () => {
         const deviceId = btn.dataset.secApprove;
@@ -3109,62 +3213,91 @@
   }
 
   async function renderStagingInto(node) {
-    node.innerHTML = `<div class="cab-sub">Staging QA · виртуальные пользователи и «войти как»</div><div class="muted">Загрузка…</div>`;
+    node.innerHTML = `<div class="cab-sub">Разработка / QA · открыть приложение глазами любого пользователя (только Development, 127.0.0.1)</div><div class="muted">Загрузка…</div>`;
+    let status, usersDoc;
     try {
-      const [status, usersDoc] = await Promise.all([
+      [status, usersDoc] = await Promise.all([
         API.http.testAuthStatus().catch(err => ({ enabled: false, error: err.message })),
         API.http.testAuthUsers().catch(() => ({ users: [] })),
       ]);
-      if (!status.enabled) {
-        node.innerHTML = `<div class="cab-sub">Test auth выключен. Нужны <code>NTA_APP_ENV=staging</code> и <code>NTA_ENABLE_TEST_AUTH=1</code>.</div>
-          <div class="error">${esc(status.error || '')}</div>`;
-        return;
-      }
-      const presets = status.presets || [];
-      node.innerHTML = `
-        <div class="cab-sub">Создайте виртуального пользователя и войдите его глазами без реального телефона/Google.</div>
-        <div class="form-row"><label>Preset</label><select id="stg-preset">${presets.map(p => `<option value="${esc(p.id)}">${esc(p.label || p.id)}</option>`).join('')}</select>
+    } catch (e) { node.innerHTML = `<div class="empty-state">${esc(e.message || e)}</div>`; return; }
+    if (!status || !status.enabled) {
+      node.innerHTML = `<div class="finance-note"><strong>Недоступно.</strong> Локальная QA-имперсонизация работает только в Development на 127.0.0.1. В Canary/Production она намеренно отключена.${status && status.error ? '<br>' + esc(status.error) : ''}</div>`;
+      return;
+    }
+    const users = usersDoc.users || [];
+    const findPreset = (p) => users.find(u => String(u.virtual_preset || '') === p);
+    const PERSONAS = [
+      { preset: 'developer', label: 'Разработчик', sub: 'полная команда агентов' },
+      { preset: 'ordinary', label: 'Обычный пользователь', sub: 'платный тариф' },
+      { preset: 'personal_nt', label: 'Свой NinjaTrader', sub: 'личный контур + команда' },
+      { preset: 'shared_nt', label: 'Общий NinjaTrader', sub: 'один координатор' },
+      { preset: 'new', label: 'Новый пользователь', sub: 'до выбора режима' },
+      { preset: 'blocked', label: 'Заблокирован', sub: 'нет доступа' },
+      { preset: 'no_google', label: 'Telegram без Google', sub: 'нужна привязка' },
+    ];
+    const openAs = async (preset) => {
+      try {
+        let u = findPreset(preset);
+        if (!u) { u = (await API.http.testAuthVirtualUser({ preset })).user; }
+        await API.http.ownerImpersonate(Number(u.user_id), preset);
+        toast('Открываю приложение как: ' + preset);
+        setTimeout(() => location.reload(), 300);
+      } catch (e) { reportError(e); }
+    };
+    node.innerHTML = `
+      <div class="finance-note">Откройте приложение глазами любого пользователя — появится красный баннер тестового режима, вернуться к владельцу можно кнопкой ниже. Реальные Telegram/Google/e-mail не нужны: состояния входа имитируются локально. Реальный внешний вход остаётся external acceptance.</div>
+      <div class="section-title">Открыть как персону</div>
+      <div class="qa-persona-grid">${PERSONAS.map(p => `<button class="qa-persona" data-qa-persona="${esc(p.preset)}"><span class="qa-persona-title">${esc(p.label)}</span><span class="qa-persona-sub">${esc(p.sub)}</span></button>`).join('')}</div>
+      <div class="section-title">Способы входа — состояние и симуляция</div>
+      <div class="finance-note">Локально можно проверить весь UI привязок, но <strong>реальный сквозной вход — это external acceptance, а не PASS</strong>: он требует настоящего Telegram-бота и/или Google OAuth-учётных данных.</div>
+      <div class="list">
+        <div class="feat-row"><span><strong>Telegram</strong> — привязывается автоматически при входе через бота. Локально у виртуальных пользователей отмечен ✓.</span><span class="badge trial">реальный E2E: external</span></div>
+        <div class="feat-row"><span><strong>Google</strong> — реальный OAuth требует настроенных client_id/secret. Локально привязка и вход имитируются test-auth.</span><span class="badge trial">реальный E2E: external</span></div>
+        <div class="feat-row"><span><strong>e-mail</strong> — вход по коду. Локально код виден в ответе test-auth; реальная доставка письма — вне этой среды.</span><span class="badge trial">реальный E2E: external</span></div>
+      </div>
+      <div class="section-title">Служебные AI-аккаунты разработки</div>
+      <div class="finance-note">Эти входы для агентов разработки (Claude/GPT), а не для владельца, поэтому вынесены сюда. Действия аудируются под отдельным идентификатором.</div>
+      <div class="flex gap-sm wrap"><button class="btn ghost" data-qa-svc="claude">Войти как Claude</button><button class="btn ghost" data-qa-svc="gpt">Войти как GPT</button><button class="btn primary" data-qa-return>Вернуться к владельцу</button></div>
+      <div class="section-title">Виртуальные пользователи и состояния входа</div>
+      <div class="form-row"><label>Preset</label><select id="stg-preset">${(status.presets || []).map(p => `<option value="${esc(p.id)}">${esc(p.label || p.id)}</option>`).join('')}</select>
         <input id="stg-name" placeholder="Имя (опционально)" /><button class="btn primary" id="stg-create">Создать</button></div>
-        <h4 class="cab-section-title">Виртуальные пользователи</h4>
-        <div class="list" id="stg-list">${(usersDoc.users || []).map(u => {
-          const name = esc(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username || u.user_id);
-          return `<div class="row"><div class="row-main"><div class="row-title">${name} · <span class="badge">${esc(u.virtual_preset || '')}</span></div>
-            <div class="row-sub">id ${esc(u.user_id)} · Google ${u.google_linked ? '✓' : 'нужен'} · ${esc(u.status || '')}</div></div>
-            <button class="btn sm primary" data-stg-as="${esc(u.user_id)}">Войти как</button>
+      <div class="list" id="stg-list">${users.map(u => {
+        const name = esc(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username || u.user_id);
+        return `<div class="row"><div class="row-main"><div class="row-title">${name} · <span class="badge">${esc(u.virtual_preset || '')}</span></div>
+          <div class="row-sub">id ${esc(u.user_id)} · Telegram ✓ · Google ${u.google_linked ? '✓' : '—'} · e-mail ${u.email ? '✓' : '—'} · ${esc(u.status || '')}</div></div>
+          <div class="flex gap-xs wrap">
+            <button class="btn sm primary" data-stg-as="${esc(u.user_id)}">Открыть как</button>
             ${u.google_linked ? '' : `<button class="btn sm ghost" data-stg-google="${esc(u.user_id)}">+ Google</button>`}
-          </div>`;
-        }).join('') || '<div class="muted">Пока нет виртуальных пользователей</div>'}</div>`;
+            <button class="btn sm ghost" data-stg-team="${esc(u.user_id)}">Полная команда</button>
+          </div></div>`;
+      }).join('') || '<div class="muted">Пока нет виртуальных пользователей</div>'}</div>`;
+      qsa('[data-qa-persona]', node).forEach(b => b.onclick = () => openAs(b.dataset.qaPersona));
+      qsa('[data-qa-svc]', node).forEach(b => b.onclick = async () => {
+        try { await API.http.devServiceLogin(b.dataset.qaSvc); toast('Служебный вход'); location.reload(); } catch (e) { reportError(e); }
+      });
+      const ret = qs('[data-qa-return]', node);
+      if (ret) ret.onclick = async () => {
+        try { await API.http.devServiceLogin('owner').catch(() => {}); await API.http.ownerImpersonateEnd().catch(() => {}); toast('Сессия владельца'); location.reload(); } catch (e) { reportError(e); }
+      };
       const create = qs('#stg-create', node);
       if (create) create.onclick = async () => {
         create.disabled = true;
-        try {
-          await API.http.testAuthVirtualUser({
-            preset: qs('#stg-preset', node)?.value || 'demo',
-            display_name: qs('#stg-name', node)?.value || '',
-          });
-          toast('Виртуальный пользователь создан');
-          renderStagingInto(node);
-        } catch (e) { reportError(e); create.disabled = false; }
+        try { await API.http.testAuthVirtualUser({ preset: qs('#stg-preset', node)?.value || 'demo', display_name: qs('#stg-name', node)?.value || '' }); toast('Виртуальный пользователь создан'); renderStagingInto(node); }
+        catch (e) { reportError(e); create.disabled = false; }
       };
       qsa('[data-stg-as]', node).forEach(btn => btn.onclick = async () => {
-        if (!confirm('Войти как этот пользователь? Появится красный banner тестового режима.')) return;
+        if (!confirm('Открыть приложение как этот пользователь?')) return;
         btn.disabled = true;
-        try {
-          await API.http.ownerImpersonate(Number(btn.dataset.stgAs));
-          toast('Impersonation активна');
-          setTimeout(() => location.reload(), 400);
-        } catch (e) { reportError(e); btn.disabled = false; }
+        try { await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300); }
+        catch (e) { reportError(e); btn.disabled = false; }
       });
       qsa('[data-stg-google]', node).forEach(btn => btn.onclick = async () => {
-        try {
-          await API.http.testAuthGoogleLink({ user_id: Number(btn.dataset.stgGoogle) });
-          toast('Google привязан');
-          renderStagingInto(node);
-        } catch (e) { reportError(e); }
+        try { await API.http.testAuthGoogleLink({ user_id: Number(btn.dataset.stgGoogle) }); toast('Google привязан'); renderStagingInto(node); } catch (e) { reportError(e); }
       });
-    } catch (e) {
-      node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
-    }
+      qsa('[data-stg-team]', node).forEach(btn => btn.onclick = async () => {
+        try { await API.http.ownerAgentTeamGrant(Number(btn.dataset.stgTeam), 'grant'); toast('Выдана полная команда агентов'); } catch (e) { reportError(e); }
+      });
   }
 
   function loginCard(inner) {
@@ -3983,6 +4116,11 @@
     const adapter = data.adapter || {};
     const rows = data.releases || [];
     const canCreate = hasAdminCapability('releases.create');
+    const notif = data.notification_preview || {};
+    const previews = notif.previews || [];
+    const schedOpts = data.schedule_options || {};
+    const offsets = schedOpts.explicit_offsets || [];
+    const marketClose = schedOpts.market_close || {};
     node.innerHTML = `
       <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. Развёртывание в этой фазе выполняется в режиме <strong>${esc(adapter.mode || 'dry_run')}</strong>; реальный executor не подключён, поэтому внешний результат остаётся PENDING, а не PASS.</div>
       <div class="flex gap-sm">
@@ -3990,8 +4128,32 @@
         <button class="btn ghost" id="rc-refresh">Обновить</button>
       </div>
       <div id="rc-new-form" hidden></div>
+      <div class="cab-card"><h4>Уведомления об обновлении (предпросмотр)</h4>
+        <div class="finance-note">${esc(notif.note || 'Предпросмотр текста уведомлений и верхнего баннера обновления. Реальная отправка недоступна без настроенной инфраструктуры Canary/Production.')}</div>
+        <div class="list">${previews.map(p => `<div class="feat-row"><span><strong>${esc(p.title)}</strong> — ${esc(p.message)}</span><span class="badge archived">${esc(p.kind)}</span></div>`).join('') || '<div class="empty-state">Нет предпросмотра.</div>'}</div>
+        <div class="section-title">Опции времени обновления</div>
+        <div class="flex gap-sm wrap">
+          ${offsets.map(o => `<span class="badge ${o === 'now' ? 'live' : 'trial'}">${esc(o === 'now' ? 'сейчас' : o)}</span>`).join('')}
+          <span class="badge ${marketClose.available ? 'live' : 'failed'}" title="${esc(marketClose.reason || '')}">после закрытия рынка: ${marketClose.available ? 'доступно' : 'недоступно'}</span>
+          <span class="badge archived">точное время: поддерживается</span>
+        </div>
+        <div class="flex gap-sm wrap" style="margin-top:10px">
+          <button class="btn" id="rc-banner-5m">Показать баннер: через 5 минут</button>
+          <button class="btn" id="rc-banner-60s">Показать баннер: через 60 секунд</button>
+          <button class="btn" id="rc-banner-done">Показать баннер: обновление завершено</button>
+          <button class="btn ghost" id="rc-banner-seq">Проиграть последовательность</button>
+        </div>
+      </div>
       <div class="section-title">Релизы</div>
       <div class="list" id="rc-list">${rows.map(renderReleaseRow).join('') || '<div class="empty-state">Кандидатов пока нет.</div>'}</div>`;
+    const byKind = k => previews.find(p => p.kind === k) || null;
+    const bind = (id, kind) => { const b = qs('#' + id, node); if (b) b.onclick = () => showUpdateBannerPreview([byKind(kind)].filter(Boolean), notif.note); };
+    bind('rc-banner-5m', 'warn_5m');
+    bind('rc-banner-60s', 'warn_60s');
+    bind('rc-banner-done', 'deploy_successful');
+    const seqBtn = qs('#rc-banner-seq', node);
+    if (seqBtn) seqBtn.onclick = () => showUpdateBannerPreview(
+      ['warn_5m', 'warn_60s', 'deploy_successful'].map(byKind).filter(Boolean), notif.note, true);
     const refresh = qs('#rc-refresh', node);
     if (refresh) refresh.onclick = () => renderReleaseCenterInto(node);
     const newBtn = qs('#rc-new', node);
@@ -4050,22 +4212,28 @@
     const state = s.state;
     const btns = [];
     const has = c => hasAdminCapability(c);
-    if (state === 'draft' && has('releases.create')) btns.push(['build', 'Собрать артефакт', false]);
-    if (state === 'built' && has('releases.create')) btns.push(['verify', 'Проверить подпись', false]);
-    if (state === 'signed' && has('releases.deploy_canary')) btns.push(['deploy-canary', 'Развернуть в Canary', true]);
+    // Actions that touch real Canary/Production infrastructure. In this phase no
+    // real executor is wired (adapter.real_available is false), so these are
+    // shown as explicitly blocked-by-infra rather than as working actions.
+    const infraReady = !!((detail.adapter || {}).real_available);
+    const INFRA_ACTIONS = new Set(['deploy-canary', 'promote-production', 'mark-production-live', 'rollback-production']);
+    const push = (action, label, critical) => btns.push([action, label, critical, INFRA_ACTIONS.has(action) && !infraReady]);
+    if (state === 'draft' && has('releases.create')) push('build', 'Собрать артефакт', false);
+    if (state === 'built' && has('releases.create')) push('verify', 'Проверить подпись', false);
+    if (state === 'signed' && has('releases.deploy_canary')) push('deploy-canary', 'Развернуть в Canary', true);
     if (state === 'canary_checking' && has('releases.deploy_canary')) {
-      btns.push(['record-canary-check:pass', 'Отметить проверку: PASS (final)', false]);
-      btns.push(['record-canary-check:fail', 'Отметить проверку: FAIL', false]);
+      push('record-canary-check:pass', 'Отметить проверку: PASS (final)', false);
+      push('record-canary-check:fail', 'Отметить проверку: FAIL', false);
     }
-    if (state === 'canary_passed' && has('releases.promote_production')) btns.push(['approve-production', 'Одобрить Production', true]);
+    if (state === 'canary_passed' && has('releases.promote_production')) push('approve-production', 'Одобрить Production', true);
     if (state === 'approved_for_production' && has('releases.promote_production')) {
-      btns.push(['schedule-production', 'Запланировать', false]);
-      btns.push(['promote-production', 'Продвинуть в Production', true]);
+      push('schedule-production', 'Запланировать', false);
+      push('promote-production', 'Продвинуть в Production', true);
     }
-    if (state === 'production_scheduled' && has('releases.promote_production')) btns.push(['promote-production', 'Продвинуть в Production', true]);
-    if (state === 'production_deploying' && has('releases.promote_production')) btns.push(['mark-production-live', 'Подтвердить production_live', true]);
-    if (['production_live', 'production_deploying', 'production_failed'].includes(state) && has('releases.rollback_production')) btns.push(['rollback-production', 'Откатить Production', true]);
-    if (!['production_live', 'rolled_back', 'superseded', 'cancelled'].includes(state) && has('releases.create')) btns.push(['cancel', 'Отменить', false]);
+    if (state === 'production_scheduled' && has('releases.promote_production')) push('promote-production', 'Продвинуть в Production', true);
+    if (state === 'production_deploying' && has('releases.promote_production')) push('mark-production-live', 'Подтвердить production_live', true);
+    if (['production_live', 'production_deploying', 'production_failed'].includes(state) && has('releases.rollback_production')) push('rollback-production', 'Откатить Production', true);
+    if (!['production_live', 'rolled_back', 'superseded', 'cancelled'].includes(state) && has('releases.create')) push('cancel', 'Отменить', false);
     return btns;
   }
 
@@ -4115,12 +4283,27 @@
       <div class="section-title">История</div><div>${events}</div>`;
     const actions = qs('#rc-actions', body);
     const msg = qs('#rc-action-msg', body);
-    releaseActionButtons(detail).forEach(([action, label, critical]) => {
+    let blockedInfra = false;
+    releaseActionButtons(detail).forEach(([action, label, critical, blocked]) => {
+      if (blocked) {
+        blockedInfra = true;
+        const wrap = el('<span class="rc-blocked-action"></span>');
+        const btn = el('<button class="btn ghost sm" disabled></button>');
+        btn.textContent = label;
+        btn.title = 'Заблокировано: инфраструктура не настроена';
+        wrap.appendChild(btn);
+        wrap.appendChild(el('<span class="badge failed">Заблокировано: инфраструктура не настроена</span>'));
+        actions.appendChild(wrap);
+        return;
+      }
       const btn = el(`<button class="btn ${critical ? 'primary' : 'ghost'} sm"></button>`);
       btn.textContent = label;
       btn.onclick = () => runReleaseAction(candidateId, action, critical, detail, body);
       actions.appendChild(btn);
     });
+    if (blockedInfra && msg) {
+      msg.innerHTML = 'Реальный деплой в Canary/Production заблокирован: инфраструктура (внешний executor, целевые окружения) не настроена. Локально доступны создание кандидата, просмотр артефакта/манифеста/checksum, предпросмотр уведомления и репетиция blue-green (dry-run).';
+    }
     if (!actions.children.length) actions.innerHTML = '<span class="cab-sub">Нет доступных переходов для вашей роли в этом состоянии.</span>';
     const bgActions = qs('#rc-bg-actions', body);
     const bgMsg = qs('#rc-bg-msg', body);
@@ -4421,26 +4604,51 @@
     } catch (e) { renderError(body, e, () => { closeDrawer(); openAdminPanel(initialModule); }); }
   }
 
-  function wireAdminEnvironmentButton() {
+  const ENV_SEGMENTS = [
+    { env: 'development', short: 'DEV', title: 'Local DEV' },
+    { env: 'canary', short: 'CANARY', title: 'Canary' },
+    { env: 'production', short: 'PROD', title: 'Production' },
+  ];
+
+  async function wireAdminEnvironmentButton() {
     const right = qs('.tb-right');
     if (!right) return;
-    let button = qs('#admin-env-switcher');
-    if (!hasAdminCapability('environment.switch')) { if (button) button.remove(); return; }
-    if (!button) {
-      button = el('<button class="btn sm ghost admin-env-button" id="admin-env-switcher" type="button"></button>');
+    let host = qs('#admin-env-switcher');
+    if (!hasAdminCapability('environment.switch')) { if (host) host.remove(); return; }
+    if (!host) {
+      host = el('<div class="env-seg" id="admin-env-switcher" role="group" aria-label="Переключение окружения"></div>');
       const more = qs('#tb-more', right);
-      right.insertBefore(button, more || right.firstChild);
+      right.insertBefore(host, more || right.firstChild);
     }
-    const runtime = (CURRENT_AUTH && CURRENT_AUTH.runtime) || {};
-    const runtimeDeployment = runtime.deployment || runtime;
-    const environment = (BUILD_IDENTITY && BUILD_IDENTITY.environment)
+    const current = String((BUILD_IDENTITY && BUILD_IDENTITY.environment)
       || document.documentElement.dataset.deploymentEnvironment
-      || runtimeDeployment.deployment_environment
-      || runtimeDeployment.environment
-      || 'ENV';
-    button.textContent = environment.toUpperCase();
-    button.title = 'Environment Switcher';
-    button.onclick = () => showEnvironmentSwitcher();
+      || ((CURRENT_AUTH && CURRENT_AUTH.runtime && (CURRENT_AUTH.runtime.deployment || CURRENT_AUTH.runtime).deployment_environment))
+      || 'development').toLowerCase();
+    let byEnv = host._envTargets || {};
+    if (!host._envLoaded) {
+      host.innerHTML = ENV_SEGMENTS.map(s => `<span class="env-seg-btn ${s.env}${current === s.env ? ' on' : ''}">${s.short}</span>`).join('');
+      try {
+        const data = await API.http.adminEnvironmentTargets();
+        byEnv = {}; (data.targets || []).forEach(t => { byEnv[t.environment] = t; });
+        host._envTargets = byEnv; host._envLoaded = true;
+      } catch (e) { /* keep static labels; drawer still available */ }
+    }
+    host.innerHTML = ENV_SEGMENTS.map(s => {
+      const t = byEnv[s.env] || {};
+      const isCurrent = current === s.env;
+      const openable = isCurrent || !!t.open_allowed;
+      const title = `${s.title}${isCurrent ? ' · текущая' : (openable ? ' · открыть в новой вкладке' : ' · origin не настроен')}`;
+      return `<button type="button" class="env-seg-btn ${s.env}${isCurrent ? ' on' : ''}" data-env-seg="${s.env}" title="${esc(title)}"${(openable || isCurrent) ? '' : ' data-env-unset="1"'}>${s.short}</button>`;
+    }).join('') + '<button type="button" class="env-seg-more" title="Подробнее об окружениях" aria-label="Подробнее">⋯</button>';
+    qsa('[data-env-seg]', host).forEach(b => b.onclick = () => {
+      const env = b.dataset.envSeg;
+      const t = (host._envTargets || {})[env];
+      if (current === env) { showEnvironmentSwitcher(); return; }
+      if (t && t.open_allowed && env !== 'development') { openEnvironmentOrigin(t); return; }
+      showEnvironmentSwitcher();
+    });
+    const moreBtn = qs('.env-seg-more', host);
+    if (moreBtn) moreBtn.onclick = () => showEnvironmentSwitcher();
   }
 
   function isDevelopmentEnv() {
@@ -4476,7 +4684,6 @@
         { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
         ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Панель администратора', onClick: () => openAdminPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
-        ...devServiceMenuItems(),
         { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/'; } },
         { divider: true },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
