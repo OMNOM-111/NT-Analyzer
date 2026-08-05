@@ -199,18 +199,18 @@ def test_staging_virtual_user_impersonation_and_return(phase_a_store, monkeypatc
         doc = account_auth._read_doc()
         imp = next(s for s in doc["sessions"] if int(s.get("user_id") or 0) == uid and not s.get("revoked"))
         assert int(imp.get("impersonator_owner_id") or 0) == 999
-        # Build token is not recoverable from hash — use create_session path for end via API with stored cookie.
-        # Instead verify unit API end_impersonation with a known token.
+        
+        # Verify HTTP API end_impersonation doesn't block the impersonated user (403).
+        session = account_auth.start_impersonation(999, uid, ip="127.0.0.1")
+        ended_http = _request(
+            base, "/api/owner/impersonate/end", token=session["session_token"],
+            csrf=session["csrf_token"], method="POST", body={}
+        )
+        assert ended_http["restored_owner"] is True
+        assert ended_http["user"]["id"] == account_auth.user_uuid_for_legacy_id(999)
     finally:
         server.shutdown()
         server.server_close()
-
-    session = account_auth.start_impersonation(999, uid, ip="127.0.0.1")
-    assert session["impersonating"] is True
-    token = session["session_token"]
-    restored = account_auth.end_impersonation(token, owner_id=999)
-    assert restored["restored_owner"] is True
-    assert restored["user"]["id"] == account_auth.user_uuid_for_legacy_id(999)
 
 
 def test_impersonation_blocked_in_production(phase_a_store, monkeypatch):

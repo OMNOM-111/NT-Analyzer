@@ -1940,19 +1940,32 @@
   }
 
   async function renderSharedQueueInto(node) {
-    // Anonymized shared owner-training NinjaTrader status: free / busy / queued
-    // and the caller's own position only — never another user's identity.
+    // Anonymized shared owner-training NinjaTrader status: free / busy / queued,
+    // occupancy and the caller's own position only — never another user's
+    // identity — plus the caller's single limited coordinator agent.
     try {
-      const st = await API.http.ntResourceStatus();
+      const [st, alloc] = await Promise.all([
+        API.http.ntResourceStatus(),
+        API.http.ntAllocation().catch(() => null),
+      ]);
       if (!st || st.resource_kind !== 'shared_owner_training') { node.innerHTML = ''; return; }
       const badge = st.state === 'busy' ? '<span class="badge pending">выполняется бэктест</span>'
         : (st.state === 'queued' ? '<span class="badge pending">в очереди</span>'
         : '<span class="badge live">свободен</span>');
+      const occ = `<div class="cab-sub">В очереди: <strong>${esc(Number(st.queue_depth || 0))}</strong> · выполняется: <strong>${esc(Number(st.active_count || 0))}</strong></div>`;
       const yours = st.your_job && st.your_job.state === 'queued'
         ? `<div class="cab-sub">Ваша позиция в очереди: <strong>${esc(st.your_job.position)}</strong></div>` : '';
       const msg = st.message ? `<div class="finance-note">${esc(st.message)}</div>` : '';
       const upsell = st.upsell ? `<div class="cab-sub">${esc(st.upsell)}</div>` : '';
-      node.innerHTML = `<div class="cab-kv"><span class="k">Общий NinjaTrader</span><span class="v">${badge}</span></div>${yours}${msg}${upsell}`;
+      let agentBlock = '';
+      const a = alloc && alloc.allocation;
+      if (a && Array.isArray(a.agents) && a.agents.length) {
+        const opLabel = { training: 'обучение', backtest: 'бэктест', compile: 'компиляция', optimization: 'оптимизация', telemetry_read: 'телеметрия', live: 'live' };
+        const ops = (a.allowed_operations || []).map(o => opLabel[o] || o).join(', ');
+        agentBlock = `<div class="cab-kv"><span class="k">Ваш агент</span><span class="v">${a.agents.map(n => `<span class="chip-tag">${esc(n)}</span>`).join(' ')}</span></div>`
+          + (ops ? `<div class="cab-sub">Доступные операции: ${esc(ops)}. Общий контур ограничен наблюдением и постановкой заданий в общую очередь.</div>` : '');
+      }
+      node.innerHTML = `<div class="cab-kv"><span class="k">Общий NinjaTrader</span><span class="v">${badge}</span></div>${occ}${yours}${agentBlock}${msg}${upsell}`;
     } catch (e) { node.innerHTML = ''; }
   }
 
@@ -5027,6 +5040,14 @@
   // draw/open/clear/snapshot operation. Headless snapshots never enqueue this.
   function startDesktopCommandBridge() {
     if (!window.API || (API.config && API.config.offline) || document.body.dataset.page === 'desktop') return;
+    // The bridge only hops a global-chat chart command to the Desktop page and
+    // polls /api/ops/runtime/chart-commands (live_read). A limited user without
+    // the Desktop entitlement would otherwise loop on a 403 every 5s, so never
+    // start it for them.
+    const auth = CURRENT_AUTH || {};
+    const feats = auth.features || (auth.user && auth.user.features) || {};
+    const caps = auth.capabilities || {};
+    if (!auth.is_owner && !feats.desktop && !caps.charts_realtime && !caps.live_read) return;
     let busy = false;
     poll(async () => {
       if (busy) return;
@@ -5038,6 +5059,9 @@
         await API.http.ackChartCommand(command.id, 'done', { ok: true, navigation: 'desktop.html' });
         try { sessionStorage.setItem('stratforge.desktop.auto-open', command.id || '1'); } catch (e) { /* ignore */ }
         window.location.href = withMiniAppContext('desktop.html');
+      } catch (e) {
+        // Best-effort background bridge: never surface entitlement/transient
+        // errors as toasts or console noise.
       } finally {
         busy = false;
       }

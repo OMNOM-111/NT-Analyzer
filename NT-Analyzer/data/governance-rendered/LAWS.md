@@ -1,6 +1,6 @@
 # LAWS
 
-Дата актуализации: 2026-07-27
+Дата актуализации: 2026-08-02T03:17:45Z
 
 Короткий свод проектных законов для людей, Codex, Cursor, Claude и Gemini.
 
@@ -11,7 +11,7 @@
 - Значение: `2000.00 USD`
 - Суть: Новые исследования и новые профили стартуют от одного общего allocated capital.
 - Важно: Смена capital меняет только общий дефолт. Исторические результаты и существующие locked profiles требуют ручной ревалидации.
-- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/risk-profile.md`
+- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/strategies/risk-profile.md`
 - Автосинхронизация: app/jobqueue.py research gate, app/ai_lab/backtest.py, app/ai_lab/generator.py, app/ai_lab/knowledge.py, tools/research/python/research_lib.py, ui backtest defaults, ui AI Lab capital presets
 - Ручная проверка: existing ready/paper profiles with locked StartingCapital, data/ops/registry.json and trading runtime cards, historical research bundles and legacy strategy registry docs
 
@@ -30,7 +30,7 @@
 
 - Значение: `1.90 USD`
 - Суть: Research и AI Lab не используют значение ниже project floor за round turn на контракт.
-- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
+- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
 - Автосинхронизация: app/jobqueue.py research gate, app/ai_lab/backtest.py, app/ai_lab/generator.py, app/ai_lab/knowledge.py, tools/research/python/research_lib.py
 - Ручная проверка: ops metrics that depend on per-strategy locked params, legacy paper/demo profiles with older fee assumptions
 
@@ -38,7 +38,7 @@
 
 - Значение: `1 ticks`
 - Суть: Рабочие проверки не используют slippage ниже project floor.
-- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
+- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
 - Автосинхронизация: app/jobqueue.py research gate, app/ai_lab/backtest.py, app/ai_lab/generator.py, app/ai_lab/knowledge.py, tools/research/python/research_lib.py
 - Ручная проверка: legacy reports with slip=1/slip=2 commentary
 
@@ -46,7 +46,7 @@
 
 - Значение: `High`
 - Суть: Research-grade проверки идут только через High fill.
-- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`
+- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`
 - Автосинхронизация: app/jobqueue.py validation, tools/research/python/research_lib.py build_job_body
 
 
@@ -64,7 +64,7 @@
 
 - Значение: `Да`
 - Суть: Новые исследования и новые профили по умолчанию считаются без overnight-hold.
-- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/risk-profile.md`
+- Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`, `NT-Analyzer/docs/strategies/risk-profile.md`
 - Автосинхронизация: ui backtest risk profile defaults, tools/research/python/research_lib.py
 - Ручная проверка: existing profiles with explicit IntradayOnly=false
 

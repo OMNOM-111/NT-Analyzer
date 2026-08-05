@@ -2,46 +2,46 @@
   "version": 2,
   "role_stats": {
     "vitek_dispatcher": {
-      "count": 12,
-      "rating_weight": 12.0,
-      "weighted_sum": 12.0,
+      "count": 14,
+      "rating_weight": 14.0,
+      "weighted_sum": 14.0,
       "avg": 1.0,
-      "sum": 12.0,
-      "ones": 12,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 11.675438617124836
+      "sum": 14.0,
+      "ones": 14,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 13.553976116919015
     },
     "accountant": {
-      "count": 6,
-      "rating_weight": 6.0,
-      "weighted_sum": 12.0,
+      "count": 7,
+      "rating_weight": 7.0,
+      "weighted_sum": 14.0,
       "avg": 2.0,
-      "sum": 12.0,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 5.9254981287468755
+      "sum": 14.0,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 6.895870638103141
     }
   },
   "model_stats": {
     "unknown": {
       "provider": "",
-      "count": 12,
-      "rating_weight": 12.0,
-      "weighted_sum": 12.0,
+      "count": 14,
+      "rating_weight": 14.0,
+      "weighted_sum": 14.0,
       "avg": 1.0,
-      "sum": 12.0,
-      "ones": 12,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 11.675438617124836
+      "sum": 14.0,
+      "ones": 14,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 13.553976116919015
     },
     "gpt-test": {
       "provider": "local",
-      "count": 6,
-      "rating_weight": 6.0,
-      "weighted_sum": 12.0,
+      "count": 7,
+      "rating_weight": 7.0,
+      "weighted_sum": 14.0,
       "avg": 2.0,
-      "sum": 12.0,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 5.9254981287468755
+      "sum": 14.0,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 6.895870638103141
     }
   },
   "role_model_stats": {
@@ -49,53 +49,53 @@
       "role_id": "vitek_dispatcher",
       "model_id": "unknown",
       "provider": "",
-      "count": 12,
-      "rating_weight": 12.0,
-      "weighted_sum": 12.0,
+      "count": 14,
+      "rating_weight": 14.0,
+      "weighted_sum": 14.0,
       "avg": 1.0,
-      "sum": 12.0,
-      "ones": 12,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 11.675438617124836
+      "sum": 14.0,
+      "ones": 14,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 13.553976116919015
     },
     "accountant::gpt-test": {
       "role_id": "accountant",
       "model_id": "gpt-test",
       "provider": "local",
-      "count": 6,
-      "rating_weight": 6.0,
-      "weighted_sum": 12.0,
+      "count": 7,
+      "rating_weight": 7.0,
+      "weighted_sum": 14.0,
       "avg": 2.0,
-      "sum": 12.0,
-      "updated_at_utc": "2026-07-25T21:21:59Z",
-      "weight": 5.9254981287468755
+      "sum": 14.0,
+      "updated_at_utc": "2026-08-05T23:49:51Z",
+      "weight": 6.895870638103141
     }
   },
   "workspace_stats": {
     "ws-shared": {
       "role_stats": {
         "vitek_dispatcher": {
-          "count": 6,
-          "rating_weight": 6.0,
-          "weighted_sum": 6.0,
+          "count": 7,
+          "rating_weight": 7.0,
+          "weighted_sum": 7.0,
           "avg": 1.0,
-          "sum": 6.0,
-          "ones": 6,
-          "updated_at_utc": "2026-07-25T21:21:56Z",
-          "weight": 5.9254981287468755
+          "sum": 7.0,
+          "ones": 7,
+          "updated_at_utc": "2026-08-05T23:49:48Z",
+          "weight": 6.895870638103141
         }
       },
       "model_stats": {
         "unknown": {
           "provider": "",
-          "count": 6,
-          "rating_weight": 6.0,
-          "weighted_sum": 6.0,
+          "count": 7,
+          "rating_weight": 7.0,
+          "weighted_sum": 7.0,
           "avg": 1.0,
-          "sum": 6.0,
-          "ones": 6,
-          "updated_at_utc": "2026-07-25T21:21:56Z",
-          "weight": 5.9254981287468755
+          "sum": 7.0,
+          "ones": 7,
+          "updated_at_utc": "2026-08-05T23:49:48Z",
+          "weight": 6.895870638103141
         }
       },
       "role_model_stats": {
@@ -103,14 +103,14 @@
           "role_id": "vitek_dispatcher",
           "model_id": "unknown",
           "provider": "",
-          "count": 6,
-          "rating_weight": 6.0,
-          "weighted_sum": 6.0,
+          "count": 7,
+          "rating_weight": 7.0,
+          "weighted_sum": 7.0,
           "avg": 1.0,
-          "sum": 6.0,
-          "ones": 6,
-          "updated_at_utc": "2026-07-25T21:21:56Z",
-          "weight": 5.9254981287468755
+          "sum": 7.0,
+          "ones": 7,
+          "updated_at_utc": "2026-08-05T23:49:48Z",
+          "weight": 6.895870638103141
         }
       }
     }
@@ -364,6 +364,48 @@
       "task_category": "task",
       "weight": 1.0,
       "message_id": "MSG-F596BDFCC33B",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "auto_penalty"
+    },
+    {
+      "event_id": "message_rating:ws-shared:MSG-075E4C3DF37B",
+      "at": "2026-08-05T23:49:48Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-075E4C3DF37B",
+      "workspace_id": "ws-shared",
+      "user_id": "11",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-255C6956A2D0",
+      "at": "2026-08-05T23:49:51Z",
+      "role_id": "vitek_dispatcher",
+      "model_id": "unknown",
+      "provider": "",
+      "rating": 1,
+      "task_category": "chat",
+      "weight": 1.0,
+      "message_id": "MSG-255C6956A2D0",
+      "workspace_id": "",
+      "user_id": "",
+      "source": "owner"
+    },
+    {
+      "event_id": "message_rating:global:MSG-89520A36001B",
+      "at": "2026-08-05T23:49:51Z",
+      "role_id": "accountant",
+      "model_id": "gpt-test",
+      "provider": "local",
+      "rating": 2,
+      "task_category": "task",
+      "weight": 1.0,
+      "message_id": "MSG-89520A36001B",
       "workspace_id": "",
       "user_id": "",
       "source": "auto_penalty"

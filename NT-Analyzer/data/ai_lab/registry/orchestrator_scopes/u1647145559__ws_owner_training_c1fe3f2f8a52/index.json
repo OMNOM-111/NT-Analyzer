@@ -4,13 +4,14 @@
       "conversation_id": "c-42",
       "title": "Новый чат",
       "created_at_utc": "2026-07-22T05:27:40Z",
-      "message_count": 36,
+      "message_count": 65,
       "auto_title": true,
       "conversation_scope_id": "u1647145559__ws_owner_training_c1fe3f2f8a52",
       "user_id": 1647145559,
       "workspace_id": "ws_owner_training_c1fe3f2f8a52",
       "membership_role": "owner",
-      "updated_at_utc": "2026-07-22T21:14:54Z"
+      "updated_at_utc": "2026-08-04T02:59:51Z",
+      "user_uuid": "6b0738c8-efca-4285-9100-905e34633d56"
     }
   ],
   "owner_legacy_conversations_migrated_v1": {

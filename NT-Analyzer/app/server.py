@@ -334,6 +334,18 @@ def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
     return value == "/api/server/restart" or value.startswith(_OWNER_ONLY_API_PREFIXES)
 
 
+def _is_impersonation_exit(path: str, context: Any) -> bool:
+    """The impersonation-exit endpoint must always be reachable by an active
+    impersonation session, so "return to owner" can never get stuck behind the
+    impersonated persona's workspace role, read-only role or the owner-only gate.
+    The endpoint itself is loopback + Development gated and only ever restores
+    the exact owner that started the impersonation, so this exemption cannot be
+    used to escalate privileges."""
+    if path != "/api/owner/impersonate/end":
+        return False
+    return bool(isinstance(context, dict) and context.get("impersonator_owner_id"))
+
+
 _ADMIN_MODULES = (
     {"id": "overview", "label": "Обзор", "capability": "admin.view", "group": ""},
     {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage", "group": "Доступ и пользователи"},
@@ -1849,28 +1861,30 @@ class Handler(BaseHTTPRequestHandler):
                 workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
                 membership_role = str(self._remote_context.get("membership_role") or "viewer")
                 personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+                impersonation_exit = _is_impersonation_exit(path, self._remote_context)
                 if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                         and membership_role not in workspaces.WRITE_ROLES
-                        and not _is_self_service_post(path) and not admin_route):
+                        and not _is_self_service_post(path) and not admin_route and not impersonation_exit):
                     raise telegram_remote.RemoteAccessError(
                         "В этой рабочей области доступно только наблюдение.", 403,
                         self._remote_context,
                     )
                 if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
-                        and not admin_route
+                        and not admin_route and not impersonation_exit
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
-                if _is_owner_only_api_path(path, method) and not self._remote_context["is_owner"]:
+                if _is_owner_only_api_path(path, method) and not self._remote_context["is_owner"] and not impersonation_exit:
                     raise telegram_remote.RemoteAccessError(
                         "Это действие разрешено только владельцу.", 403,
                         self._remote_context,
                     )
                 try:
                     self._remote_context["_request_method"] = method
-                    permissions.enforce(path, self._remote_context)
+                    if not impersonation_exit:
+                        permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
                     raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
-                if account_auth.path_requires_nt_dual_auth(path, method):
+                if not impersonation_exit and account_auth.path_requires_nt_dual_auth(path, method):
                     try:
                         account_auth.require_nt_dual_auth(self._remote_context)
                     except account_auth.AccountAuthError as exc:
@@ -1899,25 +1913,27 @@ class Handler(BaseHTTPRequestHandler):
         workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
         membership_role = str(context.get("membership_role") or "viewer")
         personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+        impersonation_exit = _is_impersonation_exit(path, context)
         if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                 and membership_role not in workspaces.WRITE_ROLES
-                and not _is_self_service_post(path) and not admin_route):
+                and not _is_self_service_post(path) and not admin_route and not impersonation_exit):
             self._err(HTTPStatus.FORBIDDEN, "В этой рабочей области доступно только наблюдение.")
             return False
         if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
-            and not admin_route
+            and not admin_route and not impersonation_exit
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
-        if _is_owner_only_api_path(path, method) and not context.get("is_owner"):
+        if _is_owner_only_api_path(path, method) and not context.get("is_owner") and not impersonation_exit:
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
         try:
             context["_request_method"] = method
-            permissions.enforce(path, context)
+            if not impersonation_exit:
+                permissions.enforce(path, context)
         except permissions.PermissionError as exc:
             self._err(exc.status, str(exc)); return False
-        if account_auth.path_requires_nt_dual_auth(path, method):
+        if not impersonation_exit and account_auth.path_requires_nt_dual_auth(path, method):
             try:
                 account_auth.require_nt_dual_auth(context)
             except account_auth.AccountAuthError as exc:
