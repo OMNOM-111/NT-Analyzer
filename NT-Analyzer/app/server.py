@@ -2608,6 +2608,30 @@ class Handler(BaseHTTPRequestHandler):
         except (runtime_env.RuntimeEnvError, account_auth.AccountAuthError) as exc:
             self._err(getattr(exc, "status", 400), str(exc))
 
+    def _owner_agent_team_grant(self) -> None:
+        """Owner grants/revokes the full agent team capability for a user."""
+        context = self._require_owner_actor()
+        if not context:
+            return
+        body = self._read_body() or {}
+        try:
+            uid = int(body.get("user_id") or 0)
+        except (TypeError, ValueError):
+            uid = 0
+        if uid <= 0:
+            self._err(HTTPStatus.BAD_REQUEST, "user_id обязателен."); return
+        capability = str(body.get("capability") or agent_allocation.TEAM_FULL_CAPABILITY)
+        action = str(body.get("action") or "grant").strip().lower()
+        try:
+            if action == "revoke":
+                out = agent_allocation.revoke_team_capability(uid, capability)
+            else:
+                out = agent_allocation.grant_team_capability(
+                    uid, capability, granted_by=context.get("user_id"))
+            self._json(HTTPStatus.OK, out)
+        except ValueError as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
+
     def _owner_google_secrets(self) -> None:
         if not self._require_owner_actor():
             return
@@ -7343,6 +7367,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_local_post():
                 return
             self._owner_impersonate_end()
+            return
+
+        if path == "/api/owner/agents/team-grant":
+            if not self._check_local_post():
+                return
+            self._owner_agent_team_grant()
             return
 
         if path == "/api/owner/google/secrets":

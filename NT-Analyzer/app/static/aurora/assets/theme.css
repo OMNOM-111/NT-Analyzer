@@ -430,6 +430,57 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .admin-modules { display: flex; flex-direction: column; gap: 5px; align-self: start; position: sticky; top: 0; }
 .admin-module { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--tx-2); text-align: left; cursor: pointer; }
 .admin-module:hover { background: var(--bg-3); color: var(--tx); }
+/* Compact top-bar environment switcher (environment.switch) */
+.env-seg { display: inline-flex; align-items: stretch; gap: 0; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; background: var(--bg-3); flex: none; }
+.env-seg-btn { appearance: none; border: 0; background: transparent; color: var(--tx-3); font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 4px 8px; cursor: pointer; line-height: 1.4; border-right: 1px solid var(--line); }
+.env-seg-btn:last-of-type { border-right: 0; }
+.env-seg-btn:hover:not(.on):not([data-env-unset]) { background: var(--bg-4); color: var(--tx); }
+.env-seg-btn[data-env-unset] { color: var(--tx-4); cursor: default; }
+.env-seg-btn.on { color: #fff; cursor: default; }
+.env-seg-btn.development.on { background: linear-gradient(180deg, #f59e0b, #d97706); }
+.env-seg-btn.canary.on { background: linear-gradient(180deg, #eab308, #ca8a04); }
+.env-seg-btn.production.on { background: linear-gradient(180deg, #6d5efc, #4f46e5); }
+.env-seg-more { appearance: none; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--tx-3); cursor: pointer; padding: 0 7px; font-size: 13px; line-height: 1; }
+.env-seg-more:hover { background: var(--bg-4); color: var(--tx); }
+/* Development / QA persona quick-launch grid */
+.qa-persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.qa-persona { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--tx); cursor: pointer; }
+.qa-persona:hover { border-color: var(--brand-line); background: var(--brand-soft); }
+.qa-persona-title { font-weight: 700; font-size: 13px; }
+.qa-persona-sub { font-size: 11px; color: var(--tx-3); }
+/* Item 2: typed device cards (computer / phone / browser / Connector). */
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.device-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-2); }
+.device-card.dev-connector { border-color: var(--brand-line); }
+.device-card-head { display: flex; align-items: flex-start; gap: 10px; }
+.device-card-head .dev-ic { font-size: 22px; line-height: 1; flex: none; }
+.device-card-head .dev-headmain { flex: 1 1 auto; min-width: 0; }
+.device-card-head .badge { flex: none; }
+.dev-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dev-type { font-size: 11px; color: var(--tx-3); margin-top: 2px; }
+.dev-online { font-size: 11px; font-weight: 600; }
+.dev-online.on { color: #22c55e; }
+.dev-online.off { color: var(--tx-4); }
+.device-kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.dev-kv-item { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dev-kv-item .k { font-size: 10px; letter-spacing: .03em; text-transform: uppercase; color: var(--tx-4); }
+.dev-kv-item .v { font-size: 12px; color: var(--tx); overflow-wrap: anywhere; }
+.device-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.device-details { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; background: var(--bg-3); border: 1px solid var(--line); }
+.dev-detail-item { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+.dev-detail-item .k { color: var(--tx-4); }
+.dev-detail-item .v.mono { font-family: var(--mono, ui-monospace, monospace); color: var(--tx-2); overflow-wrap: anywhere; text-align: right; }
+/* Item 5: blocked-by-infrastructure release actions. */
+.rc-blocked-action { display: inline-flex; align-items: center; gap: 6px; }
+.rc-blocked-action button[disabled] { opacity: .55; cursor: not-allowed; }
+/* Item 6: top update-banner preview. */
+.update-preview-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 1200; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: linear-gradient(90deg, #4f46e5, #6d5efc); color: #fff; box-shadow: 0 6px 20px rgba(0,0,0,.35); font-size: 13px; }
+.update-preview-banner.upb-done { background: linear-gradient(90deg, #059669, #10b981); }
+.update-preview-banner .upb-tag { font-size: 10px; font-weight: 800; letter-spacing: .08em; padding: 3px 7px; border-radius: 6px; background: rgba(255,255,255,.22); flex: none; }
+.update-preview-banner .upb-main { flex: 1 1 auto; min-width: 0; }
+.update-preview-banner .upb-title { font-weight: 700; }
+.update-preview-banner .upb-msg { opacity: .95; }
+.update-preview-banner .btn { flex: none; color: #fff; border-color: rgba(255,255,255,.4); }
 .admin-module.on { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand-ink); }
 .admin-module small { color: var(--tx-4); font-size: 9px; overflow-wrap: anywhere; }
 .admin-module-group { padding: 12px 12px 4px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--tx-4); }

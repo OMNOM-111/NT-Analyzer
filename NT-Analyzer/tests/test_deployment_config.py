@@ -165,7 +165,7 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.build_id.startswith("dev-0.10.0-dev.1-")
     assert config.build_timestamp_utc == "2026-08-02T01:35:50Z"
     assert config.artifact_sha256 == ""
-    assert runtime_env.impersonation_enabled() is False
+    assert runtime_env.impersonation_enabled() is True
     status = runtime_env.status()
     assert status["deployment_environment"] == "development"
     assert status["app_version"] == "0.10.0-dev.1"

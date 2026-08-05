@@ -249,9 +249,29 @@ def _expire_stale(doc: Dict[str, Any]) -> bool:
 # --------------------------------------------------------------------------- #
 # Public masking.
 # --------------------------------------------------------------------------- #
-def _public_device(device: Dict[str, Any]) -> Dict[str, Any]:
+def _active_device_ids(doc: Dict[str, Any]) -> frozenset:
+    """Device ids that currently have at least one live (non-revoked, unexpired)
+    session. This is the only honest ``online`` signal — it never guesses from a
+    stale ``last_seen`` timestamp and never invents a heartbeat we do not have.
+    """
+    now = _now()
+    live: set = set()
+    for row in doc.get("sessions") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("revoked") or float(row.get("expires_at") or 0) <= now:
+            continue
+        did = str(row.get("trusted_device_id") or "")
+        if did:
+            live.add(did)
+    return frozenset(live)
+
+
+def _public_device(device: Dict[str, Any], active_ids: frozenset = frozenset()) -> Dict[str, Any]:
+    device_id = str(device.get("device_id") or "")
+    status = str(device.get("status") or STATUS_PENDING)
     return {
-        "device_id": str(device.get("device_id") or ""),
+        "device_id": device_id,
         "device_type": str(device.get("device_type") or "browser"),
         "display_name": str(device.get("display_name") or "Устройство"),
         "os_family": str(device.get("os_family") or ""),
@@ -259,7 +279,10 @@ def _public_device(device: Dict[str, Any]) -> Dict[str, Any]:
         "client": str(device.get("client") or ""),
         "app_version": str(device.get("app_version") or ""),
         "connector_installation_id": str(device.get("connector_installation_id") or ""),
-        "status": str(device.get("status") or STATUS_PENDING),
+        "status": status,
+        # ``online`` is derived only from a live session for this device id, so a
+        # revoked/expired device can never report as online.
+        "online": bool(device_id) and device_id in active_ids and status in _ACTIVE_STATUSES,
         "confirmation_provider": str(device.get("confirmation_provider") or ""),
         "first_seen_at_utc": str(device.get("first_seen_at_utc") or ""),
         "last_seen_at_utc": str(device.get("last_seen_at_utc") or ""),
@@ -725,8 +748,9 @@ def list_devices(user_id: Any) -> Dict[str, Any]:
         if _expire_stale(doc):
             account_auth._write_doc(doc)
         user_uuid = _normalize_uuid(account_auth._user_uuid(user))
+        active_ids = _active_device_ids(doc)
         rows = [
-            _public_device(row) for row in _devices(doc)
+            _public_device(row, active_ids) for row in _devices(doc)
             if isinstance(row, dict)
             and hmac.compare_digest(_normalize_uuid(row.get("user_uuid")), user_uuid)
         ]
@@ -749,8 +773,9 @@ def account_security(user_id: Any) -> Dict[str, Any]:
         if _expire_stale(doc):
             account_auth._write_doc(doc)
         user_uuid = _normalize_uuid(account_auth._user_uuid(user))
+        active_ids = _active_device_ids(doc)
         devices = [
-            _public_device(row) for row in _devices(doc)
+            _public_device(row, active_ids) for row in _devices(doc)
             if isinstance(row, dict)
             and hmac.compare_digest(_normalize_uuid(row.get("user_uuid")), user_uuid)
         ]
