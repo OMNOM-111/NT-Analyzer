@@ -3,7 +3,7 @@
   "broker": "NinjaTrader",
   "source": "auto_refresh",
   "source_url": "https://ninjatrader.com/pricing/margins/",
-  "fetched_at_utc": "2026-08-04T03:46:21Z",
+  "fetched_at_utc": "2026-08-06T00:51:25Z",
   "trigger": "auto",
   "notes": [
     "Intraday margins can change without notice.",
@@ -16,35 +16,35 @@
       "display_name": "Micro 10-Year Yield",
       "exchange": "CBOT",
       "intraday_margin": 50.0,
-      "initial_margin": 0.0,
+      "initial_margin": 330.0,
       "maintenance_margin": null
     },
     "1OZ": {
       "display_name": "1-Ounce Gold",
       "exchange": "COMEX",
       "intraday_margin": 50.0,
-      "initial_margin": 224.4,
+      "initial_margin": 227.7,
       "maintenance_margin": null
     },
     "2YY": {
       "display_name": "Micro 2-Year Yield",
       "exchange": "CBOT",
       "intraday_margin": 50.0,
-      "initial_margin": 0.0,
+      "initial_margin": 363.0,
       "maintenance_margin": null
     },
     "30Y": {
       "display_name": "Micro 30-Year Yield",
       "exchange": "CBOT",
       "intraday_margin": 50.0,
-      "initial_margin": 0.0,
+      "initial_margin": 297.0,
       "maintenance_margin": null
     },
     "5YY": {
       "display_name": "Micro 5-Year Yield",
       "exchange": "CBOT",
       "intraday_margin": 50.0,
-      "initial_margin": 0.0,
+      "initial_margin": 341.0,
       "maintenance_margin": null
     },
     "6A": {
@@ -142,7 +142,7 @@
       "display_name": "CME Bitcoin",
       "exchange": "CME",
       "intraday_margin": 20000.0,
-      "initial_margin": 82767.0,
+      "initial_margin": 85120.2,
       "maintenance_margin": null
     },
     "BTI": {
@@ -156,14 +156,14 @@
       "display_name": "Brent Crude Last Day Financial",
       "exchange": "NYMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 9913.52,
+      "initial_margin": 8429.26,
       "maintenance_margin": null
     },
     "CL": {
       "display_name": "Crude Oil",
       "exchange": "NYMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 9008.33,
+      "initial_margin": 8159.2,
       "maintenance_margin": null
     },
     "DOG": {
@@ -191,7 +191,7 @@
       "display_name": "E-Mini S&P 500",
       "exchange": "CME",
       "intraday_margin": 500.0,
-      "initial_margin": 27599.51,
+      "initial_margin": 27509.1,
       "maintenance_margin": null
     },
     "ET": {
@@ -205,7 +205,7 @@
       "display_name": "Ether",
       "exchange": "CME",
       "intraday_margin": 2500.0,
-      "initial_margin": 32742.0,
+      "initial_margin": 33088.0,
       "maintenance_margin": null
     },
     "ETI": {
@@ -303,7 +303,7 @@
       "display_name": "Gold",
       "exchange": "COMEX",
       "intraday_margin": 2000.0,
-      "initial_margin": 22270.6,
+      "initial_margin": 22524.7,
       "maintenance_margin": null
     },
     "GE": {
@@ -331,14 +331,14 @@
       "display_name": "CME Solana",
       "exchange": "CME",
       "intraday_margin": 500.0,
-      "initial_margin": 16896.0,
+      "initial_margin": 17163.3,
       "maintenance_margin": null
     },
     "GXRP": {
       "display_name": "CME XRP",
       "exchange": "CME",
       "intraday_margin": 1000.0,
-      "initial_margin": 0.0,
+      "initial_margin": 26244.9,
       "maintenance_margin": null
     },
     "HE": {
@@ -359,7 +359,7 @@
       "display_name": "Heating Oil",
       "exchange": "NYMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 13276.31,
+      "initial_margin": 11651.56,
       "maintenance_margin": null
     },
     "J7": {
@@ -415,7 +415,7 @@
       "display_name": "Micro E-mini Russell 2000",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 1171.47,
+      "initial_margin": 1188.86,
       "maintenance_margin": null
     },
     "M6A": {
@@ -443,7 +443,7 @@
       "display_name": "Micro Bitcoin",
       "exchange": "CME",
       "intraday_margin": 100.0,
-      "initial_margin": 1654.0,
+      "initial_margin": 1702.8,
       "maintenance_margin": null
     },
     "MC": {
@@ -464,21 +464,21 @@
       "display_name": "Micro Crude Oil",
       "exchange": "NYMEX",
       "intraday_margin": 100.0,
-      "initial_margin": 903.04,
+      "initial_margin": 818.13,
       "maintenance_margin": null
     },
     "MES": {
       "display_name": "Micro E-mini S&P 500",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 2759.96,
+      "initial_margin": 2750.92,
       "maintenance_margin": null
     },
     "MET": {
       "display_name": "Micro Ether",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 67.0,
+      "initial_margin": 67.1,
       "maintenance_margin": null
     },
     "MFS": {
@@ -492,7 +492,7 @@
       "display_name": "E-Micro Gold",
       "exchange": "COMEX",
       "intraday_margin": 200.0,
-      "initial_margin": 2227.5,
+      "initial_margin": 2252.8,
       "maintenance_margin": null
     },
     "MHG": {
@@ -513,35 +513,35 @@
       "display_name": "Micro E-mini S&P MidCap 400 Index",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 2674.86,
+      "initial_margin": 2666.57,
       "maintenance_margin": null
     },
     "MNG": {
       "display_name": "Micro Henry Hub Natural Gas",
       "exchange": "NYMEX",
       "intraday_margin": 100.0,
-      "initial_margin": 328.08,
+      "initial_margin": 323.26,
       "maintenance_margin": null
     },
     "MNK": {
       "display_name": "Micro Nikkei Stock Average",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 2768.46,
+      "initial_margin": 2829.59,
       "maintenance_margin": null
     },
     "MNQ": {
       "display_name": "Micro E-mini NASDAQ-100",
       "exchange": "CME",
       "intraday_margin": 100.0,
-      "initial_margin": 4235.26,
+      "initial_margin": 4383.91,
       "maintenance_margin": null
     },
     "MSC": {
       "display_name": "Micro E-mini S&P SmallCap 600 Index",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 1371.37,
+      "initial_margin": 1366.83,
       "maintenance_margin": null
     },
     "MSF": {
@@ -555,7 +555,7 @@
       "display_name": "Micro Solana",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 844.0,
+      "initial_margin": 859.1,
       "maintenance_margin": null
     },
     "MTN": {
@@ -576,14 +576,14 @@
       "display_name": "CME Micro XRP",
       "exchange": "CME",
       "intraday_margin": 50.0,
-      "initial_margin": 1285.0,
+      "initial_margin": 1312.3,
       "maintenance_margin": null
     },
     "MYM": {
       "display_name": "Micro E-mini Dow $0.50",
       "exchange": "CBOT",
       "intraday_margin": 50.0,
-      "initial_margin": 1650.09,
+      "initial_margin": 1643.88,
       "maintenance_margin": null
     },
     "MZC": {
@@ -625,7 +625,7 @@
       "display_name": "Natural Gas",
       "exchange": "NYMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 3258.81,
+      "initial_margin": 3210.62,
       "maintenance_margin": null
     },
     "NKD": {
@@ -646,14 +646,14 @@
       "display_name": "E-Mini NASDAQ 100",
       "exchange": "CME",
       "intraday_margin": 1000.0,
-      "initial_margin": 42352.57,
+      "initial_margin": 43839.12,
       "maintenance_margin": null
     },
     "PA": {
       "display_name": "Palladium",
       "exchange": "NYMEX",
       "intraday_margin": 2000.0,
-      "initial_margin": 14031.6,
+      "initial_margin": 14908.3,
       "maintenance_margin": null
     },
     "PADAUK": {
@@ -723,7 +723,7 @@
       "display_name": "Platinum",
       "exchange": "NYMEX",
       "intraday_margin": 2000.0,
-      "initial_margin": 8169.7,
+      "initial_margin": 8649.3,
       "maintenance_margin": null
     },
     "PLNKUD": {
@@ -786,63 +786,56 @@
       "display_name": "E-Mini Natural Gas",
       "exchange": "NYMEX",
       "intraday_margin": 500.0,
-      "initial_margin": 820.21,
+      "initial_margin": 808.16,
       "maintenance_margin": null
     },
     "QH": {
       "display_name": "E-Mini Heating Oil",
       "exchange": "NYMEX",
       "intraday_margin": 500.0,
-      "initial_margin": 6185.51,
+      "initial_margin": 5830.4,
       "maintenance_margin": null
     },
     "QI": {
       "display_name": "miNY Silver",
       "exchange": "COMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 15891.7,
+      "initial_margin": 16568.2,
       "maintenance_margin": null
     },
     "QM": {
       "display_name": "E-Mini Crude Oil",
       "exchange": "NYMEX",
       "intraday_margin": 500.0,
-      "initial_margin": 4515.16,
+      "initial_margin": 4090.61,
       "maintenance_margin": null
     },
     "QO": {
       "display_name": "E-Mini Gold",
       "exchange": "COMEX",
       "intraday_margin": 500.0,
-      "initial_margin": 11211.2,
+      "initial_margin": 11335.5,
       "maintenance_margin": null
     },
     "RB": {
       "display_name": "RBOB Gasoline",
       "exchange": "NYMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 10606.59,
+      "initial_margin": 8810.78,
       "maintenance_margin": null
     },
     "RTY": {
       "display_name": "E-Mini Russell 2000",
       "exchange": "CME",
       "intraday_margin": 500.0,
-      "initial_margin": 11714.7,
-      "maintenance_margin": null
-    },
-    "SAAPL": {
-      "display_name": "APPLE INC. Commodity",
-      "exchange": "CME",
-      "intraday_margin": 2887.0,
-      "initial_margin": 5774.0,
+      "initial_margin": 11888.56,
       "maintenance_margin": null
     },
     "SI": {
       "display_name": "Silver",
       "exchange": "COMEX",
       "intraday_margin": 4000.0,
-      "initial_margin": 31675.6,
+      "initial_margin": 33030.8,
       "maintenance_margin": null
     },
     "SIC": {
@@ -856,7 +849,7 @@
       "display_name": "Micro Silver",
       "exchange": "COMEX",
       "intraday_margin": 1000.0,
-      "initial_margin": 6336.0,
+      "initial_margin": 6606.6,
       "maintenance_margin": null
     },
     "SOL": {
@@ -904,15 +897,15 @@
     "XAAPL": {
       "display_name": "APPLE INC. Micro SSF Commodity",
       "exchange": "CME",
-      "intraday_margin": 288.5,
+      "intraday_margin": 200.0,
       "initial_margin": 577.0,
       "maintenance_margin": null
     },
-    "XAVGO": {
-      "display_name": "BROADCOM INC. Micro SSF Commodity",
+    "XAMD0": {
+      "display_name": "Micro Advanced Micro Devices, Inc. SSF",
       "exchange": "CME",
-      "intraday_margin": 331.0,
-      "initial_margin": 662.0,
+      "intraday_margin": 200.0,
+      "initial_margin": 1235.0,
       "maintenance_margin": null
     },
     "XC": {
@@ -925,7 +918,7 @@
     "XINTC": {
       "display_name": "INTEL CORP Micro SSF Commodity",
       "exchange": "CME",
-      "intraday_margin": 116.0,
+      "intraday_margin": 100.0,
       "initial_margin": 232.0,
       "maintenance_margin": null
     },
@@ -934,13 +927,6 @@
       "exchange": "CBOT",
       "intraday_margin": 250.0,
       "initial_margin": 484.0,
-      "maintenance_margin": null
-    },
-    "XNVDA": {
-      "display_name": "NVIDIA CORPORATION Micro SSF Commodity",
-      "exchange": "CME",
-      "intraday_margin": 179.0,
-      "initial_margin": 358.0,
       "maintenance_margin": null
     },
     "XRP": {
@@ -953,7 +939,7 @@
     "XTSLA": {
       "display_name": "TESLA, INC. Micro SSF Commodity",
       "exchange": "CME",
-      "intraday_margin": 120.5,
+      "intraday_margin": 200.0,
       "initial_margin": 241.0,
       "maintenance_margin": null
     },
@@ -968,7 +954,7 @@
       "display_name": "E-Mini Dow ($5)",
       "exchange": "CBOT",
       "intraday_margin": 500.0,
-      "initial_margin": 16500.88,
+      "initial_margin": 16438.76,
       "maintenance_margin": null
     },
     "Z3N": {

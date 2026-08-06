@@ -199,7 +199,7 @@ def test_staging_virtual_user_impersonation_and_return(phase_a_store, monkeypatc
         doc = account_auth._read_doc()
         imp = next(s for s in doc["sessions"] if int(s.get("user_id") or 0) == uid and not s.get("revoked"))
         assert int(imp.get("impersonator_owner_id") or 0) == 999
-        
+
         # Verify HTTP API end_impersonation doesn't block the impersonated user (403).
         session = account_auth.start_impersonation(999, uid, ip="127.0.0.1")
         ended_http = _request(
