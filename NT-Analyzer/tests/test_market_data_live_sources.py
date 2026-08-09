@@ -695,6 +695,7 @@ def test_databento_slow_reader_gap(monkeypatch) -> None:
 
 def test_topstepx_projectx_connector(monkeypatch) -> None:
     # 1. Setup credentials
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
     monkeypatch.setenv("NTA_ENABLE_TOPSTEPX_LIVE", "1")
     monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "test_owner")
     monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-api-key-here")
@@ -704,12 +705,17 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
         if "loginKey" in url:
             return {"success": True, "token": "mocked_jwt_token_xyz"}
         elif "search" in url:
+            assert payload["live"] is False
             return {
                 "contracts": [
                     {"id": "CON.F.US.MNQ.U26", "name": "MNQU6", "symbolId": "F.US.MNQ"}
                 ]
             }
         elif "retrieveBars" in url:
+            assert payload["live"] is False
+            assert payload["startTime"].endswith("Z")
+            assert payload["endTime"].endswith("Z")
+            assert payload["includePartialBar"] is True
             return {
                 "bars": [
                     {"time": "2026-07-16T14:00:00Z", "open": 20000.0, "high": 20050.0, "low": 19990.0, "close": 20010.0, "volume": 100}
@@ -796,6 +802,15 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     assert ev["exact_contract"] == "MNQ 09-26"
     assert ev["price"] == 20010.0
     assert ev["volume"] == 5
+
+    # The official (contractId, data) callback remains routable even when the
+    # trade payload omits symbol/symbolId.
+    adapter._on_ws_message("GatewayTrade", [
+        "CON.F.US.MNQ.U26",
+        {"price": 20011.0, "volume": 2, "timestamp": "2026-07-16T14:00:01Z"},
+    ])
+    assert len(events) == 2
+    assert events[-1]["exact_contract"] == "MNQ 09-26"
 
     # Official ProjectX SignalR target and string contract id are used.
     for _ in range(20):

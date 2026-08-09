@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tools import production_preflight
 
 
 def _environment(root: Path) -> str:
+    catalog_path = root.parent / "connector-releases.json"
+    release = {
+        "version": "1.0.0",
+        "archive_url": "https://app.stratforges.com/releases/connector/1.0.0.zip",
+        "archive_sha256": "A" * 64,
+        "manifest_sha256": "B" * 64,
+        "protocol_version": "1.0",
+        "minimum_version": "1.0.0",
+        "blocked_versions": [],
+        "major_approved": True,
+        "health_timeout_sec": 900,
+        "published_at_utc": "2026-08-08T00:00:00Z",
+    }
+    catalog_path.write_text(json.dumps({
+        "schema_version": 1,
+        "channels": {"stable": release, "canary": release},
+        "canary_installation_ids": [],
+    }), encoding="utf-8")
     return "\n".join((
         "DEPLOYMENT_ENV=production",
         "STRATFORGE_INSTANCE_ID=stratforge-prod-test",
@@ -38,6 +57,21 @@ def _environment(root: Path) -> str:
         "STRATFORGE_ARTIFACT_MIN_FREE_BYTES=1",
         "STRATFORGE_LIVE_TRADING_ALLOWED=0",
         "STRATFORGE_REAL_PAYMENTS_ALLOWED=0",
+        f"STRATFORGE_CONNECTOR_RELEASE_CATALOG={catalog_path}",
+        "NTA_GOOGLE_CLIENT_ID=test.apps.googleusercontent.com",
+        "NTA_GOOGLE_CLIENT_SECRET=test-google-secret",
+        "NTA_GOOGLE_REDIRECT_URI=https://app.stratforges.com/api/auth/google/callback",
+        "NTA_EMAIL_AUTH_PROVIDER=smtp",
+        "NTA_SMTP_HOST=smtp.example.test",
+        "NTA_SMTP_PORT=587",
+        "NTA_SMTP_USERNAME=mailer",
+        "NTA_SMTP_PASSWORD=test-mail-secret",
+        "NTA_SMTP_FROM=StratForge <login@example.test>",
+        "NTA_SMTP_SECURITY=starttls",
+        "NTA_TELEGRAM_BOT_TOKEN=123456:test-bot-token-value",
+        "NTA_TELEGRAM_BOT_USERNAME=StratForgeTestBot",
+        "NTA_TELEGRAM_WEBHOOK_SECRET=test-webhook-secret-123456",
+        "NTA_DATABENTO_API_KEY=test-market-data-key",
     )) + "\n"
 
 
@@ -51,6 +85,20 @@ def _clear_legacy_flags(monkeypatch) -> None:
         "NTA_DISABLE_RATE_LIMIT",
         "NTA_ALLOW_LIVE_ORDERS",
         "NTA_ALLOW_REAL_PAYMENTS",
+        "NTA_GOOGLE_CLIENT_ID",
+        "NTA_GOOGLE_CLIENT_SECRET",
+        "NTA_GOOGLE_REDIRECT_URI",
+        "NTA_EMAIL_AUTH_PROVIDER",
+        "NTA_SMTP_HOST",
+        "NTA_SMTP_PORT",
+        "NTA_SMTP_USERNAME",
+        "NTA_SMTP_PASSWORD",
+        "NTA_SMTP_FROM",
+        "NTA_SMTP_SECURITY",
+        "NTA_TELEGRAM_BOT_TOKEN",
+        "NTA_TELEGRAM_BOT_USERNAME",
+        "NTA_TELEGRAM_WEBHOOK_SECRET",
+        "NTA_DATABENTO_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -124,6 +172,36 @@ def test_preflight_rejects_data_inside_release_and_bad_config(tmp_path: Path, mo
     assert invalid["checks"][0]["code"] == "invalid"
 
 
+def test_preflight_rejects_missing_auth_and_independent_market_data(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    _clear_legacy_flags(monkeypatch)
+    app_root = tmp_path / "release"
+    _make_release(app_root)
+    data_root = tmp_path / "state"
+    data_root.mkdir()
+    (tmp_path / "objects").mkdir()
+    text = _environment(data_root)
+    text = "\n".join(
+        line for line in text.splitlines()
+        if not line.startswith((
+            "NTA_GOOGLE_CLIENT_SECRET=", "NTA_SMTP_PASSWORD=", "NTA_DATABENTO_API_KEY=",
+        ))
+    ) + "\n"
+    env_file = tmp_path / "production.env"
+    env_file.write_text(text, encoding="utf-8")
+
+    result = production_preflight.run_preflight(
+        app_root=app_root,
+        environment_file=env_file,
+        allow_non_linux=True,
+        require_binaries=(),
+    )
+
+    failed = {item["name"] for item in result["checks"] if not item["ok"]}
+    assert {"google_first_login", "email_otp_delivery", "independent_chart_market_data"} <= failed
+
+
 def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     root = Path(__file__).resolve().parents[1]
     env_template = (root / "deploy" / "production" / "production.env.example").read_text(encoding="utf-8")
@@ -144,6 +222,9 @@ def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     assert "STRATFORGE_STORAGE_MODE=postgresql" in env_template
     assert "STRATFORGE_DATABASE_URL=__FROM_PROTECTED_SECRET_PROVIDER__" in env_template
     assert "STRATFORGE_ARTIFACT_ROOT=" in env_template
+    assert "NTA_GOOGLE_REDIRECT_URI=https://app.stratforges.com/api/auth/google/callback" in env_template
+    assert "NTA_EMAIL_AUTH_PROVIDER=smtp" in env_template
+    assert "NTA_TOPSTEPX_REMOTE_SERVER_AUTHORIZED=0" in env_template
     assert "token=" not in env_template.lower()
     assert "password=" not in env_template.lower()
     assert "127.0.0.1:18765" in tunnel

@@ -54,7 +54,9 @@ def test_nt_gate_requires_google_then_telegram(nt_auth_store):
     assert gate["ok"] is False
     assert gate["code"] == "nt_google_required"
 
-    account_auth.link_google_identity(42, google_sub="g-alice", google_email="a@example.com")
+    account_auth.link_google_identity(
+        42, google_sub="g-alice", google_email="a@example.com", email_verified=True,
+    )
     user = account_auth._user(account_auth._read_doc(), 42)
     gate = account_auth.nt_action_gate(user, session={})
     assert gate["google_ok"] is True
@@ -75,7 +77,9 @@ def test_nt_gate_requires_google_then_telegram(nt_auth_store):
 
 def test_nt_gate_reads_public_user_google_linked_flag(nt_auth_store):
     """Auth context uses _public_user without raw google_sub — gate must still pass."""
-    account_auth.link_google_identity(42, google_sub="g-alice", google_email="a@example.com")
+    account_auth.link_google_identity(
+        42, google_sub="g-alice", google_email="a@example.com", email_verified=True,
+    )
     raw = account_auth._user(account_auth._read_doc(), 42)
     public = account_auth._public_user(raw, include_contact=True)
     assert "google_sub" not in public or not public.get("google_sub")
@@ -115,7 +119,9 @@ def test_forged_google_linked_flag_rejected_by_store_lookup(nt_auth_store):
 
 
 def test_telegram_confirm_callback_elevates_session(nt_auth_store):
-    account_auth.link_google_identity(42, google_sub="g-alice", google_email="a@example.com")
+    account_auth.link_google_identity(
+        42, google_sub="g-alice", google_email="a@example.com", email_verified=True,
+    )
     token = "t" * 48
     csrf = "c" * 32
     doc = account_auth._read_doc()
@@ -157,7 +163,9 @@ def test_telegram_confirm_callback_elevates_session(nt_auth_store):
 
 
 def test_telegram_confirm_requires_specific_active_session(nt_auth_store):
-    account_auth.link_google_identity(42, google_sub="g-alice", google_email="a@example.com")
+    account_auth.link_google_identity(
+        42, google_sub="g-alice", google_email="a@example.com", email_verified=True,
+    )
     with pytest.raises(account_auth.AccountAuthError) as exc:
         account_auth.start_nt_telegram_confirm(42, session_id="", api_call=None)
     assert exc.value.code == "nt_session_required"

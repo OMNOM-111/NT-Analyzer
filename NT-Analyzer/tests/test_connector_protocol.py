@@ -520,6 +520,10 @@ def test_heartbeat_masks_accounts_and_rejects_instance_change(connector_store) -
         "connector_sequence": 1,
         "ninja_instance_id": "nt_test_instance_01",
         "account_labels": ["DEMO3369390", "SIM-SECRET-99"],
+        "accounts": [
+            {"account_label": "DEMO3369390", "mode": "demo", "connection_status": "Connected"},
+            {"account_label": "SIM-SECRET-99", "mode": "paper", "connection_status": "Disconnected"},
+        ],
     })
     assert hb["state"] == "online"
     listed = connector_protocol.list_installations(
@@ -528,6 +532,14 @@ def test_heartbeat_masks_accounts_and_rejects_instance_change(connector_store) -
     labels = listed["connections"][0]["account_labels"]
     assert labels == ["***9390", "***ET99"]
     assert "DEMO3369390" not in json.dumps(listed)
+    connection = listed["connections"][0]
+    assert connection["account_mode_counts"] == {"demo": 1, "paper": 1}
+    assert connection["has_demo_account"] is True
+    assert connection["has_live_account"] is False
+    assert connection["accounts"] == [
+        {"account_label": "***9390", "mode": "demo", "connection_status": "connected"},
+        {"account_label": "***ET99", "mode": "paper", "connection_status": "disconnected"},
+    ]
 
     with pytest.raises(connector_protocol.ConnectorProtocolError) as mismatch:
         connector_protocol.heartbeat(welcome["session_token"], {
@@ -810,4 +822,3 @@ def test_blocked_handshake_rollback(connector_store) -> None:
         42, workspace_id=workspace["workspace_id"],
     )
     assert listed["connections"][0]["status"] == "pending"
-

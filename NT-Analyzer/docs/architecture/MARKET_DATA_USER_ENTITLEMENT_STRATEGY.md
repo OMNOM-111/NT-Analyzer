@@ -1,8 +1,10 @@
 # StratForge Market Data Pivot: Bring Your Own Market Data (BYOMD)
 
-Status: architecture plus connector prototypes. Only the existing NinjaTrader
-path has automated integration coverage; every credentialed vendor connector
-remains disabled/unverified until an owner acceptance run and contract review.
+История поправки: 2026-08-09; внёс `GPT-5.5 через Codex по запросу owner`; scope: актуализировать TopstepX read-only implementation, canonical enable flag и remote/redistribution policy gates.
+
+Status: architecture plus connector implementation. NinjaTrader and TopstepX
+read-only paths have automated contract coverage; credentialed vendor acceptance
+and contractual remote/redistribution rights remain external release gates.
 
 This document establishes the strategic, legal, and technical framework for the user-owned market data model. Under this architecture, StratForge remains free for the first 100 users by avoiding centralized enterprise data subscriptions, shifting the entitlement burden to the end-users.
 
@@ -69,13 +71,20 @@ Global cache keys are permitted **only** for:
 
 ### B. TopstepX / ProjectX Connector
 - **Official API:** ProjectX REST plus SignalR/WebSocket market hub. The adapter is
-  opt-in with `NTA_ENABLE_TOPSTEPX_LIVE=1` and is not production accepted.
+  read-only and enabled with `NTA_ENABLE_TOPSTEPX_MARKET_DATA=1`; the legacy
+  `NTA_ENABLE_TOPSTEPX_LIVE` flag is read only for backward-compatible disable.
 - **Credentials:** TopstepX username plus ProjectX API key, not a Tradovate login.
+- **Implementation:** auth, root-to-active/exact contract search, REST OHLCV bars,
+  official realtime callbacks and reconnect/resubscribe are covered by automated
+  contracts. Account/order/trade APIs are not used.
 - **Current published cost (verified 2026-07-17):** Topstep says $29/month, or
   $14.50/month with its published trader code; prices can change.
 - **Runtime restriction:** Topstep says trading API activity must originate from
   the trader's personal device and prohibits VPN/VPS/remote-server use. Therefore
-  this connector must not be enabled on a shared/cloud host.
+  this connector remains fail-closed on a shared/cloud host unless written
+  remote-server and market-data redistribution authorization is recorded through
+  both protected policy flags. Without that authorization it is personal-device
+  only; a public StratForge server needs another licensed server-side feed.
 - **Sandbox:** Topstep currently states that no sandbox is available, so production
   claims remain blocked pending a separately authorized owner credential run.
 - Official references: [TopstepX API Access](https://help.topstep.com/en/articles/11187768-topstepx-api-access),

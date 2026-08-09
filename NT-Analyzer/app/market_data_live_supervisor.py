@@ -77,8 +77,16 @@ def start(
         for adapter in _ADAPTERS:
             adapter.set_sink(_sink_for(adapter), mode="shadow")
             health = adapter.connect()
-            # Only Databento attempts real subscribe when credentials exist.
-            if adapter.name == "databento_live" and adapter.credentials_present():
+            # Every implemented credentialed read-only provider receives the
+            # same exact-contract shadow subscriptions. Provider policy gates
+            # (not this supervisor) decide whether remote use is permitted.
+            if (
+                adapter.name in {"databento_live", "topstep_live"}
+                and adapter.credentials_present()
+                and health.get("runtime_state") not in {
+                    "DISABLED", "POLICY_BLOCKED", "ENTITLEMENT_MISSING", "AUTH_FAILED", "ERROR",
+                }
+            ):
                 contracts = list(exact_contracts or [])
                 if not contracts:
                     # Subscribe parent roots via continuous is forbidden for charts;

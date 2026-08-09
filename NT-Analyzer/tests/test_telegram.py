@@ -19,6 +19,7 @@ def _isolate(monkeypatch, tmp_path) -> None:
         lambda: tmp_path / "data" / "integrations" / "secrets.local.json",
     )
     monkeypatch.delenv(telegram_service.TOKEN_ENV, raising=False)
+    monkeypatch.delenv(telegram_service.BOT_USERNAME_ENV, raising=False)
     monkeypatch.delenv(telegram_service.CHAT_ENV, raising=False)
     monkeypatch.delenv(telegram_service.GROUP_ENV, raising=False)
     monkeypatch.delenv(telegram_service.WEBHOOK_SECRET_ENV, raising=False)
@@ -48,6 +49,45 @@ def test_token_is_validated_and_never_returned(monkeypatch, tmp_path) -> None:
     assert token not in json.dumps(result)
     stored = json.loads(local_secrets.secrets_path().read_text(encoding="utf-8"))
     assert stored[telegram_service.TOKEN_ENV] == token
+
+
+def test_injected_production_token_refreshes_and_matches_public_bot_identity(
+    monkeypatch, tmp_path,
+) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456")
+    monkeypatch.setenv(telegram_service.BOT_USERNAME_ENV, "StratForge_prod_bot")
+    monkeypatch.setattr(
+        telegram_service,
+        "_bot_identity",
+        lambda value=None: {
+            "is_bot": True,
+            "username": "StratForge_prod_bot",
+            "first_name": "StratForge",
+        },
+    )
+
+    result = telegram_service.refresh_bot_identity()
+
+    assert result == {"ok": True, "bot_username": "StratForge_prod_bot"}
+    assert telegram_service.bot_username() == "StratForge_prod_bot"
+    assert telegram_service.load_settings()["bot_username"] == "StratForge_prod_bot"
+
+
+def test_injected_production_token_rejects_wrong_public_bot_identity(
+    monkeypatch, tmp_path,
+) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456")
+    monkeypatch.setenv(telegram_service.BOT_USERNAME_ENV, "Expected_bot")
+    monkeypatch.setattr(
+        telegram_service,
+        "_bot_identity",
+        lambda value=None: {"is_bot": True, "username": "Different_bot"},
+    )
+
+    with pytest.raises(telegram_service.TelegramServiceError):
+        telegram_service.refresh_bot_identity()
 
 
 def test_private_chat_pairing_uses_one_time_code(monkeypatch, tmp_path) -> None:

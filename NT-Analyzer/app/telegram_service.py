@@ -36,6 +36,7 @@ from . import workspaces
 
 
 TOKEN_ENV = "NTA_TELEGRAM_BOT_TOKEN"
+BOT_USERNAME_ENV = "NTA_TELEGRAM_BOT_USERNAME"
 CHAT_ENV = "NTA_TELEGRAM_CHAT_ID"
 GROUP_ENV = "NTA_TELEGRAM_GROUP_ID"
 API_BASE_ENV = "NTA_TELEGRAM_API_BASE"
@@ -726,6 +727,31 @@ def configure_token(token: str) -> Dict[str, Any]:
     return status()
 
 
+def bot_username() -> str:
+    """Return the contour-specific public bot username, never the token."""
+    candidate = str(
+        os.environ.get(BOT_USERNAME_ENV) or load_settings().get("bot_username") or ""
+    ).strip().lstrip("@")
+    return candidate if re.fullmatch(r"[A-Za-z0-9_]{5,32}", candidate) else ""
+
+
+def refresh_bot_identity() -> Dict[str, Any]:
+    """Validate an injected token and persist its public identity at startup."""
+    identity = _bot_identity()
+    actual = str(identity.get("username") or "").strip().lstrip("@")
+    expected = str(os.environ.get(BOT_USERNAME_ENV) or "").strip().lstrip("@")
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", actual):
+        raise TelegramServiceError("Telegram bot username отсутствует или некорректен.")
+    if expected and not secrets.compare_digest(expected.lower(), actual.lower()):
+        raise TelegramServiceError("Telegram token не соответствует настроенному bot username.")
+    settings = load_settings()
+    settings["bot_username"] = actual
+    settings["bot_name"] = str(identity.get("first_name") or actual)[:120]
+    settings["updated_at_utc"] = _now_iso()
+    _save_settings(settings)
+    return {"ok": True, "bot_username": actual}
+
+
 def disconnect() -> Dict[str, Any]:
     if not local_secrets.update({TOKEN_ENV: None, CHAT_ENV: None, GROUP_ENV: None}):
         raise TelegramServiceError("Не удалось очистить локальные данные Telegram.")
@@ -1340,7 +1366,7 @@ def status() -> Dict[str, Any]:
         "chat_configured": chat_configured,
         "notifications_enabled": (configured or group_ready) and bool(settings.get("enabled")),
         "commands_enabled": configured or group_ready,
-        "bot_username": str(settings.get("bot_username") or ""),
+        "bot_username": bot_username(),
         "bot_name": str(settings.get("bot_name") or ""),
         "chat_label": str(settings.get("chat_label") or ""),
         "group_mode": group_ready,

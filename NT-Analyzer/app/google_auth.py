@@ -10,11 +10,12 @@ Google identity. Production requires real OAuth client credentials.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -32,7 +33,6 @@ class GoogleAuthError(RuntimeError):
         self.status = int(status)
 
 
-_LOCK = threading.RLock()
 _MAGIC = b"STRATFORGE-GOOGLE-OAUTH-DPAPI-1\n"
 _STATE_TTL_SEC = 15 * 60
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -125,24 +125,131 @@ def is_configured() -> bool:
 def status() -> Dict[str, Any]:
     creds = credentials()
     cid = creds["client_id"]
+    try:
+        redirect = resolve_redirect_uri("") if is_configured() else ""
+        redirect_ready = bool(redirect)
+        code = "ok" if redirect_ready else "credentials_not_configured"
+    except (GoogleAuthError, runtime_env.RuntimeEnvError):
+        redirect = ""
+        redirect_ready = False
+        code = "redirect_uri_invalid"
     return {
-        "configured": is_configured(),
+        "configured": bool(is_configured() and redirect_ready),
+        "credentials_configured": is_configured(),
         "client_id_suffix": (cid[-8:] if len(cid) >= 8 else cid) if cid else "",
-        "redirect_uri": creds["redirect_uri"],
+        "redirect_uri": redirect,
+        "redirect_ready": redirect_ready,
+        "code": code,
         "staging": runtime_env.is_staging(),
         "test_auth_fallback": runtime_env.test_auth_enabled() and not is_configured(),
     }
 
 
-# In-memory OAuth state (short-lived). Survives process only — fine for MVP.
-_STATES: Dict[str, Dict[str, Any]] = {}
+def _valid_absolute_redirect(value: Any) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        _ = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path != "/api/auth/google/callback"
+    ):
+        return ""
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}{parsed.path}"
 
 
-def _purge_states() -> None:
-    now = time.time()
-    dead = [key for key, row in _STATES.items() if float(row.get("expires_at") or 0) <= now]
-    for key in dead:
-        _STATES.pop(key, None)
+def resolve_redirect_uri(requested: Any = "") -> str:
+    """Resolve one canonical callback, never trusting request headers remotely."""
+    creds = credentials()
+    configured = _valid_absolute_redirect(creds.get("redirect_uri"))
+    public_origin = str(runtime_env.deployment_config(strict=False).public_origin or "").rstrip("/")
+    canonical = _valid_absolute_redirect(f"{public_origin}/api/auth/google/callback")
+    if not runtime_env.is_development():
+        if not canonical or not canonical.startswith("https://"):
+            raise GoogleAuthError("Canonical Google redirect URI не настроен.", 503)
+        if creds.get("redirect_uri") and configured != canonical:
+            raise GoogleAuthError(
+                "NTA_GOOGLE_REDIRECT_URI не совпадает со STRATFORGE_PUBLIC_ORIGIN.", 503,
+            )
+        return canonical
+    candidate = configured or _valid_absolute_redirect(requested) or canonical
+    if not candidate:
+        raise GoogleAuthError("redirect_uri не задан или некорректен.", 503)
+    return candidate
+
+
+def _state_key() -> bytes:
+    creds = credentials()
+    material = str(
+        os.environ.get("NTA_GOOGLE_STATE_SECRET") or creds.get("client_secret") or ""
+    ).encode("utf-8")
+    if not material:
+        raise GoogleAuthError("Google OAuth signing secret не настроен.", 503)
+    return hashlib.sha256(b"StratForge/google-oauth-state/v1\x00" + material).digest()
+
+
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(value: str) -> bytes:
+    raw = str(value or "").encode("ascii", errors="strict")
+    return base64.urlsafe_b64decode(raw + b"=" * (-len(raw) % 4))
+
+
+def _encode_state(row: Dict[str, Any]) -> str:
+    payload = json.dumps(
+        row, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    encoded = _b64url_encode(payload)
+    signature = _b64url_encode(hmac.new(_state_key(), encoded.encode("ascii"), hashlib.sha256).digest())
+    return f"v1.{encoded}.{signature}"
+
+
+def _decode_state(value: Any) -> Dict[str, Any]:
+    state = str(value or "").strip()
+    try:
+        version, encoded, supplied_signature = state.split(".", 2)
+        if version != "v1" or len(state) > 2048:
+            raise ValueError
+        expected_signature = _b64url_encode(
+            hmac.new(_state_key(), encoded.encode("ascii"), hashlib.sha256).digest()
+        )
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise ValueError
+        row = json.loads(_b64url_decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeError, json.JSONDecodeError, base64.binascii.Error):
+        raise GoogleAuthError("OAuth state недействителен. Начните вход через Google заново.", 410) from None
+    if not isinstance(row, dict) or int(row.get("exp") or 0) <= int(time.time()):
+        raise GoogleAuthError("OAuth state истёк. Начните вход через Google заново.", 410)
+    if str(row.get("purpose") or "") not in {"login", "link"}:
+        raise GoogleAuthError("OAuth state содержит неверную цель.", 410)
+    if resolve_redirect_uri(row.get("redirect_uri")) != str(row.get("redirect_uri") or ""):
+        raise GoogleAuthError("OAuth redirect URI изменился. Начните вход заново.", 410)
+    return row
+
+
+def state_cookie_token(state: Any) -> str:
+    """Bind a signed state to the browser that initiated the login flow."""
+    value = str(state or "").strip()
+    if not value:
+        return ""
+    return hashlib.sha256(("StratForge/google-state-cookie/v1\x00" + value).encode("utf-8")).hexdigest()
+
+
+def state_cookie_matches(state: Any, supplied_token: Any) -> bool:
+    expected = state_cookie_token(state)
+    supplied = str(supplied_token or "").strip().lower()
+    return bool(expected and len(supplied) == len(expected) and hmac.compare_digest(expected, supplied))
 
 
 def _safe_return_path(value: Any) -> str:
@@ -181,21 +288,16 @@ def _start(
             503,
         )
     creds = credentials()
-    uri = str(redirect_uri or creds["redirect_uri"] or "").strip()
-    if not uri:
-        raise GoogleAuthError("redirect_uri не задан (NTA_GOOGLE_REDIRECT_URI).", 503)
-    state = secrets.token_urlsafe(24)
-    with _LOCK:
-        _purge_states()
-        _STATES[state] = {
-            "user_id": int(user_id),
-            "purpose": purpose_id,
-            "accept_terms": bool(accept_terms),
-            "redirect_uri": uri,
-            "return_path": _safe_return_path(return_path)[:200],
-            "expires_at": time.time() + _STATE_TTL_SEC,
-            "created_at_utc": _now_iso(),
-        }
+    uri = resolve_redirect_uri(redirect_uri)
+    state = _encode_state({
+        "user_id": int(user_id),
+        "purpose": purpose_id,
+        "accept_terms": bool(accept_terms),
+        "redirect_uri": uri,
+        "return_path": _safe_return_path(return_path)[:200],
+        "exp": int(time.time()) + _STATE_TTL_SEC,
+        "nonce": secrets.token_urlsafe(16),
+    })
     params = {
         "client_id": creds["client_id"],
         "redirect_uri": uri,
@@ -263,16 +365,12 @@ def _http_json(url: str, *, data: Optional[Dict[str, str]] = None, bearer: str =
 
 
 def exchange_code(*, code: str, state: str) -> Dict[str, Any]:
-    """Exchange a one-use code and return identity plus the stored OAuth intent."""
+    """Exchange a one-use code and return identity plus the signed OAuth intent."""
     code = str(code or "").strip()
     state = str(state or "").strip()
     if not code or not state:
         raise GoogleAuthError("code и state обязательны.")
-    with _LOCK:
-        _purge_states()
-        row = _STATES.pop(state, None)
-    if not row:
-        raise GoogleAuthError("OAuth state истёк или не найден. Начните привязку Google заново.", 410)
+    row = _decode_state(state)
     creds = credentials()
     token_doc = _http_json(
         _TOKEN_URL,
@@ -292,7 +390,7 @@ def exchange_code(*, code: str, state: str) -> Dict[str, Any]:
     email = str(info.get("email") or "").strip().lower()
     if not google_sub:
         raise GoogleAuthError("Google не вернул идентификатор пользователя (sub).", 502)
-    if info.get("email_verified") is False:
+    if info.get("email_verified") is not True or not email or "@" not in email:
         raise GoogleAuthError("Email Google не подтверждён. Используйте другой аккаунт.", 403)
     return {
         "ok": True,
@@ -304,7 +402,7 @@ def exchange_code(*, code: str, state: str) -> Dict[str, Any]:
         "google_name": str(info.get("name") or ""),
         "google_picture": str(info.get("picture") or ""),
         "return_path": _safe_return_path(row.get("return_path")),
-        "email_verified": bool(info.get("email_verified", True)),
+        "email_verified": True,
     }
 
 

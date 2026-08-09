@@ -378,12 +378,15 @@ namespace NTAnalyzerBridge.Connector
 
         private void SendHeartbeat()
         {
+            JArray accounts = ReadAccountSummaries();
             JObject heartbeat = new JObject
             {
                 ["connector_sequence"] = NextSequence(),
                 ["ninja_instance_id"] = _state.NinjaInstanceId,
                 ["connector_time"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
-                ["account_labels"] = ReadMaskedAccountLabels(),
+                ["account_labels"] = new JArray(
+                    accounts.OfType<JObject>().Select(row => (string)row["account_label"] ?? "")),
+                ["accounts"] = accounts,
             };
             JObject response = PostJson(
                 "api/connector/v1/heartbeat", heartbeat, _sessionToken);
@@ -711,26 +714,52 @@ namespace NTAnalyzerBridge.Connector
             return "";
         }
 
-        private JArray ReadMaskedAccountLabels()
+        private JArray ReadAccountSummaries()
         {
-            JArray labels = new JArray();
+            JArray summaries = new JArray();
             string path = Path.Combine(_runtimeDir, "accounts.json");
-            if (!File.Exists(path)) return labels;
+            if (!File.Exists(path)) return summaries;
             try
             {
                 JObject root = JObject.Parse(File.ReadAllText(path));
                 JArray accounts = root["accounts"] as JArray;
-                if (accounts == null) return labels;
+                if (accounts == null) return summaries;
                 foreach (JObject account in accounts.OfType<JObject>().Take(20))
                 {
                     string raw = (string)account["account_name"] ?? "";
                     string compact = new string(raw.Where(char.IsLetterOrDigit).ToArray());
                     if (compact.Length == 0) continue;
-                    labels.Add("***" + compact.Substring(Math.Max(0, compact.Length - 4)));
+                    string mode = NormalizeAccountMode(
+                        (string)account["account_mode"] ?? "", raw);
+                    string connection = Truncate(
+                        (string)account["connection_status"] ?? "unknown", 64);
+                    summaries.Add(new JObject
+                    {
+                        ["account_label"] = "***" + compact.Substring(Math.Max(0, compact.Length - 4)),
+                        ["mode"] = mode,
+                        ["connection_status"] = connection,
+                    });
                 }
             }
             catch { }
-            return labels;
+            return summaries;
+        }
+
+        private static string NormalizeAccountMode(string supplied, string accountName)
+        {
+            string mode = (supplied ?? "").Trim().ToLowerInvariant();
+            if (mode == "paper" || mode == "demo" || mode == "live" ||
+                mode == "playback" || mode == "unknown")
+                return mode;
+            string name = (accountName ?? "").Trim().ToLowerInvariant();
+            if (name.Contains("playback")) return "playback";
+            if (name.StartsWith("demo") || name.Contains(" demo") || name.EndsWith("demo"))
+                return "demo";
+            if (name == "sim101" || name == "backtest" || name.StartsWith("sim") ||
+                name.Contains("paper"))
+                return "paper";
+            if (name.Contains("live")) return "live";
+            return "unknown";
         }
 
         private static string BuildNinjaInstanceId(string ninjaTraderUserDir)

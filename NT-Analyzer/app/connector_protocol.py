@@ -584,6 +584,10 @@ def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
         "update_reason",
         "release_channel",
         "account_labels",
+        "accounts",
+        "account_mode_counts",
+        "has_live_account",
+        "has_demo_account",
     )}
 
 
@@ -797,6 +801,10 @@ def enroll_device(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "update_reason": "pending_first_hello",
             "release_channel": "",
             "account_labels": [],
+            "accounts": [],
+            "account_mode_counts": {},
+            "has_live_account": False,
+            "has_demo_account": False,
         }
         nonce = _issue_challenge(installation, now)
         doc["installations"].append(installation)
@@ -1117,10 +1125,54 @@ def _mask_account_label(value: Any) -> str:
     return "***" + text[-4:]
 
 
+_ACCOUNT_MODES = {"paper", "demo", "live", "playback", "unknown"}
+
+
+def _clean_account_summaries(value: Any) -> list[Dict[str, str]]:
+    if value is None or value == "":
+        return []
+    if not isinstance(value, list) or len(value) > 20:
+        raise ConnectorProtocolError(
+            "Heartbeat accounts должен быть массивом до 20 элементов.",
+            400, "invalid_heartbeat_accounts",
+        )
+    clean: list[Dict[str, str]] = []
+    for raw in value:
+        if not isinstance(raw, Mapping) or set(raw) - {
+            "account_label", "mode", "connection_status",
+        }:
+            raise ConnectorProtocolError(
+                "Heartbeat account содержит неизвестные поля.",
+                400, "invalid_heartbeat_accounts",
+            )
+        label = _mask_account_label(raw.get("account_label"))
+        mode = str(raw.get("mode") or "unknown").strip().lower()
+        if not label or mode not in _ACCOUNT_MODES:
+            raise ConnectorProtocolError(
+                "Heartbeat account label/mode некорректен.",
+                400, "invalid_heartbeat_accounts",
+            )
+        status_raw = str(raw.get("connection_status") or "unknown").strip().lower()
+        if "disconnect" in status_raw or "отключ" in status_raw:
+            connection_status = "disconnected"
+        elif "connect" in status_raw or "работает" in status_raw:
+            connection_status = "connected"
+        else:
+            connection_status = "unknown"
+        row = {
+            "account_label": label,
+            "mode": mode,
+            "connection_status": connection_status,
+        }
+        if row not in clean:
+            clean.append(row)
+    return clean
+
+
 def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
     allowed = {
         "connector_sequence", "ninja_instance_id", "connector_time",
-        "account_labels", "extensions",
+        "account_labels", "accounts", "extensions",
     }
     if not isinstance(payload, Mapping) or set(payload) - allowed:
         raise ConnectorProtocolError(
@@ -1137,6 +1189,7 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "NinjaTrader instance mismatch.", 409, "instance_mismatch",
             )
+        accounts = _clean_account_summaries(payload.get("accounts"))
         labels = []
         for value in payload.get("account_labels") or []:
             masked = _mask_account_label(value)
@@ -1144,11 +1197,24 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
                 labels.append(masked)
             if len(labels) >= 20:
                 break
+        for row in accounts:
+            label = row["account_label"]
+            if label not in labels and len(labels) < 20:
+                labels.append(label)
+        mode_counts = {
+            mode: sum(1 for row in accounts if row["mode"] == mode)
+            for mode in sorted(_ACCOUNT_MODES)
+            if any(row["mode"] == mode for row in accounts)
+        }
         installation.update({
             "status": "online",
             "last_heartbeat_utc": _now_iso(now),
             "last_heartbeat_at": now,
             "account_labels": labels,
+            "accounts": accounts,
+            "account_mode_counts": mode_counts,
+            "has_live_account": bool(mode_counts.get("live")),
+            "has_demo_account": bool(mode_counts.get("demo") or mode_counts.get("paper")),
         })
         previous_release = (
             installation.get("update_state"),
@@ -1182,6 +1248,7 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
         "update_reason": release_decision["reason"],
         "release_channel": release_decision["channel"],
         "update_offer": copy.deepcopy(release_decision.get("offer") or {}),
+        "account_mode_counts": copy.deepcopy(installation.get("account_mode_counts") or {}),
     }
 
 
@@ -1853,6 +1920,38 @@ def list_installations(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any
 
 def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     listed = list_installations(user_id, workspace_id=workspace_id)
+    try:
+        catalog = connector_releases.load_catalog()
+        release_error = ""
+    except connector_releases.ConnectorReleaseError as exc:
+        catalog = None
+        release_error = str(exc)[:240]
+    stable = ((catalog or {}).get("channels") or {}).get("stable") or {}
+    installer_available = bool(stable)
+    installer = {
+        "state": "available" if installer_available else (
+            "blocked_release_catalog_invalid" if release_error
+            else "blocked_release_catalog_unconfigured"
+        ),
+        "download_url": str(stable.get("archive_url") or ""),
+        "version": str(stable.get("version") or ""),
+        "archive_sha256": str(stable.get("archive_sha256") or ""),
+        "manifest_sha256": str(stable.get("manifest_sha256") or ""),
+        "package_format": "verified_windows_zip",
+        "manifest_signature": "ECDSA_P256_SHA256",
+        "requires_authenticode": True,
+        "requires_user_consent": True,
+        "browser_silent_install": False,
+        "installation_mode": "download_then_user_confirmed_setup",
+        "error": release_error,
+        "message": (
+            "Скачайте подписанный пакет и подтвердите запуск Setup/UAC. "
+            "Браузер не может незаметно устанавливать компоненты; после согласия "
+            "Setup установит Connector и зарегистрирует auto-updater."
+            if installer_available else
+            "Публичный immutable Connector release ещё не доступен в release catalog."
+        ),
+    }
     return {
         **listed,
         "owner_runtime": False,
@@ -1868,18 +1967,9 @@ def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             "poll": "/api/connector/v1/commands/poll",
             "result": "/api/connector/v1/commands/result",
         },
-        "installer": {
-            "state": "blocked_release_gate",
-            "download_url": "",
-            "package_format": "verified_windows_zip",
-            "manifest_signature": "ECDSA_P256_SHA256",
-            "message": (
-                "Установщик реализован и проверен локально. Production download "
-                "будет опубликован после Authenticode и immutable release gate."
-            ),
-        },
+        "installer": installer,
         "updater": {
-            "state": "implemented_local_release_gate",
+            "state": "release_catalog_ready" if installer_available else "blocked_release_catalog",
             "policy": "safe_restart",
             "channels": ["stable", "canary"],
             "post_update_health": "signed_hello_and_heartbeat",

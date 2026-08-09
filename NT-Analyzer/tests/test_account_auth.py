@@ -760,7 +760,11 @@ def test_phase3_public_user_uses_uuid_without_legacy_identity(auth_store) -> Non
 
 
 def test_phase3_email_otp_login_requires_approval_then_reuses_identity(auth_store, monkeypatch) -> None:
-    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "1")
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {
+        "available": True, "test_backend": True,
+    })
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
 
@@ -825,7 +829,11 @@ def test_phase3_google_login_requires_approval_then_reuses_identity(auth_store) 
 
 
 def test_phase3_same_email_does_not_merge_telegram_and_email_accounts(auth_store, monkeypatch) -> None:
-    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "1")
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {
+        "available": True, "test_backend": True,
+    })
     account_auth.ensure_owner(999)
     account_auth.register_via_telegram(
         {"id": 42, "first_name": "Ada", "username": "ada"},
@@ -861,6 +869,7 @@ def test_phase3_google_link_keeps_account_uuid_and_rejects_owned_subject(auth_st
 
     linked = account_auth.link_google_identity(
         42, google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
+        email_verified=True,
     )
 
     assert linked["user"]["id"] == user_uuid
@@ -869,6 +878,7 @@ def test_phase3_google_link_keeps_account_uuid_and_rejects_owned_subject(auth_st
     with pytest.raises(account_auth.AccountAuthError) as exc:
         account_auth.link_google_identity(
             999, google_sub="google-ada", google_email="owner@gmail.example",
+            email_verified=True,
         )
     assert exc.value.status == 409
     google_rows = [
@@ -879,8 +889,24 @@ def test_phase3_google_link_keeps_account_uuid_and_rejects_owned_subject(auth_st
     assert google_rows[0]["user_uuid"] == user_uuid
 
 
+def test_google_link_requires_explicit_verified_email(auth_store) -> None:
+    _seed_owner_and_user(auth_store)
+
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.link_google_identity(
+            42, google_sub="unverified-google", google_email="unverified@example.test",
+        )
+
+    assert exc.value.status == 403
+    assert exc.value.code == "google_email_unverified"
+
+
 def test_phase3_email_link_otp_keeps_existing_account_uuid(auth_store, monkeypatch) -> None:
-    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "1")
+    monkeypatch.setattr(account_auth, "email_auth_status", lambda: {
+        "available": True, "test_backend": True,
+    })
     _seed_owner_and_user(auth_store)
     user = account_auth._user(account_auth._read_doc(), 42)
     assert user is not None
@@ -928,10 +954,12 @@ def test_phase3_relinked_google_identity_clears_durable_revocation(auth_store) -
     assert user is not None
     account_auth.link_google_identity(
         42, google_sub="google-relink", google_email="relink@gmail.example",
+        email_verified=True,
     )
     account_auth.unlink_google_identity(999, 42)
     account_auth.link_google_identity(
         42, google_sub="google-relink", google_email="relink@gmail.example",
+        email_verified=True,
     )
 
     class RecordingResult:

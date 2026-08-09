@@ -1,7 +1,22 @@
 # Установка StratForge Connector для NinjaTrader 8
 
+История поправки: 2026-08-09T00:57:35Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: приёмочный аудит кнопки подключения личного NinjaTrader, consent-gate, release catalog и безопасного updater.
+
 Статус: инструкция для проверенного пакета; публичная Production-ссылка появится
 после Authenticode/release gate.
+
+## Что делает кнопка «Подключить свой NinjaTrader»
+
+Backend возвращает установщик только из канала `stable` проверенного Connector
+release catalog. Ответ содержит immutable URL, version, SHA-256 архива и
+manifest. Если catalog отсутствует или невалиден, UI обязан показать точную
+блокировку, а не фиктивную ссылку.
+
+После согласия пользователя браузер скачивает подписанный пакет. Windows всё
+равно требует явного запуска Setup и, при необходимости, UAC: скрытая установка
+компонентов из браузера не поддерживается и не должна имитироваться. Setup уже
+автоматизирует поиск каталога NinjaTrader, установку Connector, регистрацию
+updater и последующий signed hello/heartbeat.
 
 ## Установка
 
@@ -18,7 +33,8 @@
 6. Введите одноразовый код и нажмите «Установить». Пароли брокера, API keys и
    данные счёта не требуются.
 7. После сообщения об успехе запустите NinjaTrader. В кабинете должны появиться
-   version, NT instance, masked account labels, fingerprint и свежий heartbeat.
+   version, NT instance, masked account summaries, фактический режим
+   `paper/demo/live/playback/unknown`, fingerprint и свежий heartbeat.
 
 Private device key и bootstrap защищены Windows DPAPI CurrentUser. В открытом
 конфиге нет enrollment code или broker credentials. Connector открывает только
@@ -46,6 +62,11 @@ hello + heartbeat. Если health-check отклонён или истёк, п�
 закрытии восстанавливается предыдущая DLL/config. Один и тот же неудачный релиз
 автоматически повторно не ставится. Device key и DPAPI state при update/rollback
 не перезаписываются. Major/protocol update требует отдельного подтверждения.
+
+Production-ready считается только состояние, где stable release опубликован в
+catalog, Authenticode и manifest signature проверяются, URL не является
+placeholder, а новый Connector прошёл signed hello + heartbeat. До этого кнопка
+честно остаётся заблокированной.
 
 ## Понятные причины отказа
 

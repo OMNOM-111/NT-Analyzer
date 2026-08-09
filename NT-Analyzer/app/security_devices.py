@@ -30,7 +30,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Tuple
 
-from . import account_auth, auth_identity, runtime_env
+from . import account_auth, auth_delivery, auth_identity, runtime_env
 
 
 # Device lifecycle.
@@ -439,18 +439,47 @@ def _prune_devices(doc: Dict[str, Any], user_uuid: str, keep: int = 50) -> None:
 # --------------------------------------------------------------------------- #
 def _available_providers(doc: Dict[str, Any], user: Dict[str, Any]) -> List[str]:
     providers: List[str] = []
-    if account_auth._telegram_subject_for_user(doc, user) > 0:
+    development_echo = _dev_code_echo()
+    if (
+        account_auth._telegram_subject_for_user(doc, user) > 0
+        and (development_echo or auth_delivery.telegram_status().get("available"))
+    ):
         providers.append("telegram")
     verified_email = False
     for row in account_auth._identities_for_user(doc, user):
         if str(row.get("provider") or "") == "email" and row.get("verified_at_utc"):
             verified_email = True
             break
-    if verified_email:
+    email_available = bool(development_echo or auth_delivery.email_status().get("available"))
+    if verified_email and email_available:
         providers.append("email")
-    if account_auth.google_linked(user) and str(user.get("google_email") or "").strip():
+    if _verified_google_email(doc, user) and email_available:
         providers.append("google")
     return providers
+
+
+def _verified_google_email(doc: Dict[str, Any], user: Dict[str, Any]) -> str:
+    for row in account_auth._identities_for_user(doc, user):
+        if str(row.get("provider") or "") != "google" or not row.get("verified_at_utc"):
+            continue
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        address = str(metadata.get("email") or user.get("google_email") or "").strip().lower()
+        if "@" in address and "\r" not in address and "\n" not in address:
+            return address
+    return ""
+
+
+def _delivery_recipient(doc: Dict[str, Any], user: Dict[str, Any], provider: str) -> Any:
+    provider_id = str(provider or "").strip().lower()
+    if provider_id == "telegram":
+        return account_auth._telegram_subject_for_user(doc, user)
+    if provider_id == "google":
+        return _verified_google_email(doc, user)
+    if provider_id == "email":
+        for row in account_auth._identities_for_user(doc, user):
+            if str(row.get("provider") or "") == "email" and row.get("verified_at_utc"):
+                return auth_identity.normalize_subject("email", row.get("provider_subject"))
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -510,6 +539,7 @@ def create_challenge(
     challenge_id = secrets.token_urlsafe(24)
     environment = _current_environment()
     now = _now()
+    recipient: Any = ""
 
     with account_auth._LOCK:
         doc = account_auth._read_doc()
@@ -546,6 +576,12 @@ def create_challenge(
                 "Этот канал подтверждения недоступен для аккаунта.",
                 409, code="provider_unavailable",
             )
+        recipient = _delivery_recipient(doc, user, provider_id)
+        if recipient in {"", 0, None}:
+            raise SecurityDeviceError(
+                "Получатель для выбранного канала не найден.",
+                409, code="delivery_recipient_missing",
+            )
 
         _challenges(doc).append({
             "challenge_id": challenge_id,
@@ -565,6 +601,40 @@ def create_challenge(
             "expires_at": now + CHALLENGE_TTL_SEC,
         })
         account_auth._write_doc(doc)
+
+    if not _dev_code_echo():
+        try:
+            auth_delivery.deliver_security_code(
+                provider_id,
+                recipient,
+                code,
+                purpose=purpose_id,
+                expires_in_sec=CHALLENGE_TTL_SEC,
+                action=str(action or "")[:40],
+            )
+        except auth_delivery.AuthDeliveryError as exc:
+            with account_auth._LOCK:
+                doc = account_auth._read_doc()
+                for row in reversed(_challenges(doc)):
+                    if hmac.compare_digest(str(row.get("challenge_id") or ""), challenge_id):
+                        row["status"] = "delivery_failed"
+                        row["expires_at"] = now
+                        row["delivery_error_code"] = exc.code
+                        row["retain_until"] = now + _CHALLENGE_RETENTION_SEC
+                        account_auth._write_doc(doc)
+                        break
+            account_auth._audit(
+                "security.challenge_delivery_failed",
+                user_id=uid,
+                ip=ip,
+                extra={
+                    "challenge_id": challenge_id,
+                    "purpose": purpose_id,
+                    "provider": provider_id,
+                    "reason": exc.code,
+                },
+            )
+            raise SecurityDeviceError(str(exc), 503, code=exc.code) from None
 
     account_auth._audit(
         "security.challenge_created",
@@ -588,7 +658,8 @@ def create_challenge(
         "delivery": "development_test" if _dev_code_echo() else provider_id,
     }
     # The one-time code is only ever disclosed behind the explicit Development
-    # test-auth gate. Real Telegram/email delivery happens out-of-band.
+    # test-auth gate. Canary/Production always deliver out-of-band before this
+    # response is returned.
     if _dev_code_echo():
         out["test_code"] = code
     return out

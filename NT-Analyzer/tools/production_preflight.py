@@ -16,7 +16,14 @@ from typing import Dict, Iterable, Iterator, Mapping
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import runtime_env, storage_router
+from app import (
+    auth_delivery,
+    connector_releases,
+    google_auth,
+    market_data_failover,
+    runtime_env,
+    storage_router,
+)
 from app.production_storage import StorageError, reset_for_tests
 
 
@@ -131,6 +138,61 @@ def run_preflight(
                 "artifact_storage_root", artifact_ready,
                 "ok" if artifact_ready else "missing_or_not_writable",
             ))
+
+            if config.deployment_role in {"all-in-one", "api"}:
+                google = google_auth.status()
+                checks.append(_check(
+                    "google_first_login",
+                    bool(google.get("configured")),
+                    "ok" if google.get("configured") else str(google.get("code") or "not_configured"),
+                ))
+                email = auth_delivery.email_status()
+                checks.append(_check(
+                    "email_otp_delivery",
+                    bool(email.get("production_ready")),
+                    "ok" if email.get("production_ready") else str(email.get("code") or "not_configured"),
+                ))
+                telegram = auth_delivery.telegram_status()
+                webhook_secret = str(
+                    os.environ.get("NTA_TELEGRAM_WEBHOOK_SECRET") or ""
+                ).strip()
+                webhook_secret_ready = bool(
+                    re.fullmatch(r"[A-Za-z0-9_-]{16,256}", webhook_secret)
+                )
+                bot_username_ready = bool(re.fullmatch(
+                    r"[A-Za-z0-9_]{5,32}",
+                    str(os.environ.get("NTA_TELEGRAM_BOT_USERNAME") or "").strip().lstrip("@"),
+                ))
+                telegram_ready = bool(
+                    telegram.get("production_ready") and webhook_secret_ready
+                    and bot_username_ready
+                )
+                checks.append(_check(
+                    "telegram_auth_delivery",
+                    telegram_ready,
+                    "ok" if telegram_ready else (
+                        str(telegram.get("code"))
+                        if not telegram.get("production_ready")
+                        else (
+                            "telegram_webhook_secret_invalid"
+                            if not webhook_secret_ready
+                            else "telegram_bot_username_invalid"
+                        )
+                    ),
+                ))
+                releases = connector_releases.readiness_status()
+                checks.append(_check(
+                    "connector_release_catalog",
+                    bool(releases.get("ok") and releases.get("state") == "ready"),
+                    "ok" if releases.get("ok") and releases.get("state") == "ready"
+                    else str(releases.get("state") or "not_ready"),
+                ))
+                backups = market_data_failover.live_backup_candidates()
+                checks.append(_check(
+                    "independent_chart_market_data",
+                    bool(backups),
+                    "ok" if backups else "licensed_live_backup_missing",
+                ))
 
         linux = platform.system().lower() == "linux"
         checks.append(_check(

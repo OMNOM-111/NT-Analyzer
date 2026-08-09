@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import math
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -29,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from . import runtime_env
+from . import market_data_live_adapters, runtime_env
 
 
 class MarketDataProviderError(RuntimeError):
@@ -40,6 +42,8 @@ _LOCK = threading.RLock()
 _CACHE: Dict[str, Dict[str, Any]] = {}
 _HEALTH: Dict[str, Dict[str, Any]] = {}
 _LAST_SELECTION: Dict[str, Any] = {}
+_READINESS_STATE: Dict[str, Any] = {}
+_READINESS_PROBE_THREAD: Optional[threading.Thread] = None
 _FAILURES_BEFORE_COOLDOWN = 3
 _COOLDOWN_SEC = 60
 _TIMEFRAME_SECONDS = {
@@ -450,12 +454,169 @@ class DatabentoProvider(MarketDataProvider):
         }
 
 
+class TopstepXProvider(MarketDataProvider):
+    """Personal-device ProjectX bars for read-only charts.
+
+    Remote/public use stays fail-closed unless both remote-server and market
+    data redistribution authorization are explicitly recorded in protected
+    deployment configuration. This provider has no order/account methods.
+    """
+
+    name = "topstepx"
+    tier = "user_owned_credentialed_market_data"
+    _adapter_lock = threading.RLock()
+    _adapter_instance: Optional[market_data_live_adapters.TopstepXProjectXAdapter] = None
+    _credential_fingerprint = ""
+
+    @staticmethod
+    def _settings() -> Dict[str, Any]:
+        return market_data_live_adapters.TopstepXProjectXAdapter.settings()
+
+    @staticmethod
+    def _fingerprint(cfg: Dict[str, Any]) -> str:
+        material = {
+            "username": str(cfg.get("username") or ""),
+            "api_key": str(cfg.get("api_key") or ""),
+            "requested": bool(cfg.get("requested")),
+            "policy_allowed": bool(cfg.get("policy_allowed")),
+            "data_mode": str(cfg.get("data_mode") or ""),
+        }
+        return hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def configured(self) -> bool:
+        cfg = self._settings()
+        return bool(
+            cfg["credentials_present"] and cfg["requested"]
+            and cfg["policy_allowed"] and cfg["data_mode"] != "invalid"
+        )
+
+    def public_status(self) -> Dict[str, Any]:
+        cfg = self._settings()
+        configured = self.configured()
+        adapter = self.__class__._adapter_instance
+        if (
+            not configured
+            or self.__class__._credential_fingerprint != self._fingerprint(cfg)
+        ):
+            adapter = None
+        runtime_health = adapter.health() if adapter is not None else {}
+        runtime_state = str(runtime_health.get("runtime_state") or "")
+        if not runtime_state:
+            runtime_state = "CONNECTING" if configured else (
+                "POLICY_BLOCKED" if not cfg["policy_allowed"] else "DISABLED"
+            )
+        return {
+            "name": self.name,
+            "configured": configured,
+            "independent": self.independent,
+            "tier": self.tier,
+            "implementation_state": "ADAPTER_READY",
+            "runtime_state": runtime_state,
+            "capability": "REALTIME_READ_ONLY" if configured else "ENTITLEMENT_OR_POLICY_MISSING",
+            "live_eligible": configured,
+            "production_failover_eligible": configured,
+            "read_only": True,
+            "trade_routing": False,
+            "data_mode": cfg["data_mode"],
+            "username_configured": cfg["username_configured"],
+            "api_key_configured": cfg["api_key_configured"],
+            "remote_environment": cfg["remote_environment"],
+            "remote_server_authorized": cfg["remote_server_authorized"],
+            "redistribution_authorized": cfg["redistribution_authorized"],
+            "blocking_reasons": list(cfg["blocking_reasons"]),
+            "runtime_health": {
+                "runtime_state": runtime_state,
+                "connected_at_utc": str(runtime_health.get("connected_at_utc") or ""),
+                "last_event_utc": str(runtime_health.get("last_event_utc") or ""),
+                "last_event_age_sec": runtime_health.get("last_event_age_sec"),
+                "last_error": str(runtime_health.get("last_error") or "")[:160],
+            },
+            "note": (
+                "ProjectX/TopstepX read-only bars; no account, order or trade API is used."
+            ),
+        }
+
+    def _adapter(self) -> market_data_live_adapters.TopstepXProjectXAdapter:
+        cfg = self._settings()
+        fingerprint = self._fingerprint(cfg)
+        with self._adapter_lock:
+            if (
+                self.__class__._adapter_instance is None
+                or self.__class__._credential_fingerprint != fingerprint
+            ):
+                self.__class__._adapter_instance = (
+                    market_data_live_adapters.TopstepXProjectXAdapter()
+                )
+                self.__class__._credential_fingerprint = fingerprint
+            return self.__class__._adapter_instance
+
+    def fetch(self, instrument: str, timeframe: str, limit: int) -> Dict[str, Any]:
+        if not self.configured():
+            reasons = ",".join(self._settings()["blocking_reasons"])
+            raise MarketDataProviderError(
+                f"TopstepX market data is not configured: {reasons or 'unavailable'}"
+            )
+        requested_contract = " ".join(str(instrument or "").strip().upper().split())
+        if not requested_contract:
+            raise MarketDataProviderError("TopstepX requires a futures root or exact contract")
+        tf = _timeframe(timeframe)
+        adapter = self._adapter()
+        bars = normalize_bars(adapter.backfill(requested_contract, tf, limit))
+        bars = bars[-max(1, min(int(limit or 1500), 20000)):]
+        if not bars:
+            raise MarketDataProviderError(
+                adapter.health().get("last_error") or "TopstepX returned no valid OHLCV bars"
+            )
+        fresh = series_freshness(bars, tf)
+        cfg = self._settings()
+        exact_contract = adapter.resolved_exact_contract(requested_contract)
+        last = float(bars[-1]["c"])
+        adapter._runtime_state = "LIVE" if fresh["fresh"] else "DEGRADED"
+        adapter._last_event_utc = str(fresh.get("data_as_of_utc") or "")
+        adapter._last_error = ""
+        return {
+            "instrument": exact_contract,
+            "bars": bars,
+            "total": len(bars),
+            "raw_total": len(bars),
+            "live": bool(fresh["fresh"]),
+            "status": "external_live" if fresh["fresh"] else "external_stale",
+            "requested_timeframe": tf,
+            "matched_timeframe": tf,
+            "source": {
+                "kind": "external_provider",
+                "provider": self.name,
+                "provider_symbol": exact_contract,
+                "independent": True,
+                "tier": self.tier,
+                "updated_at_utc": fresh["data_as_of_utc"],
+                "fetched_at_utc": _iso(),
+                "age_sec": fresh["age_sec"],
+                "fresh": fresh["fresh"],
+                "live_eligible": True,
+                "read_only": True,
+                "trade_routing": False,
+                "data_mode": cfg["data_mode"],
+            },
+            "freshness": fresh,
+            "quote": _quote(last, _root_symbol(exact_contract), source=self.name),
+            "note": "TopstepX read-only market data; execution remains NinjaTrader-only.",
+            "data_plane": "display",
+            "market_data_available": bool(fresh["fresh"]),
+        }
+
+
 def configured_providers() -> List[MarketDataProvider]:
     available: Dict[str, MarketDataProvider] = {
+        "topstepx": TopstepXProvider(), "topstep": TopstepXProvider(),
         "databento": DatabentoProvider(), "yahoo": YahooChartProvider(),
         "yahoo_chart": YahooChartProvider(),
     }
-    order = str(os.environ.get("NTA_MARKET_DATA_PROVIDERS") or "databento,yahoo").split(",")
+    order = str(
+        os.environ.get("NTA_MARKET_DATA_PROVIDERS") or "topstepx,databento,yahoo"
+    ).split(",")
     result: List[MarketDataProvider] = []
     seen = set()
     for name in order:
@@ -464,6 +625,22 @@ def configured_providers() -> List[MarketDataProvider]:
             seen.add(provider.name)
             result.append(provider)
     return result
+
+
+def provider_config_signature() -> str:
+    """Secret-free cache invalidation when provider readiness changes."""
+    rows = [
+        {
+            "name": provider.name,
+            "configured": provider.configured(),
+            "production_failover_eligible": bool(
+                provider.public_status().get("production_failover_eligible")
+            ),
+        }
+        for provider in configured_providers()
+    ]
+    payload = json.dumps(rows, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _cache_key(provider: MarketDataProvider, instrument: str, timeframe: str, limit: int) -> str:
@@ -476,6 +653,13 @@ def _cache_ttl(timeframe: str) -> int:
 
 def _public_error(exc: BaseException) -> str:
     text = " ".join(str(exc).split())
+    text = re.sub(r"(?i)(access_token=)[^&\s]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+\-/=]+", r"\1[redacted]", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key[\"']?\s*[:=]\s*)[^,\s}\]]+",
+        r"\1[redacted]",
+        text,
+    )
     return text[:300]
 
 
@@ -531,7 +715,10 @@ def fetch_external_series(instrument: str, timeframe: str, limit: int = 1500,
                 _CACHE[key] = {"stored_at": now, "payload": copy.deepcopy(payload)}
                 _HEALTH[provider.name] = {
                     "failures": 0, "cooldown_until": 0.0, "last_ok_utc": _iso(),
-                    "last_error": "",
+                    "last_error": "", "data_live": bool(payload.get("live")),
+                    "data_as_of_utc": str(
+                        ((payload.get("freshness") or {}).get("data_as_of_utc")) or ""
+                    ),
                 }
             attempted.append({**public, "ok": True, "cache_hit": False})
             selected = payload
@@ -581,6 +768,188 @@ def live_backup_candidates(
         provider for provider in candidates
         if production_live_failover_eligible(provider.name) and provider.configured()
     ]
+
+
+def _readiness_probe_config() -> Dict[str, Any]:
+    try:
+        max_age = int(os.environ.get("NTA_MARKET_DATA_READINESS_MAX_AGE_SEC") or 900)
+    except (TypeError, ValueError):
+        max_age = 900
+    try:
+        refresh_after = int(os.environ.get("NTA_MARKET_DATA_READINESS_REFRESH_SEC") or 300)
+    except (TypeError, ValueError):
+        refresh_after = 300
+    try:
+        retry_after = int(os.environ.get("NTA_MARKET_DATA_READINESS_RETRY_SEC") or 30)
+    except (TypeError, ValueError):
+        retry_after = 30
+    return {
+        "instrument": str(
+            os.environ.get("NTA_MARKET_DATA_HEALTHCHECK_INSTRUMENT") or "MNQ"
+        ).strip().upper(),
+        "timeframe": str(
+            os.environ.get("NTA_MARKET_DATA_HEALTHCHECK_TIMEFRAME") or "1m"
+        ).strip(),
+        "max_age_sec": max(60, min(max_age, 3600)),
+        "refresh_after_sec": max(30, min(refresh_after, 1800)),
+        "retry_after_sec": max(10, min(retry_after, 300)),
+    }
+
+
+def _readiness_candidate_signature(candidates: Sequence[MarketDataProvider]) -> str:
+    rows = []
+    for provider in candidates:
+        identity = provider.__class__.__qualname__
+        if isinstance(provider, TopstepXProvider):
+            identity += ":" + provider._fingerprint(provider._settings())
+        elif isinstance(provider, DatabentoProvider):
+            identity += ":" + hashlib.sha256(provider._key().encode("utf-8")).hexdigest()
+        rows.append({"name": provider.name, "identity": identity})
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def verify_independent_market_data(
+    providers: Optional[Sequence[MarketDataProvider]] = None,
+) -> Dict[str, Any]:
+    """Actively verify a credentialed provider with a real read-only bars call."""
+    candidates = live_backup_candidates(providers)
+    config = _readiness_probe_config()
+    candidate_signature = _readiness_candidate_signature(candidates)
+    try:
+        selected = fetch_external_series(
+            config["instrument"], config["timeframe"], 3,
+            providers=candidates, force=True,
+        ) if candidates else None
+    except Exception:
+        selected = None
+    source = selected.get("source") if isinstance((selected or {}).get("source"), dict) else {}
+    provider_name = str(source.get("provider") or "")
+    success = bool(
+        selected and selected.get("bars")
+        and production_live_failover_eligible(provider_name)
+        and any(provider.name == provider_name for provider in candidates)
+    )
+    now = time.time()
+    with _LOCK:
+        _READINESS_STATE.update({
+            "in_flight": False,
+            "last_completed_at": now,
+            "last_completed_utc": _iso(),
+            "last_result_ok": success,
+            "code": "ok" if success else "provider_probe_failed",
+            "candidate_signature": candidate_signature,
+        })
+        if success:
+            freshness = selected.get("freshness") if isinstance(selected.get("freshness"), dict) else {}
+            _READINESS_STATE.update({
+                "last_ok_at": now,
+                "last_ok_utc": _iso(),
+                "verified_provider": provider_name,
+                "data_live": bool(selected.get("live")),
+                "data_as_of_utc": str(freshness.get("data_as_of_utc") or ""),
+            })
+        else:
+            _READINESS_STATE["last_failure_at"] = now
+            _READINESS_STATE["last_failure_utc"] = _iso()
+    return independent_market_data_readiness(providers=candidates, trigger_probe=False)
+
+
+def _readiness_probe_worker(candidates: Sequence[MarketDataProvider]) -> None:
+    global _READINESS_PROBE_THREAD
+    try:
+        verify_independent_market_data(candidates)
+    finally:
+        with _LOCK:
+            _READINESS_STATE["in_flight"] = False
+            _READINESS_PROBE_THREAD = None
+
+
+def _trigger_readiness_probe(candidates: Sequence[MarketDataProvider]) -> bool:
+    global _READINESS_PROBE_THREAD
+    config = _readiness_probe_config()
+    now = time.time()
+    with _LOCK:
+        if _READINESS_PROBE_THREAD is not None and _READINESS_PROBE_THREAD.is_alive():
+            return False
+        last_started = float(_READINESS_STATE.get("last_started_at") or 0.0)
+        if now - last_started < config["retry_after_sec"]:
+            return False
+        _READINESS_STATE.update({
+            "in_flight": True,
+            "last_started_at": now,
+            "last_started_utc": _iso(),
+        })
+        _READINESS_PROBE_THREAD = threading.Thread(
+            target=_readiness_probe_worker,
+            args=(list(candidates),),
+            name="market-data-readiness-probe",
+            daemon=True,
+        )
+        thread = _READINESS_PROBE_THREAD
+    thread.start()
+    return True
+
+
+def independent_market_data_readiness(
+    providers: Optional[Sequence[MarketDataProvider]] = None,
+    *,
+    trigger_probe: bool = False,
+) -> Dict[str, Any]:
+    """Return green only after a recent successful provider bars response.
+
+    A stale last bar can still prove reachability while the market is closed;
+    chart payloads continue to expose it as stale instead of claiming LIVE.
+    """
+    candidates = live_backup_candidates(providers)
+    names = [provider.name for provider in candidates]
+    if not candidates:
+        return {
+            "ok": False,
+            "code": "licensed_live_backup_missing",
+            "candidate_providers": [],
+            "verification_in_flight": False,
+        }
+    config = _readiness_probe_config()
+    candidate_signature = _readiness_candidate_signature(candidates)
+    now = time.time()
+    with _LOCK:
+        state = copy.deepcopy(_READINESS_STATE)
+    last_ok = float(state.get("last_ok_at") or 0.0)
+    last_failure = float(state.get("last_failure_at") or 0.0)
+    verified_name = str(state.get("verified_provider") or "")
+    age = max(0.0, now - last_ok) if last_ok else None
+    verified = bool(
+        last_ok and last_ok >= last_failure
+        and verified_name in names
+        and str(state.get("candidate_signature") or "") == candidate_signature
+        and age is not None and age <= config["max_age_sec"]
+    )
+    should_refresh = bool(not verified or (age is not None and age >= config["refresh_after_sec"]))
+    if trigger_probe and should_refresh:
+        _trigger_readiness_probe(candidates)
+        with _LOCK:
+            state = copy.deepcopy(_READINESS_STATE)
+    if verified:
+        code = "ok"
+    elif state.get("in_flight"):
+        code = "provider_probe_pending"
+    elif state.get("last_result_ok") is False:
+        code = "provider_probe_failed"
+    else:
+        code = "provider_not_verified"
+    return {
+        "ok": verified,
+        "code": code,
+        "candidate_providers": names,
+        "verified_provider": verified_name if verified else "",
+        "last_verified_utc": str(state.get("last_ok_utc") or "") if verified else "",
+        "verification_age_sec": round(age, 1) if age is not None else None,
+        "verification_in_flight": bool(state.get("in_flight")),
+        "data_live_at_last_probe": bool(state.get("data_live")) if verified else False,
+        "data_as_of_utc": str(state.get("data_as_of_utc") or "") if verified else "",
+    }
 
 
 def mark_offline_snapshot(
@@ -860,7 +1229,11 @@ def status(*, include_file: bool = True) -> Dict[str, Any]:
         "ok": True, "generated_at_utc": _iso(),
         "preferred_primary": "ninjatrader_runtime",
         "external_providers": rows,
-        "independent_provider_configured": any(row["configured"] for row in rows),
+        "independent_provider_configured": bool(live_backup_candidates(providers)),
+        "best_effort_external_provider_configured": any(row["configured"] for row in rows),
+        "independent_provider_readiness": independent_market_data_readiness(
+            providers=providers, trigger_probe=False,
+        ),
         "last_selection": last,
         "policy": {
             "primary_collision_wins": True, "synthetic_gap_bars": False,
@@ -886,3 +1259,4 @@ def reset_runtime_state() -> None:
         _CACHE.clear()
         _HEALTH.clear()
         _LAST_SELECTION.clear()
+        _READINESS_STATE.clear()

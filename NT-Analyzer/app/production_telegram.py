@@ -601,6 +601,10 @@ def run(*, poll_interval_sec: float = 0.25) -> int:
     storage_router.assert_production_storage_safe()
     if not str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip():
         raise ProductionTelegramError("Protected Telegram bot token is not configured.")
+    # Environment injection bypasses the local configure-token UI. Validate the
+    # token against Telegram and populate the public username needed by login
+    # deep links before advertising the consumer as available.
+    telegram_service.refresh_bot_identity()
     queue = get_queue()
     owner_id = f"{config.instance_id}:{os.getpid()}"
     lease_token = queue.acquire_service_lease("telegram-consumer", owner_id, ttl_sec=30)

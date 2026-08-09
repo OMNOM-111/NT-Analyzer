@@ -13,7 +13,12 @@ PRODUCTION_COMPONENTS = (
     "object_storage",
     "signing_key",
     "connector_control",
+    "connector_releases",
     "telegram_consumer",
+    "telegram_delivery",
+    "google_auth",
+    "email_delivery",
+    "independent_market_data",
 )
 
 

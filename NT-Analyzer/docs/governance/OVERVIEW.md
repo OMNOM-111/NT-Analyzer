@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-02T03:17:45Z
+Дата актуализации: 2026-08-09T00:57:35Z
 
 ## Короткое предисловие
 
@@ -38,8 +38,8 @@
 
 ## Последние поправки
 
+- Поправка 11 · 2026-08-09T00:57:35Z · `GPT-5.5 через Codex по запросу owner` · Production auth, Connector and TopstepX acceptance audit: Auth Connector TopstepX audit: `external auth, installer and TopstepX readiness not fully verified` -> `local implementation verified; exact Production external gates documented`; Connector and market data runbooks: `no active TopstepX read-only path and stale two-environment wording` -> `TopstepX policy/failover contract, consented Connector setup and Development/Canary/Production gates`
 - Поправка 10 · 2026-08-02T03:17:45Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `pending` -> `PR #8 merged at ca65be2e; task branch deleted`
 - Поправка 9 · 2026-08-02T03:06:47Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 Admin Panel: Administrative authorization: `owner-only controls mixed with product UI` -> `separate explicit expiring grants and server-side capability checks`; Personal UI: `system actions in three-dot menu and cabinet tabs` -> `personal menu/cabinet plus capability-gated Admin Panel`
 - Поправка 8 · 2026-08-02T02:17:26Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `PR pending` -> `PR #7 merged at f4bcb3fc; task branch deleted`
 - Поправка 7 · 2026-08-02T01:55:27Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 environment metadata: Environment и release metadata: `production|development; development|canary|stable; partial build identity` -> `development|canary|production; dev|beta|stable; complete build identity`; UI labels and icons: `DEV|CANARY|STABLE derived from channel` -> `DEV|CANARY|BETA derived from env/channel; stable Production unlabelled`
-- Поправка 6 · 2026-08-02T00:53:55Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 0 ADR package: Принятые ADR: `audit recommendations only` -> `owner-approved ADR 0001-0007`; Журнал Phase 0-10: `absent` -> `docs/current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md`

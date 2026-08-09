@@ -104,10 +104,14 @@ def verified_email_factor(doc: Dict[str, Any], user: Dict[str, Any]) -> Tuple[bo
     independent Telegram factor).
     """
     for row in account_auth._identities_for_user(doc, user):
-        if str(row.get("provider") or "") == "email" and row.get("verified_at_utc"):
+        provider = str(row.get("provider") or "")
+        if provider == "email" and row.get("verified_at_utc"):
             return True, "email"
-    if account_auth.google_linked(user) and str(user.get("google_email") or "").strip():
-        return True, "google"
+        if provider == "google" and row.get("verified_at_utc"):
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            verified_email = str(metadata.get("email") or user.get("google_email") or "").strip()
+            if "@" in verified_email:
+                return True, "google"
     return False, ""
 
 

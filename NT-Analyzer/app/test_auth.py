@@ -236,6 +236,7 @@ def link_fake_google(*, user_id: int, google_sub: str = "", email: str = "") -> 
         google_sub=identity["google_sub"],
         google_email=identity["google_email"],
         google_name=identity.get("google_name") or "",
+        email_verified=True,
         source="test_auth",
     )
 

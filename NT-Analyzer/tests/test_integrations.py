@@ -11,17 +11,21 @@ def test_document_owner_is_explicit_and_consistent() -> None:
 
 
 def test_integration_status_never_exposes_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_APP_ENV", "staging")
     monkeypatch.setenv("NTA_TELEGRAM_BOT_TOKEN", "secret-telegram-token")
     monkeypatch.setenv("NTA_TELEGRAM_CHAT_ID", "123456")
     monkeypatch.setenv("NTA_TOPSTEP_API_KEY", "secret-topstep-key")
+    monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "owner_user")
     monkeypatch.setenv("NTA_TOPSTEP_ACCOUNT_ID", "account-1")
     status = integrations.status()
     assert status["telegram"]["configured"] is True
     assert status["topstep"]["configured"] is True
     assert status["topstep"]["live_actions_enabled"] is False
     assert status["topstep"]["available"] is False
-    assert status["topstep"]["phase"] == "safe_scaffold"
-    assert status["topstep"]["blocking_reasons"]
+    assert status["topstep"]["phase"] == "read_only_market_data"
+    assert status["topstep"]["read_only"] is True
+    assert status["topstep"]["trade_routing_enabled"] is False
+    assert status["topstep"]["blocking_reasons"] == []
     assert "secret" not in str(status).lower()
     assert "123456" not in str(status)
 

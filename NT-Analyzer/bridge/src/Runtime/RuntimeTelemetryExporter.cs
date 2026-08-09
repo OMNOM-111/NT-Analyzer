@@ -898,22 +898,30 @@ namespace NTAnalyzerBridge.Runtime
         {
             try
             {
-                // Try Account.Provider or AccountConnection or similar
                 string provider = GetStringProp(acc, "Provider");
-                if (!string.IsNullOrEmpty(provider))
-                {
-                    string p = provider.ToLowerInvariant();
-                    if (p.Contains("playback")) return "playback";
-                    if (p.Contains("simulator") || p.Contains("sim")) return "paper";
-                }
+                string connectionMode = GetStringProp(acc, "Connection.Options.Mode");
+                string connectionName = GetStringProp(acc, "Connection.Options.Name");
+                string metadata = (provider + " " + connectionMode + " " + connectionName)
+                    .ToLowerInvariant();
+                if (metadata.Contains("playback") || metadata.Contains("воспроизвед"))
+                    return "playback";
+                if (metadata.Contains("demo")) return "demo";
+                if (metadata.Contains("simulator") || metadata.Contains("simulation") ||
+                    metadata.Contains("paper") || metadata.Contains("симуляц") ||
+                    metadata.Contains("моделир"))
+                    return "paper";
+                if (metadata.Contains("live") || metadata.Contains("real"))
+                    return "live";
             }
             catch { }
             string n = (name ?? "").ToLowerInvariant();
             if (n.Contains("playback")) return "playback";
-            if (n.StartsWith("sim") || n.Contains("paper") || n.Contains("demo"))
+            if (n.StartsWith("demo") || n.Contains(" demo") || n.EndsWith("demo"))
+                return "demo";
+            if (n.StartsWith("sim") || n.Contains("paper") || n == "backtest")
                 return "paper";
-            if (string.IsNullOrEmpty(n)) return "unknown";
-            return "live";
+            if (n.Contains("live")) return "live";
+            return "unknown";
         }
 
         private static bool IsStrategyEnabled(object strat)

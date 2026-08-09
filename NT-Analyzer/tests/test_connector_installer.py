@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -102,12 +103,61 @@ def test_external_updater_has_safe_restart_health_and_one_shot_rollback() -> Non
 
 
 def test_setup_payload_reports_real_release_gate(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("STRATFORGE_ENV", "development")
-    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "dev"))
-    # The payload needs an authorized workspace; contract details are verified
-    # in test_connector_protocol. Here the release-state fields are static and
-    # must never claim a public download before Stage 9 publishing.
-    source = Path(connector_protocol.__file__).read_text(encoding="utf-8")
-    assert '"state": "blocked_release_gate"' in source
-    assert '"download_url": ""' in source
-    assert "Authenticode" in source
+    release = {
+        "version": "1.2.3",
+        "archive_url": "https://downloads.stratforges.com/connector/1.2.3.zip",
+        "archive_sha256": "A" * 64,
+        "manifest_sha256": "B" * 64,
+    }
+    monkeypatch.setattr(
+        connector_protocol,
+        "list_installations",
+        lambda *_args, **_kwargs: {"ok": True, "workspace": {}, "connections": []},
+    )
+    monkeypatch.setattr(
+        connector_protocol.connector_releases,
+        "load_catalog",
+        lambda: {"channels": {"stable": release, "canary": release}},
+    )
+    monkeypatch.setattr(
+        connector_protocol.runtime_env,
+        "deployment_config",
+        lambda: SimpleNamespace(public_origin="https://app.stratforges.com"),
+    )
+
+    payload = connector_protocol.setup_payload(42)
+
+    assert payload["installer"]["state"] == "available"
+    assert payload["installer"]["download_url"] == release["archive_url"]
+    assert payload["installer"]["requires_user_consent"] is True
+    assert payload["installer"]["browser_silent_install"] is False
+    assert payload["installer"]["requires_authenticode"] is True
+    assert payload["updater"]["state"] == "release_catalog_ready"
+
+
+def test_setup_payload_is_blocked_without_published_catalog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        connector_protocol,
+        "list_installations",
+        lambda *_args, **_kwargs: {"ok": True, "workspace": {}, "connections": []},
+    )
+    monkeypatch.setattr(connector_protocol.connector_releases, "load_catalog", lambda: None)
+    monkeypatch.setattr(
+        connector_protocol.runtime_env,
+        "deployment_config",
+        lambda: SimpleNamespace(public_origin="https://app.stratforges.com"),
+    )
+    payload = connector_protocol.setup_payload(42)
+    assert payload["installer"]["state"] == "blocked_release_catalog_unconfigured"
+    assert payload["installer"]["download_url"] == ""
+
+
+def test_aurora_connector_download_has_explicit_consent_gate() -> None:
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "app" / "static" / "aurora" / "assets" / "ui.js"
+    ).read_text(encoding="utf-8")
+    assert "data-nt-installer-url" in source
+    assert "Согласиться и скачать Connector" in source
+    assert "Скачать подписанный StratForge Connector?" in source
+    assert "link.click()" in source

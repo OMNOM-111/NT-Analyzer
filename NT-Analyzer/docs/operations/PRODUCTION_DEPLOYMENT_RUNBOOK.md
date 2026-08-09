@@ -1,7 +1,11 @@
 # StratForge Production deployment runbook
 
-Актуальная целевая схема содержит только два окружения: приватный Windows
-Development и общий Linux Production. MacBook, публичный staging и отдельные
+История поправки: 2026-08-09T00:57:35Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: привести runbook к Development/Canary/Production и добавить обязательные auth, Connector release и independent market-data gates.
+
+Актуальная целевая схема содержит три изолированных окружения: приватный Windows
+Development, внутренний Linux Canary и публичный Linux Production. Canary — не
+отдельная кодовая база: в Production продвигается тот же immutable artifact с
+тем же manifest/checksum/build identity. MacBook, публичный staging и отдельные
 `api.*`/`admin.*`/`www.*` в эту схему не входят.
 
 ## Каноническое решение
@@ -9,6 +13,7 @@ Development и общий Linux Production. MacBook, публичный staging 
 | Элемент | Решение |
 |---|---|
 | Пользовательский origin | `https://app.stratforges.com` |
+| Canary origin | `https://canary.stratforges.com`, только owner/admin с permission |
 | Apex `stratforges.com` | не публиковать до появления отдельной landing page; redirect сейчас не нужен |
 | API | same-origin `/api/*` |
 | Connector | outbound TLS на `/connector/v1/*`; вводится Stage 3 |
@@ -17,6 +22,11 @@ Development и общий Linux Production. MacBook, публичный staging 
 | Service manager | `systemd --user`, не PM2 |
 | Windows VM | owner Connector + NinjaTrader; не web/API server |
 | Redis | отсутствует до доказанной необходимости |
+
+Canary и Production используют отдельные DB roles/data, secrets, Telegram bot
+configuration, queues, object-storage namespaces, cookies, signing identities и
+Connector sessions. Совпадение критической identity между окружениями —
+fail-closed preflight error.
 
 Production не принимает wildcard Host, HTTP scheme, прямой origin request или
 `X-Forwarded-*` от неизвестного peer. Приложение проверяет это повторно после
@@ -99,6 +109,10 @@ python tools/production_preflight.py \
 ~~~
 
 Preflight печатает только имена проверок и коды, но не значения конфигурации.
+Для API/all-in-one Production он также обязан подтвердить Google first login,
+аутентифицированный TLS SMTP для email OTP, Telegram bot token + webhook secret,
+готовый stable Connector release catalog и хотя бы один лицензированный
+независимый live источник графиков.
 
 ## Первый запуск и restart
 
@@ -119,9 +133,10 @@ systemctl --user enable --now cloudflared.service
 ~~~
 
 Liveness доказывает, что процесс отвечает. Readiness возвращает 503, пока не
-готов хотя бы один обязательный компонент: PostgreSQL, durable queue, artifact
-storage, signing key или Connector control plane. Нельзя направлять Production
-traffic только по liveness.
+готов каждый обязательный компонент: PostgreSQL, durable queue, artifact
+storage, signing key, Connector control/release plane, Telegram consumer,
+Google auth, email delivery и independent market data. Нельзя направлять
+Production traffic только по liveness.
 
 После restart проверить PID, active release symlink, build version, liveness,
 readiness и последние bounded journal lines. В логах не должно быть environment
@@ -191,6 +206,12 @@ NinjaTrader. Private admin RDP/PowerShell разрешены лишь через
 - `systemd --user` переживает logout/reboot;
 - backup и изолированный restore реально выполнены;
 - Windows VM доступна только административно и готова к outbound Connector;
+- Google first login прошёл реальный callback на canonical Production origin;
+- email OTP реально доставлен через authenticated TLS SMTP, а Telegram
+  confirmation — через Production bot/webhook;
+- stable Authenticode Connector package опубликован в release catalog и прошёл
+  установку, signed hello, heartbeat и rollback rehearsal;
+- график продолжил получать licensed live данные после остановки NinjaTrader;
 - readiness 200 только после фактической готовности всех компонентов.
 
 Если доступа к Linux/Cloudflare/VM/DB нет, локальные тесты и deployment assets

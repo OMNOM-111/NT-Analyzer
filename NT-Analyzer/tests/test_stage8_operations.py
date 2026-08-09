@@ -670,6 +670,7 @@ class TestServiceReadiness:
         from app import service_readiness
 
         assert "telegram_consumer" in service_readiness.PRODUCTION_COMPONENTS
+        assert "telegram_delivery" in service_readiness.PRODUCTION_COMPONENTS
 
 
 # ---------------------------------------------------------------------------

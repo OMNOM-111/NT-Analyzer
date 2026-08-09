@@ -2022,7 +2022,7 @@
           }).join('')}</div>` : '<div class="cab-sub">Установок пока нет. Код одноразовый и действует 10 минут.</div>';
           const installer = setup.installer || {};
           inner += installer.download_url
-            ? `<div class="dchart-actions"><a class="btn primary" href="${esc(installer.download_url)}">Скачать StratForge Connector</a></div>`
+            ? `<div class="finance-note">Будет скачан проверенный Connector ${esc(installer.version || '')}. После вашего согласия откройте Setup и подтвердите Windows/UAC; дальше компоненты NinjaTrader и updater устанавливаются автоматически.</div><div class="dchart-actions"><button class="btn primary" type="button" data-nt-installer-url="${esc(installer.download_url)}">Согласиться и скачать Connector</button></div>`
             : `<div class="finance-note">${esc(installer.message || 'Установщик Connector ещё не опубликован.')}</div>`;
         }
         inner += `<ol class="nt-steps">${(setup.steps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>`;
@@ -2039,6 +2039,22 @@
       if (areaSel) areaSel.onchange = async () => { try { await API.http.workspaceSelect(areaSel.value); toast('Область переключена'); location.reload(); } catch (e) { reportError(e); } };
       const dualBtn = qs('#nt-dual', node);
       if (dualBtn) dualBtn.onclick = async () => { dualBtn.disabled = true; try { await ensureNtDualAuth(me); await renderNinjaInto(node, me); } catch (e) { reportError(e); } finally { dualBtn.disabled = false; } };
+      const installerDownload = qs('[data-nt-installer-url]', node);
+      if (installerDownload) installerDownload.onclick = () => {
+        const url = installerDownload.getAttribute('data-nt-installer-url') || '';
+        if (!url) return;
+        const consent = confirm(
+          'Скачать подписанный StratForge Connector? После загрузки нужно открыть Setup и подтвердить Windows/UAC. Затем Setup автоматически установит необходимые компоненты NinjaTrader и updater.'
+        );
+        if (!consent) return;
+        const link = document.createElement('a');
+        link.href = url;
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        toast('Загрузка Connector начата. Откройте скачанный Setup.');
+      };
       const connect = qs('#nt-connect', node);
       if (connect) connect.onclick = async () => {
         connect.disabled = true;

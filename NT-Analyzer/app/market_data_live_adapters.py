@@ -17,9 +17,10 @@ import time
 import json
 import urllib.request
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from . import local_secrets, runtime_env
 from .canonical_event import make_canonical_event
 from .instrument_registry import get_registry
 
@@ -30,6 +31,7 @@ _MONTH_CODE = {
     1: "F", 2: "G", 3: "H", 4: "J", 5: "K", 6: "M",
     7: "N", 8: "Q", 9: "U", 10: "V", 11: "X", 12: "Z",
 }
+_CODE_MONTH = {code: month for month, code in _MONTH_CODE.items()}
 
 
 def _iso() -> str:
@@ -59,6 +61,20 @@ def databento_raw_symbol(exact_contract: str) -> str:
         raise ValueError(f"exact contract required, got {exact_contract!r}")
     root, mm, yy = match.group(1), int(match.group(2)), int(match.group(3))
     return f"{root}{_MONTH_CODE[mm]}{yy % 10}"
+
+
+def topstep_exact_contract(root: str, item: Dict[str, Any]) -> str:
+    """Translate a ProjectX contract id into the explicit NT contract form."""
+    normalized_root = str(root or "").strip().upper()
+    contract_id = str(item.get("id") or "").strip().upper()
+    suffix = contract_id.rsplit(".", 1)[-1]
+    match = re.fullmatch(r"([FGHJKMNQUVXZ])(\d{2})", suffix)
+    if not normalized_root or not match:
+        return normalized_root
+    month = _CODE_MONTH.get(match.group(1))
+    if month is None:
+        return normalized_root
+    return f"{normalized_root} {month:02d}-{int(match.group(2)):02d}"
 
 
 class LiveMarketDataAdapter(ABC):
@@ -582,11 +598,10 @@ class DatabentoLiveAdapter(LiveMarketDataAdapter):
 
 
 class TopstepXProjectXAdapter(LiveMarketDataAdapter):
-    """Experimental, opt-in TopstepX / ProjectX market-data client.
+    """Read-only TopstepX / ProjectX market-data client.
 
-    Topstep currently requires API traffic to originate from the trader's
-    personal device.  Keep this adapter disabled unless the owner explicitly
-    enables the local connector and completes credentialed acceptance.
+    Remote use remains policy-blocked unless the deployment records both the
+    remote-server and redistribution permissions required for that contour.
     """
 
     name = "topstep_live"
@@ -599,55 +614,145 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         self._ws_client = None
         self._contract_id_map = {}
         self._contract_symbol_map = {}
+        self._resolved_exact_map = {}
         self._session_refresh_thread = None
 
     def implementation_state(self) -> str:
         if self._runtime_state == "LIVE":
             return "CONNECTED"
-        return "EXPERIMENTAL_UNVERIFIED"
+        return "ADAPTER_READY"
+
+    @staticmethod
+    def _flag(name: str, *, default: bool = False) -> bool:
+        raw = str(os.environ.get(name) or "").strip().lower()
+        if not raw:
+            return bool(default)
+        return raw in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def settings(cls) -> Dict[str, Any]:
+        """Return secret-free adapter configuration and policy state."""
+        local_secrets.apply()
+        username = str(
+            os.environ.get("NTA_TOPSTEPX_USERNAME")
+            or os.environ.get("NTA_TOPSTEP_USERNAME")
+            or ""
+        ).strip()
+        api_key = str(
+            os.environ.get("NTA_TOPSTEPX_API_KEY")
+            or os.environ.get("NTA_TOPSTEP_API_KEY")
+            or ""
+        ).strip()
+        requested = cls._flag("NTA_ENABLE_TOPSTEPX_MARKET_DATA", default=True)
+        # Backward-compatible opt-in: an explicit old flag can still disable.
+        if "NTA_ENABLE_TOPSTEPX_LIVE" in os.environ:
+            requested = requested and cls._flag("NTA_ENABLE_TOPSTEPX_LIVE")
+        remote = not runtime_env.is_development()
+        remote_authorized = cls._flag("NTA_TOPSTEPX_REMOTE_SERVER_AUTHORIZED")
+        redistribution_authorized = cls._flag("NTA_TOPSTEPX_REDISTRIBUTION_AUTHORIZED")
+        policy_allowed = bool(
+            not remote or (remote_authorized and redistribution_authorized)
+        )
+        mode = str(os.environ.get("NTA_TOPSTEPX_DATA_MODE") or "sim").strip().lower()
+        if mode not in {"sim", "live"}:
+            mode = "invalid"
+        credentials_present = bool(
+            username and api_key and not is_mock_key(api_key, "topstep")
+        )
+        blocking_reasons: List[str] = []
+        if not username:
+            blocking_reasons.append("topstepx_username_missing")
+        if not api_key or is_mock_key(api_key, "topstep"):
+            blocking_reasons.append("topstepx_api_key_missing")
+        if mode == "invalid":
+            blocking_reasons.append("topstepx_data_mode_invalid")
+        if not requested:
+            blocking_reasons.append("topstepx_market_data_disabled")
+        if remote and not remote_authorized:
+            blocking_reasons.append("remote_server_authorization_missing")
+        if remote and not redistribution_authorized:
+            blocking_reasons.append("market_data_redistribution_authorization_missing")
+        return {
+            "username": username,
+            "api_key": api_key,
+            "username_configured": bool(username),
+            "api_key_configured": bool(api_key and not is_mock_key(api_key, "topstep")),
+            "credentials_present": credentials_present,
+            "requested": requested,
+            "remote_environment": remote,
+            "remote_server_authorized": remote_authorized,
+            "redistribution_authorized": redistribution_authorized,
+            "policy_allowed": policy_allowed,
+            "data_mode": mode,
+            "live_subscription": mode == "live",
+            "blocking_reasons": blocking_reasons,
+        }
 
     @staticmethod
     def enabled() -> bool:
-        return str(os.environ.get("NTA_ENABLE_TOPSTEPX_LIVE") or "").strip().lower() in {
-            "1", "true", "yes", "on",
-        }
+        cfg = TopstepXProjectXAdapter.settings()
+        return bool(
+            cfg["requested"] and cfg["policy_allowed"]
+            and cfg["data_mode"] != "invalid"
+        )
 
     def credentials_present(self) -> bool:
-        username = str(os.environ.get("NTA_TOPSTEPX_USERNAME") or "").strip()
-        api_key = str(os.environ.get("NTA_TOPSTEPX_API_KEY") or "").strip()
-        return bool(username and api_key and not is_mock_key(api_key, "topstep"))
+        return bool(self.settings()["credentials_present"])
 
-    def connect(self) -> Dict[str, Any]:
+    def capabilities(self) -> Dict[str, Any]:
+        cfg = self.settings()
+        return {
+            **super().capabilities(),
+            "historical": True,
+            "read_only": True,
+            "trade_routing": False,
+            "data_mode": cfg["data_mode"],
+            "policy_allowed": cfg["policy_allowed"],
+            "remote_environment": cfg["remote_environment"],
+            "blocking_reasons": list(cfg["blocking_reasons"]),
+        }
+
+    def _authenticate(self, *, force: bool = False) -> bool:
         if not self.enabled():
-            self._runtime_state = "DISABLED"
-            self._last_error = "NTA_ENABLE_TOPSTEPX_LIVE is not enabled"
-            return self.health()
+            cfg = self.settings()
+            self._runtime_state = "POLICY_BLOCKED" if not cfg["policy_allowed"] else "DISABLED"
+            self._last_error = ",".join(cfg["blocking_reasons"]) or "TopstepX market data disabled"
+            return False
         if not self.credentials_present():
             self._runtime_state = "ENTITLEMENT_MISSING"
             self._last_error = "NTA_TOPSTEPX_USERNAME or NTA_TOPSTEPX_API_KEY missing"
-            return self.health()
-
-        username = str(os.environ.get("NTA_TOPSTEPX_USERNAME") or "").strip()
-        api_key = str(os.environ.get("NTA_TOPSTEPX_API_KEY") or "").strip()
-
+            return False
+        if not force and self._token and self._token_expires_at > time.time() + 300:
+            return True
+        cfg = self.settings()
         try:
             self._runtime_state = "CONNECTING"
             data = _post_json(
                 "https://api.topstepx.com/api/Auth/loginKey",
-                {"userName": username, "apiKey": api_key},
+                {"userName": cfg["username"], "apiKey": cfg["api_key"]},
                 headers={"Content-Type": "application/json"},
-                timeout=10.0
+                timeout=10.0,
             )
             if not data.get("success") or not data.get("token"):
-                raise ValueError(f"Auth response unsuccessful: {data.get('errorMessage') or 'no token returned'}")
-
+                raise ValueError(
+                    f"Auth response unsuccessful: {data.get('errorMessage') or 'no token returned'}"
+                )
             self._token = str(data["token"])
-            import time
             self._token_expires_at = time.time() + 24 * 3600
             self._last_error = ""
+            return True
         except Exception as exc:
+            self._token = ""
+            self._token_expires_at = 0.0
             self._runtime_state = "AUTH_FAILED"
-            self._last_error = f"TopstepX login failed: {exc}"
+            self._last_error = f"TopstepX login failed: {type(exc).__name__}"
+            return False
+
+    def connect(self) -> Dict[str, Any]:
+        if not self._authenticate():
+            return self.health()
+
+        if self._thread is not None and self._thread.is_alive():
             return self.health()
 
         self._stop.clear()
@@ -659,51 +764,72 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
     def _run_async_loop(self) -> None:
         import asyncio
         self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._websocket_worker())
+        try:
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._websocket_worker())
+        finally:
+            self._loop.close()
+            self._loop = None
 
     async def _websocket_worker(self) -> None:
         import websockets
         import json
         import asyncio
 
-        url = f"wss://rtc.topstepx.com/hubs/market?access_token={self._token}"
-        try:
-            async with websockets.connect(url) as ws:
-                self._ws_client = ws
-                await ws.send(json.dumps({"protocol": "json", "version": 1}) + "\x1e")
-                handshake_resp = await ws.recv()
+        backoff = 1.0
+        while not self._stop.is_set():
+            if not self._authenticate():
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
+                continue
+            url = f"wss://rtc.topstepx.com/hubs/market?access_token={self._token}"
+            try:
+                async with websockets.connect(url) as ws:
+                    self._ws_client = ws
+                    await ws.send(json.dumps({"protocol": "json", "version": 1}) + "\x1e")
+                    handshake_resp = await ws.recv()
+                    handshake_parts = [part for part in str(handshake_resp).split("\x1e") if part]
+                    if handshake_parts:
+                        handshake = json.loads(handshake_parts[0])
+                        if isinstance(handshake, dict) and handshake.get("error"):
+                            raise ValueError(str(handshake.get("error")))
+                    self._runtime_state = "AUTHENTICATED"
+                    self._connected_at = _iso()
+                    self._last_error = ""
+                    backoff = 1.0
 
-                self._runtime_state = "AUTHENTICATED"
-                self._connected_at = _iso()
+                    for sub in list(self._subs.values()):
+                        await self._subscribe_ws(ws, sub["raw_symbol"])
 
-                for sub in list(self._subs.values()):
-                    await self._subscribe_ws(ws, sub["raw_symbol"])
-
-                while not self._stop.is_set():
-                    try:
-                        raw_data = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                        parts = raw_data.split("\x1e")
-                        for part in parts:
-                            if not part:
-                                continue
-                            msg = json.loads(part)
-                            if msg.get("type") == 6:
-                                await ws.send('{"type":6}\x1e')
-                                continue
-                            if msg.get("type") == 1:
-                                target = msg.get("target")
-                                args = msg.get("arguments", [])
-                                self._on_ws_message(target, args)
-                    except asyncio.TimeoutError:
-                        await ws.send('{"type":6}\x1e')
-                    except Exception as exc:
-                        self._last_error = f"WS receive error: {exc}"
-                        self._runtime_state = "DEGRADED"
-                        break
-        except Exception as exc:
-            self._last_error = f"WS connection failed: {exc}"
-            self._runtime_state = "ERROR"
+                    while not self._stop.is_set():
+                        if self._token_expires_at <= time.time() + 300:
+                            break
+                        try:
+                            raw_data = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                            parts = raw_data.split("\x1e")
+                            for part in parts:
+                                if not part:
+                                    continue
+                                msg = json.loads(part)
+                                if msg.get("type") == 6:
+                                    await ws.send('{"type":6}\x1e')
+                                    continue
+                                if msg.get("type") == 1:
+                                    self._on_ws_message(
+                                        msg.get("target"), msg.get("arguments", []),
+                                    )
+                        except asyncio.TimeoutError:
+                            await ws.send('{"type":6}\x1e')
+            except Exception as exc:
+                # A websocket exception may echo its URL, which contains the
+                # short-lived bearer token. Expose only the exception class.
+                self._last_error = f"WS connection failed: {type(exc).__name__}"
+                self._runtime_state = "DEGRADED"
+            finally:
+                self._ws_client = None
+            if not self._stop.is_set():
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
 
     def subscribe(self, exact_contract: str, channel: str = "trades") -> str:
         contract = " ".join(str(exact_contract or "").strip().upper().split())
@@ -755,6 +881,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         await ws.send(json.dumps(msg_trades) + "\x1e")
 
     def _resolve_topstep_symbol(self, contract: str) -> str:
+        contract = " ".join(str(contract or "").strip().upper().split())
         with self._lock:
             if contract in self._contract_id_map:
                 return self._contract_id_map[contract]
@@ -763,23 +890,61 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         try:
             data = _post_json(
                 "https://api.topstepx.com/api/Contract/search",
-                {"searchText": root},
+                {"searchText": root, "live": bool(self.settings()["live_subscription"])},
                 headers={"Authorization": f"Bearer {self._token}"},
                 timeout=5.0
             )
-            raw = databento_raw_symbol(contract)
-            for item in data.get("contracts", data.get("available", [])):
+            rows = [
+                item for item in data.get("contracts", data.get("available", []))
+                if isinstance(item, dict)
+            ]
+            exact_requested = bool(_CONTRACT_RE.fullmatch(contract))
+            expected_raw = databento_raw_symbol(contract) if exact_requested else ""
+
+            def matches_root(item: Dict[str, Any]) -> bool:
+                symbol_root = str(item.get("symbolId") or "").upper().rsplit(".", 1)[-1]
                 provider_symbol = str(item.get("name") or item.get("symbol") or "").upper()
-                if provider_symbol == raw.upper():
-                    cid = str(item["id"])
-                    with self._lock:
-                        self._contract_id_map[contract] = raw
-                        self._contract_id_map[raw] = cid
-                        self._contract_symbol_map[cid] = contract
-                    return raw
-        except Exception:
-            pass
-        return databento_raw_symbol(contract)
+                return bool(
+                    symbol_root == root
+                    or re.fullmatch(
+                        re.escape(root) + r"[FGHJKMNQUVXZ]\d{1,2}", provider_symbol,
+                    )
+                )
+
+            matching = [item for item in rows if matches_root(item)]
+            if exact_requested:
+                matching = [
+                    item for item in matching
+                    if str(item.get("name") or item.get("symbol") or "").upper()
+                    == expected_raw.upper()
+                ]
+            else:
+                matching.sort(key=lambda item: not bool(item.get("activeContract")))
+
+            if matching:
+                item = matching[0]
+                raw = str(item.get("name") or item.get("symbol") or "").upper()
+                cid = str(item["id"])
+                resolved_exact = contract if exact_requested else topstep_exact_contract(root, item)
+                if not raw or not cid:
+                    raise ValueError("ProjectX contract response is incomplete")
+                with self._lock:
+                    self._contract_id_map[contract] = raw
+                    self._contract_id_map[raw] = cid
+                    self._contract_symbol_map[cid] = resolved_exact
+                    self._resolved_exact_map[contract] = resolved_exact
+                    self._resolved_exact_map[raw] = resolved_exact
+                return raw
+        except Exception as exc:
+            self._last_error = f"TopstepX contract search failed: {type(exc).__name__}"
+            raise ValueError(self._last_error) from None
+        self._last_error = f"TopstepX active/exact contract not found: {contract}"
+        raise ValueError(self._last_error)
+
+    def resolved_exact_contract(self, contract: str) -> str:
+        normalized = " ".join(str(contract or "").strip().upper().split())
+        with self._lock:
+            return str(self._resolved_exact_map.get(normalized) or normalized)
 
     def _on_ws_message(self, target: str, args: List[Any]) -> None:
         # Official ProjectX callbacks are (contractId, data).  Accept the old
@@ -792,18 +957,21 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         for contract_id, arg in rows:
             if not arg:
                 continue
-            symbol = str(arg.get("symbol") or arg.get("symbolId") or "")
-            if not symbol:
-                continue
             exact = self._contract_symbol_map.get(contract_id, "")
+            symbol = str(arg.get("symbol") or arg.get("symbolId") or "")
             with self._lock:
                 if not exact:
                     for sub in self._subs.values():
-                        if sub["raw_symbol"] == symbol:
+                        mapped_id = self._contract_id_map.get(sub["raw_symbol"])
+                        if (symbol and sub["raw_symbol"] == symbol) or (
+                            contract_id and mapped_id == contract_id
+                        ):
                             exact = sub["exact_contract"]
+                            symbol = symbol or sub["raw_symbol"]
                             break
             if not exact:
                 continue
+            symbol = symbol or contract_id
 
             price = arg.get("price")
             if price is None:
@@ -841,6 +1009,8 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             self._emit(event)
 
     def backfill(self, exact_contract: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
+        if not self._authenticate():
+            return []
         unit = 2
         unit_num = 1
         tf = str(timeframe).lower()
@@ -863,6 +1033,11 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             return []
 
         try:
+            seconds_per_unit = {1: 1, 2: 60, 3: 3600, 4: 86400}.get(unit, 60)
+            end_time = datetime.now(timezone.utc)
+            start_time = end_time - timedelta(
+                seconds=max(1, unit_num) * seconds_per_unit * max(10, min(int(limit or 1), 20000)) * 2
+            )
             data = _post_json(
                 "https://api.topstepx.com/api/History/retrieveBars",
                 {
@@ -870,7 +1045,10 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                     "unit": unit,
                     "unitNumber": unit_num,
                     "limit": min(limit, 20000),
-                    "live": True
+                    "live": bool(self.settings()["live_subscription"]),
+                    "startTime": start_time.isoformat().replace("+00:00", "Z"),
+                    "endTime": end_time.isoformat().replace("+00:00", "Z"),
+                    "includePartialBar": True,
                 },
                 headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"},
                 timeout=10.0
@@ -887,7 +1065,8 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                     "v": float(item.get("v") or item.get("volume", 0.0)),
                 })
             return bars
-        except Exception:
+        except Exception as exc:
+            self._last_error = f"TopstepX retrieve bars failed: {type(exc).__name__}"
             return []
 
 

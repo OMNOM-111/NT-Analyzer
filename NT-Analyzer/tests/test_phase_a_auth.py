@@ -125,14 +125,18 @@ def test_dual_auth_google_link_unique_and_needs_google(phase_a_store, monkeypatc
     )
     assert user["needs_google"] is True
     assert user["google_linked"] is False
-    linked = account_auth.link_google_identity(42, google_sub="g-alice", google_email="alice@example.com")
+    linked = account_auth.link_google_identity(
+        42, google_sub="g-alice", google_email="alice@example.com", email_verified=True,
+    )
     assert linked["user"]["google_linked"] is True
     assert linked["user"]["needs_google"] is False
     account_auth.create_or_update_virtual_user(
         user_id=43, username="bob", first_name="Bob", google_linked=False, preset="no_google",
     )
     with pytest.raises(account_auth.AccountAuthError) as exc:
-        account_auth.link_google_identity(43, google_sub="g-alice", google_email="other@example.com")
+        account_auth.link_google_identity(
+            43, google_sub="g-alice", google_email="other@example.com", email_verified=True,
+        )
     assert exc.value.status == 409
 
 

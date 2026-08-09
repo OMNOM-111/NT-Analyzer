@@ -56,6 +56,14 @@ def store(tmp_path, monkeypatch):
             "verified_at_utc": "2026-01-01T00:00:00Z", "linked_at_utc": "2026-01-01T00:00:00Z",
         }
 
+    def _google_identity(user_uuid, legacy, subject, email):
+        return {
+            "identity_id": "id_google_%s" % legacy, "user_uuid": user_uuid,
+            "legacy_user_id": legacy, "provider": "google", "provider_subject": subject,
+            "verified_at_utc": "2026-01-01T00:00:00Z", "linked_at_utc": "2026-01-01T00:00:00Z",
+            "metadata": {"email": email},
+        }
+
     account_auth._write_doc({
         "version": 3,
         "users": [
@@ -79,6 +87,7 @@ def store(tmp_path, monkeypatch):
             _telegram_identity(BOB_UUID, 7),
             _email_identity(CAROL_UUID, 8, "carol@example.com"),
             _telegram_identity(DAVE_UUID, 9),
+            _google_identity(DAVE_UUID, 9, "dave-google", "dave@gmail.com"),
         ],
         "challenges": [],
         "sessions": [],
@@ -128,6 +137,25 @@ def test_google_verified_email_satisfies_email_factor(store):
     assert posture["factors"] == {"telegram": True, "email": True}
     assert posture["email_factor_via"] == "google"
     assert posture["ready"] is True
+
+
+def test_google_profile_fields_without_verified_identity_do_not_satisfy_factor(store):
+    doc = account_auth._read_doc()
+    doc["auth_identities"] = [
+        row for row in doc["auth_identities"]
+        if not (row.get("provider") == "google" and row.get("legacy_user_id") == 9)
+    ]
+    account_auth._write_doc(doc)
+
+    posture = personal_nt_security.security_posture(9)
+
+    assert posture["factors"] == {"telegram": True, "email": False}
+    assert posture["ready"] is False
+    with pytest.raises(security_devices.SecurityDeviceError) as exc:
+        security_devices.create_challenge(
+            user_id=9, purpose="step_up", action="connector_revoke", provider="google",
+        )
+    assert exc.value.code == "provider_unavailable"
 
 
 def test_owner_is_exempt(store):

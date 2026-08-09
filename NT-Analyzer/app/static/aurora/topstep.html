@@ -8,18 +8,18 @@
 <link rel="stylesheet" href="assets/theme.css?v=20260812-phase12-owner1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="topstep" data-title="TopStep" data-kicker="StratForge AI · Мост к prop-счёту">
-  <div class="demo-report-banner warn">TopStep · безопасный scaffold · live-команды недоступны</div>
+<body data-page="topstep" data-title="TopStep" data-kicker="StratForge AI · Независимый read-only market data">
+  <div class="demo-report-banner info">TopstepX · только котировки и бары для графиков · сделки не передаются</div>
   <div class="grid cols-3" id="topstep-kpis"></div>
   <div class="grid cols-2" style="margin-top:18px">
-    <section class="panel"><div class="panel-h"><h2>Контур передачи сигналов</h2></div><div class="panel-b"><div class="timeline"><div class="tl-item update"><div class="tl-dot"></div><div class="tl-body"><div class="t">1. Одобренная стратегия</div><div class="m">Только профиль с пройденным risk-gate</div></div></div><div class="tl-item update"><div class="tl-dot"></div><div class="tl-body"><div class="t">2. NinjaTrader</div><div class="m">Единственный разрешённый исполнитель сделок</div></div></div><div class="tl-item warn"><div class="tl-dot"></div><div class="tl-body"><div class="t">3. TopStep API</div><div class="m">Подключение и live-команды заблокированы до отдельной валидации</div></div></div></div></div></section>
-    <section class="panel"><div class="panel-h"><h2>Безопасность</h2></div><div class="panel-b col gap-lg"><div class="finance-note" id="topstep-note"><strong>Никаких прямых сделок из браузера.</strong> Эта страница сейчас только отображает безопасный status scaffold.</div><div class="list" id="topstep-checks"></div></div></section>
+    <section class="panel"><div class="panel-h"><h2>Контур данных</h2></div><div class="panel-b"><div class="timeline"><div class="tl-item update"><div class="tl-dot"></div><div class="tl-body"><div class="t">1. ProjectX / TopstepX</div><div class="m">Авторизация API key и разрешение корня в активный точный контракт</div></div></div><div class="tl-item update"><div class="tl-dot"></div><div class="tl-body"><div class="t">2. Read-only market data</div><div class="m">Исторические бары и SignalR quotes/trades</div></div></div><div class="tl-item update"><div class="tl-dot"></div><div class="tl-body"><div class="t">3. Графики StratForge</div><div class="m">Failover работает независимо от подключения NinjaTrader</div></div></div></div></div></section>
+    <section class="panel"><div class="panel-h"><h2>Границы и готовность</h2></div><div class="panel-b col gap-lg"><div class="finance-note" id="topstep-note"><strong>TopstepX не является execution-маршрутом.</strong> Сделки остаются в отдельном NinjaTrader-контуре.</div><div class="list" id="topstep-checks"></div></div></section>
   </div>
 <script src="assets/api.js?v=20260812-phase12-owner1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260813-shared-nt-return1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/topstep.js?v=20260716-scaffold1"></script>
+<script src="assets/pages/topstep.js?v=20260808-marketdata1"></script>
 </body>
 </html>

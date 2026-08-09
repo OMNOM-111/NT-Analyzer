@@ -55,6 +55,7 @@ if __package__ is None or __package__ == "":
     from app import production_telegram  # type: ignore[no-redef]
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
+    from app import auth_delivery  # type: ignore[no-redef]
     from app import security_devices  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
@@ -143,6 +144,7 @@ else:
     from . import production_telegram
     from . import tunnel_manager
     from . import account_auth
+    from . import auth_delivery
     from . import security_devices
     from . import personal_nt_security
     from . import ninjatrader_resources
@@ -536,8 +538,17 @@ _DESKTOP_INSTRUMENT_ROOTS = {
 }
 
 _MARKET_BARS_PAYLOAD_CACHE_LOCK = threading.RLock()
-_MARKET_BARS_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_MARKET_BARS_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Tuple[float, Dict[str, Any]]] = {}
 _MARKET_BARS_PAYLOAD_CACHE_MAX = 512
+
+
+def _market_payload_cache_ttl_sec() -> float:
+    """Keep fan-out deduplication bounded so a recovered provider is retried."""
+    try:
+        configured = float(os.environ.get("NTA_MARKET_PAYLOAD_CACHE_TTL_SEC") or "2")
+    except (TypeError, ValueError):
+        configured = 2.0
+    return max(0.25, min(5.0, configured))
 
 
 def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
@@ -631,14 +642,19 @@ def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _market_payload_cache_get(key: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
     with _MARKET_BARS_PAYLOAD_CACHE_LOCK:
         cached = _MARKET_BARS_PAYLOAD_CACHE.get(key)
-    if cached is None:
-        return None
-    return _refresh_market_payload_age(copy.deepcopy(cached))
+        if cached is None:
+            return None
+        cached_at, payload = cached
+        if time.monotonic() - cached_at > _market_payload_cache_ttl_sec():
+            _MARKET_BARS_PAYLOAD_CACHE.pop(key, None)
+            return None
+        payload_copy = copy.deepcopy(payload)
+    return _refresh_market_payload_age(payload_copy)
 
 
 def _market_payload_cache_put(key: Tuple[Any, ...], payload: Dict[str, Any]) -> None:
     with _MARKET_BARS_PAYLOAD_CACHE_LOCK:
-        _MARKET_BARS_PAYLOAD_CACHE[key] = copy.deepcopy(payload)
+        _MARKET_BARS_PAYLOAD_CACHE[key] = (time.monotonic(), copy.deepcopy(payload))
         while len(_MARKET_BARS_PAYLOAD_CACHE) > _MARKET_BARS_PAYLOAD_CACHE_MAX:
             try:
                 oldest = next(iter(_MARKET_BARS_PAYLOAD_CACHE))
@@ -707,6 +723,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         str((connector_snapshot_index or {}).get("source_signature") or ""),
         str(((remote_bars or {}).get("source") or {}).get("source_signature") or ""),
         int(((remote_bars or {}).get("source") or {}).get("source_sequence") or 0),
+        market_data_failover.provider_config_signature(),
     )
     cached = _market_payload_cache_get(cache_key)
     if cached is not None:
@@ -717,16 +734,31 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             remote_bars.get("live")
             and ((remote_bars.get("freshness") or {}).get("fresh"))
         )
-        out = remote_bars if primary_healthy else market_data_failover.mark_offline_snapshot(
+        out = market_data_failover.apply_failover(
             remote_bars,
-            reason="connector_remote_snapshot_stale",
-            last_source="ninjatrader_connector",
-            backup_providers_available=0,
+            resolved_instrument,
+            timeframe,
+            limit,
+            primary_healthy=primary_healthy,
         )
+        if not out:
+            out = market_data_failover.mark_offline_snapshot(
+                remote_bars,
+                reason="connector_remote_snapshot_stale",
+                last_source="ninjatrader_connector",
+                backup_providers_available=0,
+            )
     elif production_mode:
         primary_healthy = False
-        out = market_data_failover.mark_offline_snapshot(
-            {
+        out = market_data_failover.apply_failover(
+            None,
+            resolved_instrument,
+            timeframe,
+            limit,
+            primary_healthy=False,
+        )
+        if not out:
+            out = market_data_failover.mark_offline_snapshot({
                 "instrument": resolved_instrument,
                 "bars": [],
                 "total": 0,
@@ -737,11 +769,8 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                     "provider": "ninjatrader",
                     "transport": "connector_https",
                 },
-            },
-            reason="no_workspace_connector_snapshot",
-            last_source="none",
-            backup_providers_available=0,
-        )
+            }, reason="no_workspace_connector_snapshot", last_source="none",
+                backup_providers_available=0)
     else:
         if snapshot_index is not None:
             runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
@@ -1461,6 +1490,26 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._extra_headers.append(("Set-Cookie", value))
 
+    def _google_oauth_cookie_name(self) -> str:
+        return runtime_env.session_cookie_name() + "_google_oauth"
+
+    def _set_google_oauth_cookie(self, state: str) -> None:
+        secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        value = (
+            f"{self._google_oauth_cookie_name()}={google_auth.state_cookie_token(state)}; "
+            f"Path=/api/auth/google/callback; Max-Age={15 * 60}; HttpOnly; SameSite=Lax"
+            + ("; Secure" if secure else "")
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
+    def _clear_google_oauth_cookie(self) -> None:
+        secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        value = (
+            f"{self._google_oauth_cookie_name()}=; Path=/api/auth/google/callback; "
+            "Max-Age=0; HttpOnly; SameSite=Lax" + ("; Secure" if secure else "")
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
     def _clear_session_cookie(self) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
         value = f"{runtime_env.session_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
@@ -2113,8 +2162,8 @@ class Handler(BaseHTTPRequestHandler):
         return scope
 
     def _auth_providers_payload(self) -> Dict[str, Any]:
-        settings = telegram_service.load_settings()
-        bot_username = str(settings.get("bot_username") or "").strip().lstrip("@")
+        bot_username = telegram_service.bot_username()
+        telegram_delivery = auth_delivery.telegram_status()
         google = google_auth.status()
         email = account_auth.email_auth_status()
         return {
@@ -2123,8 +2172,8 @@ class Handler(BaseHTTPRequestHandler):
             "owner_approval_required": True,
             "providers": {
                 "telegram": {
-                    "available": bool(bot_username),
-                    "configured": bool(bot_username),
+                    "available": bool(bot_username and telegram_delivery.get("production_ready")),
+                    "configured": bool(bot_username and telegram_delivery.get("production_ready")),
                     "bot_username": bot_username,
                 },
                 "google": {
@@ -2207,7 +2256,7 @@ class Handler(BaseHTTPRequestHandler):
                         **failure,
                         "authenticated": False,
                         "auth_required": account_auth.auth_required(),
-                        "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                        "bot_username": telegram_service.bot_username(),
                         "storage": account_auth.storage_status(),
                         "providers": self._auth_providers_payload()["providers"],
                     })
@@ -2215,7 +2264,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.UNAUTHORIZED, {
                     "error": "Требуется вход.", "authenticated": False,
                     "auth_required": account_auth.auth_required(),
-                    "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                    "bot_username": telegram_service.bot_username(),
                     "storage": account_auth.storage_status(),
                     "providers": self._auth_providers_payload()["providers"],
                 })
@@ -2443,24 +2492,33 @@ class Handler(BaseHTTPRequestHandler):
                 redirect_uri=self._google_redirect_uri(body),
                 return_path=str(body.get("return_path") or "/ui/"),
             )
+            self._set_google_oauth_cookie(str(out.get("state") or ""))
             self._json(HTTPStatus.OK, out)
         except google_auth.GoogleAuthError as exc:
             self._err(exc.status, str(exc))
 
     def _google_redirect_uri(self, body: Dict[str, Any]) -> str:
-        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
-        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
-        return str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
+        # Canary/Production use STRATFORGE_PUBLIC_ORIGIN, never client-controlled
+        # Host/X-Forwarded-* headers. Development may supply an explicit local
+        # callback for its ephemeral test server.
+        return google_auth.resolve_redirect_uri(body.get("redirect_uri"))
 
     def _google_oauth_callback(self, qs: Dict[str, Any]) -> None:
         code = str((qs.get("code") or [""])[0] or "")
         state = str((qs.get("state") or [""])[0] or "")
         err = str((qs.get("error") or [""])[0] or "")
         if err:
+            self._clear_google_oauth_cookie()
             self._html_redirect("/ui/?google_error=" + urllib.parse.quote(err))
             return
         try:
+            cookie = self._cookie_value(self._google_oauth_cookie_name())
+            self._clear_google_oauth_cookie()
+            if not google_auth.state_cookie_matches(state, cookie):
+                raise google_auth.GoogleAuthError(
+                    "OAuth flow не принадлежит этому браузеру. Начните вход через Google заново.",
+                    410,
+                )
             identity = google_auth.exchange_code(code=code, state=state)
             path = str(identity.get("return_path") or "/ui/")
             if identity.get("purpose") == "login":
@@ -2488,6 +2546,7 @@ class Handler(BaseHTTPRequestHandler):
                     google_sub=identity["google_sub"],
                     google_email=identity.get("google_email") or "",
                     google_name=identity.get("google_name") or "",
+                    email_verified=bool(identity.get("email_verified")),
                     source="google_oauth",
                 )
                 suffix = "google_linked=1"
@@ -2803,7 +2862,7 @@ class Handler(BaseHTTPRequestHandler):
             account_auth.ensure_owner(owner_id)
             if path == "/api/auth/login/start":
                 out = account_auth.start_login(
-                    bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                    bot_username=telegram_service.bot_username(),
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
             elif path == "/api/auth/login/status":
@@ -2825,6 +2884,7 @@ class Handler(BaseHTTPRequestHandler):
                     return_path=str(body.get("return_path") or "/ui/"),
                     accept_terms=bool(body.get("accept_terms")),
                 )
+                self._set_google_oauth_cookie(str(out.get("state") or ""))
             elif path == "/api/auth/email/start":
                 out = account_auth.start_email_auth(
                     body.get("email"), ip=ip,
@@ -8162,7 +8222,7 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             try:
-                bot_username = str(telegram_service.load_settings().get("bot_username") or "")
+                bot_username = telegram_service.bot_username()
                 try:
                     public_url = str(telegram_remote.admin_status().get("public_url") or "")
                 except Exception:
@@ -8506,7 +8566,7 @@ class Handler(BaseHTTPRequestHandler):
                     out = telegram_remote.update_settings(body.get("settings") or body)
                 elif path == "/api/telegram/remote/pair/start":
                     out = telegram_remote.start_pairing(
-                        bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                        bot_username=telegram_service.bot_username(),
                         role=str(body.get("role") or "read_only"),
                         expected_user_id=body.get("expected_user_id") or 0,
                         require_phone=bool(body.get("require_phone", True)),
@@ -8958,6 +9018,23 @@ def create_http_server(
     server.readiness_probes = {  # type: ignore[attr-defined]
         "connector_control": connector_protocol.readiness_status,
         "connector_releases": connector_releases.readiness_status,
+        "google_auth": lambda: {
+            "ok": bool(google_auth.status().get("configured")),
+            "code": str(google_auth.status().get("code") or "not_configured"),
+        },
+        "email_delivery": lambda: {
+            "ok": bool(account_auth.email_auth_status().get("production_ready")),
+            "code": str(account_auth.email_auth_status().get("code") or "not_configured"),
+        },
+        "telegram_delivery": lambda: {
+            "ok": bool(auth_delivery.telegram_status().get("production_ready")),
+            "code": str(auth_delivery.telegram_status().get("code") or "not_configured"),
+        },
+        # The first readiness call starts a non-blocking, real bars probe.
+        # Presence of credentials alone must never make Production ready.
+        "independent_market_data": lambda: (
+            market_data_failover.independent_market_data_readiness(trigger_probe=True)
+        ),
     }
     if deployment.environment == runtime_env.PRODUCTION:
         from . import storage_router

@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-from . import auth_identity, legal, runtime_env, secure_store
+from . import auth_delivery, auth_identity, legal, runtime_env, secure_store
 
 
 SESSION_COOKIE = "sf_session"
@@ -415,7 +415,10 @@ def _migrate_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
                 touch=False,
             )
         google_sub = str(user.get("google_sub") or "").strip()
-        if google_sub:
+        # Only a pre-v3 store may promote legacy summary fields into a verified
+        # identity. In v3 the identity row is canonical; silently recreating it
+        # from mutable profile fields would turn an unproved email into a factor.
+        if google_sub and legacy_identity_model:
             _link_identity_in_doc(
                 doc,
                 user,
@@ -2764,6 +2767,7 @@ def link_google_identity(
     google_sub: str,
     google_email: str = "",
     google_name: str = "",
+    email_verified: bool = False,
     source: str = "google_oauth",
 ) -> Dict[str, Any]:
     uid = int(user_id)
@@ -2771,6 +2775,9 @@ def link_google_identity(
     email = str(google_email or "").strip().lower()
     if not sub:
         raise AccountAuthError("google_sub обязателен.")
+    if not email_verified:
+        raise AccountAuthError("Email Google не подтверждён.", 403, code="google_email_unverified")
+    email = _valid_email(email)
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
@@ -2996,16 +3003,7 @@ def create_session_for_user(
 
 
 def email_auth_status() -> Dict[str, Any]:
-    test_backend = bool(runtime_env.is_development() and runtime_env.test_auth_enabled())
-    configured_provider = str(os.environ.get("NTA_EMAIL_AUTH_PROVIDER") or "").strip().lower()
-    return {
-        "available": test_backend,
-        "operational": test_backend,
-        "provider": "development_test" if test_backend else (configured_provider or "unconfigured"),
-        "test_backend": test_backend,
-        "production_ready": False,
-        "code": "ok" if test_backend else "transactional_provider_not_configured",
-    }
+    return auth_delivery.email_status()
 
 
 def _email_code_hash(challenge_id: str, salt: str, code: str) -> str:
@@ -3032,6 +3030,11 @@ def start_email_auth(
             503,
             code="email_provider_unavailable",
         )
+    test_backend = bool(
+        status.get("test_backend")
+        and runtime_env.is_development()
+        and runtime_env.test_auth_enabled()
+    )
     _login_rate(ip)
     normalized = _valid_email(email)
     purpose_id = str(purpose or "login").strip().lower()
@@ -3059,7 +3062,7 @@ def start_email_auth(
             "provider": "email",
             "purpose": purpose_id,
             "provider_subject": normalized,
-            "status": "email_code_sent",
+            "status": "email_code_sent" if test_backend else "delivery_pending",
             "user_id": actor_id or None,
             "user_uuid": _user_uuid(actor) if actor else "",
             "code_salt": salt,
@@ -3072,6 +3075,44 @@ def start_email_auth(
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
         })
         _write_doc(doc)
+    if not test_backend:
+        try:
+            auth_delivery.send_email_code(
+                normalized,
+                code,
+                purpose=purpose_id,
+                expires_in_sec=EMAIL_CHALLENGE_TTL_SEC,
+            )
+        except auth_delivery.AuthDeliveryError as exc:
+            with _LOCK:
+                doc = _read_doc()
+                failed = _challenge(doc, challenge_id=challenge_id, statuses=("delivery_pending",))
+                if failed is not None:
+                    failed["status"] = "delivery_failed"
+                    failed["expires_at"] = time.time()
+                    failed["delivery_error_code"] = exc.code
+                    _write_doc(doc)
+            _audit(
+                "email_auth_delivery_failed",
+                user_id=actor_id,
+                ip=ip,
+                extra={"purpose": purpose_id, "code": exc.code},
+            )
+            raise AccountAuthError(
+                str(exc), 503, code=str(exc.code or "email_delivery_failed")
+            ) from None
+        with _LOCK:
+            doc = _read_doc()
+            delivered = _challenge(doc, challenge_id=challenge_id, statuses=("delivery_pending",))
+            if delivered is None:
+                raise AccountAuthError(
+                    "Email challenge не удалось активировать.", 503,
+                    code="email_challenge_activation_failed",
+                )
+            delivered["status"] = "email_code_sent"
+            delivered["delivered_at_utc"] = _now_iso()
+            delivered["delivery"] = str(status.get("provider") or "smtp")
+            _write_doc(doc)
     _audit(
         "email_auth_started",
         user_id=actor_id,
@@ -3079,16 +3120,18 @@ def start_email_auth(
         extra={"purpose": purpose_id, "email_hash": hashlib.sha256(normalized.encode()).hexdigest()},
     )
     # Test credentials are disclosed only behind the explicit Development test
-    # auth gate. A real provider integration must deliver them out-of-band.
-    return {
+    # auth gate. Canary/Production always deliver them out-of-band.
+    out = {
         "ok": True,
         "challenge_id": challenge_id,
         "status": "email_code_sent",
         "expires_in_sec": EMAIL_CHALLENGE_TTL_SEC,
-        "delivery": "development_test",
-        "test_code": code,
-        "test_magic_token": magic_token,
+        "delivery": "development_test" if test_backend else str(status.get("provider") or "smtp"),
     }
+    if test_backend:
+        out["test_code"] = code
+        out["test_magic_token"] = magic_token
+    return out
 
 
 def _email_challenge_verified(
