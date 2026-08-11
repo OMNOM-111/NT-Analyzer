@@ -608,6 +608,24 @@ def test_topstep_signalr_protocol_writes_are_serialized(monkeypatch) -> None:
     assert len(ws.sent) == 8
 
 
+def test_topstep_signalr_loop_errors_are_sanitized_without_default_logging(monkeypatch) -> None:
+    """A detached server must not block its sole market worker on stderr."""
+    _local_topstep_env(monkeypatch)
+    adapter = live_adapters.TopstepXProjectXAdapter()
+
+    class Loop:
+        def default_exception_handler(self, _context) -> None:  # pragma: no cover
+            raise AssertionError("SignalR loop error must not use blocking default logging")
+
+    adapter._handle_signalr_loop_exception(
+        Loop(), {"exception": RuntimeError("credential-bearing provider detail")},
+    )
+    health = adapter.health()
+    assert health["last_error"] == "WS background task failed: RuntimeError"
+    assert "credential-bearing" not in health["last_error"]
+    assert health["session_audit"]["signalr_background_task_errors"] == 1
+
+
 def test_topstep_chart_uses_one_gatewayquote_wire_stream_per_contract(monkeypatch) -> None:
     """GatewayQuote already carries lastPrice and bid/ask; do not double large-layout load."""
     _local_topstep_env(monkeypatch)

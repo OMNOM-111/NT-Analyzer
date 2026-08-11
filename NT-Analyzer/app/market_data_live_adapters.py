@@ -1712,6 +1712,13 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         self._loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(self._loop)
+            # A detached DEV server can outlive the shell/pipe that launched
+            # it.  asyncio's default exception handler writes unretrieved task
+            # failures to stderr; a dead pipe can then block this sole market
+            # worker forever while the thread still looks alive to connect().
+            # Record a sanitized internal diagnostic instead of doing blocking
+            # I/O from the realtime event loop.
+            self._loop.set_exception_handler(self._handle_signalr_loop_exception)
             self._signalr_send_lock = asyncio.Lock()
             self._signalr_invoke_lock = asyncio.Lock()
             self._loop.run_until_complete(self._websocket_worker())
@@ -1720,6 +1727,13 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             self._loop = None
             self._signalr_send_lock = None
             self._signalr_invoke_lock = None
+
+    def _handle_signalr_loop_exception(self, _loop: Any, context: Dict[str, Any]) -> None:
+        """Keep an unretrieved background-task error from blocking SignalR."""
+        error = context.get("exception")
+        error_kind = type(error).__name__ if error is not None else "AsyncioError"
+        self._session.record("signalr_background_task_errors")
+        self._last_error = f"WS background task failed: {error_kind}"
 
     async def _send_signalr_frame(self, ws: Any, payload: str) -> None:
         """Send one SignalR frame without letting socket backpressure hang forever."""
@@ -1913,16 +1927,21 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 for waiter in completion_waiters:
                     if waiter is not None and not waiter.done():
                         waiter.cancel()
-                if resubscribe_task is not None and not resubscribe_task.done():
-                    resubscribe_task.cancel()
-                    # Never await cancellation without a deadline: websocket
-                    # flow control may keep send() pending on a dead transport.
-                    # The task is tied to the old socket and will exit after
-                    # its bounded write even if cancellation is delayed.
-                    done, _pending = await asyncio.wait(
-                        {resubscribe_task}, timeout=self._signalr_close_timeout_sec,
-                    )
-                    if resubscribe_task in done:
+                if resubscribe_task is not None:
+                    if not resubscribe_task.done():
+                        resubscribe_task.cancel()
+                        # Never await cancellation without a deadline: websocket
+                        # flow control may keep send() pending on a dead transport.
+                        # The task is tied to the old socket and will exit after
+                        # its bounded write even if cancellation is delayed.
+                        await asyncio.wait(
+                            {resubscribe_task}, timeout=self._signalr_close_timeout_sec,
+                        )
+                    # Retrieve success, cancellation or failure even when the
+                    # task completed immediately before connection cleanup.
+                    # Otherwise asyncio reports it later through its default
+                    # stderr logger, which can block a detached DEV process.
+                    if resubscribe_task.done():
                         try:
                             resubscribe_task.result()
                         except (asyncio.CancelledError, Exception):
