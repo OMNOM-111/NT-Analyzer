@@ -965,6 +965,11 @@
         ctx.strokeStyle = withA(tagColor, live ? 0.5 : 0.35); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
         const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · OFF`);
+        // Exact values used by the canvas draw, exposed only as inert DOM
+        // diagnostics for Development acceptance and regression automation.
+        this.host.dataset.renderedPriceMarkerText = label;
+        this.host.dataset.renderedPriceMarkerColor = tagColor;
+        this.host.dataset.renderedPriceMarkerLive = String(live);
         this._axisTag(ctx, P, plotW, y, L.axisW, label, tagColor);
       }
 

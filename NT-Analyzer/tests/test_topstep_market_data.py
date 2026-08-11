@@ -474,6 +474,39 @@ def test_topstep_logical_chart_refs_share_one_session_and_wire_contract(monkeypa
     assert adapter.health()["logical_subscription_refcount"] == 1
 
 
+def test_topstep_connect_starts_one_signalr_worker_under_concurrent_layout_load(monkeypatch) -> None:
+    """Concurrent chart mounts must share one Market SignalR worker."""
+    _local_topstep_env(monkeypatch)
+    adapter = live_adapters.TopstepXProjectXAdapter()
+    worker_entered = threading.Event()
+    release_worker = threading.Event()
+    count_lock = threading.Lock()
+    starts = []
+
+    monkeypatch.setattr(adapter, "_authenticate", lambda **_kwargs: True)
+
+    def worker() -> None:
+        with count_lock:
+            starts.append(threading.get_ident())
+        worker_entered.set()
+        assert release_worker.wait(5)
+
+    monkeypatch.setattr(adapter, "_run_async_loop", worker)
+    callers = [threading.Thread(target=adapter.connect) for _ in range(24)]
+    try:
+        for caller in callers:
+            caller.start()
+        assert worker_entered.wait(1)
+        for caller in callers:
+            caller.join(timeout=2)
+            assert not caller.is_alive()
+        assert len(starts) == 1
+    finally:
+        release_worker.set()
+        if adapter._thread is not None:
+            adapter._thread.join(timeout=2)
+
+
 def test_topstep_reconnect_gap_fill_is_nonblocking_singleflight(monkeypatch) -> None:
     """A large REST gap-fill must never starve the shared Market Hub reader."""
     _local_topstep_env(monkeypatch)
@@ -517,6 +550,83 @@ def test_topstep_reconnect_resubscribe_multiplexes_unique_contracts(monkeypatch)
     monkeypatch.setattr(adapter, "_subscribe_ws", record_subscribe)
     asyncio.run(adapter._resubscribe_ws(ws))
     assert subscribed == ["MNQU6", "MESU6"]
+
+
+def test_topstep_signalr_protocol_write_has_a_hard_timeout(monkeypatch) -> None:
+    """A dead socket must not strand reconnect behind a pending send()."""
+    _local_topstep_env(monkeypatch)
+    adapter = live_adapters.TopstepXProjectXAdapter()
+    adapter._signalr_send_timeout_sec = 0.01
+
+    class BlockedSocket:
+        async def send(self, _payload) -> None:
+            await asyncio.sleep(60)
+
+    async def exercise() -> None:
+        started = time.monotonic()
+        try:
+            await adapter._send_signalr_frame(BlockedSocket(), '{"type":6}\x1e')
+        except asyncio.TimeoutError:
+            pass
+        else:  # pragma: no cover - regression guard
+            raise AssertionError("blocked SignalR write did not time out")
+        assert time.monotonic() - started < 0.5
+
+    asyncio.run(exercise())
+
+
+def test_topstep_signalr_protocol_writes_are_serialized(monkeypatch) -> None:
+    """Many chart subscriptions still write through one orderly Hub stream."""
+    _local_topstep_env(monkeypatch)
+    adapter = live_adapters.TopstepXProjectXAdapter()
+    adapter._signalr_write_spacing_sec = 0.0
+
+    class Socket:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.sent = []
+
+        async def send(self, payload) -> None:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.005)
+            self.sent.append(payload)
+            self.active -= 1
+
+    async def exercise() -> Socket:
+        ws = Socket()
+        adapter._ws_client = ws
+        adapter._signalr_send_lock = asyncio.Lock()
+        await asyncio.gather(*(
+            adapter._send_signalr_frame(ws, f"frame-{index}") for index in range(8)
+        ))
+        return ws
+
+    ws = asyncio.run(exercise())
+    assert ws.max_active == 1
+    assert len(ws.sent) == 8
+
+
+def test_topstep_chart_uses_one_gatewayquote_wire_stream_per_contract(monkeypatch) -> None:
+    """GatewayQuote already carries lastPrice and bid/ask; do not double large-layout load."""
+    _local_topstep_env(monkeypatch)
+    adapter = live_adapters.TopstepXProjectXAdapter()
+    adapter._contract_id_map["MNQU6"] = "CON.F.US.MNQ.U26"
+
+    class Socket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, payload) -> None:
+            self.sent.append(payload)
+
+    ws = Socket()
+    asyncio.run(adapter._subscribe_ws(ws, "MNQU6"))
+    messages = [json.loads(payload.rstrip("\x1e")) for payload in ws.sent]
+    assert [message["target"] for message in messages] == ["SubscribeContractQuotes"]
+    assert messages[0]["arguments"] == ["CON.F.US.MNQ.U26"]
+    assert adapter.health()["session_audit"]["signalr_subscribe_invocations"] == 1
 
 
 def test_topstep_market_freshness_does_not_depend_on_last_trade_change(monkeypatch) -> None:

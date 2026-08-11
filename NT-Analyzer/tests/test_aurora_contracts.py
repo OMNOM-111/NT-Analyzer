@@ -804,6 +804,12 @@ def test_desktop_root_contracts_auto_roll_but_fixed_contracts_do_not():
     assert "rec.chart.setLivePriceEnabled(true)" in js
     assert "mergeFormingLiveBar" in js
     assert "rec.liveBarAt" in js
+    assert "rec.node.dataset.marketWsPayload" in js
+    assert "rec.node.dataset.externalLive" in js
+    assert "rec.node.dataset.backendPriceMarkerLive" in js
+    assert "rec.node.dataset.priceMarkerLive" in js
+    assert "rec.node.dataset.providerConnectionState" in js
+    assert "rec.node.dataset.lastBarClose" in js
 
 
 def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
@@ -812,6 +818,9 @@ def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
     assert "nextClose > previousClose ? 1 : -1" in js
     assert "this.livePriceDirection === 0" in js
     assert "this.livePriceDirection > 0" in js
+    assert "this.host.dataset.renderedPriceMarkerText = label" in js
+    assert "this.host.dataset.renderedPriceMarkerColor = tagColor" in js
+    assert "this.host.dataset.renderedPriceMarkerLive = String(live)" in js
 
 
 def test_command_language_covers_every_desktop_instrument():

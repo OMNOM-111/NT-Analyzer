@@ -157,6 +157,21 @@ UI.ready(async function () {
               rec.liveBarAt = Date.now();
               rec.liveBarProvider = String(liveBar.provider || sources.chart_source || '').toLowerCase();
               rec.historyBars = mergeChartBars(rec.historyBars, [liveBar]);
+              rec.node.dataset.lastBarClose = Number.isFinite(Number(liveBar.c)) ? String(Number(liveBar.c)) : '';
+              // Development diagnostics are kept on the chart node instead of
+              // in user-facing UI. This is the exact sanitized WebSocket
+              // payload that reached this browser and produced the live bar.
+              const rawEvent = msg.event && typeof msg.event === 'object' ? msg.event : {};
+              rec.node.dataset.marketWsPayload = JSON.stringify({
+                type: msg.type,
+                exact_contract: String(liveBar.exact_contract || instrument),
+                timeframe: String(liveBar.timeframe || tf),
+                provider: String(liveBar.provider || sources.chart_source || rawEvent.provider || ''),
+                lastPrice: Number.isFinite(Number(rawEvent.price)) ? Number(rawEvent.price) : Number(liveBar.c),
+                close: Number(liveBar.c),
+                bar_time_utc: String(liveBar.t || liveBar.time_utc || ''),
+                received_at_utc: new Date().toISOString(),
+              });
             } catch (e) { /* poll fallback */ }
           }
           // A provider label alone is not a tick for every chart.  Mark only
@@ -167,6 +182,7 @@ UI.ready(async function () {
             // WS ticks only mark LIVE when document is not in offline mode.
             if (document.documentElement.dataset.mdOffline === '1') {
               if (rec.chart.setLivePriceEnabled) rec.chart.setLivePriceEnabled(false);
+              rec.node.dataset.priceMarkerLive = 'false';
               setSrc(rec, 'err', `OFFLINE · ${src} · ${instrument} · WS blocked`);
             } else {
               // A matching market event proves that this chart's feed is live.
@@ -174,6 +190,9 @@ UI.ready(async function () {
               // restore its red/green semantics on the same event that updates
               // the forming candle instead of leaving a live quote grey.
               if (rec.chart.setLivePriceEnabled) rec.chart.setLivePriceEnabled(true);
+              rec.node.dataset.externalLive = 'true';
+              rec.node.dataset.providerConnectionState = 'LIVE';
+              rec.node.dataset.priceMarkerLive = 'true';
               setSrc(rec, 'live', `LIVE · ${src} · ${instrument} · WS · age now`);
               rec._transport = 'WS';
               rec.nextPollAt = Date.now() + HEALTH_POLL_MS;
@@ -1190,6 +1209,13 @@ UI.ready(async function () {
         health = marketFeedStale ? 'STALE' : 'DEGRADED';
         css = 'wait';
       }
+      const renderedLastBar = mergedBars[mergedBars.length - 1] || {};
+      rec.node.dataset.externalLive = String(live === true);
+      rec.node.dataset.backendPriceMarkerLive = String(payload.price_marker_live === true);
+      rec.node.dataset.priceMarkerLive = String(css === 'live');
+      rec.node.dataset.providerConnectionState = String(freshness.market_connection_state || source.runtime_state || '');
+      rec.node.dataset.historyStatus = String(status);
+      rec.node.dataset.lastBarClose = Number.isFinite(Number(renderedLastBar.c)) ? String(Number(renderedLastBar.c)) : '';
       const transition = source.failover_from ? ` · switched from ${source.failover_from}` : '';
       setSrc(rec, css, `${health} · DATA · ${chartSource} · ${contract} · ${transport}${transition}${ageLabel}${asOfLabel}${extra}${note ? ' · ' + note : ''}`);
       rec._diagnostics = diag;

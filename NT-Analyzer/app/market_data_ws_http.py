@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import socket
 import struct
 import threading
 from collections import deque
@@ -25,6 +26,7 @@ _METRICS = {
     "messages_out": 0,
     "coalesced": 0,
     "dropped": 0,
+    "non_bar_events_filtered": 0,
     "clients": 0,
 }
 
@@ -111,6 +113,26 @@ class WsClient:
         self.coalesce_slot: Dict[str, Dict[str, Any]] = {}
         self.alive = True
         self.connected_at = _iso()
+        self._queue_lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._wake = threading.Event()
+        self._writer_thread: Optional[threading.Thread] = None
+
+    def start_writer(self) -> None:
+        if self._writer_thread is not None:
+            return
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name=f"market-ws-writer-{id(self):x}",
+            daemon=True,
+        )
+        self._writer_thread.start()
+
+    def send_text(self, message: Dict[str, Any]) -> None:
+        raw = encode_text_frame(json.dumps(message, ensure_ascii=False))
+        with self._write_lock:
+            self.handler.wfile.write(raw)
+            self.handler.wfile.flush()
 
     def enqueue(self, message: Dict[str, Any]) -> None:
         """Latest-value coalesce for provisional bar updates; never drop closes."""
@@ -123,34 +145,60 @@ class WsClient:
             b = bar.get("bar") if isinstance(bar.get("bar"), dict) else bar
             if isinstance(b, dict):
                 key = f"{b.get('exact_contract')}|{b.get('timeframe')}|prov"
-        if kind == "market_event" and action == "update" and key:
-            self.coalesce_slot[key] = message
-            with _LOCK:
-                _METRICS["coalesced"] += 1
-            return
-        if len(self.outbound) >= MAX_OUTBOUND:
-            # Drop oldest coalescable-looking events only.
-            self.outbound.popleft()
-            with _LOCK:
-                _METRICS["dropped"] += 1
-        self.outbound.append(message)
+        if kind == "market_event" and not key:
+            # ProjectX GatewayQuote also emits high-rate bestBid/bestAsk-only
+            # events. They carry no browser bar update, but remain available to
+            # consumers as a latest-value contract event. Never let those
+            # replace closed bars or fill the reliable outbound queue.
+            event = message.get("event") if isinstance(message.get("event"), dict) else {}
+            contract = str(event.get("exact_contract") or "")
+            if contract:
+                key = f"{contract}|event"
+        with self._queue_lock:
+            if kind == "market_event" and key and (action == "update" or not bar):
+                self.coalesce_slot[key] = message
+                with _LOCK:
+                    _METRICS["coalesced"] += 1
+            else:
+                if len(self.outbound) >= MAX_OUTBOUND:
+                    self.outbound.popleft()
+                    with _LOCK:
+                        _METRICS["dropped"] += 1
+                self.outbound.append(message)
+        self._wake.set()
 
     def flush(self) -> None:
-        if self.coalesce_slot:
-            for msg in self.coalesce_slot.values():
-                self.outbound.append(msg)
-            self.coalesce_slot.clear()
-        while self.outbound and self.alive:
-            msg = self.outbound.popleft()
-            try:
-                raw = encode_text_frame(json.dumps(msg, ensure_ascii=False))
-                self.handler.wfile.write(raw)
-                self.handler.wfile.flush()
-                with _LOCK:
-                    _METRICS["messages_out"] += 1
-            except Exception:
-                self.alive = False
-                break
+        """Wake the dedicated writer without blocking the provider reader."""
+        self._wake.set()
+
+    def _next_outbound(self) -> Optional[Dict[str, Any]]:
+        with self._queue_lock:
+            if self.outbound:
+                return self.outbound.popleft()
+            if self.coalesce_slot:
+                key = next(iter(self.coalesce_slot))
+                return self.coalesce_slot.pop(key)
+        return None
+
+    def _writer_loop(self) -> None:
+        while self.alive:
+            self._wake.wait(timeout=1.0)
+            self._wake.clear()
+            while self.alive:
+                msg = self._next_outbound()
+                if msg is None:
+                    break
+                try:
+                    self.send_text(msg)
+                    with _LOCK:
+                        _METRICS["messages_out"] += 1
+                except Exception:
+                    self.alive = False
+                    try:
+                        self.handler.connection.shutdown(socket.SHUT_RDWR)
+                    except Exception:
+                        pass
+                    break
 
 
 def register_client(client: WsClient) -> None:
@@ -158,9 +206,12 @@ def register_client(client: WsClient) -> None:
         _CLIENTS.add(client)
         _METRICS["accepted"] += 1
         _METRICS["clients"] = len(_CLIENTS)
+    client.start_writer()
 
 
 def unregister_client(client: WsClient) -> None:
+    client.alive = False
+    client._wake.set()
     _release_client_upstreams(client)
     with _LOCK:
         _CLIENTS.discard(client)
@@ -172,36 +223,82 @@ def reject() -> None:
         _METRICS["rejected"] += 1
 
 
+def _message_for_subscriptions(
+    message: Dict[str, Any], subscriptions: Set[str],
+) -> Optional[Dict[str, Any]]:
+    """Keep only canonical bar updates requested by this browser client."""
+    if str(message.get("type") or "") != "market_event":
+        return message
+    updates = message.get("bar_updates") or []
+    if not updates or not subscriptions:
+        return None
+    if "*" in subscriptions:
+        return message
+    matched: List[Dict[str, Any]] = []
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        bar = update.get("bar") if isinstance(update.get("bar"), dict) else update
+        if not isinstance(bar, dict):
+            continue
+        contract = str(bar.get("exact_contract") or "").upper()
+        timeframe = str(bar.get("timeframe") or "").lower()
+        if (
+            contract in subscriptions
+            or f"{contract}|*" in subscriptions
+            or f"{contract}|{timeframe}" in subscriptions
+        ):
+            matched.append(update)
+    if not matched:
+        return None
+    if len(matched) == len(updates):
+        return message
+    filtered = dict(message)
+    filtered["bar_updates"] = matched
+    return filtered
+
+
 def broadcast(message: Dict[str, Any]) -> None:
+    updates = message.get("bar_updates") or []
+    if str(message.get("type") or "") == "market_event" and not updates:
+        # The desktop transport renders canonical bar updates. ProjectX also
+        # emits much higher-rate bid/ask-only GatewayQuote events; the current
+        # browser consumer ignores those completely, so writing them only adds
+        # socket backpressure without changing a candle or price marker.
+        with _LOCK:
+            _METRICS["non_bar_events_filtered"] += 1
+        return
     with _LOCK:
         clients = list(_CLIENTS)
-    contract = ""
-    updates = message.get("bar_updates") or []
-    if updates and isinstance(updates[0], dict):
-        bar = updates[0].get("bar") if isinstance(updates[0].get("bar"), dict) else updates[0]
-        if isinstance(bar, dict):
-            contract = str(bar.get("exact_contract") or "")
-    event = message.get("event") if isinstance(message.get("event"), dict) else {}
-    if not contract:
-        contract = str(event.get("exact_contract") or "")
     for client in clients:
         if not client.alive:
             continue
-        if client.subscriptions:
-            # Deliver if subscribed to contract (any TF) or wildcard.
-            wanted = any(
-                sub == "*" or sub.startswith(contract + "|") or sub == contract
-                for sub in client.subscriptions
-            )
-            if contract and not wanted:
-                continue
-        client.enqueue(message)
-        client.flush()
+        filtered = _message_for_subscriptions(message, set(client.subscriptions))
+        if filtered is not None:
+            client.enqueue(filtered)
 
 
 def metrics() -> Dict[str, Any]:
     with _LOCK:
-        return dict(_METRICS)
+        out = dict(_METRICS)
+        out["active_clients"] = [
+            {
+                "connected_at": client.connected_at,
+                "subscriptions": sorted(client.subscriptions),
+                "upstream_leases": len(client.upstream_refs),
+            }
+            for client in sorted(_CLIENTS, key=lambda row: row.connected_at)
+        ]
+        return out
+
+
+def _read_client_chunk(handler: Any, size: int = 4096) -> bytes:
+    """Read one available WebSocket chunk without waiting to fill the buffer."""
+    reader = handler.rfile
+    read1 = getattr(reader, "read1", None)
+    if callable(read1):
+        return read1(size)
+    return reader.read(size)
 
 
 def handle_websocket_upgrade(handler: Any) -> bool:
@@ -236,7 +333,6 @@ def handle_websocket_upgrade(handler: Any) -> bool:
     handler.end_headers()
 
     client = WsClient(handler, user_id=user_id)
-    register_client(client)
     welcome = {
         "type": "welcome",
         "server_time_utc": _iso(),
@@ -248,16 +344,20 @@ def handle_websocket_upgrade(handler: Any) -> bool:
         },
     }
     try:
-        handler.wfile.write(encode_text_frame(json.dumps(welcome)))
-        handler.wfile.flush()
+        client.send_text(welcome)
     except Exception:
         unregister_client(client)
         return True
+    register_client(client)
 
     buf = bytearray()
     try:
         while client.alive:
-            chunk = handler.rfile.read(4096)
+            # BufferedReader.read(4096) may wait for all 4096 bytes. Browser
+            # subscribe/unsubscribe/close frames are much smaller, so that can
+            # strand stale clients and their upstream TopstepX leases after a
+            # reload. read1() returns the next available socket chunk instead.
+            chunk = _read_client_chunk(handler)
             if not chunk:
                 break
             buf.extend(chunk)
@@ -287,7 +387,7 @@ def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
             key = f"{contract}|{timeframe}"
             client.subscriptions.add(key)
             _acquire_client_upstream(client, contract, timeframe)
-            client.outbound.append({
+            client.enqueue({
                 "type": "subscribe_ack",
                 "exact_contract": contract,
                 "timeframe": timeframe,
@@ -299,7 +399,7 @@ def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
         client.subscriptions.discard(key)
         _release_client_upstream(client, key)
     elif mtype == "ping":
-        client.outbound.append({"type": "pong", "server_time_utc": _iso()})
+        client.enqueue({"type": "pong", "server_time_utc": _iso()})
 
 
 def _acquire_client_upstream(client: WsClient, contract: str, timeframe: str) -> None:

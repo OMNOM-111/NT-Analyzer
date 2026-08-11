@@ -1199,6 +1199,12 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
     _history_rate_lock = threading.Lock()
     _history_next_at = 0.0
     _history_min_interval_sec = 0.62
+    # The official ProjectX SignalR example uses a 10-second transport
+    # timeout.  Keep every small protocol write bounded so a dead socket
+    # cannot strand reconnect cleanup behind an unfinished bulk resubscribe.
+    _signalr_send_timeout_sec = 10.0
+    _signalr_close_timeout_sec = 5.0
+    _signalr_write_spacing_sec = 0.03
 
     def __init__(self) -> None:
         super().__init__()
@@ -1208,6 +1214,9 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         self._token_expires_at = 0.0
         self._loop = None
         self._ws_client = None
+        self._signalr_send_lock = None
+        self._signalr_invoke_lock = None
+        self._signal_completion_waiters: Dict[str, Any] = {}
         self._contract_id_map = {}
         self._contract_symbol_map = {}
         self._resolved_exact_map = {}
@@ -1313,6 +1322,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             out["logical_subscription_refcount"] = sum(
                 len(set(row.get("consumers") or set())) for row in self._subs.values()
             )
+            out["pending_signal_invocations"] = len(self._pending_signal_invocations)
         return out
 
     def implementation_state(self) -> str:
@@ -1667,12 +1677,19 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
     def connect(self) -> Dict[str, Any]:
         if not self._authenticate():
             return self.health()
-        if self._thread is not None and self._thread.is_alive():
-            return self.health()
-
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
-        self._thread.start()
+        # A large browser layout acquires many contracts from independent HTTP
+        # / WebSocket handler threads. Starting the shared Market worker must
+        # therefore be single-flight; otherwise several callers can all see a
+        # not-yet-alive thread and open duplicate SignalR sessions.
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._stop.clear()
+                self._thread = threading.Thread(
+                    target=self._run_async_loop,
+                    name="topstepx-market-signalr",
+                    daemon=True,
+                )
+                self._thread.start()
 
         return self.health()
 
@@ -1695,10 +1712,37 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         self._loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(self._loop)
+            self._signalr_send_lock = asyncio.Lock()
+            self._signalr_invoke_lock = asyncio.Lock()
             self._loop.run_until_complete(self._websocket_worker())
         finally:
             self._loop.close()
             self._loop = None
+            self._signalr_send_lock = None
+            self._signalr_invoke_lock = None
+
+    async def _send_signalr_frame(self, ws: Any, payload: str) -> None:
+        """Send one SignalR frame without letting socket backpressure hang forever."""
+        import asyncio
+
+        async def send() -> None:
+            if self._ws_client is not None and ws is not self._ws_client:
+                raise ConnectionError("stale TopstepX SignalR socket")
+            await asyncio.wait_for(
+                ws.send(payload), timeout=self._signalr_send_timeout_sec,
+            )
+            # ProjectX's official client invokes subscriptions through one Hub
+            # connection. Serialize our raw protocol writes and leave a small
+            # bounded gap so a 36-chart layout cannot flood that connection.
+            if self._signalr_write_spacing_sec > 0:
+                await asyncio.sleep(self._signalr_write_spacing_sec)
+
+        lock = self._signalr_send_lock
+        if lock is None:
+            await send()
+            return
+        async with lock:
+            await send()
 
     async def _websocket_worker(self) -> None:
         import websockets
@@ -1709,6 +1753,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         while not self._stop.is_set():
             connection_stage = "authenticate"
             connection_opened = False
+            owned_ws = None
             connection_token = ""
             connection_epoch = -1
             resubscribe_task = None
@@ -1723,10 +1768,17 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             try:
                 connection_stage = "connect"
                 self._session.record("signalr_connection_attempts")
-                async with websockets.connect(url) as ws:
+                async with websockets.connect(
+                    url,
+                    open_timeout=self._signalr_send_timeout_sec,
+                    close_timeout=self._signalr_close_timeout_sec,
+                ) as ws:
+                    owned_ws = ws
                     self._ws_client = ws
                     connection_stage = "handshake"
-                    await ws.send(json.dumps({"protocol": "json", "version": 1}) + "\x1e")
+                    await self._send_signalr_frame(
+                        ws, json.dumps({"protocol": "json", "version": 1}) + "\x1e",
+                    )
                     handshake_resp = await ws.recv()
                     self._record_signalr_receive()
                     handshake_parts = [part for part in str(handshake_resp).split("\x1e") if part]
@@ -1741,9 +1793,14 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                     # subscriptions.  Keep logical chart references, but let
                     # the new socket subscribe each contract exactly once.
                     with self._lock:
+                        completion_waiters = list(self._signal_completion_waiters.values())
                         self._wire_subscribed_contract_ids.clear()
                         self._wire_subscribe_pending.clear()
                         self._pending_signal_invocations.clear()
+                        self._signal_completion_waiters.clear()
+                    for waiter in completion_waiters:
+                        if waiter is not None and not waiter.done():
+                            waiter.cancel()
                     self._session.record("signalr_connections_opened")
                     if self._market_connection_opened_once:
                         self._session.record("signalr_reconnects")
@@ -1792,7 +1849,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                                 msg = json.loads(part)
                                 if msg.get("type") == 6:
                                     self._record_signalr_receive(heartbeat=True)
-                                    await ws.send('{"type":6}\x1e')
+                                    await self._send_signalr_frame(ws, '{"type":6}\x1e')
                                     continue
                                 if msg.get("type") == 7:
                                     # ProjectX can leave REST calls working
@@ -1816,9 +1873,14 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                                 self._runtime_state = "DEGRADED"
                                 break
                         except asyncio.TimeoutError:
-                            await ws.send('{"type":6}\x1e')
                             if self._market_stream_stale():
                                 self._last_error = "TopstepX market SignalR stream stalled; reconnecting"
+                                self._runtime_state = "DEGRADED"
+                                break
+                            try:
+                                await self._send_signalr_frame(ws, '{"type":6}\x1e')
+                            except asyncio.TimeoutError:
+                                self._last_error = "TopstepX market SignalR write stalled; reconnecting"
                                 self._runtime_state = "DEGRADED"
                                 break
             except _TopstepXRealtimeSessionClosed:
@@ -1844,13 +1906,34 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 )
                 self._runtime_state = "DEGRADED"
             finally:
+                with self._lock:
+                    completion_waiters = list(self._signal_completion_waiters.values())
+                    self._signal_completion_waiters.clear()
+                    self._pending_signal_invocations.clear()
+                for waiter in completion_waiters:
+                    if waiter is not None and not waiter.done():
+                        waiter.cancel()
                 if resubscribe_task is not None and not resubscribe_task.done():
                     resubscribe_task.cancel()
-                    try:
-                        await resubscribe_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                self._ws_client = None
+                    # Never await cancellation without a deadline: websocket
+                    # flow control may keep send() pending on a dead transport.
+                    # The task is tied to the old socket and will exit after
+                    # its bounded write even if cancellation is delayed.
+                    done, _pending = await asyncio.wait(
+                        {resubscribe_task}, timeout=self._signalr_close_timeout_sec,
+                    )
+                    if resubscribe_task in done:
+                        try:
+                            resubscribe_task.result()
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                # Never let cleanup for an older worker/socket erase a newer
+                # connection reference. The single-flight start above prevents
+                # that race going forward; this identity guard also makes
+                # recovery safe if a pre-fix duplicate worker is still exiting.
+                with self._lock:
+                    if owned_ws is not None and self._ws_client is owned_ws:
+                        self._ws_client = None
                 if connection_opened:
                     self._session.record("signalr_connections_closed")
             if not self._stop.is_set():
@@ -2000,9 +2083,9 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 return True
             removed = self._subs.pop(sub_id, None) or {}
             raw_symbol = str(removed.get("raw_symbol") or "")
-            # Both quote and trade SignalR methods are multiplexed by one
-            # contract.  Keep the wire stream while any logical schema/chart
-            # still references it.
+            # One GatewayQuote subscription carries lastPrice plus bid/ask for
+            # the chart. Keep that wire stream while any logical schema/chart
+            # still references the contract.
             should_unsubscribe = bool(raw_symbol) and not any(
                 str(row.get("raw_symbol") or "") == raw_symbol for row in self._subs.values()
             )
@@ -2033,6 +2116,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             )
 
     async def _subscribe_ws(self, ws: Any, symbol: str) -> None:
+        import asyncio
         import json
         import uuid
         with self._lock:
@@ -2044,7 +2128,9 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 return
             self._wire_subscribe_pending.add(contract_id)
         inv_id_quotes = f"sub_quotes_{uuid.uuid4().hex[:6]}"
-        inv_id_trades = f"sub_trades_{uuid.uuid4().hex[:6]}"
+        running_loop = asyncio.get_running_loop()
+        wait_for_completion = bool(self._loop is running_loop and ws is self._ws_client)
+        completion_waiter = running_loop.create_future() if wait_for_completion else None
         try:
             msg_quotes = {
                 "type": 1,
@@ -2056,24 +2142,32 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
                 self._pending_signal_invocations[inv_id_quotes] = {
                     "target": "SubscribeContractQuotes", "contract_id": contract_id,
                 }
-            await ws.send(json.dumps(msg_quotes) + "\x1e")
+                if completion_waiter is not None:
+                    self._signal_completion_waiters[inv_id_quotes] = completion_waiter
 
-            msg_trades = {
-                "type": 1,
-                "invocationId": inv_id_trades,
-                "target": "SubscribeContractTrades",
-                "arguments": [contract_id]
-            }
-            with self._lock:
-                self._pending_signal_invocations[inv_id_trades] = {
-                    "target": "SubscribeContractTrades", "contract_id": contract_id,
-                }
-            await ws.send(json.dumps(msg_trades) + "\x1e")
+            async def invoke() -> None:
+                await self._send_signalr_frame(ws, json.dumps(msg_quotes) + "\x1e")
+                if completion_waiter is None:
+                    return
+                completion = await asyncio.wait_for(
+                    completion_waiter, timeout=self._signalr_send_timeout_sec,
+                )
+                if completion.get("error"):
+                    raise ValueError("ProjectX SubscribeContractQuotes rejected")
+
+            invoke_lock = self._signalr_invoke_lock
+            if invoke_lock is None:
+                await invoke()
+            else:
+                async with invoke_lock:
+                    await invoke()
             with self._lock:
                 self._wire_subscribed_contract_ids.add(contract_id)
-            self._session.record("signalr_subscribe_invocations", 2)
+            self._session.record("signalr_subscribe_invocations")
         finally:
             with self._lock:
+                self._pending_signal_invocations.pop(inv_id_quotes, None)
+                self._signal_completion_waiters.pop(inv_id_quotes, None)
                 self._wire_subscribe_pending.discard(contract_id)
 
     async def _unsubscribe_ws(self, ws: Any, symbol: str) -> None:
@@ -2084,25 +2178,28 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             if not contract_id or contract_id not in self._wire_subscribed_contract_ids:
                 return
             self._wire_subscribed_contract_ids.discard(contract_id)
-        for target in ("UnsubscribeContractQuotes", "UnsubscribeContractTrades"):
-            invocation = f"unsub_{uuid.uuid4().hex[:6]}"
-            await ws.send(json.dumps({
-                "type": 1, "invocationId": invocation,
-                "target": target, "arguments": [contract_id],
-            }) + "\x1e")
-            self._session.record("signalr_unsubscribe_invocations")
+        invocation = f"unsub_{uuid.uuid4().hex[:6]}"
+        await self._send_signalr_frame(ws, json.dumps({
+            "type": 1, "invocationId": invocation,
+            "target": "UnsubscribeContractQuotes", "arguments": [contract_id],
+        }) + "\x1e")
+        self._session.record("signalr_unsubscribe_invocations")
 
     def _on_signal_completion(self, message: Dict[str, Any]) -> None:
         invocation_id = str(message.get("invocationId") or "")
         with self._lock:
             pending = self._pending_signal_invocations.pop(invocation_id, {})
+            waiter = self._signal_completion_waiters.pop(invocation_id, None)
             target = str(pending.get("target") or "unknown")
-            self._signal_invocation_results[target] = {
+            completion = {
                 "ok": not bool(message.get("error")),
                 "contract_id": str(pending.get("contract_id") or "")[:80],
                 "completed_at_utc": _iso(),
                 "error": "SignalR invocation rejected" if message.get("error") else "",
             }
+            self._signal_invocation_results[target] = completion
+        if waiter is not None and not waiter.done():
+            waiter.set_result(completion)
 
     def _record_signalr_receive(self, *, heartbeat: bool = False) -> None:
         now = _iso()

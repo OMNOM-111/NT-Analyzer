@@ -1,7 +1,9 @@
 """Tests for parallel live-source adapters (no vendor network required)."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 
 from app import market_data_live_adapters as la
 from app import market_data_live_supervisor as sup
@@ -731,19 +733,25 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
             self.sent = []
             self.closed = False
             self.recv_count = 0
+            self.completions = asyncio.Queue()
 
         async def send(self, msg: str) -> None:
             self.sent.append(msg)
+            try:
+                payload = json.loads(msg.rstrip("\x1e"))
+            except (TypeError, ValueError):
+                payload = {}
+            if payload.get("type") == 1 and payload.get("invocationId"):
+                await self.completions.put(json.dumps({
+                    "type": 3, "invocationId": payload["invocationId"],
+                }) + "\x1e")
 
         async def recv(self) -> str:
             # Simulate SignalR protocol handshake reply on first recv
             self.recv_count += 1
             if self.recv_count == 1:
                 return '{}'
-            # Subsequent recvs block or return ping or market data
-            import asyncio
-            await asyncio.sleep(10.0)
-            return '{"type":6}'
+            return await self.completions.get()
 
         async def close(self) -> None:
             self.closed = True
@@ -831,12 +839,14 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     assert completion["ok"] is True
     assert completion["error"] == ""
 
-    # Official ProjectX SignalR target and string contract id are used.
+    # GatewayQuote is the single chart wire: it carries lastPrice plus bid/ask,
+    # so a large layout must not duplicate every contract with GatewayTrade.
     for _ in range(20):
-        if any("SubscribeContractTrades" in msg for msg in mock_ws_mod.client.sent):
+        if any("SubscribeContractQuotes" in msg for msg in mock_ws_mod.client.sent):
             break
         time.sleep(0.05)
     assert any("SubscribeContractQuotes" in msg for msg in mock_ws_mod.client.sent)
+    assert not any("SubscribeContractTrades" in msg for msg in mock_ws_mod.client.sent)
     assert any("CON.F.US.MNQ.U26" in msg for msg in mock_ws_mod.client.sent)
 
     # Test backfill / retrieveBars
