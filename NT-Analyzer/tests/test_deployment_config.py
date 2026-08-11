@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,6 +241,29 @@ def test_development_honors_launcher_dirty_snapshot(tmp_path, monkeypatch) -> No
     assert runtime_env.assert_startup_safe().dirty is False
 
 
+def test_local_git_state_uses_utf8_replacement_and_tolerates_empty_stdout(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if args[1:] == ["rev-parse", "HEAD"]:
+            return SimpleNamespace(stdout="a" * 40)
+        return SimpleNamespace(stdout=None)
+
+    monkeypatch.setattr(runtime_env.subprocess, "run", fake_run)
+    runtime_env._local_git_state.cache_clear()
+    try:
+        assert runtime_env._local_git_state() == ("a" * 40, False)
+    finally:
+        runtime_env._local_git_state.cache_clear()
+
+    assert len(calls) == 2
+    assert all(kwargs["encoding"] == "utf-8" for _, kwargs in calls)
+    assert all(kwargs["errors"] == "replace" for _, kwargs in calls)
+
+
 def test_api_admission_backlog_cannot_be_smaller_than_inflight(
     tmp_path, monkeypatch,
 ) -> None:
@@ -457,6 +481,9 @@ def test_run_mode_launchers_are_unambiguous() -> None:
     assert "$env:DEPLOYMENT_ENV = 'development'" in start
     assert "$env:RELEASE_CHANNEL = 'dev'" in start
     assert "VERSION.json channel=dev" in start
+    assert "$buildTimestampValue -is [DateTime]" in start
+    assert "yyyy-MM-ddTHH:mm:ssZ" in start
+    assert "InvariantCulture" in start
     assert "/api/runtime/env" in open_server
     assert "this is not the stable release" in open_server
     assert "START-DEVELOPMENT.cmd" in guide

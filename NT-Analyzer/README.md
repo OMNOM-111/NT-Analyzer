@@ -1,24 +1,47 @@
-# NT-Analyzer
+# NT-Analyzer — ядро StratForge AI
 
-Рабочая локальная платформа для разработки, проверки и операционного контроля
-NinjaTrader-стратегий совместно с AI.
+**StratForge AI** — торгово-аналитическая платформа для анализа рынков и
+стратегий. Она объединяет realtime-графики и market data из нескольких
+источников, интеграцию с NinjaTrader 8 через StratForge Connector, команду
+AI-агентов, бэктестинг и управление жизненным циклом стратегий в одном
+локальном приложении: веб-интерфейс **Aurora** поверх Python-backend.
+Режим Simulation/Live определяется подключённым аккаунтом NinjaTrader; paper/demo
+команды доступны, а отправка live-команд остаётся `IN DEVELOPMENT — release-gated`
+до отдельного owner/regulatory решения.
 
-Главная инструкция по текущему состоянию проекта находится в
-`../ПОДРОБНАЯ_ИНСТРУКЦИЯ.txt`.
+> `NT-Analyzer` — это репозиторий и технический идентификатор (исходное имя
+> проекта). Продукт, который он собирает и запускает, называется StratForge AI.
+
+Актуальные сведения о запуске и структуре ведутся в этом README и в
+`docs/DOCS_STRUCTURE.md`. Ранняя историческая подробная инструкция
+(NinjaTrader-центричный контур) перенесена в архив:
+`docs/archive/ПОДРОБНАЯ_ИНСТРУКЦИЯ.txt`.
 
 ## Что делает система
 
-- Запускает backtest-задания через NinjaTrader runtime.
-- Показывает web UI для backtesting, strategy profiles, coverage и online runtime.
-- Хранит историю jobs локально в `jobs/`.
-- Читает каталог стратегий, инструментов и шаблонов из NinjaTrader через bridge.
-- Экспортирует runtime telemetry из NinjaTrader в `data/runtime/`.
-- Позволяет отправлять enable/disable команды уже загруженным strategy instances.
+- Показывает Aurora — веб-интерфейс для обзора, бэктестинга, торговли/контроля
+  runtime, производительности, стратегий, AI Lab и market-data графиков.
+- Строит realtime-графики через **TopstepX как основной независимый read-only
+  источник history + realtime** (opt-in по credentials пользователя). При его
+  недоступности используется свежий NinjaTrader Connector runtime, затем другой
+  разрешённый credentialed provider; delayed/history источник не выдаётся за live.
+- NinjaTrader остаётся единственным путём исполнения и источником истины по
+  сделкам/runtime. Futures root автоматически разрешается в текущий контракт;
+  синтетические свечи не создаются, внешний chart feed не авторизует ордера.
+- Запускает backtest-задания через NinjaTrader runtime и хранит историю jobs
+  локально в `jobs/`.
+- Читает каталог стратегий, инструментов и шаблонов из NinjaTrader через bridge
+  и экспортирует runtime telemetry (heartbeat, accounts, positions, orders,
+  executions, errors) в `data/runtime/`.
+- Позволяет отправлять enable/disable команды уже загруженным strategy instances
+  (paper/demo контур; live-исполнение остаётся отдельным gate).
 - Запускает AI Strategy Lab для локального цикла idea -> code -> compile ->
   backtest -> arbitration, с sandbox-ограничениями и LM Studio как
   опциональным локальным LLM endpoint.
+- Работает в изолированных окружениях Development / Canary / Production с
+  продвижением одного immutable-artifact через Release Center.
 
-NinjaTrader остается источником истины по исполнению стратегии, сделкам,
+NinjaTrader остаётся источником истины по исполнению стратегии, сделкам,
 метрикам и runtime-состоянию.
 
 ## Запуск
@@ -157,3 +180,7 @@ sources, AI prompts/schemas/reference docs. В Git не попадают runtime
 backtest results, reports, local profiles, runtime telemetry, AI experiment
 registry, model-call logs, screenshots, caches, bridge build output и личные
 research dumps. Подробно: `docs/repository-hygiene.md`.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Зафиксирован фактический TopstepX-first read-only chart baseline, роль NinjaTrader как execution/runtime authority и актуальный release-gate live-команд; техническая история убрана из верха документа.
+-->

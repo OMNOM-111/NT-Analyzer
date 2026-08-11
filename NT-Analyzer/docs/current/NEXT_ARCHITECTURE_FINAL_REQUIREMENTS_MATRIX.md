@@ -1,7 +1,5 @@
 # Next Architecture — Final Requirements Matrix
 
-История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — сопоставить исходные требования программы (PLAN_TASK / AUDIT_AND_IMPLEMENTATION_PLAN / PROGRAM_STATUS) с фактическим кодом integration branch `release/0.10.0-next-architecture` и честно классифицировать каждый пункт.
-
 Integration branch at authoring: `release/0.10.0-next-architecture` (Phase 10A tip
 `f0028ace`; Phase 10B adds the physical documentation move on top). Sources
 compared: `docs/current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md`,
@@ -78,3 +76,7 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 - Next allowed dev suffix: `0.10.0-dev.2` (monotonic increment on the same line).
 - `0.10.0-beta.1` readiness: **NOT READY.** The strategy-spec revision module (§C) is now IMPLEMENTED (Phase 11), but the plan gates a beta on final integration acceptance PASS, which still depends on external gates (§D): live PostgreSQL acceptance (BLOCKED — external DB), real Canary/Production deployment + blue-green switch, and real Telegram/Connector/email providers. `VERSION.json` remains `0.10.0-dev.1` (not changed in Phase 11).
 - Environment vs release channel vs SemVer are kept distinct: `DEPLOYMENT_ENV` (development/canary/production), `RELEASE_CHANNEL` (dev/beta/stable) and the SemVer string are separate fields in `app/runtime_env.py` and `VERSION.json`; they are not mixed.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
+-->

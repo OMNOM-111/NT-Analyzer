@@ -26,6 +26,7 @@ docs/
   archive/       Superseded, dated snapshots and audits (historical only).
     audits/      Dated point-in-time audits.
   schemas/       Machine schemas (e.g. connector protocol).
+  legal/         User-facing legal package (ToS/EULA, Privacy, risk & consent) — DRAFT, pending counsel.
 ```
 
 `current/`, `architecture/`, `operations/`, `governance/`, `adr/`, `schemas/`

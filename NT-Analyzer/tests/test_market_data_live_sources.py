@@ -1,6 +1,8 @@
 """Tests for parallel live-source adapters (no vendor network required)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from app import market_data_live_adapters as la
 from app import market_data_live_supervisor as sup
 from app import market_data_router
@@ -695,9 +697,13 @@ def test_databento_slow_reader_gap(monkeypatch) -> None:
 
 def test_topstepx_projectx_connector(monkeypatch) -> None:
     # 1. Setup credentials
+    la.topstepx_session_manager().reset_for_tests()
+    monkeypatch.setattr(la.secure_store, "available", lambda: False)
+    monkeypatch.setenv("NTA_APP_ENV", "development")
     monkeypatch.setenv("NTA_ENABLE_TOPSTEPX_LIVE", "1")
     monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "test_owner")
     monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-api-key-here")
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     # 2. Mock the stdlib JSON transport used by the adapter.
     def mock_post(url, payload, *args, **kwargs):
@@ -712,7 +718,7 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
         elif "retrieveBars" in url:
             return {
                 "bars": [
-                    {"time": "2026-07-16T14:00:00Z", "open": 20000.0, "high": 20050.0, "low": 19990.0, "close": 20010.0, "volume": 100}
+                        {"time": now_iso, "open": 20000.0, "high": 20050.0, "low": 19990.0, "close": 20010.0, "volume": 100}
                 ]
             }
         raise RuntimeError("HTTP Error")
@@ -745,8 +751,10 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     class MockWebsocketsModule:
         def __init__(self):
             self.client = MockWebSocket()
+            self.urls = []
 
         def connect(self, url, *args, **kwargs):
+            self.urls.append(url)
             class AsyncContext:
                 def __init__(self, client):
                     self.client = client
@@ -776,6 +784,8 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
         time.sleep(0.1)
 
     assert adapter._runtime_state == "AUTHENTICATED"
+    assert mock_ws_mod.urls and all("/hubs/market" in url for url in mock_ws_mod.urls)
+    assert not any("/hubs/user" in url for url in mock_ws_mod.urls)
 
     # Subscribe to MNQ 09-26
     sub_id = adapter.subscribe("MNQ 09-26", "trades")
@@ -796,6 +806,30 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     assert ev["exact_contract"] == "MNQ 09-26"
     assert ev["price"] == 20010.0
     assert ev["volume"] == 5
+    assert "MNQ 09-26" not in adapter._latest_quotes
+
+    # ProjectX's live GatewayQuote carries the last trade separately from
+    # bid/ask. That last price must advance the chart's canonical OHLC bucket.
+    events.clear()
+    last_arg = {"symbol": "MNQU6", "lastPrice": 20011.0, "bestBid": 20010.0,
+                "bestAsk": 20012.0, "volume": 6, "timestamp": "2026-07-16T14:00:01Z"}
+    adapter._on_ws_message("GatewayQuote", ["CON.F.US.MNQ.U26", last_arg])
+    assert events[0]["type"] == "trade"
+    assert events[0]["price"] == 20011.0
+    assert events[0].get("volume") in {None, 0, 0.0}
+    assert adapter._latest_quotes["MNQ 09-26"]["price"] == 20011.0
+    assert adapter._latest_quotes["MNQ 09-26"]["volume"] == 0
+    assert adapter.health()["last_signal_target"] == "GatewayQuote"
+    assert adapter.health()["last_signal_price_field"] == "lastPrice"
+    assert adapter.health()["event_type_counts"] == {"quote": 1, "trade": 1}
+
+    adapter._pending_signal_invocations["trade-check"] = {
+        "target": "SubscribeContractTrades", "contract_id": "CON.F.US.MNQ.U26",
+    }
+    adapter._on_signal_completion({"type": 3, "invocationId": "trade-check"})
+    completion = adapter.health()["signal_invocation_results"]["SubscribeContractTrades"]
+    assert completion["ok"] is True
+    assert completion["error"] == ""
 
     # Official ProjectX SignalR target and string contract id are used.
     for _ in range(20):
@@ -809,3 +843,37 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     bars = adapter.backfill("MNQ 09-26", "1m", 10)
     assert len(bars) == 1
     assert bars[0]["c"] == 20010.0
+
+
+def test_topstepx_stale_watchdog_uses_signalr_transport_not_quiet_prices() -> None:
+    adapter = la.TopstepXProjectXAdapter()
+    now = datetime.now(timezone.utc)
+    recent = now.isoformat().replace("+00:00", "Z")
+    old = (now - timedelta(seconds=90)).isoformat().replace("+00:00", "Z")
+    adapter._connected_at = (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+    adapter._subs = {
+        "mnq": {"exact_contract": "MNQ 09-26"},
+        "mes": {"exact_contract": "MES 09-26"},
+        "rty": {"exact_contract": "RTY 09-26"},
+        "m2k": {"exact_contract": "M2K 09-26"},
+    }
+    adapter._last_event_type_contract_utc = {
+        "quote": {
+            "MNQ 09-26": recent, "MES 09-26": recent,
+            "RTY 09-26": recent, "M2K 09-26": recent,
+        },
+        "trade": {
+            "MNQ 09-26": recent, "MES 09-26": old,
+            "RTY 09-26": old, "M2K 09-26": old,
+        },
+    }
+    adapter._last_signalr_receive_utc = recent
+    adapter._last_signalr_heartbeat_utc = recent
+
+    # A quiet/unchanged last trade on every contract does not prove a dead
+    # market feed while SignalR frames/heartbeats are current.
+    assert adapter._trade_stream_stale() is False
+
+    adapter._last_signalr_receive_utc = old
+    adapter._last_signalr_heartbeat_utc = old
+    assert adapter._trade_stream_stale() is True

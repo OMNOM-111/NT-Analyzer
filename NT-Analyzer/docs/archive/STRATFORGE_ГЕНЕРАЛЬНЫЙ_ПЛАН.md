@@ -1,9 +1,29 @@
 # StratForge — ЗАДАНИЕ ДЛЯ РАЗРАБОТЧИКОВ
 
 **Дата:** 15 июля 2026  
-**Проект:** `NT-Analyzer` (Aurora / StratForge)  
+**Проект:** `NT-Analyzer` (Aurora / StratForge AI)
 **Файл:** один главный документ. Передавать разработчикам целиком.  
 **Проверено по коду проекта** (не абстрактное ТЗ).
+
+> **Статус документа (обновление 2026-08-10):** это датированный снимок задания
+> и аудита от 15 июля 2026 (перенесён в `docs/archive/` как исторический),
+> полезный как история работ фаз A–E. Каноническое имя
+> продукта сегодня — **StratForge AI** (торгово-аналитическая платформа: Aurora,
+> multi-provider market data, NinjaTrader + Connector, AI-агенты, окружения
+> Development/Canary/Production). По вопросам продуктовых границ и режимов
+> документ заменён более поздними материалами:
+> - **Micro Live удалён из продукта и исходников (2026-07-18)** — это не третий
+>   торговый режим; пункты 7, D ниже устарели в этой части. Актуально:
+>   `NT-Analyzer/docs/archive/audits/2026-07-18-product-contours.md`.
+> - Независимые рыночные данные, автоматический root→contract rollover и failover:
+>   `NT-Analyzer/STRATFORGE_MARKET_DATA_FAILOVER_TASK_RU.md`.
+> - TopStep/TopstepX — независимый read-only источник графиков по credentials и
+>   явному разрешению пользователя, без маршрутизации ордеров.
+> - Разрешённое торговое исполнение через брокерские аккаунты пользователя —
+>   планируемая будущая возможность, требующая внешних adapters и отдельного
+>   письменного разрешения; не считать реализованной функцией.
+>
+> История поправки: 2026-08-10T20:49:49Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code по запросу owner`; scope: пометить датированный снимок, зафиксировать имя StratForge AI и устранить противоречие по удалённому Micro Live.
 
 ---
 
@@ -651,4 +671,4 @@ To ensure StratForge is free for the first 100 users, centralized enterprise fee
 - **UserMarketDataEntitlement** manages per-user credentials, scopes, and expiration.
 - **Cache Isolation:** Cache keys are isolated per user/workspace to comply with redistribution regulations.
 - **Demo/Replay Mode:** Free demo/replay mode is active for users without credentials.
-- See [MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md](NT-Analyzer/docs/MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md) for technical details.
+- See [MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md](../architecture/MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md) for technical details.

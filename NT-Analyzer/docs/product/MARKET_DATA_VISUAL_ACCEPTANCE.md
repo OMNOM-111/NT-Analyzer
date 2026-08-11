@@ -1,9 +1,24 @@
 # Market-data visual acceptance checklist
 
-Date: 2026-07-16  
-Status: **ACCEPTANCE PENDING**
+Date: 2026-08-11
+Status: **FUNCTIONAL BASELINE ACCEPTED · FINAL DESIGN/UI ACCEPTANCE PENDING**
 
-Screenshots that only show “charts loaded from NinjaTrader” are **not** acceptance.
+The owner-accepted functional baseline is protected: TopstepX supplies real
+history + realtime with NinjaTrader OFF; live price/candles update; multiple
+browser clients may view charts concurrently while the TopstepX web platform
+remains usable. This baseline is not a refactoring target without a reproducible
+defect.
+
+## Canonical current data path
+
+- TopstepX is the primary independent read-only chart source (history + realtime).
+- Runtime fallback: TopstepX → fresh NinjaTrader Connector → another authorized
+  credentialed provider → explicit OFFLINE/cache.
+- NinjaTrader is the only execution path and source of truth for trades/runtime;
+  external chart bars never authorize orders.
+- One shared TopstepX auth/session and SignalR transport fans out to browser
+  clients; extra layouts/clients must not create repeated `loginKey` calls or
+  redundant upstream SignalR sessions.
 
 ## Per-chart chrome (always visible, compact)
 
@@ -64,6 +79,26 @@ e2e_latency_ms
 
 Automated test must load five instruments and assert no accidental shared series.
 
+## Development closeout smoke evidence
+
+Verified on 2026-08-11 at `127.0.0.1:8765`, with NinjaTrader processes absent:
+
+- two parallel HTTP clients each loaded a 16-chart layout across `1m`, `5m`,
+  `15m` and `1h`; after warm-up both received 16/16 `external_live` TopstepX
+  series with at least 300 bars each;
+- repeated samples changed the current 1m candle/price for MNQ, MES and M2K;
+- two simultaneous UI clients opened the saved multi-chart desktop: every
+  visible chart had a canvas and `LIVE · DATA · topstepx · WS`; offline banner
+  was absent and browser console errors were zero;
+- the process kept one shared adapter, made zero new `loginKey` calls and had
+  exactly one active upstream SignalR transport. Automatic reconnects did not
+  create per-client or parallel upstream sessions;
+- the already accepted concurrent TopstepX web-platform baseline was not
+  disturbed: this closeout did not log it out, change credentials or alter its
+  auth/session implementation.
+
+This is functional smoke evidence, not the owner's final design/UI acceptance.
+
 ## Deploy acceptance steps
 
 1. Backup current `NTAnalyzerBridge.dll`
@@ -76,9 +111,12 @@ Automated test must load five instruments and assert no accidental shared series
 8. Restore Bridge → recover
 9. Preserve Telegram PNG, snapshots, draw, LTTB, Practice, layouts
 
-## Evidence required before ACCEPTANCE PASSED
+## Remaining final design/UI acceptance
 
-- UI screenshot with LIVE/DEGRADED/STALE + WS/HTTP + age
-- diagnostics dump JSON
-- series_hash matrix for RTY/M2K/MES/MNQ/MYM/MGC
-- Bridge deploy note (backup path + timestamp)
+- Owner reviews final spacing, hierarchy, chart chrome and document-journal design.
+- No merge, Canary/Production promotion or deployment occurs before that separate
+  acceptance and approval.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Зафиксирован принятый baseline и добавлено фактическое DEV smoke-evidence: multi-client TopstepX live, NinjaTrader OFF, одна upstream session, без нового loginKey; финальный design acceptance остаётся owner gate.
+-->

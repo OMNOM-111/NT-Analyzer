@@ -63,7 +63,18 @@ if ([string]$projectVersion.channel -ne 'dev' -or [string]$projectVersion.status
 $env:APP_VERSION = [string]$projectVersion.version
 $env:STRATFORGE_BUILD_VERSION = [string]$projectVersion.version
 $env:STRATFORGE_BUILD_DATE = [string]$projectVersion.build_date
-$env:BUILD_TIMESTAMP_UTC = [string]$projectVersion.build_timestamp_utc
+# Windows PowerShell/ConvertFrom-Json may materialize an ISO JSON string as a
+# DateTime. Casting that object to [string] uses the current locale
+# (e.g. 08/02/2026 01:35:50), which is no longer ISO-8601 and makes the backend
+# correctly fail closed. Preserve the canonical UTC identity across shells.
+$buildTimestampValue = $projectVersion.build_timestamp_utc
+if ($buildTimestampValue -is [DateTime]) {
+    $env:BUILD_TIMESTAMP_UTC = $buildTimestampValue.ToUniversalTime().ToString(
+        'yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture
+    )
+} else {
+    $env:BUILD_TIMESTAMP_UTC = [string]$buildTimestampValue
+}
 $env:STRATFORGE_BUILD_TIMESTAMP_UTC = $env:BUILD_TIMESTAMP_UTC
 $env:RELEASE_CHANNEL = 'dev'
 $env:STRATFORGE_RELEASE_CHANNEL = 'dev'

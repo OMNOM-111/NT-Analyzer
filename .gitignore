@@ -118,6 +118,11 @@
 /NT-Analyzer/data/development/durable/
 /NT-Analyzer/data/development/audit/
 /NT-Analyzer/data/development/integrations/
+/NT-Analyzer/data/development/ai_lab/
+/NT-Analyzer/data/development/catalog/
+/NT-Analyzer/data/development/operations/
+/NT-Analyzer/data/development/reports/
+/NT-Analyzer/data/development/runtime/
 
 # AI Strategy Lab generated/runtime artifacts. Keep source prompts, schemas,
 # reference docs, and app code in Git; keep experiment history and model IO local.
@@ -147,6 +152,8 @@
 /NT-Analyzer/data/ai_lab/registry/news_agent.json
 /NT-Analyzer/data/ai_lab/registry/orchestrator_conversation.jsonl
 /NT-Analyzer/data/ai_lab/registry/orchestrator_conversations.json
+/NT-Analyzer/data/ai_lab/registry/orchestrator_scopes/
+/NT-Analyzer/data/ai_lab/registry/orchestrator_workspace_system/
 
 # Fail-closed placeholder roots used when remote deployment state is not configured.
 /NT-Analyzer/.stratforge-production-data-disabled/
@@ -155,6 +162,7 @@
 # Local closeout artifacts. Preserve on disk or in artifact storage; do not commit.
 /NT-Analyzer/dev10-reconstructed-rollback.bundle
 /NT-Analyzer/docs.zip
+/NT-Analyzer/*stratforge-full-regression-*.xml
 
 # Internal AI task briefs and local strategy research notes.
 /NT-Analyzer/docs/ai/

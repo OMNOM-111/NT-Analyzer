@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-from . import runtime_env
+from . import market_data_failover, market_data_live_adapters, market_data_live_supervisor, runtime_env
 
 
 def _root() -> Path:
@@ -42,23 +42,51 @@ def telegram_status() -> Dict[str, Any]:
 
 
 def topstep_status() -> Dict[str, Any]:
-    configured = bool(os.environ.get("NTA_TOPSTEP_API_KEY") and os.environ.get("NTA_TOPSTEP_ACCOUNT_ID"))
+    cfg = market_data_live_adapters.TopstepXProjectXAdapter.settings()
+    provider = market_data_failover.TopstepXProvider().public_status()
+    rest_health = provider.get("runtime_health") if isinstance(provider.get("runtime_health"), dict) else {}
+    configured = bool(provider.get("configured"))
+    market_feed = rest_health.get("market_feed") if isinstance(rest_health.get("market_feed"), dict) else {}
+    connected = bool(market_feed.get("fresh"))
+    # TopstepX is intentionally not a supervisor shadow stream.  The same
+    # credential-scoped adapter that serves chart history owns Market SignalR,
+    # preventing duplicate loginKey/session/socket lifecycles.
+    health = dict(rest_health)
+    health["ownership"] = "chart_provider_shared_session"
+    health["market_feed_verified"] = connected
+    if connected:
+        state = "connected_read_only"
+    elif configured:
+        state = "ready_to_initialize"
+    elif not cfg["policy_allowed"]:
+        state = "policy_blocked"
+    else:
+        state = "not_configured"
     return {
         "configured": configured,
-        "status": "scaffold_configured" if configured else "scaffold_not_configured",
-        "phase": "safe_scaffold",
-        "available": False,
-        "account_id_configured": bool(os.environ.get("NTA_TOPSTEP_ACCOUNT_ID")),
-        "api_key_configured": bool(os.environ.get("NTA_TOPSTEP_API_KEY")),
+        "status": state,
+        "phase": "read_only_market_data",
+        "available": connected,
+        "operational": connected,
+        "username_configured": cfg["username_configured"],
+        "api_key_configured": cfg["api_key_configured"],
+        "legacy_account_id_detected": bool(os.environ.get("NTA_TOPSTEP_ACCOUNT_ID")),
+        "data_mode": cfg["data_mode"],
+        "provider_initialization": health,
+        "chart_provider": provider,
         "live_actions_enabled": False,
-        "approved_strategies_only": True,
-        "transport": "NinjaTrader",
-        "blocking_reasons": [
-            "topstep_api_adapter_not_validated",
-            "end_to_end_risk_gate_not_certified",
-            "browser_live_commands_forbidden",
-        ],
-        "note": "Это безопасный scaffold: передача live-сигналов заблокирована до отдельной валидации API, broker path и risk-gate.",
+        "trade_routing_enabled": False,
+        "read_only": True,
+        "ninjatrader_independent": True,
+        "transport": "ProjectX REST + SignalR",
+        "remote_environment": cfg["remote_environment"],
+        "remote_server_authorized": cfg["remote_server_authorized"],
+        "redistribution_authorized": cfg["redistribution_authorized"],
+        "blocking_reasons": list(cfg["blocking_reasons"]),
+        "note": (
+            "TopstepX используется только как источник котировок и баров. "
+            "Передача сделок в TopstepX отсутствует; execution остаётся NinjaTrader-only."
+        ),
     }
 
 

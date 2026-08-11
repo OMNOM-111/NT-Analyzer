@@ -140,11 +140,14 @@ def test_server_wires_loopback_service_session_and_login_guards():
     src = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
     # Loopback bypass honors a service session before defaulting to the owner.
     idx = src.index("def _authorize_api(")
-    body = src[idx: idx + 2200]
-    assert "dev_service_accounts.available()" in body
-    assert "dev_service_accounts.is_service_uid(" in body
-    assert "_dev_service_context(" in body
-    assert "_local_owner_context()" in body
+    body = src[idx: src.index("def _check_local_post(", idx)]
+    assert "_local_development_cookie_context()" in body
+    local_idx = src.index("def _local_development_cookie_context(")
+    local_body = src[local_idx: src.index("def _dev_service_context(", local_idx)]
+    assert "dev_service_accounts.available()" in local_body
+    assert "dev_service_accounts.is_service_uid(" in local_body
+    assert "_dev_service_context(" in local_body
+    assert "_local_owner_context()" in local_body
     # Owner fallback uses the canonical store owner.
     assert "primary_owner_id()" in src
     # The login endpoint is Development + loopback gated.

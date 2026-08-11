@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import governance, jobqueue, permissions  # noqa: E402
+from app import dev_service_accounts, governance, jobqueue, permissions, server  # noqa: E402
 
 DOCS = ROOT / "docs"
 
@@ -162,3 +162,49 @@ def test_amendment_change_log_records_required_fields():
                 os.environ.pop("NT_ANALYZER_ROOT", None)
             else:
                 os.environ["NT_ANALYZER_ROOT"] = previous_root
+
+
+def test_compact_document_change_keeps_full_diff_in_details():
+    before = "# Risk\n\n- Max drawdown: 15%\n- Stable: yes\n"
+    after = "# Risk\n\n- Max drawdown: 10%\n- Stable: yes\n"
+    change = governance._document_change_row(before, after)[0]
+    assert change["before_text"] == "- Max drawdown: 15%"
+    assert change["after_text"] == "- Max drawdown: 10%"
+    assert {row["op"] for row in change["diff"]} >= {"del", "add"}
+
+
+def test_revision_one_uses_factual_creation_metadata():
+    revision = governance.document_revisions("legal-00")["revisions"][0]
+    assert revision["revision_no"] == 1
+    assert revision["title"] == "документ создан"
+    assert revision["ts_utc"] == "2026-08-10T20:49:49Z"
+    assert revision["author_kind"] == "ai"
+    assert "Claude Opus 4.8" in revision["author"]
+    assert revision["initiator"] == governance.PROJECT_OWNER
+
+
+def test_public_document_view_hides_owner_paths_and_internal_provenance():
+    charter = governance.read_document("charter")
+    assert charter and "STRATFORGE_INTERNAL_AMENDMENT" in charter["content"]
+    public = governance.public_document(charter)
+    assert "owner" not in public
+    assert "abs_path" not in public and "rel_path" not in public
+    assert "STRATFORGE_INTERNAL_AMENDMENT" not in public["content"]
+    roles = next(row for row in governance.list_documents() if row["id"] == "roles")
+    assert governance.document_is_public(roles) is False
+
+
+def test_authenticated_governance_author_cannot_be_overridden_by_request_body():
+    handler = object.__new__(server.Handler)
+    uid = dev_service_accounts.SERVICE_ACCOUNTS["gpt"]["uid"]
+    handler._remote_context = {
+        "source": "dev_service", "service_actor": "gpt", "user_id": uid,
+        "is_owner": True, "user": {"is_service_account": True},
+    }
+    identity = handler._governance_actor()
+    assert identity["author"] == dev_service_accounts.SERVICE_ACCOUNTS["gpt"]["label"]
+    assert identity["author_id"] == "service:gpt"
+    assert identity["initiator"] == governance.PROJECT_OWNER
+    source = inspect.getsource(server.Handler._governance_actor)
+    assert '.get("agent")' not in source
+    assert '.get("initiator")' not in source

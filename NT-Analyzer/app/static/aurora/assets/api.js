@@ -571,6 +571,7 @@
     governanceDocuments: (o) => getJSON('/api/governance/documents', o),
     governanceDocument: (id, o) => getJSON('/api/governance/documents/' + encodeURIComponent(id), o),
     governanceHistory: (q, o) => getJSON('/api/governance/history' + qs(q), o),
+    governanceRevisions: (q, o) => getJSON('/api/governance/document-revisions' + qs(q), o),
     governanceSummary: (o) => getJSON('/api/governance/summary', o),
     saveDocument: (id, body) => send('/api/governance/documents/' + encodeURIComponent(id), 'POST', body),
     aiSummary: (o) => getJSON('/api/ai-lab/summary', o),

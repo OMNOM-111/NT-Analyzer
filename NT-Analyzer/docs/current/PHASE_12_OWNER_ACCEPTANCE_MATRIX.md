@@ -1,14 +1,11 @@
 # Phase 12 — Owner Acceptance Requirements Matrix
 
-История поправки: 2026-08-04; внёс `GitHub Copilot`; scope: Phase 12 — свести
-девять пунктов owner-acceptance к фактическому коду и честному статусу; отделить
-локально проверяемое от реальных внешних зависимостей.
-
-Integration branch: `release/0.10.0-next-architecture` (Phase 12 branch
-`phase/12-owner-acceptance-fixes`, base `be42d37e`).
+Integration branch: `release/0.10.0-next-architecture`.
 
 **План/документ никогда не считается реализацией.** Легенда статусов:
-`DONE (local)` — код + браузер-проверка + регресс-тесты локально; `DONE +
+`DONE (local)` — код + браузер-проверка + регресс-тесты локально; `FUNCTIONAL
+PASS / DESIGN PENDING` — функциональная проверка завершена, финальную
+визуальную приёмку выполняет owner; `DONE +
 EXTERNAL` — локально сделано и проверено, реальная сквозная приёмка требует
 внешней инфраструктуры/учётных данных владельца; `ARCH-ONLY` — заложена
 архитектура/крючок, полный модуль намеренно вне охвата.
@@ -25,7 +22,7 @@ EXTERNAL` — локально сделано и проверено, реаль�
 | 6 | Верхний баннер обновления (предпросмотр) + сообщения «через 5 минут», «через 60 секунд», «обновление завершено»; без реальной отправки без Canary/Production | DONE + EXTERNAL | Бэкенд `release_center.notification_preview()` (kinds warn_5m/warn_60s/deploy_successful, `real_send_available=False`); фронт `showUpdateBannerPreview` (fixed top banner, тег ПРЕДПРОСМОТР), `theme.css` `.update-preview-banner`. Браузер: баннер «Обновление через 5 минут» вверху. Реальная отправка = EXTERNAL |
 | 7 | Проверить UI привязки Telegram/Google/e-mail; при отсутствии реальных провайдеров не объявлять внешний вход PASS, дать локальную QA-симуляцию всех состояний + явную заметку про external acceptance | DONE + EXTERNAL | Кабинет → Безопасность → «Способы входа» (Привязать e-mail/Google, статусы verified); QA-модуль: панель «Способы входа — состояние и симуляция» с бейджами «реальный E2E: external» + привязка Google к виртуальным пользователям. Реальный сквозной вход = EXTERNAL, PASS не объявляется |
 | 8 | Модель агентов: владелец+разработчики — полная команда; владелец может выдать `agents.team.full` другим; общий-NT — один координатор по умолчанию; заложить архитектуру под будущие имена/аватары агентов без полного конструктора | DONE (local) / ARCH-ONLY (конструктор) | `agent_allocation`: `grant/revoke/has_team_capability`, `resolve_allocation` (shared→один `Координатор`; grant→полная неадминистративная команда `TEAM_GRANTED_FULL`), эндпоинт `/api/owner/agents/team-grant`, клиент `ownerAgentTeamGrant`. `agent_display_config()` — крючок под имена/аватары, `editable=False` (полный конструктор вне охвата) |
-| 9 | Браузер-проверка сценариев (владелец/разработчик/обычный), исправление ошибок, регресс-тесты, обновление матрицы требований | DONE (local) | Браузер-проверки по пунктам 1–8; регресс `tests/test_phase12_owner_acceptance.py` (16 тестов: runtime_env dev-defaults, персоны, grant/resolve, device online, notification preview); эта матрица |
+| 9 | Финальная Development-проверка UI и принятого market-data/chart baseline; design acceptance остаётся owner gate | FUNCTIONAL PASS / DESIGN PENDING | DEV smoke: NinjaTrader OFF; два параллельных 16-chart клиента, четыре timeframe, затем два UI-клиента с живыми canvas; TopstepX 16/16 live после warm-up, текущие 1m свечи обновлялись, console errors = 0, один shared adapter/upstream SignalR и 0 новых loginKey. Полный regression: 1237 passed / 31 external PostgreSQL skips / 0 failed; custom harness 13/13 suites PASS. Финальная оценка spacing/hierarchy/design выполняется owner |
 
 ## Реальные внешние зависимости (НЕ настроены локально; PASS не объявляется)
 
@@ -48,3 +45,7 @@ EXTERNAL` — локально сделано и проверено, реаль�
 
 До настройки этих зависимостей пункты 5, 6, 7 остаются `DONE + EXTERNAL`:
 код и локальная проверка есть, реальный сквозной результат — external acceptance.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header and recorded the final Development functional smoke and owner-only design acceptance boundary.
+-->

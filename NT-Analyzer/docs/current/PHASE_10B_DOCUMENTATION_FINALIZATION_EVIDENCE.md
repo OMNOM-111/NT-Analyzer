@@ -1,7 +1,5 @@
 # Phase 10B — Documentation finalization — Implementation Evidence
 
-История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — зафиксировать фактический перенос документации (git mv + обновление ссылок), политику языка, changelog, requirements matrix, strategy-spec verification и version readiness; честно отметить незакрытые требования.
-
 **Status: Phase 10 — NOT fully closed; Phase 10B GIT CLOSEOUT COMPLETE.** Phase 10A delivered the canonical tree
 spec + migration map + governance hardening. Phase 10B performs the actual
 document relocation and the honest completeness audit. One concrete requirement
@@ -137,3 +135,7 @@ migration change in Phase 10B.
   - the checked-out tree was clean before the run; the 8 files modified after the run are governance/runtime files the app regenerates on import (not committed-content issues).
   - SKIPPED / EXTERNAL (not counted as PASS): the 31 skips are live-PostgreSQL migration/acceptance suites (need `STRATFORGE_TEST_POSTGRES_*`) and other environment-gated suites; real Canary/Production deployment, real blue-green switch, real Telegram/Connector/email provider and browser QA were **not run** (owner-gated / policy).
 - Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/*`, `data/governance-rendered/*`, `data/ai_lab/registry/orchestrator_*`, `docs/AGENT_PERSONAS.md`, `docs/governance/{LAWS,LOCAL_AI_LAWS,OVERVIEW,SYNC_MAP}.md`) were preserved on disk and kept outside the Phase 10B delivery.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
+-->

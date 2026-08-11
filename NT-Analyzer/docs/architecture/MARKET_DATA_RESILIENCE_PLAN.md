@@ -1,6 +1,6 @@
 ---
 name: Market Data Resilience
-overview: "IMPLEMENTATION PARTIAL; AUTOMATED GATES PASS / LIVE VISUAL+100-USER+ACCEPTANCE PENDING / PRODUCTION FAILOVER BLOCKED. Same-origin browser WSS; PostgreSQL+Redis production standard; localhost Bridge IPC only. Never claim ENGINEERING COMPLETE until live and visually accepted."
+overview: "CURRENT: OWNER-ACCEPTED DEVELOPMENT FUNCTIONAL BASELINE — TopstepX read-only history+realtime works with NinjaTrader OFF and multiple browser clients; final design acceptance pending. Production/Canary, 100-user and licensed-provider acceptance remain separate gates."
 todos:
   - id: phase0-baseline
     content: "Phase 0: baseline instrumentation + docs/archive/MARKET_DATA_BASELINE_2026-07-16.md"
@@ -41,6 +41,16 @@ isProject: false
 ---
 
 # Отказоустойчивый market-data контур StratForge (исправленный план)
+
+> **Каноническая схема провайдеров (по фактическому HEAD, обновлено 2026-08-11):**
+> **TopstepX — основной независимый источник графиков** (credentialed read-only realtime +
+> history) и работает при выключенном NinjaTrader. Фактический runtime-порядок:
+> **TopstepX → свежий NinjaTrader Connector → другой разрешённый credentialed provider →
+> OFFLINE/cache**. NinjaTrader — единственный путь исполнения и источник истины по
+> сделкам/runtime; исправный TopstepX chart feed не вытесняется запуском терминала.
+> Databento — credentialed historical; Yahoo — delayed/history display и никогда не live.
+> Синтетические свечи не создаются; внешние bars не авторизуют ордера. План фаз ниже —
+> историческая инженерная декомпозиция; этот current-блок имеет приоритет.
 
 ## Статус завершения (обязательное разделение)
 
@@ -364,3 +374,7 @@ baseline до изменений; схема после; p50/p95/p99; callback�
 5. Финальный engineering отчёт только после проверки доступной инженерной части
 
 После каждой фазы: targeted tests → regression → git diff review → docs → без несвязанных изменений → старые fallback не удалять до зелёных новых тестов.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Current-блок приведён к принятому TopstepX-first functional baseline; исторический фазовый план сохранён без переписывания market-data implementation.
+-->

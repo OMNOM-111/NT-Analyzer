@@ -26,7 +26,7 @@ UI.ready(async function () {
     { id: 'uhd5k', label: '5K · 5120×2880', w: 5120, h: 2880 },
     { id: 'uhd8k', label: '8K · 7680×4320', w: 7680, h: 4320 },
   ];
-  const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1D'];
+  const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1D', '1w', '1M'];
   const INDICATORS = [
     { id: 'vol', label: 'Объём', kind: 'pane' },
     { id: 'ma:9', label: 'MA 9', kind: 'overlay' },
@@ -60,6 +60,22 @@ UI.ready(async function () {
   const ZOOM_MIN = 0.05, ZOOM_MAX = 2;
   const LIVE_POLL_MS = 350;
   const HEALTH_POLL_MS = 5000;
+  function mergeFormingLiveBar(existing, incoming) {
+    if (!existing || !incoming) return incoming;
+    const existingMs = Date.parse(existing.t || existing.time_utc || existing.time || existing.timestamp);
+    const incomingMs = Date.parse(incoming.t || incoming.time_utc || incoming.time || incoming.timestamp);
+    if (!Number.isFinite(existingMs) || existingMs !== incomingMs) return incoming;
+    const o = Number(existing.o), h = Number(existing.h), l = Number(existing.l);
+    const nextH = Number(incoming.h), nextL = Number(incoming.l);
+    const existingV = Number(existing.v || 0), incomingV = Number(incoming.v || 0);
+    return Object.assign({}, incoming, {
+      o: Number.isFinite(o) ? o : Number(incoming.o),
+      h: Math.max(Number.isFinite(h) ? h : nextH, nextH),
+      l: Math.min(Number.isFinite(l) ? l : nextL, nextL),
+      c: Number(incoming.c),
+      v: Math.max(Number.isFinite(existingV) ? existingV : 0, Number.isFinite(incomingV) ? incomingV : 0),
+    });
+  }
   const protocol = (window.location && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
   const MARKET_DATA_WS_URL = (window.location && window.location.host)
     ? `${protocol}//${window.location.host}/ws/market-data`
@@ -69,6 +85,20 @@ UI.ready(async function () {
   let marketDataWsRetryAt = 0;
   let marketDataWsBackoff = 1000;
   let marketDataWsState = 'OFF';
+  function sendMarketDataSubscription(type, instrument, timeframe) {
+    const contract = String(instrument || '').trim().toUpperCase();
+    const tf = String(timeframe || '5m').trim();
+    if (!contract || !marketDataWs || marketDataWs.readyState !== WebSocket.OPEN) return;
+    try { marketDataWs.send(JSON.stringify({ type, exact_contract: contract, timeframe: tf })); } catch (e) { /* reconnect/poll fallback */ }
+  }
+  // A large saved desktop can mount dozens of charts.  Start visible data in a
+  // small bounded queue and keep deep-history requests even narrower.
+  const INITIAL_LOAD_CONCURRENCY = 4;
+  const HISTORY_LOAD_CONCURRENCY = 2;
+  const initialLoadQueue = [];
+  const historyLoadQueue = [];
+  let initialLoadsActive = 0;
+  let historyLoadsActive = 0;
 
   function ensureMarketDataWs() {
     if (!MARKET_DATA_WS_URL || typeof WebSocket === 'undefined') return;
@@ -86,9 +116,7 @@ UI.ready(async function () {
           const instrument = String((rec.model.config && rec.model.config.instrument) || '');
           const timeframe = String((rec.model.config && rec.model.config.timeframe) || '5m');
           if (!instrument) continue;
-          try {
-            ws.send(JSON.stringify({ type: 'subscribe', exact_contract: instrument, timeframe }));
-          } catch (e) { /* ignore */ }
+          sendMarketDataSubscription('subscribe', instrument, timeframe);
         }
       });
       ws.addEventListener('message', (ev) => {
@@ -116,15 +144,36 @@ UI.ready(async function () {
             if (barTf && barTf !== tf && tf !== '1d') continue;
             touched = true;
             try {
-              if (typeof rec.chart.updateLastBar === 'function') rec.chart.updateLastBar(bar);
+              // ChartEngine's public live API is appendBar(). It replaces the
+              // final bar when the timestamp is unchanged and appends at a
+              // period boundary. Older desktop code called a non-existent
+              // updateLastBar(), silently discarding every valid WS update.
+              const chartRows = rec.chart.getData ? rec.chart.getData() : [];
+              const existingBar = chartRows.length ? chartRows[chartRows.length - 1] : null;
+              const liveBar = mergeFormingLiveBar(existingBar, bar);
+              if (typeof rec.chart.updateLastBar === 'function') rec.chart.updateLastBar(liveBar);
+              else if (typeof rec.chart.appendBar === 'function') rec.chart.appendBar(liveBar);
+              rec.liveBar = liveBar;
+              rec.liveBarAt = Date.now();
+              rec.liveBarProvider = String(liveBar.provider || sources.chart_source || '').toLowerCase();
+              rec.historyBars = mergeChartBars(rec.historyBars, [liveBar]);
             } catch (e) { /* poll fallback */ }
           }
-          if (touched || sources.chart_source) {
+          // A provider label alone is not a tick for every chart.  Mark only
+          // the matching visible contract LIVE; otherwise a busy MNQ stream
+          // could incorrectly revive an unrelated stale window.
+          if (touched) {
             const src = sources.chart_source || 'ninjatrader';
             // WS ticks only mark LIVE when document is not in offline mode.
             if (document.documentElement.dataset.mdOffline === '1') {
+              if (rec.chart.setLivePriceEnabled) rec.chart.setLivePriceEnabled(false);
               setSrc(rec, 'err', `OFFLINE · ${src} · ${instrument} · WS blocked`);
             } else {
+              // A matching market event proves that this chart's feed is live.
+              // HTTP health polling may have muted the price marker earlier;
+              // restore its red/green semantics on the same event that updates
+              // the forming candle instead of leaving a live quote grey.
+              if (rec.chart.setLivePriceEnabled) rec.chart.setLivePriceEnabled(true);
               setSrc(rec, 'live', `LIVE · ${src} · ${instrument} · WS · age now`);
               rec._transport = 'WS';
               rec.nextPollAt = Date.now() + HEALTH_POLL_MS;
@@ -241,6 +290,10 @@ UI.ready(async function () {
         m.config.style.macd = Object.assign({}, DEFAULT_STYLE.macd, m.config.style.macd || {});
         if (!m.config.range) m.config.range = { id: '1m', days: 31, from: '', to: '' };
         if (!m.config.root) m.config.root = String(m.config.instrument || '').split(' ')[0];
+        // Older desktop versions only offered the current contract picker, so
+        // their saved layouts are root-managed by definition. New/edited
+        // charts may opt into ``fixed`` to preserve a chosen historical expiry.
+        if (m.config.contract_mode !== 'fixed') m.config.contract_mode = 'auto';
         if (!Array.isArray(m.drawings)) m.drawings = [];
         if (typeof m.bare !== 'boolean') m.bare = false;
       });
@@ -470,9 +523,13 @@ UI.ready(async function () {
         model.config.style = Object.assign({}, model.config.style || {}, { axisWidth: vp.axisWidth });
         markDirty();
       }
+      queueHistoryPrefetch(rec, vp);
     });
 
-    const rec = { model, node, chart, chartHost, srcEl: qs('.dwin-src', node), inFlight: false };
+    const rec = { model, node, chart, chartHost, srcEl: qs('.dwin-src', node), inFlight: false,
+      historyBars: [], historySignature: '', historyExhausted: false, historyInFlight: false,
+      historyController: null, historyPrefetchTimer: null, historySourceIdentity: '',
+      viewportPriority: 0, offscreenSince: 0, liveBar: null, liveBarAt: 0, liveBarProvider: '' };
     wins.set(model.id, rec);
 
     renderWindowMeta(rec);
@@ -681,6 +738,8 @@ UI.ready(async function () {
     deleteModelAlerts(model);
     const rec = wins.get(model.id);
     if (rec) {
+      sendMarketDataSubscription('unsubscribe', rec.model.config && rec.model.config.instrument,
+        rec.model.config && rec.model.config.timeframe);
       if (rec.chart) rec.chart.destroy();
       if (rec.refreshStop) rec.refreshStop();
       rec.node.remove();
@@ -743,8 +802,12 @@ UI.ready(async function () {
           if (!r) return { root: row[0], symbol: '', label: row[0], contract: '', name: info.name,
             group: info.group, expiry: '', available: false };
           const fm = r.front_month || {};
+          const contracts = Array.isArray(r.contracts) ? r.contracts.map(c => ({
+            instrument: String((c && (c.instrument || c.symbol || c.name)) || ''),
+            expiry: String((c && c.expiry) || ''),
+          })).filter(c => c.instrument) : [];
           return { root: r.root, symbol: fm.instrument || r.root, label: r.root, contract: fm.instrument || r.root,
-            name: info.name, group: info.group, expiry: fm.expiry || '', available: !!fm.instrument };
+            name: info.name, group: info.group, expiry: fm.expiry || '', available: !!fm.instrument, contracts };
         });
         instrumentCache = list;
         return list;
@@ -753,7 +816,7 @@ UI.ready(async function () {
     async bars(instrument, timeframe, opts) {
       opts = opts || {};
       try {
-        const q = marketRequest(opts.config || { instrument, timeframe }, opts.limit, opts.maxPoints);
+        const q = opts.query || marketRequest(opts.config || { instrument, timeframe }, opts.limit, opts.maxPoints);
         const res = await window.API.http.marketBars(q, { signal: opts.signal });
         return {
           bars: Array.isArray(res && res.bars) ? res.bars : [],
@@ -762,9 +825,11 @@ UI.ready(async function () {
           live: !!(res && res.live),
           status: (res && res.status) || '',
           alerts: Array.isArray(res && res.alerts) ? res.alerts : [],
+          history: (res && res.history) || {},
+          resolvedInstrument: (res && res.resolved_instrument) || '',
         };
       } catch (e) {
-        return { bars: [], note: (e && e.message) || 'нет соединения', source: null, live: false, status: 'error', alerts: [] };
+        return { bars: [], note: (e && e.message) || 'нет соединения', source: null, live: false, status: 'error', alerts: [], history: {} };
       }
     },
   };
@@ -781,6 +846,7 @@ UI.ready(async function () {
     const byRoot = new Map(list.map(row => [row.root, row]));
     let rolled = 0;
     for (const model of layout.windows) {
+      if (model.config.contract_mode === 'fixed') continue;
       const root = model.config.root || String(model.config.instrument || '').split(' ')[0];
       const current = byRoot.get(root);
       if (!current || !current.symbol || current.symbol === model.config.instrument) continue;
@@ -800,19 +866,24 @@ UI.ready(async function () {
     return Math.max(800, Math.min(8000, Math.ceil(width * 3)));
   }
 
-  function marketRequest(config, forcedLimit, maxPoints) {
+  function marketRequest(config, forcedLimit, maxPoints, historyRange) {
     const range = config.range || { days: 31 };
     let days = Number(range.days || 0);
     if (range.id === 'custom' && range.from && range.to) {
       days = Math.max(1, Math.ceil((Date.parse(range.to) - Date.parse(range.from)) / 86400000) + 1);
     }
     const tf = String(config.timeframe || '5m');
-    let perDay = tf === '1D' ? 1 : tf.endsWith('h') ? 24 / Math.max(1, Number(tf.slice(0, -1))) :
+    let perDay = tf === '1D' ? 1 : (tf === '1w' || tf === '1W') ? 1 / 7 : tf === '1M' ? 1 / 31 : tf.endsWith('h') ? 24 / Math.max(1, Number(tf.slice(0, -1))) :
       1440 / Math.max(1, Number(tf.slice(0, -1)) || 5);
-    const limit = forcedLimit || Math.max(500, Math.min(50000, Math.ceil((days || 60) * perDay * 1.15)));
+    // First paint is deliberately bounded. Older history is fetched only as
+    // the viewport approaches its left edge, rather than downloading years of
+    // candles before the user can see a chart.
+    const limit = forcedLimit || Math.max(800, Math.min(2500, Math.ceil(Math.max(1, perDay) * 2)));
     const points = Math.max(0, Math.min(20000, Number(maxPoints || 0)));
-    return { instrument: config.instrument, timeframe: config.timeframe, limit,
-      range_days: range.id === 'custom' ? 0 : (days || 0), from: range.from || '', to: range.to || '',
+    return { instrument: config.contract_mode === 'auto' ? (config.root || config.instrument) : config.instrument,
+      timeframe: config.timeframe, limit,
+      range_days: range.id === 'custom' ? 0 : 0, from: range.from || '', to: range.to || '',
+      from_ts: historyRange && historyRange.from_ts || '', to_ts: historyRange && historyRange.to_ts || '',
       max_points: points };
   }
 
@@ -839,10 +910,100 @@ UI.ready(async function () {
 
   function resetDataTracking(rec) {
     if (!rec) return;
+    if (rec.historyController) { try { rec.historyController.abort(); } catch (e) {} }
+    rec.historyController = null;
+    rec.historyQueued = false;
+    rec.loadQueued = false;
+    rec.historyBars = [];
+    rec.historySignature = '';
+    rec.historySourceIdentity = '';
+    rec.historyExhausted = false;
+    rec.historyInFlight = false;
     rec.lastUpdated = '';
     rec.lastBarMs = null;
     rec.lastStatus = '';
     rec.rejectedPayloads = 0;
+    rec.liveBar = null;
+    rec.liveBarAt = 0;
+    rec.liveBarProvider = '';
+  }
+
+  function mergeChartBars(left, right) {
+    const rows = new Map();
+    (Array.isArray(left) ? left : []).concat(Array.isArray(right) ? right : []).forEach((bar) => {
+      const stamp = Date.parse(bar && (bar.t || bar.time_utc || bar.time || bar.timestamp));
+      if (Number.isFinite(stamp)) rows.set(stamp, bar);
+    });
+    return Array.from(rows.entries()).sort((a, b) => a[0] - b[0]).map(row => row[1]);
+  }
+
+  function timeframeMs(timeframe) {
+    const match = String(timeframe || '1m').match(/^(\d+)([smhdwM])$/);
+    if (!match) return 60000;
+    const units = { s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000, M: 2678400000 };
+    return Math.max(1, Number(match[1])) * units[match[2]];
+  }
+
+  function queueHistoryPrefetch(rec, vp) {
+    if (!rec || rec.historyInFlight || rec.historyExhausted || !rec.historyBars || !rec.historyBars.length) return;
+    const start = Number(vp && vp.start);
+    const count = Number(vp && vp.count) || 120;
+    if (!Number.isFinite(start) || start > Math.max(32, Math.ceil(count * 0.45))) return;
+    if (rec.historyPrefetchTimer) clearTimeout(rec.historyPrefetchTimer);
+    rec.historyPrefetchTimer = setTimeout(() => loadOlderHistory(rec), 80);
+  }
+
+  function loadOlderHistory(rec) {
+    if (!rec || rec.historyQueued || rec.historyInFlight || rec.historyExhausted) return;
+    rec.historyQueued = true;
+    historyLoadQueue.push(rec);
+    drainHistoryLoadQueue();
+  }
+
+  function drainHistoryLoadQueue() {
+    while (historyLoadsActive < HISTORY_LOAD_CONCURRENCY && historyLoadQueue.length) {
+      const rec = historyLoadQueue.shift();
+      if (!rec || !wins.has(rec.model.id)) continue;
+      rec.historyQueued = false;
+      historyLoadsActive += 1;
+      loadOlderHistoryNow(rec).finally(() => {
+        historyLoadsActive -= 1;
+        drainHistoryLoadQueue();
+      });
+    }
+  }
+
+  async function loadOlderHistoryNow(rec) {
+    if (!rec || rec.historyInFlight || rec.historyExhausted || !rec.historyBars || !rec.historyBars.length) return;
+    const sig = dataSignature(rec.model.config);
+    const earliest = Date.parse(rec.historyBars[0] && (rec.historyBars[0].t || rec.historyBars[0].time));
+    if (!Number.isFinite(earliest)) return;
+    const count = Math.max(1000, Math.min(20000, Math.max(chartMaxPoints(rec), rec.chart && rec.chart.view && rec.chart.view.count || 120) * 2));
+    const end = new Date(earliest).toISOString();
+    const start = new Date(earliest - timeframeMs(rec.model.config.timeframe) * count * 1.15).toISOString();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    rec.historyController = controller;
+    rec.historyInFlight = true;
+    setSrc(rec, 'wait', `DATA · ${String(rec.historySourceIdentity || 'TopstepX').split('|')[0]} · подгружаю более раннюю историю…`);
+    try {
+      const q = marketRequest(rec.model.config, count, 0, { from_ts: start, to_ts: end });
+      const payload = await NTData.bars(rec.model.config.instrument, rec.model.config.timeframe, {
+        config: rec.model.config, query: q,
+        signal: controller && controller.signal,
+      });
+      if (!wins.has(rec.model.id) || dataSignature(rec.model.config) !== sig) return;
+      if (!payload.bars || !payload.bars.length || (payload.history && payload.history.exhausted)) {
+        rec.historyExhausted = true;
+        setSrc(rec, 'wait', `DATA · ${String(rec.historySourceIdentity || 'TopstepX').split('|')[0]} · доступная история этого контракта исчерпана`);
+      } else {
+        applyWindowPayload(rec, payload);
+      }
+    } catch (e) {
+      if (!(e && e.name === 'AbortError')) setSrc(rec, 'wait', `DATA · ${String(rec.historySourceIdentity || 'TopstepX').split('|')[0]} · история временно недоступна; повторим при прокрутке`);
+    } finally {
+      if (rec.historyController === controller) rec.historyController = null;
+      rec.historyInFlight = false;
+    }
   }
 
   function payloadLastBarMs(bars) {
@@ -864,12 +1025,34 @@ UI.ready(async function () {
     return `${Math.round(age / 60)}м назад`;
   }
 
-  async function loadWindowData(rec) {
+  function loadWindowData(rec) {
+    if (!rec || rec.loadQueued || rec.inFlight || rec.model.minimized) return;
+    rec.loadQueued = true;
+    initialLoadQueue.push(rec);
+    drainInitialLoadQueue();
+  }
+
+  function drainInitialLoadQueue() {
+    while (initialLoadsActive < INITIAL_LOAD_CONCURRENCY && initialLoadQueue.length) {
+      const rec = initialLoadQueue.shift();
+      if (!rec || !wins.has(rec.model.id)) continue;
+      rec.loadQueued = false;
+      initialLoadsActive += 1;
+      loadWindowDataNow(rec).catch((e) => {
+        if (wins.has(rec.model.id)) setSrc(rec, 'err', 'Ошибка потока данных: ' + (e.message || e));
+      }).finally(() => {
+        initialLoadsActive -= 1;
+        drainInitialLoadQueue();
+      });
+    }
+  }
+
+  async function loadWindowDataNow(rec) {
     const m = rec.model;
     if (m.minimized) return;
     if (rec.inFlight) return;
     const stamp = beginDataRequest(rec);
-    setSrc(rec, 'wait', 'NinjaTrader · загрузка…');
+    setSrc(rec, 'wait', 'DATA · загружаю актуальные бары…');
     const payload = await NTData.bars(m.config.instrument, m.config.timeframe, {
       signal: UI.signal(), config: m.config, maxPoints: chartMaxPoints(rec),
     });
@@ -887,13 +1070,79 @@ UI.ready(async function () {
     const freshness = payload.freshness || {};
     const offline = status === 'offline' || !!freshness.offline || !!payload.offline_banner
       || String(source.runtime_state || '').toUpperCase() === 'OFFLINE';
-    const chartSource = source.active || source.provider || source.kind || source.name || 'unknown';
+    const chartSource = source.active || source.provider || source.kind || source.name || 'NO DATA';
+    const topstepSource = String(chartSource || '').toLowerCase() === 'topstepx';
+    // A forming 5m/1h bar naturally ages.  For TopstepX, liveness is instead
+    // the current SignalR/quote transport state: a fresh bid/ask or heartbeat
+    // remains LIVE even when GatewayQuote.lastPrice is unchanged for seconds.
+    const marketFeedFresh = topstepSource
+      ? freshness.market_feed_fresh === true
+      : freshness.fresh === true;
+    const marketFeedStale = topstepSource
+      ? freshness.market_feed_stale === true
+      : freshness.stale === true;
     const strategySource = payload.strategy_source || 'ninjatrader';
     const executionSource = payload.execution_source || 'ninjatrader';
     const planes = `Chart:${chartSource} · Strategy:${strategySource} · Execution:${executionSource}`;
-    updateGlobalOfflineBanner(payload);
+    const resolvedByProvider = String(payload.resolvedInstrument || payload.resolved_instrument || '').trim();
+    if (rec.model.config.contract_mode === 'auto' && resolvedByProvider
+        && resolvedByProvider !== rec.model.config.instrument) {
+      // The request used the root, and the provider returned the current exact
+      // contract. Persist it for a truthful chart header while retaining the
+      // root-managed mode for the next rollover.
+      rec.model.config.instrument = resolvedByProvider;
+      rec.model.config.root = String(rec.model.config.root || resolvedByProvider.split(' ')[0]).toUpperCase();
+      rec.historyBars = [];
+      rec.historySourceIdentity = '';
+      rec.lastBarMs = null;
+      rec.lastUpdated = '';
+      rec.liveBar = null;
+      rec.liveBarAt = 0;
+      rec.liveBarProvider = '';
+      if (rec.chart && rec.chart.setMeta) rec.chart.setMeta(rec.model.config.instrument, rec.model.config.timeframe);
+      renderWindowMeta(rec);
+      // The socket may have opened before the HTTP response resolved a root
+      // symbol to its current exact expiry.  Subscribe the resolved contract
+      // as well, otherwise the server correctly emits MNQ 09-26 updates but
+      // this root-backed window remains filtered on its former MNQ request.
+      sendMarketDataSubscription('subscribe', resolvedByProvider, rec.model.config.timeframe || '5m');
+      markDirty();
+    }
+    const signature = dataSignature(rec.model.config);
+    if (rec.historySignature !== signature) {
+      rec.historySignature = signature;
+      rec.historyBars = [];
+      rec.historyExhausted = false;
+    }
+    const sourceIdentity = [chartSource, payload.resolved_instrument || '', payload.series_mode || 'contract'].join('|');
+    if (rec.historySourceIdentity && rec.historySourceIdentity !== sourceIdentity) {
+      // Never join different providers/contract modes into one rendered series.
+      // A failover is a clean range replacement; the backend requests a fresh
+      // normalized range from the new source, which also performs its gap fill.
+      rec.historyBars = [];
+      rec.lastBarMs = null;
+      rec.lastUpdated = '';
+      rec.liveBar = null;
+      rec.liveBarAt = 0;
+      rec.liveBarProvider = '';
+    }
+    rec.historySourceIdentity = sourceIdentity;
+    updateGlobalOfflineBanner(payload, rec);
     if (bars.length) {
-      const lastMs = payloadLastBarMs(bars);
+      let mergedBars = mergeChartBars(rec.historyBars, bars);
+      const liveMs = rec.liveBar && Date.parse(rec.liveBar.t || rec.liveBar.time_utc || rec.liveBar.time || rec.liveBar.timestamp);
+      const payloadMs = payloadLastBarMs(mergedBars);
+      const liveFresh = rec.liveBar && Number.isFinite(liveMs) && Date.now() - Number(rec.liveBarAt || 0) <= 15000;
+      const liveProviderCompatible = !rec.liveBarProvider
+        || rec.liveBarProvider === String(chartSource || '').toLowerCase();
+      // A health/history poll is allowed to fill gaps, but it must not roll a
+      // fresher same-provider WebSocket forming bar backwards. A genuinely
+      // newer HTTP bucket or provider switch remains authoritative.
+      if (liveFresh && liveProviderCompatible && (payloadMs == null || liveMs >= payloadMs)) {
+        mergedBars = mergeChartBars(mergedBars, [rec.liveBar]);
+      }
+      rec.historyBars = mergedBars;
+      const lastMs = payloadLastBarMs(mergedBars);
       const staleBars = rec.lastBarMs != null && lastMs != null && lastMs < rec.lastBarMs - 1000;
       if (staleBars && !offline) {
         rec.rejectedPayloads = (rec.rejectedPayloads || 0) + 1;
@@ -901,41 +1150,48 @@ UI.ready(async function () {
         setSrc(rec, 'wait', `RECOVERING · устаревший пакет · ${planes}`);
         return;
       }
-      const updated = source.updated_at_utc || `${payload.status || ''}:${bars.length}:${bars[bars.length - 1] && (bars[bars.length - 1].t || bars[bars.length - 1].c)}`;
-      if (updated !== rec.lastUpdated) { rec.chart.setData(bars); rec.lastUpdated = updated; }
+      const updated = source.updated_at_utc || `${payload.status || ''}:${mergedBars.length}:${mergedBars[mergedBars.length - 1] && (mergedBars[mergedBars.length - 1].t || mergedBars[mergedBars.length - 1].c)}`;
+      if (updated !== rec.lastUpdated || bars.length) {
+        rec.chart.setData(mergedBars);
+        rec.lastUpdated = updated;
+      }
       if (lastMs != null) rec.lastBarMs = lastMs;
       rec.rejectedPayloads = 0;
       rec.hasBars = true;
+      if (payload.history && payload.history.exhausted) rec.historyExhausted = true;
       const age = sourceAgeSec(source) != null ? sourceAgeSec(source) : Number(freshness.age_sec);
       const ageLabel = Number.isFinite(age) ? ` · age ${ageText(age)}` : '';
-      const asOf = freshness.data_as_of_utc || source.updated_at_utc || '';
+      const asOf = freshness.market_feed_as_of_utc || freshness.data_as_of_utc || source.updated_at_utc || '';
       const asOfLabel = asOf ? ` · last ${String(asOf).replace('T', ' ').slice(0, 19)}` : '';
       const diag = payload.diagnostics || {};
       const transport = marketDataWsOk ? 'WS' : 'HTTP';
       const hashShort = diag.series_hash ? String(diag.series_hash).slice(0, 8) : '';
-      const contract = payload.resolved_instrument || (rec.model.config && rec.model.config.instrument) || '';
+      const contract = payload.resolvedInstrument || payload.resolved_instrument || (rec.model.config && rec.model.config.instrument) || '';
       const extra = hashShort ? ` · #${hashShort}` : '';
       let health = 'OFFLINE';
       let css = 'err';
       if (offline || payload.market_data_available === false) {
         health = 'OFFLINE';
         css = 'err';
-      } else if (live && freshness.fresh === true && !freshness.stale) {
+      } else if (live && marketFeedFresh && !marketFeedStale) {
         health = 'LIVE';
         css = 'live';
-      } else if (freshness.stale || status === 'external_stale' || status === 'failover_stale' || status === 'stale') {
+      } else if (marketFeedStale || status === 'external_stale' || status === 'failover_stale' || status === 'stale') {
         health = 'STALE';
         css = 'wait';
       } else if (bars.length) {
         health = 'DEGRADED';
         css = 'wait';
       }
-      // Hard rule: never green LIVE without explicit fresh live flag.
-      if (css === 'live' && (live !== true || freshness.fresh !== true || Number.isFinite(age) && age > 8)) {
-        health = Number.isFinite(age) && age > 8 ? 'STALE' : 'DEGRADED';
+      // A 5m/1h candle timestamp naturally ages between ticks.  Its explicit
+      // provider freshness limit (not an arbitrary UI-second threshold) is
+      // authoritative for the price-line colour.
+      if (css === 'live' && (live !== true || !marketFeedFresh)) {
+        health = marketFeedStale ? 'STALE' : 'DEGRADED';
         css = 'wait';
       }
-      setSrc(rec, css, `${health} · ${chartSource} · ${contract} · ${transport}${ageLabel}${asOfLabel}${extra}${note ? ' · ' + note : ''}`);
+      const transition = source.failover_from ? ` · switched from ${source.failover_from}` : '';
+      setSrc(rec, css, `${health} · DATA · ${chartSource} · ${contract} · ${transport}${transition}${ageLabel}${asOfLabel}${extra}${note ? ' · ' + note : ''}`);
       rec._diagnostics = diag;
       rec._transport = transport;
       // Freeze price marker semantics for offline/stale.
@@ -986,7 +1242,7 @@ UI.ready(async function () {
     syncAlerts(rec, alerts);
   }
 
-  function updateGlobalOfflineBanner(payload) {
+  function updateGlobalOfflineBanner(payload, rec) {
     let banner = qs('#dsk-md-offline-banner');
     if (!banner && viewport) {
       banner = el(`<div id="dsk-md-offline-banner" class="dsk-md-offline-banner" hidden></div>`);
@@ -999,8 +1255,12 @@ UI.ready(async function () {
       || payload.offline_banner
       || payload.market_data_available === false
     );
-    // Show banner if ANY recent payload is offline, keep until a LIVE arrives.
-    if (offline) {
+    if (rec) rec._marketOffline = !!offline;
+    // A chart-level provider failure is not a global outage. Show red OFFLINE
+    // only if no active chart currently has a usable live/fresh source.
+    const active = Array.from(wins.values()).filter(row => !row.model.minimized);
+    const anyUsable = active.some(row => row._marketOffline === false);
+    if (offline && !anyUsable) {
       const ob = payload.offline_banner || {};
       const age = ob.age_sec != null ? ageText(Number(ob.age_sec)) : '';
       banner.hidden = false;
@@ -1011,7 +1271,7 @@ UI.ready(async function () {
         + `<span>Backup live providers available: ${ob.backup_providers_available != null ? ob.backup_providers_available : 0}</span>`
         + `<span>Strategies/execution must not use these prices as live.</span>`;
       document.documentElement.dataset.mdOffline = '1';
-    } else if (payload && payload.live === true && payload.freshness && payload.freshness.fresh === true) {
+    } else if (anyUsable || (payload && payload.live === true && payload.freshness && payload.freshness.fresh === true)) {
       banner.hidden = true;
       delete document.documentElement.dataset.mdOffline;
     }
@@ -1021,6 +1281,12 @@ UI.ready(async function () {
     s.classList.remove('live', 'wait', 'err');
     s.classList.add(state);
     s.title = title;
+    const text = s.querySelector('.src-tx');
+    if (text) {
+      const bits = String(title || '').split(' · ');
+      const dataAt = bits.indexOf('DATA');
+      text.textContent = dataAt >= 0 && bits[dataAt + 1] ? `DATA · ${bits[dataAt + 1]}` : (bits[1] || bits[0] || 'DATA');
+    }
   }
 
   // One consolidated request updates every due chart. The bridge publishes its
@@ -1031,32 +1297,48 @@ UI.ready(async function () {
     ensureMarketDataWs();
     const now = Date.now();
     const recs = Array.from(wins.values()).filter(rec => {
-      if (rec.model.minimized || rec.inFlight) return false;
+      if (rec.model.minimized || rec.inFlight || rec.loadQueued) return false;
       // With a healthy WS, slow HTTP fallback to reduce full-series re-sends.
       const dueAt = rec.nextPollAt || 0;
       if (marketDataWsOk && dueAt && (now - dueAt) < 1500 && rec.hasBars) return false;
       return !rec.nextPollAt || rec.nextPollAt <= now;
     });
     if (!recs.length) return;
-    const batch = recs.map(rec => ({
-      rec,
-      stamp: beginDataRequest(rec),
-      request: marketRequest(rec.model.config, null, chartMaxPoints(rec)),
-    }));
+    const isVisible = (rec) => {
+      const box = rec.node && rec.node.getBoundingClientRect();
+      return !!(box && box.bottom > 0 && box.right > 0 && box.top < window.innerHeight && box.left < window.innerWidth);
+    };
+    // Viewport-first: a compact visible group is rendered before background
+    // windows. Identical symbol/timeframe/range requests share one HTTP row.
+    recs.sort((a, b) => Number(isVisible(b)) - Number(isVisible(a)));
+    const selected = recs.slice(0, 12);
+    const groups = new Map();
+    selected.forEach((rec) => {
+      const request = marketRequest(rec.model.config, null, chartMaxPoints(rec));
+      const key = JSON.stringify(request);
+      const group = groups.get(key) || { request, items: [] };
+      group.items.push({ rec, stamp: beginDataRequest(rec) });
+      groups.set(key, group);
+    });
+    const batch = Array.from(groups.values());
     try {
       const out = await API.http.marketBarsBatch({ requests: batch.map(item => item.request) });
       const rows = (out && out.series) || [];
       batch.forEach((item, index) => {
-        if (requestStillCurrent(item.rec, item.stamp)) applyWindowPayload(item.rec, rows[index] || { bars: [], alerts: [], status: 'waiting' });
+        item.items.forEach((entry) => {
+          if (requestStillCurrent(entry.rec, entry.stamp)) applyWindowPayload(entry.rec, rows[index] || { bars: [], alerts: [], status: 'waiting' });
+        });
       });
     } catch (e) {
       batch.forEach(item => {
-        if (requestStillCurrent(item.rec, item.stamp)) {
-          item.rec.nextPollAt = Date.now() + 2000;
-          setSrc(item.rec, 'err', 'Ошибка потока данных: ' + (e.message || e));
-        }
+        item.items.forEach((entry) => {
+          if (requestStillCurrent(entry.rec, entry.stamp)) {
+            entry.rec.nextPollAt = Date.now() + 2000;
+            setSrc(entry.rec, 'err', 'Ошибка потока данных: ' + (e.message || e));
+          }
+        });
       });
-    } finally { batch.forEach(item => finishDataRequest(item.rec, item.stamp)); }
+    } finally { batch.forEach(item => item.items.forEach(entry => finishDataRequest(entry.rec, entry.stamp))); }
   }, LIVE_POLL_MS);
 
   // ---- add / configure chart dialog -------------------------------------
@@ -1080,6 +1362,7 @@ UI.ready(async function () {
               <label id="dc-inst-field" ${templateMode ? 'hidden' : ''}>Инструмент (актуальный контракт)
                 <select id="dc-inst"><option value="">Загрузка инструментов…</option></select>
               </label>
+              <label class="ind-chip" id="dc-contract-mode-wrap" ${templateMode ? 'hidden' : ''} title="Автоматический режим всегда использует актуальный контракт TopstepX. Закреплённый контракт не меняется."><input type="checkbox" id="dc-contract-fixed" ${cfg.contract_mode === 'fixed' ? 'checked' : ''}><span>Закрепить выбранный контракт</span></label>
               <label>Тип графика
                 <div class="type-seg" id="dc-type">${CHART_TYPES.map(t => `<button type="button" data-v="${t.id}" class="${cfg.type === t.id ? 'on' : ''}">${t.label}</button>`).join('')}</div>
               </label>
@@ -1156,9 +1439,13 @@ UI.ready(async function () {
         instSel.innerHTML = '<option value="">Нет инструментов — NinjaTrader офлайн</option>';
       } else {
         const groups = new Map(); list.forEach(x => { if (!groups.has(x.group)) groups.set(x.group, []); groups.get(x.group).push(x); });
-        instSel.innerHTML = Array.from(groups.entries()).map(([group, rows]) => `<optgroup label="${escAttr(group)}">${rows.map(x => `<option value="${escAttr(x.symbol)}" data-root="${escAttr(x.root)}" ${x.available ? '' : 'disabled'}>${escAttr(x.root)} — ${escAttr(x.name)}${x.available ? ` · ${escAttr(x.symbol)}` : ' · контракт пока недоступен'}</option>`).join('')}</optgroup>`).join('');
+        instSel.innerHTML = Array.from(groups.entries()).map(([group, rows]) => `<optgroup label="${escAttr(group)}">${rows.map(x => {
+          const current = `<option value="${escAttr(x.symbol)}" data-root="${escAttr(x.root)}" data-contract-mode="auto" ${x.available ? '' : 'disabled'}>${escAttr(x.root)} — ${escAttr(x.name)}${x.available ? ` · актуальный ${escAttr(x.symbol)}` : ' · контракт пока недоступен'}</option>`;
+          const fixed = (x.contracts || []).filter(c => c.instrument !== x.symbol).map(c => `<option value="${escAttr(c.instrument)}" data-root="${escAttr(x.root)}" data-contract-mode="fixed">${escAttr(x.root)} — ${escAttr(x.name)} · ${escAttr(c.instrument)}${c.expiry ? ` (expiry ${escAttr(c.expiry)})` : ''}</option>`).join('');
+          return current + fixed;
+        }).join('')}</optgroup>`).join('');
         const firstAvailable = list.find(x => x.available);
-        const chosen = cfg.instrument || (firstAvailable && firstAvailable.symbol) || '';
+        const chosen = cfg.contract_mode === 'fixed' ? cfg.instrument : ((cfg.root && (list.find(x => x.root === cfg.root) || {}).symbol) || cfg.instrument || (firstAvailable && firstAvailable.symbol) || '');
         instSel.value = chosen;
         if (!instSel.value) instSel.selectedIndex = 0;
         cfg.instrument = instSel.value;
@@ -1182,6 +1469,7 @@ UI.ready(async function () {
         : [];
       return Object.assign({}, cfg, {
         instrument: (instSel && instSel.value) || '', root: (instSel && instSel.selectedOptions[0] && instSel.selectedOptions[0].dataset.root) || '',
+        contract_mode: (qs('#dc-contract-fixed', d) && qs('#dc-contract-fixed', d).checked) ? 'fixed' : 'auto',
         indicators,
         range: { id: rangeId, days: preset ? preset.days : null, from: qs('#dc-from', d).value, to: qs('#dc-to', d).value },
         style: Object.assign({}, cfg.style, {
@@ -1229,7 +1517,20 @@ UI.ready(async function () {
       qs('#dc-range', d).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
       qs('#dc-custom-range', d).classList.toggle('show', b.dataset.v === 'custom');
     });
-    instSel.addEventListener('change', refreshPreview);
+    instSel.addEventListener('change', () => {
+      const fixed = qs('#dc-contract-fixed', d);
+      const selected = instSel.selectedOptions && instSel.selectedOptions[0];
+      if (fixed && selected && selected.dataset.contractMode) fixed.checked = selected.dataset.contractMode === 'fixed';
+      const wrap = qs('#dc-contract-mode-wrap', d);
+      if (wrap && fixed) wrap.classList.toggle('on', !!fixed.checked);
+      refreshPreview();
+    });
+    const fixedContract = qs('#dc-contract-fixed', d);
+    if (fixedContract) fixedContract.addEventListener('change', () => {
+      const wrap = qs('#dc-contract-mode-wrap', d);
+      if (wrap) wrap.classList.toggle('on', !!fixedContract.checked);
+      refreshPreview();
+    });
     qsaLocal('#dc-up,#dc-down,#dc-bg,#dc-body,#dc-wick,#dc-border,#dc-fill,#dc-legend,#dc-macd-fill,#dc-macd-area,#dc-macd-zero,#dc-macd-vol,#dc-macd-up,#dc-macd-down,#dc-macd-op,#dc-macd-line,#dc-macd-signal', d).forEach(node => node.addEventListener('input', () => {
       if (node.closest('.ind-chip')) node.closest('.ind-chip').classList.toggle('on', node.checked);
       refreshPreview();
@@ -1296,6 +1597,7 @@ UI.ready(async function () {
     const prev = rec.model.config || {};
     const identityChanged = prev.instrument !== cfg.instrument || prev.timeframe !== cfg.timeframe;
     if (identityChanged) {
+      sendMarketDataSubscription('unsubscribe', prev.instrument, prev.timeframe);
       deleteModelAlerts(rec.model);
       rec.model.drawings = [];
       if (rec.chart.setDrawings) rec.chart.setDrawings([]);
@@ -1309,6 +1611,7 @@ UI.ready(async function () {
       style: cloneStyle(cfg.style),
       range: Object.assign({}, cfg.range || prev.range || {}),
     });
+    if (identityChanged) sendMarketDataSubscription('subscribe', rec.model.config.instrument, rec.model.config.timeframe);
     renderWindowMeta(rec);
     try {
       rec.chart.setIndicators(rec.model.config.indicators);
@@ -1347,6 +1650,7 @@ UI.ready(async function () {
   }
 
   function addChart(cfg) {
+    cfg = Object.assign({ contract_mode: 'auto' }, cfg || {});
     const { w: Wv, h: Hv } = layout.resolution;
     layout.seq = (layout.seq || 0) + 1;
     // cascade placement anchored to the current viewport top-left (virtual coords)
@@ -1891,7 +2195,7 @@ UI.ready(async function () {
     const list = await NTData.instruments();
     const item = list.find(x => x.root === root && x.available && x.symbol) || list.find(x => x.root === root);
     const symbol = (item && item.symbol) || root;
-    addChart({ instrument: symbol, root: root, timeframe: timeframe || template.timeframe,
+    addChart({ instrument: symbol, root: root, contract_mode: 'auto', timeframe: timeframe || template.timeframe,
       indicators: template.indicators.slice(), type: template.type,
       range: Object.assign({}, template.range), aspect: template.aspect,
       style: cloneStyle(template.style) });
@@ -1913,7 +2217,7 @@ UI.ready(async function () {
     const list = (await NTData.instruments()).filter(x => x.available && x.symbol);
     if (!list.length) return null;
     const item = list[0];
-    addChart({ instrument: item.symbol, root: item.root, timeframe: timeframe || template.timeframe,
+    addChart({ instrument: item.symbol, root: item.root, contract_mode: 'auto', timeframe: timeframe || template.timeframe,
       indicators: template.indicators.slice(), type: template.type,
       range: Object.assign({}, template.range), aspect: template.aspect,
       style: cloneStyle(template.style) });
@@ -2089,7 +2393,7 @@ UI.ready(async function () {
       desired.forEach(root => {
         if (have.has(root)) return;
         const item = byRoot.get(root);
-        const cfg = { instrument: item.symbol, root: item.root, timeframe: tf || template.timeframe,
+        const cfg = { instrument: item.symbol, root: item.root, contract_mode: 'auto', timeframe: tf || template.timeframe,
           indicators: template.indicators.slice(), type: template.type,
           range: bigGrid ? { id: '1d', days: 1, from: '', to: '' } : Object.assign({}, template.range),
           aspect: template.aspect, style: cloneStyle(template.style) };
@@ -2358,7 +2662,12 @@ UI.ready(async function () {
     try {
       layout.windows.slice().sort((a, b) => (a.z || 0) - (b.z || 0)).forEach(m => { clampModel(m); createWindow(m); });
     } finally { bulkMounting = false; }
-    wins.forEach(rec => { rec.nextPollAt = 0; });
+    // Bulk mounting deliberately skips per-window work while the DOM is
+    // assembled.  Queue the first viewport load afterwards: relying solely
+    // on a later batch poll allowed a flood of WS ticks to mask a failed or
+    // delayed first batch, leaving a perfectly live chart stuck at "Нет
+    // данных".  The existing bounded queue keeps large layouts responsive.
+    wins.forEach(rec => { rec.nextPollAt = 0; loadWindowData(rec); });
     if (layout.screenFit && layout.grid) retileGrid();
     viewport.scrollLeft = (layout.scroll && layout.scroll.x) || 0;
     viewport.scrollTop = (layout.scroll && layout.scroll.y) || 0;

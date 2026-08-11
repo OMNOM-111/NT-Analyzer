@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from copy import deepcopy
@@ -34,6 +35,7 @@ ALLOWED_PROVIDERS = ("openai", "browser")
 ALLOWED_MODELS = ("tts-1", "tts-1-hd", "gpt-4o-mini-tts")
 OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 KEY_ENV = "NTA_OPENAI_API_KEY"
+AZURE_DEFAULT_API_VERSION = "2025-03-01-preview"
 _DEFAULT_VOICES_PATH = paths.PROJECT_ROOT / "data" / "integrations" / "agent_voices.json"
 VOICES_PATH = _DEFAULT_VOICES_PATH
 
@@ -419,29 +421,176 @@ def resolve_model(profile: Optional[Dict[str, Any]] = None) -> str:
     return raw if raw in ALLOWED_MODELS else DEFAULT_MODEL
 
 
-def resolve_api_key() -> str:
+def _is_speech_agent(row: Dict[str, Any]) -> bool:
+    model = str(row.get("model") or "").strip().lower()
+    path = urllib.parse.urlsplit(str(row.get("base_url") or "")).path.lower()
+    return model in ALLOWED_MODELS or path.rstrip("/").endswith("/audio/speech")
+
+
+def _agent_api_key(agent_registry: Any, row: Dict[str, Any]) -> str:
+    try:
+        return str(agent_registry.get_api_key(str(row.get("id") or "")) or "").strip()
+    except Exception:
+        return ""
+
+
+def _openai_agent_credential(agent_registry: Any) -> Dict[str, Any]:
+    for row in agent_registry.list_agents():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("provider") or "").strip().lower() != "openai":
+            continue
+        if not row.get("enabled", True):
+            continue
+        key = _agent_api_key(agent_registry, row)
+        if len(key) >= 12:
+            return {
+                "api_key": key,
+                "provider": "openai",
+                "endpoint_url": OPENAI_SPEECH_URL,
+                "source": "agent_registry:openai",
+                "agent_id": str(row.get("id") or ""),
+                "model": "",
+            }
+    return {}
+
+
+def _azure_api_version(row: Dict[str, Any], parsed: urllib.parse.SplitResult) -> str:
+    query = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
+    version = (
+        str(row.get("api_version") or "").strip()
+        or str((query.get("api-version") or [""])[0]).strip()
+        or AZURE_DEFAULT_API_VERSION
+    )
+    return version
+
+
+def _azure_resource_endpoint(
+    row: Dict[str, Any], *, deployment: str, force_deployment: bool = False,
+) -> str:
+    base = str(row.get("base_url") or "").strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(base)
+    path = parsed.path.rstrip("/")
+    version = _azure_api_version(row, parsed)
+    query = urllib.parse.urlencode({"api-version": version})
+    if path.rstrip("/").endswith("/audio/speech") and not force_deployment:
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query or query, ""))
+    marker = "/openai/deployments/"
+    if marker in path:
+        prefix = path.split(marker, 1)[0]
+        return urllib.parse.urlunsplit((
+            parsed.scheme,
+            parsed.netloc,
+            f"{prefix}{marker}{urllib.parse.quote(deployment, safe='')}/audio/speech",
+            query,
+            "",
+        ))
+    if path.endswith("/openai/v1") or "/openai/v1/" in path:
+        return urllib.parse.urlunsplit((
+            parsed.scheme, parsed.netloc, f"{path}/audio/speech", parsed.query, "",
+        ))
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        f"{path}/openai/deployments/{urllib.parse.quote(deployment, safe='')}/audio/speech",
+        query,
+        "",
+    ))
+
+
+def _azure_agent_credential(
+    agent_registry: Any, *, speech_only: bool, profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    wanted_model = resolve_model(profile)
+    for row in agent_registry.list_agents():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("provider") or "").strip().lower() != "azure_foundry":
+            continue
+        speech_agent = _is_speech_agent(row)
+        if speech_only and not speech_agent:
+            continue
+        if not speech_agent and not row.get("enabled", True):
+            continue
+        key = _agent_api_key(agent_registry, row)
+        if len(key) < 12:
+            continue
+        deployment = str(row.get("model") or "").strip() if speech_agent else wanted_model
+        if deployment.lower() not in ALLOWED_MODELS:
+            deployment = wanted_model
+        return {
+            "api_key": key,
+            "provider": "azure_foundry",
+            "endpoint_url": _azure_resource_endpoint(
+                row, deployment=deployment, force_deployment=not speech_agent,
+            ),
+            "source": "agent_registry:azure_speech" if speech_agent else "agent_registry:azure_resource_guess",
+            "agent_id": str(row.get("id") or ""),
+            "model": deployment,
+        }
+    return {}
+
+
+def resolve_speech_backend(profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Resolve a usable Speech backend without exposing secret material."""
     local_secrets.apply()
     key = str(os.environ.get(KEY_ENV) or "").strip()
     if len(key) >= 12:
-        return key
+        return {
+            "api_key": key,
+            "provider": "openai",
+            "endpoint_url": OPENAI_SPEECH_URL,
+            "source": f"env:{KEY_ENV}",
+            "agent_id": "",
+            "model": "",
+        }
     try:
         from . import agent_registry
-        for row in agent_registry.list_agents():
-            if not isinstance(row, dict):
-                continue
-            if str(row.get("provider") or "").strip().lower() != "openai":
-                continue
-            if not row.get("enabled", True):
-                continue
-            try:
-                agent_key = agent_registry.get_api_key(str(row.get("id") or ""))
-            except Exception:
-                continue
-            if len(str(agent_key or "").strip()) >= 12:
-                return str(agent_key).strip()
+
+        credential = _openai_agent_credential(agent_registry)
+        if credential:
+            return credential
+        credential = _azure_agent_credential(agent_registry, speech_only=True, profile=profile)
+        if credential:
+            return credential
+        credential = _azure_agent_credential(agent_registry, speech_only=False, profile=profile)
+        if credential:
+            return credential
     except Exception:
         pass
-    return ""
+    return {}
+
+
+def resolve_api_key() -> str:
+    """Backward-compatible helper for tests and status checks."""
+    return str(resolve_speech_backend().get("api_key") or "")
+
+
+def tts_status() -> Dict[str, Any]:
+    backend = resolve_speech_backend()
+    return {
+        "ok": True,
+        "key_configured": bool(backend.get("api_key")),
+        "tts_backend_provider": str(backend.get("provider") or ""),
+        "tts_backend_source": str(backend.get("source") or ""),
+        "tts_backend_agent_id": str(backend.get("agent_id") or ""),
+        "tts_backend_model": str(backend.get("model") or ""),
+    }
+
+
+def configure_openai_tts_key(api_key: str) -> Dict[str, Any]:
+    key = str(api_key or "").strip()
+    if len(key) < 12 or key == "YOUR_API_KEY_HERE":
+        raise AgentTtsError("Введите реальный OpenAI API-ключ для TTS.")
+    if not local_secrets.update({KEY_ENV: key}):
+        raise AgentTtsError("Не удалось сохранить OpenAI TTS ключ в local secrets.")
+    return tts_status()
+
+
+def clear_openai_tts_key() -> Dict[str, Any]:
+    if not local_secrets.update({KEY_ENV: None}):
+        raise AgentTtsError("Не удалось удалить OpenAI TTS ключ из local secrets.")
+    return tts_status()
 
 
 def _clamp_speed(value: Any) -> float:
@@ -734,7 +883,10 @@ def _write_cache(key: str, data: bytes) -> None:
                 pass
 
 
-def _openai_speech(*, text: str, profile: Dict[str, Any], api_key: str) -> bytes:
+def _openai_speech(
+    *, text: str, profile: Dict[str, Any], api_key: str,
+    endpoint_url: str = OPENAI_SPEECH_URL, backend_provider: str = "openai",
+) -> bytes:
     model = resolve_model(profile)
     voice = str(profile.get("voice") or "onyx")
     body: Dict[str, Any] = {
@@ -750,12 +902,17 @@ def _openai_speech(*, text: str, profile: Dict[str, Any], api_key: str) -> bytes
         if instructions:
             body["instructions"] = instructions
     raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    auth_headers = (
+        {"api-key": api_key}
+        if str(backend_provider or "").lower() == "azure_foundry"
+        else {"Authorization": f"Bearer {api_key}"}
+    )
     req = urllib.request.Request(
-        OPENAI_SPEECH_URL,
+        str(endpoint_url or OPENAI_SPEECH_URL),
         data=raw,
         method="POST",
         headers={
-            "Authorization": f"Bearer {api_key}",
+            **auth_headers,
             "Content-Type": "application/json",
             "Accept": "audio/mpeg",
             "User-Agent": "StratForge-NT-Analyzer/agent-tts",
@@ -770,11 +927,11 @@ def _openai_speech(*, text: str, profile: Dict[str, Any], api_key: str) -> bytes
             detail = exc.read().decode("utf-8", errors="replace")[:300]
         except Exception:
             detail = str(exc)
-        raise AgentTtsError(f"OpenAI TTS недоступен: HTTP {exc.code}. {detail}".strip()) from None
+        raise AgentTtsError(f"Speech TTS недоступен: HTTP {exc.code}. {detail}".strip()) from None
     except urllib.error.URLError as exc:
-        raise AgentTtsError(f"OpenAI TTS сеть: {exc.reason}") from None
+        raise AgentTtsError(f"Speech TTS сеть: {exc.reason}") from None
     if not data or len(data) < 64:
-        raise AgentTtsError("OpenAI TTS вернул пустой аудиоответ.")
+        raise AgentTtsError("Speech TTS вернул пустой аудиоответ.")
     return data
 
 
@@ -882,13 +1039,17 @@ def synthesize(
     if provider == "browser":
         return _browser_fallback(profile, reason="provider_browser", chars=len(cleaned))
 
-    api_key = resolve_api_key()
+    backend = resolve_speech_backend(profile)
+    api_key = str(backend.get("api_key") or "")
     if not api_key:
         return _browser_fallback(profile, reason="no_api_key", chars=len(cleaned))
 
     model = resolve_model(profile)
     profile = dict(profile)
     profile["tts_model"] = model
+    backend_provider = str(backend.get("provider") or provider or DEFAULT_PROVIDER)
+    provider = backend_provider
+    profile["tts_provider"] = backend_provider
 
     key = _cache_key(
         text=cleaned,
@@ -967,7 +1128,13 @@ def synthesize(
 
     try:
         try:
-            audio = _openai_speech(text=cleaned, profile=profile, api_key=api_key)
+            audio = _openai_speech(
+                text=cleaned,
+                profile=profile,
+                api_key=api_key,
+                endpoint_url=str(backend.get("endpoint_url") or OPENAI_SPEECH_URL),
+                backend_provider=backend_provider,
+            )
         except AgentTtsError as exc:
             durable_recorded = _record_production_tts_usage(
                 request_id,

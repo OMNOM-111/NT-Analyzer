@@ -19,9 +19,9 @@ Classic remains available for rollback/reference, but normal work starts in Auro
 | AI Lab | lazy readiness/bootstrap, run/cancel, heartbeat/activity roles, experiments, quality board, model/role request and outcome telemetry, external-agent budget/activity, calendar, candidates, error memory, compile source, research scan, notes | Complete; external execution intentionally disabled |
 | AI Agents / API Keys | DPAPI key storage, provider/model/role CRUD, chat/embedding test, editable tariff table, token/cost audit, daily/monthly/single-call gates, grant snapshots | Complete base mechanism; workflow permissions intentionally disconnected |
 | News | separate feed + Overview summary; only persisted real events | Scaffold complete; sources not configured by default |
-| TopStep | connection/risk status and approved-strategy transport design | Scaffold complete; live actions intentionally disabled |
+| TopstepX | primary independent read-only chart history + realtime, shared auth/session and browser fan-out | Available; trade routing disabled, NinjaTrader remains execution authority |
 | Telegram | dedicated system drawer, secure token/chat pairing, test send, per-event switches, app/strategy/connection/error/news alerts, daily/weekly/monthly summaries | Notifications complete; commands intentionally disabled |
-| Documents | explicit owner `Черевко Дмитро`, governance list, runtime defaults, markdown view/edit, actor/reason save, history | Complete |
+| Documents | product-first navigation; compact right-side revision journal with semantic red/green `Было → Стало`; full diff/path only in collapsed `Подробнее`; authenticated author attribution; DRAFT legal docs | Complete; journal/internal metadata owner/docs-admin only |
 | Security | CSP `script-src 'self'`, external scripts/handlers, Origin guard, paper/live safety | Complete |
 | Responsive | 390/760/1024/1280/1440 layouts, internal table scrollers, mobile bottom nav | Complete |
 
@@ -35,3 +35,7 @@ Classic remains available for rollback/reference, but normal work starts in Auro
   movements stay unknown; this is stricter than displaying balance growth as P&L.
 - Classic is not deleted. It is a safe fallback at `/ui/legacy/`, but not required
   to access the endpoint families used by normal operation.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Матрица приведена к TopstepX read-only baseline и фактическому documents revision UI с автоматической attribution и privilege boundary.
+-->

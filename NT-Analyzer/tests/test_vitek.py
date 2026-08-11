@@ -1392,7 +1392,9 @@ def test_agent_lanes_run_independently_in_parallel(tmp_path, monkeypatch) -> Non
 
     def fake_dispatch(event):
         started.append(event["event_type"])
-        release.wait(2)
+        # File-backed lane claiming can exceed two seconds on a busy Windows
+        # DEV workstation. Keep both workers alive for the status snapshot.
+        release.wait(10)
         return {"ok": True}
 
     monkeypatch.setattr(vitek, "_dispatch_event", fake_dispatch)
@@ -1426,7 +1428,10 @@ def test_all_six_employee_lanes_are_visible_and_seventh_stays_queued(tmp_path, m
 
     def fake_dispatch(event):
         started.append(event["event_id"])
-        release.wait(2)
+        # Claiming six file-backed lanes can exceed two seconds on a busy
+        # Windows DEV workstation. Keep every claimed worker behind the test
+        # barrier until the activity snapshot is taken.
+        release.wait(10)
         return {"ok": True}
 
     monkeypatch.setattr(vitek, "_dispatch_event", fake_dispatch)

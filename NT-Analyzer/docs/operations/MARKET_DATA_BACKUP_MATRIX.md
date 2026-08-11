@@ -1,8 +1,10 @@
-# Market-data backup matrix (2026-07-16)
+# Market-data runtime and backup matrix
 
-Status: **PRODUCTION BLOCKED** — no independent live backup is connected.
+Status on 2026-08-11: **Development baseline AVAILABLE; final design/UI acceptance pending.**
 
-Do **not** claim “four backups work” until each row is CONNECTED and Scenario C passes with that provider.
+TopstepX is the primary independent read-only source for chart history and realtime data. A fresh NinjaTrader Connector remains the next runtime source and the execution path. Other credentialed live providers may participate only when their entitlement and parity gates pass. Cache is history/offline continuity and is never labelled live.
+
+Production/Canary promotion remains a separate owner gate. This Development statement does not claim a Production deployment or licensed-backup acceptance.
 
 ## Capability vocabulary
 
@@ -10,36 +12,36 @@ Do **not** claim “four backups work” until each row is CONNECTED and Scenari
 
 `runtime_state`: `DISABLED` | `CONNECTING` | `LIVE` | `DEGRADED` | `STALE` | `OFFLINE` | `AUTH_FAILED` | `ENTITLEMENT_MISSING` | `RATE_LIMITED` | `ERROR`
 
+## Current runtime order
+
+1. TopstepX / ProjectX Gateway — primary independent read-only chart history and realtime.
+2. Fresh NinjaTrader Connector — chart fallback when its heartbeat is current; the execution authority remains NinjaTrader.
+3. Other explicitly configured, credentialed live adapters that passed their safety and parity gates.
+4. Canonical cache — honest history/offline continuity with `live=false`.
+
 ## Matrix
 
-| Role | Provider | implementation_state | runtime_state | Credentials | Entitlement | Coverage | Live/Delayed | Trades | Bid/Ask | Depth | Historical | Reconnect | Replay | Licensing / cost (est.) | Blockers |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Primary | NinjaTrader Bridge IPC | ADAPTER_READY | OFFLINE when NT stopped; LIVE when HB fresh | Local Bridge DLL | NT data feed | Futures via NT | Live (when NT on) | Yes | Via NT | Limited | Via NT history | Bridge reconnect | No | NT license | DLL must stay deployed; NT process required |
-| Independent live A | Databento Live | ADAPTER_READY (`market_data_live_adapters.DatabentoLiveAdapter` + supervisor) | ENTITLEMENT_MISSING until key | `NTA_DATABENTO_API_KEY` | GLBX.MDP3 live | CME micros exact (`MNQU6`…) | Live | Yes | via tbbo | Optional | hist + 24h replay | Required | Yes | Commercial Databento | **No API key / pip databento**; auto-failover blocked until shadow parity |
-| Independent live B | CME WebSocket API | NOT_IMPLEMENTED → interface scaffold only | DISABLED | CME credentials | CME MDP / WebSocket entitlement | CME | Live | Required | Required | Optional | Separate | Required | Required | CME commercial | Adapter, auth, symbol map, fixtures missing |
-| Independent live C | dxFeed **or** Rithmic **or** CQG | NOT_IMPLEMENTED | DISABLED | Vendor credentials | Vendor entitlement | Vendor coverage | Live | Required | Required | Optional | Vendor-dependent | Required | Required | Vendor commercial | Choose one; full adapter + fixtures missing |
-| Emergency offline | PostgreSQL + Redis canonical bars | Foundation / dual-write design | Not default production path | Local/ops | N/A | Cached series only | **Not live** | Cached | Cached | No | Yes | N/A | Cache replay | Ops infra | Must never be labeled LIVE |
-| Delayed only | Yahoo Chart | ADAPTER_READY | STALE when used | None (public) | None | Root futures proxies | **DELAYED_OR_UNVERIFIED** | Approx | Estimated | No | Limited | N/A | No | Public ToS | **Never** automatic production live failover |
-| Test only | RecordedProvider | TESTED_WITH_RECORDED_DATA | DISABLED | Fixture files | N/A | Fixture symbols | Not live | Replay | Replay | No | Yes | N/A | Yes | N/A | No `REALTIME_PRODUCTION` |
-| Test only | FaultInjectionProvider | TESTED_WITH_RECORDED_DATA | DISABLED | N/A | N/A | Wrapped stream | Not live | Chaos | Chaos | No | Via inner | N/A | Yes | N/A | No `REALTIME_PRODUCTION` |
+| Role | Provider | implementation_state | Development runtime | Coverage | History/realtime | Trading authority | Automatic chart eligibility | Important boundary |
+|---|---|---|---|---|---|---|---|---|
+| Primary read-only charts | TopstepX / ProjectX Gateway | CONNECTED | LIVE when the authenticated shared adapter is healthy | Entitled futures contracts | History + realtime | No order routing through the chart data path | Yes, first | One process-level authenticated adapter fans out to UI clients; consumer count must not create extra loginKey or SignalR sessions |
+| Runtime fallback + execution | NinjaTrader Bridge IPC | ADAPTER_READY | LIVE only while the Connector heartbeat is fresh; OFFLINE when NinjaTrader is stopped | Futures available through NinjaTrader | History + realtime when connected | **Yes** | Yes, after TopstepX | Stale heartbeat is never treated as live |
+| Independent live backup | Databento Live | ADAPTER_READY | ENTITLEMENT_MISSING until configured | Exact entitled CME instruments | Live + historical/replay | No | Only after key, entitlement and shadow-parity PASS | No credentials or entitlement are committed to Git |
+| Candidate backup | CME WebSocket API | NOT_IMPLEMENTED | DISABLED | CME | Vendor-dependent | No | No | Adapter, auth, symbol map and fixtures are not complete |
+| Candidate backup | dxFeed, Rithmic or CQG | NOT_IMPLEMENTED | DISABLED | Vendor-dependent | Vendor-dependent | No | No | Provider selection and implementation are still required |
+| Offline continuity | Canonical bar cache | ADAPTER_READY | OFFLINE/cache | Previously received series | Historical only | No | No live eligibility | Must report `live=false`; never masquerades as realtime |
+| Delayed only | Yahoo Chart | ADAPTER_READY | DELAYED_OR_UNVERIFIED | Root-future proxies | Limited/delayed | No | **No** | Never an automatic live-production failover |
+| Tests only | RecordedProvider / FaultInjectionProvider | TESTED_WITH_RECORDED_DATA | DISABLED | Fixtures | Replay/chaos | No | **No** | Never `REALTIME_PRODUCTION` |
 
-## Current automatic failover eligibility
+## Correct offline mode
 
-| Provider | Eligible for automatic production live failover? |
-|---|---|
-| NinjaTrader | Primary only |
-| Databento | Only after key + entitlement + shadow parity PASS |
-| CME / dxFeed / Rithmic / CQG | No — not connected |
-| Yahoo | **No** |
-| Recorded / FaultInjection | **No** |
-| PG/Redis cache | **No** (OFFLINE history only) |
+If TopstepX is unavailable, NinjaTrader is off, and no eligible credentialed live backup is healthy:
 
-## Correct offline mode (no external live provider)
+1. Declare live sources unavailable promptly.
+2. Do not call delayed HTTP providers per chart panel.
+3. Serve the last valid canonical bars when available.
+4. Mark the payload `status=offline`, `live=false`, `strategy_blocked`, `execution_blocked` as applicable.
+5. Show the global/per-chart offline state instead of a false live price.
 
-When NinjaTrader is off and Databento is not configured:
-
-1. Declare primary OFFLINE quickly (heartbeat / process check).
-2. Do **not** call Yahoo (or any delayed HTTP) per chart panel.
-3. Serve last valid bars from runtime/historical cache immediately.
-4. Mark payload `status=offline`, `live=false`, `strategy_blocked`, `execution_blocked`.
-5. UI: global OFFLINE banner + per-chart OFFLINE + muted price marker.
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Reconciled the operational matrix with the accepted TopstepX-first Development runtime; no provider or chart implementation was changed.
+-->

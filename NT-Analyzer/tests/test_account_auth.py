@@ -277,6 +277,42 @@ def test_server_requires_session_and_csrf_even_on_localhost(auth_store, monkeypa
         srv.shutdown(); srv.server_close()
 
 
+def test_development_localhost_stale_cookie_falls_back_to_owner(auth_store, monkeypatch) -> None:
+    monkeypatch.setenv("NTA_APP_ENV", "development")
+    monkeypatch.setenv("NTA_TELEGRAM_CHAT_ID", "999")
+    monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    account_auth.set_auth_required(True)
+    account_auth._write_doc({
+        "version": 1,
+        "users": [{
+            "user_id": 999, "first_name": "Owner", "last_name": "One",
+            "email": "owner@example.com", "role": "owner",
+            "status": "active", "is_owner": True, "ux_mode": "professional",
+        }],
+        "challenges": [],
+        "sessions": [],
+    })
+    stale = "x" * 64
+    srv = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True); thread.start()
+    base = f"http://{srv.server_address[0]}:{srv.server_address[1]}"
+    try:
+        headers = {"Origin": base, "Cookie": f"{account_auth.SESSION_COOKIE}={stale}"}
+        req = urllib.request.Request(base + "/api/auth/status", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            status = json.loads(response.read().decode("utf-8"))
+        assert status["authenticated"] is True
+        assert status["source"] == "local"
+        assert status["is_owner"] is True
+        assert status["admin_capabilities"]["admin.view"] is True
+
+        req = urllib.request.Request(base + "/api/health", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            assert response.status == 200
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_server_rate_limits_authenticated_api_by_user_and_ip(auth_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv("NTA_TELEGRAM_CHAT_ID", "999")

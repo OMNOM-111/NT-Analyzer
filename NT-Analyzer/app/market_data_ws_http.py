@@ -102,6 +102,11 @@ class WsClient:
         self.handler = request_handler
         self.user_id = user_id
         self.subscriptions: Set[str] = set()  # exact_contract|tf
+        # Browser WebSocket subscriptions own a ref-counted upstream lease.  A
+        # large layout remains one browser connection and one shared ProjectX
+        # market socket, while closing/reconfiguring a chart releases its lease.
+        self.upstream_refs: Dict[str, Dict[str, str]] = {}
+        self.consumer_id = f"browser-ws:{id(self):x}"
         self.outbound: Deque[Dict[str, Any]] = deque()
         self.coalesce_slot: Dict[str, Dict[str, Any]] = {}
         self.alive = True
@@ -156,6 +161,7 @@ def register_client(client: WsClient) -> None:
 
 
 def unregister_client(client: WsClient) -> None:
+    _release_client_upstreams(client)
     with _LOCK:
         _CLIENTS.discard(client)
         _METRICS["clients"] = len(_CLIENTS)
@@ -278,12 +284,9 @@ def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
         contract = str(msg.get("exact_contract") or msg.get("instrument") or "").upper()
         timeframe = str(msg.get("timeframe") or "*").lower()
         if contract:
-            client.subscriptions.add(f"{contract}|{timeframe}")
-            try:
-                from .market_data_subscriptions import get_subscription_registry
-                get_subscription_registry().acquire("ninjatrader", contract, "trades")
-            except Exception:
-                pass
+            key = f"{contract}|{timeframe}"
+            client.subscriptions.add(key)
+            _acquire_client_upstream(client, contract, timeframe)
             client.outbound.append({
                 "type": "subscribe_ack",
                 "exact_contract": contract,
@@ -292,11 +295,66 @@ def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
     elif mtype == "unsubscribe":
         contract = str(msg.get("exact_contract") or msg.get("instrument") or "").upper()
         timeframe = str(msg.get("timeframe") or "*").lower()
-        client.subscriptions.discard(f"{contract}|{timeframe}")
-        try:
-            from .market_data_subscriptions import get_subscription_registry
-            get_subscription_registry().release("ninjatrader", contract, "trades")
-        except Exception:
-            pass
+        key = f"{contract}|{timeframe}"
+        client.subscriptions.discard(key)
+        _release_client_upstream(client, key)
     elif mtype == "ping":
         client.outbound.append({"type": "pong", "server_time_utc": _iso()})
+
+
+def _acquire_client_upstream(client: WsClient, contract: str, timeframe: str) -> None:
+    """Acquire one factual upstream lease; never open a provider per chart."""
+    key = f"{contract}|{timeframe}"
+    if key in client.upstream_refs:
+        return
+    # TopstepX owns independent read-only charts when configured.  Root symbols
+    # are intentionally deferred until HTTP contract resolution sends the exact
+    # expiry, avoiding a duplicate search/login burst during cold layout load.
+    try:
+        from .market_data_failover import TopstepXProvider
+        topstep = TopstepXProvider()
+        if topstep.configured():
+            consumer = f"{client.consumer_id}:{key}"
+            if topstep.acquire_chart_subscription(contract, timeframe, consumer):
+                client.upstream_refs[key] = {
+                    "provider": "topstepx", "contract": contract,
+                    "timeframe": timeframe, "consumer_id": consumer,
+                }
+            return
+    except Exception:
+        # The history route reports the provider failure/failover.  Do not use
+        # this browser-side lease helper to manufacture a second connection.
+        return
+    try:
+        from .market_data_subscriptions import get_subscription_registry
+        get_subscription_registry().acquire("ninjatrader", contract, "trades")
+        client.upstream_refs[key] = {
+            "provider": "ninjatrader", "contract": contract,
+            "timeframe": timeframe, "consumer_id": "",
+        }
+    except Exception:
+        pass
+
+
+def _release_client_upstream(client: WsClient, key: str) -> None:
+    ref = client.upstream_refs.pop(str(key), None)
+    if not ref:
+        return
+    provider = str(ref.get("provider") or "")
+    try:
+        if provider == "topstepx":
+            from .market_data_failover import TopstepXProvider
+            TopstepXProvider().release_chart_subscription(
+                str(ref.get("contract") or ""), str(ref.get("timeframe") or "1m"),
+                str(ref.get("consumer_id") or ""),
+            )
+        elif provider == "ninjatrader":
+            from .market_data_subscriptions import get_subscription_registry
+            get_subscription_registry().release("ninjatrader", str(ref.get("contract") or ""), "trades")
+    except Exception:
+        pass
+
+
+def _release_client_upstreams(client: WsClient) -> None:
+    for key in list(client.upstream_refs):
+        _release_client_upstream(client, key)

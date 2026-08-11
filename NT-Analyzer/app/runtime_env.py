@@ -190,15 +190,17 @@ def _normalize_timestamp(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def _local_git_state() -> Tuple[str, bool]:
+    def _git_stdout(*args: str) -> str:
+        """Read local Git metadata without letting a Windows codepage abort startup."""
+        result = subprocess.run(
+            list(args), cwd=_PROJECT_ROOT, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=5,
+        )
+        return str(result.stdout or "").strip()
+
     try:
-        revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=_PROJECT_ROOT, check=True,
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        dirty = bool(subprocess.run(
-            ["git", "status", "--porcelain"], cwd=_PROJECT_ROOT, check=True,
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip())
+        revision = _git_stdout("git", "rev-parse", "HEAD")
+        dirty = bool(_git_stdout("git", "status", "--porcelain"))
     except (OSError, subprocess.SubprocessError):
         return "", True
     return revision, dirty

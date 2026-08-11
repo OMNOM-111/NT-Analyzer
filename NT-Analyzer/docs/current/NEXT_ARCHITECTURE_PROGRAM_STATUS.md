@@ -1,60 +1,6 @@
 # Next Architecture Program Status
 
-История поправки: 2026-08-04T02:39:14Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11c — локальная Development использует каноническое хранилище и настоящий owner-профиль/workspace (robust owner resolution via account_auth.primary_owner, без пустого synthetic ws_local_owner); dev-only служебные аккаунты Claude/GPT с owner-правами к тому же workspace/данным, отдельным audit, localhost-only входом (невозможен в Canary/Production). Full regression 1184 passed / 31 skipped.
-
-История поправки: 2026-08-03T22:23:53Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11 closeout — PR #18, CI run 30857565524 (SUCCESS), merge commit 8b6a2643, clean-worktree verification (1175 passed / 31 skipped), удаление task branch. Phase 11 IMPLEMENTATION CLOSED / GIT CLOSEOUT COMPLETE.
-
-История поправки: 2026-08-03T22:02:42Z; внёс `GitHub Copilot (Claude Opus 4.8) через VS Code`; scope: Phase 11 — финальная интеграционная доводка и browser-QA: реализован модуль ревизий спецификаций (strategy.spec.manage, миграция 0011, doc_specs, API/UI, тесты), Account Security UI, русификация+группировка Admin Panel, восстановление переключателя старого интерфейса, починка иконок DEV/CANARY/BETA и CSP-ошибки, детерминированный governance-рендер, per-env cookie/LS namespaces, loopback-owner в локальном DEV, PostgreSQL-приёмочный kit (BLOCKED — external DB). Full regression 1175 passed / 31 skipped.
-
-История поправки: 2026-08-03T17:10:34Z; внёс `GitHub Copilot`; scope: Phase 10B closeout — записать PR #17, cross-platform CI run 30834935279, merge commit 753d2271, clean-checkout verification (1148 passed / 31 skipped) и удаление task branch. Phase 10 остаётся NOT fully closed (strategy-spec revision module NOT IMPLEMENTED).
-
-История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — фактический перенос документации (git mv + обновление ссылок), language policy, changelog, final requirements matrix, strategy-spec verification, version readiness. КОРРЕКЦИЯ: Phase 10 не объявляется полностью закрытой — модель workspace/strategy specification revision NOT IMPLEMENTED.
-
-История поправки: 2026-08-03T15:52:54Z; внёс `GitHub Copilot`; scope: Phase 10 closeout — записать PR #16, cross-platform CI run 30829268990, merge commit bd4fbc47 и удаление task branch (implementation closed, git closeout complete).
-
-История поправки: 2026-08-03T15:45:33Z; внёс `GitHub Copilot`; scope: Phase 10 — зафиксировать канонический docs-tree + migration map, ужесточение governance amendment workflow (owner / docs.manage_global на запись), strategy-override scope invariant и тесты.
-
-История поправки: 2026-08-03T15:12:00Z; внёс `GitHub Copilot`; scope: Phase 9 closeout — записать PR #15, cross-platform CI run 30825143931, merge commit 3a787c6a и удаление task branch (implementation closed, git closeout complete; external blue-green/Production deployment acceptance остаётся owner gate).
-
-История поправки: 2026-08-03T14:52:33Z; внёс `GitHub Copilot`; scope: Phase 9 — зафиксировать реализацию blue-green deployment tooling (fail-closed dry-run engine `app/blue_green.py`, migration 0010, Release Center integration, rehearsal API/UI, deploy templates и runbook; реальный blue-green deployment и exact-artifact Production promotion остаются owner gate).
-
-История поправки: 2026-08-03T13:37:51Z; внёс `GitHub Copilot`; scope: Phase 8 closeout — записать PR #14, cross-platform CI run 30807581743, merge commit 4efddb42 и удаление task branch (external Canary/Production acceptance остаётся owner gate).
-
-История поправки: 2026-08-03T06:58:46Z; внёс `GitHub Copilot`; scope: Phase 8 — зафиксировать реализацию Release Center (immutable-artifact promotion state machine, migration 0009, API, UI, dry-run adapter; external Canary/Production acceptance pending owner approval).
-
-История поправки: 2026-08-03T03:55:03Z; внёс `GitHub Copilot`; scope: Phase 7 closeout — записать PR #13, cross-platform CI run 30782625524, merge commit 5955f2e5 и удаление task branch (external Canary acceptance остаётся owner gate).
-
-История поправки: 2026-08-03T03:42:05Z; внёс `GitHub Copilot`; scope: Phase 7 — зафиксировать реализацию изолированного Canary-контура и Developer Preview / View-As (implementation complete, external Canary acceptance pending owner approval).
-
-История поправки: 2026-08-03T02:26:18Z; внёс `GitHub Copilot`; scope: Phase 6 closeout — записать PR #12, cross-platform CI run 30779156395, merge commit 93b1fced и удаление task branch.
-
-История поправки: 2026-08-03T02:19:36Z; внёс `GitHub Copilot`; scope: Phase 6 — зафиксировать agent allocation и durable shared-NinjaTrader resource lease/queue, migration 0008 и локальный verification evidence.
-
-История поправки: 2026-08-02T23:06:34Z; внёс `GitHub Copilot`; scope: Phase 5 closeout — записать PR #11, cross-platform CI run 30771449462, merge commit 1b4249cc и удаление task branch.
-
-История поправки: 2026-08-02T23:01:01Z; внёс `GitHub Copilot`; scope: Phase 5 — зафиксировать personal NinjaTrader security (Telegram + verified email factors, per-action step-up), migration 0007 и локальный verification evidence.
-
-История поправки: 2026-08-02T22:01:10Z; внёс `GitHub Copilot`; scope: Phase 4 closeout — записать PR #10, cross-platform CI run 30769037213, merge commit 4c60df6c и удаление task branch.
-
-История поправки: 2026-08-02T21:54:12Z; внёс `GitHub Copilot`; scope: Phase 4 — зафиксировать trusted-device registry, step-up challenges, migration 0006 и локальный verification evidence.
-
-История поправки: 2026-08-02T20:27:30Z; внёс `GitHub Copilot`; scope: Phase 3 closeout — записать PR #9, cross-platform CI, merge commit и удаление task branch.
-
-История поправки: 2026-08-02T20:22:26Z; внёс `GitHub Copilot`; scope: Phase 3 — закрыть UUID session/Mini App merge gap и обновить final validation evidence.
-
-История поправки: 2026-08-02T20:10:39Z; внёс `GitHub Copilot`; scope: Phase 3 — зафиксировать UUID identity implementation, local validation evidence и границу PostgreSQL acceptance.
-
-История поправки: 2026-08-02T03:17:45Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 closeout — записать PR, cross-platform CI, merge commit и удаление task branch.
-
-История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — зафиксировать capability-gated Admin Panel, изолированный Environment Switcher и локальный verification evidence.
-
-История поправки: 2026-08-02T02:17:26Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 1 closeout — зафиксировать PR, CI, merge commit, artifact evidence и удаление task branch.
-
-История поправки: 2026-08-02T01:55:27Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 1 — зафиксировать реализацию environment metadata, build identity, visual marking и evidence.
-
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — создать единый журнал выполнения Phase 0–10.
-
-Обновлено: 2026-08-03T17:10:34Z
+Канонический текущий статус программы StratForge AI. Здесь зафиксированы действующий baseline, завершённые этапы и открытые условия приёмки; история редакций доступна в журнале документов.
 
 ## Baseline
 
@@ -304,3 +250,7 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - CI [Actions run 30872561331](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30872561331) SUCCESS (Static gates, Tests ubuntu-latest, Tests windows-latest — PASS).
 - Clean-worktree verification (detach из origin, clean env): git status чист до и после; full regression 1184 passed / 31 skipped; compileall / node --check / static scan / git diff --check PASS.
 - **Phase 11c GIT CLOSEOUT COMPLETE.** `main`/Canary/Production/DNS/Cloudflare/secrets не затронуты.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
+-->

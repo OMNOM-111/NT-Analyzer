@@ -20,6 +20,17 @@ def isolated_voices(tmp_path, monkeypatch):
     return store, cache
 
 
+def speech_backend(api_key: str = "sk-test-key-1234567890") -> dict[str, str]:
+    return {
+        "api_key": api_key,
+        "provider": "openai",
+        "endpoint_url": agent_tts.OPENAI_SPEECH_URL,
+        "source": "test",
+        "agent_id": "",
+        "model": "",
+    }
+
+
 def test_normalize_and_default_voices_differ():
     assert agent_tts.normalize_agent_id("Марина") == "marina"
     assert agent_tts.normalize_agent_id("accountant") == "marina"
@@ -76,7 +87,7 @@ def test_preset_apply_and_catalog():
 
 
 def test_cache_key_includes_profile_fields(isolated_voices, monkeypatch):
-    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    monkeypatch.setattr(agent_tts, "resolve_speech_backend", lambda profile=None: speech_backend())
     calls = {"n": 0}
 
     def fake_speech(**kwargs: Any) -> bytes:
@@ -101,7 +112,7 @@ def test_cache_key_includes_profile_fields(isolated_voices, monkeypatch):
 
 
 def test_synthesize_falls_back_without_api_key(isolated_voices, monkeypatch):
-    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "")
+    monkeypatch.setattr(agent_tts, "resolve_speech_backend", lambda profile=None: {})
     result = agent_tts.synthesize("Привет, это тест озвучки.", agent_id="tolik")
     assert result["fallback"] == "browser"
     assert result["agent_id"] == "tolik"
@@ -109,8 +120,38 @@ def test_synthesize_falls_back_without_api_key(isolated_voices, monkeypatch):
     assert "audio" not in result
 
 
+def test_resolve_backend_uses_disabled_azure_speech_agent(monkeypatch):
+    from app.ai_lab import agent_registry
+
+    monkeypatch.delenv(agent_tts.KEY_ENV, raising=False)
+    monkeypatch.setattr(agent_tts.local_secrets, "apply", lambda: False)
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: [{
+        "id": "AGT-TTS",
+        "provider": "azure_foundry",
+        "enabled": False,
+        "model": "gpt-4o-mini-tts",
+        "base_url": (
+            "https://example.openai.azure.com/openai/deployments/"
+            "gpt-4o-mini-tts/audio/speech?api-version=2025-03-01-preview"
+        ),
+    }])
+    monkeypatch.setattr(
+        agent_registry, "get_api_key",
+        lambda agent_id: "az-test-key-1234567890" if agent_id == "AGT-TTS" else "",
+    )
+
+    backend = agent_tts.resolve_speech_backend({"tts_model": "gpt-4o-mini-tts"})
+
+    assert backend["provider"] == "azure_foundry"
+    assert backend["source"] == "agent_registry:azure_speech"
+    assert backend["agent_id"] == "AGT-TTS"
+    assert backend["api_key"] == "az-test-key-1234567890"
+    assert "/audio/speech" in backend["endpoint_url"]
+    assert "api-version=2025-03-01-preview" in backend["endpoint_url"]
+
+
 def test_provider_error_falls_back_quietly(isolated_voices, monkeypatch):
-    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    monkeypatch.setattr(agent_tts, "resolve_speech_backend", lambda profile=None: speech_backend())
 
     def boom(**kwargs: Any) -> bytes:
         raise agent_tts.AgentTtsError("HTTP 500")
@@ -128,7 +169,7 @@ def test_production_tts_is_budgeted_and_cache_is_workspace_scoped(
 
     monkeypatch.setattr(runtime_env, "is_production", lambda: True)
     monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
-    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    monkeypatch.setattr(agent_tts, "resolve_speech_backend", lambda profile=None: speech_backend())
     provider_calls = []
     reservations = []
     records = []
@@ -174,7 +215,7 @@ def test_production_tts_budget_denial_blocks_before_provider(
 
     monkeypatch.setattr(runtime_env, "is_production", lambda: True)
     monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
-    monkeypatch.setattr(agent_tts, "resolve_api_key", lambda: "sk-test-key-1234567890")
+    monkeypatch.setattr(agent_tts, "resolve_speech_backend", lambda profile=None: speech_backend())
     provider_calls = []
     records = []
     monkeypatch.setattr(

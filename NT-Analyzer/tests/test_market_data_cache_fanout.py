@@ -84,6 +84,41 @@ def test_ws_accept_key_stable() -> None:
     assert market_data_ws_http.accept_key(key) == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 
 
+def test_browser_ws_topstep_subscription_is_refcounted_per_client(monkeypatch) -> None:
+    """A browser chart lease must not create a separate ProjectX session/socket."""
+    from app import market_data_failover
+
+    class FakeTopstep:
+        acquired = []
+        released = []
+
+        def configured(self):
+            return True
+
+        def acquire_chart_subscription(self, contract, timeframe, consumer):
+            self.__class__.acquired.append((contract, timeframe, consumer))
+            return True
+
+        def release_chart_subscription(self, contract, timeframe, consumer):
+            self.__class__.released.append((contract, timeframe, consumer))
+            return True
+
+    monkeypatch.setattr(market_data_failover, "TopstepXProvider", FakeTopstep)
+    client = market_data_ws_http.WsClient(request_handler=None)
+    market_data_ws_http._on_client_message(client, {
+        "type": "subscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    # Browser reconnect/resend for the same window joins the existing lease.
+    market_data_ws_http._on_client_message(client, {
+        "type": "subscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    assert len(FakeTopstep.acquired) == 1
+    market_data_ws_http._on_client_message(client, {
+        "type": "unsubscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    assert len(FakeTopstep.released) == 1
+
+
 def test_data_platform_memory_default() -> None:
     data_platform.reset_platform_for_tests()
     plat = data_platform.get_platform()

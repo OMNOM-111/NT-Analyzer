@@ -144,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260812-phase12-owner1"}, versions
+    assert set(versions.values()) == {"20260811-doc-closeout1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -751,7 +751,7 @@ def test_ai_model_telemetry_records_usage_and_aggregates(tmp_path, monkeypatch):
     assert result["roles"][0]["role"] == "coder"
 
 
-def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
+def test_documents_page_has_privileged_compact_revision_journal_and_law_anchors():
     html = (AURORA / "documents.html").read_text(encoding="utf-8")
     js = (AURORA / "assets" / "pages" / "documents.js").read_text(encoding="utf-8")
     theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
@@ -761,7 +761,13 @@ def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
     assert "parseLawIds" in js
     assert "doc-law-anchor" in js
     assert "data-amendment-no" in js
-    assert "API.http.governanceHistory" in js
+    assert "API.http.governanceRevisions" in js
+    assert "Редакция №" in js
+    assert "Было:" in js and "Стало:" in js
+    assert "Подробнее" in js
+    assert "edit-actor" not in html
+    assert "saveDocument(current.id, { content, reason })" in js
+    assert "Object.values(me.admin_capabilities).some(Boolean)" not in js
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
 
@@ -782,6 +788,30 @@ def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
     js = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
     assert "!drawing.alertId || alertIds.has(drawing.alertId)" in js
     assert "if (changed || removed)" in js
+
+
+def test_desktop_root_contracts_auto_roll_but_fixed_contracts_do_not():
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    assert "m.config.contract_mode !== 'fixed'" in js
+    assert "if (model.config.contract_mode === 'fixed') continue;" in js
+    assert "config.contract_mode === 'auto' ? (config.root || config.instrument)" in js
+    assert "source.name || 'NO DATA'" in js
+    assert "age > 8" not in js
+    assert "provider freshness limit" in js
+    assert "rec.loadQueued" in js
+    assert "loadWindowData(rec);" in js
+    assert "rec.chart.appendBar(liveBar)" in js
+    assert "rec.chart.setLivePriceEnabled(true)" in js
+    assert "mergeFormingLiveBar" in js
+    assert "rec.liveBarAt" in js
+
+
+def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
+    js = (AURORA / "assets" / "chart-engine.js").read_text(encoding="utf-8")
+
+    assert "nextClose > previousClose ? 1 : -1" in js
+    assert "this.livePriceDirection === 0" in js
+    assert "this.livePriceDirection > 0" in js
 
 
 def test_command_language_covers_every_desktop_instrument():

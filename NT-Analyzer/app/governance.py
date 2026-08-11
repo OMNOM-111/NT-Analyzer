@@ -8,6 +8,7 @@ the rendered Markdown lives under docs/governance/.
 from __future__ import annotations
 
 import copy
+import difflib
 import hashlib
 import json
 import os
@@ -21,6 +22,24 @@ from . import runtime_env
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
 PROJECT_OWNER = "Черевко Дмитро"
+INTERNAL_AMENDMENT_RE = re.compile(
+    r"\n?<!--\s*STRATFORGE_INTERNAL_AMENDMENT\b.*?-->",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+# This is an API boundary, not just a navigation preference. Documents absent
+# from this set remain available to owner/docs administrators but cannot be
+# enumerated or fetched by an ordinary account through /api/governance/*.
+PUBLIC_DOCUMENT_IDS = frozenset({
+    "project-overview", "charter", "laws", "local-ai-laws", "sync-map",
+    "legacy-rules", "legacy-registry", "legacy-hub-deploy", "legacy-family-plan",
+    "risk-profile", "ai-lab-run-controls", "ai-lab-quality",
+    "ai-lab-cloud-agents", "ai-lab-competitive-feedback",
+    "ai-staff-index", "ai-staff-vitek", "ai-staff-chief", "ai-staff-dialogue",
+    "ai-staff-marina", "ai-staff-tolik", "ai-staff-nikita", "ai-staff-ivan",
+    "ai-staff-recovery", "north-star-2026",
+    *(f"legal-{number:02d}" for number in range(9)),
+})
 
 
 def _now_iso() -> str:
@@ -130,6 +149,59 @@ def _preview_text(value: str, limit: int = 220) -> str:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _semantic_change_text(before: str, after: str) -> tuple[str, str]:
+    """Return the first meaningful removed/added line for the compact journal."""
+    before_lines = str(before or "").splitlines()
+    after_lines = str(after or "").splitlines()
+    matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
+    removed: List[str] = []
+    added: List[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in {"delete", "replace"}:
+            removed.extend(line.strip() for line in before_lines[i1:i2] if line.strip())
+        if tag in {"insert", "replace"}:
+            added.extend(line.strip() for line in after_lines[j1:j2] if line.strip())
+        if removed and added:
+            break
+    return _preview_text(removed[0] if removed else "", 120), _preview_text(added[0] if added else "", 120)
+
+
+def _line_diff(before: str, after: str, *, max_rows: int = 400) -> List[Dict[str, str]]:
+    """Line-level diff for the revision journal (removed=red, added=green)."""
+    before_lines = str(before or "").splitlines()
+    after_lines = str(after or "").splitlines()
+    matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
+    rows: List[Dict[str, str]] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            segment = before_lines[i1:i2]
+            if len(segment) > 6:
+                for text in segment[:3]:
+                    rows.append({"op": "ctx", "text": text})
+                rows.append({"op": "ctx", "text": "…"})
+                for text in segment[-3:]:
+                    rows.append({"op": "ctx", "text": text})
+            else:
+                rows.extend({"op": "ctx", "text": text} for text in segment)
+        elif tag == "delete":
+            rows.extend({"op": "del", "text": text} for text in before_lines[i1:i2])
+        elif tag == "insert":
+            rows.extend({"op": "add", "text": text} for text in after_lines[j1:j2])
+        elif tag == "replace":
+            rows.extend({"op": "del", "text": text} for text in before_lines[i1:i2])
+            rows.extend({"op": "add", "text": text} for text in after_lines[j1:j2])
+        if len(rows) >= max_rows:
+            rows = rows[:max_rows]
+            rows.append({"op": "ctx", "text": "… (diff обрезан)"})
+            break
+    return rows
+
+
+def _short_version_id(*parts: Any) -> str:
+    seed = "|".join(str(p or "") for p in parts)
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
 
 
 DEFAULT_LAWS: List[Dict[str, Any]] = [
@@ -667,6 +739,7 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "category": "governance",
             "path": "docs/governance/OVERVIEW.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "governance-readme",
@@ -683,6 +756,7 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "category": "governance",
             "path": "docs/governance/CHARTER.md",
             "editable_kind": "markdown",
+            "audience": "user",
         },
         {
             "id": "roles",
@@ -725,6 +799,7 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "category": "governance",
             "path": "docs/governance/SYNC_MAP.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "legacy-rules",
@@ -763,40 +838,45 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "title": "risk-profile",
             "label": "Technical risk profile contract",
             "category": "technical",
-            "path": "docs/risk-profile.md",
+            "path": "docs/strategies/risk-profile.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "ai-lab-run-controls",
             "title": "AI_STRATEGY_LAB_RUN_CONTROLS",
             "label": "AI Lab run controls",
             "category": "technical",
-            "path": "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+            "path": "docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "ai-lab-quality",
             "title": "AI_STRATEGY_LAB_QUALITY",
             "label": "AI Lab quality pipeline",
             "category": "technical",
-            "path": "docs/AI_STRATEGY_LAB_QUALITY.md",
+            "path": "docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "ai-lab-cloud-agents",
             "title": "AI_LAB_CLOUD_AGENTS",
             "label": "AI Lab cloud agents, roles and budget",
             "category": "technical",
-            "path": "docs/AI_LAB_CLOUD_AGENTS.md",
+            "path": "docs/agents/AI_LAB_CLOUD_AGENTS.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "ai-lab-competitive-feedback",
             "title": "AI_LAB_COMPETITIVE_FEEDBACK",
             "label": "AI Lab competitive feedback contract",
             "category": "technical",
-            "path": "docs/AI_LAB_COMPETITIVE_FEEDBACK.md",
+            "path": "docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md",
             "editable_kind": "none",
+            "audience": "user",
         },
         {
             "id": "ai-lab-system-coder",
@@ -806,21 +886,79 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "path": "ai_lab/prompts/system_coder.txt",
             "editable_kind": "none",
         },
+        {
+            "id": "legal-00", "title": "Ключевые юридические положения",
+            "label": "Проект · краткое резюме перед регистрацией",
+            "category": "legal", "path": "docs/legal/00_KEY_LEGAL_POINTS.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+            "created_at_utc": "2026-08-10T20:49:49Z",
+            "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+            "created_author_kind": "ai", "created_initiator": PROJECT_OWNER,
+            "created_reason": "Создан проект пользовательского юридического пакета.",
+        },
+        {
+            "id": "legal-01", "title": "Пользовательское соглашение (ToS + EULA)",
+            "label": "Проект · главный договор пользователя",
+            "category": "legal", "path": "docs/legal/01_TERMS_OF_SERVICE_EULA.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-02", "title": "Политика конфиденциальности",
+            "label": "Проект · обработка данных",
+            "category": "legal", "path": "docs/legal/02_PRIVACY_POLICY.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-03", "title": "Раскрытие торговых и авто-рисков",
+            "label": "Проект · market / software / AI / automation риски",
+            "category": "legal", "path": "docs/legal/03_TRADING_AUTOMATION_RISK_DISCLOSURE.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-04", "title": "Сторонние интеграции и market data",
+            "label": "Проект · NinjaTrader, TopstepX, Telegram, Google",
+            "category": "legal", "path": "docs/legal/04_THIRD_PARTY_INTEGRATIONS_AND_MARKET_DATA.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-05", "title": "Раскрытие ИИ и обработки данных",
+            "label": "Проект · что передаётся AI-провайдерам",
+            "category": "legal", "path": "docs/legal/05_AI_DISCLOSURE_AND_DATA_PROCESSING.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-06", "title": "Согласие на автоматизацию / live",
+            "label": "Проект · отдельные согласия и активация",
+            "category": "legal", "path": "docs/legal/06_AUTOMATION_LIVE_TRADING_ACTIVATION_CONSENT.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-07", "title": "Электронный акцепт и согласия",
+            "label": "Проект · clickwrap, версии, отзыв",
+            "category": "legal", "path": "docs/legal/07_CONSENT_AND_ELECTRONIC_ACCEPTANCE_POLICY.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
+        {
+            "id": "legal-08", "title": "Cookies и региональные приложения",
+            "label": "Проект · Cookie/Analytics + California/EU",
+            "category": "legal", "path": "docs/legal/08_COOKIE_ANALYTICS_AND_REGIONAL_ADDENDA.md",
+            "editable_kind": "none", "audience": "user", "draft": True,
+        },
     ],
 }
 
 
-CHARTER_DEFAULT = """# CHARTER
+CHARTER_DEFAULT = """# CHARTER — О StratForge AI
 
-Дата актуализации: 2026-06-27
+Дата актуализации: 2026-08-10
 
 ## Цель
 
-NT-Analyzer существует для разработки, проверки и сопровождения внутридневных NinjaTrader-стратегий по одному общему рабочему контракту: одна система правил, один источник истины по backtest, одна понятная карта ролей.
+StratForge AI — торгово-аналитическая платформа для анализа рынков и стратегий: realtime-графики и market data из нескольких источников, NinjaTrader через StratForge Connector, AI-агенты, бэктестинг, управление стратегиями и учебная торговля. Aurora — веб-интерфейс; `NT-Analyzer` — техническое имя репозитория.
 
 ## Границы продукта
 
-- Источник истины по историческим результатам: `NinjaTrader -> NT-Analyzer bridge`.
+- Источник истины по историческим результатам: `NinjaTrader -> StratForge Connector`.
 - Проект работает в режиме `local-first`: код, документы, research-артефакты и AI Lab живут локально в репозитории.
 - AI Lab — отдельная sandbox-ветвь для исследовательской генерации; production-код и paper/live процессы не пишутся туда автоматически.
 
@@ -1007,6 +1145,12 @@ def _normalize_documents_registry(data: Dict[str, Any]) -> Dict[str, Any]:
         merged = copy.deepcopy(row)
         if key in existing:
             merged.update(existing[key])
+        if key.startswith("legal-"):
+            merged.setdefault("created_at_utc", "2026-08-10T20:49:49Z")
+            merged.setdefault("created_author", "GitHub Copilot (Claude Opus 4.8) через VS Code")
+            merged.setdefault("created_author_kind", "ai")
+            merged.setdefault("created_initiator", PROJECT_OWNER)
+            merged.setdefault("created_reason", "Создан проект пользовательского юридического пакета.")
         normalized.append(merged)
         seen.add(key)
     for row in docs:
@@ -1028,6 +1172,7 @@ def _normalize_history_entry(raw: Dict[str, Any], fallback_no: int) -> Dict[str,
         for item in raw_changes:
             if not isinstance(item, dict):
                 continue
+            diff_rows = item.get("diff")
             changes.append({
                 "field": str(item.get("field") or ""),
                 "label": str(item.get("label") or item.get("field") or "Изменение"),
@@ -1037,6 +1182,10 @@ def _normalize_history_entry(raw: Dict[str, Any], fallback_no: int) -> Dict[str,
                 "after_text": str(item.get("after_text") or ""),
                 "before_hash": str(item.get("before_hash") or ""),
                 "after_hash": str(item.get("after_hash") or ""),
+                "diff": [
+                    {"op": str(row.get("op") or "ctx"), "text": str(row.get("text") or "")}
+                    for row in diff_rows if isinstance(row, dict)
+                ] if isinstance(diff_rows, list) else [],
             })
     if not changes:
         reason = str(raw.get("reason") or "").strip()
@@ -1050,16 +1199,24 @@ def _normalize_history_entry(raw: Dict[str, Any], fallback_no: int) -> Dict[str,
                 "after_text": reason,
                 "before_hash": "",
                 "after_hash": "",
+                "diff": [],
             })
     document_ids = [
         str(item).strip()
         for item in (raw.get("document_ids") or [])
         if str(item).strip()
     ] if isinstance(raw.get("document_ids"), list) else []
+    actor = str(raw.get("actor") or "system")
+    author = str(raw.get("author") or actor)
     return {
         "amendment_no": int(raw.get("amendment_no") or fallback_no),
         "ts_utc": str(raw.get("ts_utc") or _now_iso()),
-        "actor": str(raw.get("actor") or "system"),
+        "actor": actor,
+        "author": author,
+        "author_id": str(raw.get("author_id") or ""),
+        "author_kind": str(raw.get("author_kind") or "human"),
+        "initiator": str(raw.get("initiator") or "").strip(),
+        "version_id": str(raw.get("version_id") or ""),
         "reason": str(raw.get("reason") or "").strip(),
         "entity_type": str(raw.get("entity_type") or "note"),
         "entity_id": str(raw.get("entity_id") or ""),
@@ -1108,6 +1265,11 @@ def _append_change_log_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     payload["amendment_no"] = int(payload.get("amendment_no") or _next_amendment_no())
     payload["ts_utc"] = str(payload.get("ts_utc") or _now_iso())
     payload["actor"] = str(payload.get("actor") or "system")
+    payload["author"] = str(payload.get("author") or payload["actor"])
+    if not payload.get("version_id"):
+        payload["version_id"] = _short_version_id(
+            payload.get("entity_id"), payload["amendment_no"], payload["ts_utc"],
+        )
     with change_log_path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
     return _normalize_history_entry(payload, int(payload["amendment_no"]))
@@ -1145,6 +1307,20 @@ def _history_line(entry: Dict[str, Any]) -> str:
     )
 
 
+def _internal_amendment_comment() -> str:
+    """Hidden provenance for generated Markdown; UI history remains the display."""
+    latest = read_change_log(limit=1)
+    if not latest:
+        return ""
+    entry = latest[0]
+    text = " | ".join((
+        str(entry.get("ts_utc") or ""),
+        str(entry.get("actor") or "system"),
+        str(entry.get("reason") or "generated governance render"),
+    )).replace("--", "—")
+    return f"<!-- STRATFORGE_INTERNAL_AMENDMENT\n{text}\n-->"
+
+
 def _governance_updated_at() -> str:
     """Deterministic "last updated" stamp for generated governance documents.
 
@@ -1172,7 +1348,7 @@ def _render_laws_markdown(audience: str) -> str:
     ]
     title = "LAWS" if audience == "project" else "LOCAL_AI_LAWS"
     subtitle = (
-        "Короткий свод проектных законов для людей, Codex, Cursor, Claude и Gemini."
+        "Короткий свод действующих проектных законов для пользователей и системы StratForge AI."
         if audience == "project"
         else "Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox."
     )
@@ -1204,6 +1380,9 @@ def _render_laws_markdown(audience: str) -> str:
         if review:
             parts.append(f"- Ручная проверка: {', '.join(review)}")
         parts.append("")
+    internal = _internal_amendment_comment()
+    if internal:
+        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
@@ -1232,11 +1411,14 @@ def _render_sync_map_markdown() -> str:
                 "",
             ]
         )
+    internal = _internal_amendment_comment()
+    if internal:
+        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
 def _render_readme_markdown() -> str:
-    return """# Governance Docs
+    body = """# Governance Docs
 
 Эта папка — канонический слой governance для проекта.
 
@@ -1245,7 +1427,7 @@ def _render_readme_markdown() -> str:
 - `ROLES.md` — роли владельца и всех ИИ-каналов.
 - `LAWS.md` — общие законы проекта.
 - `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ и cloud fallback / AI Lab.
-- `../AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
+- `../agents/AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
 
@@ -1255,6 +1437,8 @@ def _render_readme_markdown() -> str:
 - `data/governance/documents.json`
 - `data/governance/change_log.jsonl` — последовательный журнал поправок с датой, временем, автором и before/after.
 """
+    internal = _internal_amendment_comment()
+    return body.rstrip() + (f"\n\n{internal}" if internal else "") + "\n"
 
 
 def _render_overview_markdown() -> str:
@@ -1294,12 +1478,13 @@ def _render_overview_markdown() -> str:
         "",
         f"Дата актуализации: {updated_at}",
         "",
-        "## Короткое предисловие",
+        "## О StratForge AI",
         "",
-        "Это первый и главный документ. Здесь держится самая сжатая, но актуальная версия правил проекта.",
-        "Последняя рабочая версия всегда определяется текущими законами и этим файлом, а история всех поправок остаётся в журнале.",
+        "StratForge AI — торгово-аналитическая платформа для анализа рынков и стратегий: realtime-графики и market data из нескольких источников, NinjaTrader через StratForge Connector, AI-агенты, бэктестинг, управление стратегиями и учебная торговля. Полная цель, назначение и текущие возможности — в `CHARTER`.",
         "",
-        "## Самое главное сейчас",
+        "Этот документ (`OVERVIEW`) — сжатая рабочая сводка правил и параметров для разработчиков стратегий. Актуальная версия всегда определяется текущими законами и журналом поправок.",
+        "",
+        "## Рабочие параметры стратегий (для разработчиков)",
         "",
         f"- StartingCapital по умолчанию: `{capital:.2f} USD`",
         f"- Max drawdown gate: `{max_dd_pct:.0f}%` от зафиксированного capital",
@@ -1326,15 +1511,11 @@ def _render_overview_markdown() -> str:
         "- Удобнее всего работать через `/ui/docs.html`: там читать, редактировать и смотреть журнал.",
         "- Законы менять в `LAWS` или `LOCAL_AI_LAWS`.",
         "- После изменения смотреть `SYNC_MAP`, блок `Где проверять после изменения` и журнал поправок.",
-        "- Если нужна первичная проверка по файлам, открыть `docs/governance/OVERVIEW.md`, `docs/governance/LAWS.md` и `data/governance/change_log.jsonl`.",
-        "",
-        "## Последние поправки",
-        "",
+        "- Подробный журнал редакций и технические сведения доступны владельцу/разработчику справа во вкладке «Документы» через «Подробнее».",
     ]
-    if history:
-        parts.extend(_history_line(entry) for entry in history)
-    else:
-        parts.append("- Пока без зафиксированных поправок.")
+    internal = _internal_amendment_comment()
+    if internal:
+        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
@@ -1446,15 +1627,17 @@ def _law_change_rows(before: Dict[str, Any], after: Dict[str, Any]) -> List[Dict
 
 
 def _document_change_row(before: str, after: str) -> List[Dict[str, Any]]:
+    before_text, after_text = _semantic_change_text(before, after)
     return [{
         "field": "content",
         "label": "Содержимое",
         "before": None,
         "after": None,
-        "before_text": _preview_text(before),
-        "after_text": _preview_text(after),
+        "before_text": before_text,
+        "after_text": after_text,
         "before_hash": _hash_text(before),
         "after_hash": _hash_text(after),
+        "diff": _line_diff(before, after),
     }]
 
 
@@ -1472,6 +1655,22 @@ def list_documents() -> List[Dict[str, Any]]:
         item["exists"] = path.is_file()
         result.append(item)
     return result
+
+
+def document_is_public(item: Dict[str, Any]) -> bool:
+    return str(item.get("audience") or "").lower() == "user" or str(item.get("id") or "") in PUBLIC_DOCUMENT_IDS
+
+
+def public_document(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove owner/dev paths and internal amendment comments from a document."""
+    allowed = {
+        "id", "title", "label", "category", "editable_kind", "audience",
+        "draft", "exists", "content", "laws",
+    }
+    out = {key: copy.deepcopy(value) for key, value in item.items() if key in allowed}
+    if "content" in out:
+        out["content"] = INTERNAL_AMENDMENT_RE.sub("", str(out.get("content") or "")).rstrip() + "\n"
+    return out
 
 
 def _document_by_id(doc_id: str) -> Optional[Dict[str, Any]]:
@@ -1517,7 +1716,16 @@ def read_document(doc_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def update_law(law_id: str, payload: Dict[str, Any], *, actor: str = "ui") -> Dict[str, Any]:
+def update_law(
+    law_id: str,
+    payload: Dict[str, Any],
+    *,
+    actor: str = "ui",
+    author: str = "",
+    author_id: str = "",
+    author_kind: str = "human",
+    initiator: str = "",
+) -> Dict[str, Any]:
     laws_doc = load_laws()
     for law in laws_doc.get("laws", []):
         if not isinstance(law, dict) or law.get("id") != law_id:
@@ -1543,6 +1751,10 @@ def update_law(law_id: str, payload: Dict[str, Any], *, actor: str = "ui") -> Di
         _save_laws(laws_doc)
         history_entry = _append_change_log_entry({
             "actor": actor or "ui",
+            "author": str(author or actor or "ui"),
+            "author_id": str(author_id or "").strip(),
+            "author_kind": str(author_kind or "human").strip() or "human",
+            "initiator": str(initiator or "").strip(),
             "reason": str(payload.get("reason") or "").strip() or f"update law {law_id}",
             "entity_type": "law",
             "entity_id": law_id,
@@ -1563,7 +1775,17 @@ def update_law(law_id: str, payload: Dict[str, Any], *, actor: str = "ui") -> Di
     raise KeyError(f"law not found: {law_id}")
 
 
-def update_markdown_document(doc_id: str, content: str, *, actor: str = "ui", reason: str = "") -> Dict[str, Any]:
+def update_markdown_document(
+    doc_id: str,
+    content: str,
+    *,
+    actor: str = "ui",
+    reason: str = "",
+    author: str = "",
+    author_id: str = "",
+    author_kind: str = "human",
+    initiator: str = "",
+) -> Dict[str, Any]:
     item = _document_by_id(doc_id)
     if not item:
         raise KeyError(f"document not found: {doc_id}")
@@ -1577,8 +1799,13 @@ def update_markdown_document(doc_id: str, content: str, *, actor: str = "ui", re
     if before == content:
         return {"ok": True, "changed": False, "document": read_document(doc_id), "history_entry": None}
     _write_text(path, content)
+    author_display = str(author or actor or "ui").strip()
     history_entry = _append_change_log_entry({
-        "actor": actor or "ui",
+        "actor": str(actor or author_display or "ui"),
+        "author": author_display,
+        "author_id": str(author_id or "").strip(),
+        "author_kind": str(author_kind or "human").strip() or "human",
+        "initiator": str(initiator or "").strip(),
         "reason": str(reason or "").strip() or f"update document {doc_id}",
         "entity_type": "document",
         "entity_id": doc_id,
@@ -1589,6 +1816,54 @@ def update_markdown_document(doc_id: str, content: str, *, actor: str = "ui", re
     })
     _render_generated_docs()
     return {"ok": True, "changed": True, "document": read_document(doc_id), "history_entry": history_entry}
+
+
+def document_revisions(doc_id: str) -> Dict[str, Any]:
+    """Per-document, immutable revision journal.
+
+    Revision №1 is the synthetic "документ создан" baseline; every real edit in
+    the append-only change log becomes the next revision in chronological order.
+    """
+    item = _document_by_id(doc_id)
+    title = str((item or {}).get("label") or (item or {}).get("title") or doc_id)
+    owner = str(PROJECT_OWNER)
+    entries = read_change_log(0, document_id=doc_id)
+    entries = sorted(
+        entries,
+        key=lambda row: (int(row.get("amendment_no") or 0), str(row.get("ts_utc") or "")),
+    )
+    created_author = str((item or {}).get("created_author") or "StratForge AI · импорт документа")
+    revisions: List[Dict[str, Any]] = [{
+        "revision_no": 1,
+        "version_id": "created",
+        "ts_utc": str((item or {}).get("created_at_utc") or ""),
+        "kind": "created",
+        "title": "документ создан",
+        "author": created_author,
+        "author_id": str((item or {}).get("created_author_id") or ""),
+        "author_kind": str((item or {}).get("created_author_kind") or "system"),
+        "initiator": str((item or {}).get("created_initiator") or ""),
+        "reason": str((item or {}).get("created_reason") or "Существующий документ импортирован в журнал редакций; исходный автор не был зафиксирован."),
+        "path": str((item or {}).get("rel_path") or (item or {}).get("path") or ""),
+        "changes": [],
+    }]
+    for index, entry in enumerate(entries, start=2):
+        revisions.append({
+            "revision_no": index,
+            "version_id": str(entry.get("version_id") or ""),
+            "ts_utc": str(entry.get("ts_utc") or ""),
+            "kind": "edited",
+            "title": str(entry.get("reason") or "правка"),
+            "author": str(entry.get("author") or entry.get("actor") or ""),
+            "author_id": str(entry.get("author_id") or ""),
+            "author_kind": str(entry.get("author_kind") or "human"),
+            "initiator": str(entry.get("initiator") or ""),
+            "reason": str(entry.get("reason") or ""),
+            "path": str(entry.get("path") or ""),
+            "amendment_no": int(entry.get("amendment_no") or 0),
+            "changes": entry.get("changes") or [],
+        })
+    return {"document_id": doc_id, "title": title, "owner": owner, "revisions": revisions}
 
 
 def runtime_defaults() -> Dict[str, Any]:

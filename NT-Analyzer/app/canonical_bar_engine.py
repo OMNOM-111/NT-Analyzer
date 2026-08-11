@@ -89,7 +89,10 @@ class CanonicalBarEngine:
         session_template: str = "cme_equity_fut_rth_eth",
     ) -> None:
         self.exact_contract = str(exact_contract or "").strip().upper()
-        tfs = list(timeframes or ("1s", "1m", "5m"))
+        # These are the desktop's live chart intervals.  Historical data may
+        # support more intervals, but a requested 1h chart must not receive a
+        # WebSocket stream that only builds 1s/1m/5m buckets.
+        tfs = list(timeframes or ("1s", "1m", "5m", "1h"))
         self.timeframes = [tf for tf in tfs if tf in TIMEFRAME_SECONDS]
         if not self.timeframes:
             self.timeframes = ["1m"]

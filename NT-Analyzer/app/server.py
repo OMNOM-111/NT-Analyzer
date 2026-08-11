@@ -551,6 +551,12 @@ def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
 
 def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
     source = payload.get("source") if isinstance(payload.get("source"), dict) else None
+    # A TopstepX chart owns an independent Market SignalR feed.  Refresh its
+    # actual transport state on every cache read; never reinterpret the age of
+    # its final 5m/1h bar as a dead market or tie it to NinjaTrader's process.
+    if source and str(source.get("provider") or "").lower() == "topstepx":
+        payload = market_data_failover.TopstepXProvider().refresh_payload_liveness(payload)
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else None
     if source:
         updated = source.get("updated_at_utc")
         if updated:
@@ -561,6 +567,11 @@ def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
                 source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
             except ValueError:
                 pass
+    if source and str(source.get("provider") or "").lower() == "topstepx":
+        # The independent provider has already produced a factual LIVE /
+        # CONNECTING / STALE state above.  Do not turn it OFFLINE solely because
+        # a local NinjaTrader bridge is intentionally disabled.
+        return payload
     # Remote Connector data has its own authenticated source clock and must
     # not be invalidated by the API host's local NinjaTrader process state.
     # Re-evaluate its bounded freshness window on every cache read so a payload
@@ -654,7 +665,8 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          alerts_index: Optional[Dict[str, Any]] = None,
                          max_points: int = 0,
                          workspace_id: str = "",
-                         connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         connector_snapshot_index: Optional[Dict[str, Any]] = None,
+                         from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
     with market_data_baseline.StageTimer(
         "backend.bars_payload_ms",
         instrument=str(instrument or ""),
@@ -663,7 +675,7 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         return _market_bars_payload_impl(
             instrument, timeframe, limit, range_days, from_date, to_date,
             register, snapshot_index, alerts_index, max_points, workspace_id,
-            connector_snapshot_index,
+            connector_snapshot_index, from_ts, to_ts,
         )
 
 
@@ -674,10 +686,31 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                               alerts_index: Optional[Dict[str, Any]] = None,
                               max_points: int = 0,
                               workspace_id: str = "",
-                              connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              connector_snapshot_index: Optional[Dict[str, Any]] = None,
+                              from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
     production_mode = bool(runtime_env.is_production() and runtime_env.environment_explicit())
+    # Timestamp ranges power viewport history paging. Date-only parameters are
+    # preserved for existing callers; explicit timestamps win and remain UTC.
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    try:
+        if from_ts:
+            start = datetime.fromisoformat(str(from_ts).replace("Z", "+00:00"))
+            start = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        elif from_date:
+            start = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+        if to_ts:
+            end = datetime.fromisoformat(str(to_ts).replace("Z", "+00:00"))
+            end = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
+        elif to_date:
+            end = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc) + timedelta(days=1)
+    except ValueError:
+        start = end = None
+    if not start and range_days > 0:
+        end = end or datetime.now(timezone.utc)
+        start = end - timedelta(days=range_days)
     remote_bars = None
     if workspace_id:
         remote_bars = market_data_ingestion.workspace_series(
@@ -687,7 +720,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     # Local request files are Development transport only.  Production charts
     # consume authenticated Connector HTTPS snapshots and never use localhost
     # IPC/shared request files as an implicit cross-host control plane.
-    if register and not production_mode:
+    if register and not production_mode and not market_data_failover.TopstepXProvider().configured():
         market_data.register_request(resolved_instrument, timeframe, limit, range_days, from_date, to_date)
     try:
         max_points = max(0, min(20000, int(max_points or 0)))
@@ -701,6 +734,8 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         int(range_days or 0),
         str(from_date or "")[:10],
         str(to_date or "")[:10],
+        str(from_ts or "")[:40],
+        str(to_ts or "")[:40],
         max_points,
         "" if production_mode else market_data.snapshot_source_signature(),
         "" if production_mode else market_data.alerts_source_signature(),
@@ -712,6 +747,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     if cached is not None:
         market_data_baseline.mark("backend.bars_payload_cache_hit")
         return cached
+    primary_healthy = False
     if remote_bars:
         primary_healthy = bool(
             remote_bars.get("live")
@@ -743,73 +779,84 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             backup_providers_available=0,
         )
     else:
-        if snapshot_index is not None:
-            runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
-        else:
-            with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
-                runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
-        heartbeat = ops_runtime.read_heartbeat()
-        primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
-        with market_data_baseline.StageTimer("backend.failover_ms"):
-            unified = market_data_failover.apply_failover(
-                runtime_bars, resolved_instrument, timeframe, limit,
-                primary_healthy=primary_healthy,
-            )
-        if unified and (unified.get("bars") or unified.get("status") == "offline"):
-            out = unified
-            # Prefer richer historical artifact when offline payload has no bars yet.
-            if not out.get("bars") and not primary_healthy:
-                hist = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-                if hist.get("bars"):
-                    out = market_data_failover.mark_offline_snapshot(
-                        hist,
-                        reason="ninjatrader_offline_historical_cache",
-                        last_source="historical_artifact",
-                        backup_providers_available=0,
-                    )
-        else:
-            out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-            out["status"] = "historical_fallback" if out.get("bars") else (
-                (runtime_bars or {}).get("status") or "waiting")
-            out["bridge"] = {
-                "status": (runtime_bars or {}).get("status") or "subscription_requested",
-                "error": (runtime_bars or {}).get("error") or "",
-            }
-            if not out.get("bars"):
-                detail = out["bridge"]["error"]
-                out["note"] = detail or (
-                    "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
-                    "актуальность контракта и установленную версию Bridge.")
-            out["gap_recovery"] = {
-                "attempted": True,
-                "provider_available": False,
-                "mode": "historical_artifact" if out.get("bars") else "unavailable",
-                "recovered_bars": 0,
-                "unresolved_gaps": 0,
-                "primary_healthy": primary_healthy,
-            }
-            if not primary_healthy:
-                out = market_data_failover.mark_offline_snapshot(
-                    out,
-                    reason="ninjatrader_offline_historical_fallback",
-                    last_source="historical_artifact" if out.get("bars") else "none",
-                    backup_providers_available=0,
+        # Development chart data uses one normalized source per response:
+        # TopstepX (preferred read-only feed) -> fresh NinjaTrader Connector ->
+        # another configured credentialed provider.  Do not merge OHLCV bars
+        # from different feeds: contract/session differences must remain visible
+        # as an explicit source transition, not a synthetic composite series.
+        topstep = market_data_failover.TopstepXProvider()
+        # A root request is the explicit Desktop auto-roll contract: let
+        # ProjectX select its currently active contract instead of pinning it
+        # to a stale bridge/catalog expiry. Exact ``ROOT MM-YY`` input remains
+        # exact for a user-selected historical chart.
+        topstep_request = requested_instrument if " " not in requested_instrument else resolved_instrument
+        out = market_data_failover.fetch_external_series(
+            topstep_request, timeframe, limit, providers=[topstep],
+            start_time=start, end_time=end,
+        ) if topstep.configured() else None
+        if out is not None and " " not in requested_instrument:
+            resolved_instrument = str(out.get("instrument") or resolved_instrument).upper()
+        if out is None:
+            if snapshot_index is not None:
+                runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
+            else:
+                with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
+                    runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
+            heartbeat = ops_runtime.read_heartbeat()
+            primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+            runtime_fresh = bool((runtime_bars or {}).get("bars") and market_data_failover.series_freshness(
+                (runtime_bars or {}).get("bars") or [], timeframe,
+            ).get("fresh"))
+            if primary_healthy and runtime_fresh:
+                out = runtime_bars
+                freshness = market_data_failover.series_freshness(out.get("bars") or [], timeframe)
+                source = dict(out.get("source") or {})
+                selection = market_data_failover.remember_selected_provider(
+                    "ninjatrader", resolved_instrument, timeframe, reason="topstepx_unavailable",
                 )
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
-    try:
-        if from_date:
-            start = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
-        if to_date:
-            end = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc) + timedelta(days=1)
-    except ValueError:
-        start = end = None
-    if not start and range_days > 0:
-        latest_times = [_market_bar_time(row) for row in (out.get("bars") or []) if isinstance(row, dict)]
-        latest = max((dt for dt in latest_times if dt is not None), default=datetime.now(timezone.utc))
-        start = latest - timedelta(days=range_days)
-        if out.get("status") == "historical_fallback":
-            end = latest + timedelta(seconds=1)
+                source.update({"provider": "ninjatrader", "active": "ninjatrader",
+                               "fresh": True, "runtime_state": "LIVE",
+                               "failover_from": selection.get("transition_from") or "topstepx",
+                               "failover_status": "switched"})
+                out.update({"source": source, "freshness": freshness, "live": True,
+                            "status": "failover_live", "market_data_available": True,
+                            "price_marker_live": True,
+                            "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable."})
+            else:
+                backups = [provider for provider in market_data_failover.live_backup_candidates()
+                           if provider.name != "topstepx"]
+                out = market_data_failover.fetch_external_series(
+                    resolved_instrument, timeframe, limit, providers=backups,
+                    start_time=start, end_time=end,
+                ) if backups else None
+                if out is not None:
+                    source = out.setdefault("source", {})
+                    source.setdefault("failover_from", "topstepx")
+                    source["failover_status"] = "switched"
+                    out.setdefault("gap_recovery", {
+                        "attempted": True, "provider_available": True,
+                        "mode": "independent_failover", "provider": source.get("provider") or "",
+                        "recovered_bars": 0, "unresolved_gaps": 0,
+                        "primary_healthy": False,
+                    })
+                else:
+                    with market_data_baseline.StageTimer("backend.failover_ms"):
+                        unified = market_data_failover.apply_failover(
+                            runtime_bars, resolved_instrument, timeframe, limit,
+                            primary_healthy=False, providers=[],
+                        )
+                    if unified and (unified.get("bars") or unified.get("status") == "offline"):
+                        out = unified
+                    else:
+                        out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+                        out["status"] = "historical_fallback" if out.get("bars") else ((runtime_bars or {}).get("status") or "waiting")
+                        out["bridge"] = {"status": (runtime_bars or {}).get("status") or "subscription_requested", "error": (runtime_bars or {}).get("error") or ""}
+                        if not out.get("bars"):
+                            detail = out["bridge"]["error"]
+                            out["note"] = detail or "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных."
+                        out["gap_recovery"] = {"attempted": True, "provider_available": False, "mode": "historical_artifact" if out.get("bars") else "unavailable", "recovered_bars": 0, "unresolved_gaps": 0, "primary_healthy": primary_healthy}
+                        if not primary_healthy:
+                            out = market_data_failover.mark_offline_snapshot(out, reason="all_live_providers_unavailable", last_source="historical_artifact" if out.get("bars") else "none", backup_providers_available=0)
     if start or end:
         out["bars"] = [row for row in (out.get("bars") or []) if isinstance(row, dict)
                        and (lambda dt: dt is not None and (start is None or dt >= start)
@@ -1542,6 +1589,25 @@ class Handler(BaseHTTPRequestHandler):
             "_owner_scope_id": owner_id,
         })
 
+    def _local_development_cookie_context(self) -> Optional[Dict[str, Any]]:
+        """Resolve localhost Development access without letting stale cookies lock out owner."""
+        cookie = self._cookie_value(runtime_env.session_cookie_name())
+        if not cookie:
+            return self._local_owner_context()
+        try:
+            session = account_auth.authenticate_session(cookie)
+        except account_auth.AccountAuthError:
+            session = None
+        if session:
+            if dev_service_accounts.available() and dev_service_accounts.is_service_uid(session.get("user_id")):
+                return self._dev_service_context(session)
+            # Keep real user sessions intact for local role/permission testing.
+            return None
+        if account_auth.session_auth_failure(cookie):
+            return None
+        self._clear_session_cookie()
+        return self._local_owner_context()
+
     def _dev_service_context(self, session: Dict[str, Any]) -> Dict[str, Any]:
         """Context for a localhost Claude/GPT service session.
 
@@ -1779,33 +1845,15 @@ class Handler(BaseHTTPRequestHandler):
         # checked-out Development build this path is the default (no flag needed);
         # Canary/Production can never reach it (see _local_owner_bypass_allowed).
         if self._local_owner_bypass_allowed():
-            # Localhost desktop convenience. Only when NO session cookie is
-            # present (a fresh desktop shell) do we open the canonical owner
-            # without a Telegram login. A Claude/GPT service session gets its
-            # audited owner-scoped context; any other session — valid, revoked
-            # or otherwise — falls through to the normal authenticated path so
-            # its real role/permissions or error are enforced, never masked as
-            # the owner.
-            cookie = self._cookie_value(runtime_env.session_cookie_name())
-            if not cookie:
-                try:
-                    self._remote_context = self._local_owner_context()
-                except account_auth.AccountAuthError as exc:
-                    self._err(exc.status, str(exc)); return False
+            try:
+                local_context = self._local_development_cookie_context()
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc)); return False
+            if local_context is not None:
+                self._remote_context = local_context
                 return True
-            if dev_service_accounts.available():
-                try:
-                    session = account_auth.authenticate_session(cookie)
-                except account_auth.AccountAuthError:
-                    session = None
-                if session and dev_service_accounts.is_service_uid(session.get("user_id")):
-                    try:
-                        self._remote_context = self._dev_service_context(session)
-                    except account_auth.AccountAuthError as exc:
-                        self._err(exc.status, str(exc)); return False
-                    return True
-            # A regular localhost session (valid or rejected): fall through to
-            # the normal authenticated-session path below.
+            # A valid regular localhost session falls through to the normal
+            # authenticated-session path so role/permission tests stay real.
         tunnel_ip, forwarded_ip = self._request_ips()
         init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
         if init_data:
@@ -2145,22 +2193,7 @@ class Handler(BaseHTTPRequestHandler):
             # login. Remote requests never take this path — they are always
             # authenticated below so Mini App visitors can't inherit owner.
             if self._local_owner_bypass_allowed():
-                # Open the owner ONLY when no session cookie is present (a fresh
-                # desktop shell). A Claude/GPT service session gets its context;
-                # any other session — valid, revoked or otherwise — falls through
-                # to the normal status path so its real status/error is surfaced
-                # (matches _authorize_api).
-                cookie = self._cookie_value(runtime_env.session_cookie_name())
-                context = None
-                if not cookie:
-                    context = self._local_owner_context()
-                elif dev_service_accounts.available():
-                    try:
-                        session = account_auth.authenticate_session(cookie)
-                    except account_auth.AccountAuthError:
-                        session = None
-                    if session and dev_service_accounts.is_service_uid(session.get("user_id")):
-                        context = self._dev_service_context(session)
+                context = self._local_development_cookie_context()
                 if context is not None:
                     self._json(HTTPStatus.OK, self._augment_permissions(context, {
                         "authenticated": True, "source": context.get("source"),
@@ -2171,8 +2204,8 @@ class Handler(BaseHTTPRequestHandler):
                         "active_membership": context.get("active_membership") or {},
                     }))
                     return
-                # A regular localhost session (valid or rejected): fall through
-                # to the normal status path below.
+                # A valid regular localhost session falls through to the normal
+                # status path below so its actual role/permissions are surfaced.
             owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
             account_auth.ensure_owner(owner_id)
             init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
@@ -4876,23 +4909,44 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path == "/api/governance/summary":
-            self._json(HTTPStatus.OK, {
-                "owner": governance.PROJECT_OWNER,
-                "documents": governance.list_documents(),
+            privileged = self._has_governance_read_privilege()
+            documents = governance.list_documents()
+            if not privileged:
+                documents = [
+                    governance.public_document(row)
+                    for row in documents if governance.document_is_public(row)
+                ]
+            payload = {
+                "documents": documents,
                 "runtime_defaults": governance.runtime_defaults(),
-                "consistency": governance.consistency_report(),
-                "history": governance.read_change_log(80),
-            })
+                "history": governance.read_change_log(80) if privileged else [],
+            }
+            if privileged:
+                payload.update({
+                    "owner": governance.PROJECT_OWNER,
+                    "consistency": governance.consistency_report(),
+                })
+            self._json(HTTPStatus.OK, payload)
             return True
 
         if path == "/api/governance/documents":
-            self._json(HTTPStatus.OK, {
-                "owner": governance.PROJECT_OWNER,
-                "documents": governance.list_documents(),
-            })
+            privileged = self._has_governance_read_privilege()
+            documents = governance.list_documents()
+            if not privileged:
+                documents = [
+                    governance.public_document(row)
+                    for row in documents if governance.document_is_public(row)
+                ]
+            payload = {"documents": documents}
+            if privileged:
+                payload["owner"] = governance.PROJECT_OWNER
+            self._json(HTTPStatus.OK, payload)
             return True
 
         if path == "/api/governance/history":
+            if not self._has_governance_read_privilege():
+                self._json(HTTPStatus.OK, {"entries": []})
+                return True
             try:
                 limit = int((qs.get("limit") or ["80"])[0])
             except ValueError:
@@ -4904,7 +4958,20 @@ class Handler(BaseHTTPRequestHandler):
             })
             return True
 
+        if path == "/api/governance/document-revisions":
+            document_id = (qs.get("document_id") or [None])[0]
+            if not document_id:
+                self._err(HTTPStatus.BAD_REQUEST, "document_id required"); return True
+            if not self._has_governance_read_privilege():
+                self._json(HTTPStatus.OK, {"document_id": document_id, "revisions": []})
+                return True
+            self._json(HTTPStatus.OK, governance.document_revisions(document_id))
+            return True
+
         if path == "/api/governance/consistency":
+            if not self._has_governance_read_privilege():
+                self._err(HTTPStatus.FORBIDDEN, "governance diagnostics require docs privilege")
+                return True
             self._json(HTTPStatus.OK, governance.consistency_report())
             return True
 
@@ -4914,6 +4981,11 @@ class Handler(BaseHTTPRequestHandler):
             if not doc:
                 self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
                 return True
+            if not self._has_governance_read_privilege():
+                if not governance.document_is_public(doc):
+                    self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
+                    return True
+                doc = governance.public_document(doc)
             self._json(HTTPStatus.OK, doc)
             return True
 
@@ -5333,6 +5405,8 @@ class Handler(BaseHTTPRequestHandler):
                 max_points = 0
             from_date = (qs.get("from") or [""])[0]
             to_date = (qs.get("to") or [""])[0]
+            from_ts = (qs.get("from_ts") or [""])[0]
+            to_ts = (qs.get("to_ts") or [""])[0]
             if not instrument:
                 self._err(HTTPStatus.BAD_REQUEST, "instrument is required")
                 return True
@@ -5343,7 +5417,8 @@ class Handler(BaseHTTPRequestHandler):
                     int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
                 if effective_points > 10000:
-                    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+                    if (not (runtime_env.is_production() and runtime_env.environment_explicit())
+                            and not market_data_failover.TopstepXProvider().configured()):
                         market_data.register_request(
                             instrument, timeframe, limit, range_days, from_date, to_date,
                         )
@@ -5351,6 +5426,7 @@ class Handler(BaseHTTPRequestHandler):
                         "instrument": instrument, "timeframe": timeframe,
                         "limit": limit, "range_days": range_days,
                         "from": from_date, "to": to_date,
+                        "from_ts": from_ts, "to_ts": to_ts,
                         "max_points": max_points,
                     }], context)
                     if queued is None:
@@ -5361,6 +5437,7 @@ class Handler(BaseHTTPRequestHandler):
                         instrument, timeframe, limit, range_days, from_date, to_date,
                         max_points=max_points,
                         workspace_id=str(context.get("workspace_id") or ""),
+                        from_ts=from_ts, to_ts=to_ts,
                     )
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
@@ -6759,7 +6836,7 @@ class Handler(BaseHTTPRequestHandler):
                 production_mode = bool(
                     runtime_env.is_production() and runtime_env.environment_explicit()
                 )
-                if not production_mode:
+                if not production_mode and not market_data_failover.TopstepXProvider().configured():
                     market_data.register_requests(row for row in rows if isinstance(row, dict))
                 normalized_rows: list[Dict[str, Any]] = []
                 work_points = 0
@@ -6779,6 +6856,8 @@ class Handler(BaseHTTPRequestHandler):
                         "range_days": int(raw.get("range_days") or 0),
                         "from": str(raw.get("from") or ""),
                         "to": str(raw.get("to") or ""),
+                        "from_ts": str(raw.get("from_ts") or ""),
+                        "to_ts": str(raw.get("to_ts") or ""),
                         "max_points": max_value,
                     })
                 context = getattr(self, "_remote_context", None) or {}
@@ -6800,7 +6879,7 @@ class Handler(BaseHTTPRequestHandler):
                     market_data_ingestion.workspace_snapshot_index(workspace_id)
                     if production_mode and workspace_id else None
                 )
-                batch_cache: Dict[Tuple[str, str, int, int, str, str, int], Dict[str, Any]] = {}
+                batch_cache: Dict[Tuple[str, str, int, int, str, str, str, str, int], Dict[str, Any]] = {}
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
@@ -6811,6 +6890,8 @@ class Handler(BaseHTTPRequestHandler):
                         int(row.get("range_days") or 0),
                         str(row.get("from") or ""),
                         str(row.get("to") or ""),
+                        str(row.get("from_ts") or ""),
+                        str(row.get("to_ts") or ""),
                         int(row.get("max_points") or 0),
                     )
                     payload = batch_cache.get(req_key)
@@ -6818,8 +6899,9 @@ class Handler(BaseHTTPRequestHandler):
                         payload = _market_bars_payload(
                             req_key[0], req_key[1], req_key[2], req_key[3], req_key[4], req_key[5],
                             register=False, snapshot_index=snapshot_index, alerts_index=alerts_index,
-                            max_points=req_key[6], workspace_id=workspace_id,
+                            max_points=req_key[8], workspace_id=workspace_id,
                             connector_snapshot_index=connector_snapshot_index,
+                            from_ts=req_key[6], to_ts=req_key[7],
                         )
                         batch_cache[req_key] = payload
                     result.append(payload)
@@ -7001,6 +7083,64 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
+    def _has_governance_read_privilege(self) -> bool:
+        """Journal / owner-metadata reads are limited to owner or docs admins."""
+        context = getattr(self, "_remote_context", None) or {}
+        if context.get("is_owner"):
+            return True
+        caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+        if isinstance(caps, dict) and (caps.get("docs.manage_global") or caps.get("docs.manage_workspace")):
+            return True
+        return False
+
+    def _governance_actor(self) -> Dict[str, str]:
+        """Derive the amendment author from the authenticated session.
+
+        A human editing through the app is always attributed to their own
+        account. A localhost AI/dev service identity is fixed by its authenticated
+        service account; neither author nor initiator is accepted from request data.
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        user = context.get("user") if isinstance(context.get("user"), dict) else {}
+        is_service = bool(
+            context.get("source") == "dev_service"
+            or context.get("service_actor")
+            or user.get("is_service_account")
+        )
+        if is_service:
+            service_actor = str(
+                context.get("service_actor")
+                or dev_service_accounts.actor_for_uid(context.get("user_id"))
+                or ""
+            )
+            spec = dev_service_accounts.SERVICE_ACCOUNTS.get(
+                service_actor, {}
+            )
+            agent = str(spec.get("label") or "AI · служебный (dev)")
+            return {
+                "actor": agent,
+                "author": agent,
+                "author_id": f"service:{service_actor}",
+                "author_kind": "ai",
+                "initiator": governance.PROJECT_OWNER,
+            }
+        name = " ".join(
+            str(part).strip()
+            for part in (user.get("first_name"), user.get("last_name"))
+            if str(part or "").strip()
+        ).strip()
+        display = name or str(user.get("username") or "").strip()
+        if not display:
+            display = governance.PROJECT_OWNER if context.get("is_owner") else f"user {context.get('user_id') or '—'}"
+        author_id = str(user.get("user_uuid") or context.get("user_uuid") or context.get("user_id") or "")
+        return {
+            "actor": display,
+            "author": display,
+            "author_id": author_id,
+            "author_kind": "human",
+            "initiator": "",
+        }
+
     def _require_governance_manage(self) -> bool:
         """Global governance mutations require owner or ``docs.manage_global``.
 
@@ -7032,11 +7172,16 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "governance":
             if parts[2] == "laws":
                 law_id = urllib.parse.unquote(parts[3])
+                identity = self._governance_actor()
                 try:
                     result = governance.update_law(
                         law_id,
                         body if isinstance(body, dict) else {},
-                        actor=str(body.get("actor") or "ui"),
+                        actor=identity["actor"],
+                        author=identity["author"],
+                        author_id=identity["author_id"],
+                        author_kind=identity["author_kind"],
+                        initiator=identity["initiator"],
                     )
                 except KeyError as e:
                     self._err(HTTPStatus.NOT_FOUND, str(e)); return
@@ -7048,12 +7193,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, result); return
             if parts[2] == "documents":
                 doc_id = urllib.parse.unquote(parts[3])
+                identity = self._governance_actor()
                 try:
                     result = governance.update_markdown_document(
                         doc_id,
                         str(body.get("content") or ""),
-                        actor=str(body.get("actor") or "ui"),
+                        actor=identity["actor"],
                         reason=str(body.get("reason") or ""),
+                        author=identity["author"],
+                        author_id=identity["author_id"],
+                        author_kind=identity["author_kind"],
+                        initiator=identity["initiator"],
                     )
                 except KeyError as e:
                     self._err(HTTPStatus.NOT_FOUND, str(e)); return

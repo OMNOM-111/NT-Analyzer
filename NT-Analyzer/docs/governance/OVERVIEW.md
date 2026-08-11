@@ -1,13 +1,14 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-02T03:17:45Z
+Дата актуализации: 2026-08-11T09:03:34Z
 
-## Короткое предисловие
+## О StratForge AI
 
-Это первый и главный документ. Здесь держится самая сжатая, но актуальная версия правил проекта.
-Последняя рабочая версия всегда определяется текущими законами и этим файлом, а история всех поправок остаётся в журнале.
+StratForge AI — торгово-аналитическая платформа для анализа рынков и стратегий: realtime-графики и market data из нескольких источников, NinjaTrader через StratForge Connector, AI-агенты, бэктестинг, управление стратегиями и учебная торговля. Полная цель, назначение и текущие возможности — в `CHARTER`.
 
-## Самое главное сейчас
+Этот документ (`OVERVIEW`) — сжатая рабочая сводка правил и параметров для разработчиков стратегий. Актуальная версия всегда определяется текущими законами и журналом поправок.
+
+## Рабочие параметры стратегий (для разработчиков)
 
 - StartingCapital по умолчанию: `2000.00 USD`
 - Max drawdown gate: `15%` от зафиксированного capital
@@ -34,12 +35,8 @@
 - Удобнее всего работать через `/ui/docs.html`: там читать, редактировать и смотреть журнал.
 - Законы менять в `LAWS` или `LOCAL_AI_LAWS`.
 - После изменения смотреть `SYNC_MAP`, блок `Где проверять после изменения` и журнал поправок.
-- Если нужна первичная проверка по файлам, открыть `docs/governance/OVERVIEW.md`, `docs/governance/LAWS.md` и `data/governance/change_log.jsonl`.
+- Подробный журнал редакций и технические сведения доступны владельцу/разработчику справа во вкладке «Документы» через «Подробнее».
 
-## Последние поправки
-
-- Поправка 10 · 2026-08-02T03:17:45Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `pending` -> `PR #8 merged at ca65be2e; task branch deleted`
-- Поправка 9 · 2026-08-02T03:06:47Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 2 Admin Panel: Administrative authorization: `owner-only controls mixed with product UI` -> `separate explicit expiring grants and server-side capability checks`; Personal UI: `system actions in three-dot menu and cabinet tabs` -> `personal menu/cabinet plus capability-gated Admin Panel`
-- Поправка 8 · 2026-08-02T02:17:26Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 closeout: Stage status: `IMPLEMENTATION COMPLETE; GIT CLOSEOUT PENDING` -> `STAGE CLOSED`; PR and merge: `PR pending` -> `PR #7 merged at f4bcb3fc; task branch deleted`
-- Поправка 7 · 2026-08-02T01:55:27Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 1 environment metadata: Environment и release metadata: `production|development; development|canary|stable; partial build identity` -> `development|canary|production; dev|beta|stable; complete build identity`; UI labels and icons: `DEV|CANARY|STABLE derived from channel` -> `DEV|CANARY|BETA derived from env/channel; stable Production unlabelled`
-- Поправка 6 · 2026-08-02T00:53:55Z · `GPT-5.5 через Codex по запросу owner` · Next Architecture Phase 0 ADR package: Принятые ADR: `audit recommendations only` -> `owner-approved ADR 0001-0007`; Журнал Phase 0-10: `absent` -> `docs/current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md`
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Записать фактическое финальное Development smoke-evidence принятого TopstepX market-data/chart baseline без изменения реализации.
+-->

@@ -1,7 +1,5 @@
 # Phase 9 — Blue-green Production deployment tooling — Implementation Evidence
 
-История поправки: 2026-08-03T14:52:33Z; внёс `GitHub Copilot`; scope: Phase 9 — зафиксировать реализацию blue-green deployment tooling (fail-closed dry-run engine, migration 0010, Release Center integration, rehearsal API/UI, deploy templates, runbook, тесты; реальный blue-green deployment и exact-artifact Production promotion остаются owner gate).
-
 **Status: Phase 9 — IMPLEMENTATION CLOSED; GIT CLOSEOUT COMPLETE; EXTERNAL BLUE-GREEN / PRODUCTION DEPLOYMENT ACCEPTANCE PENDING OWNER APPROVAL.**
 This is explicitly **NOT STAGE CLOSED**: no real Canary deployment, no real
 exact-artifact Production promotion and no real blue-green traffic switch were
@@ -231,3 +229,7 @@ are inert without an explicit real executor and operator action.
 - Merge commit: `3a787c6a`; task branch `phase/9-blue-green` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
 - Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 9 delivery.
 - Real blue-green/Production acceptance (a real separate Canary deployment and a real exact-artifact Production blue-green promotion against real infrastructure) remains an owner-gated external step; the stage is not STAGE CLOSED.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
+-->

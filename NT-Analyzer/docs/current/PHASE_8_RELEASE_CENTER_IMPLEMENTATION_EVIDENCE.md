@@ -1,7 +1,5 @@
 # Phase 8 — Release Center Implementation Evidence
 
-История поправки: 2026-08-03T06:58:46Z; внёс `GitHub Copilot`; scope: Phase 8 — зафиксировать реализацию Release Center (immutable-artifact promotion state machine, data model, API, UI, dry-run adapter, тесты, ограничения и внешние acceptance gates).
-
 **Status: Phase 8 — IMPLEMENTATION COMPLETE; REAL CANARY DEPLOYMENT / PRODUCTION PROMOTION ACCEPTANCE PENDING OWNER APPROVAL.**
 This is explicitly **NOT STAGE CLOSED**: no real Canary deployment and no
 exact-artifact Production promotion were executed against real infrastructure.
@@ -205,3 +203,7 @@ and its routes are inert unless the Release Center is used.
 - CI ([Actions run 30807581743](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30807581743)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
 - Merge commit: `4efddb42`; task branch `phase/8-release-center` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
 - Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 8 delivery.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
+-->
