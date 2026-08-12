@@ -52,6 +52,9 @@ _INCLUDED_FILES = (
     "docs/strategies/risk-profile.md",
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
+    "tools/canary_blue_green_promote.sh",
+    "tools/canary_isolation_provision.py",
+    "tools/canary_manifest_trust.py",
     "tools/release_static_scan.py",
     "tools/verify_server_release.py",
 )
@@ -111,6 +114,8 @@ def _selected_files(root: Path) -> list[Path]:
         "deploy/production/stratforge-telegram.service",
         "deploy/production/stratforge-operations.timer",
         "tools/production_preflight.py",
+        "tools/canary_blue_green_promote.sh",
+        "tools/canary_manifest_trust.py",
         "requirements.txt",
         "VERSION.json",
     }
