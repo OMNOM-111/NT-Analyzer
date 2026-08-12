@@ -83,16 +83,20 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   Production secrets отсутствуют.
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
 
-## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — code, artifact pending)
+## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — live)
 
-- Reproduced Production promote hang: Connector readiness loaded the full
-  `connectors` JSON (~19s); `curl --max-time 5` against `/api/health/ready`
-  stacked overlapping probes on the threaded API. `/live` stayed cheap.
-- Code fix: `DocumentRepository.ping()` (`SELECT 1`, no JSON); concurrent
-  probes with 2s timeout + single-flight cache; promote polls `/live` for the
-  new git SHA, then `/ready` inside one deadline. Environment Switcher default
-  origins. **Not yet the live artifact** — Canary acceptance of the new signed
-  build is required before Production promotion of that same directory.
+- Signed artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, manifest SHA256
+  `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive
+  SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`,
+  build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`. Canary first, then
+  the same directory promoted to Production (`previous` = `795db0c1`).
+- `/ready` Production 36ms / Canary 38ms; concurrent 8× does not stall the
+  threaded API. Promote `/live` then `/ready` finished in ~27s.
+- Environment Switcher: DEV current; CANARY/PROD open
+  `https://canary.stratforges.com` / `https://app.stratforges.com` in new tabs.
+- Telegram: Production available `@StratForgeAI_bot`; Canary PARTIAL
+  `disabled_pending_canary_bot_provisioning`. Google/email remain EXTERNAL
+  BLOCKED.
 
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1 auth/DEV fix)
 
