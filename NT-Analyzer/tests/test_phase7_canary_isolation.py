@@ -596,6 +596,8 @@ def test_canary_promotion_requires_lockdown_marker_and_full_topology():
     assert "required Canary Supervisor program(s) missing" in promote
     assert "canary-current must exist before blue-green promotion" in promote
     assert "missing_targets" in promote
+    assert "supervisorctl -c \"$conf\" reread" in promote
+    assert "supervisorctl -c \"$conf\" update" in promote
 
 
 def test_canary_connector_catalog_template_matches_strict_schema(monkeypatch, tmp_path):

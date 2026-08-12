@@ -202,6 +202,12 @@ install -o stratforge -g root -m 0600 "$backup/canary.env.after" "$canary_env"
 old_target="$(cat "$backup/canary-current.before")"
 ln -sfn "$RELEASE_DIR" /home/stratforge/canary-current.new
 mv -Tf /home/stratforge/canary-current.new /home/stratforge/canary-current
+
+# Pick up newly added/changed Canary Supervisor programs only after the
+# symlink points at the new release. The previous Canary release may not be
+# able to run split worker/operations programs at all.
+sudo -n supervisorctl -c "$conf" reread >/dev/null
+sudo -n supervisorctl -c "$conf" update >/dev/null
 sudo -n supervisorctl -c "$conf" restart "${restart_targets[@]}" >/dev/null
 
 ready=""
