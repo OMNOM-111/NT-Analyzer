@@ -52,6 +52,28 @@ _SHARED_PROVIDER_KEYS = (
 )
 
 
+def _quote_env_value(value: str) -> str:
+    """Single-quote a value for safe `set -a; . file; set +a` sourcing.
+
+    Without quoting, unquoted `&`, `?`, `;` etc. inside a DSN are
+    reinterpreted by the shell (e.g. `&` backgrounds the assignment),
+    silently truncating the value.
+    """
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _quote_env_lines(content: str) -> str:
+    out = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key, _, value = line.partition("=")
+        out.append(f"{key}={_quote_env_value(value)}")
+    return "\n".join(out) + "\n"
+
+
 def _read_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -273,7 +295,7 @@ def main() -> int:
         os.chmod(catalog_path, 0o600)
 
     dsn = provision_database(args)
-    content = build_canary_env(args, dsn)
+    content = _quote_env_lines(build_canary_env(args, dsn))
     tmp_path = env_path.with_suffix(".tmp")
     tmp_path.write_text(content, encoding="utf-8")
     os.chmod(tmp_path, 0o600)
