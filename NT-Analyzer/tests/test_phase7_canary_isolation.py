@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -711,6 +712,26 @@ def test_canary_privilege_lockdown_revokes_production_and_public(tmp_path):
     assert "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC" in sql
     assert "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO stratforge_canary_app" in sql
     assert "GRANT USAGE,SELECT ON SEQUENCES TO stratforge_canary_app" in sql
+
+
+def test_canary_lockdown_psql_script_is_readable_by_postgres_user(monkeypatch):
+    observed = {}
+
+    def fake_run(command, *, check, capture_output, text):
+        assert command[:4] == ["sudo", "-n", "-u", "postgres"]
+        script_path = Path(command[-1])
+        observed["mode"] = os.stat(script_path).st_mode & 0o777
+        observed["text"] = script_path.read_text(encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(canary_isolation_provision.subprocess, "run", fake_run)
+
+    canary_isolation_provision._run_psql_script(
+        "/tmp/postgresql", 5432, "stratforge_canary", "SELECT 1;",
+    )
+
+    assert observed["mode"] & 0o044
+    assert observed["text"] == "BEGIN;\nSELECT 1;\nCOMMIT;\n"
 
 
 def test_canary_lockdown_marker_is_secret_free_and_required_by_promotion(tmp_path):

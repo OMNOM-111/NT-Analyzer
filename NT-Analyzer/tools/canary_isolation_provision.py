@@ -166,6 +166,11 @@ def _run_psql_script(socket_dir: str, port: int, database: str, script: str) -> 
         handle.write("BEGIN;\n" + script.strip() + "\nCOMMIT;\n")
         script_path = handle.name
     try:
+        # The script is executed as the postgres OS user. The lockdown SQL
+        # contains only role/object names, never DSNs or passwords, so a
+        # short-lived world-readable temp file is safer than making the
+        # postgres user fail to read a 0600 file owned by the caller.
+        os.chmod(script_path, 0o644)
         subprocess.run(
             [
                 "sudo", "-n", "-u", "postgres", "psql",
