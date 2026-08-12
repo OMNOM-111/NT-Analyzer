@@ -326,7 +326,16 @@ def test_connector_grandfathers_unstamped_installation(monkeypatch, tmp_path):
 def test_canary_connector_repository_uses_server_storage_not_local_secure_store(monkeypatch, tmp_path):
     _canary_env(monkeypatch, tmp_path)
     monkeypatch.setattr(connector_protocol.secure_store, "available", lambda: False)
-    monkeypatch.setattr(storage_router, "read_document", lambda _name, default: default)
+    monkeypatch.setattr(
+        storage_router, "document_repository_readiness",
+        lambda _name: {"ok": True, "code": "ok"},
+    )
+    monkeypatch.setattr(
+        storage_router, "read_document",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("readiness must not load the connectors document")
+        ),
+    )
 
     assert connector_protocol.readiness_status() == {"ok": True, "code": "ok"}
 
@@ -570,6 +579,8 @@ def test_canary_env_declares_isolated_identity():
     assert "DEPLOYMENT_ENV=canary" in text
     assert "STRATFORGE_DEPLOYMENT_ROLE=api" in text
     assert "STRATFORGE_CANARY_DATA_ROOT=" in text
+    assert "STRATFORGE_CANARY_ORIGIN=https://canary.stratforges.com" in text
+    assert "STRATFORGE_PRODUCTION_ORIGIN=https://app.stratforges.com" in text
     assert "STRATFORGE_DATABASE_APP_ROLE=stratforge_canary_app" in text
     # Production reference identifiers must be present for the collision guard.
     assert "STRATFORGE_PRODUCTION_DATABASE_ID=" in text
@@ -606,6 +617,13 @@ def test_canary_promotion_requires_lockdown_marker_and_full_topology():
     assert "missing_targets" in promote
     assert "supervisorctl -c \"$conf\" reread" in promote
     assert "supervisorctl -c \"$conf\" update" in promote
+    assert "LIVE_URL" in promote
+    assert "new runtime identity was not observed on /live" in promote
+    assert "--max-time \"$LIVE_CURL_MAX_SEC\"" in promote
+    assert "--max-time \"$READY_CURL_MAX_SEC\"" in promote
+    assert '"status": "ready"' in promote
+    assert "Do not use curl -f" in promote
+    assert "--max-time 5" not in promote
 
 
 def test_canary_connector_catalog_template_matches_strict_schema(monkeypatch, tmp_path):

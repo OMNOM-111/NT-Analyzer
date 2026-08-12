@@ -10,7 +10,7 @@
 - Version at baseline: `0.9.0-dev.10`
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
 - Next version: `0.10.0-beta.1` (live Canary + Production as of 2026-08-12)
-- Integration branch: `release/0.10.0-next-architecture` (HEAD `795db0c110712814bda751b4c74457dece476822`, PR #26 still OPEN/DRAFT pending owner merge to `main`)
+- Integration branch: `release/0.10.0-next-architecture` (PR #26 OPEN/DRAFT pending owner merge to `main` after the `/ready` hang-fix artifact is Canary-accepted and promoted)
 - Production/Canary boundary: both live on the Supervisor host; Canary Telegram bot remains unprovisioned; Production Telegram is live; no live trading / real payments
 
 ## Сводка
@@ -28,7 +28,7 @@
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
 | 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. Strategy-spec closed in Phase 11 |
-| 12 | 0.10.0-beta.1 auth/DEV fix live on Canary+Production; **authenticated Production owner session still needs Telegram tap** | `release/0.10.0-next-architecture` | live `795db0c1` / `D1CB6FF4…`; PR #26 OPEN/DRAFT | Local DEV opens; Production Sign in/Register; Telegram `login/start` 200; Google/email EXTERNAL BLOCKED |
+| 12 | 0.10.0-beta.1 `/ready` hang-fix in flight; live still `795db0c1` until the new signed artifact is Canary-accepted then promoted | `release/0.10.0-next-architecture` | live `795db0c1` / `D1CB6FF4…`; PR #26 OPEN/DRAFT | Connector `/ready` ping + bounded promote `/live` then `/ready`; Environment Switcher default origins; Google/email EXTERNAL BLOCKED |
 
 ## Phase 0 evidence
 
@@ -257,9 +257,19 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - Current live artifact (immutable, Canary then exact-artifact Production, no Production rebuild): version `0.10.0-beta.1`, git `795db0c110712814bda751b4c74457dece476822`, build `sf-0.10.0-beta.1-795db0c11071-20260812T221054Z`, manifest SHA256 `D1CB6FF4A8BD5DAB0525BA8EFCD2F6DB29DC6C327534AB85AE1C8C6A76AA4E2E`, archive SHA256 `F7C45CB6A60F213FC503D993345EF55CF502D7C95F815BC744276BE3D2F8C90E`, signing fingerprint `SHA256:93f0831642bc403dcb780f96180d01a86a8c7adf1cbb0368a0aaa915441e6e64`, deployable `canary,production`. Previous live artifact `2f9409c4` / `FB302F80…` remains the one-step Production rollback target.
 - Canary `https://canary.stratforges.com`: READY on `.../releases/0.10.0-beta.1-795db0c1`; isolated DB/queue/storage unchanged; Telegram still unprovisioned (button disabled, `login/start` 503 «Telegram-бот не настроен», disclosed PARTIAL). Browser: `[CANARY]` + Sign in/Register, not the promo gate.
 - Production `https://app.stratforges.com`: same release directory `.../releases/0.10.0-beta.1-795db0c1`. Browser: `[BETA]` `795db0c` + Sign in/Register; `POST /api/auth/login/start` **200 created** (no `storage_constraint`); waiting UI «Подтвердите вход в Telegram». Expand migrations 0005–0011 already applied. Live trading and real payments remain false.
-- Host mechanism: Supervisor `canary-current` then `current`/`previous` symlink switch. Production `previous` → `0.10.0-beta.1-2f9409c4`. Note: `/api/health/ready` can stall the threaded API under probe load; light `/ui/` and `/api/auth/*` were used for post-promote verification.
+- Host mechanism: Supervisor `canary-current` then `current`/`previous` symlink switch. Production `previous` → `0.10.0-beta.1-2f9409c4`.
+- **`/ready` hang root cause (reproduced on live Production `795db0c1`):** `connector_protocol.readiness_status()` held the Connector lock and called `storage_router.read_document("connectors")`, which deserialized the full JSON document (~19s). Promote used `curl --max-time 5` against `/api/health/ready`; the handler does not write headers until every probe finishes, so each poll received 0 bytes while the previous probe was still running and stacked more inflight `/ready` work on `BoundedThreadingHTTPServer`. `/api/health/live` already includes deployment identity and stays cheap. Database/queue probes were fine (~50ms); this was not a stuck PostgreSQL session.
+- **Code fix (this branch, not yet the live artifact):** `DocumentRepository.ping()` does `SELECT 1` and never loads JSON; `/ready` runs control-plane probes concurrently with a 2s per-probe timeout, single-flight cache, and `probe_timeout` fail-closed. `tools/canary_blue_green_promote.sh` polls `/live` for the new git SHA first (3s/request), then `/ready` (8s/request) inside one overall deadline; rollback only if the new identity never appears or mandatory `/ready` never becomes `status=ready`. Environment Switcher uses default origins `http://127.0.0.1:8765`, `https://canary.stratforges.com`, `https://app.stratforges.com` when the dedicated env vars are unset. Local DEV still does not use Production PostgreSQL/sessions/Connector.
 - Isolation after promotion: Production cannot CONNECT to Canary DB and vice versa. No orders placed. Authenticated TopstepX chart smoke remains PARTIAL (Telegram login required; no session fabricated).
-- Git: PR #26 remains OPEN/DRAFT/MERGEABLE on this SHA pending the owner merge question required by repository policy. `main` not merged by this stage.
+- Git: PR #26 remains OPEN/DRAFT/MERGEABLE pending Canary acceptance of this hang-fix artifact, exact-artifact Production promotion, CI green, and the owner-authorized merge. `main` not merged by this stage.
+
+### `/ready` hang-fix — required new artifact
+
+The live `795db0c1` / `D1CB6FF4…` artifact still contains the slow Connector document probe. That is a reproducible code defect, so the next signed artifact must be built from this hang-fix commit, accepted on Canary, then promoted to Production **without rebuild**. Do not retag a later docs-only commit. Do not treat infra `/ready=green` on the old artifact as closeout of this defect.
+
+### Rollback after expand-only schema 11
+
+Traffic/code rollback target remains `0.10.0-beta.1-2f9409c4` (`FB302F80…`) until the hang-fix artifact is live (then `previous` becomes `795db0c1`). Schema 11 is expand-only: do not run destructive down-migrations. `0.9.0-dev.15-f05f287d` is **not** a compatible full rollback candidate (`database_migration_pending`). Restore evidence stays the existing PostgreSQL backup/restore contract in `docs/operations/PRODUCTION_STORAGE_RUNBOOK.md`.
 
 ### Owner acceptance REOPENED 2026-08-12 (infra `/ready` is not product acceptance)
 
@@ -276,6 +286,7 @@ Code fix shipped as commit `795db0c1` and the signed artifact above: hydrate aut
 Browser verification 2026-08-12: local DEV opens (`start.ps1`, `[DEV]`, git `795db0c`, `dirty=0`, `deployment_environment=development`); Canary auth UX PASS with Telegram intentionally disabled; Production auth UX PASS through Telegram start. Completing a Production owner session still requires the owner to tap Telegram (no session fabricated). Google/email remain EXTERNAL BLOCKED.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T23:45:00Z | Grok 4.6 через Cursor по запросу owner | Record /ready hang root cause (Connector JSON load ~19s + overlapping curl --max-time 5) and the bounded ping/timeout/single-flight/promote-/live fix that requires a new signed artifact.
 2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 artifact after auth/DEV fix: Canary+Production Sign in/Register, Telegram login/start 200, local DEV restored.
 2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen 0.10.0-beta.1: record real DEV/auth acceptance failures and the code fix that must ship as a new artifact.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.

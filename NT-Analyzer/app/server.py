@@ -432,6 +432,13 @@ def _validated_environment_origin(environment: str, value: Any) -> str:
     return f"{parsed.scheme}://{bracketed_host}{normalized_port}"
 
 
+_DEFAULT_ENVIRONMENT_ORIGINS = {
+    runtime_env.DEVELOPMENT: "http://127.0.0.1:8765",
+    runtime_env.CANARY: "https://canary.stratforges.com",
+    runtime_env.PRODUCTION: "https://app.stratforges.com",
+}
+
+
 def _admin_environment_targets() -> Dict[str, Any]:
     active = runtime_env.deployment_environment()
     deployment = runtime_env.public_status()
@@ -445,7 +452,9 @@ def _admin_environment_targets() -> Dict[str, Any]:
         runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION,
     ):
         current = environment == active
-        supplied = str(configured.get(environment) or "").strip()
+        supplied = str(configured.get(environment) or "").strip() or str(
+            _DEFAULT_ENVIRONMENT_ORIGINS.get(environment) or ""
+        )
         origin = _validated_environment_origin(environment, supplied)
         warnings = []
         if supplied and not origin:

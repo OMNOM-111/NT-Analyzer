@@ -379,6 +379,29 @@ def test_environment_switch_origins_fail_closed() -> None:
     ) == ""
 
 
+def test_environment_switcher_defaults_canonical_origins(monkeypatch, tmp_path) -> None:
+    development = tmp_path / "development"
+    development.mkdir()
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "production"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(development))
+    monkeypatch.delenv("STRATFORGE_DEVELOPMENT_ORIGIN", raising=False)
+    monkeypatch.delenv("STRATFORGE_CANARY_ORIGIN", raising=False)
+    monkeypatch.delenv("STRATFORGE_PRODUCTION_ORIGIN", raising=False)
+
+    payload = server_mod._admin_environment_targets()
+    by_env = {row["environment"]: row for row in payload["targets"]}
+
+    assert by_env["development"]["current"] is True
+    assert by_env["canary"]["origin"] == "https://canary.stratforges.com"
+    assert by_env["production"]["origin"] == "https://app.stratforges.com"
+    assert by_env["canary"]["open_allowed"] is True
+    assert by_env["production"]["open_allowed"] is True
+    assert by_env["development"]["requires_reachability_probe"] is False
+    assert by_env["canary"]["configured"] is True
+    assert payload["transition_contract"]["credentials_transfer"] is False
+
+
 def test_consent_support_session_commands_and_monitoring(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")

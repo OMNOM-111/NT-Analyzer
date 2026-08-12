@@ -269,6 +269,22 @@ class DocumentRepository:
         self.client.remember_revision(repository, revision)
         return document
 
+    def ping(self, repository: str) -> Dict[str, Any]:
+        """Cheap repository liveness check: do not load or migrate the JSON document.
+
+        ``/ready`` must not deserialize the Connector/auth document. Loading that
+        payload on Production took ~19s and made promote-time ``curl --max-time 5``
+        stack overlapping readiness requests.
+        """
+        if repository not in REPOSITORIES:
+            raise ValueError("Unknown repository.")
+        with self.client.transaction(self.scope, read_only=True) as conn:
+            conn.execute(
+                "SELECT 1 FROM sf_repository_documents WHERE repository=%s",
+                (repository,),
+            ).fetchone()
+        return {"ok": True, "code": "ok"}
+
     def write(self, repository: str, document: Mapping[str, Any]) -> int:
         if repository not in REPOSITORIES or not isinstance(document, Mapping):
             raise ValueError("Invalid repository document.")

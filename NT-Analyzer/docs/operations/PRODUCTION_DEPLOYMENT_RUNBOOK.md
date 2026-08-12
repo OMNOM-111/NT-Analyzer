@@ -118,10 +118,26 @@ curl --fail --silent \
 systemctl --user enable --now cloudflared.service
 ~~~
 
-Liveness доказывает, что процесс отвечает. Readiness возвращает 503, пока не
-готов хотя бы один обязательный компонент: PostgreSQL, durable queue, artifact
-storage, signing key или Connector control plane. Нельзя направлять Production
-traffic только по liveness.
+Liveness доказывает, что процесс отвечает и отдаёт version/git/artifact identity.
+Readiness возвращает 503, пока не готов хотя бы один обязательный компонент:
+PostgreSQL, durable queue, artifact storage, signing key или Connector control
+plane. Нельзя направлять Production traffic только по liveness.
+
+Promotion health polling (Supervisor host, Canary or Production):
+
+1. Poll `/api/health/live` with a per-request timeout of 3 seconds until the
+   new git SHA is visible, or until the overall deadline.
+2. Only then poll `/api/health/ready` with a per-request timeout of 8 seconds
+   and a sleep between attempts. Do not overlap curls. Do not raise the
+   timeout to hide a hung probe.
+3. SUCCESS requires the new identity on `/live` and `status=ready` on `/ready`.
+4. Rollback the symlink only if the new identity never appears or mandatory
+   `/ready` never becomes ready. Do not roll back a switch that already serves
+   the new git SHA on `/live` plus `/ui/` just because one `/ready` curl timed
+   out during startup.
+
+`/ready` probes are bounded (2s each, concurrent, single-flight). Connector
+readiness is a `SELECT 1` ping and must not load the connectors JSON document.
 
 После restart проверить PID, active release symlink, build version, liveness,
 readiness и последние bounded journal lines. В логах не должно быть environment

@@ -23,7 +23,10 @@
 # Optional overrides:
 #   BASE (default /home/stratforge/production_data)
 #   HEALTH_URL (default https://canary.stratforges.com/api/health/ready)
-#   HEALTH_TIMEOUT_SEC (default 60)
+#   LIVE_URL (default HEALTH_URL with a trailing /ready replaced by /live)
+#   HEALTH_TIMEOUT_SEC (default 60; overall deadline after the Supervisor restart)
+#   LIVE_CURL_MAX_SEC (default 3)
+#   READY_CURL_MAX_SEC (default 8)
 #   TRUSTED_SIGNING_KEY_PATH (default $BASE/config/canary-trusted-signing-key.json)
 #   LOCKDOWN_MARKER_PATH (default $BASE/config/canary-privilege-lockdown.ok.json;
 #                    written only by tools/canary_isolation_provision.py
@@ -43,7 +46,10 @@ umask 077
 
 BASE="${BASE:-/home/stratforge/production_data}"
 HEALTH_URL="${HEALTH_URL:-https://canary.stratforges.com/api/health/ready}"
+LIVE_URL="${LIVE_URL:-${HEALTH_URL%/ready}/live}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
+LIVE_CURL_MAX_SEC="${LIVE_CURL_MAX_SEC:-3}"
+READY_CURL_MAX_SEC="${READY_CURL_MAX_SEC:-8}"
 TRUSTED_SIGNING_KEY_PATH="${TRUSTED_SIGNING_KEY_PATH:-$BASE/config/canary-trusted-signing-key.json}"
 LOCKDOWN_MARKER_PATH="${LOCKDOWN_MARKER_PATH:-$BASE/config/canary-privilege-lockdown.ok.json}"
 CANARY_PROGRAMS="${CANARY_PROGRAMS:-api worker-canary operations-canary}"
@@ -191,7 +197,7 @@ rollback() {
   mv -Tf /home/stratforge/canary-current.new /home/stratforge/canary-current
   sudo -n supervisorctl -c "$conf" restart "${restart_targets[@]}" >/dev/null 2>&1 || true
   for n in $(seq 1 "$HEALTH_TIMEOUT_SEC"); do
-    if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then exit 1; fi
+    if curl -fsS --max-time "$LIVE_CURL_MAX_SEC" "$LIVE_URL" >/dev/null 2>&1; then exit 1; fi
     sleep 1
   done
   exit 1
@@ -210,12 +216,36 @@ sudo -n supervisorctl -c "$conf" reread >/dev/null
 sudo -n supervisorctl -c "$conf" update >/dev/null
 sudo -n supervisorctl -c "$conf" restart "${restart_targets[@]}" >/dev/null
 
-ready=""
-for n in $(seq 1 "$HEALTH_TIMEOUT_SEC"); do
-  ready="$(curl -fsS --max-time 5 "$HEALTH_URL" || true)"
-  if grep -q "\"build_version\": \"$NEW_VERSION\"" <<<"$ready"; then break; fi
+# Identity is taken from /live (cheap, no control-plane probes). /ready is
+# polled only after the new git SHA is visible, with a per-request timeout
+# smaller than the remaining deadline so retries cannot overlap forever.
+deadline=$((SECONDS + HEALTH_TIMEOUT_SEC))
+live=""
+while [ "$SECONDS" -lt "$deadline" ]; do
+  live="$(curl -fsS --max-time "$LIVE_CURL_MAX_SEC" "$LIVE_URL" || true)"
+  if grep -q "$NEW_GIT_COMMIT_SHA" <<<"$live"; then
+    break
+  fi
   sleep 1
 done
+if ! grep -q "$NEW_GIT_COMMIT_SHA" <<<"$live"; then
+  echo "REFUSING: new runtime identity was not observed on /live before the health deadline" >&2
+  exit 1
+fi
+
+ready=""
+while [ "$SECONDS" -lt "$deadline" ]; do
+  # Do not use curl -f: a 503 body is still useful, and -f would hide it.
+  ready="$(curl -sS --max-time "$READY_CURL_MAX_SEC" "$HEALTH_URL" || true)"
+  if grep -q '"status": "ready"' <<<"$ready" \
+    && grep -q "\"build_version\": \"$NEW_VERSION\"" <<<"$ready" \
+    && grep -q '"live_trading_allowed": false' <<<"$ready" \
+    && grep -q '"real_payments_allowed": false' <<<"$ready"; then
+    break
+  fi
+  sleep 2
+done
+grep -q '"status": "ready"' <<<"$ready"
 grep -q "\"build_version\": \"$NEW_VERSION\"" <<<"$ready"
 grep -q '"live_trading_allowed": false' <<<"$ready"
 grep -q '"real_payments_allowed": false' <<<"$ready"

@@ -106,10 +106,12 @@ For this real topology, provisioning and promotion are done with:
   trusted production public key, derives deploy identity only from the signed
   manifest, atomically swaps only the `canary-current`/`canary-previous`
   symlinks, restarts only configured Canary programs (`api worker-canary
-  operations-canary` by default), polls `canary.stratforges.com` health, and
-  automatically rolls back on any failure. Production's `current`/`previous`
-  symlinks and `api`/`worker`/`operations`/`telegram` programs are never
-  touched.
+  operations-canary` by default), polls `canary.stratforges.com` `/api/health/live`
+  for the new git SHA first, then `/api/health/ready` with bounded per-request
+  timeouts inside one overall deadline, and automatically rolls back only if the
+  new identity never appears or mandatory `/ready` never becomes ready.
+  Production's `current`/`previous` symlinks and `api`/`worker`/`operations`/`telegram`
+  programs are never touched.
 - Readiness: `app/server.py`'s `create_http_server()` registers the same
   `database`/`object_storage`/`queue`/`signing_key`/`connector_control`
   probes for Canary as for Production (against Canary's own isolated

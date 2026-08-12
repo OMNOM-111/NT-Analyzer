@@ -111,6 +111,9 @@ def test_development_profile_is_explicit_and_versioned(tmp_path, monkeypatch) ->
     assert values["STRATFORGE_PUBLIC_ORIGIN"] == "https://app.example.test"
     assert values["STRATFORGE_LIVE_TRADING_ALLOWED"] == "0"
     assert values["STRATFORGE_REAL_PAYMENTS_ALLOWED"] == "0"
+    assert values["STRATFORGE_DEVELOPMENT_ORIGIN"] == "http://127.0.0.1:8765"
+    assert values["STRATFORGE_CANARY_ORIGIN"] == "https://canary.stratforges.com"
+    assert values["STRATFORGE_PRODUCTION_ORIGIN"] == "https://app.stratforges.com"
 
 
 def test_development_profile_forces_dev_channel_when_version_json_is_beta(tmp_path, monkeypatch) -> None:

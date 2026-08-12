@@ -1980,11 +1980,23 @@ def revoke_installation(
 
 
 def readiness_status() -> Dict[str, Any]:
-    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()) and not secure_store.available():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
+        from . import storage_router
+        result = storage_router.document_repository_readiness("connectors")
+        if result.get("ok"):
+            return {"ok": True, "code": "ok"}
+        return {
+            "ok": False,
+            "code": str(result.get("code") or "connector_repository_failed")[:64],
+        }
+    if not secure_store.available():
         return {"ok": False, "code": "connector_repository_unavailable"}
     try:
-        with _LOCK:
-            _read_doc()
-    except ConnectorProtocolError:
+        path = _store_path()
+        if path.is_file():
+            raw = path.read_bytes()[: len(_MAGIC) + 8]
+            if not raw.startswith(_MAGIC):
+                return {"ok": False, "code": "connector_repository_failed"}
+    except OSError:
         return {"ok": False, "code": "connector_repository_failed"}
     return {"ok": True, "code": "ok"}

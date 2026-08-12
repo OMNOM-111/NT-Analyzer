@@ -46,6 +46,14 @@ def read_document(repository: str, default: Mapping[str, Any]) -> Dict[str, Any]
     return _documents().read(repository, default)
 
 
+def document_repository_readiness(repository: str) -> Dict[str, Any]:
+    """Secret-free ping used by HTTP readiness; never loads the JSON document."""
+    try:
+        return _documents().ping(repository)
+    except StorageError:
+        return {"ok": False, "code": "repository_unavailable"}
+
+
 def write_document(repository: str, document: Mapping[str, Any]) -> int:
     return _documents().write(repository, document)
 

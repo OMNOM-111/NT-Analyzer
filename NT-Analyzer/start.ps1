@@ -110,6 +110,9 @@ if (-not $env:STRATFORGE_SIGNING_KEY_ID) { $env:STRATFORGE_SIGNING_KEY_ID = 'dev
 if (-not $env:STRATFORGE_LOG_NAMESPACE) { $env:STRATFORGE_LOG_NAMESPACE = 'development' }
 if (-not $env:STRATFORGE_LIVE_TRADING_ALLOWED) { $env:STRATFORGE_LIVE_TRADING_ALLOWED = '0' }
 if (-not $env:STRATFORGE_REAL_PAYMENTS_ALLOWED) { $env:STRATFORGE_REAL_PAYMENTS_ALLOWED = '0' }
+if (-not $env:STRATFORGE_DEVELOPMENT_ORIGIN) { $env:STRATFORGE_DEVELOPMENT_ORIGIN = "http://127.0.0.1:$Port" }
+if (-not $env:STRATFORGE_CANARY_ORIGIN) { $env:STRATFORGE_CANARY_ORIGIN = 'https://canary.stratforges.com' }
+if (-not $env:STRATFORGE_PRODUCTION_ORIGIN) { $env:STRATFORGE_PRODUCTION_ORIGIN = 'https://app.stratforges.com' }
 
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {

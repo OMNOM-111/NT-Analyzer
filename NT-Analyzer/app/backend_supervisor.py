@@ -133,6 +133,15 @@ def configure_development_profile(
         "STRATFORGE_LOG_NAMESPACE": "development",
         "STRATFORGE_LIVE_TRADING_ALLOWED": "0",
         "STRATFORGE_REAL_PAYMENTS_ALLOWED": "0",
+        "STRATFORGE_DEVELOPMENT_ORIGIN": (
+            os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN") or "http://127.0.0.1:8765"
+        ),
+        "STRATFORGE_CANARY_ORIGIN": (
+            os.environ.get("STRATFORGE_CANARY_ORIGIN") or "https://canary.stratforges.com"
+        ),
+        "STRATFORGE_PRODUCTION_ORIGIN": (
+            os.environ.get("STRATFORGE_PRODUCTION_ORIGIN") or "https://app.stratforges.com"
+        ),
         "NT_ANALYZER_ROOT": str(project_root),
         # Local Development is a single-operator loopback sandbox: grant the
         # owner session automatically without Telegram so the app never opens in

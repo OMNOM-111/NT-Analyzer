@@ -149,7 +149,8 @@ def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     assert "BUILD_TIMESTAMP_UTC=__BUILD_TIMESTAMP_UTC__" in env_template
     assert "DIRTY=0" in env_template
     assert "STRATFORGE_ENV=" not in env_template
-    assert "STRATFORGE_LIVE_TRADING_ALLOWED=0" in env_template
+    assert "STRATFORGE_PRODUCTION_ORIGIN=https://app.stratforges.com" in env_template
+    assert "STRATFORGE_CANARY_ORIGIN=https://canary.stratforges.com" in env_template
     assert "STRATFORGE_STORAGE_MODE=postgresql" in env_template
     assert "STRATFORGE_DATABASE_URL=__FROM_PROTECTED_SECRET_PROVIDER__" in env_template
     assert "STRATFORGE_ARTIFACT_ROOT=" in env_template

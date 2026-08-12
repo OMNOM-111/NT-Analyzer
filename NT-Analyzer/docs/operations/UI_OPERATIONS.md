@@ -1,5 +1,6 @@
 # Aurora operator guide
 
+История поправки: 2026-08-12T23:45:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: Environment Switcher default DEV/CANARY/PROD origins; Local DEV enabled only after loopback probe.
 История поправки: 2026-08-12T22:30:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: live Production/Canary now serve Sign in/Register; promo/donation optional.
 История поправки: 2026-08-12T22:15:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: primary Sign in/Register after mode-entry; promo/donation optional.
 История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — описать новый личный menu/cabinet, Admin Panel и безопасный Environment Switcher.
@@ -25,9 +26,12 @@ The top bar is shared by every page:
 - `Кабинет` contains only profile and plan self-service. Users, monitoring,
   connectors, operations and other owner controls live in Admin Panel modules.
 - A compact environment button appears only with `environment.switch`. It shows
-  environment/build/readiness warnings and opens another configured origin in a
-  new tab without copying cookies, CSRF, tokens or browser storage. Local DEV is
-  enabled only after a successful loopback endpoint identity check.
+  DEV / CANARY / PROD. CANARY opens `https://canary.stratforges.com` and PROD
+  opens `https://app.stratforges.com` (defaults when the dedicated origin env
+  vars are unset). Local DEV (`http://127.0.0.1:8765`) is enabled only after a
+  successful credential-free loopback identity probe. Each target opens in a
+  new tab without copying cookies, CSRF, tokens or browser storage. Ordinary
+  users never see the switcher.
 
 ## Вход и общий чат
 

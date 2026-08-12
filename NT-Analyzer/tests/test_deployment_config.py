@@ -480,6 +480,9 @@ def test_run_mode_launchers_are_unambiguous() -> None:
     assert not (root / "OPEN-STABLE.cmd").exists()
     assert "$env:DEPLOYMENT_ENV = 'development'" in start
     assert "$env:RELEASE_CHANNEL = 'dev'" in start
+    assert "STRATFORGE_DEVELOPMENT_ORIGIN" in start
+    assert "https://canary.stratforges.com" in start
+    assert "https://app.stratforges.com" in start
     assert "next release candidate" in start
     assert "the local launcher requires VERSION.json channel=dev" not in start
     assert "$buildTimestampValue -is [DateTime]" in start

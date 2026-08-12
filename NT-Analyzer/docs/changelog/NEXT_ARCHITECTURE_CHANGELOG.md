@@ -1,5 +1,6 @@
 # Next Architecture Program — Changelog (0.10.0 line)
 
+История поправки: 2026-08-12T23:45:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: `/ready` hang-fix and Environment Switcher default origins.
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — создать честный changelog новой архитектурной программы с разделением по аудитории и по фактическому статусу развёртывания.
 
 Программа: переход от одновладельческого контура к многопользовательской
@@ -29,7 +30,11 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   owner получает полный набор, делегированному администратору выдаются только
   явные истекающие grants (Phase 2).
 - Изолированный Environment Switcher (Development/Canary/Production) без передачи
-  cookies/CSRF/токенов между origin (Phase 2).
+  cookies/CSRF/токенов между origin (Phase 2). Если `STRATFORGE_*_ORIGIN` не
+  заданы, API подставляет `http://127.0.0.1:8765`,
+  `https://canary.stratforges.com`, `https://app.stratforges.com`. Local DEV
+  открывается только после credential-free probe. Обычным пользователям
+  переключатель не показывается.
 - Developer Preview / View-As: owner может просматривать приложение глазами роли
   через реальные серверные права, только в Development (Phase 7).
 - Центр релизов в Admin Panel: создание release candidate, сборка immutable
@@ -77,6 +82,17 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   `https://app.stratforges.com/api/auth/google/callback`) — реализация есть,
   Production secrets отсутствуют.
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
+
+## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — code, artifact pending)
+
+- Reproduced Production promote hang: Connector readiness loaded the full
+  `connectors` JSON (~19s); `curl --max-time 5` against `/api/health/ready`
+  stacked overlapping probes on the threaded API. `/live` stayed cheap.
+- Code fix: `DocumentRepository.ping()` (`SELECT 1`, no JSON); concurrent
+  probes with 2s timeout + single-flight cache; promote polls `/live` for the
+  new git SHA, then `/ready` inside one deadline. Environment Switcher default
+  origins. **Not yet the live artifact** — Canary acceptance of the new signed
+  build is required before Production promotion of that same directory.
 
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1 auth/DEV fix)
 
