@@ -1,19 +1,34 @@
-# Supervisor program stanzas for the isolated Canary contour on the real
-# (non-systemd) production host. Append to the host's supervisord.conf
-# `[program:api]` block command (repoint it at run-api-canary.sh) and add
-# the two new blocks below, then:
+# Supervisor program change for the isolated Canary contour on the real
+# (non-systemd) production host.
+#
+# Canary runs as a single all-in-one process, exactly like Development: the
+# HTTP API process starts its own in-process worker loop, Telegram notifier,
+# AI orchestrator, and maintenance sweepers whenever
+# `deployment.environment != "production"` (see app/server.py's `run()`).
+# There is intentionally no separate `worker-canary` / `operations-canary`
+# Supervisor program: `app.production_workers` and
+# `app.observability --maintenance` are hard-gated to
+# `deployment.environment == "production"` and will always refuse to start
+# under any other environment, including Canary. Attempting to run them as
+# standalone Canary programs only produces a restart-loop.
+#
+# Apply by repointing the host's existing `[program:api]` block's `command=`
+# at run-api-canary.sh (the Production `api` role remains served by its own
+# separate program/port; see README.md for the real host's port layout),
+# then:
 #   sudo supervisorctl -c <conf> reread
 #   sudo supervisorctl -c <conf> update
-#   sudo supervisorctl -c <conf> start worker-canary operations-canary
+#   sudo supervisorctl -c <conf> restart api
 #
-# telegram-canary is deliberately NOT included here: it must not exist
-# until a real, separate Canary Telegram bot token has been provisioned
-# out-of-band by the owner (never reuse the Production token).
+# telegram-canary is deliberately NOT a thing to add here either: the
+# in-process Telegram notifier stays disabled fail-closed until a real,
+# separate Canary Telegram bot token has been provisioned out-of-band by the
+# owner (never reuse the Production token).
 
-[program:worker-canary]
-command=/home/stratforge/production_data/config/run-worker-canary.sh
+[program:api]
+command=/home/stratforge/production_data/config/run-api-canary.sh
 user=stratforge
-priority=41
+priority=50
 autostart=true
 autorestart=true
 startsecs=5
@@ -23,25 +38,7 @@ stopwaitsecs=90
 stopasgroup=true
 killasgroup=true
 redirect_stderr=true
-stdout_logfile=/home/stratforge/production_data/logs/worker-canary.log
+stdout_logfile=/home/stratforge/production_data/logs/api.log
 stdout_logfile_maxbytes=50MB
-stdout_logfile_backups=5
-environment=HOME="/home/stratforge"
-
-[program:operations-canary]
-command=/home/stratforge/production_data/config/run-operations-canary.sh
-user=stratforge
-priority=61
-autostart=true
-autorestart=true
-startsecs=5
-startretries=10
-stopsignal=TERM
-stopwaitsecs=90
-stopasgroup=true
-killasgroup=true
-redirect_stderr=true
-stdout_logfile=/home/stratforge/production_data/logs/operations-canary.log
-stdout_logfile_maxbytes=30MB
 stdout_logfile_backups=5
 environment=HOME="/home/stratforge"

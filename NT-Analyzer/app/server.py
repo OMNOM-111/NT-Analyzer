@@ -9109,7 +9109,11 @@ def create_http_server(
         "connector_control": connector_protocol.readiness_status,
         "connector_releases": connector_releases.readiness_status,
     }
-    if deployment.environment == runtime_env.PRODUCTION:
+    if deployment.environment in (runtime_env.PRODUCTION, runtime_env.CANARY):
+        # Canary is held to the same readiness contract as Production (see
+        # service_readiness.readiness_payload's PRODUCTION_COMPONENTS list),
+        # so it needs the same real probes registered against its own
+        # isolated database/storage/signing-key identity, not Production's.
         from . import storage_router
         from .production_storage.artifacts import object_storage_readiness
         server.readiness_probes.update({  # type: ignore[attr-defined]

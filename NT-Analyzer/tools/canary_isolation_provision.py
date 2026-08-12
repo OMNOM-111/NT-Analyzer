@@ -176,7 +176,7 @@ def provision_database(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
-def build_canary_env(args: argparse.Namespace, dsn: dict[str, str]) -> str:
+def build_canary_env(args: argparse.Namespace, dsn: dict[str, str], signing_key: str) -> str:
     production = _read_env_file(Path(args.production_env_path))
     reference_lines = []
     for key in _SAFE_PRODUCTION_KEYS:
@@ -191,7 +191,13 @@ def build_canary_env(args: argparse.Namespace, dsn: dict[str, str]) -> str:
         "# mode 0600, owner stratforge only. Never commit to Git.",
         "DEPLOYMENT_ENV=canary",
         f"STRATFORGE_INSTANCE_ID={args.instance_id}",
-        "STRATFORGE_DEPLOYMENT_ROLE=api",
+        # all-in-one: Canary has no separate worker/operations Supervisor
+        # program (app.production_workers and app.observability
+        # --maintenance are hard-gated to DEPLOYMENT_ENV=production and
+        # would only restart-loop). The single api process starts its own
+        # in-process worker/telegram/orchestrator loops, exactly like
+        # Development, whenever environment != production.
+        "STRATFORGE_DEPLOYMENT_ROLE=all-in-one",
         f"STRATFORGE_CONFIG_PROFILE={args.config_profile}",
         "STRATFORGE_REGION=primary",
         "STRATFORGE_BIND_HOST=127.0.0.1",
@@ -199,7 +205,13 @@ def build_canary_env(args: argparse.Namespace, dsn: dict[str, str]) -> str:
         "STRATFORGE_PUBLIC_ORIGIN=https://canary.stratforges.com",
         "STRATFORGE_EDGE_MODE=cloudflare-tunnel",
         "STRATFORGE_TRUSTED_PROXY_IPS=127.0.0.1,::1",
-        f"STRATFORGE_DATA_ROOT={args.canary_data_root}",
+        # STRATFORGE_DATA_ROOT is intentionally NOT set here: it is the
+        # Production data-root variable name, read unconditionally by
+        # app.runtime_env.data_root()'s cross-environment collision matrix
+        # regardless of which environment is actually running. Setting it
+        # to the Canary path here would make Canary collide with itself
+        # ("Data root canary совпадает с production или вложен в него").
+        # Only the Canary-specific variable is set.
         f"STRATFORGE_CANARY_DATA_ROOT={args.canary_data_root}",
         "STRATFORGE_DATABASE_ID=postgres-canary",
         "STRATFORGE_QUEUE_ID=canary-jobs",
@@ -207,6 +219,10 @@ def build_canary_env(args: argparse.Namespace, dsn: dict[str, str]) -> str:
         "STRATFORGE_TELEGRAM_BOT_ID=canary-telegram-disabled-pending-owner-bot",
         "STRATFORGE_COOKIE_NAMESPACE=sf-canary",
         "STRATFORGE_SIGNING_KEY_ID=canary-key-v1",
+        # Runtime application signing secret checked by
+        # storage_router.signing_key_readiness(); independently generated
+        # per environment, never shared with Production, never printed.
+        f"STRATFORGE_SIGNING_KEY={signing_key}",
         "STRATFORGE_LOG_NAMESPACE=canary",
         "STRATFORGE_READINESS_MIN_FREE_MB=2048",
         "STRATFORGE_API_MAX_INFLIGHT=24",
@@ -257,7 +273,7 @@ def main() -> int:
     parser.add_argument("--canary-db-name", default="stratforge_canary")
     parser.add_argument("--canary-app-role", default="stratforge_canary_app")
     parser.add_argument("--canary-migration-role", default="stratforge_canary_migration")
-    parser.add_argument("--instance-id", default="stratforge-linux-canary-01")
+    parser.add_argument("--instance-id", default="stratforge-canary-01")
     parser.add_argument("--config-profile", default="production-canary")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -266,7 +282,12 @@ def main() -> int:
     args.canary_data_root = args.canary_data_root or str(base / "canary" / "var")
     args.canary_artifact_root = args.canary_artifact_root or str(base / "canary" / "artifacts")
     args.canary_env_path = args.canary_env_path or str(base / "config" / "canary.env")
-    args.production_env_path = args.production_env_path or str(base / "config" / "production.env")
+    # NOTE: on the real host, `config/production.env` is a historical name
+    # for the *Canary*-facing process (port 18765, canary.stratforges.com);
+    # the real Production identity (app.stratforges.com, port 18767) lives
+    # in `config/production-app.env`. Always source the isolation-guard
+    # reference values from the real Production file.
+    args.production_env_path = args.production_env_path or str(base / "config" / "production-app.env")
     args.connector_catalog_path = args.connector_catalog_path or str(
         base / "config" / "connector-releases-canary.json",
     )
@@ -295,7 +316,8 @@ def main() -> int:
         os.chmod(catalog_path, 0o600)
 
     dsn = provision_database(args)
-    content = _quote_env_lines(build_canary_env(args, dsn))
+    signing_key = secrets.token_urlsafe(48)
+    content = _quote_env_lines(build_canary_env(args, dsn, signing_key))
     tmp_path = env_path.with_suffix(".tmp")
     tmp_path.write_text(content, encoding="utf-8")
     os.chmod(tmp_path, 0o600)

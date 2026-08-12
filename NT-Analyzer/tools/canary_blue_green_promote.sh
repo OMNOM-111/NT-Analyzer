@@ -62,9 +62,6 @@ if manifest.get("trust_tier") != "production":
 signing = manifest.get("signing") or {}
 if signing.get("algorithm") != "ECDSA_P256_SHA256_RAW":
     raise SystemExit("REFUSING: unexpected signing algorithm")
-sig = (release / "manifest.sig").read_bytes()
-if len(sig) != 64:
-    raise SystemExit("REFUSING: manifest.sig has an unexpected length")
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
@@ -74,6 +71,9 @@ def _b64url_decode(value):
     padded = value + "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(padded)
 
+sig = _b64url_decode((release / "manifest.sig").read_text(encoding="ascii").strip())
+if len(sig) != 64:
+    raise SystemExit("REFUSING: manifest.sig has an unexpected length")
 x = int.from_bytes(_b64url_decode(signing["public_key_x"]), "big")
 y = int.from_bytes(_b64url_decode(signing["public_key_y"]), "big")
 public_key = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
