@@ -497,8 +497,19 @@ def _quarantine_unreadable_store(path: Path, reason: str) -> None:
         pass
 
 
+def _authoritative_storage() -> bool:
+    """True when account state must be read/written through PostgreSQL.
+
+    Canary and Production both declare an explicit server environment and must
+    never fall back to local DPAPI just because they are not literally
+    ``production``.
+    """
+    from . import storage_router
+    return storage_router.production_enabled()
+
+
 def _read_doc() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -566,7 +577,7 @@ def _read_doc_reference() -> Dict[str, Any]:
     deep copy.  Lookup paths may inspect this object only while ``_LOCK`` is
     held and must copy the selected row before returning it.
     """
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         return _read_doc()
     path = _store_path()
     key = _doc_cache_key(path)
@@ -581,7 +592,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 def _write_doc(doc: Dict[str, Any]) -> None:
     doc = _migrate_doc(copy.deepcopy(doc))
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -660,7 +671,7 @@ def set_auth_required(enabled: bool) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         return storage_router.storage_status()
     return {
@@ -2716,7 +2727,7 @@ def revoke_session(token: str) -> None:
 
 def _audit(event: str, *, user_id: int = 0, owner_id: int = 0, ip: str = "",
            extra: Optional[Dict[str, Any]] = None) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         values: Dict[str, Any] = {

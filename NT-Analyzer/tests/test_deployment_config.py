@@ -480,7 +480,8 @@ def test_run_mode_launchers_are_unambiguous() -> None:
     assert not (root / "OPEN-STABLE.cmd").exists()
     assert "$env:DEPLOYMENT_ENV = 'development'" in start
     assert "$env:RELEASE_CHANNEL = 'dev'" in start
-    assert "VERSION.json channel=dev" in start
+    assert "next release candidate" in start
+    assert "the local launcher requires VERSION.json channel=dev" not in start
     assert "$buildTimestampValue -is [DateTime]" in start
     assert "yyyy-MM-ddTHH:mm:ssZ" in start
     assert "InvariantCulture" in start

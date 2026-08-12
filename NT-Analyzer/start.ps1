@@ -54,10 +54,10 @@ catch {
     Write-Host "ERROR: VERSION.json is invalid: $($_.Exception.Message)" -ForegroundColor Red
     exit 2
 }
-if ([string]$projectVersion.channel -ne 'dev' -or [string]$projectVersion.status -ne 'in_development') {
-    Write-Host 'ERROR: the local launcher requires VERSION.json channel=dev and status=in_development.' -ForegroundColor Red
-    exit 2
-}
+# VERSION.json may describe the next release candidate (for example channel=beta
+# while 0.10.0-beta.1 is being prepared). This launcher is still Development:
+# it always forces RELEASE_CHANNEL=dev and must not refuse to start just because
+# the product version file was stamped for a Canary/Production cut.
 # Never inherit a beta/stable identity from another terminal.  This launcher
 # is the one authoritative way to start the checked-out Development build.
 $env:APP_VERSION = [string]$projectVersion.version

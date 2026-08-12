@@ -173,6 +173,34 @@ def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
     assert 'id="auth-email-verify-accept"' in ui
 
 
+def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    boot = ui.split("async function authenticateAndStart", 1)[1].split(
+        "CURRENT_AUTH = result.auth", 1
+    )[0]
+    assert "Вход и регистрация" in ui
+    assert 'id="auth-open-promo"' in ui
+    assert "Смотреть без входа" in ui
+    assert "renderTelegramLogin('')" in boot
+    assert "if (!dismissed) renderWelcomeAccess" not in boot
+    assert "startGuestBrowse(newsStrip);" in boot
+    require_signin = ui.split("function requireSignIn()", 1)[1].split("window.UI", 1)[0]
+    assert "renderTelegramLogin('')" in require_signin
+    assert "renderWelcomeAccess" not in require_signin
+
+
+def test_every_aurora_page_uses_current_ui_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'src="assets/ui.js?v='
+        if marker not in html:
+            continue
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert versions
+    assert set(versions.values()) == {"20260812-auth-entry1"}, versions
+
+
 def test_build_identity_is_visible_and_never_guessed_client_side():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     entry = (AURORA / "mode-entry.html").read_text(encoding="utf-8")

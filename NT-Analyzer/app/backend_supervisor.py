@@ -81,14 +81,10 @@ def configure_development_profile(
         version = json.loads(version_path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"VERSION.json is missing or invalid: {exc}") from exc
-    if not isinstance(version, dict) or (
-        str(version.get("channel") or "") != "dev"
-        or str(version.get("status") or "") != "in_development"
-    ):
-        raise RuntimeError(
-            "Persistent local launcher requires VERSION.json "
-            "channel=dev and status=in_development."
-        )
+    if not isinstance(version, dict) or not str(version.get("version") or "").strip():
+        raise RuntimeError("VERSION.json is missing a version field.")
+    # VERSION.json channel/status describe the next release candidate. The
+    # Development supervisor always forces RELEASE_CHANNEL=dev at runtime.
     from urllib.parse import urlparse
 
     parsed = urlparse(str(public_origin or "").strip())

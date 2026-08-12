@@ -1,5 +1,6 @@
 # Aurora operator guide
 
+История поправки: 2026-08-12T22:15:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: primary Sign in/Register after mode-entry; promo/donation optional.
 История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — описать новый личный menu/cabinet, Admin Panel и безопасный Environment Switcher.
 
 Актуально на 2026-08-02.
@@ -7,7 +8,9 @@
 ## Start and navigation
 
 Run `start.ps1`. The launcher opens `/ui/`, where the user first chooses the
-beginner or professional contour. The classic UI remains available at
+beginner or professional contour. Unauthenticated users then see Sign in /
+Register (Telegram, Google, email). Promo code / donation is optional and must
+not replace that primary account flow. The classic UI remains available at
 `/ui/legacy/`; it has one `Новый интерфейс` link back to `/ui/`.
 
 The top bar is shared by every page:

@@ -28,7 +28,7 @@
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
 | 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. Strategy-spec closed in Phase 11 |
-| 12 | 0.10.0-beta.1 Canary PASS + exact-artifact Production PASS | `release/0.10.0-next-architecture` | HEAD `2f9409c4`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) OPEN/DRAFT | Same signed artifact on Canary and Production; host Supervisor current/previous switch; Canary Telegram PARTIAL |
+| 12 | 0.10.0-beta.1 Canary/Production infra PASS; **owner auth/DEV acceptance REOPENED** | `release/0.10.0-next-architecture` | live artifact still `2f9409c4`; PR #26 OPEN/DRAFT | Infra `/ready` green, but local DEV launcher and Production login UX/Telegram failed real owner use |
 
 ## Phase 0 evidence
 
@@ -261,7 +261,20 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - Isolation after promotion: Production cannot CONNECT to Canary DB and vice versa. No orders placed. Authenticated TopstepX chart smoke remains PARTIAL (Telegram login required; no session fabricated).
 - Git: PR #26 remains OPEN/DRAFT/MERGEABLE on this SHA pending the owner merge question required by repository policy. `main` not merged by this stage.
 
+### Owner acceptance REOPENED 2026-08-12 (infra `/ready` is not product acceptance)
+
+Real owner/user check failed while the live artifact remained `2f9409c4` / `FB302F80…`:
+
+1. **Local DEV did not open.** `start.ps1` / `backend_supervisor` refused to start because `VERSION.json` was stamped `channel=beta` / `status=pre_release` for the release cut. Runtime already forced `RELEASE_CHANNEL=dev`; the launchers did not. After reboot nothing listened on `8765`.
+2. **Production showed the legacy promo/donation/«Смотреть бесплатно» gate.** Not a stale frontend: Production/Canary `ui.js` SHA matched the repo. Unauthenticated boot called `renderWelcomeAccess` before Sign in / Register.
+3. **Telegram login returned 503 `storage_constraint`.** `/api/auth/providers` showed `@StratForgeAI_bot` available. `POST /api/auth/login/start` could not persist a challenge: the authoritative auth JSON document still had 5 users **without** `user_uuid` and **0** `auth_identities`, while `sf_users` / `sf_auth_identities` already had the SQL-backfilled UUIDs. `_migrate_doc` minted new UUIDs and collided on `(provider, provider_subject)`.
+4. **Google** — implementation exists (`app/google_auth.py`, `/api/auth/google/login/start`); Production has no `NTA_GOOGLE_CLIENT_ID` / `SECRET` / redirect URI and no DPAPI store. Status: **EXTERNAL BLOCKED**. Do not fabricate a working provider.
+5. **Email OTP** — challenge/verify exist, but `email_auth_status().available` is true only for Development test-auth; Production has no `NTA_EMAIL_AUTH_PROVIDER` and never sends mail. Status: **EXTERNAL BLOCKED**.
+
+Code fix in this reopen (requires a **new** signed artifact before Production can serve it): hydrate auth JSON from mirror UUIDs; Development launchers ignore VERSION.json channel; primary unauthenticated UI is Sign in / Register (Telegram / Google / email), with promo/donation optional.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen 0.10.0-beta.1: record real DEV/auth acceptance failures and the code fix that must ship as a new artifact.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.
 2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
 -->

@@ -1017,20 +1017,23 @@
         setTimeout(() => { if (document.body.contains(banner)) { banner.remove(); authenticateAndStart(newsStrip, true); } }, 5000);
         return;
       }
-      // Always mount the real first page as a guest, then optionally show the
-      // access sheet on top. Never replace .content with the promo screen —
-      // that destroyed the overview and made "close" feel broken.
-      startGuestBrowse(newsStrip);
+      // Unauthenticated users see Sign in / Register first. Promo/donation is
+      // optional and must not replace the primary account authentication flow.
       const adminRevoked = result.error.code === 'session_admin_revoked'
         || /Сессия завершена администратором/i.test(String(result.error.message || ''));
       if (adminRevoked) {
         try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
         toast('Сессия завершена администратором');
+        startGuestBrowse(newsStrip);
         renderSessionEndedNotice();
         return;
       }
       const dismissed = (() => { try { return sessionStorage.getItem('stratforge.welcome.dismissed') === '1'; } catch (e) { return false; } })();
-      if (!dismissed) renderWelcomeAccess({ asOverlay: true });
+      if (dismissed) {
+        startGuestBrowse(newsStrip);
+        return;
+      }
+      renderTelegramLogin('');
       return;
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
@@ -1506,7 +1509,7 @@
     const studentShell = isStudentContour(CURRENT_AUTH);
     if (studentShell) applyStudentShell(newsStrip);
     const chipUser = qs('#chip-user');
-    if (chipUser) chipUser.onclick = () => renderWelcomeAccess({ asOverlay: true });
+    if (chipUser) chipUser.onclick = () => renderTelegramLogin('');
     startClock();
     if (!studentShell) {
       // Guest preview must not hit authenticated APIs (whitelist 403 spam).
@@ -1565,7 +1568,7 @@
 
   function lockedNavClick(e) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
-    if (CURRENT_AUTH && CURRENT_AUTH.guest) renderWelcomeAccess({ asOverlay: true });
+    if (CURRENT_AUTH && CURRENT_AUTH.guest) renderTelegramLogin('');
     else openCabinet('plans');
   }
 
@@ -1711,7 +1714,7 @@
     host.appendChild(gate);
     const p = qs('#lock-gate-plans', gate);
     if (p) p.onclick = () => {
-      if (CURRENT_AUTH && CURRENT_AUTH.guest) renderWelcomeAccess({ asOverlay: true });
+      if (CURRENT_AUTH && CURRENT_AUTH.guest) renderTelegramLogin('');
       else openCabinet('plans');
     };
   }
@@ -3348,7 +3351,7 @@
       const telegramDisabled = telegram.available === false;
       const googleEnabled = !!(google.available || google.test_auth_fallback);
       const emailEnabled = !!email.available;
-      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход в StratForge</h1><p>Выберите свой способ входа. Новый профиль откроется только после личного подтверждения владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-provider-terms">условия использования</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Вернуться к просмотру</button></div>`);
+      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход и регистрация</h1><p>Войдите в существующий аккаунт или зарегистрируйте новый. Доступны Telegram, Google и e-mail. Новый профиль активируется после личного подтверждения владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-provider-terms">условия использования</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-open-promo" type="button">Промокод или донат</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Смотреть без входа</button></div>`);
       const button = qs('#auth-start', content);
       if (button) button.onclick = async () => {
         button.disabled = true;
@@ -3389,6 +3392,8 @@
       };
       const back = qs('#auth-back-preview', content);
       if (back) back.onclick = () => startGuestBrowse();
+      const promo = qs('#auth-open-promo', content);
+      if (promo) promo.onclick = () => renderWelcomeAccess({ asOverlay: true });
     };
     const renderProfile = (challengeId, state) => {
       stopPolling();
@@ -3539,8 +3544,8 @@
     // A stale/missing session used to be swallowed here, making every button
     // look frozen.  Tell the user what happened and expose the sign-in action.
     if (isGuest() && err && (err.status === 401 || err.status === 403)) {
-      toast('Нужно войти через Telegram. Ваши чаты и данные сохранены.');
-      renderWelcomeAccess({ asOverlay: true });
+      toast('Нужно войти. Ваши чаты и данные сохранены.');
+      renderTelegramLogin('');
       return;
     }
     const msg = (err && err.message) ? err.message : String(err);
@@ -6518,7 +6523,7 @@
 
   function requireSignIn() {
     if (!isGuest()) return false;
-    renderWelcomeAccess({ asOverlay: true });
+    renderTelegramLogin('');
     return true;
   }
 

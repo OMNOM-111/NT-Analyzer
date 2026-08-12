@@ -34,7 +34,7 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 |---|---|---|
 | Unit (runtime_env, permissions, auth identity, trusted devices, release state machine, resource lease, blue-green) | IMPLEMENTED | corresponding `tests/test_*`; full local run `1148 passed, 31 skipped` |
 | Migration (0001–0011, RLS, additive) | IMPLEMENTED locally; live Canary+Production applied 2026-08-12 | `0001..0011` on `stratforge_canary` and `stratforge_production`. UUID DML backfill on Production required postgres/BYPASSRLS replay |
-| Auth / account linking (Telegram/Google/email OTP, no email auto-merge, last-method guard) | IMPLEMENTED (production email delivery EXTERNAL) | `app/account_auth.py`, `app/auth_identity.py`; `tests/test_account_auth.py`. Real transactional email provider = EXTERNAL DEPENDENCY |
+| Auth / account linking (Telegram/Google/email OTP, no email auto-merge, last-method guard) | PARTIAL live | Telegram login on live `2f9409c4` fails `storage_constraint` until the auth-document UUID hydrate ships. Google **EXTERNAL BLOCKED** (no Production OAuth client). Email OTP **EXTERNAL BLOCKED** (no transactional provider; DEV test-auth only). Primary UI must be Sign in/Register, not the promo gate. |
 | Multi-device (pending/approve/reject/revoke, session invalidation) | IMPLEMENTED | `app/security_devices.py`; `tests/test_phase4_trusted_devices.py` |
 | Permissions (owner/developer/ordinary, product modes, Mini App) | IMPLEMENTED | `app/permissions.py`; `tests/test_permissions.py`, `tests/test_ux_mode.py` |
 | Environment isolation (cookie/CSRF/storage/DB/queue/host) | IMPLEMENTED live | Distinct Canary vs Production DB/role/queue/cookie/origin; CONNECT privilege negatives verified 2026-08-12 |
@@ -44,7 +44,7 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Connector pairing (P-256, signed hello, workspace/capability mismatch, canary contour) | IMPLEMENTED; real pairing EXTERNAL | `app/connector_protocol.py`; `tests/test_connector*`. Real device enrollment = EXTERNAL |
 | Shared NinjaTrader locking (exclusive/queue/TTL/heartbeat/cancel) | IMPLEMENTED | `app/ninjatrader_resources.py`; `tests/test_phase6_*` |
 | Documentation permissions (global governance not mutable by workspace/strategy override) | IMPLEMENTED | `app/server.py` `_require_governance_manage`, `app/governance.py` (global-only, no workspace param), `app/jobqueue.py` `update_strategy_profile` allowlist; `tests/test_phase10_docs_governance.py` |
-| E2E owner/developer/ordinary user | PARTIALLY IMPLEMENTED | Server/DOM/contract tests (`tests/test_aurora_contracts.py`, `tests/test_cutover_routing.py`); browser QA intentionally not run (workspace stability policy) — see §D |
+| E2E owner/developer/ordinary user | FAIL on live 0.10.0-beta.1 artifact; fix in progress | Owner could not open local DEV; Production showed legacy promo gate; Telegram login 503. Browser acceptance required before any STAGE CLOSED claim |
 
 ## C. Workspace-scoped strategy specifications (plan §10 Phase 10, acceptance line 817/836)
 
@@ -62,7 +62,8 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Real Canary provisioning (isolated DB/DSN, Cloudflare tunnel, `canary.stratforges.com` DNS, separate Telegram bot, Canary Connector) | PARTIAL | Isolated DB/DNS/tunnel live. Separate Canary Telegram bot not provisioned. Connector catalog exists; no Canary user enrollments |
 | Real Production deployment + exact-artifact promotion + real blue-green switch | IMPLEMENTED live (host Supervisor) | Same artifact as Canary promoted 2026-08-12. In-app Release Center / `blue_green` executor remains dry-run |
 | Live PostgreSQL migration acceptance (apply 0005–0011 to a real DB, RLS/restore) | IMPLEMENTED on live Canary+Production | Applied 2026-08-12. Isolated restore drill of Production dump PASS (5 users / 3 workspaces / max migration 4 before expand). UUID DML required postgres/BYPASSRLS replay |
-| Production transactional email provider (email OTP / magic link delivery) | EXTERNAL DEPENDENCY | Schema/API present; real delivery owner decision (plan §12.3) |
+| Production transactional email provider (email OTP / magic link delivery) | EXTERNAL BLOCKED | Code path exists; `available` is Development test-auth only. No `NTA_EMAIL_AUTH_PROVIDER` in Production. |
+| Google OAuth login | EXTERNAL BLOCKED | Implementation present; Production env has no `NTA_GOOGLE_CLIENT_ID` / `SECRET` / `NTA_GOOGLE_REDIRECT_URI`. Redirect contract: `https://app.stratforges.com/api/auth/google/callback` |
 | Market-calendar provider (Release Center "after market close" scheduling) | EXTERNAL DEPENDENCY / owner decision | Disabled in code (`market_calendar_unavailable`); needs timezone/holiday/early-close source |
 | Full strategy-spec revision product module | IMPLEMENTED (Phase 11) | See §C — `strategy.spec.manage` + migration 0011 + `app/doc_specs.py` + API/UI + tests |
 | Russian normalization of all user/product/governance docs | PARTIALLY IMPLEMENTED | Governance docs and agent docs are already Russian; several architecture/operations/product docs are mixed or English. Localization policy (Russian = canonical) recorded in `docs/LOCALIZATION.md`; a full normalization pass across every technical doc is a follow-up |
@@ -74,10 +75,11 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 
 - Current candidate version: `0.10.0-beta.1` (`VERSION.json`; channel `beta`, status `pre_release`). Live Canary and Production run this build from git `2f9409c48a6c1480617749462323562ade3eb6fe`. Latest prior Production tag: `stratforge-server-v0.9.0-dev.15`.
 - Development runtime still defaults `RELEASE_CHANNEL=dev` even while VERSION.json describes the next candidate.
-- `0.10.0-beta.1` live status: **DEPLOYED** to Canary and Production (2026-08-12). Remaining PARTIAL: Canary Telegram bot, authenticated TopstepX/chart smoke (Telegram login), Production email OTP provider, market-calendar provider. PR #26 not merged to `main`.
+- `0.10.0-beta.1` live status: **infra DEPLOYED**, **owner auth/DEV acceptance FAIL** (2026-08-12). Remaining: Telegram login storage_constraint on live artifact, Google OAuth credentials, Production email OTP provider, Canary Telegram bot, authenticated TopstepX/chart smoke. PR #26 not merged to `main`. A new signed artifact is required after the auth/DEV code fix.
 - Environment vs release channel vs SemVer remain distinct: `DEPLOYMENT_ENV` (development/canary/production), `RELEASE_CHANNEL` (dev/beta/stable) and the SemVer string are separate fields.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen 0.10.0-beta.1 owner auth/DEV acceptance: Telegram storage_constraint, legacy promo gate, VERSION.json launcher block, Google/email EXTERNAL BLOCKED.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion.
 2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
 -->

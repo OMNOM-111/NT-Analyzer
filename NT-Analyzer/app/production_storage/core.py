@@ -209,7 +209,15 @@ class PostgresClient:
             raise StorageConflictError("Concurrent storage update must be retried.") from exc
         except (psycopg.errors.UniqueViolation, psycopg.errors.ForeignKeyViolation,
                 psycopg.errors.CheckViolation, psycopg.errors.InsufficientPrivilege) as exc:
-            raise StorageConstraintError("Storage isolation or integrity constraint denied the operation.") from exc
+            constraint = ""
+            diag = getattr(exc, "diag", None)
+            if diag is not None:
+                constraint = str(getattr(diag, "constraint_name", "") or "")
+            detail = f" ({constraint})" if constraint else f" ({type(exc).__name__})"
+            raise StorageConstraintError(
+                "Storage isolation or integrity constraint denied the operation"
+                + detail + "."
+            ) from exc
         except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as exc:
             raise StorageUnavailableError("Authoritative PostgreSQL became unavailable.") from exc
         finally:
@@ -254,9 +262,12 @@ class DocumentRepository:
                 "SELECT revision, document FROM sf_repository_documents WHERE repository=%s",
                 (repository,),
             ).fetchone()
-        revision = int(row["revision"]) if row else 0
+            revision = int(row["revision"]) if row else 0
+            document = copy.deepcopy(dict(row["document"]) if row else dict(default))
+            if repository == "auth":
+                self._reconcile_auth_document(conn, document)
         self.client.remember_revision(repository, revision)
-        return copy.deepcopy(dict(row["document"]) if row else dict(default))
+        return document
 
     def write(self, repository: str, document: Mapping[str, Any]) -> int:
         if repository not in REPOSITORIES or not isinstance(document, Mapping):
@@ -277,6 +288,8 @@ class DocumentRepository:
                 raise StorageConflictError(
                     f"Concurrent {repository} update detected (expected {expected}, found {current})."
                 )
+            if repository == "auth":
+                self._reconcile_auth_document(conn, payload)
             revision = current + 1
             conn.execute(
                 """
@@ -291,6 +304,89 @@ class DocumentRepository:
             self._sync_mirrors(conn, repository, payload)
         self.client.remember_revision(repository, revision)
         return revision
+
+    def _reconcile_auth_document(self, conn: Any, doc: Dict[str, Any]) -> None:
+        """Reuse already-assigned mirror UUIDs instead of minting new ones.
+
+        An incomplete SQL UUID backfill can leave ``sf_users`` / ``sf_auth_identities``
+        with canonical UUIDs while the authoritative JSON document still lacks them.
+        The next write would otherwise mint fresh UUIDs, collide on
+        ``(provider, provider_subject)``, and fail closed as ``storage_constraint`` —
+        which is how Production Telegram login broke after 0.10.0-beta.1.
+        """
+        users = [row for row in doc.get("users", []) if isinstance(row, dict)]
+        user_ids = [
+            uid for uid in (
+                _int(row.get("user_id") or row.get("legacy_user_id")) for row in users
+            ) if uid > 0
+        ]
+        if not user_ids:
+            return
+        mirror_users = conn.execute(
+            "SELECT user_id, user_uuid FROM sf_users WHERE user_id = ANY(%s)",
+            (user_ids,),
+        ).fetchall() or []
+        uuid_by_id = {
+            _int(row["user_id"]): _uuid(row["user_uuid"])
+            for row in mirror_users
+            if _int(row["user_id"]) > 0 and _uuid(row["user_uuid"])
+        }
+        if not uuid_by_id:
+            return
+        for row in users:
+            uid = _int(row.get("user_id") or row.get("legacy_user_id"))
+            mirror_uuid = uuid_by_id.get(uid)
+            if not mirror_uuid:
+                continue
+            row["user_id"] = uid
+            row["legacy_user_id"] = uid
+            row["user_uuid"] = mirror_uuid
+        identities = [row for row in doc.get("auth_identities", []) if isinstance(row, dict)]
+        if identities:
+            for row in identities:
+                legacy = _int(row.get("legacy_user_id") or row.get("user_id"))
+                mirror_uuid = uuid_by_id.get(legacy)
+                if mirror_uuid:
+                    row["user_uuid"] = mirror_uuid
+                    row["legacy_user_id"] = legacy
+            return
+        mirror_identities = conn.execute(
+            """
+            SELECT identity_id, user_uuid, legacy_user_id, provider, provider_subject,
+                   normalized_email, verified_at, linked_at, last_used_at, revoked_at, document
+            FROM sf_auth_identities
+            WHERE legacy_user_id = ANY(%s)
+            """,
+            (user_ids,),
+        ).fetchall() or []
+        rebuilt: list[Dict[str, Any]] = []
+        for row in mirror_identities:
+            if row.get("revoked_at"):
+                continue
+            provider = str(row.get("provider") or "").strip().lower()
+            subject = str(row.get("provider_subject") or "").strip()
+            ident_uuid = _uuid(row.get("user_uuid")) or uuid_by_id.get(_int(row.get("legacy_user_id")))
+            ident_id = _uuid(row.get("identity_id"))
+            legacy = _int(row.get("legacy_user_id"))
+            if provider not in {"telegram", "google", "email"} or not subject or not ident_uuid or not ident_id:
+                continue
+            extra = row.get("document") if isinstance(row.get("document"), dict) else {}
+            metadata = extra.get("metadata") if isinstance(extra.get("metadata"), dict) else {}
+            email = str(row.get("normalized_email") or metadata.get("email") or "").strip()
+            rebuilt.append({
+                "identity_id": ident_id,
+                "user_uuid": ident_uuid,
+                "legacy_user_id": legacy,
+                "provider": provider,
+                "provider_subject": subject,
+                "linked_at_utc": str(extra.get("linked_at_utc") or ""),
+                "verified_at_utc": str(extra.get("verified_at_utc") or ""),
+                "last_used_at_utc": str(extra.get("last_used_at_utc") or ""),
+                "link_source": str(extra.get("link_source") or extra.get("source") or "mirror_hydrate")[:60],
+                "metadata": ({"email": email} if email else dict(metadata)),
+            })
+        if rebuilt:
+            doc["auth_identities"] = rebuilt
 
     def _sync_mirrors(self, conn: Any, repository: str, doc: Dict[str, Any]) -> None:
         if repository == "auth":

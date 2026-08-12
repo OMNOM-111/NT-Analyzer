@@ -717,6 +717,62 @@ def test_phase3_auth_storage_sync_dual_writes_uuid_identity() -> None:
     assert "user_uuid" in session_insert[0] and user_uuid in session_insert[1]
 
 
+def test_auth_document_reuses_mirror_uuids_instead_of_minting(auth_store) -> None:
+    """Incomplete SQL UUID backfill must not mint colliding provider identities."""
+    canonical = str(uuid.uuid4())
+    identity_id = str(uuid.uuid4())
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return list(self._rows)
+
+        def fetchone(self):
+            return self._rows[0] if self._rows else None
+
+    class FakeConnection:
+        def execute(self, statement, parameters=()):
+            sql = " ".join(str(statement).split())
+            if "FROM sf_users" in sql:
+                return FakeResult([{"user_id": 42, "user_uuid": canonical}])
+            if "FROM sf_auth_identities" in sql:
+                return FakeResult([{
+                    "identity_id": identity_id,
+                    "user_uuid": canonical,
+                    "legacy_user_id": 42,
+                    "provider": "telegram",
+                    "provider_subject": "42",
+                    "normalized_email": None,
+                    "verified_at": None,
+                    "linked_at": None,
+                    "last_used_at": None,
+                    "revoked_at": None,
+                    "document": {"source": "phase3_backfill"},
+                }])
+            return FakeResult([])
+
+    document = {
+        "version": 2,
+        "users": [{"user_id": 42, "status": "active", "is_owner": True}],
+        "auth_identities": [],
+        "challenges": [{"challenge_id": "login_challenge_1", "status": "created"}],
+        "sessions": [],
+    }
+    DocumentRepository._reconcile_auth_document(
+        object.__new__(DocumentRepository), FakeConnection(), document,
+    )
+    assert document["users"][0]["user_uuid"] == canonical
+    assert document["users"][0]["legacy_user_id"] == 42
+    assert len(document["auth_identities"]) == 1
+    identity = document["auth_identities"][0]
+    assert identity["identity_id"] == identity_id
+    assert identity["user_uuid"] == canonical
+    assert identity["provider"] == "telegram"
+    assert identity["provider_subject"] == "42"
+
+
 def test_phase3_auth_storage_sync_soft_revokes_unlinked_provider_identity(auth_store) -> None:
     user_uuid = str(uuid.uuid4())
     telegram_identity_id = str(uuid.uuid4())

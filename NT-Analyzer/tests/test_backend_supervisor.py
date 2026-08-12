@@ -113,14 +113,30 @@ def test_development_profile_is_explicit_and_versioned(tmp_path, monkeypatch) ->
     assert values["STRATFORGE_REAL_PAYMENTS_ALLOWED"] == "0"
 
 
-def test_development_profile_rejects_stable_version(tmp_path) -> None:
+def test_development_profile_forces_dev_channel_when_version_json_is_beta(tmp_path, monkeypatch) -> None:
     (tmp_path / "VERSION.json").write_text(
         json.dumps({
-            "version": "1.2.3", "build_date": "2026-07-21",
-            "channel": "stable", "status": "ready",
+            "version": "0.10.0-beta.1",
+            "build_date": "2026-08-11",
+            "build_timestamp_utc": "2026-08-11T18:35:00Z",
+            "channel": "beta",
+            "status": "pre_release",
         }),
         encoding="utf-8",
     )
+    for name in tuple(os.environ):
+        if name.startswith("STRATFORGE_") or name in {
+            "DEPLOYMENT_ENV", "APP_VERSION", "BUILD_TIMESTAMP_UTC",
+            "RELEASE_CHANNEL", "BUILD_ID", "GIT_COMMIT_SHA", "DIRTY",
+            "ARTIFACT_SHA256", "NT_ANALYZER_ROOT", "NTA_VITEK_BACKGROUND",
+        }:
+            monkeypatch.delenv(name, raising=False)
 
-    with pytest.raises(RuntimeError, match="channel=dev"):
-        backend_supervisor.configure_development_profile(tmp_path)
+    values = backend_supervisor.configure_development_profile(
+        tmp_path, public_origin="https://app.example.test", apply_environment=False,
+    )
+
+    assert values["DEPLOYMENT_ENV"] == "development"
+    assert values["APP_VERSION"] == "0.10.0-beta.1"
+    assert values["RELEASE_CHANNEL"] == "dev"
+    assert values["STRATFORGE_RELEASE_CHANNEL"] == "dev"
