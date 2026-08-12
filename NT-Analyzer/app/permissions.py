@@ -2,8 +2,9 @@
 
 Authentication (``account_auth``) answers *who* the user is. Entitlements
 (``subscriptions``) answer *which plan* they hold. This module is the single
-place that turns a plan plus owner overrides into the concrete capabilities a
-user has, maps those capabilities onto the Aurora navigation, and decides
+place that turns a plan plus owner overrides into the concrete product
+capabilities a user has, resolves separately granted administrative
+capabilities, maps product access onto the Aurora navigation, and decides
 whether a given API action is allowed.
 
 Every feature and every future module must authorize through this layer rather
@@ -20,6 +21,7 @@ Resolution order for a non-owner user's capability ``C``:
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from . import subscriptions
@@ -33,6 +35,29 @@ FREE_PREVIEW_PLAN_ID = "free_preview"
 # (account_auth.set_user_permission).
 CAPABILITIES = subscriptions.PLAN_FEATURES  # tuple of {"id","label","hint"?}
 CAPABILITY_IDS = tuple(c["id"] for c in CAPABILITIES)
+
+# Administrative capabilities are deliberately NOT part of a subscription.
+# They can only be granted to an individual account by the owner and may
+# expire.  This separation prevents a plan edit or promo redemption from ever
+# opening the control plane by accident.
+ADMIN_CAPABILITIES = (
+    {"id": "admin.view", "label": "Панель администратора", "risk": "read"},
+    {"id": "users.manage", "label": "Пользователи и сессии", "risk": "high"},
+    {"id": "workspaces.manage", "label": "Рабочие области и участники", "risk": "high"},
+    {"id": "connectors.manage", "label": "Коннекторы и Telegram", "risk": "high"},
+    {"id": "operations.view", "label": "Операции и диагностика", "risk": "read"},
+    {"id": "operations.execute", "label": "Перезапуск и восстановление", "risk": "critical"},
+    {"id": "releases.view", "label": "Центр релизов", "risk": "read"},
+    {"id": "releases.create", "label": "Создание релизов", "risk": "high"},
+    {"id": "releases.deploy_canary", "label": "Развёртывание в Canary", "risk": "critical"},
+    {"id": "releases.promote_production", "label": "Промоушен в Production", "risk": "critical"},
+    {"id": "releases.rollback_production", "label": "Откат Production", "risk": "critical"},
+    {"id": "environment.switch", "label": "Переключение окружений", "risk": "high"},
+    {"id": "docs.manage_global", "label": "Управление глобальными документами", "risk": "high"},
+    {"id": "docs.manage_workspace", "label": "Управление документами рабочих областей", "risk": "high"},
+    {"id": "strategy.spec.manage", "label": "Управление спецификациями стратегий и областей", "risk": "high"},
+)
+ADMIN_CAPABILITY_IDS = tuple(c["id"] for c in ADMIN_CAPABILITIES)
 
 # Aurora left-nav sections (ui.js NAV ids).  The student terminal and the
 # professional command centre intentionally have different rails; ``practice``
@@ -113,6 +138,26 @@ ROUTE_CAPABILITY = (
     ("/api/practice/", "practice_trading"),
 )
 
+# Administrative API action -> administrative capability.  Longest-prefix
+# matching is used after exact/method-specific rules below.  These routes are
+# authorized independently from subscription capabilities.
+ADMIN_ROUTE_CAPABILITY = (
+    ("/api/admin/environment-targets", "environment.switch"),
+    ("/api/admin/releases", "releases.view"),
+    ("/api/admin/ninjatrader", "operations.view"),
+    ("/api/admin/operations", "operations.view"),
+    ("/api/admin/", "admin.view"),
+    ("/api/auth/users", "users.manage"),
+    ("/api/owner/support/", "users.manage"),
+    ("/api/owner/operations", "operations.view"),
+    ("/api/ninjatrader/worker/", "operations.execute"),
+    ("/api/telegram/", "connectors.manage"),
+    ("/api/diagnostics", "operations.view"),
+    ("/api/server/restart", "operations.execute"),
+    ("/api/catalog/refresh", "operations.execute"),
+    ("/api/margins/refresh", "operations.execute"),
+)
+
 # Student UX: a separate virtual-prop terminal plus the common Community.
 # Governance documents are part of the professional command centre; showing
 # them to a learner leaked AI/strategy operations into the education contour.
@@ -155,6 +200,48 @@ def capability_catalog() -> List[Dict[str, Any]]:
     return [dict(c) for c in CAPABILITIES]
 
 
+def admin_capability_catalog() -> List[Dict[str, Any]]:
+    return [dict(c) for c in ADMIN_CAPABILITIES]
+
+
+def _expiry_timestamp(value: Any) -> Optional[float]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return -1.0
+    if parsed.tzinfo is None:
+        return -1.0
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
+def resolve_admin_capabilities(
+    user: Optional[Dict[str, Any]], *, now: Optional[float] = None,
+) -> Dict[str, bool]:
+    """Resolve explicit, optionally expiring control-plane grants.
+
+    Invalid, unstructured or expired grant records fail closed. All grants are
+    structured records written by the owner-only account service.
+    """
+    user = user or {}
+    if user.get("is_owner"):
+        return {cid: True for cid in ADMIN_CAPABILITY_IDS}
+    grants = user.get("admin_permission_grants")
+    grants = grants if isinstance(grants, dict) else {}
+    current = datetime.now(timezone.utc).timestamp() if now is None else float(now)
+    resolved: Dict[str, bool] = {}
+    for cid in ADMIN_CAPABILITY_IDS:
+        row = grants.get(cid)
+        if not isinstance(row, dict) or row.get("enabled") is not True:
+            resolved[cid] = False
+            continue
+        expires = _expiry_timestamp(row.get("expires_at_utc"))
+        resolved[cid] = expires is None or (expires >= 0 and expires > current)
+    return resolved
+
+
 def _features_from_plan(plan: Optional[Dict[str, Any]]) -> Dict[str, bool]:
     feats = (plan or {}).get("features") if isinstance(plan, dict) else None
     if isinstance(feats, dict) and feats:
@@ -185,25 +272,28 @@ def resolve(user: Optional[Dict[str, Any]],
     user = user or {}
     if user.get("is_owner"):
         caps = {cid: True for cid in CAPABILITY_IDS}
+        admin_caps = resolve_admin_capabilities(user)
         nav = {nid: True for nid in NAV_SECTIONS}
         # The owner is a professional by definition; the student terminal is
         # not part of the professional rail even for the owner.
         nav["practice"] = False
         return {
             "is_owner": True, "plan_id": "founder", "free_preview": False,
-            "capabilities": caps, "nav": nav, "locked_nav": [],
+            "capabilities": caps, "admin_capabilities": admin_caps,
+            "nav": nav, "locked_nav": [],
             "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
             "ux_mode": "professional", "ux_pending": False,
         }
 
     ux_mode = _ux_mode_of(user)
+    admin_caps = resolve_admin_capabilities(user)
     if not ux_mode:
         # Must choose beginner/professional before any product contour opens.
         caps = {cid: False for cid in CAPABILITY_IDS}
         nav = {nid: False for nid in NAV_SECTIONS}
         return {
             "is_owner": False, "plan_id": "", "free_preview": True,
-            "capabilities": caps, "nav": nav,
+            "capabilities": caps, "admin_capabilities": admin_caps, "nav": nav,
             "locked_nav": list(NAV_SECTIONS),
             "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
             "ux_mode": "", "ux_pending": True,
@@ -256,7 +346,8 @@ def resolve(user: Optional[Dict[str, Any]],
         demo_tier = True
     return {
         "is_owner": False, "plan_id": plan_id, "free_preview": free_preview,
-        "capabilities": caps, "nav": nav, "locked_nav": locked,
+        "capabilities": caps, "admin_capabilities": admin_caps,
+        "nav": nav, "locked_nav": locked,
         "unlock_message": DEMO_UNLOCK_MESSAGE if demo_tier else UNLOCK_MESSAGE,
         "demo_tier": demo_tier,
         "ux_mode": ux_mode, "ux_pending": False,
@@ -283,6 +374,24 @@ def required_capability(path: str) -> Optional[str]:
     return best
 
 
+def required_admin_capability(path: str, method: str = "GET") -> Optional[str]:
+    """Administrative capability required by an API path and method."""
+    p = str(path or "")
+    method_u = str(method or "GET").upper()
+    if p == "/api/ai-lab/bootstrap/status":
+        return "operations.view"
+    if p in {"/api/ai-lab/bootstrap/start", "/api/ai-lab/bootstrap/unload"}:
+        return "operations.execute"
+    if p.startswith("/api/worker/"):
+        return "operations.view" if method_u in {"GET", "HEAD"} else "operations.execute"
+    best: Optional[str] = None
+    best_len = -1
+    for prefix, cap in ADMIN_ROUTE_CAPABILITY:
+        if p.startswith(prefix) and len(prefix) > best_len:
+            best, best_len = cap, len(prefix)
+    return best
+
+
 def beginner_path_denied(path: str) -> bool:
     p = str(path or "")
     # Market observation for practice charts (not NT control).
@@ -302,6 +411,22 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
     if context.get("is_owner"):
         return
     user = context.get("user") if isinstance(context.get("user"), dict) else {}
+    method = str(context.get("_request_method") or "GET").upper()
+    admin_cap = required_admin_capability(path, method)
+    if admin_cap:
+        admin_caps = context.get("admin_capabilities")
+        if not isinstance(admin_caps, dict):
+            admin_caps = resolve_admin_capabilities(user)
+        if not admin_caps.get(admin_cap):
+            label = next(
+                (c.get("label") for c in ADMIN_CAPABILITIES if c.get("id") == admin_cap),
+                admin_cap,
+            )
+            raise PermissionError(
+                f"Административное разрешение «{label}» не выдано или истекло.",
+                403,
+            )
+        return
     ux_mode = _ux_mode_of(user) or str(context.get("ux_mode") or "").strip().lower()
     p = str(path or "")
     if ux_mode not in ("beginner", "professional"):
@@ -331,7 +456,6 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         or str(context.get("role") or "") == "read_only"
     ):
         return
-    method = str(context.get("_request_method") or "GET").upper()
     demo_job_read = (
         cap == "backtesting" and method in {"GET", "HEAD"}
         and p.startswith("/api/jobs") and bool(caps.get("demo_backtest"))

@@ -80,6 +80,15 @@ def test_bar_engine_builds_multiple_timeframes() -> None:
     assert engine.series("1m", 1)[0]["state"] in {"provisional", "final", "corrected"}
 
 
+def test_default_bar_engine_includes_live_one_hour_bucket() -> None:
+    engine = canonical_bar_engine.CanonicalBarEngine("MNQ 09-26")
+    engine.on_trade({"type": "trade", "price": 100.0, "volume": 1,
+                     "ts_event": "2026-07-16T14:00:01Z", "exact_contract": "MNQ 09-26"})
+    bars = engine.series("1h", 1)
+    assert bars and bars[-1]["timeframe"] == "1h"
+    assert bars[-1]["t"] == "2026-07-16T14:00:00Z"
+
+
 def test_bar_engine_late_event_marks_corrected() -> None:
     engine = canonical_bar_engine.CanonicalBarEngine("MGC 08-26", timeframes=["1m"])
     t0 = datetime(2026, 7, 16, 15, 0, 10, tzinfo=timezone.utc)

@@ -1,4 +1,4 @@
-"""Google OAuth (factor #2) for StratForge dual-auth.
+"""Google OAuth identity provider for StratForge authentication and linking.
 
 Secrets come from environment / DPAPI integrations — never from git:
   NTA_GOOGLE_CLIENT_ID
@@ -11,7 +11,6 @@ Google identity. Production requires real OAuth client credentials.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import os
 import secrets
@@ -146,12 +145,35 @@ def _purge_states() -> None:
         _STATES.pop(key, None)
 
 
-def start_link(*, user_id: int, redirect_uri: str, return_path: str = "") -> Dict[str, Any]:
-    """Begin Google OAuth for an already Telegram-authenticated user."""
+def _safe_return_path(value: Any) -> str:
+    """Keep OAuth redirects on the local Aurora UI and reject open redirects."""
+    raw = str(value or "/ui/").strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return "/ui/"
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return "/ui/"
+    if parsed.path != "/ui" and not parsed.path.startswith("/ui/"):
+        return "/ui/"
+    if any(ord(ch) < 32 for ch in raw):
+        return "/ui/"
+    return urllib.parse.urlunsplit(("", "", parsed.path or "/ui/", parsed.query, ""))
+
+
+def _start(
+    *, purpose: str, user_id: int, redirect_uri: str,
+    return_path: str = "", accept_terms: bool = False,
+) -> Dict[str, Any]:
+    purpose_id = str(purpose or "").strip().lower()
+    if purpose_id not in {"link", "login"}:
+        raise GoogleAuthError("Некорректная цель Google OAuth.")
+    if purpose_id == "link" and int(user_id or 0) <= 0:
+        raise GoogleAuthError("Для привязки Google требуется активная сессия.", 401)
     if not is_configured():
         if runtime_env.test_auth_enabled():
             raise GoogleAuthError(
-                "Google OAuth не настроен. На staging используйте /api/auth/test/google-link.",
+                "Google OAuth не настроен. В Development используйте явный test-auth endpoint.",
                 503,
             )
         raise GoogleAuthError(
@@ -167,8 +189,10 @@ def start_link(*, user_id: int, redirect_uri: str, return_path: str = "") -> Dic
         _purge_states()
         _STATES[state] = {
             "user_id": int(user_id),
+            "purpose": purpose_id,
+            "accept_terms": bool(accept_terms),
             "redirect_uri": uri,
-            "return_path": str(return_path or "/ui/")[:200],
+            "return_path": _safe_return_path(return_path)[:200],
             "expires_at": time.time() + _STATE_TTL_SEC,
             "created_at_utc": _now_iso(),
         }
@@ -188,6 +212,24 @@ def start_link(*, user_id: int, redirect_uri: str, return_path: str = "") -> Dic
         "auth_url": f"{_AUTH_URL}?{urllib.parse.urlencode(params)}",
         "expires_in_sec": _STATE_TTL_SEC,
     }
+
+
+def start_link(*, user_id: int, redirect_uri: str, return_path: str = "") -> Dict[str, Any]:
+    """Begin Google OAuth for an already authenticated user."""
+    return _start(
+        purpose="link", user_id=int(user_id), redirect_uri=redirect_uri,
+        return_path=return_path,
+    )
+
+
+def start_login(
+    *, redirect_uri: str, return_path: str = "", accept_terms: bool = False,
+) -> Dict[str, Any]:
+    """Begin Google OAuth as a first-login provider."""
+    return _start(
+        purpose="login", user_id=0, redirect_uri=redirect_uri,
+        return_path=return_path, accept_terms=accept_terms,
+    )
 
 
 def _http_json(url: str, *, data: Optional[Dict[str, str]] = None, bearer: str = "") -> Dict[str, Any]:
@@ -221,7 +263,7 @@ def _http_json(url: str, *, data: Optional[Dict[str, str]] = None, bearer: str =
 
 
 def exchange_code(*, code: str, state: str) -> Dict[str, Any]:
-    """Exchange authorization code; returns google identity + originating user_id."""
+    """Exchange a one-use code and return identity plus the stored OAuth intent."""
     code = str(code or "").strip()
     state = str(state or "").strip()
     if not code or not state:
@@ -254,12 +296,14 @@ def exchange_code(*, code: str, state: str) -> Dict[str, Any]:
         raise GoogleAuthError("Email Google не подтверждён. Используйте другой аккаунт.", 403)
     return {
         "ok": True,
-        "user_id": int(row["user_id"]),
+        "purpose": str(row.get("purpose") or "link"),
+        "user_id": int(row.get("user_id") or 0),
+        "accept_terms": bool(row.get("accept_terms")),
         "google_sub": google_sub,
         "google_email": email,
         "google_name": str(info.get("name") or ""),
         "google_picture": str(info.get("picture") or ""),
-        "return_path": str(row.get("return_path") or "/ui/"),
+        "return_path": _safe_return_path(row.get("return_path")),
         "email_verified": bool(info.get("email_verified", True)),
     }
 

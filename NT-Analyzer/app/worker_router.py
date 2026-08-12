@@ -7,7 +7,15 @@ from . import local_worker, runtime_env
 
 
 def _production() -> bool:
-    return runtime_env.is_production() and runtime_env.environment_explicit()
+    """Route to the authoritative PostgreSQL worker in Production *and* Canary.
+
+    Canary is a real, isolated server contour with its own PostgreSQL queue
+    and its own separately supervised worker process; routing it through the
+    Development-only SQLite queue here would leave Canary's declared
+    PostgreSQL identity unused and would let an in-process consumer duplicate
+    work against a real isolated ``worker-canary`` program.
+    """
+    return runtime_env.is_server_environment() and runtime_env.environment_explicit()
 
 
 def enqueue(

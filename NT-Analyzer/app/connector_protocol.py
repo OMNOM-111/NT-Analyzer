@@ -61,6 +61,7 @@ TERMINAL_COMMAND_STATES = frozenset({
     "completed", "failed", "rejected", "expired", "cancelled",
 })
 _MAGIC = b"STRATFORGE-CONNECTORS-DPAPI-1\n"
+CONNECTOR_STORE_VERSION = 2
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$")
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,31}$")
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{7,127}$")
@@ -114,17 +115,118 @@ def _now_iso(epoch: Optional[float] = None) -> str:
 
 def _default_doc() -> Dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": CONNECTOR_STORE_VERSION,
         "enrollments": [],
         "installations": [],
         "sessions": [],
         "commands": [],
         "results": [],
+        "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
     }
 
 
+def _legacy_user_id(value: Any) -> int:
+    try:
+        user_id = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return user_id if user_id > 0 else 0
+
+
+def _user_uuid_for_legacy_id(user_id: Any) -> str:
+    try:
+        from . import account_auth
+        return account_auth.user_uuid_for_legacy_id(user_id)
+    except Exception:
+        return ""
+
+
+def _backfill_user_uuid(row: Dict[str, Any], legacy_key: str, uuid_key: str) -> bool:
+    user_uuid = _user_uuid_for_legacy_id(row.get(legacy_key))
+    if not user_uuid or row.get(uuid_key) == user_uuid:
+        return False
+    row[uuid_key] = user_uuid
+    return True
+
+
+def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    changed = False
+    for key in ("enrollments", "installations", "sessions", "commands", "results"):
+        if not isinstance(doc.get(key), list):
+            doc[key] = []
+            changed = True
+    for row in doc["enrollments"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
+    installation_users: Dict[str, int] = {}
+    for row in doc["installations"]:
+        if not isinstance(row, dict):
+            continue
+        user_id = _legacy_user_id(row.get("user_id") or row.get("enrolled_by_user_id"))
+        if user_id and _legacy_user_id(row.get("user_id")) != user_id:
+            row["user_id"] = user_id
+            changed = True
+        changed = _backfill_user_uuid(row, "enrolled_by_user_id", "enrolled_by_user_uuid") or changed
+        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        installation_id = str(row.get("installation_id") or "")
+        if installation_id and user_id:
+            installation_users[installation_id] = user_id
+    command_users: Dict[str, int] = {}
+    for row in doc["commands"]:
+        if not isinstance(row, dict):
+            continue
+        user_id = _legacy_user_id(row.get("user_id") or row.get("issued_by_user_id"))
+        if user_id and _legacy_user_id(row.get("user_id")) != user_id:
+            row["user_id"] = user_id
+            changed = True
+        changed = _backfill_user_uuid(row, "issued_by_user_id", "issued_by_user_uuid") or changed
+        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        command_id = str(row.get("command_id") or "")
+        if command_id and user_id:
+            command_users[command_id] = user_id
+    for row in doc["sessions"]:
+        if not isinstance(row, dict):
+            continue
+        user_id = _legacy_user_id(row.get("user_id")) or installation_users.get(
+            str(row.get("installation_id") or ""), 0,
+        )
+        if user_id and _legacy_user_id(row.get("user_id")) != user_id:
+            row["user_id"] = user_id
+            changed = True
+        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+    for row in doc["results"]:
+        if not isinstance(row, dict):
+            continue
+        user_id = _legacy_user_id(row.get("user_id")) or command_users.get(
+            str(row.get("command_id") or ""), 0,
+        )
+        if user_id and _legacy_user_id(row.get("user_id")) != user_id:
+            row["user_id"] = user_id
+            changed = True
+        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+    identity_schema = doc.get("identity_schema") if isinstance(doc.get("identity_schema"), dict) else {}
+    expected_schema = dict(identity_schema)
+    expected_schema.update({
+        "stage": "dual_write",
+        "canonical_key": "user_uuid",
+        "legacy_key": "user_id",
+    })
+    if expected_schema != identity_schema:
+        expected_schema.setdefault("migrated_at_utc", _now_iso())
+        doc["identity_schema"] = expected_schema
+        changed = True
+    try:
+        version = int(doc.get("schema_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version < CONNECTOR_STORE_VERSION:
+        doc["schema_version"] = CONNECTOR_STORE_VERSION
+        changed = True
+    return doc, changed
+
+
 def _read_doc() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -142,8 +244,7 @@ def _read_doc() -> Dict[str, Any]:
         for name in ("enrollments", "installations", "sessions", "commands", "results"):
             if not isinstance(doc.get(name), list):
                 doc[name] = []
-        doc["schema_version"] = 1
-        return doc
+        return _migrate_doc(doc)[0]
     path = _store_path()
     if not path.is_file():
         return _default_doc()
@@ -174,12 +275,15 @@ def _read_doc() -> Dict[str, Any]:
     for name in ("enrollments", "installations", "sessions", "commands", "results"):
         if not isinstance(doc.get(name), list):
             doc[name] = []
-    doc["schema_version"] = 1
+    doc, changed = _migrate_doc(doc)
+    if changed:
+        _write_doc(doc)
     return doc
 
 
 def _write_doc(doc: Dict[str, Any]) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    doc, _ = _migrate_doc(doc)
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -442,11 +546,29 @@ def _find_installation(doc: Dict[str, Any], installation_id: str) -> Dict[str, A
     return row
 
 
+def _assert_environment(installation: Mapping[str, Any]) -> None:
+    """Fail-closed: an installation may only be used in the environment that
+    enrolled it. A Canary Connector must never be driven from Production (and
+    vice-versa). Installations enrolled before environment stamping (empty
+    field) are grandfathered and adopt the current environment on next write.
+    """
+    stamped = str(installation.get("deployment_environment") or "").strip()
+    if not stamped:
+        return
+    if stamped != runtime_env.deployment_environment():
+        raise ConnectorProtocolError(
+            "Connector installation принадлежит другому окружению.",
+            403,
+            "connector_environment_mismatch",
+        )
+
+
 def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
     return {name: copy.deepcopy(row.get(name)) for name in (
         "installation_id",
         "connection_id",
         "workspace_id",
+        "user_uuid",
         "machine_label",
         "status",
         "capabilities",
@@ -663,6 +785,7 @@ def enroll_device(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "public_key_fingerprint": fingerprint,
             "connector_version": connector_version,
             "protocol_version": PROTOCOL_VERSION,
+            "deployment_environment": runtime_env.deployment_environment(),
             "nt_version": nt_version,
             "ninja_instance_id": ninja_instance_id,
             "created_at_utc": _now_iso(now),
@@ -753,6 +876,7 @@ def issue_challenge(payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "Connector installation отозвана.", 403, "installation_revoked",
             )
+        _assert_environment(installation)
         if not hmac.compare_digest(
             str(installation.get("public_key_fingerprint") or ""), fingerprint,
         ):
@@ -830,6 +954,7 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "Connector installation отозвана.", 403, "installation_revoked",
             )
+        _assert_environment(installation)
         if not hmac.compare_digest(
             str(installation.get("workspace_id") or ""),
             str(payload.get("workspace_id") or ""),
@@ -888,6 +1013,7 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "connector_version": connector_version,
             "nt_version": nt_version,
             "ninja_instance_id": ninja_instance_id,
+            "deployment_environment": runtime_env.deployment_environment(),
             "last_hello_utc": _now_iso(now),
             "last_heartbeat_utc": _now_iso(now),
             "last_heartbeat_at": now,
@@ -961,6 +1087,7 @@ def _authenticate_session(
         raise ConnectorProtocolError(
             "Connector installation отозвана.", 403, "installation_revoked",
         )
+    _assert_environment(installation)
     return session, installation
 
 
@@ -1499,6 +1626,7 @@ def queue_command(
 def _public_command(row: Mapping[str, Any], *, include_payload: bool) -> Dict[str, Any]:
     out = {name: copy.deepcopy(row.get(name)) for name in (
         "command_id", "workspace_id", "connection_id", "installation_id",
+        "user_uuid", "issued_by_user_uuid",
         "capability", "idempotency_key", "issued_at_utc", "expires_at_utc",
         "status", "delivery_attempts", "finished_at_utc",
     )}
@@ -1852,11 +1980,23 @@ def revoke_installation(
 
 
 def readiness_status() -> Dict[str, Any]:
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()) and not secure_store.available():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
+        from . import storage_router
+        result = storage_router.document_repository_readiness("connectors")
+        if result.get("ok"):
+            return {"ok": True, "code": "ok"}
+        return {
+            "ok": False,
+            "code": str(result.get("code") or "connector_repository_failed")[:64],
+        }
+    if not secure_store.available():
         return {"ok": False, "code": "connector_repository_unavailable"}
     try:
-        with _LOCK:
-            _read_doc()
-    except ConnectorProtocolError:
+        path = _store_path()
+        if path.is_file():
+            raw = path.read_bytes()[: len(_MAGIC) + 8]
+            if not raw.startswith(_MAGIC):
+                return {"ok": False, "code": "connector_repository_failed"}
+    except OSError:
         return {"ok": False, "code": "connector_repository_failed"}
     return {"ok": True, "code": "ok"}

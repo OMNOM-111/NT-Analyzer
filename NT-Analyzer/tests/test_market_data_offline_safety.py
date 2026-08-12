@@ -51,7 +51,10 @@ def test_apply_failover_offline_when_primary_unhealthy(monkeypatch) -> None:
         raise AssertionError("must not call delayed/Yahoo providers when NT offline and no live backup")
 
     monkeypatch.setattr(mdf, "fetch_external_series", boom)
-    out = mdf.apply_failover(primary, "MNQ 09-26", "5m", 50, primary_healthy=False)
+    # Test the no-credentialed-backup policy explicitly; a developer machine
+    # may legitimately have its own read-only TopstepX credentials configured.
+    out = mdf.apply_failover(primary, "MNQ 09-26", "5m", 50,
+                             primary_healthy=False, providers=[])
     assert out is not None
     assert out["live"] is False
     assert out["status"] == "offline"
@@ -63,8 +66,17 @@ def test_apply_failover_offline_when_primary_unhealthy(monkeypatch) -> None:
 def test_live_backup_candidates_exclude_yahoo(monkeypatch) -> None:
     monkeypatch.delenv("NTA_DATABENTO_API_KEY", raising=False)
     monkeypatch.delenv("DATABENTO_API_KEY", raising=False)
+    monkeypatch.setattr(mdf.local_secrets, "apply", lambda: False)
     cands = mdf.live_backup_candidates([mdf.YahooChartProvider(), mdf.DatabentoProvider()])
     assert all(p.name != "yahoo_chart" for p in cands)
     # Databento without key is not configured → empty
     assert cands == []
 
+
+def test_databento_placeholder_is_never_eligible_for_live_failover(monkeypatch) -> None:
+    monkeypatch.setattr(mdf.local_secrets, "apply", lambda: False)
+    monkeypatch.setenv("NTA_DATABENTO_API_KEY", "db-...")
+    provider = mdf.DatabentoProvider()
+    assert provider.configured() is False
+    assert provider.public_status()["credential_state"] == "placeholder"
+    assert mdf.live_backup_candidates([provider]) == []

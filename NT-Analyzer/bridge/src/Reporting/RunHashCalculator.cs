@@ -10,7 +10,7 @@ using NTAnalyzerBridge.Util;
 namespace NTAnalyzerBridge.Reporting
 {
     /// <summary>
-    /// Computes run_hash per docs/job-schema.md, contract 0.2 rule:
+    /// Computes run_hash per docs/architecture/job-schema.md, contract 0.2 rule:
     /// hash of the canonical job context (strategy class + final parameters
     /// + instrument + timeframe + period + execution + addon_version
     /// + ninjatrader_custom_dll_sha256 + source_file_sha256

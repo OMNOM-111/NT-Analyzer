@@ -37,14 +37,20 @@ HEARTBEAT_TIMEOUT_SEC = 8.0
 _LOCK = threading.RLock()
 _TOKEN: Optional[str] = None
 _SERVER: Optional["IpcServer"] = None
-_RING: Deque[Dict[str, Any]] = deque(maxlen=16_384)
+# Recent events are an observability ring, not a delivery queue.  Live chart
+# fan-out must continue after this bounded diagnostic history fills.
+_RING: Deque[Dict[str, Any]] = deque()
 _METRICS: Dict[str, Any] = {
     "accepted": 0,
     "rejected_auth": 0,
     "rejected_protocol": 0,
     "frames_in": 0,
     "events_in": 0,
+    # ``dropped`` means an event was not delivered through the data plane.
+    # Ring eviction is intentionally tracked separately because it retains
+    # the newest diagnostic sample without freezing live charts.
     "dropped": 0,
+    "ring_evicted": 0,
     "heartbeats": 0,
     "disconnects": 0,
     "queue_depth": 0,
@@ -730,9 +736,13 @@ def ingest_event(event: Dict[str, Any]) -> bool:
     with _LOCK:
         capacity = int(_METRICS.get("queue_capacity") or DEFAULT_QUEUE_CAPACITY)
         if len(_RING) >= capacity:
-            _METRICS["dropped"] = int(_METRICS.get("dropped") or 0) + 1
-            _METRICS["queue_depth"] = len(_RING)
-            return False
+            # Keep bounded memory for diagnostics, but never use a full
+            # recent-events buffer as backpressure for the live data plane.
+            # The prior early return stopped router aggregation and browser
+            # WebSocket broadcast after 8,192 events, leaving TopstepX charts
+            # visibly frozen despite a healthy upstream stream.
+            _RING.popleft()
+            _METRICS["ring_evicted"] = int(_METRICS.get("ring_evicted") or 0) + 1
         _RING.append(event)
         _METRICS["events_in"] = int(_METRICS.get("events_in") or 0) + 1
         _METRICS["queue_depth"] = len(_RING)

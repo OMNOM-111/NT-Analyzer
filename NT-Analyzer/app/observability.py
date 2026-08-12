@@ -20,7 +20,7 @@ import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from . import runtime_env
 from .production_storage import Scope, StorageError, get_client
@@ -84,7 +84,7 @@ def redact(value: Any, *, key: str = "", depth: int = 0) -> Any:
     text = " ".join(str(value).replace("\x00", " ").split())[:2000]
     text = _BEARER.sub("[authorization-redacted]", text)
     text = _TOKENISH.sub("[token-redacted]", text)
-    if runtime_env.is_production():
+    if runtime_env.is_server_environment():
         text = _WINDOWS_PATH.sub("[private-path]", text)
         text = _UNIX_PRIVATE_PATH.sub("[private-path]", text)
     return text
@@ -125,11 +125,12 @@ def event(
     }
     with _LOCK:
         _COMPONENT_COUNTS[f"{safe_component}:{safe_type}:{level}"] += 1
-    # Production service logs are JSON and secret-safe. Development stays quiet
-    # unless explicitly requested so existing local console workflows remain readable.
-    if runtime_env.is_production() or os.environ.get("STRATFORGE_STRUCTURED_LOG_STDOUT") == "1":
+    # Production/Canary service logs are JSON and secret-safe. Development
+    # stays quiet unless explicitly requested so existing local console
+    # workflows remain readable.
+    if runtime_env.is_server_environment() or os.environ.get("STRATFORGE_STRUCTURED_LOG_STDOUT") == "1":
         print(json.dumps(row, ensure_ascii=False, separators=(",", ":")), flush=True)
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         try:
             scope = Scope.global_service_scope()
             with get_client().transaction(scope) as conn:
@@ -212,7 +213,7 @@ def heartbeat(
         "service_role": role, "instance_id": instance, "status": state,
         "heartbeat_at_utc": _now(), "details": clean,
     }
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         with get_client().transaction(Scope.global_service_scope()) as conn:
             conn.execute(
                 """
@@ -272,8 +273,14 @@ class HeartbeatEmitter:
 
 
 def service_status(*, stale_after_sec: int = 45) -> Dict[str, Any]:
+    """Return real DB-backed heartbeats in Production/Canary, local otherwise.
+
+    The ``production`` key name is kept for backward compatibility with
+    existing callers/tests; it now means "authoritative/DB-backed", which is
+    true for Canary as well as Production.
+    """
     threshold = max(5, min(int(stale_after_sec), 3600))
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()):
         with _LOCK:
             rows = list(_LOCAL_HEARTBEATS.values())
         return {"services": rows, "stale_after_sec": threshold, "production": False}
@@ -305,7 +312,7 @@ def dashboard() -> Dict[str, Any]:
     result = {"ok": True, "generated_at_utc": _now(), "metrics": metrics()}
     try:
         result["service_health"] = service_status()
-        if runtime_env.is_production() and runtime_env.environment_explicit():
+        if runtime_env.is_server_environment() and runtime_env.environment_explicit():
             with get_client().transaction(Scope.global_service_scope(), read_only=True) as conn:
                 result["queues"] = dict(conn.execute(
                     """
@@ -386,7 +393,7 @@ def _alert_fingerprint(service_role: str, condition: str) -> str:
 
 
 def _resolve_alert(fingerprint: str) -> str:
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()):
         return ""
     with get_client().transaction(Scope.global_service_scope()) as conn:
         row = conn.execute(
@@ -401,14 +408,15 @@ def _resolve_alert(fingerprint: str) -> str:
 
 def _notify_service_alert(service_role: str, condition: str, *,
                           resolved: bool = False, incident_id: str = "") -> None:
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()):
         return
     try:
         from . import production_telegram
 
         state = "восстановлен" if resolved else "неготов"
+        label = "Canary" if runtime_env.is_canary() else "Production"
         production_telegram.enqueue_text(
-            f"⚠️ <b>Production service {state}</b>\n"
+            f"⚠️ <b>{label} service {state}</b>\n"
             f"Role: <code>{service_role}</code>\n"
             f"Condition: <code>{condition}</code>",
             dedupe_key=(
@@ -420,6 +428,23 @@ def _notify_service_alert(service_role: str, condition: str, *,
         pass
 
 
+def _expected_service_roles() -> Tuple[str, ...]:
+    """Service roles a healthy deployment of the *current* environment runs.
+
+    Production runs the full topology (api/worker/telegram/background_ai).
+    Canary today only runs api + a real isolated worker: its Telegram
+    consumer is intentionally disabled pending a separate bot identity, and
+    the legacy background_ai coordinator remains Production-only by design.
+    Requiring roles Canary never starts would raise permanent, misleading
+    "heartbeat_missing" incidents for an honestly-disabled feature.
+    """
+    if runtime_env.is_production():
+        return REQUIRED_PRODUCTION_SERVICE_ROLES
+    if runtime_env.is_canary():
+        return ("api", "worker")
+    return ()
+
+
 def evaluate_alerts(*, stale_after_sec: int = 45) -> Dict[str, Any]:
     raised = []
     resolved = []
@@ -429,8 +454,7 @@ def evaluate_alerts(*, stale_after_sec: int = 45) -> Dict[str, Any]:
         for row in status.get("services") or []
     }
     expected_roles = (
-        REQUIRED_PRODUCTION_SERVICE_ROLES
-        if status.get("production") else tuple(services)
+        _expected_service_roles() if status.get("production") else tuple(services)
     )
     for role in expected_roles:
         row = services.get(role)
@@ -549,7 +573,7 @@ def evaluate_alerts(*, stale_after_sec: int = 45) -> Dict[str, Any]:
 
 
 def sweep_retention(*, limit: int = 5000) -> Dict[str, int]:
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()):
         return {}
     capped = max(1, min(int(limit), 100_000))
     tables = {
@@ -662,13 +686,18 @@ class OperationsMaintenanceError(StorageError):
 
 
 def production_maintenance() -> Dict[str, Any]:
-    """Evaluate service alerts and retention under an explicit Production role."""
+    """Evaluate service alerts and retention under an explicit worker role.
+
+    Runs in Production *and* Canary: each maintains its own isolated
+    PostgreSQL identity, so the same alert/retention sweep is safe and
+    authoritative against either one, never against the other.
+    """
     try:
         config = runtime_env.assert_startup_safe()
     except runtime_env.RuntimeEnvError as exc:
-        raise OperationsMaintenanceError("Production maintenance configuration is invalid.") from exc
-    if config.environment != runtime_env.PRODUCTION:
-        raise OperationsMaintenanceError("Operations maintenance requires Production.")
+        raise OperationsMaintenanceError("Operations maintenance configuration is invalid.") from exc
+    if config.environment not in {runtime_env.PRODUCTION, runtime_env.CANARY}:
+        raise OperationsMaintenanceError("Operations maintenance requires Production or Canary.")
     if config.deployment_role not in {"worker", "all-in-one"}:
         raise OperationsMaintenanceError("Operations maintenance requires worker role.")
     from . import storage_router

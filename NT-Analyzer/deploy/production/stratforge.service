@@ -1,6 +1,6 @@
 [Unit]
 Description=StratForge Production API
-Documentation=file:%h/apps/stratforge/current/docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md
+Documentation=file:%h/apps/stratforge/current/docs/operations/PRODUCTION_DEPLOYMENT_RUNBOOK.md
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300

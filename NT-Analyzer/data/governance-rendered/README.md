@@ -7,7 +7,7 @@
 - `ROLES.md` — роли владельца и всех ИИ-каналов.
 - `LAWS.md` — общие законы проекта.
 - `LOCAL_AI_LAWS.md` — отдельные законы локального ИИ и cloud fallback / AI Lab.
-- `../AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
+- `../agents/AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
 
@@ -16,3 +16,7 @@
 - `data/governance/laws.json`
 - `data/governance/documents.json`
 - `data/governance/change_log.jsonl` — последовательный журнал поправок с датой, временем, автором и before/after.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Записать фактическое финальное Development smoke-evidence принятого TopstepX market-data/chart baseline без изменения реализации.
+-->

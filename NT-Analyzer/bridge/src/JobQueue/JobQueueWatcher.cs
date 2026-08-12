@@ -229,7 +229,7 @@ namespace NTAnalyzerBridge.JobQueue
                 default:                  targetParent = _cfg.FailedDir;    break;
             }
 
-            // Per docs/job-schema.md the cancel path must yield a partial
+            // Per docs/architecture/job-schema.md the cancel path must yield a partial
             // result.json with verification_warnings: ["cancelled by user"],
             // not an error.json. error.json is only written on failure.
             try

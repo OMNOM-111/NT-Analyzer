@@ -22,6 +22,7 @@ from __future__ import annotations
 import errno
 import copy
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -54,6 +55,14 @@ if __package__ is None or __package__ == "":
     from app import production_telegram  # type: ignore[no-redef]
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
+    from app import security_devices  # type: ignore[no-redef]
+    from app import personal_nt_security  # type: ignore[no-redef]
+    from app import ninjatrader_resources  # type: ignore[no-redef]
+    from app import agent_allocation  # type: ignore[no-redef]
+    from app import dev_preview  # type: ignore[no-redef]
+    from app import dev_service_accounts  # type: ignore[no-redef]
+    from app import release_center  # type: ignore[no-redef]
+    from app import doc_specs  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
     from app import admin_journal  # type: ignore[no-redef]
@@ -134,6 +143,14 @@ else:
     from . import production_telegram
     from . import tunnel_manager
     from . import account_auth
+    from . import security_devices
+    from . import personal_nt_security
+    from . import ninjatrader_resources
+    from . import agent_allocation
+    from . import dev_preview
+    from . import dev_service_accounts
+    from . import release_center
+    from . import doc_specs
     from . import subscriptions
     from . import permissions
     from . import admin_journal
@@ -252,7 +269,7 @@ def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None
 # blocks injected inline script while inline style attributes remain allowed.
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self'; connect-src 'self'; media-src 'self' blob:; "
+    "script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; "
     "base-uri 'none'; form-action 'self'; "
     "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
 )
@@ -285,6 +302,8 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/practice/")
         or path.startswith("/api/community/")
         or path.startswith("/api/auth/nt-confirm/")
+        or path.startswith("/api/account/")
+        or path.startswith("/api/ninjatrader/jobs")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
     )
@@ -305,9 +324,175 @@ _OWNER_ONLY_API_PREFIXES = (
 )
 
 
-def _is_owner_only_api_path(path: str) -> bool:
+def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
     value = str(path or "")
+    # A small, audited subset of the former owner-only surface is now governed
+    # by explicit administrative capabilities.  Everything else under these
+    # prefixes remains owner-only.
+    if permissions.required_admin_capability(value, method):
+        return False
     return value == "/api/server/restart" or value.startswith(_OWNER_ONLY_API_PREFIXES)
+
+
+def _is_impersonation_exit(path: str, context: Any) -> bool:
+    """The impersonation-exit endpoint must always be reachable by an active
+    impersonation session, so "return to owner" can never get stuck behind the
+    impersonated persona's workspace role, read-only role or the owner-only gate.
+    The endpoint itself is loopback + Development gated and only ever restores
+    the exact owner that started the impersonation, so this exemption cannot be
+    used to escalate privileges."""
+    if path != "/api/owner/impersonate/end":
+        return False
+    return bool(isinstance(context, dict) and context.get("impersonator_owner_id"))
+
+
+_ADMIN_MODULES = (
+    {"id": "overview", "label": "Обзор", "capability": "admin.view", "group": ""},
+    {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage", "group": "Доступ и пользователи"},
+    {"id": "connectors", "label": "Коннекторы и Telegram", "capability": "connectors.manage", "group": "Операции"},
+    {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view", "group": "Операции"},
+    {"id": "releases", "label": "Центр релизов", "capability": "releases.view", "group": "Релизы и окружения"},
+    {"id": "environments", "label": "Переключение окружений", "capability": "environment.switch", "group": "Релизы и окружения"},
+    {"id": "docs-global", "label": "Глобальные документы", "capability": "docs.manage_global", "group": "Документы"},
+    {"id": "docs-workspace", "label": "Документы рабочих областей", "capability": "docs.manage_workspace", "group": "Документы"},
+    {"id": "monitoring", "label": "Мониторинг пользователей", "capability": "users.manage", "owner_only": True, "group": "Владелец"},
+    {"id": "requests", "label": "Запросы доступа", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "subscriptions", "label": "Подписки и гранты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "invites", "label": "Приглашения", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "payment", "label": "Настройки оплаты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "ai-ratings", "label": "Оценки ИИ", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "journal", "label": "Журнал владельца", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+)
+
+
+def _admin_overview_payload(context: Dict[str, Any]) -> Dict[str, Any]:
+    caps = context.get("admin_capabilities")
+    caps = caps if isinstance(caps, dict) else {}
+    modules = [
+        dict(row) for row in _ADMIN_MODULES
+        if caps.get(str(row["capability"]))
+        and (not row.get("owner_only") or context.get("is_owner"))
+    ]
+    return {
+        "ok": True,
+        "actor": {
+            "user_id": context.get("user_id") or "",
+            "is_owner": bool(context.get("is_owner")),
+            "kind": "owner" if context.get("is_owner") else "delegated_admin",
+        },
+        "modules": modules,
+        "admin_capabilities": {
+            cid: bool(caps.get(cid)) for cid in permissions.ADMIN_CAPABILITY_IDS
+        },
+        "admin_capability_catalog": permissions.admin_capability_catalog(),
+        "deployment": runtime_env.public_status(),
+        "security_contract": {
+            "secrets_exposed": False,
+            "credentials_transfer_between_environments": False,
+            "session_isolation": "origin-bound cookies, CSRF and browser storage",
+        },
+    }
+
+
+def _validated_environment_origin(environment: str, value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        return ""
+    if environment in {runtime_env.CANARY, runtime_env.PRODUCTION} and (
+        parsed.scheme != "https" or port not in {None, 443}
+    ):
+        return ""
+    if environment == runtime_env.DEVELOPMENT and host not in {
+        "127.0.0.1", "localhost", "::1",
+    }:
+        return ""
+    default_port = (
+        (parsed.scheme == "http" and port in {None, 80})
+        or (parsed.scheme == "https" and port in {None, 443})
+    )
+    normalized_port = "" if default_port else f":{port}"
+    bracketed_host = f"[{host}]" if ":" in host else host
+    return f"{parsed.scheme}://{bracketed_host}{normalized_port}"
+
+
+_DEFAULT_ENVIRONMENT_ORIGINS = {
+    runtime_env.DEVELOPMENT: "http://127.0.0.1:8765",
+    runtime_env.CANARY: "https://canary.stratforges.com",
+    runtime_env.PRODUCTION: "https://app.stratforges.com",
+}
+
+
+def _admin_environment_targets() -> Dict[str, Any]:
+    active = runtime_env.deployment_environment()
+    deployment = runtime_env.public_status()
+    configured = {
+        runtime_env.DEVELOPMENT: os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN"),
+        runtime_env.CANARY: os.environ.get("STRATFORGE_CANARY_ORIGIN"),
+        runtime_env.PRODUCTION: os.environ.get("STRATFORGE_PRODUCTION_ORIGIN"),
+    }
+    rows = []
+    for environment in (
+        runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION,
+    ):
+        current = environment == active
+        supplied = str(configured.get(environment) or "").strip() or str(
+            _DEFAULT_ENVIRONMENT_ORIGINS.get(environment) or ""
+        )
+        origin = _validated_environment_origin(environment, supplied)
+        warnings = []
+        if supplied and not origin:
+            warnings.append("Настроенный origin отклонён политикой безопасности.")
+        if not current and not origin:
+            warnings.append("Origin для этой среды не настроен.")
+        if environment == runtime_env.DEVELOPMENT and not current:
+            warnings.append("Локальная разработка активируется только после проверки доступности в браузере.")
+        if not current:
+            warnings.append("Метаданные среды читаются только после её открытия по целевому origin.")
+        rows.append({
+            "environment": environment,
+            "current": current,
+            "configured": bool(current or origin),
+            "origin": "" if current else origin,
+            "open_allowed": bool(current or (origin and environment != runtime_env.DEVELOPMENT)),
+            "requires_reachability_probe": bool(
+                environment == runtime_env.DEVELOPMENT and not current and origin
+            ),
+            "health": "reachable" if current else "unknown",
+            "readiness": "current_server" if current else "unknown",
+            "version": str(deployment.get("app_version") or "") if current else "",
+            "commit": str(deployment.get("git_commit_sha") or "") if current else "",
+            "build_id": str(deployment.get("build_id") or "") if current else "",
+            "release_channel": str(deployment.get("release_channel") or "") if current else "",
+            "warnings": warnings,
+        })
+    return {
+        "ok": True,
+        "active_environment": active,
+        "targets": rows,
+        "transition_contract": {
+            "new_tab": True,
+            "credentials_transfer": False,
+            "tokens_in_url": False,
+            "local_storage_transfer": False,
+        },
+    }
 
 
 _BILLING_PROMO_POSTS = {
@@ -375,6 +560,12 @@ def _market_bar_time(row: Dict[str, Any]) -> Optional[datetime]:
 
 def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
     source = payload.get("source") if isinstance(payload.get("source"), dict) else None
+    # A TopstepX chart owns an independent Market SignalR feed.  Refresh its
+    # actual transport state on every cache read; never reinterpret the age of
+    # its final 5m/1h bar as a dead market or tie it to NinjaTrader's process.
+    if source and str(source.get("provider") or "").lower() == "topstepx":
+        payload = market_data_failover.TopstepXProvider().refresh_payload_liveness(payload)
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else None
     if source:
         updated = source.get("updated_at_utc")
         if updated:
@@ -385,6 +576,11 @@ def _refresh_market_payload_age(payload: Dict[str, Any]) -> Dict[str, Any]:
                 source["age_sec"] = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
             except ValueError:
                 pass
+    if source and str(source.get("provider") or "").lower() == "topstepx":
+        # The independent provider has already produced a factual LIVE /
+        # CONNECTING / STALE state above.  Do not turn it OFFLINE solely because
+        # a local NinjaTrader bridge is intentionally disabled.
+        return payload
     # Remote Connector data has its own authenticated source clock and must
     # not be invalidated by the API host's local NinjaTrader process state.
     # Re-evaluate its bounded freshness window on every cache read so a payload
@@ -478,7 +674,8 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          alerts_index: Optional[Dict[str, Any]] = None,
                          max_points: int = 0,
                          workspace_id: str = "",
-                         connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         connector_snapshot_index: Optional[Dict[str, Any]] = None,
+                         from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
     with market_data_baseline.StageTimer(
         "backend.bars_payload_ms",
         instrument=str(instrument or ""),
@@ -487,7 +684,7 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         return _market_bars_payload_impl(
             instrument, timeframe, limit, range_days, from_date, to_date,
             register, snapshot_index, alerts_index, max_points, workspace_id,
-            connector_snapshot_index,
+            connector_snapshot_index, from_ts, to_ts,
         )
 
 
@@ -498,10 +695,31 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                               alerts_index: Optional[Dict[str, Any]] = None,
                               max_points: int = 0,
                               workspace_id: str = "",
-                              connector_snapshot_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              connector_snapshot_index: Optional[Dict[str, Any]] = None,
+                              from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
     production_mode = bool(runtime_env.is_production() and runtime_env.environment_explicit())
+    # Timestamp ranges power viewport history paging. Date-only parameters are
+    # preserved for existing callers; explicit timestamps win and remain UTC.
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    try:
+        if from_ts:
+            start = datetime.fromisoformat(str(from_ts).replace("Z", "+00:00"))
+            start = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        elif from_date:
+            start = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+        if to_ts:
+            end = datetime.fromisoformat(str(to_ts).replace("Z", "+00:00"))
+            end = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
+        elif to_date:
+            end = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc) + timedelta(days=1)
+    except ValueError:
+        start = end = None
+    if not start and range_days > 0:
+        end = end or datetime.now(timezone.utc)
+        start = end - timedelta(days=range_days)
     remote_bars = None
     if workspace_id:
         remote_bars = market_data_ingestion.workspace_series(
@@ -511,7 +729,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     # Local request files are Development transport only.  Production charts
     # consume authenticated Connector HTTPS snapshots and never use localhost
     # IPC/shared request files as an implicit cross-host control plane.
-    if register and not production_mode:
+    if register and not production_mode and not market_data_failover.TopstepXProvider().configured():
         market_data.register_request(resolved_instrument, timeframe, limit, range_days, from_date, to_date)
     try:
         max_points = max(0, min(20000, int(max_points or 0)))
@@ -525,6 +743,8 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         int(range_days or 0),
         str(from_date or "")[:10],
         str(to_date or "")[:10],
+        str(from_ts or "")[:40],
+        str(to_ts or "")[:40],
         max_points,
         "" if production_mode else market_data.snapshot_source_signature(),
         "" if production_mode else market_data.alerts_source_signature(),
@@ -536,6 +756,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     if cached is not None:
         market_data_baseline.mark("backend.bars_payload_cache_hit")
         return cached
+    primary_healthy = False
     if remote_bars:
         primary_healthy = bool(
             remote_bars.get("live")
@@ -567,73 +788,84 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             backup_providers_available=0,
         )
     else:
-        if snapshot_index is not None:
-            runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
-        else:
-            with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
-                runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
-        heartbeat = ops_runtime.read_heartbeat()
-        primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
-        with market_data_baseline.StageTimer("backend.failover_ms"):
-            unified = market_data_failover.apply_failover(
-                runtime_bars, resolved_instrument, timeframe, limit,
-                primary_healthy=primary_healthy,
-            )
-        if unified and (unified.get("bars") or unified.get("status") == "offline"):
-            out = unified
-            # Prefer richer historical artifact when offline payload has no bars yet.
-            if not out.get("bars") and not primary_healthy:
-                hist = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-                if hist.get("bars"):
-                    out = market_data_failover.mark_offline_snapshot(
-                        hist,
-                        reason="ninjatrader_offline_historical_cache",
-                        last_source="historical_artifact",
-                        backup_providers_available=0,
-                    )
-        else:
-            out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-            out["status"] = "historical_fallback" if out.get("bars") else (
-                (runtime_bars or {}).get("status") or "waiting")
-            out["bridge"] = {
-                "status": (runtime_bars or {}).get("status") or "subscription_requested",
-                "error": (runtime_bars or {}).get("error") or "",
-            }
-            if not out.get("bars"):
-                detail = out["bridge"]["error"]
-                out["note"] = detail or (
-                    "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных, "
-                    "актуальность контракта и установленную версию Bridge.")
-            out["gap_recovery"] = {
-                "attempted": True,
-                "provider_available": False,
-                "mode": "historical_artifact" if out.get("bars") else "unavailable",
-                "recovered_bars": 0,
-                "unresolved_gaps": 0,
-                "primary_healthy": primary_healthy,
-            }
-            if not primary_healthy:
-                out = market_data_failover.mark_offline_snapshot(
-                    out,
-                    reason="ninjatrader_offline_historical_fallback",
-                    last_source="historical_artifact" if out.get("bars") else "none",
-                    backup_providers_available=0,
+        # Development chart data uses one normalized source per response:
+        # TopstepX (preferred read-only feed) -> fresh NinjaTrader Connector ->
+        # another configured credentialed provider.  Do not merge OHLCV bars
+        # from different feeds: contract/session differences must remain visible
+        # as an explicit source transition, not a synthetic composite series.
+        topstep = market_data_failover.TopstepXProvider()
+        # A root request is the explicit Desktop auto-roll contract: let
+        # ProjectX select its currently active contract instead of pinning it
+        # to a stale bridge/catalog expiry. Exact ``ROOT MM-YY`` input remains
+        # exact for a user-selected historical chart.
+        topstep_request = requested_instrument if " " not in requested_instrument else resolved_instrument
+        out = market_data_failover.fetch_external_series(
+            topstep_request, timeframe, limit, providers=[topstep],
+            start_time=start, end_time=end,
+        ) if topstep.configured() else None
+        if out is not None and " " not in requested_instrument:
+            resolved_instrument = str(out.get("instrument") or resolved_instrument).upper()
+        if out is None:
+            if snapshot_index is not None:
+                runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
+            else:
+                with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
+                    runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
+            heartbeat = ops_runtime.read_heartbeat()
+            primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+            runtime_fresh = bool((runtime_bars or {}).get("bars") and market_data_failover.series_freshness(
+                (runtime_bars or {}).get("bars") or [], timeframe,
+            ).get("fresh"))
+            if primary_healthy and runtime_fresh:
+                out = runtime_bars
+                freshness = market_data_failover.series_freshness(out.get("bars") or [], timeframe)
+                source = dict(out.get("source") or {})
+                selection = market_data_failover.remember_selected_provider(
+                    "ninjatrader", resolved_instrument, timeframe, reason="topstepx_unavailable",
                 )
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
-    try:
-        if from_date:
-            start = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
-        if to_date:
-            end = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc) + timedelta(days=1)
-    except ValueError:
-        start = end = None
-    if not start and range_days > 0:
-        latest_times = [_market_bar_time(row) for row in (out.get("bars") or []) if isinstance(row, dict)]
-        latest = max((dt for dt in latest_times if dt is not None), default=datetime.now(timezone.utc))
-        start = latest - timedelta(days=range_days)
-        if out.get("status") == "historical_fallback":
-            end = latest + timedelta(seconds=1)
+                source.update({"provider": "ninjatrader", "active": "ninjatrader",
+                               "fresh": True, "runtime_state": "LIVE",
+                               "failover_from": selection.get("transition_from") or "topstepx",
+                               "failover_status": "switched"})
+                out.update({"source": source, "freshness": freshness, "live": True,
+                            "status": "failover_live", "market_data_available": True,
+                            "price_marker_live": True,
+                            "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable."})
+            else:
+                backups = [provider for provider in market_data_failover.live_backup_candidates()
+                           if provider.name != "topstepx"]
+                out = market_data_failover.fetch_external_series(
+                    resolved_instrument, timeframe, limit, providers=backups,
+                    start_time=start, end_time=end,
+                ) if backups else None
+                if out is not None:
+                    source = out.setdefault("source", {})
+                    source.setdefault("failover_from", "topstepx")
+                    source["failover_status"] = "switched"
+                    out.setdefault("gap_recovery", {
+                        "attempted": True, "provider_available": True,
+                        "mode": "independent_failover", "provider": source.get("provider") or "",
+                        "recovered_bars": 0, "unresolved_gaps": 0,
+                        "primary_healthy": False,
+                    })
+                else:
+                    with market_data_baseline.StageTimer("backend.failover_ms"):
+                        unified = market_data_failover.apply_failover(
+                            runtime_bars, resolved_instrument, timeframe, limit,
+                            primary_healthy=False, providers=[],
+                        )
+                    if unified and (unified.get("bars") or unified.get("status") == "offline"):
+                        out = unified
+                    else:
+                        out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+                        out["status"] = "historical_fallback" if out.get("bars") else ((runtime_bars or {}).get("status") or "waiting")
+                        out["bridge"] = {"status": (runtime_bars or {}).get("status") or "subscription_requested", "error": (runtime_bars or {}).get("error") or ""}
+                        if not out.get("bars"):
+                            detail = out["bridge"]["error"]
+                            out["note"] = detail or "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных."
+                        out["gap_recovery"] = {"attempted": True, "provider_available": False, "mode": "historical_artifact" if out.get("bars") else "unavailable", "recovered_bars": 0, "unresolved_gaps": 0, "primary_healthy": primary_healthy}
+                        if not primary_healthy:
+                            out = market_data_failover.mark_offline_snapshot(out, reason="all_live_providers_unavailable", last_source="historical_artifact" if out.get("bars") else "none", backup_providers_available=0)
     if start or end:
         out["bars"] = [row for row in (out.get("bars") or []) if isinstance(row, dict)
                        and (lambda dt: dt is not None and (start is None or dt >= start)
@@ -1193,6 +1425,27 @@ class Handler(BaseHTTPRequestHandler):
         forwarded = str(self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
         return tunnel_ip, forwarded
 
+    @staticmethod
+    def _is_loopback_ip(value: str) -> bool:
+        raw = str(value or "").strip().lower()
+        if not raw:
+            return False
+        if raw in {"localhost", "::1", "0:0:0:0:0:0:0:1"}:
+            return True
+        try:
+            return ipaddress.ip_address(raw).is_loopback
+        except ValueError:
+            return False
+
+    def _self_origin(self) -> str:
+        host = self._request_hostname(self.headers.get("Host") or "") or "127.0.0.1"
+        scheme = "https" if (
+            self._is_remote_api_request()
+            or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        ) else "http"
+        raw_host = str(self.headers.get("Host") or host)
+        return f"{scheme}://{raw_host}"
+
     def _connector_bearer_token(self) -> str:
         raw = str(self.headers.get("Authorization") or "").strip()
         match = re.fullmatch(r"Bearer ([A-Za-z0-9_-]{40,160})", raw)
@@ -1256,15 +1509,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _set_session_cookie(self, token: str) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        # Canary uses an isolated cookie so cross-environment tokens are never
+        # accepted; Development/Production keep the canonical name.
         value = (
-            f"{account_auth.SESSION_COOKIE}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
+            f"{runtime_env.session_cookie_name()}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
             f"HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         )
         self._extra_headers.append(("Set-Cookie", value))
 
     def _clear_session_cookie(self) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
-        value = f"{account_auth.SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        value = f"{runtime_env.session_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         self._extra_headers.append(("Set-Cookie", value))
 
     @staticmethod
@@ -1289,19 +1544,113 @@ class Handler(BaseHTTPRequestHandler):
         ]
         return any(host and host not in _ALLOWED_ORIGIN_HOSTS for host in hosts)
 
+    def _local_owner_bypass_allowed(self) -> bool:
+        """Whether this request may auto-resolve the owner/service without Telegram.
+
+        This is the localhost convenience that lets the checked-out Development
+        build open the real owner profile on 127.0.0.1 with no Telegram step and
+        with the canonical data root. It is fail-closed for anything that is not
+        physically local and is impossible in an explicitly-selected
+        Canary/Production deployment:
+          * the request must not be a remote/Mini App request (no Telegram
+            initData, only loopback origin hosts), and
+          * the transport peer and any forwarded-for must be a loopback IP, and
+          * an explicitly-configured Canary/Production environment can never
+            reach this path (hard invariant, independent of any flag or config),
+          * otherwise it is allowed when the environment is Development (the
+            local default, no flag needed) or the explicit test bypass is set.
+        """
+        if self._is_remote_api_request():
+            return False
+        tunnel_ip, forwarded_ip = self._request_ips()
+        if not self._is_loopback_ip(tunnel_ip):
+            return False
+        if forwarded_ip and not self._is_loopback_ip(forwarded_ip):
+            return False
+        environment = runtime_env.deployment_environment()
+        if (environment in (runtime_env.CANARY, runtime_env.PRODUCTION)
+                and runtime_env.environment_explicit()):
+            return False
+        return environment == runtime_env.DEVELOPMENT or not account_auth.auth_required()
+
     def _local_owner_context(self) -> Dict[str, Any]:
-        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        owner_env = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
         user: Dict[str, Any] = {}
-        if owner_id:
-            user = account_auth.ensure_owner(owner_id) or {}
+        owner_id = int(owner_env or 0)
+        if owner_env:
+            try:
+                user = account_auth.ensure_owner(owner_env) or {}
+            except account_auth.AccountAuthError:
+                user = {}
+        if not user:
+            # Fall back to the canonical owner already saved in the local store
+            # so a localhost dev session shows the real owner profile and data
+            # (accounts, strategies, NinjaTrader, agents) instead of an empty
+            # synthetic scope, even when NTA_TELEGRAM_CHAT_ID is not exported.
+            resolved_id = account_auth.primary_owner_id()
+            if resolved_id > 0:
+                owner_id = resolved_id
+                user = account_auth.primary_owner() or {}
         return self._decorate_workspace_context({
-            "source": "local", "user_id": int(owner_id or 0),
+            "source": "local", "user_id": owner_id,
             "role": "owner", "is_owner": True,
             "csrf_token": "", "user": user,
+            "_owner_scope_id": owner_id,
+        })
+
+    def _local_development_cookie_context(self) -> Optional[Dict[str, Any]]:
+        """Resolve localhost Development access without letting stale cookies lock out owner."""
+        cookie = self._cookie_value(runtime_env.session_cookie_name())
+        if not cookie:
+            return self._local_owner_context()
+        try:
+            session = account_auth.authenticate_session(cookie)
+        except account_auth.AccountAuthError:
+            session = None
+        if session:
+            if dev_service_accounts.available() and dev_service_accounts.is_service_uid(session.get("user_id")):
+                return self._dev_service_context(session)
+            # Keep real user sessions intact for local role/permission testing.
+            return None
+        if account_auth.session_auth_failure(cookie):
+            return None
+        self._clear_session_cookie()
+        return self._local_owner_context()
+
+    def _dev_service_context(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        """Context for a localhost Claude/GPT service session.
+
+        Owner-equivalent authority over the owner's workspace/data (via the
+        pre-established owner-role membership), but a distinct ``user_id`` so
+        every action is audited under the service account, not the human owner.
+        """
+        uid = int(session.get("user_id") or 0)
+        actor = dev_service_accounts.actor_for_uid(uid)
+        spec = dev_service_accounts.SERVICE_ACCOUNTS.get(actor, {})
+        user = account_auth.find_active_user(uid) or {
+            "user_id": uid,
+            "first_name": spec.get("first_name", "Service"),
+            "last_name": spec.get("last_name", ""),
+            "username": spec.get("username", ""),
+            "role": "owner", "status": "active",
+            "is_owner": False, "is_service_account": True,
+            "ux_mode": "professional",
+        }
+        return self._decorate_workspace_context({
+            "source": "dev_service", "user_id": uid,
+            "role": "owner", "is_owner": True, "user": user,
+            "session_id": str(session.get("session_id") or ""),
+            "csrf_token": str(session.get("csrf_token") or ""),
+            "service_actor": actor,
+            "_owner_scope_id": 0,
         })
 
     def _decorate_workspace_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        scope_override = context.get("_owner_scope_id")
+        if scope_override is None:
+            owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        else:
+            owner_id = str(scope_override or "")
         try:
             workspace_context = workspaces.context_for_user(
                 context.get("user_id"),
@@ -1354,6 +1703,10 @@ class Handler(BaseHTTPRequestHandler):
                     capability_id: bool(context.get("is_owner"))
                     for capability_id in permissions.CAPABILITY_IDS
                 },
+                "admin_capabilities": {
+                    capability_id: bool(context.get("is_owner"))
+                    for capability_id in permissions.ADMIN_CAPABILITY_IDS
+                },
                 "ux_mode": "professional" if context.get("is_owner") else str(
                     (context.get("user") or {}).get("ux_mode") or ""
                 ),
@@ -1366,9 +1719,15 @@ class Handler(BaseHTTPRequestHandler):
             context["capabilities"] = {
                 capability_id: True for capability_id in permissions.CAPABILITY_IDS
             }
+            context["admin_capabilities"] = {
+                capability_id: True for capability_id in permissions.ADMIN_CAPABILITY_IDS
+            }
             context["ux_mode"] = "professional"
         else:
             context["capabilities"] = dict(resolved.get("capabilities") or {})
+            context["admin_capabilities"] = dict(
+                resolved.get("admin_capabilities") or {}
+            )
             context["ux_mode"] = str(resolved.get("ux_mode") or "")
         context["_permissions"] = resolved
         return context
@@ -1414,6 +1773,8 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _api_action_class(self, path: str, method: str) -> str:
+        if permissions.required_admin_capability(path, method):
+            return "owner"
         if path.startswith("/api/auth/"):
             # Session/profile reads are ordinary authenticated UI polling.
             # Keeping them in the small login/mutation bucket makes a healthy
@@ -1489,13 +1850,19 @@ class Handler(BaseHTTPRequestHandler):
         # Mini App tunnel or anything carrying Telegram initData — must ALWAYS be
         # authenticated against the approved account allowlist, even when desktop
         # auth is disabled. Otherwise every Mini App visitor would inherit full
-        # owner access (the reported "instant access" security hole).
-        if not account_auth.auth_required() and not self._is_remote_api_request():
+        # owner access (the reported "instant access" security hole). On the
+        # checked-out Development build this path is the default (no flag needed);
+        # Canary/Production can never reach it (see _local_owner_bypass_allowed).
+        if self._local_owner_bypass_allowed():
             try:
-                self._remote_context = self._local_owner_context()
+                local_context = self._local_development_cookie_context()
             except account_auth.AccountAuthError as exc:
                 self._err(exc.status, str(exc)); return False
-            return True
+            if local_context is not None:
+                self._remote_context = local_context
+                return True
+            # A valid regular localhost session falls through to the normal
+            # authenticated-session path so role/permission tests stay real.
         tunnel_ip, forwarded_ip = self._request_ips()
         init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
         if init_data:
@@ -1509,11 +1876,18 @@ class Handler(BaseHTTPRequestHandler):
                 # Telegram initData authenticates the Mini App request, while
                 # the protected browser session carries device-scoped step-up
                 # state. Merge it only when both identities are identical.
+                remote_user_uuid = account_auth.user_uuid_for_legacy_id(
+                    self._remote_context.get("user_id"),
+                )
+                if remote_user_uuid:
+                    self._remote_context["user_uuid"] = remote_user_uuid
                 browser_session = account_auth.authenticate_session(
-                    self._cookie_value(account_auth.SESSION_COOKIE)
+                    self._cookie_value(runtime_env.session_cookie_name())
                 )
                 if (browser_session and str(browser_session.get("user_id") or "")
-                        == str(self._remote_context.get("user_id") or "")):
+                        == str(self._remote_context.get("user_id") or "")
+                        and remote_user_uuid
+                        and str(browser_session.get("user_uuid") or "") == remote_user_uuid):
                     for key in (
                         "session_id", "device_id", "csrf_hash", "csrf_token",
                         "nt_elevated_until", "impersonating",
@@ -1539,31 +1913,35 @@ class Handler(BaseHTTPRequestHandler):
                         account, include_contact=True, include_avatar=True)
                 self._remote_context = self._decorate_workspace_context(self._remote_context)
                 method = self.command.upper()
+                admin_route = bool(permissions.required_admin_capability(path, method))
                 role = str(self._remote_context.get("role") or "read_only")
                 workspace = self._remote_context.get("active_workspace") if isinstance(self._remote_context.get("active_workspace"), dict) else {}
                 membership_role = str(self._remote_context.get("membership_role") or "viewer")
                 personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+                impersonation_exit = _is_impersonation_exit(path, self._remote_context)
                 if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                         and membership_role not in workspaces.WRITE_ROLES
-                        and not _is_self_service_post(path)):
+                        and not _is_self_service_post(path) and not admin_route and not impersonation_exit):
                     raise telegram_remote.RemoteAccessError(
                         "В этой рабочей области доступно только наблюдение.", 403,
                         self._remote_context,
                     )
                 if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
+                        and not admin_route and not impersonation_exit
                         and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
                     raise telegram_remote.RemoteAccessError("Для этого действия нужна роль «полное управление».", 403, self._remote_context)
-                if _is_owner_only_api_path(path) and not self._remote_context["is_owner"]:
+                if _is_owner_only_api_path(path, method) and not self._remote_context["is_owner"] and not impersonation_exit:
                     raise telegram_remote.RemoteAccessError(
                         "Это действие разрешено только владельцу.", 403,
                         self._remote_context,
                     )
                 try:
                     self._remote_context["_request_method"] = method
-                    permissions.enforce(path, self._remote_context)
+                    if not impersonation_exit:
+                        permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
                     raise telegram_remote.RemoteAccessError(str(exc), exc.status, self._remote_context) from None
-                if account_auth.path_requires_nt_dual_auth(path, method):
+                if not impersonation_exit and account_auth.path_requires_nt_dual_auth(path, method):
                     try:
                         account_auth.require_nt_dual_auth(self._remote_context)
                     except account_auth.AccountAuthError as exc:
@@ -1578,7 +1956,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         try:
             context = account_auth.authenticate_session(
-                self._cookie_value(account_auth.SESSION_COOKIE),
+                self._cookie_value(runtime_env.session_cookie_name()),
             )
         except account_auth.AccountAuthError as exc:
             self._err(exc.status, str(exc), code=getattr(exc, "code", "") or ""); return False
@@ -1587,28 +1965,32 @@ class Handler(BaseHTTPRequestHandler):
             return False
         context = self._decorate_workspace_context(context)
         method = self.command.upper()
+        admin_route = bool(permissions.required_admin_capability(path, method))
         role = str(context.get("role") or "read_only")
         workspace = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
         membership_role = str(context.get("membership_role") or "viewer")
         personal_statement_write = path.startswith("/api/ops/runtime/account-history/") and bool(workspace) and not workspace.get("uses_owner_runtime")
+        impersonation_exit = _is_impersonation_exit(path, context)
         if (method not in {"GET", "HEAD"} and workspace.get("uses_owner_runtime")
                 and membership_role not in workspaces.WRITE_ROLES
-                and not _is_self_service_post(path)):
+                and not _is_self_service_post(path) and not admin_route and not impersonation_exit):
             self._err(HTTPStatus.FORBIDDEN, "В этой рабочей области доступно только наблюдение.")
             return False
         if (method not in {"GET", "HEAD"} and role == "read_only" and not _is_self_service_post(path)
+            and not admin_route and not impersonation_exit
             and not path.startswith("/api/bridge/connections/") and not personal_statement_write):
             self._err(HTTPStatus.FORBIDDEN, "Для этого действия нужна роль «полное управление».")
             return False
-        if _is_owner_only_api_path(path) and not context.get("is_owner"):
+        if _is_owner_only_api_path(path, method) and not context.get("is_owner") and not impersonation_exit:
             self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
             return False
         try:
             context["_request_method"] = method
-            permissions.enforce(path, context)
+            if not impersonation_exit:
+                permissions.enforce(path, context)
         except permissions.PermissionError as exc:
             self._err(exc.status, str(exc)); return False
-        if account_auth.path_requires_nt_dual_auth(path, method):
+        if not impersonation_exit and account_auth.path_requires_nt_dual_auth(path, method):
             try:
                 account_auth.require_nt_dual_auth(context)
             except account_auth.AccountAuthError as exc:
@@ -1727,6 +2109,8 @@ class Handler(BaseHTTPRequestHandler):
         payload["features"] = perm["nav"]
         payload["capabilities"] = perm["capabilities"]
         payload["capability_catalog"] = permissions.capability_catalog()
+        payload["admin_capabilities"] = perm["admin_capabilities"]
+        payload["admin_capability_catalog"] = permissions.admin_capability_catalog()
         payload["plan_id"] = perm["plan_id"]
         payload["free_preview"] = perm["free_preview"]
         payload["locked_nav"] = perm["locked_nav"]
@@ -1767,7 +2151,7 @@ class Handler(BaseHTTPRequestHandler):
             "active_membership": membership,
             "uses_owner_runtime": bool(active.get("uses_owner_runtime")),
         }
-        return {
+        scope = {
             "user_id": context.get("user_id"),
             "workspace_id": active.get("workspace_id"),
             "workspace_kind": active.get("kind") or "",
@@ -1778,25 +2162,59 @@ class Handler(BaseHTTPRequestHandler):
             "display_name": display,
             "capabilities": context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {},
         }
+        user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
+        if not user_uuid:
+            user_uuid = account_auth.user_uuid_for_legacy_id(context.get("user_id"))
+        if user_uuid:
+            scope["user_uuid"] = user_uuid
+        return scope
+
+    def _auth_providers_payload(self) -> Dict[str, Any]:
+        settings = telegram_service.load_settings()
+        bot_username = str(settings.get("bot_username") or "").strip().lstrip("@")
+        google = google_auth.status()
+        email = account_auth.email_auth_status()
+        return {
+            "ok": True,
+            "identity_model": "uuid",
+            "owner_approval_required": True,
+            "providers": {
+                "telegram": {
+                    "available": bool(bot_username),
+                    "configured": bool(bot_username),
+                    "bot_username": bot_username,
+                },
+                "google": {
+                    "available": bool(google.get("configured")),
+                    "configured": bool(google.get("configured")),
+                    "test_auth_fallback": bool(google.get("test_auth_fallback")),
+                },
+                "email": email,
+            },
+        }
 
     def _auth_status(self) -> None:
         try:
-            # Fast-path: no auth required AND the request is genuinely local
-            # (loopback desktop, no Telegram initData, no public tunnel host).
-            # Return the local-owner context so the desktop shell loads without a
-            # Telegram login. Remote requests never take this path — they are
-            # always authenticated below so Mini App visitors can't inherit owner.
-            if not account_auth.auth_required() and not self._is_remote_api_request():
-                context = self._local_owner_context()
-                self._json(HTTPStatus.OK, self._augment_permissions(context, {
-                    "authenticated": True, "source": context.get("source"),
-                    "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
-                    "csrf_token": "", "user": context.get("user") or {},
-                    "workspaces": context.get("workspaces") or [],
-                    "active_workspace": context.get("active_workspace") or {},
-                    "active_membership": context.get("active_membership") or {},
-                }))
-                return
+            # Fast-path: the request is genuinely local (loopback desktop, no
+            # Telegram initData, no public tunnel host) AND either the explicit
+            # test bypass is active or this is the Development build. Return the
+            # local-owner context so the desktop shell loads without a Telegram
+            # login. Remote requests never take this path — they are always
+            # authenticated below so Mini App visitors can't inherit owner.
+            if self._local_owner_bypass_allowed():
+                context = self._local_development_cookie_context()
+                if context is not None:
+                    self._json(HTTPStatus.OK, self._augment_permissions(context, {
+                        "authenticated": True, "source": context.get("source"),
+                        "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
+                        "csrf_token": "", "user": context.get("user") or {},
+                        "workspaces": context.get("workspaces") or [],
+                        "active_workspace": context.get("active_workspace") or {},
+                        "active_membership": context.get("active_membership") or {},
+                    }))
+                    return
+                # A valid regular localhost session falls through to the normal
+                # status path below so its actual role/permissions are surfaced.
             owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
             account_auth.ensure_owner(owner_id)
             init_data = str(self.headers.get(telegram_remote.INIT_DATA_HEADER) or "")
@@ -1820,11 +2238,11 @@ class Handler(BaseHTTPRequestHandler):
                     user_agent=str(self.headers.get("User-Agent") or ""),
                     throttle_sec=6 * 3600)
             else:
-                context = account_auth.authenticate_session(self._cookie_value(account_auth.SESSION_COOKIE))
+                context = account_auth.authenticate_session(self._cookie_value(runtime_env.session_cookie_name()))
             if context:
                 context = self._decorate_workspace_context(context)
             if not context:
-                failure = account_auth.session_auth_failure(self._cookie_value(account_auth.SESSION_COOKIE))
+                failure = account_auth.session_auth_failure(self._cookie_value(runtime_env.session_cookie_name()))
                 if failure:
                     self._clear_session_cookie()
                     self._json(HTTPStatus.UNAUTHORIZED, {
@@ -1833,13 +2251,15 @@ class Handler(BaseHTTPRequestHandler):
                         "auth_required": account_auth.auth_required(),
                         "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
                         "storage": account_auth.storage_status(),
+                        "providers": self._auth_providers_payload()["providers"],
                     })
                     return
                 self._json(HTTPStatus.UNAUTHORIZED, {
-                    "error": "Требуется вход через Telegram.", "authenticated": False,
+                    "error": "Требуется вход.", "authenticated": False,
                     "auth_required": account_auth.auth_required(),
                     "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
                     "storage": account_auth.storage_status(),
+                    "providers": self._auth_providers_payload()["providers"],
                 })
                 return
             payload = {
@@ -1857,6 +2277,7 @@ class Handler(BaseHTTPRequestHandler):
                 "impersonator_owner_id": context.get("impersonator_owner_id"),
                 "runtime": runtime_env.status(),
                 "google_oauth": google_auth.status(),
+                "providers": self._auth_providers_payload()["providers"],
             }
             self._json(HTTPStatus.OK, self._augment_permissions(context, payload))
         except (account_auth.AccountAuthError, telegram_remote.RemoteAccessError) as exc:
@@ -1932,6 +2353,31 @@ class Handler(BaseHTTPRequestHandler):
                 sent = False
         return {"ok": bool(sent), "sent_to": "owner"}
 
+    def _admin_operations_payload(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        payload = observability.dashboard()
+        payload["worker"] = (
+            production_workers.status()
+            if runtime_env.is_production() and runtime_env.environment_explicit()
+            else local_worker.status()
+        )
+        try:
+            payload["telegram"] = (
+                production_telegram.get_queue().status()
+                if runtime_env.is_production() and runtime_env.environment_explicit()
+                else telegram_service.status()
+            )
+        except production_telegram.StorageError as exc:
+            payload["telegram"] = {"ok": False, "code": exc.code}
+        try:
+            payload["connector"] = connector_protocol.list_installations(
+                context.get("user_id"),
+                workspace_id=str(context.get("workspace_id") or ""),
+            )
+        except connector_protocol.ConnectorProtocolError as exc:
+            payload["connector"] = {"ok": False, "code": exc.code}
+        return payload
+
     def _cabinet_payload(self) -> Dict[str, Any]:
         context = getattr(self, "_remote_context", None) or {}
         uid = context.get("user_id")
@@ -1969,6 +2415,11 @@ class Handler(BaseHTTPRequestHandler):
             perm = permissions.resolve(
                 permission_user, None if is_owner else subscription,
             )
+        admin_capabilities = perm.get("admin_capabilities")
+        if not isinstance(admin_capabilities, dict):
+            # Keep older/mocked request contexts compatible while still deriving
+            # the new control-plane grants from the authenticated user record.
+            admin_capabilities = permissions.resolve_admin_capabilities(permission_user)
         nav_features = perm["nav"]
         if isinstance(user, dict):
             user = {**user, "features": nav_features}
@@ -1987,6 +2438,8 @@ class Handler(BaseHTTPRequestHandler):
             "feature_catalog": account_auth.feature_catalog(),
             "capabilities": perm["capabilities"],
             "capability_catalog": permissions.capability_catalog(),
+            "admin_capabilities": admin_capabilities,
+            "admin_capability_catalog": permissions.admin_capability_catalog(),
             "plan_id": perm["plan_id"],
             "free_preview": perm["free_preview"],
             "locked_nav": perm["locked_nav"],
@@ -2026,19 +2479,21 @@ class Handler(BaseHTTPRequestHandler):
         if uid <= 0:
             self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход."); return
         body = self._read_body() or {}
-        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
-        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
-        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
-        redirect_uri = str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
         try:
             out = google_auth.start_link(
                 user_id=uid,
-                redirect_uri=redirect_uri,
+                redirect_uri=self._google_redirect_uri(body),
                 return_path=str(body.get("return_path") or "/ui/"),
             )
             self._json(HTTPStatus.OK, out)
         except google_auth.GoogleAuthError as exc:
             self._err(exc.status, str(exc))
+
+    def _google_redirect_uri(self, body: Dict[str, Any]) -> str:
+        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        proto = str(self.headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+        default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
+        return str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
 
     def _google_oauth_callback(self, qs: Dict[str, Any]) -> None:
         code = str((qs.get("code") or [""])[0] or "")
@@ -2049,17 +2504,36 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             identity = google_auth.exchange_code(code=code, state=state)
-            account_auth.link_google_identity(
-                identity["user_id"],
-                google_sub=identity["google_sub"],
-                google_email=identity.get("google_email") or "",
-                google_name=identity.get("google_name") or "",
-                source="google_oauth",
-            )
             path = str(identity.get("return_path") or "/ui/")
-            if not path.startswith("/"):
-                path = "/ui/"
-            self._html_redirect(path + ("&" if "?" in path else "?") + "google_linked=1")
+            if identity.get("purpose") == "login":
+                tunnel_ip, forwarded_ip = self._request_ips()
+                out = account_auth.login_via_google_identity(
+                    google_sub=identity["google_sub"],
+                    google_email=identity.get("google_email") or "",
+                    google_name=identity.get("google_name") or "",
+                    email_verified=bool(identity.get("email_verified")),
+                    accept_terms=bool(identity.get("accept_terms")),
+                    ip=forwarded_ip or tunnel_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call,
+                    owner_chat_id=str(os.environ.get(telegram_service.CHAT_ENV) or ""),
+                )
+                token = str(out.pop("session_token", ""))
+                if token:
+                    self._set_session_cookie(token)
+                    suffix = "google_login=1"
+                else:
+                    suffix = "auth_challenge=" + urllib.parse.quote(str(out.get("challenge_id") or ""))
+            else:
+                account_auth.link_google_identity(
+                    identity["user_id"],
+                    google_sub=identity["google_sub"],
+                    google_email=identity.get("google_email") or "",
+                    google_name=identity.get("google_name") or "",
+                    source="google_oauth",
+                )
+                suffix = "google_linked=1"
+            self._html_redirect(path + ("&" if "?" in path else "?") + suffix)
         except (google_auth.GoogleAuthError, account_auth.AccountAuthError) as exc:
             self._html_redirect("/ui/?google_error=" + urllib.parse.quote(str(exc)[:180]))
 
@@ -2180,7 +2654,7 @@ class Handler(BaseHTTPRequestHandler):
         tunnel_ip, forwarded_ip = self._request_ips()
         try:
             out = account_auth.end_impersonation(
-                self._cookie_value(account_auth.SESSION_COOKIE),
+                self._cookie_value(runtime_env.session_cookie_name()),
                 owner_id=owner_id,
                 ip=forwarded_ip or tunnel_ip,
                 user_agent=str(self.headers.get("User-Agent") or "owner-return"),
@@ -2191,6 +2665,30 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, out)
         except (runtime_env.RuntimeEnvError, account_auth.AccountAuthError) as exc:
             self._err(getattr(exc, "status", 400), str(exc))
+
+    def _owner_agent_team_grant(self) -> None:
+        """Owner grants/revokes the full agent team capability for a user."""
+        context = self._require_owner_actor()
+        if not context:
+            return
+        body = self._read_body() or {}
+        try:
+            uid = int(body.get("user_id") or 0)
+        except (TypeError, ValueError):
+            uid = 0
+        if uid <= 0:
+            self._err(HTTPStatus.BAD_REQUEST, "user_id обязателен."); return
+        capability = str(body.get("capability") or agent_allocation.TEAM_FULL_CAPABILITY)
+        action = str(body.get("action") or "grant").strip().lower()
+        try:
+            if action == "revoke":
+                out = agent_allocation.revoke_team_capability(uid, capability)
+            else:
+                out = agent_allocation.grant_team_capability(
+                    uid, capability, granted_by=context.get("user_id"))
+            self._json(HTTPStatus.OK, out)
+        except ValueError as exc:
+            self._err(HTTPStatus.BAD_REQUEST, str(exc))
 
     def _owner_google_secrets(self) -> None:
         if not self._require_owner_actor():
@@ -2363,18 +2861,650 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
+            elif path == "/api/auth/google/login/start":
+                out = google_auth.start_login(
+                    redirect_uri=self._google_redirect_uri(body),
+                    return_path=str(body.get("return_path") or "/ui/"),
+                    accept_terms=bool(body.get("accept_terms")),
+                )
+            elif path == "/api/auth/email/start":
+                out = account_auth.start_email_auth(
+                    body.get("email"), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    purpose="login",
+                )
+            elif path == "/api/auth/email/verify":
+                out = account_auth.verify_email_auth(
+                    body.get("challenge_id"), code=body.get("code"),
+                    magic_token=body.get("magic_token"),
+                    profile=body.get("profile") or body,
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                )
+                if out.get("status") == "authenticated":
+                    self._set_session_cookie(str(out.pop("session_token")))
+            elif path == "/api/auth/test/google-login":
+                runtime_env.require_test_auth()
+                identity = google_auth.fake_identity(
+                    google_sub=str(body.get("google_sub") or ""),
+                    email=str(body.get("email") or ""),
+                )
+                out = account_auth.login_via_google_identity(
+                    google_sub=identity["google_sub"],
+                    google_email=identity["google_email"],
+                    google_name=str(body.get("google_name") or identity.get("google_name") or ""),
+                    email_verified=True,
+                    accept_terms=bool(body.get("accept_terms")),
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                )
+                if out.get("status") == "authenticated":
+                    self._set_session_cookie(str(out.pop("session_token")))
             else:
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
             self._json(HTTPStatus.OK, out)
+        except (account_auth.AccountAuthError, google_auth.GoogleAuthError,
+                runtime_env.RuntimeEnvError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc), code=getattr(exc, "code", "") or "")
+
+    def _account_security_post(self, path: str) -> None:
+        """Self-service trusted-device and step-up mutations (Phase 4).
+
+        Every action is authenticated (session/CSRF), scoped to the caller's own
+        account by ``user_id`` and re-checks device ownership server-side. Hiding
+        a button is never the authorization boundary.
+        """
+        routes = {
+            "/api/account/security/challenge",
+            "/api/account/security/challenge/confirm",
+            "/api/account/devices/approve",
+            "/api/account/devices/reject",
+            "/api/account/devices/revoke",
+        }
+        if path not in routes:
+            self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
+            return
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        tunnel_ip, forwarded_ip = self._request_ips()
+        ip = forwarded_ip or tunnel_ip
+        try:
+            if path == "/api/account/security/challenge":
+                out = security_devices.create_challenge(
+                    user_id=user_id,
+                    purpose=str(body.get("purpose") or ""),
+                    device_id=str(body.get("device_id") or ""),
+                    provider=str(body.get("provider") or ""),
+                    ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/account/security/challenge/confirm":
+                out = security_devices.confirm_challenge(
+                    user_id=user_id,
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/devices/approve":
+                out = security_devices.approve_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/devices/reject":
+                out = security_devices.reject_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            else:
+                out = security_devices.revoke_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            self._json(HTTPStatus.OK, out)
+        except security_devices.SecurityDeviceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _personal_nt_error(self, exc: "personal_nt_security.PersonalNtSecurityError") -> None:
+        payload: Dict[str, Any] = {"error": str(exc), "code": exc.code}
+        if exc.onboarding is not None:
+            payload["onboarding"] = exc.onboarding
+        if exc.action:
+            payload["action"] = exc.action
+        self._json(exc.status, payload)
+
+    def _personal_nt_gate(
+        self, action: str, *, require_ready: bool, challenge_id: str = "",
+    ) -> bool:
+        """Enforce personal-NT factors and/or a single-use step-up grant.
+
+        Writes the error response and returns False when the gate is not met,
+        so critical NinjaTrader actions cannot proceed without a fresh, bound
+        confirmation (owner is exempt inside the security module).
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        _, forwarded_ip = self._request_ips()
+        try:
+            if require_ready:
+                personal_nt_security.require_ready_and_step_up(
+                    context.get("user_id"), action=action,
+                    challenge_id=challenge_id, ip=forwarded_ip,
+                )
+            else:
+                personal_nt_security.require_step_up(
+                    context.get("user_id"), action=action,
+                    challenge_id=challenge_id, ip=forwarded_ip,
+                )
+            return True
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+            return False
+
+    def _personal_nt_require_ready(self) -> bool:
+        """Require both personal-NT factors without consuming a step-up grant."""
+        context = getattr(self, "_remote_context", None) or {}
+        try:
+            personal_nt_security.require_ready(context.get("user_id"))
+            return True
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+            return False
+
+    def _ninjatrader_post(self, path: str) -> None:
+        """Phase 6: shared/personal NinjaTrader job queue and durable lease.
+
+        User-facing routes (jobs enqueue/cancel) are self-service and scoped to
+        the caller's own workspace. Worker routes (claim/heartbeat/release/
+        recover) are capability-gated at ``_authorize_api``; heartbeat/release
+        additionally prove possession of the server-issued lease token.
+        """
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        is_owner = bool(context.get("is_owner"))
+        admin_caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        can_admin = bool(is_owner or admin_caps.get("operations.execute") or admin_caps.get("operations.view"))
+        parts = [urllib.parse.unquote(p) for p in path.split("/") if p]
+        try:
+            if path == "/api/ninjatrader/jobs":
+                out = ninjatrader_resources.enqueue_job(
+                    user_id,
+                    operation_kind=str(body.get("operation_kind") or ""),
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                    workspace_id=str(body.get("workspace_id") or ""),
+                    parallel_group=str(body.get("parallel_group") or "exclusive"),
+                    is_owner=is_owner,
+                )
+            elif len(parts) == 4 and parts[2] == "jobs" and path.endswith("/cancel"):
+                out = ninjatrader_resources.cancel_job(
+                    user_id, job_id=parts[3], is_owner=is_owner, can_admin=can_admin,
+                )
+            elif path == "/api/ninjatrader/worker/claim":
+                out = ninjatrader_resources.claim_next(str(body.get("resource_id") or ""))
+            elif path == "/api/ninjatrader/worker/heartbeat":
+                out = ninjatrader_resources.heartbeat(
+                    str(body.get("job_id") or ""), lease_token=str(body.get("lease_token") or ""),
+                )
+            elif path == "/api/ninjatrader/worker/release":
+                out = ninjatrader_resources.release(
+                    str(body.get("job_id") or ""), lease_token=str(body.get("lease_token") or ""),
+                    outcome=str(body.get("outcome") or "released"),
+                )
+            elif path == "/api/ninjatrader/worker/recover":
+                out = ninjatrader_resources.recover_expired(str(body.get("resource_id") or ""))
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no ninjatrader route", code="nt_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except ninjatrader_resources.NinjaTraderResourceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+        except workspaces.WorkspaceError as exc:
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+
+    def _dev_bootstrap_redeem(self, qs: Dict[str, Any]) -> None:
+        """Public Development-only redeem: single-use loopback bootstrap link."""
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        token = str((qs.get("token") or [""])[0] or "")
+        try:
+            out = dev_preview.redeem_bootstrap_token(
+                token, is_loopback=is_loopback, ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-bootstrap"),
+            )
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._set_session_cookie(str(out.get("session_token") or ""))
+        # Redirect to the app without leaving the token in the address bar.
+        self.send_response(HTTPStatus.SEE_OTHER)
+        for name, value in self._extra_headers:
+            self.send_header(name, value)
+        self.send_header("Location", "/ui/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _dev_preview_return(self) -> None:
+        """Public Development-only, loopback-only return to the owner session."""
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        if not is_loopback:
+            self._err(HTTPStatus.FORBIDDEN, "loopback required", code="loopback_required")
+            return
+        try:
+            out = dev_preview.return_to_developer(
+                ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+            )
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._set_session_cookie(str(out.get("session_token") or ""))
+        self.send_response(HTTPStatus.SEE_OTHER)
+        for name, value in self._extra_headers:
+            self.send_header(name, value)
+        self.send_header("Location", "/ui/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _dev_service_login(self) -> None:
+        """Localhost-only Claude/GPT service login (Development only).
+
+        Never available in Canary/Production (``dev_service_accounts.available``)
+        and only from a loopback client. ``actor='owner'`` (or empty) clears the
+        service session to return to the human owner.
+        """
+        if not self._check_local_post():
+            return
+        if not dev_service_accounts.available():
+            self._err(HTTPStatus.FORBIDDEN, "Служебный вход доступен только в Development.",
+                      code="dev_only")
+            return
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        is_loopback = self._is_loopback_ip(client_ip) and not self._is_remote_api_request()
+        if not is_loopback:
+            self._err(HTTPStatus.FORBIDDEN, "Служебный вход возможен только с localhost.",
+                      code="loopback_required")
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        actor = str(body.get("actor") or "").strip().lower()
+        if actor in {"", "owner"}:
+            self._clear_session_cookie()
+            self._json(HTTPStatus.OK, {"ok": True, "actor": "owner"})
+            return
+        try:
+            out = dev_service_accounts.login(
+                actor, is_loopback=is_loopback, ip=client_ip or "127.0.0.1",
+                user_agent=str(self.headers.get("User-Agent") or "dev-service"))
+        except dev_service_accounts.DevServiceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        token = str(out.pop("session_token", ""))
+        if token:
+            self._set_session_cookie(token)
+        self._json(HTTPStatus.OK, out)
+
+    def _dev_preview_post(self, path: str) -> None:
+        """Developer-only View-As and bootstrap-mint (Development, owner-gated)."""
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        tunnel_ip, forwarded_ip = self._request_ips()
+        ip = str(forwarded_ip or tunnel_ip or "127.0.0.1")
+        try:
+            if path == "/api/dev/preview/view-as":
+                out = dev_preview.start_view_as(
+                    user_id, str(body.get("persona") or ""), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or "dev-preview"),
+                )
+                if out.get("clear_session"):
+                    self._clear_session_cookie()
+                elif out.get("session_token"):
+                    self._set_session_cookie(str(out.get("session_token")))
+                    out.pop("session_token", None)
+            elif path == "/api/dev/preview/exit":
+                out = dev_preview.exit_view_as(
+                    user_id, self._cookie_value(runtime_env.session_cookie_name()), ip=ip,
+                    user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+                )
+                if out.get("session_token"):
+                    self._set_session_cookie(str(out.get("session_token")))
+                    out.pop("session_token", None)
+            elif path == "/api/dev/preview/reset-personas":
+                out = dev_preview.reset_personas()
+            elif path == "/api/dev/bootstrap/mint":
+                out = dev_preview.mint_bootstrap_token(
+                    user_id, origin=self._self_origin(),
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no dev preview route", code="dev_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except dev_preview.DevPreviewError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    # ---- Release Center (Phase 8) -------------------------------------------
+    def _release_context(self) -> Dict[str, Any]:
+        context = getattr(self, "_remote_context", None) or {}
+        caps = context.get("admin_capabilities")
+        if not isinstance(caps, dict):
+            caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+            context = {**context, "admin_capabilities": caps}
+        return context
+
+    def _require_release_capability(self, context: Dict[str, Any], capability: str) -> bool:
+        if context.get("is_owner"):
+            return True
+        caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        if caps.get(capability):
+            return True
+        self._err(HTTPStatus.FORBIDDEN, "Недостаточно прав для этого действия Release Center.",
+                  code="release_capability_required")
+        return False
+
+    def _releases_get(self, path: str) -> None:
+        try:
+            if path == "/api/admin/releases":
+                self._json(HTTPStatus.OK, release_center.list_releases())
+                return
+            prefix = "/api/admin/releases/"
+            if path.startswith(prefix):
+                candidate_id = path[len(prefix):].strip("/")
+                self._json(HTTPStatus.OK, release_center.get_release(candidate_id))
+                return
+            self._err(HTTPStatus.NOT_FOUND, "no release route", code="release_route_not_found")
+        except release_center.ReleaseCenterError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _releases_post(self, path: str) -> None:
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = self._release_context()
+        actor = {"user_id": context.get("user_id"), "is_owner": bool(context.get("is_owner"))}
+        parts = path[len("/api/admin/releases"):].strip("/").split("/")
+        try:
+            if path == "/api/admin/releases/candidates":
+                if not self._require_release_capability(context, "releases.create"):
+                    return
+                self._json(HTTPStatus.OK, release_center.create_candidate(
+                    actor=actor,
+                    app_version=str(body.get("app_version") or ""),
+                    release_channel=str(body.get("release_channel") or ""),
+                    git_commit_sha=str(body.get("git_commit_sha") or ""),
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                ))
+                return
+            # /api/admin/releases/{id}/{action}
+            if len(parts) != 2:
+                self._err(HTTPStatus.NOT_FOUND, "no release route", code="release_route_not_found")
+                return
+            candidate_id, action = parts[0], parts[1]
+            self._release_action(context, actor, candidate_id, action, body)
+        except release_center.ReleaseCenterError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _release_action(self, context, actor, candidate_id, action, body) -> None:
+        idem = str(body.get("idempotency_key") or "")
+        challenge = str(body.get("step_up_challenge_id") or "")
+        if action == "build":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.build_release(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "verify":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.verify_release(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "deploy-canary":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.deploy_canary(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "record-canary-check":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.record_canary_check(
+                actor=actor, candidate_id=candidate_id,
+                name=str(body.get("name") or ""), result=str(body.get("result") or ""),
+                evidence=body.get("evidence") if isinstance(body.get("evidence"), dict) else None,
+                final=bool(body.get("final")), idempotency_key=idem))
+        elif action == "approve-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.approve_production(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "schedule-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.schedule_production(
+                actor=actor, candidate_id=candidate_id,
+                mode=str(body.get("mode") or "now"), explicit_utc=str(body.get("explicit_utc") or ""),
+                idempotency_key=idem))
+        elif action == "promote-production":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.promote_production(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "mark-production-live":
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.mark_production_live(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem))
+        elif action == "rollback-production":
+            if not self._require_release_capability(context, "releases.rollback_production"):
+                return
+            self._json(HTTPStatus.OK, release_center.rollback_production(
+                actor=actor, candidate_id=candidate_id,
+                to_artifact_id=str(body.get("to_artifact_id") or ""),
+                reason=str(body.get("reason") or ""), idempotency_key=idem,
+                step_up_challenge_id=challenge))
+        elif action == "rehearse-bluegreen":
+            if not self._require_release_capability(context, "releases.deploy_canary"):
+                return
+            self._json(HTTPStatus.OK, release_center.rehearse_blue_green(
+                actor=actor, candidate_id=candidate_id,
+                environment=str(body.get("environment") or "production"),
+                drain=body.get("drain") if isinstance(body.get("drain"), dict) else None,
+                idempotency_key=idem))
+        elif action == "step-up":
+            self._json(HTTPStatus.OK, release_center.begin_step_up(
+                actor, action=str(body.get("action") or ""),
+                provider=str(body.get("provider") or ""),
+                ip=str(self._request_ips()[1] or self._request_ips()[0] or ""),
+                user_agent=str(self.headers.get("User-Agent") or "release-center")))
+        elif action == "cancel":
+            if not self._require_release_capability(context, "releases.create"):
+                return
+            self._json(HTTPStatus.OK, release_center.cancel_release(
+                actor=actor, candidate_id=candidate_id,
+                reason=str(body.get("reason") or ""), idempotency_key=idem))
+        else:
+            self._err(HTTPStatus.NOT_FOUND, "no release action", code="release_action_not_found")
+
+    # ---- Document specifications (Phase 11) ---------------------------------
+    def _doc_context(self):
+        context = self._release_context()
+        actor = {"user_id": context.get("user_id"), "is_owner": bool(context.get("is_owner"))}
+        caps = context.get("admin_capabilities") if isinstance(context.get("admin_capabilities"), dict) else {}
+        ws = context.get("active_workspace") if isinstance(context.get("active_workspace"), dict) else {}
+        workspace_id = str(context.get("workspace_id") or ws.get("workspace_id") or "")
+        return actor, caps, workspace_id
+
+    def _documents_get(self, path: str) -> None:
+        actor, caps, aws = self._doc_context()
+        try:
+            if path == "/api/documents":
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                self._json(HTTPStatus.OK, doc_specs.list_documents(
+                    actor=actor, admin_caps=caps, actor_workspace_id=aws,
+                    scope_type=str(qs.get("scope_type", [""])[0] or ""),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or "")))
+                return
+            prefix = "/api/documents/"
+            if path.startswith(prefix):
+                self._json(HTTPStatus.OK, doc_specs.get_document(
+                    actor=actor, document_id=path[len(prefix):].strip("/"),
+                    admin_caps=caps, actor_workspace_id=aws))
+                return
+            self._err(HTTPStatus.NOT_FOUND, "no document route", code="document_route_not_found")
+        except doc_specs.DocSpecError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _documents_post(self, path: str) -> None:
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        actor, caps, aws = self._doc_context()
+        kw = dict(admin_caps=caps, actor_workspace_id=aws)
+        try:
+            if path == "/api/documents":
+                self._json(HTTPStatus.OK, doc_specs.create_document(
+                    actor=actor, scope_type=str(body.get("scope_type") or ""),
+                    slug=str(body.get("slug") or ""), title=str(body.get("title") or ""),
+                    content=body.get("content"), workspace_id=str(body.get("workspace_id") or ""),
+                    strategy_id=str(body.get("strategy_id") or ""), reason=str(body.get("reason") or ""), **kw))
+                return
+            parts = path[len("/api/documents/"):].strip("/").split("/")
+            if len(parts) == 2 and parts[1] == "revisions":
+                self._json(HTTPStatus.OK, doc_specs.create_revision(
+                    actor=actor, document_id=parts[0], content=body.get("content"),
+                    reason=str(body.get("reason") or ""), **kw))
+                return
+            if len(parts) == 2 and parts[1] == "revert":
+                self._json(HTTPStatus.OK, doc_specs.revert_document(
+                    actor=actor, document_id=parts[0], to_revision=int(body.get("to_revision") or 0),
+                    reason=str(body.get("reason") or ""), **kw))
+                return
+            if len(parts) == 3 and parts[0] == "revisions":
+                rid, act = parts[1], parts[2]
+                if act == "submit":
+                    self._json(HTTPStatus.OK, doc_specs.submit_revision(actor=actor, revision_id=rid, **kw)); return
+                if act == "approve":
+                    self._json(HTTPStatus.OK, doc_specs.approve_revision(actor=actor, revision_id=rid, **kw)); return
+                if act == "publish":
+                    self._json(HTTPStatus.OK, doc_specs.publish_revision(actor=actor, revision_id=rid, **kw)); return
+            self._err(HTTPStatus.NOT_FOUND, "no document action", code="document_action_not_found")
+        except doc_specs.DocSpecError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
+    def _account_nt_security_post(self, path: str) -> None:
+        """Self-service personal-NT security: step-up start/confirm, unlink."""
+        if not self._check_local_post():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.", code="invalid_body")
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        user_id = context.get("user_id")
+        _, forwarded_ip = self._request_ips()
+        try:
+            if path == "/api/account/nt-security/step-up/start":
+                out = personal_nt_security.begin_step_up(
+                    user_id, action=str(body.get("action") or ""),
+                    provider=str(body.get("provider") or ""), ip=forwarded_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/account/nt-security/step-up/confirm":
+                out = security_devices.confirm_challenge(
+                    user_id=user_id,
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    code=str(body.get("code") or ""),
+                    ip=forwarded_ip,
+                )
+                # A confirmed personal-NT step-up also refreshes this session's
+                # NT elevation so the paired critical action clears the dual-auth
+                # gate with a single confirmation.
+                if out.get("purpose") == security_devices.PURPOSE_STEP_UP and context.get("session_id"):
+                    try:
+                        account_auth.elevate_session_for_nt(
+                            str(context.get("session_id") or ""), user_id=user_id,
+                        )
+                    except account_auth.AccountAuthError:
+                        pass
+            elif path == "/api/account/identities/unlink":
+                # Removing a login method is a critical action: require step-up.
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_UNLINK_METHOD, require_ready=False,
+                    challenge_id=str(body.get("step_up_challenge_id") or ""),
+                ):
+                    return
+                out = account_auth.unlink_identity_self(
+                    user_id, identity_id=str(body.get("identity_id") or ""),
+                )
+            elif path == "/api/account/nt-security/step-up/staging":
+                out = personal_nt_security.grant_step_up_staging(
+                    user_id, action=str(body.get("action") or ""),
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
+                return
+            self._json(HTTPStatus.OK, out)
+        except personal_nt_security.PersonalNtSecurityError as exc:
+            self._personal_nt_error(exc)
+        except security_devices.SecurityDeviceError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
         except account_auth.AccountAuthError as exc:
-            self._err(exc.status, str(exc))
+            self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+        except runtime_env.RuntimeEnvError as exc:
+            self._err(getattr(exc, "status", 403), str(exc), code=getattr(exc, "code", "") or "")
 
     def _check_local_origin(self) -> bool:
         """Check Origin/Referer without requiring a Content-Type (used for DELETE)."""
         context = getattr(self, "_remote_context", None) or {}
         if context.get("source") == telegram_remote.SOURCE:
             return True
-        if context.get("source") == "desktop_session":
+        if context.get("csrf_hash"):
             if not account_auth.verify_csrf(context, str(self.headers.get("X-CSRF-Token") or "")):
                 self._err(HTTPStatus.FORBIDDEN, "CSRF token отсутствует или недействителен.")
                 return False
@@ -2671,6 +3801,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = service_readiness.readiness_payload(
                 deployment,
                 probes=getattr(self.server, "readiness_probes", {}),
+                optional_components=getattr(self.server, "readiness_optional_components", {}),
             )
             self._json(
                 HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
@@ -2680,6 +3811,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/status":
             self._auth_status()
+            return
+
+        if path == "/api/auth/providers":
+            self._json(HTTPStatus.OK, self._auth_providers_payload())
             return
 
         if path == "/api/legal/terms":
@@ -2697,12 +3832,31 @@ class Handler(BaseHTTPRequestHandler):
             self._google_oauth_callback(qs)
             return
 
+        if path == "/api/dev/bootstrap/redeem":
+            # Public, Development-only, loopback-only single-use bootstrap link so
+            # a separate automation browser can obtain a real owner session.
+            self._dev_bootstrap_redeem(qs)
+            return
+
+        if path == "/api/dev/preview/return":
+            # Loopback return to the developer session from any persona (works
+            # even for the unauthenticated persona which holds no session).
+            self._dev_preview_return()
+            return
+
         if path == "/api/runtime/env":
-            # Public enough for UI banners; no secrets.
+            # Public, secret-free build identity for UI banners and the
+            # credential-free Environment Switcher probe. Never return the
+            # Development-only status payload here: it contains local paths and
+            # operational flags that must not become cross-origin readable.
             self._json(
                 HTTPStatus.OK,
-                runtime_env.status() if runtime_env.is_development()
-                else runtime_env.public_status(),
+                runtime_env.public_status(),
+                # Public, secret-free build identity is intentionally readable
+                # cross-origin by the credential-free Environment Switcher.
+                # Wildcard CORS cannot carry cookies and this endpoint never
+                # accepts credentials or mutates state.
+                headers={"Access-Control-Allow-Origin": "*"},
             )
             return
 
@@ -2715,6 +3869,112 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/") and not self._authorize_api(path):
+            return
+
+        if path in {"/api/account/security", "/api/account/devices"}:
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                if path.endswith("/security"):
+                    payload = security_devices.account_security(context.get("user_id"))
+                else:
+                    payload = security_devices.list_devices(context.get("user_id"))
+                self._json(HTTPStatus.OK, payload)
+            except security_devices.SecurityDeviceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/account/nt-security":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, personal_nt_security.security_posture(context.get("user_id")))
+            except personal_nt_security.PersonalNtSecurityError as exc:
+                self._personal_nt_error(exc)
+            return
+
+        if path == "/api/account/identities":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, account_auth.list_account_identities(context.get("user_id")))
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
+            return
+
+        if path == "/api/ninjatrader/resource":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, ninjatrader_resources.resource_status(
+                    context.get("user_id"),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or ""),
+                    is_owner=bool(context.get("is_owner")),
+                ))
+            except ninjatrader_resources.NinjaTraderResourceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/ninjatrader/allocation":
+            context = getattr(self, "_remote_context", None) or {}
+            self._json(HTTPStatus.OK, agent_allocation.allocation_status(context))
+            return
+
+        if path == "/api/admin/ninjatrader/resources":
+            try:
+                self._json(HTTPStatus.OK, ninjatrader_resources.admin_resource_detail(
+                    resource_id=str(qs.get("resource_id", [""])[0] or ""),
+                    workspace_id=str(qs.get("workspace_id", [""])[0] or ""),
+                ))
+            except ninjatrader_resources.NinjaTraderResourceError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/dev/preview/status":
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, dev_preview.status(context.get("user_id")))
+            except dev_preview.DevPreviewError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        if path == "/api/admin/releases" or path.startswith("/api/admin/releases/"):
+            self._releases_get(path)
+            return
+
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            self._documents_get(path)
+            return
+
+        if path == "/api/admin/overview":
+            self._json(
+                HTTPStatus.OK,
+                _admin_overview_payload(
+                    getattr(self, "_remote_context", None) or {},
+                ),
+            )
+            return
+
+        if path == "/api/admin/environment-targets":
+            payload = _admin_environment_targets()
+            deployment = getattr(self.server, "deployment_config", None)
+            if deployment is None:
+                deployment = runtime_env.deployment_config()
+            readiness = service_readiness.readiness_payload(
+                deployment,
+                probes=getattr(self.server, "readiness_probes", {}),
+                optional_components=getattr(self.server, "readiness_optional_components", {}),
+            )
+            for target in payload["targets"]:
+                if target.get("current"):
+                    target["readiness"] = str(readiness.get("status") or "unknown")
+                    target["health"] = "reachable"
+                    target["warnings"].extend(
+                        str(check.get("code") or name)
+                        for name, check in (readiness.get("checks") or {}).items()
+                        if not check.get("ok")
+                    )
+            self._json(HTTPStatus.OK, payload)
+            return
+
+        if path == "/api/admin/operations":
+            self._json(HTTPStatus.OK, self._admin_operations_payload())
             return
 
         if path.startswith("/api/community/attachment/"):
@@ -2780,7 +4040,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
                 "/mode-entry.html",
             }
-            if rel in _new_pages or rel.startswith("/assets/"):
+            if rel in _new_pages or rel.startswith("/assets/") or rel.startswith("/brand/"):
                 self._serve_static("aurora/mode-entry.html" if rel == "/" else "aurora" + rel)
                 return
             # Fallback: any other path resolves against the static root (legacy-named files).
@@ -3347,6 +4607,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = account_auth.list_users(
                     (getattr(self, "_remote_context", None) or {}).get("user_id"))
+                out["admin_capability_catalog"] = permissions.admin_capability_catalog()
                 for row in out.get("users") or []:
                     if row.get("is_owner"):
                         continue
@@ -3380,6 +4641,8 @@ class Handler(BaseHTTPRequestHandler):
                     detail["entitlements"] = entitlements
                     detail["capabilities"] = perm["capabilities"]
                     detail["capability_catalog"] = permissions.capability_catalog()
+                    detail["admin_capabilities"] = perm["admin_capabilities"]
+                    detail["admin_capability_catalog"] = permissions.admin_capability_catalog()
                     detail["nt_connection"] = self._user_nt_info(target, bool(user.get("is_owner")))
                     detail["public_plans"] = subscriptions.list_plans().get("public_plans") or []
                     self._json(HTTPStatus.OK, detail)
@@ -3512,33 +4775,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/owner/operations":
-            context = getattr(self, "_remote_context", None) or {}
-            if not context.get("is_owner"):
-                self._err(HTTPStatus.FORBIDDEN, "Это действие разрешено только владельцу.")
-                return
-            payload = observability.dashboard()
-            payload["worker"] = (
-                production_workers.status()
-                if runtime_env.is_production()
-                and runtime_env.environment_explicit()
-                else local_worker.status()
-            )
-            try:
-                payload["telegram"] = (
-                    production_telegram.get_queue().status()
-                    if runtime_env.is_production() and runtime_env.environment_explicit()
-                    else telegram_service.status()
-                )
-            except production_telegram.StorageError as exc:
-                payload["telegram"] = {"ok": False, "code": exc.code}
-            try:
-                payload["connector"] = connector_protocol.list_installations(
-                    context.get("user_id"),
-                    workspace_id=str(context.get("workspace_id") or ""),
-                )
-            except connector_protocol.ConnectorProtocolError as exc:
-                payload["connector"] = {"ok": False, "code": exc.code}
-            self._json(HTTPStatus.OK, payload)
+            self._json(HTTPStatus.OK, self._admin_operations_payload())
             return
 
         if path.startswith("/api/bridge/commands/"):
@@ -3683,23 +4920,44 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path == "/api/governance/summary":
-            self._json(HTTPStatus.OK, {
-                "owner": governance.PROJECT_OWNER,
-                "documents": governance.list_documents(),
+            privileged = self._has_governance_read_privilege()
+            documents = governance.list_documents()
+            if not privileged:
+                documents = [
+                    governance.public_document(row)
+                    for row in documents if governance.document_is_public(row)
+                ]
+            payload = {
+                "documents": documents,
                 "runtime_defaults": governance.runtime_defaults(),
-                "consistency": governance.consistency_report(),
-                "history": governance.read_change_log(80),
-            })
+                "history": governance.read_change_log(80) if privileged else [],
+            }
+            if privileged:
+                payload.update({
+                    "owner": governance.PROJECT_OWNER,
+                    "consistency": governance.consistency_report(),
+                })
+            self._json(HTTPStatus.OK, payload)
             return True
 
         if path == "/api/governance/documents":
-            self._json(HTTPStatus.OK, {
-                "owner": governance.PROJECT_OWNER,
-                "documents": governance.list_documents(),
-            })
+            privileged = self._has_governance_read_privilege()
+            documents = governance.list_documents()
+            if not privileged:
+                documents = [
+                    governance.public_document(row)
+                    for row in documents if governance.document_is_public(row)
+                ]
+            payload = {"documents": documents}
+            if privileged:
+                payload["owner"] = governance.PROJECT_OWNER
+            self._json(HTTPStatus.OK, payload)
             return True
 
         if path == "/api/governance/history":
+            if not self._has_governance_read_privilege():
+                self._json(HTTPStatus.OK, {"entries": []})
+                return True
             try:
                 limit = int((qs.get("limit") or ["80"])[0])
             except ValueError:
@@ -3711,7 +4969,20 @@ class Handler(BaseHTTPRequestHandler):
             })
             return True
 
+        if path == "/api/governance/document-revisions":
+            document_id = (qs.get("document_id") or [None])[0]
+            if not document_id:
+                self._err(HTTPStatus.BAD_REQUEST, "document_id required"); return True
+            if not self._has_governance_read_privilege():
+                self._json(HTTPStatus.OK, {"document_id": document_id, "revisions": []})
+                return True
+            self._json(HTTPStatus.OK, governance.document_revisions(document_id))
+            return True
+
         if path == "/api/governance/consistency":
+            if not self._has_governance_read_privilege():
+                self._err(HTTPStatus.FORBIDDEN, "governance diagnostics require docs privilege")
+                return True
             self._json(HTTPStatus.OK, governance.consistency_report())
             return True
 
@@ -3721,6 +4992,11 @@ class Handler(BaseHTTPRequestHandler):
             if not doc:
                 self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
                 return True
+            if not self._has_governance_read_privilege():
+                if not governance.document_is_public(doc):
+                    self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
+                    return True
+                doc = governance.public_document(doc)
             self._json(HTTPStatus.OK, doc)
             return True
 
@@ -4140,6 +5416,8 @@ class Handler(BaseHTTPRequestHandler):
                 max_points = 0
             from_date = (qs.get("from") or [""])[0]
             to_date = (qs.get("to") or [""])[0]
+            from_ts = (qs.get("from_ts") or [""])[0]
+            to_ts = (qs.get("to_ts") or [""])[0]
             if not instrument:
                 self._err(HTTPStatus.BAD_REQUEST, "instrument is required")
                 return True
@@ -4150,7 +5428,8 @@ class Handler(BaseHTTPRequestHandler):
                     int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
                 if effective_points > 10000:
-                    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+                    if (not (runtime_env.is_production() and runtime_env.environment_explicit())
+                            and not market_data_failover.TopstepXProvider().configured()):
                         market_data.register_request(
                             instrument, timeframe, limit, range_days, from_date, to_date,
                         )
@@ -4158,6 +5437,7 @@ class Handler(BaseHTTPRequestHandler):
                         "instrument": instrument, "timeframe": timeframe,
                         "limit": limit, "range_days": range_days,
                         "from": from_date, "to": to_date,
+                        "from_ts": from_ts, "to_ts": to_ts,
                         "max_points": max_points,
                     }], context)
                     if queued is None:
@@ -4168,6 +5448,7 @@ class Handler(BaseHTTPRequestHandler):
                         instrument, timeframe, limit, range_days, from_date, to_date,
                         max_points=max_points,
                         workspace_id=str(context.get("workspace_id") or ""),
+                        from_ts=from_ts, to_ts=to_ts,
                     )
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
@@ -5566,7 +6847,7 @@ class Handler(BaseHTTPRequestHandler):
                 production_mode = bool(
                     runtime_env.is_production() and runtime_env.environment_explicit()
                 )
-                if not production_mode:
+                if not production_mode and not market_data_failover.TopstepXProvider().configured():
                     market_data.register_requests(row for row in rows if isinstance(row, dict))
                 normalized_rows: list[Dict[str, Any]] = []
                 work_points = 0
@@ -5586,6 +6867,8 @@ class Handler(BaseHTTPRequestHandler):
                         "range_days": int(raw.get("range_days") or 0),
                         "from": str(raw.get("from") or ""),
                         "to": str(raw.get("to") or ""),
+                        "from_ts": str(raw.get("from_ts") or ""),
+                        "to_ts": str(raw.get("to_ts") or ""),
                         "max_points": max_value,
                     })
                 context = getattr(self, "_remote_context", None) or {}
@@ -5607,7 +6890,7 @@ class Handler(BaseHTTPRequestHandler):
                     market_data_ingestion.workspace_snapshot_index(workspace_id)
                     if production_mode and workspace_id else None
                 )
-                batch_cache: Dict[Tuple[str, str, int, int, str, str, int], Dict[str, Any]] = {}
+                batch_cache: Dict[Tuple[str, str, int, int, str, str, str, str, int], Dict[str, Any]] = {}
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
@@ -5618,6 +6901,8 @@ class Handler(BaseHTTPRequestHandler):
                         int(row.get("range_days") or 0),
                         str(row.get("from") or ""),
                         str(row.get("to") or ""),
+                        str(row.get("from_ts") or ""),
+                        str(row.get("to_ts") or ""),
                         int(row.get("max_points") or 0),
                     )
                     payload = batch_cache.get(req_key)
@@ -5625,8 +6910,9 @@ class Handler(BaseHTTPRequestHandler):
                         payload = _market_bars_payload(
                             req_key[0], req_key[1], req_key[2], req_key[3], req_key[4], req_key[5],
                             register=False, snapshot_index=snapshot_index, alerts_index=alerts_index,
-                            max_points=req_key[6], workspace_id=workspace_id,
+                            max_points=req_key[8], workspace_id=workspace_id,
                             connector_snapshot_index=connector_snapshot_index,
+                            from_ts=req_key[6], to_ts=req_key[7],
                         )
                         batch_cache[req_key] = payload
                     result.append(payload)
@@ -5808,16 +7094,105 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"ops error: {e}"); return
         self._err(HTTPStatus.NOT_FOUND, f"no ops route: {path}")
 
+    def _has_governance_read_privilege(self) -> bool:
+        """Journal / owner-metadata reads are limited to owner or docs admins."""
+        context = getattr(self, "_remote_context", None) or {}
+        if context.get("is_owner"):
+            return True
+        caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+        if isinstance(caps, dict) and (caps.get("docs.manage_global") or caps.get("docs.manage_workspace")):
+            return True
+        return False
+
+    def _governance_actor(self) -> Dict[str, str]:
+        """Derive the amendment author from the authenticated session.
+
+        A human editing through the app is always attributed to their own
+        account. A localhost AI/dev service identity is fixed by its authenticated
+        service account; neither author nor initiator is accepted from request data.
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        user = context.get("user") if isinstance(context.get("user"), dict) else {}
+        is_service = bool(
+            context.get("source") == "dev_service"
+            or context.get("service_actor")
+            or user.get("is_service_account")
+        )
+        if is_service:
+            service_actor = str(
+                context.get("service_actor")
+                or dev_service_accounts.actor_for_uid(context.get("user_id"))
+                or ""
+            )
+            spec = dev_service_accounts.SERVICE_ACCOUNTS.get(
+                service_actor, {}
+            )
+            agent = str(spec.get("label") or "AI · служебный (dev)")
+            return {
+                "actor": agent,
+                "author": agent,
+                "author_id": f"service:{service_actor}",
+                "author_kind": "ai",
+                "initiator": governance.PROJECT_OWNER,
+            }
+        name = " ".join(
+            str(part).strip()
+            for part in (user.get("first_name"), user.get("last_name"))
+            if str(part or "").strip()
+        ).strip()
+        display = name or str(user.get("username") or "").strip()
+        if not display:
+            display = governance.PROJECT_OWNER if context.get("is_owner") else f"user {context.get('user_id') or '—'}"
+        author_id = str(user.get("user_uuid") or context.get("user_uuid") or context.get("user_id") or "")
+        return {
+            "actor": display,
+            "author": display,
+            "author_id": author_id,
+            "author_kind": "human",
+            "initiator": "",
+        }
+
+    def _require_governance_manage(self) -> bool:
+        """Global governance mutations require owner or ``docs.manage_global``.
+
+        GET reads stay at the read-level ``documents`` capability; only writes to
+        the single global governance store (laws / markdown documents) are
+        restricted. There is no workspace-scoped governance store, and strategy
+        profile updates cannot reach governance, so this closes the last gap in
+        the Phase 10 invariant: global governance can never be modified by a
+        workspace or strategy override, only by the owner (or an explicitly
+        delegated ``docs.manage_global`` administrator).
+        """
+        context = getattr(self, "_remote_context", None) or {}
+        if context.get("is_owner"):
+            return True
+        caps = permissions.resolve_admin_capabilities(context.get("user") or {})
+        if isinstance(caps, dict) and caps.get("docs.manage_global"):
+            return True
+        self._err(
+            HTTPStatus.FORBIDDEN,
+            "Изменение глобального управления доступно только владельцу или администратору с правом docs.manage_global.",
+            code="governance_manage_required",
+        )
+        return False
+
     def _governance_post(self, path: str, body: Dict[str, Any]) -> None:
+        if not self._require_governance_manage():
+            return
         parts = [p for p in path.split("/") if p]
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "governance":
             if parts[2] == "laws":
                 law_id = urllib.parse.unquote(parts[3])
+                identity = self._governance_actor()
                 try:
                     result = governance.update_law(
                         law_id,
                         body if isinstance(body, dict) else {},
-                        actor=str(body.get("actor") or "ui"),
+                        actor=identity["actor"],
+                        author=identity["author"],
+                        author_id=identity["author_id"],
+                        author_kind=identity["author_kind"],
+                        initiator=identity["initiator"],
                     )
                 except KeyError as e:
                     self._err(HTTPStatus.NOT_FOUND, str(e)); return
@@ -5829,12 +7204,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, result); return
             if parts[2] == "documents":
                 doc_id = urllib.parse.unquote(parts[3])
+                identity = self._governance_actor()
                 try:
                     result = governance.update_markdown_document(
                         doc_id,
                         str(body.get("content") or ""),
-                        actor=str(body.get("actor") or "ui"),
+                        actor=identity["actor"],
                         reason=str(body.get("reason") or ""),
+                        author=identity["author"],
+                        author_id=identity["author_id"],
+                        author_kind=identity["author_kind"],
+                        initiator=identity["initiator"],
                     )
                 except KeyError as e:
                     self._err(HTTPStatus.NOT_FOUND, str(e)); return
@@ -5954,7 +7334,11 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         path = url.path
 
-        if path in {"/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile"}:
+        if path in {
+            "/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile",
+            "/api/auth/google/login/start", "/api/auth/email/start",
+            "/api/auth/email/verify", "/api/auth/test/google-login",
+        }:
             self._auth_public_post(path)
             return
 
@@ -6004,10 +7388,69 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorize_api(path):
             return
 
+        if path in {
+            "/api/account/nt-security/step-up/start",
+            "/api/account/nt-security/step-up/confirm",
+            "/api/account/nt-security/step-up/staging",
+            "/api/account/identities/unlink",
+        }:
+            self._account_nt_security_post(path)
+            return
+
+        if path.startswith("/api/account/"):
+            self._account_security_post(path)
+            return
+
+        if path.startswith("/api/ninjatrader/"):
+            self._ninjatrader_post(path)
+            return
+
+        if path.startswith("/api/dev/preview/") or path == "/api/dev/bootstrap/mint":
+            self._dev_preview_post(path)
+            return
+
+        if path == "/api/dev/service-login":
+            self._dev_service_login()
+            return
+
+        if path.startswith("/api/admin/releases"):
+            self._releases_post(path)
+            return
+
+        if path == "/api/documents" or path.startswith("/api/documents/"):
+            self._documents_post(path)
+            return
+
         if path == "/api/auth/google/start":
             if not self._check_local_post():
                 return
             self._google_oauth_start()
+            return
+
+        if path in {"/api/auth/email/link/start", "/api/auth/email/link/verify"}:
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            tunnel_ip, forwarded_ip = self._request_ips()
+            try:
+                if path.endswith("/start"):
+                    out = account_auth.start_email_auth(
+                        body.get("email"), ip=forwarded_ip or tunnel_ip,
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        purpose="link", actor_user_id=context.get("user_id"),
+                    )
+                else:
+                    out = account_auth.verify_email_auth(
+                        body.get("challenge_id"), code=body.get("code"),
+                        magic_token=body.get("magic_token"),
+                        ip=forwarded_ip or tunnel_ip,
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        actor_user_id=context.get("user_id"),
+                    )
+                self._json(HTTPStatus.OK, out)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/auth/nt-confirm/start":
@@ -6103,6 +7546,12 @@ class Handler(BaseHTTPRequestHandler):
             self._owner_impersonate_end()
             return
 
+        if path == "/api/owner/agents/team-grant":
+            if not self._check_local_post():
+                return
+            self._owner_agent_team_grant()
+            return
+
         if path == "/api/owner/google/secrets":
             if not self._check_local_post():
                 return
@@ -6150,6 +7599,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.post_message(
                     context.get("user_id"),
@@ -6160,6 +7610,7 @@ class Handler(BaseHTTPRequestHandler):
                     channel_id=str(body.get("channel_id") or "general"),
                     thread_root_id=str(body.get("thread_root_id") or ""),
                     attachments=body.get("attachments"),
+                    user_uuid=user_uuid,
                 )
                 try:
                     out["telegram_mirror"] = bool(not out.get("deduplicated") and
@@ -6183,6 +7634,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.share_report(
                     context.get("user_id"),
@@ -6193,6 +7645,7 @@ class Handler(BaseHTTPRequestHandler):
                     workspace_id=str(context.get("workspace_id") or ""),
                     channel_id=str(body.get("channel_id") or "reports"),
                     attachments=body.get("attachments"),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6205,6 +7658,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.create_request(
                     context.get("user_id"),
@@ -6215,6 +7669,7 @@ class Handler(BaseHTTPRequestHandler):
                     display_name=str(user.get("first_name") or user.get("username") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     channel_id=str(body.get("channel_id") or "reports"),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6227,6 +7682,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
             user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.publish_strategy(
                     context.get("user_id"),
@@ -6236,6 +7692,7 @@ class Handler(BaseHTTPRequestHandler):
                     display_name=str(user.get("first_name") or user.get("username") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6247,12 +7704,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.copy_strategy(
                     context.get("user_id"),
                     str(body.get("strategy_id") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6264,12 +7724,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = self._read_body() or {}
             context = getattr(self, "_remote_context", None) or {}
+            user = context.get("user") or {}
+            user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
             try:
                 out = community.report_abuse(
                     context.get("user_id"),
                     target_id=str(body.get("target_id") or ""),
                     reason=str(body.get("reason") or ""),
                     workspace_id=str(context.get("workspace_id") or ""),
+                    user_uuid=user_uuid,
                 )
                 self._json(HTTPStatus.OK, out)
             except community.CommunityError as exc:
@@ -6421,7 +7884,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/logout":
             if not self._check_local_post():
                 return
-            account_auth.revoke_session(self._cookie_value(account_auth.SESSION_COOKIE))
+            account_auth.revoke_session(self._cookie_value(runtime_env.session_cookie_name()))
             self._clear_session_cookie()
             self._json(HTTPStatus.OK, {"ok": True})
             return
@@ -6585,6 +8048,14 @@ class Handler(BaseHTTPRequestHandler):
                     out = account_auth.set_user_feature(actor, parts_auth[3], str(body.get("feature") or ""), bool(body.get("enabled")))
                 elif parts_auth[4] == "permission":
                     out = account_auth.set_user_permission(actor, parts_auth[3], str(body.get("capability") or ""), body.get("enabled"))
+                elif parts_auth[4] == "admin-permission":
+                    out = account_auth.set_user_admin_permission(
+                        actor,
+                        parts_auth[3],
+                        str(body.get("capability") or ""),
+                        body.get("enabled"),
+                        expires_at_utc=body.get("expires_at_utc"),
+                    )
                 elif parts_auth[4] == "status":
                     out = account_auth.set_user_status(actor, parts_auth[3], str(body.get("status") or ""))
                 elif parts_auth[4] == "sessions":
@@ -6690,6 +8161,12 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             context = getattr(self, "_remote_context", None) or {}
+            # Phase 5: personal-NT pairing needs both factors + a fresh step-up.
+            if not self._personal_nt_gate(
+                personal_nt_security.ACTION_PAIRING, require_ready=True,
+                challenge_id=str(body.get("step_up_challenge_id") or ""),
+            ):
+                return
             try:
                 use_connector = (
                     runtime_env.environment_explicit() and runtime_env.is_production()
@@ -6720,6 +8197,9 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             context = getattr(self, "_remote_context", None) or {}
+            # Factors must still be present to finish binding a personal device.
+            if not self._personal_nt_require_ready():
+                return
             try:
                 if runtime_env.environment_explicit() and runtime_env.is_production():
                     raise connector_protocol.ConnectorProtocolError(
@@ -6767,23 +8247,55 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_local_post():
                 return
             parts_bridge = [urllib.parse.unquote(p) for p in path.split("/") if p]
-            if len(parts_bridge) != 5 or parts_bridge[4] != "revoke":
+            if len(parts_bridge) != 5 or parts_bridge[4] not in {"revoke", "default", "capabilities"}:
                 self._err(HTTPStatus.NOT_FOUND, f"no bridge route: {path}"); return
+            action_kind = parts_bridge[4]
+            connection_id = parts_bridge[3]
             context = getattr(self, "_remote_context", None) or {}
+            body = self._read_body() or {}
+            step_up_challenge = str(body.get("step_up_challenge_id") or "")
+            # Phase 5 step-up: revoke, default-account and capability changes are
+            # all critical NinjaTrader actions.
+            if action_kind == "revoke":
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_CONNECTOR_REVOKE, require_ready=False,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
+            elif action_kind == "default":
+                if not self._personal_nt_gate(
+                    personal_nt_security.ACTION_DEFAULT_ACCOUNT, require_ready=True,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
+            else:  # capabilities
+                requested_caps = [str(v) for v in (body.get("capabilities") or [])]
+                raises_live = any(cap in {"live_commands", "live_read"} for cap in requested_caps)
+                if raises_live and not self._personal_nt_gate(
+                    personal_nt_security.ACTION_TRADING_CAPABILITY, require_ready=True,
+                    challenge_id=step_up_challenge,
+                ):
+                    return
             try:
-                body = self._read_body() or {}
                 use_connector = (
                     runtime_env.environment_explicit() and runtime_env.is_production()
                 ) or str(body.get("transport") or "") == "production_connector"
-                out = (
-                    connector_protocol.revoke_installation(
-                        context.get("user_id"),
-                        parts_bridge[3],
-                        workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                if action_kind == "revoke":
+                    out = (
+                        connector_protocol.revoke_installation(
+                            context.get("user_id"),
+                            connection_id,
+                            workspace_id=str(body.get("workspace_id") or context.get("workspace_id") or ""),
+                        )
+                        if use_connector
+                        else workspaces.revoke_connection(context.get("user_id"), connection_id)
                     )
-                    if use_connector
-                    else workspaces.revoke_connection(context.get("user_id"), parts_bridge[3])
-                )
+                elif action_kind == "default":
+                    out = workspaces.set_default_connection(context.get("user_id"), connection_id)
+                else:
+                    out = workspaces.set_connection_capabilities(
+                        context.get("user_id"), connection_id, body.get("capabilities") or [],
+                    )
                 self._json(HTTPStatus.OK, out)
             except (workspaces.WorkspaceError, connector_protocol.ConnectorProtocolError) as exc:
                 self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
@@ -7608,23 +9120,47 @@ def create_http_server(
         "connector_control": connector_protocol.readiness_status,
         "connector_releases": connector_releases.readiness_status,
     }
-    if deployment.environment == runtime_env.PRODUCTION:
+    server.readiness_optional_components = {}  # type: ignore[attr-defined]
+    if deployment.environment in (runtime_env.PRODUCTION, runtime_env.CANARY):
+        # Canary is held to the same readiness contract as Production (see
+        # service_readiness.readiness_payload's PRODUCTION_COMPONENTS list),
+        # so it needs the same real probes registered against its own
+        # isolated database/storage/signing-key identity, not Production's.
         from . import storage_router
         from .production_storage.artifacts import object_storage_readiness
         server.readiness_probes.update({  # type: ignore[attr-defined]
             "database": storage_router.database_readiness,
             "object_storage": object_storage_readiness,
             "queue": production_workers.readiness_status,
-            "telegram_consumer": production_telegram.readiness_status,
             "signing_key": storage_router.signing_key_readiness,
         })
+        telegram_configured = bool(
+            str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()
+        )
+        if deployment.environment == runtime_env.PRODUCTION or telegram_configured:
+            server.readiness_probes["telegram_consumer"] = (  # type: ignore[attr-defined]
+                production_telegram.readiness_status
+            )
+        else:
+            # A real Canary bot has not been provisioned yet (see
+            # deploy/canary/README.md). Registering production_telegram's
+            # probe here would check whether a consumer process is actively
+            # leased -- one that architecturally cannot exist without a
+            # token -- and misreport an honestly-disabled feature as a
+            # broken/offline component. Readiness still surfaces this gap
+            # (checks.telegram_consumer.ok stays False) but it no longer
+            # forces the whole endpoint into a permanent 503; acceptance
+            # tracking must keep reporting Telegram as PARTIAL, not PASS.
+            server.readiness_optional_components["telegram_consumer"] = (  # type: ignore[attr-defined]
+                "disabled_pending_canary_bot_provisioning"
+            )
     return server
 
 
 def run(port: Optional[int] = None) -> None:
     try:
         deployment = runtime_env.assert_startup_safe()
-        if deployment.environment == "production":
+        if deployment.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}:
             from . import storage_router
             storage_router.assert_production_storage_safe()
     except runtime_env.RuntimeEnvError as exc:
@@ -7634,11 +9170,11 @@ def run(port: Optional[int] = None) -> None:
         from .production_storage import StorageError
         if not isinstance(exc, StorageError):
             raise
-        print(f"[nta-backend] FATAL: Production storage configuration invalid ({exc.code}).")
+        print(f"[nta-backend] FATAL: server storage configuration invalid ({exc.code}).")
         raise SystemExit(2) from exc
     env = runtime_env.status()
     if (
-        deployment.environment == runtime_env.PRODUCTION
+        deployment.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}
         and deployment.deployment_role not in {"api", "all-in-one"}
     ):
         print("[nta-backend] FATAL: HTTP server requires deployment role api/all-in-one.")
@@ -7650,6 +9186,10 @@ def run(port: Optional[int] = None) -> None:
         f"instance={deployment.instance_id} "
         f"role={deployment.deployment_role} "
         f"build={deployment.build_version} "
+        f"build_id={deployment.build_id} "
+        f"git={deployment.git_commit_sha[:12]} "
+        f"channel={deployment.release_channel} "
+        f"dirty={str(deployment.dirty).lower()} "
         f"test_auth={env['test_auth_enabled']} "
         f"impersonation={env['impersonation_enabled']}"
     )
@@ -7661,6 +9201,7 @@ def run(port: Optional[int] = None) -> None:
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
     print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
     production_api = deployment.environment == runtime_env.PRODUCTION
+    canary_api = deployment.environment == runtime_env.CANARY
     _heartbeat_emitter: Optional[observability.HeartbeatEmitter] = None
     try:
         _heartbeat_emitter = observability.HeartbeatEmitter(
@@ -7682,7 +9223,9 @@ def run(port: Optional[int] = None) -> None:
             "stratforge-worker.service; Telegram by stratforge-telegram.service"
         )
     else:
-        # Development intentionally keeps the local single-process helpers.
+        # Development keeps all local single-process helpers. Canary keeps the
+        # legacy singleton schedulers here, but queue and Telegram consumers are
+        # owned by the split Canary topology below.
         try:
             ai_stale_sweep.start_background_sweeper(
                 interval_sec=1800, ttl_hours=6.0,
@@ -7695,16 +9238,22 @@ def run(port: Optional[int] = None) -> None:
             print("[nta-backend] news refresher started (live every 15 min)")
         except Exception as e:
             print(f"[nta-backend] news refresher NOT started: {e}")
-        try:
-            local_worker.start_background_worker(interval_sec=2.0)
-            print("[nta-backend] local worker process started")
-        except Exception as e:
-            print(f"[nta-backend] local worker process NOT started: {e}")
-        try:
-            telegram_service.start_background_notifier(interval_sec=30)
-            print("[nta-backend] Telegram notifier started (every 30 sec)")
-        except Exception as e:
-            print(f"[nta-backend] Telegram notifier NOT started: {e}")
+        if canary_api:
+            print("[nta-backend] Canary queue work is owned by worker-canary; local worker not started")
+        else:
+            try:
+                local_worker.start_background_worker(interval_sec=2.0)
+                print("[nta-backend] local worker process started")
+            except Exception as e:
+                print(f"[nta-backend] local worker process NOT started: {e}")
+        if canary_api:
+            print("[nta-backend] Canary Telegram notifier stays disabled until a separate bot is provisioned")
+        else:
+            try:
+                telegram_service.start_background_notifier(interval_sec=30)
+                print("[nta-backend] Telegram notifier started (every 30 sec)")
+            except Exception as e:
+                print(f"[nta-backend] Telegram notifier NOT started: {e}")
         try:
             ai_chief_agent.start_background_worker(interval_sec=30)
             print("[nta-backend] StratForge Orchestrator started (every 30 sec)")

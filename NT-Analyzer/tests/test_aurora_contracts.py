@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import struct
 import subprocess
 import threading
 import urllib.error
@@ -142,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260721-stage8-operations1"}, versions
+    assert set(versions.values()) == {"20260811-doc-closeout1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -152,7 +154,51 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260721-build-identity1"}, versions
+    assert set(versions.values()) == {"20260812-phase12-owner1"}, versions
+
+
+def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+
+    assert "user.id || user.user_id" in ui
+    assert "const telegramIdentity" in ui
+    assert "auth-provider-start" in ui
+    assert "authGoogleLoginStart" in api
+    assert "authEmailStart" in api
+    assert "authEmailVerify" in api
+    assert "authEmailLinkStart" in api
+    assert "authEmailLinkVerify" in api
+    assert "accept_terms: details.accept_terms" in ui
+    assert 'id="auth-email-verify-accept"' in ui
+
+
+def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    boot = ui.split("async function authenticateAndStart", 1)[1].split(
+        "CURRENT_AUTH = result.auth", 1
+    )[0]
+    assert "Вход и регистрация" in ui
+    assert 'id="auth-open-promo"' in ui
+    assert "Смотреть без входа" in ui
+    assert "renderTelegramLogin('')" in boot
+    assert "if (!dismissed) renderWelcomeAccess" not in boot
+    assert "startGuestBrowse(newsStrip);" in boot
+    require_signin = ui.split("function requireSignIn()", 1)[1].split("window.UI", 1)[0]
+    assert "renderTelegramLogin('')" in require_signin
+    assert "renderWelcomeAccess" not in require_signin
+
+
+def test_every_aurora_page_uses_current_ui_cache_version():
+    versions = {}
+    for page in AURORA.glob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        marker = 'src="assets/ui.js?v='
+        if marker not in html:
+            continue
+        versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
+    assert versions
+    assert set(versions.values()) == {"20260812-auth-entry1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -165,19 +211,47 @@ def test_build_identity_is_visible_and_never_guessed_client_side():
 
     assert 'id="app-release-badge" data-release-badge' in ui
     assert 'id="app-build-meta" data-build-meta' in ui
-    assert "development: { short: 'DEV', full: 'РАЗРАБОТКА'" in ui
-    assert "canary: { short: 'CANARY', full: 'ПРЕДРЕЛИЗ'" in ui
-    assert "stable: { short: 'STABLE', full: 'СТАБИЛЬНАЯ'" in ui
+    assert "environment === 'development' && channel === 'dev'" in ui
+    assert "short: 'DEV', full: 'РАЗРАБОТКА'" in ui
+    assert "environment === 'canary' && ['beta', 'stable'].includes(channel)" in ui
+    assert "short: 'CANARY', full: 'CANARY'" in ui
+    assert "environment === 'production' && channel === 'beta'" in ui
+    assert "short: 'BETA', full: 'ПУБЛИЧНАЯ БЕТА'" in ui
+    assert "environment === 'production' && channel === 'stable'" in ui
+    assert "return { short: '', full: 'PRODUCTION'" in ui
     assert "deployment.release_channel || ''" in ui
-    assert "environment === 'development' ? 'development'" not in ui
-    assert "v${version} · от ${visibleDate}" in ui
+    assert "deployment.app_version || deployment.build_version" in ui
+    assert "deployment.build_timestamp_utc" in ui
+    assert "deployment.git_commit_sha" in ui
+    assert "deployment.artifact_sha256" in ui
+    assert "deployment.dirty === true" in ui
+    assert "visibleParts.join(' · ')" in ui
+    assert "badge.hidden = !label.short" in ui
+    assert "data-release-icon" in ui
     assert 'id="mode-entry-release-badge"' in entry
     assert 'id="mode-entry-build-meta"' in entry
+    assert "data-release-icon" in entry
     assert "API.http.runtimeEnv" in entry_js
     assert "never guess a channel" in entry_js
     assert ".rail-release-badge.dev" in theme
     assert ".rail-release-badge.canary" in theme
-    assert ".rail-release-badge.stable" in theme
+    assert ".rail-release-badge.beta" in theme
+    assert ".rail-release-badge.stable[hidden]" in theme
+
+
+def test_release_icon_assets_match_owner_sources_and_png_contract():
+    expected = {
+        "stratforge-dev.png": "B6F8473D19F4AC9823952A99F6271F5A7C6E55B67165B644AFCA7FACB3AE5F66",
+        "stratforge-canary.png": "931B71761AD7001822AA989F9F6329A7F5047B1477FC8D2D5FD66379959131D9",
+        "stratforge-beta.png": "F887F976B4FB572646E5AD3DC8A1FB8C89B7234A96E30F94EE708ED276CBE9D3",
+    }
+
+    for name, digest in expected.items():
+        payload = (AURORA / "brand" / name).read_bytes()
+        assert payload[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", payload[16:24]) == (1254, 1254)
+        assert payload[24:26] == bytes((8, 2))  # 24-bit RGB, no alpha channel.
+        assert hashlib.sha256(payload).hexdigest().upper() == digest
 
 
 def test_news_tickers_have_clipped_tracks_and_global_page_coverage():
@@ -211,6 +285,15 @@ def test_live_static_handler_routes_csp_and_assets():
                 assert response.status == 200
                 assert marker in body
                 assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+                assert "http://127.0.0.1:*" in response.headers["Content-Security-Policy"]
+
+        with urllib.request.urlopen(base + "/api/runtime/env", timeout=5) as response:
+            runtime = json.loads(response.read().decode("utf-8"))
+            assert response.status == 200
+            assert response.headers["Access-Control-Allow-Origin"] == "*"
+            assert runtime.get("environment") or runtime.get("deployment")
+            assert "data_root" not in runtime
+            assert "test_auth_enabled" not in runtime
 
         request = urllib.request.Request(base + "/ui/ops.html", method="GET")
         opener = urllib.request.build_opener(urllib.request.HTTPHandler())
@@ -342,6 +425,53 @@ def test_aurora_keeps_legacy_operational_capabilities_wired():
     assert "API.http.setRuntimeStrategyDisplay" in strategies
     for method in ("aiPerformance", "aiCalendar", "aiCompileSourceStatus", "aiCurrent", "aiUserResearchScan"):
         assert f"API.http.{method}" in ai_lab
+
+
+def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+
+    menu = ui.split("function wireTopbar()", 1)[1].split("function environmentHtml", 1)[0]
+    assert "hasAdminCapability('admin.view')" in menu
+    assert "label: 'Панель администратора'" in menu
+    # System OPERATIONS actions moved to the Admin Panel → Operations module.
+    # The legacy-interface switch is navigation and stays in the menu (restored
+    # per owner request in the Phase 11 final integration pass).
+    for legacy_action in (
+        "Запустить всё окружение",
+        "Диагностика системы",
+        "Перезапустить backend",
+    ):
+        assert legacy_action not in menu
+    assert "Перейти в старый интерфейс" in menu
+
+    cabinet = ui.split("function renderCabinet", 1)[1].split("async function renderAiRatingsInto", 1)[0]
+    assert "const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
+    assert "['users'," not in cabinet
+    assert "['operations'," not in cabinet
+
+    for path in (
+        "/api/admin/overview",
+        "/api/admin/environment-targets",
+        "/api/admin/operations",
+        "/admin-permission",
+    ):
+        assert path in api
+    assert ".admin-shell" in css and ".admin-env-grid" in css
+
+
+def test_environment_switcher_never_transfers_browser_credentials() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    switcher = ui.split("async function probeEnvironmentTarget", 1)[1].split(
+        "async function renderDelegatedUsersInto", 1,
+    )[0]
+    assert "credentials: 'omit'" in switcher
+    assert "'_blank', 'noopener,noreferrer'" in switcher
+    assert "origin + '/ui/'" in switcher
+    assert "withMiniAppContext" not in switcher
+    assert "localStorage.getItem" not in switcher
+    assert "telegramInitData" not in switcher
 
 
 def test_aurora_trading_exposes_reconnect_modeling_control():
@@ -649,7 +779,7 @@ def test_ai_model_telemetry_records_usage_and_aggregates(tmp_path, monkeypatch):
     assert result["roles"][0]["role"] == "coder"
 
 
-def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
+def test_documents_page_has_privileged_compact_revision_journal_and_law_anchors():
     html = (AURORA / "documents.html").read_text(encoding="utf-8")
     js = (AURORA / "assets" / "pages" / "documents.js").read_text(encoding="utf-8")
     theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
@@ -659,15 +789,66 @@ def test_documents_page_opens_amendments_in_drawer_and_law_anchors():
     assert "parseLawIds" in js
     assert "doc-law-anchor" in js
     assert "data-amendment-no" in js
-    assert "API.http.governanceHistory" in js
+    assert "API.http.governanceRevisions" in js
+    assert "Редакция №" in js
+    assert "Было:" in js and "Стало:" in js
+    assert "Подробнее" in js
+    assert "edit-actor" not in html
+    assert "saveDocument(current.id, { content, reason })" in js
+    assert "Object.values(me.admin_capabilities).some(Boolean)" not in js
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
+
+
+def test_admin_panel_module_switching_uses_stale_render_guard():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "let renderSeq = 0;" in ui
+    assert "const seq = ++renderSeq;" in ui
+    assert "admin-module-render" in ui
+    assert "moduleBody.replaceChildren(container);" in ui
+    assert "await renderAdminModule(container, id, overview);" in ui
+    assert "renderAdminModule(moduleBody, id, overview)" not in ui
+
+
 def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
     from pathlib import Path
 
     js = (Path(__file__).resolve().parents[1] / "app" / "static" / "aurora" / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
     assert "!drawing.alertId || alertIds.has(drawing.alertId)" in js
     assert "if (changed || removed)" in js
+
+
+def test_desktop_root_contracts_auto_roll_but_fixed_contracts_do_not():
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    assert "m.config.contract_mode !== 'fixed'" in js
+    assert "if (model.config.contract_mode === 'fixed') continue;" in js
+    assert "config.contract_mode === 'auto' ? (config.root || config.instrument)" in js
+    assert "source.name || 'NO DATA'" in js
+    assert "age > 8" not in js
+    assert "provider freshness limit" in js
+    assert "rec.loadQueued" in js
+    assert "loadWindowData(rec);" in js
+    assert "rec.chart.appendBar(liveBar)" in js
+    assert "rec.chart.setLivePriceEnabled(true)" in js
+    assert "mergeFormingLiveBar" in js
+    assert "rec.liveBarAt" in js
+    assert "rec.node.dataset.marketWsPayload" in js
+    assert "rec.node.dataset.externalLive" in js
+    assert "rec.node.dataset.backendPriceMarkerLive" in js
+    assert "rec.node.dataset.priceMarkerLive" in js
+    assert "rec.node.dataset.providerConnectionState" in js
+    assert "rec.node.dataset.lastBarClose" in js
+
+
+def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
+    js = (AURORA / "assets" / "chart-engine.js").read_text(encoding="utf-8")
+
+    assert "nextClose > previousClose ? 1 : -1" in js
+    assert "this.livePriceDirection === 0" in js
+    assert "this.livePriceDirection > 0" in js
+    assert "this.host.dataset.renderedPriceMarkerText = label" in js
+    assert "this.host.dataset.renderedPriceMarkerColor = tagColor" in js
+    assert "this.host.dataset.renderedPriceMarkerLive = String(live)" in js
 
 
 def test_command_language_covers_every_desktop_instrument():

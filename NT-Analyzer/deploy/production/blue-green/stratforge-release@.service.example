@@ -1,0 +1,44 @@
+# StratForge blue-green per-slot API unit — REFERENCE TEMPLATE (Phase 9).
+# Instantiate as e.g. stratforge-release@green.service to run the staged (green)
+# slot beside the live (blue) slot before the traffic switch. Secret-free: the
+# protected configuration and secrets live only under ~/.config/stratforge/ and
+# the shared data root, never inside a release slot. %i = slot name (blue|green).
+[Unit]
+Description=StratForge Production API (release slot %i)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/stratforge/releases-by-slot/%i
+EnvironmentFile=%h/.config/stratforge/production.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=STRATFORGE_RELEASE_SLOT=%i
+# Each slot binds a distinct loopback port behind the edge; the traffic switch
+# repoints the "current" symlink / edge upstream, not the running processes.
+ExecStartPre=%h/apps/stratforge/releases-by-slot/%i/.venv/bin/python tools/production_preflight.py --app-root %h/apps/stratforge/releases-by-slot/%i
+ExecStart=%h/apps/stratforge/releases-by-slot/%i/.venv/bin/python -m app.server
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+# A long stop timeout gives the graceful worker drain time to finish in-flight
+# NinjaTrader leases and jobs before the slot exits.
+TimeoutStopSec=120
+KillSignal=SIGTERM
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

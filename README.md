@@ -1,17 +1,35 @@
-# NT-Analyzer
+# StratForge AI
 
-NT-Analyzer is a local NinjaTrader 8 strategy analysis platform with a Python
-backend, static web UI, NinjaTrader bridge AddOn, portfolio/runtime dashboards,
-and an AI Strategy Lab for controlled strategy research.
+StratForge AI is a trading-analytics platform for market and strategy research.
+It brings together realtime charts and multi-provider market data, NinjaTrader 8
+integration through the StratForge Connector, an AI Agent Team, backtesting, and
+strategy lifecycle management in one local-first application: the Aurora web UI
+on top of a Python backend. Simulation/Live reflects the connected NinjaTrader
+account; paper/demo controls are available, while live commands remain
+release-gated pending a separate owner and regulatory decision.
+
+> `NT-Analyzer` is the repository and technical identifier (the project's
+> original name). The product it builds and runs is StratForge AI.
 
 The product is intentionally local-first:
 
 - NinjaTrader remains the source of truth for compilation, execution, fills,
   trades, metrics, and runtime strategy state.
-- NT-Analyzer owns job queues, UI, result storage, comparison, runtime
-  telemetry views, and AI-assisted research workflows.
+- TopstepX is the primary independent, read-only chart source for history and
+  realtime when the user explicitly enables it with their own credentials. A
+  fresh NinjaTrader Connector runtime and then another authorized credentialed
+  provider form the fallback path; delayed/history data is never labeled live.
+- NinjaTrader remains the only execution path and the source of truth for fills,
+  trades, metrics, and runtime strategy state. Futures roots resolve to the
+  current contract automatically; no synthetic candles are created and an
+  external chart feed never authorizes an order.
+- StratForge AI owns the job queues, the Aurora UI, result storage, comparison,
+  runtime telemetry views, market-data failover, and AI-assisted research
+  workflows.
 - AI-generated strategy code is sandboxed and gated before any promotion to a
   portfolio or paper workflow.
+- The application runs in isolated Development, Canary, and Production
+  environments, promoted through the Release Center as one immutable artifact.
 - Vitek is the owner-facing control layer: application and Telegram messages
   enter through one StratForge Orchestrator gateway, while the manager and
   specialist agents work independently behind it.
@@ -78,12 +96,12 @@ cd NT-Analyzer
 
 The watchdog does not open a browser. See
 `NT-Analyzer/docs/VITEK.md` and
-`NT-Analyzer/docs/PRODUCTION_READINESS_2026-07-13.md`.
+`NT-Analyzer/docs/archive/PRODUCTION_READINESS_2026-07-13.md`.
 
 External model connections are configured locally at
 `http://127.0.0.1:8765/ui/ai-agents.html`. API keys are encrypted with Windows
 DPAPI, never stored in source, and never returned by the HTTP API. See
-`NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md` for providers, budgets and grant tracking.
+`NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md` for providers, budgets and grant tracking.
 
 ## Product Boundary
 
@@ -108,3 +126,7 @@ See `NT-Analyzer/docs/repository-hygiene.md` for the full policy.
 ## License
 
 Proprietary. See `LICENSE`.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Aligned the product overview with the accepted TopstepX-first read-only chart baseline, NinjaTrader execution/runtime authority, and the current live-command release gate.
+-->

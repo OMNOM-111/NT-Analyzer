@@ -1,0 +1,18 @@
+# Copy to ~/.config/stratforge/cloudflared-canary.yml and chmod 600.
+# The credential JSON is provisioned out-of-band and never enters Git.
+# This is a SEPARATE tunnel from Production; never reuse the Production tunnel.
+tunnel: __CANARY_TUNNEL_UUID__
+credentials-file: __STRATFORGE_HOME__/.cloudflared/__CANARY_TUNNEL_UUID__.json
+
+ingress:
+  # Internal readiness and diagnostic routes are reachable only over loopback.
+  - hostname: canary.stratforges.com
+    path: ^/(api/(health/ready|ready|diagnostics|admin)(/.*)?|metrics(/.*)?|debug(/.*)?)$
+    service: http_status:404
+  - hostname: canary.stratforges.com
+    service: http://127.0.0.1:18766
+    originRequest:
+      httpHostHeader: canary.stratforges.com
+      connectTimeout: 10s
+      noHappyEyeballs: true
+  - service: http_status:404

@@ -54,7 +54,7 @@ UI.ready(async function () {
     if (firstLoad) {
       const sel = UI.qs('#acct-filter');
       const selectableAccounts = ((accountDoc && (accountDoc.accounts || accountDoc.online_accounts)) || perf.accounts || []).filter(account => !account.is_system);
-      sel.innerHTML = '<option value="">Все счета</option>' + selectableAccounts.map(a => `<option value="${UI.esc(a.account_name)}">${UI.esc(a.account_name)} · ${a.is_live ? 'LIVE' : (a.account_mode || 'paper')}${String(a.connection_status || '').toLowerCase() === 'connected' ? '' : ' · offline'}</option>`).join('');
+      sel.innerHTML = '<option value="">Все счета</option>' + selectableAccounts.map(a => `<option value="${UI.esc(a.account_name)}">${UI.esc(a.account_name)} · ${a.is_live ? 'LIVE' : (a.account_mode || 'paper')}${String(a.connection_status || '').toLowerCase() === 'connected' ? '' : ' · офлайн'}</option>`).join('');
       const shared = UI.getSelectedAccount();
       if (!state.account && shared && selectableAccounts.some(a => a.account_name === shared.account_name)) state.account = shared.account_name;
       sel.value = state.account;

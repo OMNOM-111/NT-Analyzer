@@ -1,6 +1,6 @@
 [Unit]
 Description=Schedule StratForge Production Operations Maintenance
-Documentation=file:%h/apps/stratforge/current/docs/PRODUCTION_OPERATIONS_RUNBOOK.md
+Documentation=file:%h/apps/stratforge/current/docs/operations/PRODUCTION_OPERATIONS_RUNBOOK.md
 
 [Timer]
 OnBootSec=2min

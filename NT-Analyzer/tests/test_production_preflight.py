@@ -7,13 +7,17 @@ from tools import production_preflight
 
 def _environment(root: Path) -> str:
     return "\n".join((
-        "STRATFORGE_ENV=production",
+        "DEPLOYMENT_ENV=production",
         "STRATFORGE_INSTANCE_ID=stratforge-prod-test",
         "STRATFORGE_DEPLOYMENT_ROLE=all-in-one",
         "STRATFORGE_CONFIG_PROFILE=production-primary",
-        "STRATFORGE_BUILD_VERSION=1.0.0-test",
-        "STRATFORGE_BUILD_DATE=2026-07-21",
-        "STRATFORGE_RELEASE_CHANNEL=stable",
+        "APP_VERSION=1.0.0-test",
+        "RELEASE_CHANNEL=stable",
+        "BUILD_ID=sf-1.0.0-test-preflight",
+        "GIT_COMMIT_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ARTIFACT_SHA256=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "BUILD_TIMESTAMP_UTC=2026-07-21T12:34:56Z",
+        "DIRTY=0",
         "STRATFORGE_REGION=primary",
         "STRATFORGE_BIND_HOST=127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS=app.stratforges.com",
@@ -74,6 +78,7 @@ def test_preflight_passes_a_complete_isolated_layout(tmp_path: Path, monkeypatch
     (tmp_path / "objects").mkdir()
     env_file = tmp_path / "production.env"
     env_file.write_text(_environment(data_root), encoding="utf-8")
+    env_file.chmod(0o600)
 
     result = production_preflight.run_preflight(
         app_root=app_root,
@@ -119,6 +124,15 @@ def test_preflight_rejects_data_inside_release_and_bad_config(tmp_path: Path, mo
     assert invalid["checks"][0]["code"] == "invalid"
 
 
+def test_preflight_init_system_profiles_are_explicit() -> None:
+    assert production_preflight._INIT_SYSTEM_BINARIES["systemd"] == (
+        "systemctl", "cloudflared",
+    )
+    assert production_preflight._INIT_SYSTEM_BINARIES["supervisor"] == (
+        "cloudflared",
+    )
+
+
 def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     root = Path(__file__).resolve().parents[1]
     env_template = (root / "deploy" / "production" / "production.env.example").read_text(encoding="utf-8")
@@ -126,7 +140,17 @@ def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     unit = (root / "deploy" / "production" / "stratforge.service").read_text(encoding="utf-8")
 
     assert "app.stratforges.com" in env_template
-    assert "STRATFORGE_LIVE_TRADING_ALLOWED=0" in env_template
+    assert "DEPLOYMENT_ENV=production" in env_template
+    assert "APP_VERSION=__RELEASE_VERSION__" in env_template
+    assert "RELEASE_CHANNEL=stable" in env_template
+    assert "BUILD_ID=__BUILD_ID__" in env_template
+    assert "GIT_COMMIT_SHA=__GIT_COMMIT_SHA__" in env_template
+    assert "ARTIFACT_SHA256=__ARTIFACT_SHA256__" in env_template
+    assert "BUILD_TIMESTAMP_UTC=__BUILD_TIMESTAMP_UTC__" in env_template
+    assert "DIRTY=0" in env_template
+    assert "STRATFORGE_ENV=" not in env_template
+    assert "STRATFORGE_PRODUCTION_ORIGIN=https://app.stratforges.com" in env_template
+    assert "STRATFORGE_CANARY_ORIGIN=https://canary.stratforges.com" in env_template
     assert "STRATFORGE_STORAGE_MODE=postgresql" in env_template
     assert "STRATFORGE_DATABASE_URL=__FROM_PROTECTED_SECRET_PROVIDER__" in env_template
     assert "STRATFORGE_ARTIFACT_ROOT=" in env_template

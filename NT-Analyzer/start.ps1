@@ -32,11 +32,13 @@ if (-not $UiPath.StartsWith('/')) { $UiPath = '/' + $UiPath }
 # This launcher is intentionally Development-only.  It preserves the existing
 # local data directory while reserving a distinct unused production root, so a
 # future production profile cannot be selected by an omitted variable.
-if (-not $env:STRATFORGE_ENV) { $env:STRATFORGE_ENV = 'development' }
-if ($env:STRATFORGE_ENV -notin @('development', 'dev', 'local')) {
-    Write-Host "ERROR: start.ps1 is Development-only; STRATFORGE_ENV=$($env:STRATFORGE_ENV)" -ForegroundColor Red
+$requestedEnvironment = if ($env:DEPLOYMENT_ENV) { $env:DEPLOYMENT_ENV } elseif ($env:STRATFORGE_ENV) { $env:STRATFORGE_ENV } else { 'development' }
+if ($requestedEnvironment -notin @('development', 'dev', 'local')) {
+    Write-Host "ERROR: start.ps1 is Development-only; DEPLOYMENT_ENV=$requestedEnvironment" -ForegroundColor Red
     exit 2
 }
+$env:DEPLOYMENT_ENV = 'development'
+$env:STRATFORGE_ENV = 'development'
 if (-not $env:STRATFORGE_INSTANCE_ID) {
     $env:STRATFORGE_INSTANCE_ID = "stratforge-dev-$($env:COMPUTERNAME)"
 }
@@ -52,15 +54,44 @@ catch {
     Write-Host "ERROR: VERSION.json is invalid: $($_.Exception.Message)" -ForegroundColor Red
     exit 2
 }
-if ([string]$projectVersion.channel -ne 'development' -or [string]$projectVersion.status -ne 'in_development') {
-    Write-Host 'ERROR: the local launcher requires VERSION.json channel=development and status=in_development.' -ForegroundColor Red
-    exit 2
-}
-# Never inherit a stable/canary identity from another terminal.  This launcher
+# VERSION.json may describe the next release candidate (for example channel=beta
+# while 0.10.0-beta.1 is being prepared). This launcher is still Development:
+# it always forces RELEASE_CHANNEL=dev and must not refuse to start just because
+# the product version file was stamped for a Canary/Production cut.
+# Never inherit a beta/stable identity from another terminal.  This launcher
 # is the one authoritative way to start the checked-out Development build.
+$env:APP_VERSION = [string]$projectVersion.version
 $env:STRATFORGE_BUILD_VERSION = [string]$projectVersion.version
 $env:STRATFORGE_BUILD_DATE = [string]$projectVersion.build_date
-$env:STRATFORGE_RELEASE_CHANNEL = 'development'
+# Windows PowerShell/ConvertFrom-Json may materialize an ISO JSON string as a
+# DateTime. Casting that object to [string] uses the current locale
+# (e.g. 08/02/2026 01:35:50), which is no longer ISO-8601 and makes the backend
+# correctly fail closed. Preserve the canonical UTC identity across shells.
+$buildTimestampValue = $projectVersion.build_timestamp_utc
+if ($buildTimestampValue -is [DateTime]) {
+    $env:BUILD_TIMESTAMP_UTC = $buildTimestampValue.ToUniversalTime().ToString(
+        'yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture
+    )
+} else {
+    $env:BUILD_TIMESTAMP_UTC = [string]$buildTimestampValue
+}
+$env:STRATFORGE_BUILD_TIMESTAMP_UTC = $env:BUILD_TIMESTAMP_UTC
+$env:RELEASE_CHANNEL = 'dev'
+$env:STRATFORGE_RELEASE_CHANNEL = 'dev'
+$gitSha = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+if (-not $gitSha -or $gitSha -notmatch '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$') {
+    Write-Host 'ERROR: the local launcher cannot resolve a full Git commit SHA.' -ForegroundColor Red
+    exit 2
+}
+$gitDirty = [bool](& git status --porcelain 2>$null)
+$env:GIT_COMMIT_SHA = [string]$gitSha
+$env:STRATFORGE_GIT_COMMIT_SHA = $env:GIT_COMMIT_SHA
+$env:BUILD_ID = "dev-$($env:APP_VERSION)-$($env:GIT_COMMIT_SHA.Substring(0, 12))"
+$env:STRATFORGE_BUILD_ID = $env:BUILD_ID
+$env:DIRTY = if ($gitDirty) { '1' } else { '0' }
+$env:STRATFORGE_BUILD_DIRTY = $env:DIRTY
+Remove-Item Env:ARTIFACT_SHA256 -ErrorAction SilentlyContinue
+Remove-Item Env:STRATFORGE_ARTIFACT_SHA256 -ErrorAction SilentlyContinue
 if (-not $env:STRATFORGE_REGION) { $env:STRATFORGE_REGION = 'local' }
 if (-not $env:STRATFORGE_BIND_HOST) { $env:STRATFORGE_BIND_HOST = '127.0.0.1' }
 if (-not $env:STRATFORGE_ALLOWED_HOSTS) { $env:STRATFORGE_ALLOWED_HOSTS = '127.0.0.1,localhost' }
@@ -68,7 +99,7 @@ if (-not $env:STRATFORGE_DEVELOPMENT_DATA_ROOT) {
     $env:STRATFORGE_DEVELOPMENT_DATA_ROOT = (Join-Path $projectRoot 'data')
 }
 if (-not $env:STRATFORGE_DATA_ROOT) {
-    $env:STRATFORGE_DATA_ROOT = (Join-Path $projectRoot 'data\production')
+    $env:STRATFORGE_DATA_ROOT = (Join-Path $projectRoot '.stratforge-production-data-disabled')
 }
 if (-not $env:STRATFORGE_DATABASE_ID) { $env:STRATFORGE_DATABASE_ID = 'development-sqlite' }
 if (-not $env:STRATFORGE_QUEUE_ID) { $env:STRATFORGE_QUEUE_ID = 'development-local-worker' }
@@ -79,6 +110,9 @@ if (-not $env:STRATFORGE_SIGNING_KEY_ID) { $env:STRATFORGE_SIGNING_KEY_ID = 'dev
 if (-not $env:STRATFORGE_LOG_NAMESPACE) { $env:STRATFORGE_LOG_NAMESPACE = 'development' }
 if (-not $env:STRATFORGE_LIVE_TRADING_ALLOWED) { $env:STRATFORGE_LIVE_TRADING_ALLOWED = '0' }
 if (-not $env:STRATFORGE_REAL_PAYMENTS_ALLOWED) { $env:STRATFORGE_REAL_PAYMENTS_ALLOWED = '0' }
+if (-not $env:STRATFORGE_DEVELOPMENT_ORIGIN) { $env:STRATFORGE_DEVELOPMENT_ORIGIN = "http://127.0.0.1:$Port" }
+if (-not $env:STRATFORGE_CANARY_ORIGIN) { $env:STRATFORGE_CANARY_ORIGIN = 'https://canary.stratforges.com' }
+if (-not $env:STRATFORGE_PRODUCTION_ORIGIN) { $env:STRATFORGE_PRODUCTION_ORIGIN = 'https://app.stratforges.com' }
 
 $serverScript = Join-Path $projectRoot 'app\server.py'
 if (-not (Test-Path -LiteralPath $serverScript)) {
@@ -102,7 +136,7 @@ if (-not $pyCmd) {
 
 Write-Host '[StratForge AI] starting backend...' -ForegroundColor Cyan
 Write-Host "[StratForge AI] project_root: $projectRoot"
-Write-Host "[StratForge AI] v$($env:STRATFORGE_BUILD_VERSION) | DEVELOPMENT | from $($env:STRATFORGE_BUILD_DATE)" -ForegroundColor Yellow
+Write-Host "[StratForge AI] DEV | v$($env:APP_VERSION) | $($env:GIT_COMMIT_SHA.Substring(0, 7)) | dirty=$($env:DIRTY)" -ForegroundColor Yellow
 Write-Host '[StratForge AI] This launcher never starts the stable Production service.' -ForegroundColor Yellow
 
 $env:PYTHONUNBUFFERED = '1'

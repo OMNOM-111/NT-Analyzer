@@ -105,6 +105,14 @@ def run_preflight(
             checks.append(_check("typed_config", False, "rejected"))
             return {"ok": False, "checks": checks}
 
+        if config.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}:
+            try:
+                runtime_env.assert_environment_isolation(config)
+                checks.append(_check("environment_isolation", True, "ok"))
+            except runtime_env.RuntimeEnvError:
+                checks.append(_check("environment_isolation", False, "collision"))
+                return {"ok": False, "checks": checks}
+
         if config.environment == runtime_env.PRODUCTION:
             try:
                 storage_router.assert_production_storage_safe()
@@ -192,12 +200,38 @@ def run_preflight(
     return {"ok": all(bool(item["ok"]) for item in checks), "checks": checks}
 
 
+_INIT_SYSTEM_BINARIES: Dict[str, tuple[str, ...]] = {
+    # The historical/documented target: a systemd unit manages the process,
+    # and it still owns the Cloudflare Tunnel client.
+    "systemd": ("systemctl", "cloudflared"),
+    # The real current production host: a single root supervisord instance
+    # manages every StratForge program; there is no systemd unit for this
+    # launcher to require at all. Cloudflare Tunnel is still real
+    # infrastructure the host needs, so cloudflared stays required -- this
+    # profile narrows the *wrong* assumption (systemd) without hiding a
+    # check that is still genuinely needed before deploy.
+    "supervisor": ("cloudflared",),
+}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app-root", type=Path, default=Path.cwd())
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--allow-non-linux", action="store_true")
-    parser.add_argument("--skip-runtime-binaries", action="store_true")
+    parser.add_argument(
+        "--init-system", choices=sorted(_INIT_SYSTEM_BINARIES), default="systemd",
+        help=(
+            "Which binaries this host's process supervisor makes "
+            "meaningful to require. 'systemd' (default) requires "
+            "systemctl+cloudflared; 'supervisor' (the real current "
+            "production/canary host) requires only cloudflared."
+        ),
+    )
+    parser.add_argument(
+        "--skip-runtime-binaries", action="store_true",
+        help="Skip ALL binary presence checks (test/CI override only).",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -208,7 +242,9 @@ def main(argv: list[str] | None = None) -> int:
         app_root=args.app_root,
         environment_file=args.env_file,
         allow_non_linux=args.allow_non_linux,
-        require_binaries=() if args.skip_runtime_binaries else ("systemctl", "cloudflared"),
+        require_binaries=(
+            () if args.skip_runtime_binaries else _INIT_SYSTEM_BINARIES[args.init_system]
+        ),
     )
     if args.json:
         print(json.dumps(result, sort_keys=True))

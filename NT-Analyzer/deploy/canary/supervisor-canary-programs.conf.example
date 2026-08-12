@@ -1,0 +1,96 @@
+# Supervisor program change for the isolated Canary contour on the real
+# (non-systemd) production host.
+#
+# Canary runs a real isolated 3-process topology, matching Production's
+# split as closely as the current host allows:
+#   - `api`               HTTP only in this environment too now that its
+#                          queue routes to PostgreSQL (see below); still
+#                          keeps Development-style in-process
+#                          news/orchestrator/vitek/market-data loops (see
+#                          app/server.py's `run()`), which is unrelated to
+#                          queue processing and is not changed here.
+#   - `worker-canary`      app.production_workers, real isolated queue
+#                          consumer + heartbeat emitter against Canary's own
+#                          PostgreSQL. Requires app.runtime_env's
+#                          `is_server_environment()` gate (Production OR
+#                          Canary), not Production-only.
+#   - `operations-canary`  app.observability --maintenance loop (alerts +
+#                          retention) against Canary's own PostgreSQL. No
+#                          systemd timer exists on this host, so
+#                          run-operations-canary.sh.example loops internally
+#                          instead of being timer-triggered.
+#
+# `app.worker_router` now routes Canary's queue operations (enqueue/list/
+# cancel/start_background_worker) to the real PostgreSQL-backed
+# `app.production_workers` queue instead of the Development-only SQLite
+# queue, and the api process's own attempt to start an in-process consumer
+# becomes a safe no-op -- `worker-canary` is the only consumer.
+#
+# telegram-canary is deliberately NOT a thing to add here: the in-process
+# Telegram notifier stays disabled fail-closed until a real, separate
+# Canary Telegram bot token has been provisioned out-of-band by the owner
+# (never reuse the Production token). app/server.py does not register the
+# telegram_consumer readiness probe while no token is configured, so this
+# shows up as an honest, disclosed PARTIAL, not a fabricated PASS.
+#
+# Apply by repointing the host's existing `[program:api]` block's `command=`
+# at run-api-canary.sh (the Production `api` role remains served by its own
+# separate program/port; see README.md for the real host's port layout),
+# adding the two new program blocks below, then:
+#   sudo supervisorctl -c <conf> reread
+#   sudo supervisorctl -c <conf> update
+#   sudo supervisorctl -c <conf> restart api worker-canary operations-canary
+
+[program:api]
+command=/home/stratforge/production_data/config/run-api-canary.sh
+user=stratforge
+priority=50
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/api.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"
+
+[program:worker-canary]
+command=/home/stratforge/production_data/config/run-worker-canary.sh
+user=stratforge
+priority=60
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/worker-canary.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"
+
+[program:operations-canary]
+command=/home/stratforge/production_data/config/run-operations-canary.sh
+user=stratforge
+priority=70
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=30
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/operations-canary.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"

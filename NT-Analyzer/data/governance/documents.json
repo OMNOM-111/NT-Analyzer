@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "owner": "Черевко Дмитро",
-  "updated_at_utc": "2026-07-15T19:58:33Z",
+  "updated_at_utc": "2026-08-11T08:19:30Z",
   "documents": [
     {
       "id": "project-overview",
@@ -9,7 +9,8 @@
       "label": "Главное: краткое предисловие",
       "category": "governance",
       "path": "docs/governance/OVERVIEW.md",
-      "editable_kind": "none"
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "governance-readme",
@@ -25,7 +26,8 @@
       "label": "Устав проекта",
       "category": "governance",
       "path": "docs/governance/CHARTER.md",
-      "editable_kind": "markdown"
+      "editable_kind": "markdown",
+      "audience": "user"
     },
     {
       "id": "roles",
@@ -67,7 +69,8 @@
       "label": "Карта синхронизации правил",
       "category": "governance",
       "path": "docs/governance/SYNC_MAP.md",
-      "editable_kind": "none"
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "legacy-rules",
@@ -106,40 +109,45 @@
       "title": "risk-profile",
       "label": "Technical risk profile contract",
       "category": "technical",
-      "path": "docs/risk-profile.md",
-      "editable_kind": "none"
+      "path": "docs/strategies/risk-profile.md",
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "ai-lab-run-controls",
       "title": "AI_STRATEGY_LAB_RUN_CONTROLS",
       "label": "AI Lab run controls",
       "category": "technical",
-      "path": "docs/AI_STRATEGY_LAB_RUN_CONTROLS.md",
-      "editable_kind": "none"
+      "path": "docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md",
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "ai-lab-quality",
       "title": "AI_STRATEGY_LAB_QUALITY",
       "label": "AI Lab quality pipeline",
       "category": "technical",
-      "path": "docs/AI_STRATEGY_LAB_QUALITY.md",
-      "editable_kind": "none"
+      "path": "docs/strategies/AI_STRATEGY_LAB_QUALITY.md",
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "ai-lab-cloud-agents",
       "title": "AI_LAB_CLOUD_AGENTS",
       "label": "AI Lab cloud agents, roles and budget",
       "category": "technical",
-      "path": "docs/AI_LAB_CLOUD_AGENTS.md",
-      "editable_kind": "none"
+      "path": "docs/agents/AI_LAB_CLOUD_AGENTS.md",
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "ai-lab-competitive-feedback",
       "title": "AI_LAB_COMPETITIVE_FEEDBACK",
       "label": "AI Lab competitive feedback contract",
       "category": "technical",
-      "path": "docs/AI_LAB_COMPETITIVE_FEEDBACK.md",
-      "editable_kind": "none"
+      "path": "docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md",
+      "editable_kind": "none",
+      "audience": "user"
     },
     {
       "id": "ai-lab-system-coder",
@@ -150,11 +158,146 @@
       "editable_kind": "none"
     },
     {
+      "id": "legal-00",
+      "title": "Ключевые юридические положения",
+      "label": "Проект · краткое резюме перед регистрацией",
+      "category": "legal",
+      "path": "docs/legal/00_KEY_LEGAL_POINTS.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-01",
+      "title": "Пользовательское соглашение (ToS + EULA)",
+      "label": "Проект · главный договор пользователя",
+      "category": "legal",
+      "path": "docs/legal/01_TERMS_OF_SERVICE_EULA.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-02",
+      "title": "Политика конфиденциальности",
+      "label": "Проект · обработка данных",
+      "category": "legal",
+      "path": "docs/legal/02_PRIVACY_POLICY.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-03",
+      "title": "Раскрытие торговых и авто-рисков",
+      "label": "Проект · market / software / AI / automation риски",
+      "category": "legal",
+      "path": "docs/legal/03_TRADING_AUTOMATION_RISK_DISCLOSURE.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-04",
+      "title": "Сторонние интеграции и market data",
+      "label": "Проект · NinjaTrader, TopstepX, Telegram, Google",
+      "category": "legal",
+      "path": "docs/legal/04_THIRD_PARTY_INTEGRATIONS_AND_MARKET_DATA.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-05",
+      "title": "Раскрытие ИИ и обработки данных",
+      "label": "Проект · что передаётся AI-провайдерам",
+      "category": "legal",
+      "path": "docs/legal/05_AI_DISCLOSURE_AND_DATA_PROCESSING.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-06",
+      "title": "Согласие на автоматизацию / live",
+      "label": "Проект · отдельные согласия и активация",
+      "category": "legal",
+      "path": "docs/legal/06_AUTOMATION_LIVE_TRADING_ACTIVATION_CONSENT.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-07",
+      "title": "Электронный акцепт и согласия",
+      "label": "Проект · clickwrap, версии, отзыв",
+      "category": "legal",
+      "path": "docs/legal/07_CONSENT_AND_ELECTRONIC_ACCEPTANCE_POLICY.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
+      "id": "legal-08",
+      "title": "Cookies и региональные приложения",
+      "label": "Проект · Cookie/Analytics + California/EU",
+      "category": "legal",
+      "path": "docs/legal/08_COOKIE_ANALYTICS_AND_REGIONAL_ADDENDA.md",
+      "editable_kind": "none",
+      "audience": "user",
+      "draft": true,
+      "created_at_utc": "2026-08-10T20:49:49Z",
+      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author_kind": "ai",
+      "created_initiator": "Черевко Дмитро",
+      "created_reason": "Создан проект пользовательского юридического пакета."
+    },
+    {
       "id": "ai-staff-index",
       "title": "AGENTS",
       "label": "Карта агентов StratForge",
       "category": "ai-staff",
-      "path": "docs/AGENTS.md",
+      "path": "docs/agents/AGENTS.md",
       "editable_kind": "none"
     },
     {
@@ -170,7 +313,7 @@
       "title": "CHIEF_AI_AGENT",
       "label": "Orchestrator и маршрутизация",
       "category": "ai-staff",
-      "path": "docs/CHIEF_AI_AGENT.md",
+      "path": "docs/agents/CHIEF_AI_AGENT.md",
       "editable_kind": "none"
     },
     {
@@ -186,7 +329,7 @@
       "title": "AI_MANAGEMENT",
       "label": "Секретарь / Заместитель / Управляющий",
       "category": "ai-staff",
-      "path": "docs/AI_MANAGEMENT.md",
+      "path": "docs/agents/AI_MANAGEMENT.md",
       "editable_kind": "none"
     },
     {
@@ -194,7 +337,7 @@
       "title": "AI_ACCOUNTANT",
       "label": "Марина — финансы",
       "category": "ai-staff",
-      "path": "docs/AI_ACCOUNTANT.md",
+      "path": "docs/agents/AI_ACCOUNTANT.md",
       "editable_kind": "none"
     },
     {
@@ -202,7 +345,7 @@
       "title": "AI_STRATEGY_ANALYST",
       "label": "Толик — стратегии",
       "category": "ai-staff",
-      "path": "docs/AI_STRATEGY_ANALYST.md",
+      "path": "docs/agents/AI_STRATEGY_ANALYST.md",
       "editable_kind": "none"
     },
     {
@@ -210,7 +353,7 @@
       "title": "AI_NEWS_AGENT",
       "label": "Никита — новости",
       "category": "ai-staff",
-      "path": "docs/AI_NEWS_AGENT.md",
+      "path": "docs/agents/AI_NEWS_AGENT.md",
       "editable_kind": "none"
     },
     {
@@ -218,7 +361,7 @@
       "title": "AI_CHART_OPERATOR",
       "label": "Иван — графики",
       "category": "ai-staff",
-      "path": "docs/AI_CHART_OPERATOR.md",
+      "path": "docs/agents/AI_CHART_OPERATOR.md",
       "editable_kind": "none"
     },
     {
@@ -226,7 +369,7 @@
       "title": "STRATEGY_RECOVERY",
       "label": "Восстановление стратегии из карантина",
       "category": "ai-staff",
-      "path": "docs/STRATEGY_RECOVERY.md",
+      "path": "docs/strategies/STRATEGY_RECOVERY.md",
       "editable_kind": "none"
     },
     {

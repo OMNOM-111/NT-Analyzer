@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, secure_store, server as server_mod, subscriptions, workspaces
+from app import account_auth, personal_nt_security, secure_store, server as server_mod, subscriptions, workspaces
 
 
 @pytest.fixture
@@ -76,6 +76,83 @@ def test_workspace_dpapi_cache_is_copy_isolated_and_write_through(
     assert len(decrypts) == 1
 
 
+def test_phase3_workspace_identity_backfill_preserves_legacy_references(workspace_store) -> None:
+    account_auth._write_doc({
+        "version": 3,
+        "users": [{
+            "user_id": 42,
+            "legacy_user_id": 42,
+            "user_uuid": "9b2c8d86-7ce3-4ee0-aa1f-9b9e0b6b77c1",
+            "first_name": "Ada",
+            "status": "active",
+            "is_owner": False,
+        }],
+        "auth_identities": [],
+        "challenges": [],
+        "sessions": [],
+    })
+    workspaces._write_doc({
+        "version": 1,
+        "workspaces": [{
+            "workspace_id": "ws_personal_PHASE3TEST",
+            "owner_user_id": 42,
+            "kind": "personal",
+            "status": "active",
+        }],
+        "memberships": [{
+            "workspace_id": "ws_personal_PHASE3TEST", "user_id": 42,
+            "created_by_user_id": 42, "role": "owner",
+        }],
+        "active_workspaces": {"42": "ws_personal_PHASE3TEST"},
+        "connections": [{
+            "connection_id": "conn_phase3", "workspace_id": "ws_personal_PHASE3TEST",
+            "owner_user_id": 42, "status": "online",
+        }],
+        "pairings": [{
+            "pairing_id": "pair_phase3", "workspace_id": "ws_personal_PHASE3TEST",
+            "created_by_user_id": 42,
+        }],
+    })
+
+    migrated = workspaces._read_doc()
+    user_uuid = "9b2c8d86-7ce3-4ee0-aa1f-9b9e0b6b77c1"
+
+    assert migrated["workspaces"][0]["owner_user_id"] == 42
+    assert migrated["workspaces"][0]["owner_user_uuid"] == user_uuid
+    assert migrated["memberships"][0]["user_id"] == 42
+    assert migrated["memberships"][0]["user_uuid"] == user_uuid
+    assert migrated["memberships"][0]["created_by_user_uuid"] == user_uuid
+    assert migrated["connections"][0]["owner_user_uuid"] == user_uuid
+    assert migrated["pairings"][0]["created_by_user_uuid"] == user_uuid
+    assert migrated["active_workspaces"]["42"] == "ws_personal_PHASE3TEST"
+    assert migrated["active_workspaces_by_uuid"][user_uuid] == "ws_personal_PHASE3TEST"
+
+
+def test_phase3_workspace_creation_dual_writes_uuid_companions(workspace_store) -> None:
+    user_uuid = "d69c90cb-9db9-4a10-aa76-18dcb816eab7"
+    account_auth._write_doc({
+        "version": 3,
+        "users": [{
+            "user_id": 42, "legacy_user_id": 42, "user_uuid": user_uuid,
+            "first_name": "Ada", "status": "active", "is_owner": False,
+        }],
+        "auth_identities": [], "challenges": [], "sessions": [],
+    })
+
+    workspace = workspaces.ensure_personal_workspace(42, require_entitlement=False)
+    pairing = workspaces.start_bridge_pairing(42, workspace_id=workspace["workspace_id"])
+    completed = workspaces.complete_bridge_pairing(
+        42, code=pairing["code"], device_id="device-phase3",
+        bridge_instance_id="bridge-phase3",
+    )
+
+    assert workspace["owner_user_id"] == 42
+    assert workspace["owner_user_uuid"] == user_uuid
+    assert workspace["membership"]["user_uuid"] == user_uuid
+    assert workspace["membership"]["created_by_user_uuid"] == user_uuid
+    assert completed["connection"]["owner_user_uuid"] == user_uuid
+
+
 def test_personal_runtime_storage_never_falls_back_to_owner_when_offline(workspace_store) -> None:
     context = {
         "active_workspace": {
@@ -113,7 +190,9 @@ def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: st
             {
                 "user_id": 42, "first_name": "Dev", "last_name": "Two", "email": "dev@example.com",
                 "role": "full_control", "status": "active", "is_owner": False,
-                # NT control (bridge pair) requires Google + elevated Telegram confirm.
+                # NT control (bridge pair) requires a verified email factor (Google
+                # here), a confirmed Telegram factor and an elevated Telegram confirm.
+                "telegram_user_id": 42,
                 "google_sub": "google-dev-42", "google_email": "dev@gmail.com",
                 "google_linked_at_utc": "2026-07-15T00:00:00Z",
             },
@@ -228,6 +307,23 @@ def test_workspace_auth_status_and_runtime_isolation(workspace_store, monkeypatc
         assert blocked.value.code == 403
         err_body = json.loads(blocked.value.read().decode("utf-8"))
         assert err_body.get("code") == "nt_google_required"
+
+        # Phase 5: a personal-NT pairing needs both factors and a fresh, single-
+        # use step-up grant. Inject a confirmed grant directly (no test-auth here).
+        grant_doc = account_auth._read_doc()
+        grant_user = account_auth._user(grant_doc, 42)
+        grant_doc.setdefault("security_challenges", []).append({
+            "challenge_id": "grant_pair_42",
+            "user_uuid": account_auth._user_uuid(grant_user),
+            "legacy_user_id": 42,
+            "purpose": "step_up",
+            "action": "pairing",
+            "environment": personal_nt_security._current_environment(),
+            "status": "consumed",
+            "consumed_at_utc": account_auth._now_iso(),
+            "expires_at": time.time() + 600,
+        })
+        account_auth._write_doc(grant_doc)
 
         pairing = _json_request(base, "/api/bridge/pair/start", method="POST", token=user_token, csrf=user_csrf, body={
             "machine_label": "Dev PC",

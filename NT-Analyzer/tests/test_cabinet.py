@@ -288,6 +288,120 @@ def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
         server.server_close()
 
 
+def test_admin_panel_capabilities_gate_ui_data_and_server_routes(cabinet_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")
+    account_auth.set_auth_required(True)
+
+    owner_token, owner_csrf = "a" * 64, "b" * 48
+    user_token, user_csrf = "c" * 64, "d" * 48
+    _seed_two_accounts(owner_token, owner_csrf, user_token, user_csrf)
+
+    server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    try:
+        # An ordinary professional user has no control-plane access even when
+        # authenticated and holding product capabilities.
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(base, "/api/admin/overview", token=user_token)
+        assert exc.value.code == 403
+
+        for capability in ("admin.view", "users.manage", "environment.switch"):
+            _request(
+                base,
+                "/api/auth/users/42/admin-permission",
+                method="POST",
+                token=owner_token,
+                csrf=owner_csrf,
+                body={"capability": capability, "enabled": True},
+            )
+
+        overview = _request(base, "/api/admin/overview", token=user_token)
+        modules = {row["id"] for row in overview["modules"]}
+        assert {"overview", "users", "environments"} <= modules
+        assert "operations" not in modules
+        assert overview["security_contract"]["secrets_exposed"] is False
+
+        targets = _request(base, "/api/admin/environment-targets", token=user_token)
+        assert {row["environment"] for row in targets["targets"]} == {
+            "development", "canary", "production",
+        }
+        assert targets["transition_contract"] == {
+            "new_tab": True,
+            "credentials_transfer": False,
+            "tokens_in_url": False,
+            "local_storage_transfer": False,
+        }
+        assert len(_request(base, "/api/auth/users", token=user_token)["users"]) == 2
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(base, "/api/admin/operations", token=user_token)
+        assert exc.value.code == 403
+        # users.manage does not allow staff to grant itself stronger rights.
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(
+                base,
+                "/api/auth/users/42/admin-permission",
+                method="POST",
+                token=user_token,
+                csrf=user_csrf,
+                body={"capability": "operations.execute", "enabled": True},
+            )
+        assert exc.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_environment_switch_origins_fail_closed() -> None:
+    assert server_mod._validated_environment_origin(
+        "development", "http://127.0.0.1:8765",
+    ) == "http://127.0.0.1:8765"
+    assert server_mod._validated_environment_origin(
+        "development", "http://localhost:443",
+    ) == "http://localhost:443"
+    assert server_mod._validated_environment_origin(
+        "development", "https://localhost:80",
+    ) == "https://localhost:80"
+    assert server_mod._validated_environment_origin(
+        "development", "https://dev.example.com",
+    ) == ""
+    assert server_mod._validated_environment_origin(
+        "canary", "http://canary.example.com",
+    ) == ""
+    assert server_mod._validated_environment_origin(
+        "canary", "https://canary.example.com",
+    ) == "https://canary.example.com"
+    assert server_mod._validated_environment_origin(
+        "production", "https://user:password@prod.example.com",
+    ) == ""
+
+
+def test_environment_switcher_defaults_canonical_origins(monkeypatch, tmp_path) -> None:
+    development = tmp_path / "development"
+    development.mkdir()
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "production"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(development))
+    monkeypatch.delenv("STRATFORGE_DEVELOPMENT_ORIGIN", raising=False)
+    monkeypatch.delenv("STRATFORGE_CANARY_ORIGIN", raising=False)
+    monkeypatch.delenv("STRATFORGE_PRODUCTION_ORIGIN", raising=False)
+
+    payload = server_mod._admin_environment_targets()
+    by_env = {row["environment"]: row for row in payload["targets"]}
+
+    assert by_env["development"]["current"] is True
+    assert by_env["canary"]["origin"] == "https://canary.stratforges.com"
+    assert by_env["production"]["origin"] == "https://app.stratforges.com"
+    assert by_env["canary"]["open_allowed"] is True
+    assert by_env["production"]["open_allowed"] is True
+    assert by_env["development"]["requires_reachability_probe"] is False
+    assert by_env["canary"]["configured"] is True
+    assert payload["transition_contract"]["credentials_transfer"] is False
+
+
 def test_consent_support_session_commands_and_monitoring(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")

@@ -930,6 +930,10 @@ def test_non_owner_cannot_read_ai_operator_control_plane(monkeypatch, path) -> N
         def _is_remote_api_request(self):
             return True
 
+        def _local_owner_bypass_allowed(self):
+            # A remote (Mini App) request is never a local owner/service bypass.
+            return False
+
         def _request_ips(self):
             return "", ""
 
@@ -1029,7 +1033,7 @@ def test_ai_agents_page_and_navigation_contract() -> None:
     api = (root / "app" / "static" / "aurora" / "assets" / "api.js").read_text(encoding="utf-8")
     ui = (root / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
     server = (root / "app" / "server.py").read_text(encoding="utf-8")
-    for label in ("Add Model", "Edit Model", "Delete Model", "Test Connection", "Enable Agent", "Disable Agent"):
+    for label in ("Добавить модель", "Изменить модель", "Удалить модель", "Проверить подключение", "Включить", "Выключить"):
         assert label in page + js
     assert 'type="password"' in js
     assert "API.http.aiAgentCreate" in js and "API.http.aiAgentTest" in js

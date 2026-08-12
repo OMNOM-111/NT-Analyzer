@@ -284,7 +284,7 @@ class TestProductionTelegramStructure:
         unit = (root / "deploy" / "production" / "stratforge-telegram.service").read_text(
             encoding="utf-8",
         )
-        runbook = (root / "docs" / "PRODUCTION_TELEGRAM_RUNBOOK.md").read_text(
+        runbook = (root / "docs" / "operations" / "PRODUCTION_TELEGRAM_RUNBOOK.md").read_text(
             encoding="utf-8",
         )
         assert "STRATFORGE_DEPLOYMENT_ROLE=telegram" in unit
@@ -302,7 +302,7 @@ class TestOperationsDeployment:
         timer = (root / "deploy" / "production" / "stratforge-operations.timer").read_text(
             encoding="utf-8",
         )
-        runbook = (root / "docs" / "PRODUCTION_OPERATIONS_RUNBOOK.md").read_text(
+        runbook = (root / "docs" / "operations" / "PRODUCTION_OPERATIONS_RUNBOOK.md").read_text(
             encoding="utf-8",
         )
         assert "STRATFORGE_DEPLOYMENT_ROLE=worker" in service
@@ -681,15 +681,22 @@ class TestRedactionContracts:
 
     def test_observability_redacts_windows_paths_in_production(self):
         from app.observability import redact, _WINDOWS_PATH
-        with mock.patch("app.runtime_env.is_production", return_value=True):
+        with mock.patch("app.runtime_env.is_server_environment", return_value=True):
             text = "Error at C:\\Users\\admin\\Documents\\secrets.txt"
             result = redact(text)
             assert "[private-path]" in result
 
     def test_observability_redacts_unix_paths_in_production(self):
         from app.observability import redact
-        with mock.patch("app.runtime_env.is_production", return_value=True):
+        with mock.patch("app.runtime_env.is_server_environment", return_value=True):
             text = "Error at /home/admin/.ssh/id_rsa"
+            result = redact(text)
+            assert "[private-path]" in result
+
+    def test_observability_redacts_paths_in_canary(self):
+        from app.observability import redact
+        with mock.patch("app.runtime_env.is_server_environment", return_value=True):
+            text = "Error at /home/stratforge/canary/config/canary.env"
             result = redact(text)
             assert "[private-path]" in result
 

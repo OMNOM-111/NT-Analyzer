@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import runtime_env
+from . import auth_identity, runtime_env
 
 
 class CommunityError(RuntimeError):
@@ -47,6 +47,17 @@ _CHANNELS = (
 _CHANNEL_IDS = frozenset(row["id"] for row in _CHANNELS)
 _ATTACHMENT_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$", re.I)
 _MIME_EXTENSION = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+_IDENTITY_FIELDS = {
+    "accounts": (("user_id", "user_uuid"),),
+    "messages": (("user_id", "user_uuid"),),
+    "posts": (("user_id", "user_uuid"),),
+    "strategies": (("user_id", "user_uuid"),),
+    "copies": (("from_user_id", "from_user_uuid"), ("to_user_id", "to_user_uuid")),
+    "reports": (("from_user_id", "from_user_uuid"),),
+    "shared_reports": (("user_id", "user_uuid"),),
+    "requests": (("from_user_id", "from_user_uuid"), ("recipient_user_id", "recipient_user_uuid")),
+    "blocks": (("user_id", "user_uuid"), ("by_owner_id", "by_owner_uuid")),
+}
 
 
 def _empty_doc() -> Dict[str, Any]:
@@ -133,6 +144,53 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return int(default)
+
+
+def _resolved_user_uuid(user_id: Any, preferred: Any = "") -> str:
+    canonical = auth_identity.normalize_user_uuid(preferred)
+    if canonical:
+        return canonical
+    uid = _safe_int(user_id)
+    if uid <= 0:
+        return ""
+    try:
+        from . import account_auth
+        return account_auth.user_uuid_for_legacy_id(uid)
+    except Exception:
+        return ""
+
+
+def _backfill_identity_rows(
+    doc: Dict[str, Any], known: Optional[Dict[int, str]] = None,
+) -> bool:
+    resolved: Dict[int, str] = {}
+    for raw_user_id, raw_user_uuid in (known or {}).items():
+        user_id = _safe_int(raw_user_id)
+        canonical = auth_identity.normalize_user_uuid(raw_user_uuid)
+        if user_id > 0 and canonical:
+            resolved[user_id] = canonical
+
+    def user_uuid(user_id: Any) -> str:
+        numeric = _safe_int(user_id)
+        if numeric <= 0:
+            return ""
+        if numeric not in resolved:
+            resolved[numeric] = _resolved_user_uuid(numeric)
+        return resolved[numeric]
+
+    changed = False
+    for collection, field_pairs in _IDENTITY_FIELDS.items():
+        for row in doc.get(collection) or []:
+            if not isinstance(row, dict):
+                continue
+            for user_id_field, user_uuid_field in field_pairs:
+                if str(row.get(user_uuid_field) or "").strip():
+                    continue
+                canonical = user_uuid(row.get(user_id_field))
+                if canonical:
+                    row[user_uuid_field] = canonical
+                    changed = True
+    return changed
 
 
 def _safe_number(value: Any, default: float = 0.0) -> float:
@@ -261,12 +319,13 @@ def _blocked(doc: Dict[str, Any], user_id: int, workspace_id: str) -> bool:
 
 
 def _touch_account(doc: Dict[str, Any], user_id: int, workspace_id: str,
-                   display_name: str = "") -> Dict[str, Any]:
+                   display_name: str = "", user_uuid: Any = "") -> Dict[str, Any]:
     rows = doc.setdefault("accounts", [])
     row = next((item for item in rows
                 if _safe_int(item.get("user_id")) == int(user_id)
                 and _same_workspace(item, workspace_id)), None)
     now = _now_iso()
+    canonical = _resolved_user_uuid(user_id, user_uuid)
     if row is None:
         identity = hashlib.sha256(f"{workspace_id}|{int(user_id)}".encode("utf-8")).hexdigest()[:16]
         row = {
@@ -277,10 +336,14 @@ def _touch_account(doc: Dict[str, Any], user_id: int, workspace_id: str,
             "created_at_utc": now,
             "updated_at_utc": now,
         }
+        if canonical:
+            row["user_uuid"] = canonical
         rows.append(row)
     else:
         if str(display_name or "").strip():
             row["display_name"] = str(display_name).strip()[:80]
+        if canonical and not str(row.get("user_uuid") or "").strip():
+            row["user_uuid"] = canonical
         row["updated_at_utc"] = now
     return row
 
@@ -290,6 +353,8 @@ def feed(*, limit: int = 50, workspace_id: str = "", channel_id: str = "") -> Di
     channel = _channel_id(channel_id) if str(channel_id or "").strip() else ""
     with _LOCK:
         doc = _load()
+        if _backfill_identity_rows(doc):
+            _save(doc)
         scoped_messages = [
             row for row in doc.get("messages") or []
             if _same_workspace(row, workspace) and (not channel or str(row.get("channel_id") or "general") == channel)
@@ -321,8 +386,9 @@ def feed(*, limit: int = 50, workspace_id: str = "", channel_id: str = "") -> Di
 def post_message(user_id: Any, *, text: str, display_name: str = "",
                  workspace_id: str = "", idempotency_key: str = "",
                  channel_id: str = "general", thread_root_id: str = "",
-                 attachments: Any = None) -> Dict[str, Any]:
+                 attachments: Any = None, user_uuid: Any = "") -> Dict[str, Any]:
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     body = str(text or "").strip()
     workspace = _workspace_id(workspace_id)
     channel = _channel_id(channel_id)
@@ -334,6 +400,7 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
         raise CommunityError("Сообщение пустое или слишком длинное.")
     with _LOCK:
         doc = _load()
+        backfilled = _backfill_identity_rows(doc, {uid: canonical})
         if _blocked(doc, uid, workspace):
             raise CommunityError("Вы заблокированы в community.", 403)
         if idem_hash:
@@ -342,6 +409,8 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
                              and _same_workspace(item, workspace)
                              and item.get("idempotency_key_hash") == idem_hash), None)
             if existing is not None:
+                if backfilled:
+                    _save(doc)
                 return {"ok": True, "message": _public_message(existing), "telegram_mirror": False, "deduplicated": True}
         if root_id:
             root = next((item for item in doc.get("messages") or []
@@ -361,6 +430,8 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
             "created_at_utc": _now_iso(),
             "contour": "community",
         }
+        if canonical:
+            row["user_uuid"] = canonical
         if root_id:
             row["thread_root_id"] = root_id
         stored_attachments = _validate_attachments(
@@ -370,7 +441,7 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
             row["attachments"] = stored_attachments
         if idem_hash:
             row["idempotency_key_hash"] = idem_hash
-        _touch_account(doc, uid, workspace, display_name)
+        _touch_account(doc, uid, workspace, display_name, canonical)
         doc.setdefault("messages", []).append(row)
         doc["messages"] = doc["messages"][-1000:]
         _save(doc)
@@ -379,9 +450,10 @@ def post_message(user_id: Any, *, text: str, display_name: str = "",
 
 def share_report(user_id: Any, *, title: str, summary: str = "", metrics: Any = None,
                  display_name: str = "", workspace_id: str = "", channel_id: str = "reports",
-                 attachments: Any = None) -> Dict[str, Any]:
+                 attachments: Any = None, user_uuid: Any = "") -> Dict[str, Any]:
     """Share an explicit user report without turning it into an AI task."""
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     workspace = _workspace_id(workspace_id)
     channel = _channel_id(channel_id)
     clean_title = str(title or "").strip()
@@ -392,6 +464,7 @@ def share_report(user_id: Any, *, title: str, summary: str = "", metrics: Any = 
     clean_metrics = _validated_metrics(metrics)
     with _LOCK:
         doc = _load()
+        _backfill_identity_rows(doc, {uid: canonical})
         if _blocked(doc, uid, workspace):
             raise CommunityError("Вы заблокированы в community.", 403)
         report_id = "crshare_" + secrets.token_hex(7)
@@ -407,6 +480,9 @@ def share_report(user_id: Any, *, title: str, summary: str = "", metrics: Any = 
             "created_at_utc": _now_iso(),
             "contour": "community",
         }
+        if canonical:
+            row["user_uuid"] = canonical
+            _touch_account(doc, uid, workspace, display_name, canonical)
         stored_attachments = _validate_attachments(
             attachments, workspace_id=workspace, owner_id=report_id,
         )
@@ -421,9 +497,11 @@ def share_report(user_id: Any, *, title: str, summary: str = "", metrics: Any = 
 
 def create_request(user_id: Any, *, title: str, request_type: str = "report",
                    recipient_user_id: Any = 0, notes: str = "", display_name: str = "",
-                   workspace_id: str = "", channel_id: str = "reports") -> Dict[str, Any]:
+                   workspace_id: str = "", channel_id: str = "reports",
+                   user_uuid: Any = "") -> Dict[str, Any]:
     """Create a transparent in-product request for a report, data or screenshot."""
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     workspace = _workspace_id(workspace_id)
     channel = _channel_id(channel_id)
     clean_title = str(title or "").strip()
@@ -435,10 +513,12 @@ def create_request(user_id: Any, *, title: str, request_type: str = "report",
     if kind not in {"report", "data", "screenshot"}:
         raise CommunityError("Тип запроса: report, data или screenshot.")
     target = _safe_int(recipient_user_id)
+    recipient_uuid = _resolved_user_uuid(target)
     if target < 0:
         raise CommunityError("Некорректный получатель запроса.")
     with _LOCK:
         doc = _load()
+        _backfill_identity_rows(doc, {uid: canonical, target: recipient_uuid})
         if _blocked(doc, uid, workspace):
             raise CommunityError("Вы заблокированы в community.", 403)
         row = {
@@ -454,7 +534,11 @@ def create_request(user_id: Any, *, title: str, request_type: str = "report",
             "status": "open",
             "created_at_utc": _now_iso(),
         }
-        _touch_account(doc, uid, workspace, display_name)
+        if canonical:
+            row["from_user_uuid"] = canonical
+        if recipient_uuid:
+            row["recipient_user_uuid"] = recipient_uuid
+        _touch_account(doc, uid, workspace, display_name, canonical)
         doc.setdefault("requests", []).append(row)
         doc["requests"] = doc["requests"][-500:]
         _save(doc)
@@ -469,6 +553,8 @@ def attachment(attachment_id: str, *, workspace_id: str = "") -> Dict[str, Any]:
         raise CommunityError("Вложение не найдено.", 404)
     with _LOCK:
         doc = _load()
+        if _backfill_identity_rows(doc):
+            _save(doc)
         candidates = list(doc.get("messages") or []) + list(doc.get("shared_reports") or [])
         owner = next((row for row in candidates if _same_workspace(row, workspace)
                       and any(isinstance(item, dict) and item.get("attachment_id") == aid
@@ -502,8 +588,10 @@ def publish_strategy(
     display_name: str = "",
     workspace_id: str = "",
     idempotency_key: str = "",
+    user_uuid: Any = "",
 ) -> Dict[str, Any]:
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     name = str(title or "").strip()
     workspace = _workspace_id(workspace_id)
     clean_metrics = _validated_metrics(metrics)
@@ -514,6 +602,7 @@ def publish_strategy(
         raise CommunityError("Укажите название стратегии.")
     with _LOCK:
         doc = _load()
+        backfilled = _backfill_identity_rows(doc, {uid: canonical})
         if _blocked(doc, uid, workspace):
             raise CommunityError("Вы заблокированы в community.", 403)
         if idem_hash:
@@ -522,6 +611,8 @@ def publish_strategy(
                              and _same_workspace(item, workspace)
                              and item.get("idempotency_key_hash") == idem_hash), None)
             if existing is not None:
+                if backfilled:
+                    _save(doc)
                 return {"ok": True, "strategy": existing, "deduplicated": True}
         row = {
             "strategy_id": "cstr_" + secrets.token_hex(5),
@@ -535,6 +626,9 @@ def publish_strategy(
             "created_at_utc": _now_iso(),
             "status": "published",
         }
+        if canonical:
+            row["user_uuid"] = canonical
+            _touch_account(doc, uid, workspace, display_name, canonical)
         if idem_hash:
             row["idempotency_key_hash"] = idem_hash
         _touch_account(doc, uid, workspace, display_name)
@@ -545,8 +639,9 @@ def publish_strategy(
 
 
 def copy_strategy(user_id: Any, strategy_id: str, *, workspace_id: str = "",
-                  idempotency_key: str = "") -> Dict[str, Any]:
+                  idempotency_key: str = "", user_uuid: Any = "") -> Dict[str, Any]:
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     sid = str(strategy_id or "").strip()
     workspace = _workspace_id(workspace_id)
     idem_hash = _idempotency_hash(idempotency_key)
@@ -554,6 +649,7 @@ def copy_strategy(user_id: Any, strategy_id: str, *, workspace_id: str = "",
         raise CommunityError("Требуется вход.", 401)
     with _LOCK:
         doc = _load()
+        backfilled = _backfill_identity_rows(doc, {uid: canonical})
         if _blocked(doc, uid, workspace):
             raise CommunityError("Вы заблокированы в community.", 403)
         src = next((row for row in doc.get("strategies") or []
@@ -568,11 +664,14 @@ def copy_strategy(user_id: Any, strategy_id: str, *, workspace_id: str = "",
                          and _same_workspace(item, workspace)
                          and str(item.get("status") or "pending_import") == "pending_import"), None)
         if existing is not None:
+            if backfilled:
+                _save(doc)
             return {
                 "ok": True, "copy": existing, "strategy": src, "deduplicated": True,
                 "import": _pending_import_contract(existing),
             }
         src["copies"] = max(0, _safe_int(src.get("copies"))) + 1
+        source_uuid = _resolved_user_uuid(src.get("user_id"), src.get("user_uuid"))
         copy_row = {
             "copy_id": "ccopy_" + secrets.token_hex(5),
             "workspace_id": workspace,
@@ -585,6 +684,11 @@ def copy_strategy(user_id: Any, strategy_id: str, *, workspace_id: str = "",
             "status": "pending_import",
             "personal_strategy_created": False,
         }
+        if source_uuid:
+            copy_row["from_user_uuid"] = source_uuid
+        if canonical:
+            copy_row["to_user_uuid"] = canonical
+            _touch_account(doc, uid, workspace, user_uuid=canonical)
         if idem_hash:
             copy_row["idempotency_key_hash"] = idem_hash
         _touch_account(doc, uid, workspace)
@@ -628,6 +732,9 @@ def _ratings_for(strategies: List[Dict[str, Any]]) -> Dict[str, Any]:
     for row in strategies:
         uid = _safe_int(row.get("user_id"))
         bucket = authors.setdefault(uid, {"user_id": uid, "display_name": row.get("display_name"), "strategies": 0, "copies": 0})
+        canonical = auth_identity.normalize_user_uuid(row.get("user_uuid"))
+        if canonical and not bucket.get("user_uuid"):
+            bucket["user_uuid"] = canonical
         bucket["strategies"] += 1
         bucket["copies"] += max(0, _safe_int(row.get("copies")))
     return {
@@ -643,18 +750,22 @@ def ratings(*, workspace_id: str = "") -> Dict[str, Any]:
     workspace = _workspace_id(workspace_id)
     with _LOCK:
         doc = _load()
+        if _backfill_identity_rows(doc):
+            _save(doc)
         strategies = [row for row in doc.get("strategies") or [] if _same_workspace(row, workspace)]
     return _ratings_for(strategies)
 
 
 def report_abuse(user_id: Any, *, target_id: str, reason: str = "",
-                 workspace_id: str = "") -> Dict[str, Any]:
+                 workspace_id: str = "", user_uuid: Any = "") -> Dict[str, Any]:
     uid = int(user_id or 0)
+    canonical = _resolved_user_uuid(uid, user_uuid)
     workspace = _workspace_id(workspace_id)
     if uid <= 0:
         raise CommunityError("Требуется вход.", 401)
     with _LOCK:
         doc = _load()
+        _backfill_identity_rows(doc, {uid: canonical})
         row = {
             "report_id": "crep_" + secrets.token_hex(5),
             "workspace_id": workspace,
@@ -663,32 +774,44 @@ def report_abuse(user_id: Any, *, target_id: str, reason: str = "",
             "reason": str(reason or "")[:500],
             "created_at_utc": _now_iso(),
         }
+        if canonical:
+            row["from_user_uuid"] = canonical
         doc.setdefault("reports", []).append(row)
         _save(doc)
     return {"ok": True, "report": row}
 
 
 def moderate_block(owner_id: Any, target_user_id: Any, *, reason: str = "",
-                   workspace_id: str = "") -> Dict[str, Any]:
+                   workspace_id: str = "", owner_user_uuid: Any = "") -> Dict[str, Any]:
     # Owner check is done by server route.
     tid = int(target_user_id or 0)
+    target_uuid = _resolved_user_uuid(tid)
+    owner_uuid = _resolved_user_uuid(owner_id, owner_user_uuid)
     workspace = _workspace_id(workspace_id)
     if tid <= 0:
         raise CommunityError("Пользователь не найден.", 404)
     with _LOCK:
         doc = _load()
+        backfilled = _backfill_identity_rows(doc, {tid: target_uuid, _safe_int(owner_id): owner_uuid})
         existing = next((row for row in doc.get("blocks") or []
                          if _safe_int(row.get("user_id")) == tid
                          and _same_workspace(row, workspace)), None)
         if existing is not None:
+            if backfilled:
+                _save(doc)
             return {"ok": True, "blocked_user_id": tid, "deduplicated": True}
-        doc.setdefault("blocks", []).append({
+        row = {
             "workspace_id": workspace,
             "user_id": tid,
             "by_owner_id": int(owner_id or 0),
             "reason": str(reason or "")[:300],
             "created_at_utc": _now_iso(),
-        })
+        }
+        if target_uuid:
+            row["user_uuid"] = target_uuid
+        if owner_uuid:
+            row["by_owner_uuid"] = owner_uuid
+        doc.setdefault("blocks", []).append(row)
         _save(doc)
     return {"ok": True, "blocked_user_id": tid, "deduplicated": False}
 
@@ -698,6 +821,7 @@ def moderate_delete_message(owner_id: Any, message_id: str, *, workspace_id: str
     workspace = _workspace_id(workspace_id)
     with _LOCK:
         doc = _load()
+        _backfill_identity_rows(doc)
         before = len(doc.get("messages") or [])
         doc["messages"] = [row for row in doc.get("messages") or []
                            if not (row.get("message_id") == mid and _same_workspace(row, workspace))]

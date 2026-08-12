@@ -82,35 +82,64 @@ def test_development_profile_is_explicit_and_versioned(tmp_path, monkeypatch) ->
         json.dumps({
             "version": "1.2.3-dev.4",
             "build_date": "2026-07-21",
-            "channel": "development",
+            "build_timestamp_utc": "2026-07-21T08:09:10Z",
+            "channel": "dev",
             "status": "in_development",
         }),
         encoding="utf-8",
     )
     for name in tuple(os.environ):
-        if name.startswith("STRATFORGE_") or name in {"NT_ANALYZER_ROOT", "NTA_VITEK_BACKGROUND"}:
+        if name.startswith("STRATFORGE_") or name in {
+            "DEPLOYMENT_ENV", "APP_VERSION", "BUILD_TIMESTAMP_UTC",
+            "RELEASE_CHANNEL", "BUILD_ID", "GIT_COMMIT_SHA", "DIRTY",
+            "ARTIFACT_SHA256", "NT_ANALYZER_ROOT", "NTA_VITEK_BACKGROUND",
+        }:
             monkeypatch.delenv(name, raising=False)
 
     values = backend_supervisor.configure_development_profile(
         tmp_path, public_origin="https://app.example.test", apply_environment=False,
     )
 
+    assert values["DEPLOYMENT_ENV"] == "development"
     assert values["STRATFORGE_ENV"] == "development"
+    assert values["APP_VERSION"] == "1.2.3-dev.4"
     assert values["STRATFORGE_BUILD_VERSION"] == "1.2.3-dev.4"
+    assert values["BUILD_TIMESTAMP_UTC"] == "2026-07-21T08:09:10Z"
+    assert values["RELEASE_CHANNEL"] == "dev"
+    assert len(values["GIT_COMMIT_SHA"]) == 40
     assert values["STRATFORGE_ALLOWED_HOSTS"] == "127.0.0.1,localhost,app.example.test"
     assert values["STRATFORGE_PUBLIC_ORIGIN"] == "https://app.example.test"
     assert values["STRATFORGE_LIVE_TRADING_ALLOWED"] == "0"
     assert values["STRATFORGE_REAL_PAYMENTS_ALLOWED"] == "0"
+    assert values["STRATFORGE_DEVELOPMENT_ORIGIN"] == "http://127.0.0.1:8765"
+    assert values["STRATFORGE_CANARY_ORIGIN"] == "https://canary.stratforges.com"
+    assert values["STRATFORGE_PRODUCTION_ORIGIN"] == "https://app.stratforges.com"
 
 
-def test_development_profile_rejects_stable_version(tmp_path) -> None:
+def test_development_profile_forces_dev_channel_when_version_json_is_beta(tmp_path, monkeypatch) -> None:
     (tmp_path / "VERSION.json").write_text(
         json.dumps({
-            "version": "1.2.3", "build_date": "2026-07-21",
-            "channel": "stable", "status": "ready",
+            "version": "0.10.0-beta.1",
+            "build_date": "2026-08-11",
+            "build_timestamp_utc": "2026-08-11T18:35:00Z",
+            "channel": "beta",
+            "status": "pre_release",
         }),
         encoding="utf-8",
     )
+    for name in tuple(os.environ):
+        if name.startswith("STRATFORGE_") or name in {
+            "DEPLOYMENT_ENV", "APP_VERSION", "BUILD_TIMESTAMP_UTC",
+            "RELEASE_CHANNEL", "BUILD_ID", "GIT_COMMIT_SHA", "DIRTY",
+            "ARTIFACT_SHA256", "NT_ANALYZER_ROOT", "NTA_VITEK_BACKGROUND",
+        }:
+            monkeypatch.delenv(name, raising=False)
 
-    with pytest.raises(RuntimeError, match="channel=development"):
-        backend_supervisor.configure_development_profile(tmp_path)
+    values = backend_supervisor.configure_development_profile(
+        tmp_path, public_origin="https://app.example.test", apply_environment=False,
+    )
+
+    assert values["DEPLOYMENT_ENV"] == "development"
+    assert values["APP_VERSION"] == "0.10.0-beta.1"
+    assert values["RELEASE_CHANNEL"] == "dev"
+    assert values["STRATFORGE_RELEASE_CHANNEL"] == "dev"

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app import market_data_baseline, market_data_ipc
+from app import market_data_baseline, market_data_ipc, market_data_router, market_data_ws_http
 
 
 @pytest.fixture()
@@ -126,10 +126,20 @@ def test_ipc_authenticated_event_roundtrip(ipc_runtime: Path) -> None:
         server.stop()
 
 
-def test_ipc_backpressure_drops(ipc_runtime: Path) -> None:
+def test_ipc_observability_ring_evicts_without_stopping_live_fanout(ipc_runtime: Path, monkeypatch) -> None:
     market_data_ipc.reset_runtime_state()
     with market_data_ipc._LOCK:
         market_data_ipc._METRICS["queue_capacity"] = 3
+    routed = []
+    broadcast = []
+
+    class _Router:
+        def ingest_primary(self, _workspace_id, event):
+            routed.append(event["generated_sequence"])
+            return []
+
+    monkeypatch.setattr(market_data_router, "get_router", lambda: _Router())
+    monkeypatch.setattr(market_data_ws_http, "broadcast", lambda message: broadcast.append(message))
     for i in range(5):
         ok = market_data_ipc.ingest_event({
             "type": "trade",
@@ -137,11 +147,14 @@ def test_ipc_backpressure_drops(ipc_runtime: Path) -> None:
             "generated_sequence": i,
             "ts_receive": market_data_ipc._iso(),
         })
-        if i < 3:
-            assert ok
-        else:
-            assert not ok
-    assert market_data_ipc.metrics()["dropped"] >= 2
+        assert ok
+    metrics = market_data_ipc.metrics()
+    assert metrics["dropped"] == 0
+    assert metrics["ring_evicted"] == 2
+    assert metrics["queue_depth"] == 3
+    assert [row["generated_sequence"] for row in market_data_ipc.recent_events(10)] == [2, 3, 4]
+    assert routed == [0, 1, 2, 3, 4]
+    assert len(broadcast) == 5
 
 
 def test_generated_sequence_not_promoted_to_exchange() -> None:

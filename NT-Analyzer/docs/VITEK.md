@@ -1,7 +1,7 @@
 # Виктор («Витёк») — правая рука руководителя
 
-Карта сотрудников, аватары и ссылки на специалистов: [AGENTS.md](AGENTS.md).
-Технический шлюз и capability-routing: [CHIEF_AI_AGENT.md](CHIEF_AI_AGENT.md).
+Карта сотрудников, аватары и ссылки на специалистов: [AGENTS.md](agents/AGENTS.md).
+Технический шлюз и capability-routing: [CHIEF_AI_AGENT.md](agents/CHIEF_AI_AGENT.md).
 Публичный тон: [AI_DIALOGUE_CONTRACT.md](AI_DIALOGUE_CONTRACT.md).
 
 В интерфейсе используется официальное имя **Виктор · личный помощник и правая
@@ -214,4 +214,4 @@ DOM-контракты и стандартный Chrome. Лог находитс
 запускается: такую задачу владелец даёт отдельно.
 
 Последний release-аудит, команды полной проверки и безопасный ручной smoke:
-[PRODUCTION_READINESS_2026-07-13.md](PRODUCTION_READINESS_2026-07-13.md).
+[PRODUCTION_READINESS_2026-07-13.md](archive/PRODUCTION_READINESS_2026-07-13.md).

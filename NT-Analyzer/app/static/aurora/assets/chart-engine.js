@@ -259,6 +259,10 @@
       this.aspect = opts.aspect || 'auto';  // 'auto' | 'square' | 'wide'
       // When false, last-price tag must not look like a live quote.
       this.livePriceEnabled = opts.livePriceEnabled !== false;
+      // Direction of the most recent live price change. Candle colour still
+      // follows close-vs-open, while the current-price line follows the last
+      // actual tick (the behaviour traders expect from a live price marker).
+      this.livePriceDirection = 0;
 
       this._build();
       this._wire();
@@ -645,6 +649,12 @@
       if (!b) return this;
       const last = this.bars[this.bars.length - 1];
       const lastMs = barMs(last), nextMs = barMs(b);
+      const previousClose = Number(last && last.c), nextClose = Number(b.c);
+      if ((!last || lastMs == null || nextMs == null || nextMs >= lastMs)
+          && Number.isFinite(previousClose) && Number.isFinite(nextClose)
+          && nextClose !== previousClose) {
+        this.livePriceDirection = nextClose > previousClose ? 1 : -1;
+      }
       if (last && lastMs != null && nextMs != null && lastMs === nextMs) this.bars[this.bars.length - 1] = b; // update forming bar
       else if (last && lastMs != null && nextMs != null && nextMs < lastMs) return this.setData(this.bars.concat([b]));
       else this.bars.push(b);
@@ -759,7 +769,11 @@
       const clamped = clamp(next, minOff, maxOff);
       // -1 means "pinned to right edge (latest bar)"; only pin if exactly at latest bar.
       this.view.offset = (clamped >= n - 1 && clamped < n) ? -1 : clamped;
-      this._emit('viewport', { count: this.view.count, offset: this.view.offset });
+      const visible = this._visibleRange();
+      this._emit('viewport', {
+        count: this.view.count, offset: this.view.offset,
+        start: visible.start, end: visible.end, total: this.bars.length,
+      });
       this._schedule();
     }
     _defaultCount() { return clamp(120, this.minBars, Math.max(this.minBars, this.bars.length || 120)); }
@@ -940,12 +954,22 @@
       const lastBar = this.bars[end - 1];
       if (lastBar) {
         const y = yOf(lastBar.c);
-        const up = lastBar.c >= lastBar.o;
+        // A green candle can still be ticking down (and vice versa). The live
+        // marker reports the latest movement; before the first live change it
+        // safely falls back to the candle direction.
+        const up = this.livePriceDirection === 0
+          ? lastBar.c >= lastBar.o
+          : this.livePriceDirection > 0;
         const live = this.livePriceEnabled !== false;
         const tagColor = live ? (up ? P.up : P.down) : '#6b7280';
         ctx.strokeStyle = withA(tagColor, live ? 0.5 : 0.35); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
         const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · OFF`);
+        // Exact values used by the canvas draw, exposed only as inert DOM
+        // diagnostics for Development acceptance and regression automation.
+        this.host.dataset.renderedPriceMarkerText = label;
+        this.host.dataset.renderedPriceMarkerColor = tagColor;
+        this.host.dataset.renderedPriceMarkerLive = String(live);
         this._axisTag(ctx, P, plotW, y, L.axisW, label, tagColor);
       }
 

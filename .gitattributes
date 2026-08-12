@@ -4,8 +4,9 @@
 *.cs text eol=crlf
 *.py text eol=lf
 *.js text eol=lf
+*.sh text eol=lf
 *.css text eol=lf
 *.html text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
-NT-Analyzer/docs/STRATFORGE_ORCHESTRATOR_BACKLOG_ISSUES_1-210_SOURCE.md whitespace=-trailing-space
+NT-Analyzer/docs/archive/STRATFORGE_ORCHESTRATOR_BACKLOG_ISSUES_1-210_SOURCE.md whitespace=-trailing-space

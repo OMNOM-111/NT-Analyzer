@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Canary operations/maintenance-loop launcher for the real Supervisor
+# topology (no systemd on the current host, so there is no systemd timer
+# either -- this script loops internally, mirroring
+# deploy/production/stratforge-operations.timer's ~1 minute cadence).
+# Install as /home/stratforge/production_data/config/run-operations-canary.sh
+# (chmod 0700, owner stratforge), then point the supervisord
+# `operations-canary` program's `command=` at this script. Sources the
+# isolated canary.env produced by tools/canary_isolation_provision.py --
+# never Production's env -- and overrides STRATFORGE_DEPLOYMENT_ROLE to
+# worker (required by app.observability.production_maintenance()).
+# Evaluates Canary's own alerts/retention against Canary's own isolated
+# PostgreSQL, never Production's; see runtime_env.is_server_environment().
+set -uo pipefail
+umask 077
+set -a
+. /home/stratforge/production_data/config/canary.env
+set +a
+export STRATFORGE_DEPLOYMENT_ROLE=worker
+export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+cd /home/stratforge/canary-current
+.venv/bin/python tools/production_preflight.py \
+  --app-root /home/stratforge/canary-current \
+  --env-file /home/stratforge/production_data/config/canary.env \
+  --init-system supervisor
+
+stop=0
+trap 'stop=1' TERM INT
+
+while [ "$stop" -eq 0 ]; do
+  .venv/bin/python -m app.observability --maintenance || true
+  for _ in $(seq 1 60); do
+    [ "$stop" -eq 0 ] || break
+    sleep 1
+  done
+done

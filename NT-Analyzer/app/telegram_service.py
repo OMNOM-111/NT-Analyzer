@@ -1143,16 +1143,23 @@ def _send_raw_direct(text: str, *, silent: bool = False,
 def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = None,
               chat_id: Optional[str] = None, dedupe_key: str = "",
               parse_mode: str = "HTML") -> Dict[str, Any]:
+    # Non-Production environments prepend a visible contour marker so a Canary or
+    # Development bot can never be mistaken for the Production owner bot. The
+    # marker is empty in Production, so its wording is unchanged there.
+    marker = runtime_env.telegram_environment_marker()
+    body = str(text or "")
+    if marker and not body.startswith(marker):
+        body = marker + body
     if runtime_env.is_production() and runtime_env.environment_explicit():
         from . import production_telegram
         queued = production_telegram.enqueue_text(
-            text, silent=silent, thread_id=thread_id,
+            body, silent=silent, thread_id=thread_id,
             chat_id=str(chat_id or ""), dedupe_key=dedupe_key,
             parse_mode=parse_mode,
         )
         return {**queued, "delivery": "production_outbox"}
     return _send_raw_direct(
-        text, silent=silent, thread_id=thread_id,
+        body, silent=silent, thread_id=thread_id,
         chat_id=chat_id, parse_mode=parse_mode,
     )
 
@@ -1858,6 +1865,9 @@ def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int =
             "is_owner": bool(user.get("is_owner")),
             "display_name": display_name,
         }
+        user_uuid = str(user.get("user_uuid") or "").strip()
+        if user_uuid:
+            scope["user_uuid"] = user_uuid
         # A named topic belongs to one user's private app dialogue.  The default
         # topic is workspace-shared by design, but a named owner dialogue must
         # never be exposed to another member of the same Telegram group.
@@ -1888,12 +1898,16 @@ def _conversation_scope_for_topic(conversation_id: str, *, sender_user_id: int =
     if user_id <= 0 or not workspace_id:
         return None
     role = str(row.get("membership_role") or "").strip()
-    return {
+    scope = {
         "user_id": user_id,
         "workspace_id": workspace_id,
         "membership_role": role,
         "is_owner": role == "owner",
     }
+    user_uuid = str(row.get("user_uuid") or "").strip()
+    if user_uuid:
+        scope["user_uuid"] = user_uuid
+    return scope
 
 
 def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,

@@ -1,6 +1,6 @@
 # LOCAL_AI_LAWS
 
-Дата актуализации: 2026-07-27
+Дата актуализации: 2026-08-11T09:03:34Z
 
 Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox.
 
@@ -10,21 +10,21 @@
 
 - Значение: `Да`
 - Суть: AI Lab не пишет production class, production CELL и не трогает рабочие стратегии напрямую.
-- Источники: `NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
+- Источники: `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
 - Автосинхронизация: app/ai_lab/knowledge.py, app/ai_lab/generator.py, app/ai_lab/guards.py
 
 ### GOV-AI-002 — Локальный ИИ не запускает live/paper/demo/account actions
 
 - Значение: `Да`
 - Суть: AI Lab делает только историческое исследование и не имеет права на runtime/account операции.
-- Источники: `NT-Analyzer/docs/AI_STRATEGY_LAB_RUN_CONTROLS.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
+- Источники: `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_RUN_CONTROLS.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
 - Автосинхронизация: app/ai_lab/knowledge.py, app/ai_lab/goal_parser.py
 
 ### GOV-AI-003 — Локальный ИИ не использует AddDataSeries
 
 - Значение: `Да`
 - Суть: Sandbox-стратегии только single instrument / single timeframe.
-- Источники: `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
+- Источники: `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`, `NT-Analyzer/ai_lab/prompts/system_coder.txt`
 - Автосинхронизация: app/ai_lab/knowledge.py, app/ai_lab/validator.py
 
 ### GOV-AI-004 — Локальный ИИ обязан задавать явное PT-окно входа
@@ -38,7 +38,7 @@
 
 - Значение: `Да`
 - Суть: Без явной risk shell стратегия считается невалидной.
-- Источники: `NT-Analyzer/ai_lab/prompts/system_coder.txt`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`
+- Источники: `NT-Analyzer/ai_lab/prompts/system_coder.txt`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`
 - Автосинхронизация: app/ai_lab/generator.py, app/ai_lab/knowledge.py, app/ai_lab/validator.py
 
 ### GOV-AI-006 — Локальный ИИ обязан опираться на reference library
@@ -52,14 +52,14 @@
 
 - Значение: `Да`
 - Суть: Платная модель вызывается только после зафиксированной неудачи разрешённой локальной роли; API не является основным двигателем run.
-- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Источники: `NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md`
 - Автосинхронизация: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py, app/ai_lab/generator.py
 
 ### GOV-AI-008 — Бюджет облачного API имеет жёсткие потолки
 
 - Значение: `20.00 USD/month; 0.50 USD/run`
 - Суть: Вызов блокируется до обращения к провайдеру, если reservation превышает месячный или per-run остаток.
-- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Источники: `NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md`
 - Автосинхронизация: app/ai_lab/cloud_agents.py, ui AI Lab cloud-agent settings
 - Ручная проверка: provider invoice versus local cost audit
 
@@ -67,14 +67,14 @@
 
 - Значение: `Да`
 - Суть: Cloud-ответ не может обойти validator, compile, backtest, arbitration, governance или ручное promotion-решение.
-- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`, `NT-Analyzer/docs/AI_STRATEGY_LAB_QUALITY.md`
+- Источники: `NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md`, `NT-Analyzer/docs/strategies/AI_STRATEGY_LAB_QUALITY.md`
 - Автосинхронизация: app/ai_lab/cloud_agents.py, app/ai_lab/orchestrator.py
 
 ### GOV-AI-010 — Облачные ключи и prompts не раскрываются
 
 - Значение: `Да`
 - Суть: Ключи хранятся только локально; status API возвращает флаги. Cloud usage audit хранит prompt hash и usage, но не prompt/response text.
-- Источники: `NT-Analyzer/docs/AI_LAB_CLOUD_AGENTS.md`
+- Источники: `NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md`
 - Автосинхронизация: app/local_secrets.py, app/ai_lab/cloud_agents.py
 
 ### GOV-AI-011 — Вопрос об исследовании не является командой запуска
@@ -117,7 +117,7 @@
 
 - Значение: `Да`
 - Суть: Роли Analyst/Coder/Judge/Reviewer сравниваются по проверяемому результату; слабый ответ не наказывается, а получает детальный feedback и временно меньший приоритет следующего вызова, пока не восстановит качество.
-- Источники: `NT-Analyzer/docs/AI_LAB_COMPETITIVE_FEEDBACK.md`
+- Источники: `NT-Analyzer/docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md`
 - Автосинхронизация: governance docs, docs/AI_LAB_COMPETITIVE_FEEDBACK.md
 - Ручная проверка: app/ai_lab/agent_router.py role ranking, agent usage/feedback ledger, AI Lab UI feedback report
 
@@ -162,3 +162,8 @@
 - Значение: `Да`
 - Суть: Фразы «не запускай», «ничего не восстанавливай» и вопросы о причине не превращаются в команды. Ответ владельца на needs_input передаётся в том же диалоге и тому же профильному агенту; подтверждение не подписывается именем другого специалиста.
 - Автосинхронизация: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
+
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Записать фактическое финальное Development smoke-evidence принятого TopstepX market-data/chart baseline без изменения реализации.
+-->

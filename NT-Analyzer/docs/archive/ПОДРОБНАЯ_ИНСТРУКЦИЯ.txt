@@ -1,0 +1,438 @@
+ПОДРОБНАЯ ИНСТРУКЦИЯ ПО NT-ANALYZER
+Анализатор стратегий NinjaTrader
+
+Текущая фиксация: 2026-05-08
+
+Статус документа: историческая подробная инструкция (перенесена в
+`docs/archive/` 2026-08-10 по запросу owner, GitHub Copilot через VS Code). Она описывает
+ранний, NinjaTrader-центричный контур проекта. Сегодня продукт
+называется **StratForge AI** — торгово-аналитическая платформа (Aurora +
+multi-provider market data + Connector + AI-агенты + окружения
+Development/Canary/Production); `NT-Analyzer` остаётся только техническим
+именем репозитория. Актуальный quick start,
+структура репозитория, правила публикации и сведения по AI Strategy Lab
+ведутся в `README.md` и `NT-Analyzer/README.md`, а карта документации — в
+`NT-Analyzer/docs/DOCS_STRUCTURE.md`. Если этот документ расходится
+с README, каноническим источником для запуска, Git-hygiene и состава публичного
+репозитория считается README.
+
+1. НАЗНАЧЕНИЕ ПРОГРАММЫ
+
+Современный контекст: продукт вырос из узкого «анализатора стратегий
+NinjaTrader» в торгово-аналитическую платформу **StratForge AI** (анализ
+рынков и стратегий, realtime-графики и market data из нескольких
+источников, NinjaTrader + Connector, AI-агенты, бэктестинг и управление
+стратегиями). Раздел ниже описывает базовый NinjaTrader-контур, который
+остаётся ядром исполнения и источником истины.
+
+NT-Analyzer — локальная платформа для совместной разработки торговых стратегий
+с AI через NinjaTrader. NinjaTrader остается источником истины: именно он
+компилирует NinjaScript, запускает исторические тесты, считает сделки,
+позиции, PnL и runtime-состояние стратегий. NT-Analyzer управляет заданиями,
+показывает интерфейс, сохраняет результаты, строит отчеты и дает AI удобный
+доступ к тем же данным, которые видит пользователь.
+
+Главная рабочая задача дальше одна: разрабатывать стратегии вместе с AI,
+проверять их через реальные прогоны NinjaTrader, анализировать сделки и
+дорабатывать стратегию до приемлемого результата. Доработки интерфейса или
+самой платформы делаются только по отдельному запросу.
+
+2. ЧТО СЕЙЧАС РАБОТАЕТ
+
+Рабочая версия включает:
+
+- локальный backend на Python, который слушает только 127.0.0.1;
+- web UI, который backend раздает из `NT-Analyzer/app/static`;
+- C# NinjaTrader AddOn `NTAnalyzerBridge.dll`;
+- файловую очередь заданий `NT-Analyzer/jobs`;
+- каталог стратегий, инструментов, trading-hours и commission templates;
+- одиночные backtest-запуски;
+- batch-запуски по корзине инструментов;
+- чтение сделок, bars, draw objects, метрик и отчетов;
+- Strategy Profiles и покрытие инструментов;
+- страницу онлайн-торговли/контроля runtime-инстансов NinjaTrader;
+- runtime telemetry из NinjaTrader: heartbeat, accounts, strategies,
+  positions, orders, executions, errors;
+- command queue для включения/отключения strategy instance в NinjaTrader;
+- тестовый набор Python runner-тестов;
+- сборку bridge через `dotnet build`.
+
+3. ГЛАВНЫЙ ПРИНЦИП АРХИТЕКТУРЫ
+
+NinjaTrader считает. NT-Analyzer показывает, сохраняет, сравнивает и помогает
+AI анализировать.
+
+NT-Analyzer не является отдельным движком бэктеста и не должен подменять
+NinjaTrader. Любой результат стратегии считается рабочим только тогда, когда
+он получен через NinjaTrader runtime / bridge и сохранен в структуре задания.
+
+4. СТРУКТУРА ПРОЕКТА
+
+Корневая папка:
+
+- `ПОДРОБНАЯ_ИНСТРУКЦИЯ.txt` — этот файл (архив), исторический ориентир по раннему NinjaTrader-контуру; актуальный ориентир — `README.md`.
+- `.gitignore` — исключает локальные данные, runtime-артефакты, venv, caches,
+  build output, logs и большие результаты запусков.
+- `NT-Analyzer/` — основная рабочая папка проекта.
+
+Основные папки внутри `NT-Analyzer/`:
+
+- `app/` — Python backend и сервер API.
+- `app/static/` — HTML/CSS/JS интерфейс.
+- `bridge/` — C# NinjaTrader AddOn.
+- `bridge/src/Execution/` — запуск backtest, сбор bars/trades/draw objects,
+  refresh каталога.
+- `bridge/src/Runtime/` — runtime telemetry и command processor.
+- `bridge/src/Reporting/` — сбор result.json, catalog writer, run hash.
+- `data/catalog/` — каталоги инструментов, стратегий, шаблонов и маржи.
+- `data/profiles/` — активные Strategy Profiles и покрытие инструментов.
+- `docs/` — технические контракты и валидационные заметки.
+- `examples/` — примеры job/result JSON.
+- `jobs/` — локальная очередь и история запусков.
+- `ninjatrader/strategies/` — исходники стратегий проекта.
+- `tests/` — самодельные Python runner-тесты.
+- `tools/` — установочные и служебные скрипты.
+
+5. КАК ЗАПУСКАТЬ СИСТЕМУ
+
+Обычный запуск:
+
+1. Открыть NinjaTrader 8 вручную и дождаться Control Center.
+2. Запустить `NT-Analyzer/00_START_NT_ANALYZER.cmd`.
+3. Откроется браузер на `http://127.0.0.1:8765/ui/`.
+4. Если порт 8765 занят, backend выберет ближайший свободный порт 8766..8774.
+
+Быстрый запуск AI Strategy Lab:
+
+1. Запустить `NT-Analyzer/00_START_AI_LAB.cmd`.
+2. Скрипт best-effort проверит/запустит NinjaTrader, LM Studio, `lms server start`,
+   и откроет `http://127.0.0.1:8765/ui/ai-strategy.html`.
+   Модели не грузятся заранее: нужная модель загружается только перед LLM-запросом
+   и автоматически выгружается после завершения run.
+3. Если пути нестандартные, задать `NINJATRADER_EXE`, `LM_STUDIO_EXE`, `LMS_CLI`
+   или создать `NT-Analyzer/ai_lab/bootstrap.json`.
+4. Первый логин NinjaTrader, установка bridge и скачивание моделей остаются ручными.
+
+Backend можно запустить напрямую:
+
+```
+cd NT-Analyzer
+python -m app.server 8765
+```
+
+PowerShell launcher:
+
+```
+cd NT-Analyzer
+.\start.ps1
+```
+
+Launcher не запускает NinjaTrader сам. NinjaTrader должен быть открыт
+пользователем отдельно, потому что это внешнее приложение со своим UI,
+логином и подключениями.
+
+6. УСТАНОВКА И ОБНОВЛЕНИЕ BRIDGE
+
+Bridge — это C# AddOn, который должен лежать в:
+
+`%USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\NTAnalyzerBridge.dll`
+
+Обновление после изменений в `bridge/src/`:
+
+1. Полностью закрыть NinjaTrader 8.
+2. Запустить `NT-Analyzer/01_INSTALL_BRIDGE.cmd`.
+3. Открыть NinjaTrader 8 снова.
+4. Проверить лог:
+   `%USERPROFILE%\Documents\NinjaTrader 8\log\NTAnalyzerBridge.log`.
+
+Прямая сборка:
+
+```
+cd NT-Analyzer
+dotnet build bridge\NTAnalyzerBridge.csproj -c Debug
+```
+
+Конфиг bridge:
+
+`%USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\NTAnalyzerBridge.config.json`
+
+В конфиге важны `project_root` и `ninjatrader_user_dir`. Если путь проекта
+перенесен, нужно обновить `project_root`, затем перезапустить NinjaTrader.
+
+7. WEB UI
+
+Backtesting:
+
+- URL: `/ui/` или `/ui/index.html`.
+- Выбор стратегии из каталога NinjaTrader.
+- Динамическая форма `[NinjaScriptProperty]` параметров.
+- Выбор инструмента или корзины инструментов.
+- Период теста, timeframe, execution/risk profile.
+- Submit одиночного job или batch.
+- Таблица jobs, отчеты, trades, bars, draw objects, equity/report panels.
+
+Strategies:
+
+- URL: `/ui/strategies.html`.
+- Показывает активные Strategy Profiles.
+- Показывает coverage по инструментам.
+- Сопоставляет профили, catalog classes и runtime status.
+- Используется как рабочая карта того, какие стратегии уже готовы, а какие
+  требуют дальнейшего поиска.
+
+Trading Online:
+
+- URL: `/ui/trading.html`.
+- Показывает accounts, runtime strategies, positions, executions, orders,
+  errors и strategy history из NinjaTrader.
+- Позволяет отправить команду enable/disable strategy instance через
+  `data/runtime/commands.jsonl`.
+- Команда исполняется bridge внутри NinjaTrader и возвращает результат в
+  `data/runtime/command_results.jsonl`.
+
+Ops:
+
+- URL: `/ui/ops.html`.
+- Техническая/операционная страница для Strategy Control Center.
+- Нужна как вспомогательный экран и не является главным рабочим сценарием.
+
+8. BACKTEST WORKFLOW
+
+Один прогон:
+
+1. Убедиться, что NinjaTrader открыт и bridge загружен.
+2. Открыть `/ui/index.html`.
+3. Выбрать стратегию.
+4. Проверить параметры стратегии.
+5. Выбрать инструмент, timeframe и период.
+6. Нажать `Запустить бэктест`.
+7. Backend создает job в `jobs/pending/<job_id>/job.json`.
+8. Bridge забирает job, переносит его в `jobs/running/<job_id>/`.
+9. NinjaTrader выполняет исторический прогон.
+10. Bridge пишет `result.json`, `trades.json`, `bars.json`, `draw_objects.json`
+    и переносит job в `jobs/done/<job_id>/`.
+11. UI показывает отчет.
+
+Batch-прогон:
+
+1. Собрать корзину инструментов.
+2. Нажать запуск batch.
+3. Backend создает batch и дочерние jobs.
+4. UI показывает aggregate progress.
+5. После завершения можно открыть batch results и отдельные job reports.
+
+9. ФАЙЛОВАЯ ОЧЕРЕДЬ
+
+Очередь находится в `NT-Analyzer/jobs/`:
+
+- `pending/` — новые задания.
+- `running/` — задания, которые сейчас исполняет bridge.
+- `done/` — успешные задания.
+- `failed/` — ошибки.
+- `cancelled/` — отмененные задания.
+
+Каждый job — это папка, а не один файл. Создание задания идет через staging и
+атомарный move. Bridge также финализирует job атомарным переносом папки.
+
+История `jobs/done` может быть очень большой. Она не входит в Git и остается
+локальной рабочей историей бэктестов.
+
+10. ДАННЫЕ И ЧТО ПОПАДАЕТ В GIT
+
+В Git должны попадать:
+
+- исходный код backend, UI и bridge;
+- исходники стратегий проекта;
+- техническая документация;
+- примеры JSON;
+- curated Strategy Profiles в `data/profiles`;
+- базовые каталоги, которые нужны как статические справочники:
+  `data/catalog/instrument_groups.json` и `data/catalog/margins.json`.
+
+В Git не должны попадать:
+
+- `.venv`;
+- `.pytest_cache`;
+- `__pycache__`;
+- `bridge/bin`;
+- `bridge/obj`;
+- logs;
+- `jobs/*` результаты;
+- `data/runtime`;
+- `data/ops`;
+- `data/commands`;
+- `data/batches`;
+- `data/reports`;
+- `data/research`;
+- временные server logs;
+- локальные backups.
+
+11. КАТАЛОГИ NINJATRADER
+
+Bridge пишет runtime-каталоги в `NT-Analyzer/data/catalog/`:
+
+- `strategies.json` — классы стратегий из `NinjaTrader.Custom.dll`,
+  параметры `[NinjaScriptProperty]`, source file hints.
+- `instruments.json` — инструменты NinjaTrader.
+- `templates.json` — trading hours и commission templates.
+
+Эти runtime-каталоги создаются локально bridge и не обязаны попадать в Git.
+Если NinjaScript перекомпилирован, UI может показать предупреждение, что
+каталог устарел. Тогда нужно нажать `Обновить каталог` или перезапустить
+NinjaTrader/bridge.
+
+12. STRATEGY PROFILES
+
+Активные профили находятся в:
+
+`NT-Analyzer/data/profiles/strategies.json`
+
+Профиль описывает рабочую стратегию:
+
+- stable id;
+- class name;
+- instrument/current contract;
+- timeframe;
+- locked parameters;
+- execution settings;
+- тестовый период;
+- метрики;
+- решение: ready / in_progress / rejected / archived;
+- evidence job ids;
+- дальнейшее действие.
+
+Панель Strategies и Coverage опирается именно на эти профили. Для дальнейшей
+работы с AI профиль является краткой точкой истины по стратегии: что проверено,
+какие параметры зафиксированы, какие слабые места известны.
+
+13. ONLINE / RUNTIME WORKFLOW
+
+Runtime telemetry пишет bridge в `NT-Analyzer/data/runtime/`:
+
+- `heartbeat.json`;
+- `accounts.json`;
+- `strategies.json`;
+- `positions.json`;
+- `orders.jsonl`;
+- `executions.jsonl`;
+- `errors.jsonl`;
+- `strategy_history.jsonl`;
+- `commands.jsonl`;
+- `command_results.jsonl`.
+
+Страница Trading Online читает эти файлы через backend endpoints:
+
+- `/api/ops/runtime/heartbeat`;
+- `/api/ops/runtime/accounts`;
+- `/api/ops/runtime/strategies`;
+- `/api/ops/runtime/positions`;
+- `/api/ops/runtime/orders`;
+- `/api/ops/runtime/executions`;
+- `/api/ops/runtime/errors`;
+- `/api/ops/runtime/command`;
+- `/api/ops/runtime/command-status`.
+
+Команды enable/disable не отправляют C# код. Они только просят bridge найти
+уже загруженный strategy instance в NinjaTrader и включить или отключить его.
+
+14. РАЗРАБОТКА СТРАТЕГИИ С AI
+
+Новый обязательный цикл: `Research Hub -> Deploy`.
+
+Этап Research Hub:
+
+1. Формулируем идею стратегии, root family, strategy family и критерии успеха.
+2. Если подходящий Hub уже есть, добавляем новую ветку `Mode` / `SetupMode`
+   в этот Hub, а не создаём новый deploy-wrapper на каждую гипотезу.
+3. Синхронизируем Hub в рабочую папку NinjaTrader:
+   `%USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\Strategies\NT-Analyzer_strategies`.
+4. Компилируем NinjaScript в NinjaTrader.
+5. Обновляем каталог NT-Analyzer.
+6. Запускаем smoke, Full, IS/OOS и stress через один и тот же `class_name`
+   Hub, меняя только параметры job/batch: `Mode`, окна, фильтры, стопы,
+   инструмент, timeframe.
+7. AI анализирует `result.json`, `trades.json`, метрики, просадки, периоды,
+   слабые места и сравнение прогонов.
+8. Если Mode не проходит gates, фиксируем `rejected` / `research_only` и не
+   занимаем ячейку портфеля.
+
+Этап Deploy:
+
+1. Deploy-wrapper создаётся только после survivor/gates и evidence bundle.
+2. Wrapper lock'ит approved defaults под конкретную `CELL-xxx`.
+3. В Strategy Profile фиксируются `root_family`, `strategy_family`,
+   `hub_class`, `deploy_strategy_class`, `cell_id`, locked parameters и
+   evidence job ids.
+4. Компилируем NinjaScript.
+5. Полный restart NinjaTrader нужен только когда появился новый `class_name`,
+   изменилась `[NinjaScriptProperty]` surface, bridge или AppDomain должен
+   увидеть новый класс. Обычные research-прогоны внутри уже загруженного Hub
+   restart не требуют.
+6. После deploy запускается paper-forward на demo по действующим audit-правилам.
+
+Карта процесса и статусов хранится в:
+
+- `NT-Analyzer/data/profiles/strategy_families.json`
+- `NT-Analyzer/data/profiles/research_modes.json`
+- `РАЗРАБОТКА СТРАТЕГИЙ/Двухэтапный цикл Research Hub и Deploy.md`
+- `РАЗРАБОТКА СТРАТЕГИЙ/План перехода стратегий в семьи и новый цикл.md`
+
+Рабочее правило: не считать стратегию готовой по красивому одиночному прогону.
+Нужны IS/OOS, стресс по slippage/fee, проверка количества сделок, drawdown,
+стабильности по периодам и логичности входов/выходов.
+
+15. БЕЗОПАСНОСТЬ
+
+- Backend слушает только localhost / 127.0.0.1.
+- Mutating POST endpoints проверяют локальный origin/content-type.
+- Bridge исполняет только классы, найденные в whitelist из
+  `NinjaTrader.Custom.dll`.
+- Job не содержит произвольный C# код.
+- AI не должен незаметно менять, компилировать и запускать произвольный
+  NinjaScript без явного рабочего шага.
+- Любое изменение стратегии должно быть видно как изменение файла.
+- Live/online действия проходят через NinjaTrader и требуют понимания
+  выбранного аккаунта, инструмента и instance.
+
+16. ПРОВЕРКИ
+
+Python runner-тесты:
+
+```
+cd NT-Analyzer
+python -m tests.test_ops
+python -m tests.test_runtime
+python -m tests.test_scc
+python -m tests.test_trading
+```
+
+C# bridge build:
+
+```
+cd NT-Analyzer
+dotnet build bridge\NTAnalyzerBridge.csproj -c Debug
+```
+
+Важно: `pytest` не является основным runner'ом для текущих тестов. Файлы тестов
+запускаются как Python-модули.
+
+17. ЧТО НЕ НУЖНО ВОЗВРАЩАТЬ В ПРОЕКТ
+
+Не возвращать старые планы построения системы вместо фактической инструкции.
+Система уже работает; дальнейшие документы должны описывать текущее поведение,
+операционные правила и стратегические исследования, а не старые этапы создания.
+
+Не добавлять в Git runtime-историю, локальные логи, кеши, venv, backups и
+исследовательские dump-файлы без отдельной причины.
+
+18. ТЕКУЩАЯ ТОЧКА ФИКСАЦИИ
+
+Проект проверен как рабочая локальная платформа:
+
+- C# bridge собирается;
+- backend runner-тесты проходят;
+- UI содержит страницы Backtesting, Strategies, Trading Online и Ops;
+- bridge умеет backtest-запуски через NinjaTrader, catalog refresh, runtime
+  telemetry и runtime command queue;
+- дальнейшая основная работа — разработка и проверка стратегий через
+  NT-Analyzer совместно с AI.

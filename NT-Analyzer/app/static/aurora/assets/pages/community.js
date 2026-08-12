@@ -78,7 +78,7 @@
     });
     const ratings = (feed.ratings && feed.ratings.composite) || [];
     const ratingHost = q('#c-ratings');
-    if (ratingHost) ratingHost.innerHTML = '<div class="cab-sub">Risk-adjusted + copies</div>' + (ratings.slice(0, 8).map((s, index) => `<div class="row"><div class="row-main"><div class="row-title">#${index + 1} ${esc(s.title)}</div><div class="row-sub">copies ${Number(s.copies || 0)}</div></div></div>`).join('') || '<div class="muted">—</div>');
+    if (ratingHost) ratingHost.innerHTML = '<div class="cab-sub">С поправкой на риск + копии</div>' + (ratings.slice(0, 8).map((s, index) => `<div class="row"><div class="row-main"><div class="row-title">#${index + 1} ${esc(s.title)}</div><div class="row-sub">копий ${Number(s.copies || 0)}</div></div></div>`).join('') || '<div class="muted">—</div>');
   }
   async function refresh() {
     const feed = await API.http.communityFeed({ channel });
@@ -129,7 +129,7 @@
           attachments: pendingAttachments,
         });
         q('#c-report-title').value = ''; q('#c-report-summary').value = ''; pendingAttachments = []; renderPendingAttachments();
-        channel = 'reports'; await refresh(); UI.toast('Отчёт опубликован в Community');
+        channel = 'reports'; await refresh(); UI.toast('Отчёт опубликован в сообществе');
       } catch (error) { UI.reportError(error); }
     };
     q('#c-create-request').onclick = async () => {

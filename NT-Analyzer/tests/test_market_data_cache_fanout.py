@@ -1,6 +1,9 @@
 """Cache-key collision and subscription fan-in tests."""
 from __future__ import annotations
 
+import threading
+import time
+
 from app import data_platform, market_data_cache_keys, market_data_subscriptions, market_data_ws_http
 
 
@@ -82,6 +85,169 @@ def test_ws_accept_key_stable() -> None:
     # RFC6455 example
     key = "dGhlIHNhbXBsZSBub25jZQ=="
     assert market_data_ws_http.accept_key(key) == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+
+def test_browser_ws_reader_returns_available_frame_without_waiting_for_buffer_fill() -> None:
+    class Reader:
+        def read1(self, size):
+            assert size == 4096
+            return b"small-websocket-frame"
+
+        def read(self, _size):  # pragma: no cover - regression guard
+            raise AssertionError("BufferedReader.read() can wait for the full requested size")
+
+    handler = type("Handler", (), {"rfile": Reader()})()
+    assert market_data_ws_http._read_client_chunk(handler) == b"small-websocket-frame"
+
+
+def test_browser_ws_fanout_filters_updates_to_exact_subscribed_timeframe() -> None:
+    message = {
+        "type": "market_event",
+        "event": {"exact_contract": "MNQ 09-26", "price": 29700.25},
+        "bar_updates": [
+            {
+                "action": "close",
+                "bar": {
+                    "exact_contract": "MNQ 09-26",
+                    "timeframe": "1s",
+                    "c": 29700.0,
+                },
+            },
+            {
+                "action": "update",
+                "bar": {
+                    "exact_contract": "MNQ 09-26",
+                    "timeframe": "5m",
+                    "c": 29700.25,
+                },
+            },
+            {
+                "action": "update",
+                "bar": {
+                    "exact_contract": "MES 09-26",
+                    "timeframe": "5m",
+                    "c": 7765.25,
+                },
+            },
+        ],
+    }
+    filtered = market_data_ws_http._message_for_subscriptions(
+        message, {"MNQ 09-26|5m"},
+    )
+    assert filtered is not message
+    assert [row["bar"]["timeframe"] for row in filtered["bar_updates"]] == ["5m"]
+    assert [row["bar"]["exact_contract"] for row in filtered["bar_updates"]] == ["MNQ 09-26"]
+    assert market_data_ws_http._message_for_subscriptions(
+        message, {"MES 09-26|1m"},
+    ) is None
+
+
+def test_browser_ws_broadcast_does_not_block_provider_reader_on_slow_client() -> None:
+    """A slow browser socket must never stall the upstream SignalR reader."""
+    write_started = threading.Event()
+    release_write = threading.Event()
+    write_finished = threading.Event()
+    writer_thread_ids = []
+
+    class BlockingWriter:
+        def write(self, raw):
+            assert raw
+            writer_thread_ids.append(threading.get_ident())
+            write_started.set()
+            assert release_write.wait(timeout=2.0)
+            return len(raw)
+
+        def flush(self):
+            write_finished.set()
+
+    class Connection:
+        def shutdown(self, _how):
+            release_write.set()
+
+    handler = type("Handler", (), {
+        "wfile": BlockingWriter(),
+        "connection": Connection(),
+    })()
+    client = market_data_ws_http.WsClient(handler)
+    client.subscriptions.add("MNQ 09-26|5m")
+    market_data_ws_http.register_client(client)
+    caller_thread_id = threading.get_ident()
+    dropped_before = market_data_ws_http.metrics()["dropped"]
+    filtered_before = market_data_ws_http.metrics()["non_bar_events_filtered"]
+    try:
+        started = time.monotonic()
+        market_data_ws_http.broadcast({
+            "type": "market_event",
+            "event": {"exact_contract": "MNQ 09-26", "price": 29700.25},
+            "bar_updates": [{
+                "action": "update",
+                "bar": {
+                    "exact_contract": "MNQ 09-26",
+                    "timeframe": "5m",
+                    "c": 29700.25,
+                },
+            }],
+        })
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.25
+        assert write_started.wait(timeout=1.0)
+        assert writer_thread_ids == [client._writer_thread.ident]
+        assert writer_thread_ids[0] != caller_thread_id
+        # The desktop does not consume GatewayQuote bid/ask-only events. They
+        # must be filtered before the slow socket, not evict reliable
+        # close/correction/control messages from the bounded queue.
+        for price in range(200):
+            market_data_ws_http.broadcast({
+                "type": "market_event",
+                "event": {
+                    "exact_contract": "MNQ 09-26",
+                    "bestBid": 29700.0 + price / 100,
+                },
+            })
+        with client._queue_lock:
+            assert len(client.outbound) == 0
+            assert len(client.coalesce_slot) == 0
+        assert market_data_ws_http.metrics()["dropped"] == dropped_before
+        assert market_data_ws_http.metrics()["non_bar_events_filtered"] == filtered_before + 200
+    finally:
+        release_write.set()
+        assert write_finished.wait(timeout=1.0)
+        market_data_ws_http.unregister_client(client)
+
+
+def test_browser_ws_topstep_subscription_is_refcounted_per_client(monkeypatch) -> None:
+    """A browser chart lease must not create a separate ProjectX session/socket."""
+    from app import market_data_failover
+
+    class FakeTopstep:
+        acquired = []
+        released = []
+
+        def configured(self):
+            return True
+
+        def acquire_chart_subscription(self, contract, timeframe, consumer):
+            self.__class__.acquired.append((contract, timeframe, consumer))
+            return True
+
+        def release_chart_subscription(self, contract, timeframe, consumer):
+            self.__class__.released.append((contract, timeframe, consumer))
+            return True
+
+    monkeypatch.setattr(market_data_failover, "TopstepXProvider", FakeTopstep)
+    client = market_data_ws_http.WsClient(request_handler=None)
+    market_data_ws_http._on_client_message(client, {
+        "type": "subscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    # Browser reconnect/resend for the same window joins the existing lease.
+    market_data_ws_http._on_client_message(client, {
+        "type": "subscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    assert len(FakeTopstep.acquired) == 1
+    market_data_ws_http._on_client_message(client, {
+        "type": "unsubscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
+    })
+    assert len(FakeTopstep.released) == 1
 
 
 def test_data_platform_memory_default() -> None:

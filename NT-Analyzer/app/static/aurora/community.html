@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Сообщество — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260721-build-identity1">
+<link rel="stylesheet" href="assets/theme.css?v=20260812-phase12-owner1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="community" data-title="Сообщество" data-kicker="Рабочее пространство пользователей · не Orchestrator">
+<body data-page="community" data-title="Сообщество" data-kicker="Рабочее пространство пользователей · не оркестратор">
   <div class="community-workspace">
     <section class="panel community-channel-panel">
       <div class="panel-h"><h2>Пространство сообщества</h2><span class="sub">Обсуждения, отчёты, скриншоты и запросы — отдельно от ИИ-оркестратора</span></div>
@@ -24,7 +24,7 @@
           <div class="community-thread-state" id="c-thread-state" hidden></div>
           <div class="list community-chat" id="c-chat"></div>
           <div class="composer community-composer">
-            <textarea id="c-text" rows="3" maxlength="4000" placeholder="Сообщение в Community…"></textarea>
+            <textarea id="c-text" rows="3" maxlength="4000" placeholder="Сообщение в сообщество…"></textarea>
             <div class="community-composer-actions">
               <label class="btn ghost sm" for="c-files">Скриншот</label>
               <input id="c-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
@@ -72,15 +72,15 @@
         </div>
       </section>
       <section class="panel">
-        <div class="panel-h"><h2>Рейтинг</h2><span class="sub">Risk-adjusted результат и запросы на копирование</span></div>
+        <div class="panel-h"><h2>Рейтинг</h2><span class="sub">Результат с поправкой на риск и запросы на копирование</span></div>
         <div class="panel-b"><div class="list" id="c-ratings"></div></div>
       </section>
     </div>
   </div>
-<script src="assets/api.js?v=20260721-stage8-operations1"></script>
+<script src="assets/api.js?v=20260811-doc-closeout1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260721-stage8-operations1"></script>
+<script src="assets/ui.js?v=20260812-auth-entry1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
 <script src="assets/pages/community.js?v=20260718-contours2"></script>
 </body>
