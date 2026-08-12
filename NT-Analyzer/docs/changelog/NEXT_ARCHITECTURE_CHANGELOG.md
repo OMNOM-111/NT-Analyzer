@@ -78,19 +78,30 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   Production secrets отсутствуют.
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
 
+## Развёрнуто 2026-08-12 (0.10.0-beta.1 auth/DEV fix)
+
+- New signed artifact after owner acceptance failed on `2f9409c4`: git
+  `795db0c110712814bda751b4c74457dece476822`, manifest SHA256
+  `D1CB6FF4A8BD5DAB0525BA8EFCD2F6DB29DC6C327534AB85AE1C8C6A76AA4E2E`,
+  build `sf-0.10.0-beta.1-795db0c11071-20260812T221054Z`. Canary first, then
+  the same directory promoted to Production (`previous` = `2f9409c4`).
+- Local DEV: `start.ps1` starts with `VERSION.json` channel=beta; `[DEV]`,
+  `795db0c`, `dirty=0`, `deployment_environment=development`.
+- Production browser: Sign in/Register (Telegram/Google/email); promo/donation
+  optional. Telegram `login/start` 200 + waiting UI. Google/email remain
+  EXTERNAL BLOCKED. Owner Telegram tap still required to finish a Production
+  session. PR #26 remains OPEN/DRAFT.
+
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1) — infra PASS, owner auth FAIL
 
-- Live Canary `canary.stratforges.com` и live Production `app.stratforges.com`
-  работают на **одном** signed artifact: git `2f9409c48a6c1480617749462323562ade3eb6fe`,
-  manifest SHA256 `FB302F809F7FD38A7BDB6CCFC0ADD1A1D01DA43B4C947EB0C9726F5FBB42C870`,
+- Previous live artifact (now Production rollback target): git
+  `2f9409c48a6c1480617749462323562ade3eb6fe`, manifest SHA256
+  `FB302F809F7FD38A7BDB6CCFC0ADD1A1D01DA43B4C947EB0C9726F5FBB42C870`,
   build `sf-0.10.0-beta.1-2f9409c48a6c-20260812T054311Z`.
 - Owner acceptance 2026-08-12: local DEV launcher blocked by `VERSION.json`
   channel=beta; Production primary gate was promo/donation; Telegram
   `POST /api/auth/login/start` returned `storage_constraint` because the auth
   JSON document lacked the SQL-backfilled UUIDs. Infra `/ready` remained green.
-- `release/0.10.0-next-architecture` **ещё не** слит в `main` (PR #26 DRAFT).
-  Auth/DEV code fix requires a **new** signed artifact; do not patch live
-  Production files.
 
 ## Не реализовано (Not implemented)
 
@@ -99,6 +110,7 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   owner design/UI acceptance и Canary Telegram bot provisioning.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 auth/DEV fix artifact on Canary and Production.
 2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen: owner auth/DEV acceptance failed on live 2f9409c4; record UUID hydrate + launcher + primary Sign in/Register fix requiring a new artifact.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary/Production deployment; remove stale "not deployed" claims.
 -->
