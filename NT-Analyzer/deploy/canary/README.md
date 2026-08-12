@@ -122,3 +122,16 @@ For this real topology, provisioning and promotion are done with:
 
 Canary's API already runs on `127.0.0.1:18765` (routed by the existing
 Cloudflare ingress); no new port was required for this isolation pass.
+
+## Live 0.10.0-beta.1 (2026-08-12)
+
+The Canary-tested signed artifact
+`0.10.0-beta.1` / git `2f9409c48a6c1480617749462323562ade3eb6fe` /
+manifest SHA256 `FB302F809F7FD38A7BDB6CCFC0ADD1A1D01DA43B4C947EB0C9726F5FBB42C870`
+was promoted to Production **without rebuild** by pointing
+`/home/stratforge/current` at the same extracted release directory
+`.../releases/0.10.0-beta.1-2f9409c4` and restarting only Production Supervisor
+programs (`api-app`, `worker`, `operations`, `telegram`). Canary programs were
+not restarted for that promotion. Rollback target remains
+`0.9.0-dev.15-f05f287d`. Canary Telegram stays
+`disabled_pending_canary_bot_provisioning`.

@@ -18,13 +18,13 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | 0 | ADRs + governance overview + CI workflow | IMPLEMENTED | `docs/adr/0001..0007`, `.github/workflows/next-architecture-ci.yml`; merge `fe38c3b7` (PR #6) |
 | 1 | Environment metadata, build identity, visual marking, owner icons | IMPLEMENTED | `app/runtime_env.py` (`DeploymentConfig`, `deployment_config`, `/api/runtime/env`), signed server release manifest/verifier `tools/build_server_release.py`/`verify_server_release.py`, Aurora badges; `tests/test_deployment_config.py`, `tests/test_server_release.py`; merge `f4bcb3fc` (PR #7) |
 | 2 | Capability-gated Admin Panel + expiring grants + isolated Environment Switcher | IMPLEMENTED | `app/permissions.py` (`ADMIN_CAPABILITIES`, `resolve_admin_capabilities`), `app/account_auth.py` (owner-only grant/revoke), `app/server.py` `_ADMIN_MODULES`; `tests/test_permissions.py`; merge `ca65be2e` (PR #8) |
-| 3 | UUID identity, provider abstraction, dual-write compatibility | IMPLEMENTED (live PostgreSQL acceptance EXTERNAL) | `app/auth_identity.py`, `app/account_auth.py` (Google/email OTP/provider status), migration `0005_identity_uuid.sql`; `tests/test_account_auth.py`, `tests/test_phase_a_auth.py`; merge `7fb34762` (PR #9). Live PostgreSQL backfill = EXTERNAL |
+| 3 | UUID identity, provider abstraction, dual-write compatibility | IMPLEMENTED (live PostgreSQL applied 2026-08-12) | `app/auth_identity.py`, migration `0005_identity_uuid.sql`; live Canary+Production apply. Existing Production rows required a postgres/BYPASSRLS backfill replay because `stratforge_migration` is not `BYPASSRLS` under FORCE RLS |
 | 4 | Trusted-device registry + step-up challenges | IMPLEMENTED | `app/security_devices.py`, migration `0006_trusted_devices.sql`, `/api/account/security`,`/devices`; `tests/test_phase4_trusted_devices.py`; merge `4c60df6c` (PR #10) |
 | 5 | Personal NinjaTrader two-factor + per-action step-up | IMPLEMENTED | `app/personal_nt_security.py`, `account_auth.nt_action_gate`, migration `0007_step_up_actions.sql`; `tests/test_phase5_*`,`test_nt_dual_auth.py`; merge `1b4249cc` (PR #11) |
 | 6 | Agent allocation + durable shared-NinjaTrader lease/queue | IMPLEMENTED | `app/ninjatrader_resources.py`, `app/agent_allocation.py`, migration `0008_ninjatrader_resource_leases.sql`, `/api/ninjatrader/*`; `tests/test_phase6_*`; merge `93b1fced` (PR #12) |
-| 7 | Isolated Canary contour + Developer Preview / View-As | EXTERNAL DEPENDENCY (implementation complete) | `app/runtime_env.py` (`assert_environment_isolation`), `app/dev_preview.py`, `deploy/canary/*`; `tests/test_phase7_canary_isolation.py`,`test_phase7_dev_preview.py`; merge `5955f2e5` (PR #13). Real Canary DB/DNS/tunnel/bot/Connector = EXTERNAL |
-| 8 | Release Center: immutable-artifact promotion state machine | EXTERNAL DEPENDENCY (implementation complete) | `app/release_center.py`, migration `0009_release_center.sql`, `/api/admin/releases/*`, Aurora `Центр релизов`; `tests/test_phase8_release_center.py`; merge `4efddb42` (PR #14). Real Canary deploy + exact-artifact Production promotion = EXTERNAL |
-| 9 | Blue-green deployment tooling (fail-closed dry-run) | EXTERNAL DEPENDENCY (implementation complete) | `app/blue_green.py`, migration `0010_blue_green_deploy_steps.sql`, `/api/admin/releases/{id}/rehearse-bluegreen`, `deploy/production/blue-green/*`; `tests/test_phase9_blue_green.py`; merge `3a787c6a` (PR #15). Real blue-green deploy/rollback = EXTERNAL |
+| 7 | Isolated Canary contour + Developer Preview / View-As | IMPLEMENTED live (Telegram bot PARTIAL) | Live `canary.stratforges.com` on isolated DB/queue/storage; Developer Preview remains Development-only. Separate Canary Telegram bot not provisioned. Code: `assert_environment_isolation`, `deploy/canary/*`; merge `5955f2e5` (PR #13) |
+| 8 | Release Center: immutable-artifact promotion state machine | IMPLEMENTED in code; live promotion used host Supervisor switch | Release Center remains fail-closed dry-run in-app. Exact-artifact Canary→Production promotion completed on the real Supervisor host 2026-08-12 (`2f9409c4` / `FB302F80…`). Code: `app/release_center.py`; merge `4efddb42` (PR #14) |
+| 9 | Blue-green deployment tooling | IMPLEMENTED in code as dry-run; live host used current/previous symlinks | `app.blue_green` still `real_available: false`. Live switch: `/home/stratforge/current` → `0.10.0-beta.1-2f9409c4`, `previous` → `0.9.0-dev.15-f05f287d`. Merge `3a787c6a` (PR #15) |
 | 10A | Canonical docs tree spec + migration map + governance amendment hardening | IMPLEMENTED | `docs/DOCS_STRUCTURE.md`, `app/server.py` `_require_governance_manage` (owner/`docs.manage_global` on governance writes); `tests/test_phase10_docs_governance.py`; merge `bd4fbc47` (PR #16) |
 | 10B | Physical documentation move + reference rewrite + language/changelog/matrix | PARTIALLY IMPLEMENTED | This branch: `git mv` of ~55 docs into canonical dirs, all markdown links + release manifest + tests + systemd + code comments updated; see §D for the honest residuals |
 
@@ -33,16 +33,16 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Area | Status | Evidence |
 |---|---|---|
 | Unit (runtime_env, permissions, auth identity, trusted devices, release state machine, resource lease, blue-green) | IMPLEMENTED | corresponding `tests/test_*`; full local run `1148 passed, 31 skipped` |
-| Migration (0001–0010, RLS, additive) | IMPLEMENTED locally; live-PostgreSQL EXTERNAL | `app/production_storage/migrations/0001..0010`, `MigrationRunner`; `tests/test_production_storage.py` (`latest_version == 10`). Live apply to real DB skipped without `STRATFORGE_TEST_POSTGRES_*` = EXTERNAL |
+| Migration (0001–0011, RLS, additive) | IMPLEMENTED locally; live Canary+Production applied 2026-08-12 | `0001..0011` on `stratforge_canary` and `stratforge_production`. UUID DML backfill on Production required postgres/BYPASSRLS replay |
 | Auth / account linking (Telegram/Google/email OTP, no email auto-merge, last-method guard) | IMPLEMENTED (production email delivery EXTERNAL) | `app/account_auth.py`, `app/auth_identity.py`; `tests/test_account_auth.py`. Real transactional email provider = EXTERNAL DEPENDENCY |
 | Multi-device (pending/approve/reject/revoke, session invalidation) | IMPLEMENTED | `app/security_devices.py`; `tests/test_phase4_trusted_devices.py` |
 | Permissions (owner/developer/ordinary, product modes, Mini App) | IMPLEMENTED | `app/permissions.py`; `tests/test_permissions.py`, `tests/test_ux_mode.py` |
-| Environment isolation (cookie/CSRF/storage/DB/queue/host) | IMPLEMENTED locally; real cross-env EXTERNAL | `app/runtime_env.py`; `tests/test_phase7_canary_isolation.py`, `tests/test_staging_isolation.py` |
-| Telegram separation (per-env bot/webhook/dedupe) | IMPLEMENTED locally; real per-env bot tokens EXTERNAL | `app/telegram_service.py`, `app/production_telegram.py`; `tests/test_telegram.py`, `tests/test_stage8_operations.py` |
+| Environment isolation (cookie/CSRF/storage/DB/queue/host) | IMPLEMENTED live | Distinct Canary vs Production DB/role/queue/cookie/origin; CONNECT privilege negatives verified 2026-08-12 |
+| Telegram separation (per-env bot/webhook/dedupe) | PARTIAL | Production Telegram READY. Canary has no separate bot (`disabled_pending_canary_bot_provisioning`) |
+| Release promotion (clean commit, signature, artifact/manifest SHA, Canary checks, exact-artifact Production) | IMPLEMENTED live on host; Release Center UI still dry-run | Same artifact `FB302F80…` / SHA `2f9409c4` on Canary and Production |
+| Blue-green / rollback (green readiness, drain, expand/migrate/contract, rollback switch) | IMPLEMENTED live via Supervisor current/previous; in-app executor still dry-run | Rollback target `0.9.0-dev.15-f05f287d`; schema 11 is expand-only so code rollback reports `database_migration_pending` |
 | Connector pairing (P-256, signed hello, workspace/capability mismatch, canary contour) | IMPLEMENTED; real pairing EXTERNAL | `app/connector_protocol.py`; `tests/test_connector*`. Real device enrollment = EXTERNAL |
 | Shared NinjaTrader locking (exclusive/queue/TTL/heartbeat/cancel) | IMPLEMENTED | `app/ninjatrader_resources.py`; `tests/test_phase6_*` |
-| Release promotion (clean commit, signature, artifact/manifest SHA, Canary checks, exact-artifact Production) | IMPLEMENTED (dry-run); real promotion EXTERNAL | `app/release_center.py`; `tests/test_phase8_release_center.py` |
-| Blue-green / rollback (green readiness, drain, expand/migrate/contract, rollback switch) | IMPLEMENTED (dry-run); real deploy EXTERNAL | `app/blue_green.py`; `tests/test_phase9_blue_green.py` |
 | Documentation permissions (global governance not mutable by workspace/strategy override) | IMPLEMENTED | `app/server.py` `_require_governance_manage`, `app/governance.py` (global-only, no workspace param), `app/jobqueue.py` `update_strategy_profile` allowlist; `tests/test_phase10_docs_governance.py` |
 | E2E owner/developer/ordinary user | PARTIALLY IMPLEMENTED | Server/DOM/contract tests (`tests/test_aurora_contracts.py`, `tests/test_cutover_routing.py`); browser QA intentionally not run (workspace stability policy) — see §D |
 
@@ -59,9 +59,9 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 
 | Item | Status | Note |
 |---|---|---|
-| Real Canary provisioning (isolated DB/DSN, Cloudflare tunnel, `canary.stratforges.com` DNS, separate Telegram bot, Canary Connector) | EXTERNAL DEPENDENCY | Owner infra/credentials; code is fail-closed until configured |
-| Real Production deployment + exact-artifact promotion + real blue-green switch | EXTERNAL DEPENDENCY | Owner-gated; dry-run only in code |
-| Live PostgreSQL migration acceptance (apply 0005–0011 to a real DB, RLS/restore) | EXTERNAL DEPENDENCY / BLOCKED | Acceptance kit added `deploy/testing/` (provision SQL, env example, Windows/Linux runner, backup/restore, README); **BLOCKED — EXTERNAL TEST DATABASE REQUIRED**; suite (`test_stage8_postgresql`, `test_production_storage`, `test_production_workers`) runs with `STRATFORGE_TEST_POSTGRES_*` |
+| Real Canary provisioning (isolated DB/DSN, Cloudflare tunnel, `canary.stratforges.com` DNS, separate Telegram bot, Canary Connector) | PARTIAL | Isolated DB/DNS/tunnel live. Separate Canary Telegram bot not provisioned. Connector catalog exists; no Canary user enrollments |
+| Real Production deployment + exact-artifact promotion + real blue-green switch | IMPLEMENTED live (host Supervisor) | Same artifact as Canary promoted 2026-08-12. In-app Release Center / `blue_green` executor remains dry-run |
+| Live PostgreSQL migration acceptance (apply 0005–0011 to a real DB, RLS/restore) | IMPLEMENTED on live Canary+Production | Applied 2026-08-12. Isolated restore drill of Production dump PASS (5 users / 3 workspaces / max migration 4 before expand). UUID DML required postgres/BYPASSRLS replay |
 | Production transactional email provider (email OTP / magic link delivery) | EXTERNAL DEPENDENCY | Schema/API present; real delivery owner decision (plan §12.3) |
 | Market-calendar provider (Release Center "after market close" scheduling) | EXTERNAL DEPENDENCY / owner decision | Disabled in code (`market_calendar_unavailable`); needs timezone/holiday/early-close source |
 | Full strategy-spec revision product module | IMPLEMENTED (Phase 11) | See §C — `strategy.spec.manage` + migration 0011 + `app/doc_specs.py` + API/UI + tests |
@@ -72,11 +72,12 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 
 ## E. Version readiness
 
-- Current development version: `0.10.0-dev.1` (`VERSION.json`; channel `dev`, status `in_development`). Latest release tag on non-baseline history: `stratforge-server-v0.9.0-dev.15`; the `0.10.0` line does not reuse any `0.9.0-dev.N` identifier.
-- Next allowed dev suffix: `0.10.0-dev.2` (monotonic increment on the same line).
-- `0.10.0-beta.1` readiness: **NOT READY.** The strategy-spec revision module (§C) is now IMPLEMENTED (Phase 11), but the plan gates a beta on final integration acceptance PASS, which still depends on external gates (§D): live PostgreSQL acceptance (BLOCKED — external DB), real Canary/Production deployment + blue-green switch, and real Telegram/Connector/email providers. `VERSION.json` remains `0.10.0-dev.1` (not changed in Phase 11).
-- Environment vs release channel vs SemVer are kept distinct: `DEPLOYMENT_ENV` (development/canary/production), `RELEASE_CHANNEL` (dev/beta/stable) and the SemVer string are separate fields in `app/runtime_env.py` and `VERSION.json`; they are not mixed.
+- Current candidate version: `0.10.0-beta.1` (`VERSION.json`; channel `beta`, status `pre_release`). Live Canary and Production run this build from git `2f9409c48a6c1480617749462323562ade3eb6fe`. Latest prior Production tag: `stratforge-server-v0.9.0-dev.15`.
+- Development runtime still defaults `RELEASE_CHANNEL=dev` even while VERSION.json describes the next candidate.
+- `0.10.0-beta.1` live status: **DEPLOYED** to Canary and Production (2026-08-12). Remaining PARTIAL: Canary Telegram bot, authenticated TopstepX/chart smoke (Telegram login), Production email OTP provider, market-calendar provider. PR #26 not merged to `main`.
+- Environment vs release channel vs SemVer remain distinct: `DEPLOYMENT_ENV` (development/canary/production), `RELEASE_CHANNEL` (dev/beta/stable) and the SemVer string are separate fields.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion.
 2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
 -->

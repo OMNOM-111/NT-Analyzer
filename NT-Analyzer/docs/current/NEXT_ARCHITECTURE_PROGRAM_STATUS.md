@@ -9,9 +9,9 @@
 - Baseline branch: `main`; при старте `HEAD == origin/main`, working tree clean
 - Version at baseline: `0.9.0-dev.10`
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
-- Next version: `0.10.0-dev.1`
-- Integration branch: `release/0.10.0-next-architecture`
-- Production/Canary boundary: deployment, Production DB/secrets, DNS/Cloudflare и реальные bot/email credentials вне scope
+- Next version: `0.10.0-beta.1` (live Canary + Production as of 2026-08-12)
+- Integration branch: `release/0.10.0-next-architecture` (HEAD `2f9409c48a6c1480617749462323562ade3eb6fe`, PR #26 still OPEN/DRAFT pending owner merge to `main`)
+- Production/Canary boundary: both live on the Supervisor host; Canary Telegram bot remains unprovisioned; Production Telegram is live; no live trading / real payments
 
 ## Сводка
 
@@ -27,7 +27,8 @@
 | 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
-| 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. **NOT IMPLEMENTED: strategy-spec revision module** — см. requirements matrix |
+| 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. Strategy-spec closed in Phase 11 |
+| 12 | 0.10.0-beta.1 Canary PASS + exact-artifact Production PASS | `release/0.10.0-next-architecture` | HEAD `2f9409c4`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) OPEN/DRAFT | Same signed artifact on Canary and Production; host Supervisor current/previous switch; Canary Telegram PARTIAL |
 
 ## Phase 0 evidence
 
@@ -251,6 +252,16 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - Clean-worktree verification (detach из origin, clean env): git status чист до и после; full regression 1184 passed / 31 skipped; compileall / node --check / static scan / git diff --check PASS.
 - **Phase 11c GIT CLOSEOUT COMPLETE.** `main`/Canary/Production/DNS/Cloudflare/secrets не затронуты.
 
+## Phase 12 — 0.10.0-beta.1 live Canary + exact-artifact Production
+
+- Artifact (immutable, not rebuilt for Production): version `0.10.0-beta.1`, git `2f9409c48a6c1480617749462323562ade3eb6fe`, build `sf-0.10.0-beta.1-2f9409c48a6c-20260812T054311Z`, manifest SHA256 `FB302F809F7FD38A7BDB6CCFC0ADD1A1D01DA43B4C947EB0C9726F5FBB42C870`, signing fingerprint `SHA256:93f0831642bc403dcb780f96180d01a86a8c7adf1cbb0368a0aaa915441e6e64`, deployable `canary,production`.
+- Canary `https://canary.stratforges.com`: READY; isolated DB `stratforge_canary` / role `stratforge_canary_app`; worker-canary + operations-canary RUNNING; Telegram `disabled_pending_canary_bot_provisioning` (disclosed PARTIAL, not a fabricated PASS). Load 40/40 ready; prior 15h soak then restart recovery PASS.
+- Production `https://app.stratforges.com`: READY on the **same release directory** `.../releases/0.10.0-beta.1-2f9409c4`. Expand migrations 0005–0011 applied to `stratforge_production`. UUID backfill for existing 5 users required a postgres/BYPASSRLS replay because `stratforge_migration` is not `BYPASSRLS` under FORCE RLS. Telegram consumer READY. Live trading and real payments remain false.
+- Host mechanism: Supervisor `current`/`previous` symlink switch (same pattern as `stage10-1-promote-dev15.sh`). Rollback target `0.9.0-dev.15-f05f287d` plus dump `.../backups/prod-promote-0.10.0-beta.1-20260812T211233Z`. Note: rolling code back to 0.9.0-dev.15 after schema 11 makes `/api/health/ready` report `database_migration_pending`.
+- Isolation after promotion: Production cannot CONNECT to Canary DB and vice versa. No orders placed. Authenticated TopstepX chart smoke remains PARTIAL (Telegram login required; no session fabricated).
+- Git: PR #26 remains OPEN/DRAFT/MERGEABLE on this SHA pending the owner merge question required by repository policy. `main` not merged by this stage.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.
 2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
 -->

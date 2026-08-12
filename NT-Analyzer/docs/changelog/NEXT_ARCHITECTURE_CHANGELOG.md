@@ -7,7 +7,7 @@
 `release/0.10.0-next-architecture`). Ниже — фактические изменения по категориям.
 Dry-run, mock, тестовый backend и неподключённые внешние провайдеры **не**
 выдаются за рабочие функции; такие пункты вынесены в разделы «Внешне
-заблокировано» и «Ещё не в Production».
+заблокировано» и «Развёрнуто 2026-08-12».
 
 ## Пользовательские изменения (User)
 
@@ -58,8 +58,9 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 
 - Environment metadata + build identity + signed server release
   manifest/verifier; визуальная маркировка DEV/CANARY/BETA (Phase 1).
-- Additive expand-only миграции `0005`–`0010` (RLS, global-scope для Release
-  Center) — определены и покрыты статическими контрактными тестами.
+- Additive expand-only миграции `0005`–`0011` (RLS, Release Center, documents) —
+  определены, покрыты тестами и **применены** к live Canary и Production
+  PostgreSQL 2026-08-12.
 - Durable NinjaTrader resource lease/queue; agent allocation policy (Phase 6).
 - Секрет-free deploy templates: `deploy/canary/*`, `deploy/production/*`,
   `deploy/production/blue-green/*`; runbooks в `docs/operations/`.
@@ -69,25 +70,31 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 
 ## Внешне заблокировано (External acceptance gates — не «готово»)
 
-- Реальный Canary: изолированная PostgreSQL DB/DSN, Cloudflare tunnel и
-  `canary.stratforges.com` DNS, отдельный Telegram bot token/webhook, Canary
-  Connector — требуют owner-инфраструктуры.
+- Отдельный Canary Telegram bot (BotFather) + webhook — не provisioned;
+  Canary readiness честно сообщает `disabled_pending_canary_bot_provisioning`.
 - Реальный Production transactional email provider для email OTP / magic link.
-- Live PostgreSQL применение миграций `0005`–`0010` к реальной БД (RLS/restore).
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
 
-## Ещё не развёрнуто в Production (Not yet in Production)
+## Развёрнуто 2026-08-12 (0.10.0-beta.1)
 
-- Реального развёртывания Canary или Production **не выполнялось**. Центр релизов
-  и blue-green работают в режиме fail-closed dry-run: внешний результат всегда
-  `pending`; `production_live` достигается только отдельным owner-подтверждением.
-- `release/0.10.0-next-architecture` **не** слит в `main`; версия остаётся
-  `0.10.0-dev.1`; `0.10.0-beta.1` не подготовлена.
+- Live Canary `canary.stratforges.com` и live Production `app.stratforges.com`
+  работают на **одном** signed artifact: git `2f9409c48a6c1480617749462323562ade3eb6fe`,
+  manifest SHA256 `FB302F809F7FD38A7BDB6CCFC0ADD1A1D01DA43B4C947EB0C9726F5FBB42C870`,
+  build `sf-0.10.0-beta.1-2f9409c48a6c-20260812T054311Z`.
+- Host promotion: Supervisor `current`/`previous` symlink на
+  `releases/0.10.0-beta.1-2f9409c4` (не rebuild). Rollback target
+  `0.9.0-dev.15-f05f287d`.
+- Release Center UI / `app.blue_green` по-прежнему fail-closed dry-run; реальное
+  переключение на этом хосте — существующий Supervisor-механизм, не новый executor.
+- `release/0.10.0-next-architecture` **ещё не** слит в `main` (PR #26 DRAFT;
+  нужен отдельный owner merge). `VERSION.json` = `0.10.0-beta.1` / channel `beta`.
 
 ## Не реализовано (Not implemented)
 
-- Полная модель workspace/strategy specification revision (`strategy.spec.manage`
-  capability, `sf_document_revisions` со `scope_type`,
-  `document_revisions/approvals/publications`) — отдельный крупный продуктовый
-  модуль (см. `docs/current/NEXT_ARCHITECTURE_FINAL_REQUIREMENTS_MATRIX.md` §C).
-  Поэтому Phase 10 **не** объявляется полностью закрытой.
+- Полная модель workspace/strategy specification revision закрыта в Phase 11
+  (`strategy.spec.manage`, migration `0011`, `app/doc_specs.py`). Остаётся
+  owner design/UI acceptance и Canary Telegram bot provisioning.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary/Production deployment; remove stale "not deployed" claims.
+-->
