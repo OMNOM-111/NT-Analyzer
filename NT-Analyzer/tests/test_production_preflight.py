@@ -124,6 +124,15 @@ def test_preflight_rejects_data_inside_release_and_bad_config(tmp_path: Path, mo
     assert invalid["checks"][0]["code"] == "invalid"
 
 
+def test_preflight_init_system_profiles_are_explicit() -> None:
+    assert production_preflight._INIT_SYSTEM_BINARIES["systemd"] == (
+        "systemctl", "cloudflared",
+    )
+    assert production_preflight._INIT_SYSTEM_BINARIES["supervisor"] == (
+        "cloudflared",
+    )
+
+
 def test_deployment_templates_keep_secrets_out_and_routes_fail_closed() -> None:
     root = Path(__file__).resolve().parents[1]
     env_template = (root / "deploy" / "production" / "production.env.example").read_text(encoding="utf-8")

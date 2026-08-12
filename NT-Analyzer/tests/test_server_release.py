@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from tools import build_server_release
+from tools import canary_manifest_trust
 from tools import verify_server_release
 
 
@@ -125,3 +126,56 @@ def test_server_release_verifier_accepts_zero_byte_tracked_payload(
     assert result["ok"] is True
     assert result["file_count"] == 1
     assert result["build_id"] == "sf-zero-byte-test"
+
+
+def test_canary_manifest_trust_uses_pinned_key_and_manifest_identity(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    trusted_path = tmp_path / "trusted-key.json"
+    key = ec.generate_private_key(ec.SECP256R1())
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z",
+    )
+    manifest = {
+        "schema_version": 1,
+        "product": "StratForge Server",
+        "version": "0.10.0-beta.1",
+        "channel": "beta",
+        "build_id": "sf-0.10.0-beta.1-test",
+        "git_commit_sha": "a" * 40,
+        "build_timestamp_utc": timestamp,
+        "dirty": False,
+        "deployable_environments": ["canary", "production"],
+        "trust_tier": "production",
+        "signing": build_server_release._public_signing(key),
+        "files": [],
+    }
+    manifest_bytes = json.dumps(
+        manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    der = key.sign(manifest_bytes, ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der)
+    (release / "manifest.json").write_bytes(manifest_bytes)
+    (release / "manifest.sig").write_text(
+        build_server_release._b64url(r.to_bytes(32, "big") + s.to_bytes(32, "big")),
+        encoding="ascii",
+    )
+    trusted_path.write_text(
+        json.dumps(build_server_release._public_signing(key), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    identity = canary_manifest_trust.verify_release(release, trusted_path)
+
+    assert identity["version"] == "0.10.0-beta.1"
+    assert identity["channel"] == "beta"
+    assert identity["manifest_signature_verified"] is True
+    assert identity["artifact_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+
+    forged_key = ec.generate_private_key(ec.SECP256R1())
+    trusted_path.write_text(
+        json.dumps(build_server_release._public_signing(forged_key), sort_keys=True),
+        encoding="utf-8",
+    )
+    with pytest.raises(canary_manifest_trust.ManifestTrustError, match="pinned trusted"):
+        canary_manifest_trust.verify_release(release, trusted_path)

@@ -3792,6 +3792,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = service_readiness.readiness_payload(
                 deployment,
                 probes=getattr(self.server, "readiness_probes", {}),
+                optional_components=getattr(self.server, "readiness_optional_components", {}),
             )
             self._json(
                 HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
@@ -3949,6 +3950,7 @@ class Handler(BaseHTTPRequestHandler):
             readiness = service_readiness.readiness_payload(
                 deployment,
                 probes=getattr(self.server, "readiness_probes", {}),
+                optional_components=getattr(self.server, "readiness_optional_components", {}),
             )
             for target in payload["targets"]:
                 if target.get("current"):
@@ -9109,6 +9111,7 @@ def create_http_server(
         "connector_control": connector_protocol.readiness_status,
         "connector_releases": connector_releases.readiness_status,
     }
+    server.readiness_optional_components = {}  # type: ignore[attr-defined]
     if deployment.environment in (runtime_env.PRODUCTION, runtime_env.CANARY):
         # Canary is held to the same readiness contract as Production (see
         # service_readiness.readiness_payload's PRODUCTION_COMPONENTS list),
@@ -9120,16 +9123,35 @@ def create_http_server(
             "database": storage_router.database_readiness,
             "object_storage": object_storage_readiness,
             "queue": production_workers.readiness_status,
-            "telegram_consumer": production_telegram.readiness_status,
             "signing_key": storage_router.signing_key_readiness,
         })
+        telegram_configured = bool(
+            str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()
+        )
+        if deployment.environment == runtime_env.PRODUCTION or telegram_configured:
+            server.readiness_probes["telegram_consumer"] = (  # type: ignore[attr-defined]
+                production_telegram.readiness_status
+            )
+        else:
+            # A real Canary bot has not been provisioned yet (see
+            # deploy/canary/README.md). Registering production_telegram's
+            # probe here would check whether a consumer process is actively
+            # leased -- one that architecturally cannot exist without a
+            # token -- and misreport an honestly-disabled feature as a
+            # broken/offline component. Readiness still surfaces this gap
+            # (checks.telegram_consumer.ok stays False) but it no longer
+            # forces the whole endpoint into a permanent 503; acceptance
+            # tracking must keep reporting Telegram as PARTIAL, not PASS.
+            server.readiness_optional_components["telegram_consumer"] = (  # type: ignore[attr-defined]
+                "disabled_pending_canary_bot_provisioning"
+            )
     return server
 
 
 def run(port: Optional[int] = None) -> None:
     try:
         deployment = runtime_env.assert_startup_safe()
-        if deployment.environment == "production":
+        if deployment.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}:
             from . import storage_router
             storage_router.assert_production_storage_safe()
     except runtime_env.RuntimeEnvError as exc:
@@ -9139,11 +9161,11 @@ def run(port: Optional[int] = None) -> None:
         from .production_storage import StorageError
         if not isinstance(exc, StorageError):
             raise
-        print(f"[nta-backend] FATAL: Production storage configuration invalid ({exc.code}).")
+        print(f"[nta-backend] FATAL: server storage configuration invalid ({exc.code}).")
         raise SystemExit(2) from exc
     env = runtime_env.status()
     if (
-        deployment.environment == runtime_env.PRODUCTION
+        deployment.environment in {runtime_env.PRODUCTION, runtime_env.CANARY}
         and deployment.deployment_role not in {"api", "all-in-one"}
     ):
         print("[nta-backend] FATAL: HTTP server requires deployment role api/all-in-one.")
@@ -9170,6 +9192,7 @@ def run(port: Optional[int] = None) -> None:
     print(f"[nta-backend] project_root: {jobqueue.project_root()}")
     print(f"[nta-backend] jobs_dir: {jobqueue.jobs_dir()}")
     production_api = deployment.environment == runtime_env.PRODUCTION
+    canary_api = deployment.environment == runtime_env.CANARY
     _heartbeat_emitter: Optional[observability.HeartbeatEmitter] = None
     try:
         _heartbeat_emitter = observability.HeartbeatEmitter(
@@ -9191,7 +9214,9 @@ def run(port: Optional[int] = None) -> None:
             "stratforge-worker.service; Telegram by stratforge-telegram.service"
         )
     else:
-        # Development intentionally keeps the local single-process helpers.
+        # Development keeps all local single-process helpers. Canary keeps the
+        # legacy singleton schedulers here, but queue and Telegram consumers are
+        # owned by the split Canary topology below.
         try:
             ai_stale_sweep.start_background_sweeper(
                 interval_sec=1800, ttl_hours=6.0,
@@ -9204,16 +9229,22 @@ def run(port: Optional[int] = None) -> None:
             print("[nta-backend] news refresher started (live every 15 min)")
         except Exception as e:
             print(f"[nta-backend] news refresher NOT started: {e}")
-        try:
-            local_worker.start_background_worker(interval_sec=2.0)
-            print("[nta-backend] local worker process started")
-        except Exception as e:
-            print(f"[nta-backend] local worker process NOT started: {e}")
-        try:
-            telegram_service.start_background_notifier(interval_sec=30)
-            print("[nta-backend] Telegram notifier started (every 30 sec)")
-        except Exception as e:
-            print(f"[nta-backend] Telegram notifier NOT started: {e}")
+        if canary_api:
+            print("[nta-backend] Canary queue work is owned by worker-canary; local worker not started")
+        else:
+            try:
+                local_worker.start_background_worker(interval_sec=2.0)
+                print("[nta-backend] local worker process started")
+            except Exception as e:
+                print(f"[nta-backend] local worker process NOT started: {e}")
+        if canary_api:
+            print("[nta-backend] Canary Telegram notifier stays disabled until a separate bot is provisioned")
+        else:
+            try:
+                telegram_service.start_background_notifier(interval_sec=30)
+                print("[nta-backend] Telegram notifier started (every 30 sec)")
+            except Exception as e:
+                print(f"[nta-backend] Telegram notifier NOT started: {e}")
         try:
             ai_chief_agent.start_background_worker(interval_sec=30)
             print("[nta-backend] StratForge Orchestrator started (every 30 sec)")

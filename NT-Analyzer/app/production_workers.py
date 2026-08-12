@@ -1220,6 +1220,11 @@ class WorkerService:
         configs = get_queue().class_configs()
         from . import runtime_env
 
+        # Production-only by design: the legacy singleton schedulers this
+        # coordinator owns (news/orchestrator/vitek/stale-sweep) already run
+        # in-process inside Canary's single api program (see server.run's
+        # non-production branch). Starting them again here would duplicate
+        # that work against the same Canary database.
         if (
             "maintenance" in self.classes
             and runtime_env.is_production()
@@ -1253,6 +1258,22 @@ class WorkerService:
         return not any(thread.is_alive() for thread in self.threads)
 
 
+def _required_heartbeat_roles() -> tuple[str, ...]:
+    """Service roles this environment's worker topology must actually emit.
+
+    Production always runs the legacy ``background_ai`` coordinator alongside
+    the queue worker. Canary intentionally does not (see
+    ``WorkerService.start``): requiring that role there would make queue
+    readiness measure a heartbeat Canary never emits instead of its own real
+    isolated worker.
+    """
+    from . import runtime_env
+
+    if runtime_env.is_production():
+        return ("worker", "background_ai")
+    return ("worker",)
+
+
 def readiness_status() -> Dict[str, Any]:
     try:
         queue = get_queue()
@@ -1262,6 +1283,7 @@ def readiness_status() -> Dict[str, Any]:
         metrics = queue.metrics()
         if int(metrics["leases"]["expired"]) > 0:
             return {"ok": False, "code": "worker_lease_expired"}
+        required_roles = _required_heartbeat_roles()
         with queue.client.transaction(
             Scope.global_service_scope(), read_only=True,
         ) as conn:
@@ -1272,8 +1294,9 @@ def readiness_status() -> Dict[str, Any]:
                            clock_timestamp()-heartbeat_at
                          )) AS age_sec
                    FROM sf_service_heartbeats
-                   WHERE service_role IN ('worker','background_ai')
-                   ORDER BY service_role,heartbeat_at DESC"""
+                   WHERE service_role = ANY(%s)
+                   ORDER BY service_role,heartbeat_at DESC""",
+                (list(required_roles),),
             ).fetchall()
         services = {
             str(row["service_role"]): {
@@ -1282,7 +1305,7 @@ def readiness_status() -> Dict[str, Any]:
             }
             for row in rows
         }
-        for role in ("worker", "background_ai"):
+        for role in required_roles:
             state = services.get(role)
             if state is None:
                 return {
@@ -1334,10 +1357,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = _parser().parse_args(argv)
     config = runtime_env.assert_startup_safe()
-    if config.environment != runtime_env.PRODUCTION:
-        raise SystemExit("Production workers refuse to run outside Production.")
+    if not runtime_env.is_server_environment():
+        raise SystemExit("Worker service refuses to run outside Production/Canary.")
     if config.deployment_role not in {"worker", "all-in-one"}:
-        raise SystemExit("Production worker service requires deployment role worker/all-in-one.")
+        raise SystemExit("Worker service requires deployment role worker/all-in-one.")
     storage_router.assert_production_storage_safe()
     classes = [value.strip() for value in str(args.classes).split(",") if value.strip()]
     service = WorkerService(classes, poll_ms=args.poll_ms)

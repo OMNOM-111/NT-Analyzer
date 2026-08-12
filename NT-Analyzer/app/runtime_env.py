@@ -419,6 +419,22 @@ def is_production() -> bool:
     return deployment_environment() == PRODUCTION
 
 
+def is_server_environment() -> bool:
+    """True for the shared-service deployment boundary: Production or Canary.
+
+    Distinguishes the two real, multi-user, PostgreSQL-authoritative server
+    contours from Development, which stays local-only. This is intentionally
+    narrower than "not Development": it must be used only in infrastructure
+    paths that are meant to be authoritative and isolated in *both* server
+    environments -- storage/worker routing, queue and observability
+    heartbeats, path/detail redaction, and readiness probes. Callers that
+    encode a real Production-only business or safety decision (billing, live
+    trading, real payments, which Telegram bot consumes updates, etc.) must
+    keep using :func:`is_production`, never this helper.
+    """
+    return deployment_environment() in (PRODUCTION, CANARY)
+
+
 def _optional_bool(name: str) -> Optional[bool]:
     raw = str(os.environ.get(name) or "").strip().lower()
     if not raw:

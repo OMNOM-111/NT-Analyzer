@@ -2,97 +2,152 @@
 # Real blue-green executor for the Canary-only slot on the actual
 # Supervisor-managed production host (no systemd). Atomically switches the
 # `canary-current`/`canary-previous` symlinks to a new, already-extracted
-# and signature-verified release directory, restarts only the Canary
-# Supervisor programs, verifies health, and automatically rolls back on any
+# release directory whose manifest is verified against a *pinned* trusted
+# production public key (never the key embedded in the manifest itself),
+# restarts only the Canary Supervisor programs that actually exist in
+# `supervisord.conf`, verifies health, and automatically rolls back on any
 # failure after the switch point. Production's `current`/`previous`
-# symlinks and `api-app`/`worker`/`operations`/`telegram` programs are never
+# symlinks and `api`/`worker`/`operations`/`telegram` programs are never
 # touched by this script.
+#
+# The deployed version/channel/build ID/git SHA/artifact SHA are never
+# accepted as independent caller-supplied values (that would let a caller
+# deploy metadata that disagrees with what was actually signed and
+# extracted). They are extracted exclusively from the verified, signed
+# manifest by tools/canary_manifest_trust.py.
 #
 # Required environment variables (no defaults, fail closed if unset):
 #   RELEASE_DIR             Absolute path to the extracted, verified release
 #                           (e.g. $BASE/releases/0.10.0-beta.1-<sha>)
-#   NEW_VERSION             e.g. 0.10.0-beta.1
-#   NEW_CHANNEL             beta|stable
-#   NEW_BUILD_ID
-#   NEW_GIT_COMMIT_SHA
-#   NEW_ARTIFACT_SHA256
-#   NEW_BUILD_TIMESTAMP_UTC ISO-8601 UTC, e.g. 2026-08-11T20:00:00Z
 #
 # Optional overrides:
 #   BASE (default /home/stratforge/production_data)
 #   HEALTH_URL (default https://canary.stratforges.com/api/health/ready)
 #   HEALTH_TIMEOUT_SEC (default 60)
+#   TRUSTED_SIGNING_KEY_PATH (default $BASE/config/canary-trusted-signing-key.json)
+#   LOCKDOWN_MARKER_PATH (default $BASE/config/canary-privilege-lockdown.ok.json;
+#                    written only by tools/canary_isolation_provision.py
+#                    --lockdown-privileges after post-migration privilege
+#                    revocation succeeds)
+#   CANARY_PROGRAMS (default "api worker-canary operations-canary";
+#                    space-separated Supervisor program names
+#                    this script must restart; every requested name must have
+#                    a [program:NAME] section in supervisord.conf)
+#   EXPECTED_VERSION / EXPECTED_CHANNEL (optional operator sanity check: if
+#                    set, must match the manifest-derived value or the
+#                    script refuses before touching anything)
 set -Eeuo pipefail
 umask 077
 
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
-: "${NEW_VERSION:?NEW_VERSION is required}"
-: "${NEW_CHANNEL:?NEW_CHANNEL is required}"
-: "${NEW_BUILD_ID:?NEW_BUILD_ID is required}"
-: "${NEW_GIT_COMMIT_SHA:?NEW_GIT_COMMIT_SHA is required}"
-: "${NEW_ARTIFACT_SHA256:?NEW_ARTIFACT_SHA256 is required}"
-: "${NEW_BUILD_TIMESTAMP_UTC:?NEW_BUILD_TIMESTAMP_UTC is required}"
 
 BASE="${BASE:-/home/stratforge/production_data}"
 HEALTH_URL="${HEALTH_URL:-https://canary.stratforges.com/api/health/ready}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
+TRUSTED_SIGNING_KEY_PATH="${TRUSTED_SIGNING_KEY_PATH:-$BASE/config/canary-trusted-signing-key.json}"
+LOCKDOWN_MARKER_PATH="${LOCKDOWN_MARKER_PATH:-$BASE/config/canary-privilege-lockdown.ok.json}"
+CANARY_PROGRAMS="${CANARY_PROGRAMS:-api worker-canary operations-canary}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config="$BASE/config"
 conf="$config/supervisord.conf"
 canary_env="$config/canary.env"
 evidence="$BASE/runtime/canary-promote-evidence"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$BASE/backups/canary-promote-$stamp"
-result="$evidence/canary-promote-$NEW_VERSION-$stamp.json"
 
 test "$(id -u)" = 0
 test -d "$RELEASE_DIR"
 test -f "$RELEASE_DIR/manifest.json"
 test -f "$RELEASE_DIR/manifest.sig"
 test -f "$canary_env"
+test -f "$conf"
+test -f "$LOCKDOWN_MARKER_PATH"
 test ! -e "$backup"
 mkdir -p "$evidence"
 
-# --- verify manifest is a real production-trust, signed artifact ---
-python3 - "$RELEASE_DIR" <<'PY'
-import json, sys, pathlib
-release = pathlib.Path(sys.argv[1])
-manifest = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
-if manifest.get("trust_tier") != "production":
-    raise SystemExit("REFUSING: manifest trust_tier is not 'production': " + str(manifest.get("trust_tier")))
-signing = manifest.get("signing") or {}
-if signing.get("algorithm") != "ECDSA_P256_SHA256_RAW":
-    raise SystemExit("REFUSING: unexpected signing algorithm")
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-import base64
-
-def _b64url_decode(value):
-    padded = value + "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(padded)
-
-sig = _b64url_decode((release / "manifest.sig").read_text(encoding="ascii").strip())
-if len(sig) != 64:
-    raise SystemExit("REFUSING: manifest.sig has an unexpected length")
-x = int.from_bytes(_b64url_decode(signing["public_key_x"]), "big")
-y = int.from_bytes(_b64url_decode(signing["public_key_y"]), "big")
-public_key = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
-manifest_bytes = (release / "manifest.json").read_bytes()
-r = int.from_bytes(sig[:32], "big")
-s = int.from_bytes(sig[32:], "big")
-public_key.verify(encode_dss_signature(r, s), manifest_bytes, ec.ECDSA(hashes.SHA256()))
-print("manifest_signature_verified=true")
-print("key_fingerprint=" + signing["key_fingerprint"])
+python3 - "$LOCKDOWN_MARKER_PATH" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+try:
+  marker = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+  raise SystemExit("REFUSING: Canary privilege-lockdown marker is unreadable") from exc
+if not isinstance(marker, dict) or marker.get("schema_version") != 1 or marker.get("ok") is not True:
+  raise SystemExit("REFUSING: Canary privilege-lockdown marker is invalid")
+if not str(marker.get("canary_database_name") or "").strip():
+  raise SystemExit("REFUSING: Canary privilege-lockdown marker has no database name")
+if not str(marker.get("canary_app_role") or "").strip():
+  raise SystemExit("REFUSING: Canary privilege-lockdown marker has no app role")
+revoked = set(marker.get("revoked_from") or [])
+if "PUBLIC" not in revoked:
+  raise SystemExit("REFUSING: Canary privilege-lockdown marker does not record PUBLIC revocation")
 PY
 
-for service in api worker-canary operations-canary; do
-  sudo -n supervisorctl -c "$conf" status "$service" >/dev/null 2>&1 || true
+# --- verify manifest against the pinned trusted key; derive identity ---
+verify_json="$(python3 "$script_dir/canary_manifest_trust.py" \
+  "$RELEASE_DIR" "$TRUSTED_SIGNING_KEY_PATH" --required-environment canary)"
+echo "$verify_json"
+
+eval "$(python3 -c '
+import json, shlex, sys
+data = json.load(sys.stdin)
+for key in ("version", "channel", "build_id", "git_commit_sha", "build_timestamp_utc", "artifact_sha256", "key_fingerprint"):
+    print("NEW_" + key.upper() + "=" + shlex.quote(str(data[key])))
+' <<<"$verify_json")"
+
+[[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "REFUSING: NEW_VERSION has an unexpected shape" >&2; exit 1; }
+[[ "$NEW_CHANNEL" =~ ^(beta|stable)$ ]] || { echo "REFUSING: NEW_CHANNEL must be beta or stable" >&2; exit 1; }
+[[ "$NEW_BUILD_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$ ]] || { echo "REFUSING: NEW_BUILD_ID has an unexpected shape" >&2; exit 1; }
+[[ "$NEW_GIT_COMMIT_SHA" =~ ^[0-9a-fA-F]{40,64}$ ]] || { echo "REFUSING: NEW_GIT_COMMIT_SHA has an unexpected shape" >&2; exit 1; }
+[[ "$NEW_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "REFUSING: NEW_ARTIFACT_SHA256 has an unexpected shape" >&2; exit 1; }
+
+if [ -n "${EXPECTED_VERSION:-}" ] && [ "$EXPECTED_VERSION" != "$NEW_VERSION" ]; then
+  echo "REFUSING: EXPECTED_VERSION=$EXPECTED_VERSION does not match manifest version=$NEW_VERSION" >&2
+  exit 1
+fi
+if [ -n "${EXPECTED_CHANNEL:-}" ] && [ "$EXPECTED_CHANNEL" != "$NEW_CHANNEL" ]; then
+  echo "REFUSING: EXPECTED_CHANNEL=$EXPECTED_CHANNEL does not match manifest channel=$NEW_CHANNEL" >&2
+  exit 1
+fi
+
+result="$evidence/canary-promote-$NEW_VERSION-$stamp.json"
+
+# --- resolve the real Canary Supervisor program topology; never assume ---
+# Every requested `[program:NAME]` section must be present in the current
+# supervisord.conf. Skipping a missing worker/operations program would let a
+# partial topology pass promotion while old or absent worker processes remain
+# invisible until runtime symptoms appear.
+mapfile -t defined_programs < <(grep -oE '^\[program:[^]]+\]' "$conf" | sed -E 's/^\[program:(.*)\]$/\1/')
+restart_targets=()
+missing_targets=()
+for requested in $CANARY_PROGRAMS; do
+  found=""
+  for defined in "${defined_programs[@]}"; do
+    if [ "$defined" = "$requested" ]; then
+      restart_targets+=("$requested")
+      found="1"
+      break
+    fi
+  done
+  if [ -z "$found" ]; then
+    missing_targets+=("$requested")
+  fi
 done
+if [ "${#missing_targets[@]}" -ne 0 ]; then
+  echo "REFUSING: required Canary Supervisor program(s) missing from $conf: ${missing_targets[*]}" >&2
+  exit 1
+fi
+echo "canary_restart_targets=${restart_targets[*]}"
 
 mkdir "$backup"
 chmod 0700 "$backup"
 install -o stratforge -g root -m 0600 "$canary_env" "$backup/canary.env.before"
-readlink -f /home/stratforge/canary-current >"$backup/canary-current.before"
+current_before="$(readlink -f /home/stratforge/canary-current 2>/dev/null || true)"
+if [ -z "$current_before" ]; then
+  echo "REFUSING: /home/stratforge/canary-current must exist before blue-green promotion so rollback has a target" >&2
+  exit 1
+fi
+printf '%s\n' "$current_before" >"$backup/canary-current.before"
 readlink -f /home/stratforge/canary-previous >"$backup/canary-previous.before" 2>/dev/null || echo "" >"$backup/canary-previous.before"
 chmod 0400 "$backup/canary-current.before" "$backup/canary-previous.before"
 
@@ -134,7 +189,7 @@ rollback() {
   previous_target="$(cat "$backup/canary-current.before")"
   ln -sfn "$previous_target" /home/stratforge/canary-current.new
   mv -Tf /home/stratforge/canary-current.new /home/stratforge/canary-current
-  sudo -n supervisorctl -c "$conf" restart api worker-canary operations-canary >/dev/null 2>&1 || true
+  sudo -n supervisorctl -c "$conf" restart "${restart_targets[@]}" >/dev/null 2>&1 || true
   for n in $(seq 1 "$HEALTH_TIMEOUT_SEC"); do
     if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then exit 1; fi
     sleep 1
@@ -144,9 +199,10 @@ rollback() {
 trap rollback ERR
 
 install -o stratforge -g root -m 0600 "$backup/canary.env.after" "$canary_env"
+old_target="$(cat "$backup/canary-current.before")"
 ln -sfn "$RELEASE_DIR" /home/stratforge/canary-current.new
 mv -Tf /home/stratforge/canary-current.new /home/stratforge/canary-current
-sudo -n supervisorctl -c "$conf" restart api worker-canary operations-canary >/dev/null
+sudo -n supervisorctl -c "$conf" restart "${restart_targets[@]}" >/dev/null
 
 ready=""
 for n in $(seq 1 "$HEALTH_TIMEOUT_SEC"); do
@@ -159,12 +215,23 @@ grep -q '"live_trading_allowed": false' <<<"$ready"
 grep -q '"real_payments_allowed": false' <<<"$ready"
 
 trap - ERR
-python3 - "$result" "$backup" "$NEW_VERSION" "$NEW_BUILD_ID" "$NEW_ARTIFACT_SHA256" "$NEW_GIT_COMMIT_SHA" <<'PY'
+
+# Only after the swap is confirmed healthy: atomically point
+# canary-previous at the release that was current immediately before this
+# swap, so a later, independent rollback tool always has a real one-step-back
+# target to refer to (never this run's own transient in-flight state).
+if [ -n "$old_target" ] && [ "$old_target" != "$RELEASE_DIR" ]; then
+  ln -sfn "$old_target" /home/stratforge/canary-previous.new
+  mv -Tf /home/stratforge/canary-previous.new /home/stratforge/canary-previous
+fi
+
+python3 - "$result" "$backup" "$NEW_VERSION" "$NEW_BUILD_ID" "$NEW_ARTIFACT_SHA256" "$NEW_GIT_COMMIT_SHA" "$NEW_CHANNEL" <<'PY'
 import json, pathlib, sys
-result, backup, version, build_id, artifact_sha, git_sha = sys.argv[1:7]
+result, backup, version, build_id, artifact_sha, git_sha, channel = sys.argv[1:8]
 pathlib.Path(result).write_text(json.dumps({
     "ok": True,
     "version": version,
+    "channel": channel,
     "build_id": build_id,
     "artifact_sha256": artifact_sha.upper(),
     "git_commit_sha": git_sha,

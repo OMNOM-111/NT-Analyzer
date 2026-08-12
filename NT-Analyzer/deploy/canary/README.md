@@ -6,13 +6,16 @@ database DSNs, signing keys, bot tokens and OAuth secrets never belong in a
 release artifact or Git.
 
 Canary is a **fully isolated** environment from Production. It has its own
-PostgreSQL database, secrets, job queues, object-storage namespace, Telegram
-bot and webhook, Connector test contour, cookie/CSRF namespace and browser
-local-storage namespace. A Production session token, Telegram bot, Connector
-installation or storage namespace must never be reachable from Canary, and vice
-versa. `assert_environment_isolation()` fails closed at startup and in the
-service preflight if any Canary identity is ever set equal to the Production
-reference identity carried in `canary.env`.
+PostgreSQL database, app/migration roles, job queue, object-storage namespace,
+Connector test contour, cookie/CSRF namespace and browser local-storage
+namespace. A separate Canary Telegram bot identity is intentionally not
+provisioned yet; until it exists, Telegram stays disabled fail-closed and
+readiness reports that component as a disclosed partial, not a pass. A
+Production session token, Telegram bot, Connector installation or storage
+namespace must never be reachable from Canary, and vice versa.
+`assert_environment_isolation()` fails closed at startup and in the service
+preflight if any Canary identity is ever set equal to the Production reference
+identity carried in `canary.env`.
 
 Canonical topology (independent from Production):
 
@@ -81,35 +84,41 @@ For this real topology, provisioning and promotion are done with:
   root, and `canary.env` with every identity distinct from Production
   (checked by `assert_environment_isolation`), including its own
   `STRATFORGE_SIGNING_KEY` runtime secret. Never prints a secret value.
-- `run-api-canary.sh.example`, `supervisor-canary-programs.conf.example` —
-  Canary runs as a **single all-in-one Supervisor program** (`api`), exactly
-  like Development: `app.server.run()` starts its own in-process worker
-  loop, Telegram notifier, and AI/maintenance sweepers whenever
-  `deployment.environment != "production"`. There is intentionally no
-  separate `worker-canary` / `operations-canary` program: `app.production_workers`
-  and `app.observability --maintenance` are hard-gated to
-  `DEPLOYMENT_ENV=production` and only restart-loop under any other
-  environment. `telegram-canary` is likewise not a separate program; the
-  in-process Telegram notifier stays disabled fail-closed until a real,
-  separate Canary Telegram bot token exists.
+  After migrations are applied to the Canary database, run the same tool
+  with `--lockdown-privileges`; it revokes Production/PUBLIC privileges from
+  Canary objects and writes the secret-free
+  `canary-privilege-lockdown.ok.json` marker required by promotion. Without
+  that marker, `tools/canary_blue_green_promote.sh` refuses before touching
+  symlinks or Supervisor.
+- `run-api-canary.sh.example`, `run-worker-canary.sh.example`,
+  `run-operations-canary.sh.example`,
+  `supervisor-canary-programs.conf.example` — Canary now runs a real split
+  Supervisor topology: `api` (HTTP), `worker-canary` (PostgreSQL queue
+  consumer + worker heartbeat), and `operations-canary` (observability
+  maintenance loop). `app.production_workers` and `app.observability
+  --maintenance` are gated for Production **or Canary** via the server
+  environment boundary, while the API process refuses worker-only roles and
+  does not start the Development-local queue consumer. `telegram-canary` is
+  still not a separate program until a separate Canary bot token is
+  provisioned; never reuse the Production token.
 - `tools/canary_blue_green_promote.sh` — the real blue-green executor for
-  this Supervisor topology: verifies the release manifest is
-  `trust_tier: production` with a valid ECDSA P-256 signature, atomically
-  swaps only the `canary-current`/`canary-previous` symlinks, restarts only
-  the Canary `api` program, polls `canary.stratforges.com` health, and
-  automatically rolls back on any failure. Production's `current`/
-  `previous` symlinks and `api-app`/`worker`/`operations`/`telegram`
-  programs are never touched.
+  this Supervisor topology: verifies the release manifest against a pinned
+  trusted production public key, derives deploy identity only from the signed
+  manifest, atomically swaps only the `canary-current`/`canary-previous`
+  symlinks, restarts only configured Canary programs (`api worker-canary
+  operations-canary` by default), polls `canary.stratforges.com` health, and
+  automatically rolls back on any failure. Production's `current`/`previous`
+  symlinks and `api`/`worker`/`operations`/`telegram` programs are never
+  touched.
 - Readiness: `app/server.py`'s `create_http_server()` registers the same
-  `database`/`object_storage`/`queue`/`signing_key`/`telegram_consumer`
+  `database`/`object_storage`/`queue`/`signing_key`/`connector_control`
   probes for Canary as for Production (against Canary's own isolated
-  dependencies), per `service_readiness.PRODUCTION_COMPONENTS`. The `queue`
-  probe currently cannot pass in Canary: `observability.heartbeat()` only
-  persists worker/background_ai heartbeats to the database when
-  `runtime_env.is_production()` is true, so Canary's in-process worker loop
-  has nothing to report there. This is a known, disclosed readiness gap,
-  not a deployment defect; closing it requires a deliberate, owner-reviewed
-  change to the heartbeat persistence gate (not just Canary deploy tooling).
+  dependencies), per `service_readiness.PRODUCTION_COMPONENTS`. The queue
+  probe requires the real `worker-canary` heartbeat, not Production's legacy
+  `background_ai` heartbeat. `telegram_consumer` remains visible as
+  `ok: false` with a disabled-pending-bot code while no Canary bot token is
+  configured, but it is excluded from the overall readiness decision so the
+  endpoint does not stay permanently 503 for an intentionally absent feature.
 
 Canary's API already runs on `127.0.0.1:18765` (routed by the existing
 Cloudflare ingress); no new port was required for this isolation pass.

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "channels": {
-    "beta": {
-      "version": "__CANARY_BETA_VERSION__",
-      "archive_url": "https://canary.stratforges.com/releases/connector/__CANARY_BETA_ARCHIVE__",
-      "archive_sha256": "__CANARY_BETA_ARCHIVE_SHA256__",
-      "manifest_sha256": "__CANARY_BETA_MANIFEST_SHA256__",
+    "stable": {
+      "version": "__STABLE_VERSION__",
+      "archive_url": "https://canary.stratforges.com/releases/connector/__STABLE_ARCHIVE__",
+      "archive_sha256": "__STABLE_ARCHIVE_SHA256__",
+      "manifest_sha256": "__STABLE_MANIFEST_SHA256__",
       "protocol_version": "1.0",
       "minimum_version": "__MINIMUM_SUPPORTED_VERSION__",
       "blocked_versions": [],

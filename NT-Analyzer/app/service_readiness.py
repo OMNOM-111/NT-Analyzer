@@ -60,6 +60,7 @@ def readiness_payload(
     *,
     probes: Optional[Mapping[str, Callable[[], Any]]] = None,
     minimum_free_mb: Optional[int] = None,
+    optional_components: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Return a bounded, secret-free readiness view.
 
@@ -68,6 +69,17 @@ def readiness_payload(
     missing probes as PostgreSQL, the durable queue, signing keys and Connector
     control plane are enabled.  Canary is held to the same readiness contract so
     it can never report ready while sharing or missing an isolated dependency.
+
+    ``optional_components`` names a *known, disclosed* gap (for example: no
+    separate Canary Telegram bot has been provisioned yet) that must not be
+    reported as a fabricated PASS but also must not force the whole endpoint
+    into a permanent 503 for a feature the current deployment never intends
+    to run. Each key maps to the explanatory ``code`` reported for that
+    component; the component is still visible in ``checks`` and still marked
+    ``ok: False`` when its probe is genuinely absent, but is excluded from the
+    overall ``ok`` computation. It never applies when a probe *is*
+    registered: once a component is actually wired up, it is judged like
+    every other mandatory component.
     """
     floor = int(
         minimum_free_mb
@@ -79,10 +91,21 @@ def readiness_payload(
         "data_root": _data_root_check(config, max(1, floor)),
     }
     registered = dict(probes or {})
+    optional = dict(optional_components or {})
+    excluded_from_overall = set()
     if config.environment in {"production", "canary"}:
         for name in PRODUCTION_COMPONENTS:
-            checks[name] = _run_probe(registered.get(name))
-    ok = all(bool(check.get("ok")) for check in checks.values())
+            probe = registered.get(name)
+            if probe is None and name in optional:
+                checks[name] = {"ok": False, "code": str(optional[name])[:64]}
+                excluded_from_overall.add(name)
+            else:
+                checks[name] = _run_probe(probe)
+    ok = all(
+        bool(check.get("ok"))
+        for name, check in checks.items()
+        if name not in excluded_from_overall
+    )
     return {
         "ok": ok,
         "status": "ready" if ok else "not_ready",

@@ -21,7 +21,13 @@ from .production_storage.artifacts import object_storage_readiness
 
 
 def production_enabled() -> bool:
-    return runtime_env.is_production() and runtime_env.environment_explicit()
+    """True when storage routing must be authoritative against PostgreSQL.
+
+    Applies to Production *and* Canary: both declare a real, isolated
+    PostgreSQL identity and must never silently fall back to local
+    files/DPAPI just because they are not literally Production.
+    """
+    return runtime_env.is_server_environment() and runtime_env.environment_explicit()
 
 
 def _mode() -> str:
@@ -87,23 +93,46 @@ def storage_status() -> Dict[str, Any]:
     }
 
 
+def _expected_app_db_role() -> str:
+    """Return the non-superuser app role this environment's runtime must use.
+
+    Production and Canary each own a distinct, dedicated role
+    (``stratforge_app`` / ``stratforge_canary_app``) so neither environment's
+    runtime DSN can be mistaken for, or collide with, the other's. An explicit
+    override is honoured for operator-controlled renames, but the safe
+    per-environment default requires no configuration.
+    """
+    configured = str(os.environ.get("STRATFORGE_DATABASE_APP_ROLE") or "").strip()
+    if configured:
+        return configured
+    return "stratforge_canary_app" if runtime_env.is_canary() else "stratforge_app"
+
+
 def assert_production_storage_safe() -> None:
+    """Fail-closed storage safety gate, shared by Production and Canary.
+
+    The name is retained for compatibility with existing callers/tests; the
+    checks it enforces (postgresql mode, dedicated non-superuser role,
+    dedicated database, isolated artifact root) apply to both server
+    environments via :func:`production_enabled`.
+    """
     if not production_enabled():
         return
     if _mode() != "postgresql":
         raise StorageConfigurationError(
-            "STRATFORGE_STORAGE_MODE=postgresql is mandatory in Production."
+            "STRATFORGE_STORAGE_MODE=postgresql is mandatory in Production/Canary."
         )
     database_url = str(os.environ.get("STRATFORGE_DATABASE_URL") or "").strip()
     parsed = urlparse(database_url)
     username = unquote(parsed.username or "")
     database_name = (parsed.path or "").strip("/")
-    if username != "stratforge_app":
+    expected_role = _expected_app_db_role()
+    if username != expected_role:
         raise StorageConfigurationError(
-            "Production runtime must use the non-superuser stratforge_app database role."
+            f"Runtime must use the non-superuser {expected_role} database role."
         )
     if not database_name or database_name.lower() in {"postgres", "template0", "template1"}:
-        raise StorageConfigurationError("Production requires a dedicated application database.")
+        raise StorageConfigurationError("Production/Canary requires a dedicated application database.")
     artifact_raw = str(os.environ.get("STRATFORGE_ARTIFACT_ROOT") or "").strip()
     if not artifact_raw:
         raise StorageConfigurationError("STRATFORGE_ARTIFACT_ROOT is required in Production.")

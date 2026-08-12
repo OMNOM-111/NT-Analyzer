@@ -9,11 +9,26 @@ Telegram bot or Connector.
 """
 from __future__ import annotations
 
+import argparse
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from app import connector_protocol, runtime_env, service_readiness
+from app import (
+    connector_protocol,
+    connector_releases,
+    observability,
+    production_workers,
+    runtime_env,
+    server as server_mod,
+    service_readiness,
+    storage_router,
+    worker_router,
+)
+from app.production_storage import StorageConfigurationError
+from tools import canary_isolation_provision
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +68,7 @@ _ENV_KEYS = (
     "STRATFORGE_LOG_NAMESPACE",
     "STRATFORGE_DATABASE_URL",
     "STRATFORGE_STORAGE_MODE",
+    "STRATFORGE_DATABASE_APP_ROLE",
     "STRATFORGE_PRODUCTION_DATABASE_ID",
     "STRATFORGE_PRODUCTION_QUEUE_ID",
     "STRATFORGE_PRODUCTION_OBJECT_STORAGE_ID",
@@ -75,6 +91,7 @@ _ENV_KEYS = (
     "NTA_ENABLE_IMPERSONATION",
     "NTA_DISABLE_RATE_LIMIT",
     "NTA_TEST_BYPASS_AUTH",
+    "NTA_TELEGRAM_BOT_TOKEN",
 )
 
 
@@ -316,6 +333,196 @@ def test_canary_readiness_requires_control_plane_probes(monkeypatch, tmp_path):
     assert payload["checks"]["database"]["ok"] is False
 
 
+def test_canary_readiness_discloses_disabled_telegram_without_blocking(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+    config = runtime_env.deployment_config(strict=False)
+    probes = {
+        name: (lambda: True)
+        for name in service_readiness.PRODUCTION_COMPONENTS
+        if name != "telegram_consumer"
+    }
+
+    payload = service_readiness.readiness_payload(
+        config,
+        probes=probes,
+        minimum_free_mb=1,
+        optional_components={
+            "telegram_consumer": "disabled_pending_canary_bot_provisioning",
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["checks"]["telegram_consumer"] == {
+        "ok": False,
+        "code": "disabled_pending_canary_bot_provisioning",
+    }
+
+
+def test_optional_readiness_component_cannot_hide_registered_failure(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+    config = runtime_env.deployment_config(strict=False)
+    probes = {name: (lambda: True) for name in service_readiness.PRODUCTION_COMPONENTS}
+    probes["telegram_consumer"] = lambda: {"ok": False, "code": "consumer_missing"}
+
+    payload = service_readiness.readiness_payload(
+        config,
+        probes=probes,
+        minimum_free_mb=1,
+        optional_components={
+            "telegram_consumer": "disabled_pending_canary_bot_provisioning",
+        },
+    )
+
+    assert payload["ok"] is False
+    assert payload["checks"]["telegram_consumer"] == {
+        "ok": False,
+        "code": "consumer_missing",
+    }
+
+
+def test_canary_http_server_marks_missing_telegram_consumer_optional(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+    config = runtime_env.assert_startup_safe()
+    srv = server_mod.create_http_server(config, bind_port=0)
+    try:
+        assert "telegram_consumer" not in srv.readiness_probes
+        assert srv.readiness_optional_components == {
+            "telegram_consumer": "disabled_pending_canary_bot_provisioning",
+        }
+    finally:
+        srv.server_close()
+
+
+def test_canary_http_server_requires_telegram_probe_once_token_exists(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("NTA_TELEGRAM_BOT_TOKEN", "placeholder-test-token")
+    config = runtime_env.assert_startup_safe()
+    srv = server_mod.create_http_server(config, bind_port=0)
+    try:
+        assert "telegram_consumer" in srv.readiness_probes
+        assert srv.readiness_optional_components == {}
+    finally:
+        srv.server_close()
+
+
+def test_canary_run_does_not_start_development_local_worker_or_notifier(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path, STRATFORGE_DEPLOYMENT_ROLE="api")
+    monkeypatch.setattr(storage_router, "assert_production_storage_safe", lambda: None)
+
+    class FakeEmitter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 0)
+
+        def admission_metrics(self):
+            return {}
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    unexpected = []
+
+    def unexpected_start(name):
+        def _start(*args, **kwargs):
+            unexpected.append(name)
+            return True
+        return _start
+
+    monkeypatch.setattr(server_mod.observability, "HeartbeatEmitter", FakeEmitter)
+    monkeypatch.setattr(server_mod, "create_http_server", lambda deployment, bind_port: FakeServer())
+    monkeypatch.setattr(server_mod.ai_stale_sweep, "start_background_sweeper", lambda **kwargs: None)
+    monkeypatch.setattr(server_mod.news_refresh, "start_background_refresher", lambda: None)
+    monkeypatch.setattr(server_mod.ai_chief_agent, "start_background_worker", lambda **kwargs: None)
+    monkeypatch.setattr(server_mod.vitek, "start_background_worker", lambda **kwargs: None)
+    monkeypatch.setattr(server_mod.market_data, "start_chart_worker", lambda **kwargs: None)
+    monkeypatch.setattr(server_mod.market_data_ipc, "start_server", lambda: (_ for _ in ()).throw(RuntimeError("disabled")))
+    monkeypatch.setattr(server_mod.market_data_gap_recovery, "start_background_worker", lambda **kwargs: None)
+    monkeypatch.setattr(server_mod.market_data_live_supervisor, "start", lambda: {})
+    monkeypatch.setattr(server_mod.local_worker, "start_background_worker", unexpected_start("local_worker"))
+    monkeypatch.setattr(server_mod.telegram_service, "start_background_notifier", unexpected_start("telegram_notifier"))
+    for module, name in (
+        (server_mod.ai_stale_sweep, "stop_background_sweeper"),
+        (server_mod.news_refresh, "stop_background_refresher"),
+        (server_mod.ai_chief_agent, "stop_background_worker"),
+        (server_mod.vitek, "stop_background_worker"),
+        (server_mod.local_worker, "stop_background_worker"),
+        (server_mod.telegram_service, "stop_background_notifier"),
+        (server_mod.market_data, "stop_chart_worker"),
+        (server_mod.market_data_gap_recovery, "stop_background_worker"),
+        (server_mod.market_data_ipc, "stop_server"),
+        (server_mod.market_data_live_supervisor, "stop"),
+    ):
+        monkeypatch.setattr(module, name, lambda: None)
+
+    server_mod.run(0)
+
+    assert unexpected == []
+
+
+def test_canary_routes_storage_and_workers_to_authoritative_backends(monkeypatch, tmp_path):
+    artifact_root = tmp_path / "objects"
+    artifact_root.mkdir()
+    _canary_env(
+        monkeypatch,
+        tmp_path,
+        STRATFORGE_STORAGE_MODE="postgresql",
+        STRATFORGE_DATABASE_URL="postgresql://stratforge_app@db.internal/stratforge_canary",
+        STRATFORGE_ARTIFACT_ROOT=str(artifact_root),
+    )
+    with pytest.raises(StorageConfigurationError, match="stratforge_canary_app"):
+        storage_router.assert_production_storage_safe()
+
+    monkeypatch.setenv("STRATFORGE_DATABASE_APP_ROLE", "stratforge_canary_app")
+    monkeypatch.setenv(
+        "STRATFORGE_DATABASE_URL",
+        "postgresql://stratforge_canary_app@db.internal/stratforge_canary",
+    )
+    monkeypatch.setattr(storage_router, "get_client", lambda production=False: object())
+
+    assert storage_router.production_enabled() is True
+    assert worker_router._production() is True
+    storage_router.assert_production_storage_safe()
+
+
+def test_canary_heartbeat_role_matrix_excludes_production_only_processes(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+
+    assert observability._expected_service_roles() == ("api", "worker")
+    assert production_workers._required_heartbeat_roles() == ("worker",)
+
+
+def test_canary_operations_maintenance_is_allowed(monkeypatch):
+    monkeypatch.setattr(
+        observability.runtime_env,
+        "assert_startup_safe",
+        lambda: SimpleNamespace(environment=runtime_env.CANARY, deployment_role="worker"),
+    )
+    monkeypatch.setattr(storage_router, "assert_production_storage_safe", lambda: None)
+    monkeypatch.setattr(observability, "evaluate_alerts", lambda: {"ok": True, "raised": []})
+    monkeypatch.setattr(observability, "sweep_retention", lambda: {"audit_events": 1})
+
+    assert observability.production_maintenance() == {
+        "ok": True,
+        "alerts_raised": 0,
+        "retention": {"audit_events": 1},
+    }
+
+
 def test_development_readiness_has_no_control_plane_probes(monkeypatch, tmp_path):
     development = tmp_path / "development"
     development.mkdir()
@@ -341,6 +548,10 @@ def test_canary_deploy_assets_exist():
         "stratforge-canary-telegram.service",
         "stratforge-canary-operations.service",
         "stratforge-canary-operations.timer",
+        "run-api-canary.sh.example",
+        "run-worker-canary.sh.example",
+        "run-operations-canary.sh.example",
+        "supervisor-canary-programs.conf.example",
     ):
         assert (CANARY_DEPLOY / name).is_file(), name
 
@@ -348,10 +559,60 @@ def test_canary_deploy_assets_exist():
 def test_canary_env_declares_isolated_identity():
     text = (CANARY_DEPLOY / "canary.env.example").read_text(encoding="utf-8")
     assert "DEPLOYMENT_ENV=canary" in text
+    assert "STRATFORGE_DEPLOYMENT_ROLE=api" in text
     assert "STRATFORGE_CANARY_DATA_ROOT=" in text
+    assert "STRATFORGE_DATABASE_APP_ROLE=stratforge_canary_app" in text
     # Production reference identifiers must be present for the collision guard.
     assert "STRATFORGE_PRODUCTION_DATABASE_ID=" in text
     assert "STRATFORGE_PRODUCTION_TELEGRAM_BOT_ID=" in text
+    assert "STRATFORGE_MIGRATION_DATABASE_URL" not in text
+    assert "STRATFORGE_BACKUP_DATABASE_URL" not in text
+
+
+def test_canary_supervisor_templates_declare_split_worker_topology():
+    supervisor = (CANARY_DEPLOY / "supervisor-canary-programs.conf.example").read_text(encoding="utf-8")
+    api = (CANARY_DEPLOY / "run-api-canary.sh.example").read_text(encoding="utf-8")
+    worker = (CANARY_DEPLOY / "run-worker-canary.sh.example").read_text(encoding="utf-8")
+    operations = (CANARY_DEPLOY / "run-operations-canary.sh.example").read_text(encoding="utf-8")
+
+    assert "[program:api]" in supervisor
+    assert "[program:worker-canary]" in supervisor
+    assert "[program:operations-canary]" in supervisor
+    assert "[program:telegram-canary]" not in supervisor
+    assert "--init-system supervisor" in api
+    assert "--init-system supervisor" in worker
+    assert "--init-system supervisor" in operations
+    assert "exec .venv/bin/python -m app.production_workers" in worker
+    assert "--classes interactive_ai,chart,telemetry,maintenance" in worker
+    assert ".venv/bin/python -m app.observability --maintenance" in operations
+
+
+def test_canary_promotion_requires_lockdown_marker_and_full_topology():
+    promote = (REPO_ROOT / "tools" / "canary_blue_green_promote.sh").read_text(encoding="utf-8")
+
+    assert "LOCKDOWN_MARKER_PATH" in promote
+    assert "canary-privilege-lockdown.ok.json" in promote
+    assert "required Canary Supervisor program(s) missing" in promote
+    assert "canary-current must exist before blue-green promotion" in promote
+    assert "missing_targets" in promote
+
+
+def test_canary_connector_catalog_template_matches_strict_schema(monkeypatch, tmp_path):
+    template = json.loads((CANARY_DEPLOY / "connector-releases.example.json").read_text(encoding="utf-8"))
+    placeholder_hash = "0" * 64
+    for channel in ("stable", "canary"):
+        template["channels"][channel]["version"] = "0.0.1"
+        template["channels"][channel]["archive_sha256"] = placeholder_hash
+        template["channels"][channel]["manifest_sha256"] = placeholder_hash
+        template["channels"][channel]["minimum_version"] = "0.0.1"
+        template["channels"][channel]["published_at_utc"] = "2026-08-11T00:00:00Z"
+    path = tmp_path / "connector-releases-canary.json"
+    path.write_text(json.dumps(template), encoding="utf-8")
+    monkeypatch.setenv("STRATFORGE_CONNECTOR_RELEASE_CATALOG", str(path))
+
+    catalog = connector_releases.load_catalog()
+
+    assert set(catalog["channels"]) == {"stable", "canary"}
 
 
 def test_canary_deploy_templates_have_no_real_secrets():
@@ -373,3 +634,101 @@ def test_canary_deploy_templates_have_no_real_secrets():
                     or line.endswith("=")
                     or ".json" in lowered
                 ), f"potential real secret in {path.name}: {line}"
+
+
+def _provision_args(tmp_path: Path, **overrides) -> argparse.Namespace:
+    production_env = tmp_path / "production-app.env"
+    production_env.write_text(
+        "\n".join((
+            "STRATFORGE_DATABASE_URL=postgresql://stratforge_app@db.internal/stratforge",
+            "STRATFORGE_INSTANCE_ID=stratforge-prod-01",
+            f"STRATFORGE_DATA_ROOT={tmp_path / 'production'}",
+            "STRATFORGE_DATABASE_ID=postgres-primary",
+            "STRATFORGE_QUEUE_ID=production-jobs",
+            "STRATFORGE_OBJECT_STORAGE_ID=production-artifacts",
+            "STRATFORGE_TELEGRAM_BOT_ID=production-main",
+            "STRATFORGE_COOKIE_NAMESPACE=sf-prod",
+            "STRATFORGE_SIGNING_KEY_ID=production-key-v1",
+            "STRATFORGE_LOG_NAMESPACE=production",
+            "STRATFORGE_PUBLIC_ORIGIN=https://app.stratforges.com",
+            "STRATFORGE_ALLOWED_HOSTS=app.stratforges.com",
+        )) + "\n",
+        encoding="utf-8",
+    )
+    values = {
+        "canary_app_role": "stratforge_canary_app",
+        "canary_migration_role": "stratforge_canary_migration",
+        "canary_db_name": "stratforge_canary",
+        "instance_id": "stratforge-canary-01",
+        "canary_data_root": str(tmp_path / "canary" / "var"),
+        "canary_artifact_root": str(tmp_path / "canary" / "artifacts"),
+        "production_env_path": str(production_env),
+        "connector_catalog_path": str(tmp_path / "connector-releases-canary.json"),
+        "config_profile": "production-canary",
+        "pg_socket": str(tmp_path / "run" / "postgresql"),
+        "pg_port": 5432,
+        "pg_ca_cert": str(tmp_path / "postgresql-ca.crt"),
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def test_canary_provision_env_is_api_only_and_least_privilege(tmp_path):
+    args = _provision_args(tmp_path)
+    dsn = {
+        "app_url": "postgresql://stratforge_canary_app:app_pw@localhost/stratforge_canary",
+        "migration_url": "postgresql://stratforge_canary_migration:migration_pw@localhost/stratforge_canary",
+    }
+
+    content = canary_isolation_provision.build_canary_env(args, dsn, "test-signing-key")
+    maintenance = canary_isolation_provision.build_canary_maintenance_env(args, dsn)
+
+    assert "STRATFORGE_DEPLOYMENT_ROLE=api" in content
+    assert "STRATFORGE_DATABASE_APP_ROLE=stratforge_canary_app" in content
+    assert "STRATFORGE_DATABASE_URL=postgresql://stratforge_canary_app:" in content
+    assert "\nSTRATFORGE_MIGRATION_DATABASE_URL=" not in content
+    assert "\nSTRATFORGE_BACKUP_DATABASE_URL=" not in content
+    assert "STRATFORGE_MIGRATION_DATABASE_URL=postgresql://stratforge_canary_migration:" in maintenance
+    assert "STRATFORGE_BACKUP_DATABASE_URL=postgresql://stratforge_canary_migration:" in maintenance
+
+
+def test_canary_provision_guard_rejects_unsafe_sql_identifiers(tmp_path):
+    args = _provision_args(tmp_path, canary_app_role="stratforge_canary_app;drop")
+    production = canary_isolation_provision._read_env_file(Path(args.production_env_path))
+
+    with pytest.raises(canary_isolation_provision.ProvisionGuardError, match="PostgreSQL identifier"):
+        canary_isolation_provision._preflight_collision_guard(args, production)
+
+
+def test_canary_privilege_lockdown_revokes_production_and_public(tmp_path):
+    args = _provision_args(tmp_path)
+    production = canary_isolation_provision._read_env_file(Path(args.production_env_path))
+    canary_isolation_provision._preflight_collision_guard(args, production)
+
+    sql = canary_isolation_provision.lockdown_privileges_sql(args, "stratforge_app")
+
+    assert "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM stratforge_app" in sql
+    assert "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC" in sql
+    assert "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO stratforge_canary_app" in sql
+    assert "GRANT USAGE,SELECT ON SEQUENCES TO stratforge_canary_app" in sql
+
+
+def test_canary_lockdown_marker_is_secret_free_and_required_by_promotion(tmp_path):
+    marker_path = tmp_path / "config" / "canary-privilege-lockdown.ok.json"
+    result = {
+        "ok": True,
+        "canary_database_name": "stratforge_canary",
+        "canary_app_role": "stratforge_canary_app",
+        "revoked_from": ["stratforge_app", "PUBLIC"],
+        "granted_to": "stratforge_canary_app",
+    }
+
+    canary_isolation_provision.write_lockdown_marker(marker_path, result)
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+    assert marker["schema_version"] == 1
+    assert marker["ok"] is True
+    assert marker["canary_database_name"] == "stratforge_canary"
+    assert marker["canary_app_role"] == "stratforge_canary_app"
+    assert marker["revoked_from"] == ["stratforge_app", "PUBLIC"]
+    assert "password" not in json.dumps(marker).lower()
