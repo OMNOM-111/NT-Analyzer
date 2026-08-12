@@ -1,6 +1,6 @@
 # Next Architecture Program — Changelog (0.10.0 line)
 
-История поправки: 2026-08-12T23:45:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: `/ready` hang-fix and Environment Switcher default origins.
+История поправки: 2026-08-12T23:50:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: PR #26 merged to main; hang-fix tag on `6b6dc458`.
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — создать честный changelog новой архитектурной программы с разделением по аудитории и по фактическому статусу развёртывания.
 
 Программа: переход от одновладельческого контура к многопользовательской
@@ -97,6 +97,10 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 - Telegram: Production available `@StratForgeAI_bot`; Canary PARTIAL
   `disabled_pending_canary_bot_provisioning`. Google/email remain EXTERNAL
   BLOCKED.
+- Git: [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) MERGED;
+  merge `5b43569d` on `main`; tag `stratforge-server-v0.10.0-beta.1-6b6dc458`
+  on `6b6dc458` only. Existing `stratforge-server-v0.10.0-beta.1` stays on
+  `2f9409c4`.
 
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1 auth/DEV fix)
 
@@ -110,7 +114,7 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 - Production browser: Sign in/Register (Telegram/Google/email); promo/donation
   optional. Telegram `login/start` 200 + waiting UI. Google/email remain
   EXTERNAL BLOCKED. Owner Telegram tap still required to finish a Production
-  session. PR #26 remains OPEN/DRAFT.
+  session. PR #26 later MERGED after the hang-fix artifact.
 
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1) — infra PASS, owner auth FAIL
 

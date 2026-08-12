@@ -10,7 +10,7 @@
 - Version at baseline: `0.9.0-dev.10`
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
 - Next version: `0.10.0-beta.1` (live Canary + Production hang-fix artifact `6b6dc458` as of 2026-08-12)
-- Integration branch: `release/0.10.0-next-architecture` (HEAD `6b6dc4589407855526cf6cc345376d64cf95200e`, PR #26)
+- Integration branch: `release/0.10.0-next-architecture` merged to `main` via [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) (`5b43569d`); live artifact remains `6b6dc4589407855526cf6cc345376d64cf95200e`
 - Production/Canary boundary: both live on the Supervisor host; Canary Telegram bot remains unprovisioned; Production Telegram is live; no live trading / real payments
 
 ## Сводка
@@ -28,7 +28,7 @@
 | 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
 | 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
 | 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. Strategy-spec closed in Phase 11 |
-| 12 | 0.10.0-beta.1 hang-fix live on Canary+Production (`6b6dc458` / `272045DB…`) | `release/0.10.0-next-architecture` | live `6b6dc458`; PR #26 | `/ready` 36ms; Environment Switcher DEV→CANARY→PROD; Telegram Production PASS / Canary PARTIAL; Google/email EXTERNAL BLOCKED |
+| 12 | STAGE CLOSED — hang-fix live Canary+Production | `main` | live `6b6dc458`; merge `5b43569d`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) MERGED; tag `stratforge-server-v0.10.0-beta.1-6b6dc458` | `/ready` 36ms; Environment Switcher DEV→CANARY→PROD; Telegram Production PASS / Canary PARTIAL; Google/email EXTERNAL BLOCKED |
 
 ## Phase 0 evidence
 
@@ -261,7 +261,7 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - **`/ready` hang root cause (reproduced on previous live Production `795db0c1`):** `connector_protocol.readiness_status()` held the Connector lock and called `storage_router.read_document("connectors")`, which deserialized the full JSON document (~19s). Promote used `curl --max-time 5` against `/api/health/ready`; the handler does not write headers until every probe finishes, so each poll received 0 bytes while the previous probe was still running and stacked more inflight `/ready` work on `BoundedThreadingHTTPServer`. `/api/health/live` already includes deployment identity and stays cheap.
 - **Fix now live:** `DocumentRepository.ping()` does `SELECT 1` and never loads JSON; `/ready` runs control-plane probes concurrently with a 2s per-probe timeout, single-flight cache, and `probe_timeout` fail-closed. Environment Switcher defaults to `http://127.0.0.1:8765`, `https://canary.stratforges.com`, `https://app.stratforges.com`. Browser DEV→CANARY→PROD opened those origins in new tabs without copying cookies.
 - Isolation: Production cannot CONNECT to Canary DB and vice versa. No orders placed. Authenticated Production TopstepX/chart smoke remains PARTIAL for a fresh browser (Telegram tap required; no session fabricated). Local DEV owner session shows paper Topstep account read-only.
-- Git: artifact commit `6b6dc458`; existing tag `stratforge-server-v0.10.0-beta.1` stays on `2f9409c4` and is not moved. New tag `stratforge-server-v0.10.0-beta.1-6b6dc458` marks the verified hang-fix artifact. Do not retag a later docs-only commit.
+- Git closeout: artifact commit `6b6dc458`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) MERGED `2026-08-12T23:42:36Z`; merge commit `5b43569df4940189847031000a78b15e44d32320` on `main`. Existing tag `stratforge-server-v0.10.0-beta.1` stays on `2f9409c4` and is not moved. Annotated tag `stratforge-server-v0.10.0-beta.1-6b6dc458` points at `6b6dc4589407855526cf6cc345376d64cf95200e` only. Do not retag a later docs-only or merge commit. `main` == `origin/main` after this closeout.
 
 ### `/ready` hang-fix — required new artifact
 
@@ -286,6 +286,7 @@ Code fix shipped as commit `795db0c1` and the signed artifact above: hydrate aut
 Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]` `6b6dc45` `dirty=0` owner auto-auth; Canary `[CANARY]` Sign in/Register with Telegram disabled; Production `[BETA]` Sign in/Register + Telegram waiting UI. Environment Switcher from DEV opened Canary and Production in new tabs. Google/email remain EXTERNAL BLOCKED. Completing a Production owner session in a fresh browser still requires the owner Telegram tap (no session fabricated).
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-12T23:50:00Z | Grok 4.6 через Cursor по запросу owner | Record PR #26 MERGED to main (5b43569d) and annotated tag stratforge-server-v0.10.0-beta.1-6b6dc458 on the live hang-fix artifact.
 2026-08-12T23:40:00Z | Grok 4.6 через Cursor по запросу owner | Record live 6b6dc458 hang-fix artifact: Canary then exact-artifact Production, /ready 36ms, Environment Switcher DEV→CANARY→PROD.
 2026-08-12T23:45:00Z | Grok 4.6 через Cursor по запросу owner | Record /ready hang root cause (Connector JSON load ~19s + overlapping curl --max-time 5) and the bounded ping/timeout/single-flight/promote-/live fix that requires a new signed artifact.
 2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 artifact after auth/DEV fix: Canary+Production Sign in/Register, Telegram login/start 200, local DEV restored.
