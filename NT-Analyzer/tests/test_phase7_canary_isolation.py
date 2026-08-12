@@ -323,6 +323,14 @@ def test_connector_grandfathers_unstamped_installation(monkeypatch, tmp_path):
     connector_protocol._assert_environment({})
 
 
+def test_canary_connector_repository_uses_server_storage_not_local_secure_store(monkeypatch, tmp_path):
+    _canary_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(connector_protocol.secure_store, "available", lambda: False)
+    monkeypatch.setattr(storage_router, "read_document", lambda _name, default: default)
+
+    assert connector_protocol.readiness_status() == {"ok": True, "code": "ok"}
+
+
 # --------------------------------------------------------------------------- #
 # Readiness contract.
 # --------------------------------------------------------------------------- #
@@ -616,6 +624,15 @@ def test_canary_connector_catalog_template_matches_strict_schema(monkeypatch, tm
     catalog = connector_releases.load_catalog()
 
     assert set(catalog["channels"]) == {"stable", "canary"}
+
+
+def test_canary_provision_refreshes_stale_connector_catalog_on_force(tmp_path):
+    path = tmp_path / "connector-releases-canary.json"
+    path.write_text(json.dumps({"schema_version": 1, "channel": "beta", "installations": []}), encoding="utf-8")
+
+    assert canary_isolation_provision._connector_catalog_needs_refresh(path) is True
+    path.write_text(json.dumps(canary_isolation_provision.default_connector_catalog()), encoding="utf-8")
+    assert canary_isolation_provision._connector_catalog_needs_refresh(path) is False
 
 
 def test_canary_deploy_templates_have_no_real_secrets():

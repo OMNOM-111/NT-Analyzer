@@ -460,6 +460,27 @@ def default_connector_catalog() -> dict[str, object]:
     }
 
 
+def _connector_catalog_needs_refresh(path: Path) -> bool:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return True
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        return True
+    channels = raw.get("channels")
+    if not isinstance(channels, dict) or set(channels) != {"stable", "canary"}:
+        return True
+    required = {
+        "version", "archive_url", "archive_sha256", "manifest_sha256",
+        "protocol_version", "minimum_version", "blocked_versions",
+        "major_approved", "health_timeout_sec", "published_at_utc",
+    }
+    for value in channels.values():
+        if not isinstance(value, dict) or set(value) != required:
+            return True
+    return False
+
+
 def build_canary_env(args: argparse.Namespace, dsn: dict[str, str], signing_key: str) -> str:
     production = _read_env_file(Path(args.production_env_path))
     reference_lines = []
@@ -662,7 +683,7 @@ def main() -> int:
         os.chmod(directory, 0o700)
 
     catalog_path = Path(args.connector_catalog_path)
-    if not catalog_path.exists():
+    if not catalog_path.exists() or (args.force and _connector_catalog_needs_refresh(catalog_path)):
         catalog_path.write_text(
             json.dumps(default_connector_catalog(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

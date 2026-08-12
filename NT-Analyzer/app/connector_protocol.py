@@ -226,7 +226,7 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
 
 
 def _read_doc() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -283,7 +283,7 @@ def _read_doc() -> Dict[str, Any]:
 
 def _write_doc(doc: Dict[str, Any]) -> None:
     doc, _ = _migrate_doc(doc)
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if runtime_env.is_server_environment() and runtime_env.environment_explicit():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -1980,7 +1980,7 @@ def revoke_installation(
 
 
 def readiness_status() -> Dict[str, Any]:
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()) and not secure_store.available():
+    if not (runtime_env.is_server_environment() and runtime_env.environment_explicit()) and not secure_store.available():
         return {"ok": False, "code": "connector_repository_unavailable"}
     try:
         with _LOCK:
