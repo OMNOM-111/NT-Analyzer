@@ -232,7 +232,25 @@ def _release_identity(
         "BUILD_TIMESTAMP_UTC", "STRATFORGE_BUILD_TIMESTAMP_UTC",
     ))
     legacy_build_date = str(os.environ.get("STRATFORGE_BUILD_DATE") or "").strip()
-    if environment == DEVELOPMENT or not required:
+    if environment == DEVELOPMENT:
+        # Development is invariantly RELEASE_CHANNEL=dev (enforced below).
+        # VERSION.json's channel field describes the *next release
+        # candidate* being prepared for Canary/Production (e.g. "beta"
+        # while a beta build is cut) and must never leak into the
+        # Development runtime default; only its version/timestamp are
+        # reused as a convenience default.
+        version = version or defaults.get("version", "")
+        channel = channel or "dev"
+        build_timestamp = (
+            build_timestamp
+            or defaults.get("build_timestamp_utc", "")
+            or (f"{legacy_build_date}T00:00:00Z" if legacy_build_date else "")
+            or (
+                f"{defaults.get('build_date', '')}T00:00:00Z"
+                if defaults.get("build_date", "") else ""
+            )
+        )
+    elif not required:
         version = version or defaults.get("version", "")
         channel = channel or _normalize_channel(defaults.get("channel", "dev"))
         build_timestamp = (

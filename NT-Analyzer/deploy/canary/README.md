@@ -67,3 +67,32 @@ database reachability and real Telegram/Connector acceptance remain manual
 readiness checks performed only after real Canary provisioning is approved. Do
 not expose port 18766, RDP, NinjaTrader IPC, a Windows share, debug routes or
 metrics to the Internet.
+
+## Real host topology note (owner-approved provisioning, 2026-08-11)
+
+The systemd units above describe the aspirational rootless-systemd target.
+The actual current production host runs **no systemd**; a single root
+`supervisord` instance manages every process (`api`, `api-app`, `worker`,
+`operations`, `telegram`, `cloudflared`, `postgresql`, `artifact-server`).
+For this real topology, provisioning and promotion are done with:
+
+- `tools/canary_isolation_provision.py` — one-time, idempotent creation of
+  the isolated Canary PostgreSQL role/database, a dedicated Canary data
+  root, and `canary.env` with every identity distinct from Production
+  (checked by `assert_environment_isolation`). Never prints a secret value.
+- `run-api-canary.sh.example`, `run-worker-canary.sh.example`,
+  `run-operations-canary.sh.example`, `supervisor-canary-programs.conf.example`
+  — the Canary-only Supervisor program set (`api`, `worker-canary`,
+  `operations-canary`). `telegram-canary` is intentionally not included
+  until a real, separate Canary Telegram bot token exists.
+- `tools/canary_blue_green_promote.sh` — the real blue-green executor for
+  this Supervisor topology: verifies the release manifest is
+  `trust_tier: production` with a valid ECDSA P-256 signature, atomically
+  swaps only the `canary-current`/`canary-previous` symlinks, restarts only
+  the Canary programs, polls `canary.stratforges.com` health, and
+  automatically rolls back on any failure. Production's `current`/
+  `previous` symlinks and `api-app`/`worker`/`operations`/`telegram`
+  programs are never touched.
+
+Canary's API already runs on `127.0.0.1:18765` (routed by the existing
+Cloudflare ingress); no new port was required for this isolation pass.

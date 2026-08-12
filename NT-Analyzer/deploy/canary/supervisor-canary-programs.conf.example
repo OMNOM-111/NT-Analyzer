@@ -1,0 +1,47 @@
+# Supervisor program stanzas for the isolated Canary contour on the real
+# (non-systemd) production host. Append to the host's supervisord.conf
+# `[program:api]` block command (repoint it at run-api-canary.sh) and add
+# the two new blocks below, then:
+#   sudo supervisorctl -c <conf> reread
+#   sudo supervisorctl -c <conf> update
+#   sudo supervisorctl -c <conf> start worker-canary operations-canary
+#
+# telegram-canary is deliberately NOT included here: it must not exist
+# until a real, separate Canary Telegram bot token has been provisioned
+# out-of-band by the owner (never reuse the Production token).
+
+[program:worker-canary]
+command=/home/stratforge/production_data/config/run-worker-canary.sh
+user=stratforge
+priority=41
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/worker-canary.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"
+
+[program:operations-canary]
+command=/home/stratforge/production_data/config/run-operations-canary.sh
+user=stratforge
+priority=61
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/operations-canary.log
+stdout_logfile_maxbytes=30MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"

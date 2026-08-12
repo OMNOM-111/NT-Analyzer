@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Canary worker process. There is no shared worker between Production and
+# Canary: Production's existing `worker` program keeps serving
+# production-app.env only. Install as
+# /home/stratforge/production_data/config/run-worker-canary.sh.
+set -euo pipefail
+umask 077
+set -a
+. /home/stratforge/production_data/config/canary.env
+set +a
+export STRATFORGE_DEPLOYMENT_ROLE=worker PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+cd /home/stratforge/canary-current
+.venv/bin/python tools/production_preflight.py \
+  --app-root /home/stratforge/canary-current \
+  --env-file /home/stratforge/production_data/config/canary.env
+exec .venv/bin/python -m app.production_workers --classes interactive_ai,chart,telemetry,maintenance --poll-ms 250 --shutdown-grace-sec 60
