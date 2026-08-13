@@ -32,8 +32,8 @@
   .rev-created { padding:6px 8px; border-radius:7px; background:var(--bg-2); color:var(--tx-2); font-size:11.5px; }
   .rev-summary { display:grid; gap:4px; margin:6px 0; padding:7px 8px; border:1px solid var(--line); border-radius:8px; background:var(--bg-1); font-size:11.5px; line-height:1.35; }
   .rev-summary-label { color:var(--tx-3); font-weight:600; }
-  .rev-summary del { color:#e06666; text-decoration-thickness:1.5px; }
-  .rev-summary ins { color:#2ecc71; text-decoration:none; font-weight:600; }
+  .rev-summary del { color:var(--neg); text-decoration:line-through; text-decoration-thickness:2px; background:color-mix(in srgb, var(--neg) 14%, transparent); border-radius:4px; padding:0 3px; }
+  .rev-summary ins { color:var(--pos); text-decoration:none; font-weight:600; background:color-mix(in srgb, var(--pos) 14%, transparent); border-radius:4px; padding:0 3px; }
   .rev-details { margin-top:5px; }
   .rev-tech { display:grid; gap:3px; padding:6px 0; color:var(--tx-3); font-size:10.5px; }
   .rev-tech code { word-break:break-all; }
@@ -43,6 +43,34 @@
   .rev-diff .dl.del { background:rgba(220,60,60,0.14); color:#e06666; text-decoration:line-through; }
   .rev-diff .dl.ctx { color:var(--tx-3); }
   .rev-diff-toggle { font-size:11px; color:var(--ac); cursor:pointer; user-select:none; }
+
+  @media (min-width: 861px){
+    .docs-grid > aside { align-self:start; position:sticky; top:78px; max-height:calc(100vh - 94px); overflow-y:auto; overscroll-behavior:contain; }
+  }
+
+  .doc .st-pill { display:inline-block; font-size:10px; font-weight:700; line-height:1; padding:3px 8px; border-radius:999px; letter-spacing:.02em; vertical-align:baseline; white-space:nowrap; }
+  .doc .st-ok { background:color-mix(in srgb, var(--pos) 18%, transparent); color:var(--pos); }
+  .doc .st-dev { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
+  .doc .st-plan { background:var(--bg-3); color:var(--tx-2); }
+  .doc .st-blocked { background:color-mix(in srgb, var(--neg) 16%, transparent); color:var(--neg); }
+  .doc .st-beta { background:var(--brand-soft); color:var(--brand); }
+  .doc .st-dep { background:var(--bg-3); color:var(--tx-3); text-decoration:line-through; }
+
+  .doc .doc-tablewrap { margin:14px 0; overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  .doc table.doc-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .doc table.doc-table th, .doc table.doc-table td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .doc table.doc-table thead th { background:var(--bg-2); color:var(--tx-1); font-weight:700; }
+  .doc table.doc-table tbody tr:last-child td { border-bottom:0; }
+  .doc table.doc-table tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--bg-2) 45%, transparent); }
+
+  .doc ul ul, .doc ol ol, .doc ul ol, .doc ol ul { margin:4px 0; }
+  .doc ul ul { list-style:circle; }
+  .doc ul ul ul { list-style:square; }
+  .doc li > ul, .doc li > ol { padding-left:20px; }
+
+  .doc blockquote .bq-lead { font-size:16px; font-weight:700; color:var(--brand-ink); margin-bottom:4px; }
+  .doc blockquote p { margin:4px 0; }
+  .doc blockquote p:last-child { margin-bottom:0; }
 </style>
 </head>
 <body data-page="docs" data-title="Документы и законы" data-kicker="StratForge AI · Управление и законы">
@@ -98,6 +126,6 @@
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260813-release-workflow2"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/documents.js?v=20260812-final-acceptance1"></script>
+<script src="assets/pages/documents.js?v=20260813-docs-ux2"></script>
 </body>
 </html>

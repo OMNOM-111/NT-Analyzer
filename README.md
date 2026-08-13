@@ -1,6 +1,12 @@
 # StratForge AI
 
-StratForge AI is a trading-analytics platform for market and strategy research.
+StratForge AI exists so that any trader — regardless of experience or coding
+skills — can turn a trading idea into a fully automatic strategy, validated on
+real historical data, and stop sitting at the monitor. *A trader is good;
+auto-trading is even better.* A team of AI agents writes the strategy code, tests
+it through the NinjaTrader Strategy Analyzer on real history, and improves it
+until it meets the target criteria — then hands it back ready for demo testing.
+
 It brings together realtime charts and multi-provider market data, NinjaTrader 8
 integration through the StratForge Connector, an AI Agent Team, backtesting, and
 strategy lifecycle management in one local-first application: the Aurora web UI
@@ -129,4 +135,5 @@ Proprietary. See `LICENSE`.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Aligned the product overview with the accepted TopstepX-first read-only chart baseline, NinjaTrader execution/runtime authority, and the current live-command release gate.
+2026-08-13T09:03:17Z | GPT-5.5 через Codex по запросу owner | Integrated the owner-approved mission-led product opening while preserving the accepted market-data and release boundaries.
 -->

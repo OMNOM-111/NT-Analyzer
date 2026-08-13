@@ -47,6 +47,7 @@ UI.ready(async function () {
     'registry-policy':    { section: 'dev',        title: 'Политика реестра стратегий',            desc: 'Правила ведения реестра.' },
     'ai-lab-system-coder':{ section: 'dev',        title: 'Локальный AI prompt',                   desc: 'Технический промпт-контракт.' },
     'ai-staff-management':{ section: 'owner',      title: 'Секретарь / Заместитель / Управляющий', desc: 'Внутренние управляющие роли.' },
+    'north-star-2026':    { section: 'owner',      title: 'Цель проекта 2026 (North Star)',          desc: 'Ориентир владельца: $100k с онлайн-стратегий.' },
     'legal-00': { section: 'legal', title: 'Ключевые юридические положения', desc: 'Краткое резюме перед регистрацией.', badge: 'ПРОЕКТ' },
     'legal-01': { section: 'legal', title: 'Пользовательское соглашение (ToS + EULA)', desc: 'Главный договор пользователя.', badge: 'ПРОЕКТ' },
     'legal-02': { section: 'legal', title: 'Политика конфиденциальности', desc: 'Обработка данных.', badge: 'ПРОЕКТ' },
@@ -66,16 +67,22 @@ UI.ready(async function () {
     return { section: 'dev', title: label, desc: '' };
   }
   const STATIC_DOCS = [
-    { id: 'p-capabilities', section: 'capabilities', title: 'Что умеет платформа', desc: 'Текущие возможности со статусами.', content: [
+    { id: 'p-capabilities', section: 'capabilities', title: 'Что умеет платформа', desc: 'Что уже работает и что в разработке.', content: [
       '# Что умеет StratForge AI', '',
-      'Статусы: `AVAILABLE` — доступно · `EXTERNAL BLOCKED` — реализовано, но выключено внешним условием.', '',
-      '- **Realtime-графики и market data** — `AVAILABLE`. TopstepX — основной независимый read-only источник history + realtime; графики работают при выключенном NinjaTrader.',
-      '- **NinjaTrader Connector** — runtime fallback для графиков и единственный путь исполнения; внешний chart feed никогда не авторизует ордер.',
-      '- **Бэктестинг и управление стратегиями** — `AVAILABLE`.',
-      '- **AI Strategy Lab и AI-агенты** — `AVAILABLE` (локальный LLM приоритетно, облачный резерв — opt-in с лимитами).',
-      '- **Учебная (Practice) торговля** — `AVAILABLE`, на виртуальные средства.',
-      '- **Режим Simulation / Live** — `IN DEVELOPMENT — release-gated`. Определяется подключённым аккаунтом NinjaTrader; отправка live-команд сейчас закрыта release-gate на стороне сервера. Внешние/regulatory prerequisites — отдельно.', '',
-      'Полная цель и границы — в разделе «О StratForge AI».',
+      'Цветной значок показывает готовность: **Доступно** — можно пользоваться сейчас, **В разработке** — скоро, **Ждёт условия** — готово, но включается позже.', '',
+      '## Уже работает', '',
+      '- **Автоматическая разработка стратегий** — `AVAILABLE`. ИИ-агенты сами пишут, тестируют и улучшают стратегии; можно запускать несколько параллельно.',
+      '- **Бэктест на реальной истории** — `AVAILABLE`. Проверка идеи на исторических данных с подробными метриками.',
+      '- **Графики и котировки** — `AVAILABLE`. Независимый источник TopstepX; графики работают даже при выключенном NinjaTrader.',
+      '- **Рабочий стол без ограничений** — `AVAILABLE`. Любое количество графиков и таймфреймов.',
+      '- **Агент и уведомления в Telegram** — `AVAILABLE`. Личный помощник отвечает на вопросы и присылает уведомления.',
+      '- **Учебный режим** — `AVAILABLE`. Тренировка на виртуальных деньгах в формате челленджа проп-компании.', '',
+      '## В разработке', '',
+      '- **Личные цели и задачи агенту** — `PLANNED`. Каждый пользователь ставит свою цель, а личный агент отслеживает её и выполняет задачи для достижения.',
+      '- **Пометки и алерты на графике** — `IN DEVELOPMENT`. Отметить уровень и получить сигнал, когда цена до него дойдёт.',
+      '- **Сообщество** — `IN DEVELOPMENT`. Обмен стратегиями и аналитикой.',
+      '- **Реальная торговля (Live)** — `IN DEVELOPMENT — release-gated`. Платформа уже видит режим счёта NinjaTrader; отправка живых команд пока закрыта до отдельного решения.', '',
+      'Подробнее о цели и границах — в разделе «О StratForge AI».',
     ].join('\n') },
     { id: 'p-principles', section: 'principles', title: 'Основные принципы', desc: 'Как устроена работа платформы.', content: [
       '# Основные принципы', '',
@@ -108,6 +115,8 @@ UI.ready(async function () {
     { id: 'owner-info', section: 'owner', title: 'Владелец и внутренние записи', desc: 'Только для владельца/разработчика.', content: [
       '# Владелец и внутренние записи', '',
       '- **Владелец проекта:** Черевко Дмитро.',
+      '- **Цель проекта (North Star):** ориентир владельца — $100k с онлайн-стратегий. Это цель всего проекта, а не отдельного пользователя.',
+      '- **Личные цели пользователей** — отдельная функция (в разработке): каждый ставит свою цель и поручает её достижение своему агенту; агент отслеживает прогресс и выполняет задачи.',
       '- Журнал редакций и внутренние технические сведения доступны справа; подробности каждой редакции свёрнуты в «Подробнее».',
       '- Эти материалы намеренно скрыты по умолчанию и не показываются обычному пользователю.',
     ].join('\n') },
@@ -125,12 +134,50 @@ UI.ready(async function () {
     return `<h${level}>${inline(raw)}</h${level}>`;
   }
 
-  // minimal markdown renderer (headings, bold, code, lists, blockquote, hr, tables)
+  // Status codes are humanised into coloured pills so readers don't parse jargon.
+  const STATUS_PILL = {
+    'AVAILABLE': ['ok', 'Доступно'],
+    'BETA': ['beta', 'Бета'],
+    'IN DEVELOPMENT': ['dev', 'В разработке'],
+    'IN DEVELOPMENT — release-gated': ['dev', 'В разработке'],
+    'PLANNED': ['plan', 'Скоро'],
+    'EXTERNAL BLOCKED': ['blocked', 'Ждёт условия'],
+    'DEPRECATED': ['dep', 'Устарело'],
+  };
+
+  // minimal markdown renderer (headings, bold, code, nested lists, blockquote, hr, tables)
   function md(src) {
-    const lines = String(src || '').split('\n').map(s => s.replace(/\r$/, ''));
-    let html = ''; let inList = false, listType = 'ul';
-    const inline = t => UI.esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
-    function closeList() { if (inList) { html += `</${listType}>`; inList = false; } }
+    const rawLines = String(src || '').split('\n').map(s => s.replace(/\r$/, ''));
+    let html = '';
+    const inline = t => UI.esc(t)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, (_m, code) => {
+        const pill = STATUS_PILL[code.trim()];
+        return pill ? `<span class="st-pill st-${pill[0]}">${pill[1]}</span>` : `<code>${code}</code>`;
+      });
+    const isBlockStart = s => /^#{1,6}\s/.test(s) || /^\s*[-*] /.test(s) || /^\s*\d+\. /.test(s) || /^>/.test(s) || /^---/.test(s) || /\|/.test(s) || /^\s*<!--/.test(s);
+    const prevAcceptsCont = s => s.trim() !== '' && !/^#{1,6}\s/.test(s) && !/^>/.test(s) && !/^---/.test(s) && !/\|/.test(s) && !/^\s*<!--/.test(s);
+    // Merge hard-wrapped continuation lines into their paragraph / list item so
+    // prose doesn't render as many choppy one-line blocks.
+    const lines = [];
+    for (const line of rawLines) {
+      const prev = lines.length ? lines[lines.length - 1] : '';
+      if (lines.length && line.trim() !== '' && !isBlockStart(line) && prevAcceptsCont(prev)) {
+        lines[lines.length - 1] = prev.replace(/\s+$/, '') + ' ' + line.trim();
+      } else {
+        lines.push(line);
+      }
+    }
+    const listStack = [];
+    function closeLists() { while (listStack.length) html += '</' + listStack.pop().type + '>'; }
+    function listItem(indent, type, content) {
+      while (listStack.length && listStack[listStack.length - 1].indent > indent) html += '</' + listStack.pop().type + '>';
+      const top = listStack[listStack.length - 1];
+      if (top && top.indent === indent) {
+        if (top.type !== type) { html += '</' + top.type + '>'; listStack.pop(); html += '<' + type + '>'; listStack.push({ type, indent }); }
+      } else { html += '<' + type + '>'; listStack.push({ type, indent }); }
+      html += '<li>' + inline(content) + '</li>';
+    }
     const isSep = s => /\|/.test(s) && /^[\s:|-]+$/.test(s) && /-/.test(s);
     const cells = s => s.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
     let inComment = false;
@@ -145,27 +192,45 @@ UI.ready(async function () {
         continue;
       }
       if (/\|/.test(l) && i + 1 < lines.length && isSep(lines[i + 1])) {
-        closeList();
+        closeLists();
         const header = cells(l);
         let j = i + 2; const rows = [];
         while (j < lines.length && /\|/.test(lines[j]) && lines[j].trim() !== '') { rows.push(cells(lines[j])); j++; }
-        html += '<table class="doc-table"><thead><tr>' + header.map(h => '<th>' + inline(h) + '</th>').join('') +
+        html += '<div class="doc-tablewrap"><table class="doc-table"><thead><tr>' + header.map(h => '<th>' + inline(h) + '</th>').join('') +
           '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') +
-          '</tbody></table>';
+          '</tbody></table></div>';
         i = j - 1;
         continue;
       }
-      if (/^### /.test(l)) { closeList(); html += headingHtml(3, l.slice(4), inline); }
-      else if (/^## /.test(l)) { closeList(); html += headingHtml(2, l.slice(3), inline); }
-      else if (/^# /.test(l)) { closeList(); html += headingHtml(1, l.slice(2), inline); }
-      else if (/^> /.test(l)) { closeList(); html += '<blockquote>' + inline(l.slice(2)) + '</blockquote>'; }
-      else if (/^---/.test(l)) { closeList(); html += '<hr>'; }
-      else if (/^\s*[-*] /.test(l)) { if (!inList || listType !== 'ul') { closeList(); html += '<ul>'; inList = true; listType = 'ul'; } html += '<li>' + inline(l.replace(/^\s*[-*] /, '')) + '</li>'; }
-      else if (/^\s*\d+\. /.test(l)) { if (!inList || listType !== 'ol') { closeList(); html += '<ol>'; inList = true; listType = 'ol'; } html += '<li>' + inline(l.replace(/^\s*\d+\. /, '')) + '</li>'; }
-      else if (l.trim() === '') { closeList(); }
-      else { closeList(); html += '<p>' + inline(l) + '</p>'; }
+      const um = l.match(/^(\s*)[-*] (.*)$/);
+      const om = l.match(/^(\s*)\d+\. (.*)$/);
+      if (/^### /.test(l)) { closeLists(); html += headingHtml(3, l.slice(4), inline); }
+      else if (/^## /.test(l)) { closeLists(); html += headingHtml(2, l.slice(3), inline); }
+      else if (/^# /.test(l)) { closeLists(); html += headingHtml(1, l.slice(2), inline); }
+      else if (/^>/.test(l)) {
+        closeLists();
+        const buf = [];
+        let j = i;
+        while (j < lines.length && /^>/.test(lines[j])) { buf.push(lines[j].replace(/^>\s?/, '')); j++; }
+        const inner = []; let qp = [];
+        const flushQp = () => { if (qp.length) { inner.push('<p>' + inline(qp.join(' ')) + '</p>'); qp = []; } };
+        buf.forEach(q => {
+          const h = q.match(/^#{1,6}\s+(.*)$/);
+          if (h) { flushQp(); inner.push('<div class="bq-lead">' + inline(h[1]) + '</div>'); }
+          else if (q.trim() === '') flushQp();
+          else qp.push(q);
+        });
+        flushQp();
+        html += '<blockquote>' + inner.join('') + '</blockquote>';
+        i = j - 1;
+      }
+      else if (/^---/.test(l)) { closeLists(); html += '<hr>'; }
+      else if (um) { listItem(um[1].length, 'ul', um[2]); }
+      else if (om) { listItem(om[1].length, 'ol', om[2]); }
+      else if (l.trim() === '') { closeLists(); }
+      else { closeLists(); html += '<p>' + inline(l.trim()) + '</p>'; }
     }
-    closeList(); return html;
+    closeLists(); return html;
   }
 
   function fmtTs(iso) { try { return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso || ''; } }

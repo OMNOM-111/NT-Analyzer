@@ -812,6 +812,15 @@ def test_documents_page_has_privileged_compact_revision_journal_and_law_anchors(
     assert "style.gridTemplateColumns" not in js
     assert "classList.toggle('docs-privileged'" in js
     assert "classList.toggle('docs-journal-hidden'" in js
+    assert "STATUS_PILL" in js
+    assert "doc-tablewrap" in js and "listStack" in js
+    assert "bq-lead" in js
+    assert "Юридические документы (проекты)" in js
+    assert js.count("badge: 'ПРОЕКТ'") >= 9
+    assert ".doc .st-pill" in html
+    assert ".doc .doc-tablewrap" in html
+    assert ".rev-summary del" in html and "var(--neg)" in html
+    assert ".rev-summary ins" in html and "var(--pos)" in html
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
 
