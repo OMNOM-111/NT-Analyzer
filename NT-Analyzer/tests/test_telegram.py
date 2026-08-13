@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import threading
 import time
 from datetime import datetime, timezone
@@ -62,6 +63,13 @@ def test_bot_username_falls_back_to_configured_token_identity(monkeypatch, tmp_p
     telegram_service._BOT_USERNAME_CACHE = ""
 
     assert telegram_service.bot_username() == "StratForge_bot"
+
+
+def test_server_auth_paths_use_bot_username_fallback() -> None:
+    source = (Path(__file__).resolve().parents[1] / "app" / "server.py").read_text(encoding="utf-8")
+
+    assert 'load_settings().get("bot_username")' not in source
+    assert "telegram_service.bot_username()" in source
 
 
 def test_private_chat_pairing_uses_one_time_code(monkeypatch, tmp_path) -> None:
