@@ -1,8 +1,8 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: DONE
 
@@ -19,9 +19,9 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `DONE` | primary owner/operator entry, bot-based login link, contact verification, Mini App integration |
-| Google | `PARTIAL` | provider path exists and verified email can participate in identity/security flows; operational state still depends on environment config |
-| Email | `PARTIAL` | provider is part of the canonical identity model; do not assume a fully operational transactional Production sender without separate deployment evidence |
+| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works and local DEV owner session works; Canary remains `disabled_pending_canary_bot_provisioning` |
+| Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
+| Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 
 ## Account linking rules
 
@@ -54,6 +54,17 @@ Key admin capability names already in the contract: `admin.view`,
 - Step-up is the intended gate for linking identities, trusting a device,
   personal NinjaTrader pairing, Connector revoke and release approvals.
 
+## Operational auth snapshot
+
+- Production browser serves Sign in/Register and Telegram `login/start` is
+  operational.
+- Completing a fresh Production owner session still requires the real Telegram
+  tap; no session is fabricated for acceptance.
+- Canary intentionally stays `PARTIAL` until a separate Canary bot is
+  provisioned.
+- Google and email must remain `EXTERNAL BLOCKED` in Production until their
+  external provider configurations exist.
+
 ## Personal NinjaTrader security requirements
 
 1. User identity must already be authenticated.
@@ -66,6 +77,8 @@ Key admin capability names already in the contract: `admin.view`,
 
 - Treat Production email login as incomplete until a real transactional backend is
   clearly configured and accepted for the target environment.
+- Treat Production Google login as blocked until the real external OAuth client,
+  secret and callback configuration are accepted for Production.
 - Treat trusted-device hard enforcement for every release-critical action as
   incomplete until the step-up workflow is fully rolled out across those paths.
 - Treat wide public personal-NT onboarding as incomplete even though the model,
@@ -88,3 +101,4 @@ Key admin capability names already in the contract: `admin.view`,
 - `app/auth_identity.py`
 - `app/security_devices.py`
 - `app/personal_nt_security.py`
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)

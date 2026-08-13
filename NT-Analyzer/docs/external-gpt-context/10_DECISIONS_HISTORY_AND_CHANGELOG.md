@@ -1,8 +1,8 @@
 # 10. Decisions History and Changelog
 
 - Context Pack document: 10_DECISIONS_HISTORY_AND_CHANGELOG.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: High-value milestones and architectural decisions only
 - Status: DONE
 
@@ -20,6 +20,8 @@
 | 2026-08-01 | ADR-0005 fixed immutable release promotion as the target model | established `clean commit -> signed artifact -> canary -> same artifact -> production` | current |
 | 2026-08-10 | user-facing legal package was created as DRAFT only | gave the repo a concrete legal surface without pretending it was already published | current DRAFT |
 | 2026-08-11 | public version metadata moved to `0.10.0-beta.1` and README current-state wording was aligned around TopstepX-first charts and NinjaTrader execution authority | reduced drift between top-level product docs and actual current contracts | current |
+| 2026-08-12 | Auth/DEV fix shipped as signed artifact `795db0c1` and restored Sign in/Register plus local DEV owner flow | converted a reopened owner-acceptance failure into a real operational release artifact | superseded by the later hang-fix release, but still the direct previous slot |
+| 2026-08-12 | `/ready` hang was fixed in signed artifact `6b6dc458` and the exact same release directory was accepted on Canary then Production | proved the live promotion path, bounded readiness probes and environment switch behavior | current operational baseline |
 | 2026-08-13 | External GPT Context Pack introduced | created a compact, updateable handoff surface for external LLM projects with no repo access | current |
 
 ## What this history replaces
@@ -28,6 +30,8 @@
   are superseded by current schema and code.
 - Older environment descriptions that mix `canary` with release channel labels are
   superseded by ADR-0001 and `README-RUN-MODES.md`.
+- Older statements that “the current live build is unknown from the repo” are
+  superseded by the canonical operational release snapshot for `6b6dc458`.
 - Older market-data stories that imply charts follow NinjaTrader uptime are
   superseded by the TopstepX-first read-only baseline.
 
@@ -40,4 +44,5 @@
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
 - [../adr/0005-immutable-release-promotion.md](../adr/0005-immutable-release-promotion.md)
 - [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md)
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
 - [../legal/README.md](../legal/README.md)

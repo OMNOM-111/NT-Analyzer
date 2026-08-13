@@ -1,8 +1,8 @@
 # StratForge AI External GPT Context Pack
 
 - Context Pack document: 00_STRATFORGE_CONTEXT_INDEX.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: Entry point, pack inventory, reading order and status legend
 - Status: DONE
 
@@ -22,9 +22,11 @@ GitHub, локальному компьютеру, серверу или runtime
 | Проверенный Git root | корень репозитория; живой продуктовый код находится в `NT-Analyzer/` |
 | Public version | `0.10.0-beta.1` |
 | Release status | `beta`, `pre_release` |
-| DEV | локальный loopback development из `NT-Analyzer/`; dirty checkout разрешён и должен явно маркироваться |
-| CANARY | отдельное deployment environment на `https://canary.stratforges.com`; тот же immutable-artifact принцип, что и для Production; текущий live build из репозитория не доказуем |
-| PRODUCTION | публичный origin `https://app.stratforges.com`; release channel может быть `beta` или `stable`; live trading остаётся gated |
+| Repository evidence snapshot | `cad53f682e413db86bc3a77e57f8942baf4d4bc3` |
+| Operational release snapshot | accepted closeout `0.10.0-beta.1` / `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, `same_release_dir=true`, `previous=795db0c1` |
+| DEV | operationally confirmed as `http://127.0.0.1:8765/ui/` `[DEV]`, app identity `6b6dc458`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
+| CANARY | operationally confirmed as `https://canary.stratforges.com` `[CANARY]`, same artifact as Production, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `PARTIAL` |
+| PRODUCTION | operationally confirmed as `https://app.stratforges.com` `[BETA]`, same artifact as Canary, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Порядок чтения
 
@@ -77,12 +79,19 @@ smaller external vocabulary.
 | `PLANNED` | целевое направление без готового current implementation contract |
 | `DEPRECATED` | историческое или вытесненное решение; не считать current state |
 
-## Source-of-truth hierarchy
+## Evidence model
 
-1. Current code, current schema and current config contracts.
-2. Current canonical docs and ADRs.
-3. Current release manifests, build scripts and deployment runbooks.
-4. Historical plans, handoffs and audits only as explanation of context, not as current truth.
+- **Repository evidence**: current code, schema, config and current canonical docs
+	that describe what the repository implements.
+- **Operational evidence**: the latest accepted release/deployment closeout
+	captured in canonical repo docs, currently
+	[../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
+- **Historical evidence**: plans, older audits and handoffs used only to explain
+	why the system looks the way it does today.
+
+When the question is “what is deployed now”, prefer operational evidence. When
+the question is “what does the current repository implement”, prefer repository
+evidence. Do not collapse the two into one undifferentiated claim.
 
 ## Canonical repo evidence to pair with this pack when needed
 
@@ -90,3 +99,4 @@ smaller external vocabulary.
 - Docs tree and governance: [../DOCS_STRUCTURE.md](../DOCS_STRUCTURE.md), [../DOCUMENTATION_GOVERNANCE.md](../DOCUMENTATION_GOVERNANCE.md)
 - Environment and identity ADRs: [../adr/0001-environments-and-release-identity.md](../adr/0001-environments-and-release-identity.md), [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md), [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md), [../adr/0005-immutable-release-promotion.md](../adr/0005-immutable-release-promotion.md)
 - Connector and market-data contracts: [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md), [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
+- Operational release evidence: [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md), [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md), [../changelog/NEXT_ARCHITECTURE_CHANGELOG.md](../changelog/NEXT_ARCHITECTURE_CHANGELOG.md)

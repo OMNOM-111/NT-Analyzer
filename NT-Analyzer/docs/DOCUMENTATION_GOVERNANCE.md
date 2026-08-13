@@ -68,6 +68,19 @@ gap**, а не `PLANNED` и не «будущая стадия продукта�
 Минимум после каждой значимой законченной задачи перепроверяются
 `02_CURRENT_SYSTEM_STATE.md` и `11_ACTIVE_WORK_AND_HANDOFF.md`.
 
+После подтверждённого Canary/Production deployment или release acceptance
+исполнитель обязан обновить `02_CURRENT_SYSTEM_STATE.md`,
+`04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md` и `11_ACTIVE_WORK_AND_HANDOFF.md` в том
+же release closeout и зафиксировать exact: `version`, artifact git SHA,
+authoritative manifest/archive SHA256 из release evidence, `build ID`,
+Canary/Production status, `same_release_dir` при наличии,
+`previous`/rollback slot и все `PARTIAL` / `EXTERNAL BLOCKED` пункты.
+
+Если operational release evidence ещё не записано в канонической repo
+документации, сначала создаётся/обновляется компактный canonical
+release-snapshot / handoff document в `docs/changelog/` или другой уже
+утверждённой current/changelog зоне, и только затем обновляется Context Pack.
+
 Даты не переписываются автоматически по всему пакету. Обновляется только тот
 документ, чьи факты реально затронуты. Для проверки используется
 `python tools/validate_external_gpt_context.py`.
