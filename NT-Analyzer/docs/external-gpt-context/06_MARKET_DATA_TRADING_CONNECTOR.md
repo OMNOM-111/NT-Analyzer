@@ -1,8 +1,8 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: NinjaTrader authority, Connector protocol, market-data priorities and trading safety gates
 - Status: DONE
 
@@ -25,7 +25,7 @@
 | Read-only charts | `DONE` | TopstepX history + realtime can operate with NinjaTrader OFF and feed multiple browser clients |
 | Connector fallback | `PARTIAL` | fresh NinjaTrader Connector bars are a current fallback for charts when TopstepX is unavailable |
 | Simulation / paper / demo runtime control | `PARTIAL` | safe runtime commands exist for paper/demo/playback contours |
-| Real-money automation | `EXTERNAL BLOCKED` | live order execution remains release-gated and owner/regulatory-gated |
+| Account-mode execution gates | `PARTIAL` | Simulation vs real/live comes from the connected NinjaTrader account; app-side execution on that account is allowed or blocked by permissions, safety gates, release state and account capabilities |
 | Market-data entitlement / licensed-provider parity | `PARTIAL` | provider slots and contracts exist; full licensed-provider acceptance is still pending |
 | SignalR / session / freshness rules | `DONE` | provider health, cooldowns, freshness and provenance are part of the charting contract |
 
@@ -34,6 +34,8 @@
 - Charting is primarily a read-only market-data problem, not an execution
   authorization problem.
 - Trading mode comes from the connected NinjaTrader account/runtime state.
+- The accepted 2026-08-12 operational snapshot ran the same signed artifact on
+  Canary and Production and placed no orders during closeout.
 - Production Connector should work only via outbound HTTPS to the canonical
   origin; it does not open an inbound port for the server.
 - Market-data payloads are bounded and capability-scoped; workspace or account
@@ -53,7 +55,9 @@
 - Delivery leases prevent accidental duplicate execution after reconnect.
 - Default Production posture is telemetry/accounts read plus optional paper
   commands, not arbitrary code execution.
-- Live capability should be treated as blocked until explicitly released.
+- A connected live account mode does not by itself grant execution authority;
+  live-account actions stay blocked unless the current environment, account
+  capability, safety gate and release gate all allow them.
 
 ## Areas that must not be casually modified
 
@@ -73,3 +77,4 @@
 - `app/market_data_failover.py`
 - `app/market_data_live_adapters.py`
 - `app/market_data_ws_http.py`
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)

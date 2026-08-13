@@ -1,10 +1,21 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: Deployment environments, release channels, immutable promotion and rollback boundaries
 - Status: DONE
+
+## Evidence modes
+
+- **Repository evidence** in this document describes what the repo implements:
+  env/channel split, fail-closed startup, build scripts, Release Center schema
+  and deploy templates.
+- **Operational evidence** describes what the last accepted closeout actually
+  deployed: the canonical source is
+  [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
+- Do not answer a “what is live right now” question from repository templates
+  alone when operational closeout evidence exists.
 
 ## Canonical promotion model
 
@@ -29,19 +40,23 @@ Git branch, deployment environment and release channel are not synonyms.
 
 ## Environment identities
 
-| Environment | Origin / opening mode | Isolation contract | Current evidence status |
+| Environment | Origin / opening mode | Isolation contract | Operational snapshot |
 | --- | --- | --- | --- |
-| DEV | local loopback / local owner URL, typically started from `NT-Analyzer/` | dirty checkout allowed, separate local data roots, local secrets, local browser storage | current and directly evidenced by code, scripts and repo workflow |
-| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/bot/Connector sessions; owner/admin/developer only | architecture and handoff evidence exist; current live deployed build is not provable from repo alone |
-| PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/bot/Connector sessions; public app | canonical origin is documented; current live deployed build is not provable from repo alone |
+| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`, app identity `6b6dc458`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
+| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, `instance=stratforge-canary-01`, `config_profile=production-canary`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, same artifact as Production |
+| PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Current release/build identity
 
 - Public version file: `0.10.0-beta.1`.
 - Build timestamp in `VERSION.json`: `2026-08-11T18:35:00Z`.
-- Current repo HEAD verified for this pack: `c4711ae3f876966f6bedcba8fc3b4ad9c309c836`.
-- Current deployed Canary/Production artifact SHA, slot and approval record are
-  **unknown from repository evidence alone**.
+- Repository evidence snapshot for this sync pass: `cad53f682e413db86bc3a77e57f8942baf4d4bc3`.
+- Operational live artifact: git `6b6dc4589407855526cf6cc345376d64cf95200e`,
+  build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256
+  `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive
+  SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`.
+- Accepted release path: Canary first, then the same release directory promoted
+  to Production (`same_release_dir=true`, no rebuild).
 
 ## Release Center and signing
 
@@ -51,7 +66,7 @@ Git branch, deployment environment and release channel are not synonyms.
 | Release ledger | `app/release_center.py` plus `sf_release_*` tables model candidates, artifacts, deployments, checks, approvals, notifications and rollbacks |
 | Blue-green | `app/blue_green.py` and `0010_blue_green_deploy_steps.sql` model slot switching and maintenance windows |
 | Exact-artifact promotion | same artifact fingerprint is stored and compared in schema/contracts |
-| Live execution proof | not present in repo as a current deployed record |
+| Live execution proof | accepted operational closeout exists for `6b6dc458` Canary -> same-directory Production |
 
 ## Environment Switcher
 
@@ -61,6 +76,9 @@ Git branch, deployment environment and release channel are not synonyms.
   not silently switch under the user.
 - Local DEV access requires loopback identity probing rather than production-like
   trust assumptions.
+- Accepted 2026-08-12 browser evidence: DEV / CANARY / PROD open in new tabs,
+  sessions/cookies/CSRF do not carry across, and ordinary users do not see
+  DEV/CANARY.
 
 ## Git / PR / CI model visible from repo
 
@@ -73,17 +91,21 @@ Git branch, deployment environment and release channel are not synonyms.
 
 - Migrations in Phases 3-11 are additive-first; rollback is expected to disable
   newer surfaces rather than drop identity links or release evidence.
-- Promotion from Canary to Production is designed for the **same artifact**.
-- No current repo evidence proves that a specific Canary deployment was already
-  promoted to Production.
+- Promotion from Canary to Production is designed for the **same artifact** and
+  this was operationally confirmed for `6b6dc458`.
+- Previous Production slot is `0.10.0-beta.1-795db0c1`.
+- The `/ready` hang root cause was full Connector JSON deserialization under
+  lock plus overlapping short-timeout curl polling; the live fix uses a
+  lightweight DB/Connector probe, bounded per-request timeouts, single-flight,
+  `/live` before `/ready`, and one bounded deadline.
 - This Context Pack task itself should never trigger runtime deployment.
 
 ## What to treat as historical only
 
 - Sibling `StratForge Releases/server-0.9.0-dev.*` bundles are useful evidence of
   artifact naming, but they are not current source of truth for the live app.
-- Stage handoff notes are useful operational history, not proof of current live
-  deployment state.
+- Older pre-`6b6dc458` live snapshots are historical once a newer accepted
+  closeout supersedes them.
 
 ## Canonical evidence
 
@@ -92,5 +114,7 @@ Git branch, deployment environment and release channel are not synonyms.
 - `app/runtime_env.py`
 - `app/release_center.py`
 - `app/blue_green.py`
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
 - [../../../.github/workflows/ci.yml](../../../.github/workflows/ci.yml)
 - [../../../.github/workflows/next-architecture-ci.yml](../../../.github/workflows/next-architecture-ci.yml)

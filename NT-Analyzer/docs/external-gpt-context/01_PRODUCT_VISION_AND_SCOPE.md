@@ -1,8 +1,8 @@
 # 01. Product Vision and Scope
 
 - Context Pack document: 01_PRODUCT_VISION_AND_SCOPE.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: c4711ae3f876966f6bedcba8fc3b4ad9c309c836
+- Last verified UTC: 2026-08-13T04:59:15Z
+- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
 - Scope: Product purpose, users, boundaries and principles
 - Status: DONE
 
@@ -35,7 +35,7 @@ backtest -> анализ -> controlled runtime.
 | Read-only charts и market data | `DONE` | TopstepX даёт независимые графики и realtime/history даже при выключенном NinjaTrader |
 | AI Strategy Lab | `PARTIAL` | цикл idea -> code -> compile -> backtest -> arbitration есть, но не вся продуктовая автоматизация завершена |
 | Paper/demo runtime control | `PARTIAL` | безопасные enable/disable/reconnect workflows доступны для paper/demo/playback |
-| Real broker live automation | `EXTERNAL BLOCKED` | live-команды остаются gated отдельным owner/regulatory/release решением |
+| Account-mode aware execution controls | `PARTIAL` | Simulation vs real/live определяется подключённым NinjaTrader account; конкретное действие разрешают или блокируют permissions, safety gates, release gates и account capabilities |
 | Multi-user personal workspaces | `PARTIAL` | модель описана и частично реализована, но полный продуктовый rollout ещё не закрыт |
 | Team/shared collaboration around one NinjaTrader contour | `PARTIAL` | owner-training/shared patterns есть, но leasing/scaling/permissions продолжают усиливаться |
 
@@ -55,8 +55,11 @@ backtest -> анализ -> controlled runtime.
   не придуманное приложением состояние.
 - Paper/demo workflows доступны через backend gates и требуют явных capability /
   confirmation rules.
-- Real-money automation не считается текущей пользовательской возможностью,
-  пока не закрыты release, security и owner/regulatory decisions.
+- Если NinjaTrader подключён к real/live account, это по-прежнему только факт
+  account mode. Разрешение на конкретное execution-действие определяется
+  application permissions, safety gates, release gates и account capabilities;
+  отсутствие такого разрешения сейчас является gate, а не отдельным будущим
+  продуктом под названием “Live Trading”.
 
 ## Границы продукта
 
@@ -83,3 +86,4 @@ backtest -> анализ -> controlled runtime.
 - [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
 - [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [06_MARKET_DATA_TRADING_CONNECTOR.md](06_MARKET_DATA_TRADING_CONNECTOR.md)
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
