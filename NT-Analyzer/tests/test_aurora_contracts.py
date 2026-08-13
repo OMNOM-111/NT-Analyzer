@@ -867,6 +867,17 @@ def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
     assert "this.host.dataset.renderedPriceMarkerLive = String(live)" in js
 
 
+def test_desktop_preserves_backend_freshness_across_http_poll():
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    html = (AURORA / "desktop.html").read_text(encoding="utf-8")
+
+    assert "freshness: (res && res.freshness) || {}" in js
+    assert "price_marker_live: !!(res && res.price_marker_live)" in js
+    assert "const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh" in js
+    assert "Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh" in js
+    assert "desktop.js?v=20260813-live-marker-freshness1" in html
+
+
 def test_command_language_covers_every_desktop_instrument():
     import re
     from app.ai_lab import command_language
