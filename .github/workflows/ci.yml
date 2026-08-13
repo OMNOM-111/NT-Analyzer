@@ -26,6 +26,8 @@ jobs:
           node-version: "22"
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
+      - name: Validate External GPT context pack
+        run: python tools/validate_external_gpt_context.py
       - name: Run release test runner
         run: python -m tests
       - name: Run full pytest suite

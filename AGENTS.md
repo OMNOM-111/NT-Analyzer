@@ -33,3 +33,12 @@
 - При завершении любой разработки: определить затронутые документы, обновить их одновременно с кодом, сменить статус функции, убрать устаревшие формулировки из current-секции, перенести историческое в `changelog`/`archive`. Нельзя оставлять несколько противоречащих current-описаний одной функции.
 - Главный первый документ (product overview / `CHARTER` / вкладка «Документы») начинается с цели, назначения, текущих возможностей, принципов и направления StratForge AI, а не со StartingCapital/комиссий/owner-процессов. Amendment log, роли AI-инструментов, технические owner-записи и Git/Claude/Codex closeout — только owner/developer и в самом конце, не как первое содержание приложения.
 - Опубликованные юридические документы версионируются отдельно (`NT-Analyzer/docs/legal/`) и не переводятся в статус действующих, пока не закрыты обязательные owner/legal-решения; в UI показываются как проекты (DRAFT).
+
+## External GPT Context Pack
+
+- Канонический upload-пакет для внешних моделей без доступа к репозиторию хранится в `NT-Analyzer/docs/external-gpt-context/`.
+- Перед Git closeout каждый AI developer (Codex/GPT/Grok/Claude/Cursor/иная модель) обязан проверить, затронула ли задача External GPT Context Pack.
+- Если задача изменила architecture, current system state, API/schema, auth/security, environment/release/deployment, Connector/market data/trading, agents, UI product contract, documentation/governance/legal status, active blockers или roadmap, соответствующий файл Context Pack обновляется в той же задаче и том же commit.
+- Минимальная обязательная проверка после каждой значимой завершённой задачи: `NT-Analyzer/docs/external-gpt-context/02_CURRENT_SYSTEM_STATE.md` и `NT-Analyzer/docs/external-gpt-context/11_ACTIVE_WORK_AND_HANDOFF.md`.
+- Нельзя массово переписывать даты или делать cosmetic refresh всего пакета. Обновляются только документы, чьи факты действительно изменились.
+- Перед closeout прогонять `python tools/validate_external_gpt_context.py` из `NT-Analyzer/`.

@@ -46,6 +46,32 @@ gap**, а не `PLANNED` и не «будущая стадия продукта�
 6. **Не допускать** существования нескольких противоречащих current-описаний
    одной функции: у функции один канонический current-источник.
 
+### 3.1. External GPT Context Pack
+
+Канонический внешний пакет находится в `docs/external-gpt-context/` и должен
+поддерживаться в том же Definition of Done.
+
+Исполнитель обязан перед Git closeout проверить, изменила ли задача:
+
+- architecture;
+- current system state;
+- API/schema;
+- auth/security;
+- environment/release/deployment;
+- Connector/market data/trading;
+- agents;
+- UI product contract;
+- documentation/governance/legal status;
+- active blockers или roadmap.
+
+Если да, соответствующий файл Context Pack обновляется в **той же задаче/PR**.
+Минимум после каждой значимой законченной задачи перепроверяются
+`02_CURRENT_SYSTEM_STATE.md` и `11_ACTIVE_WORK_AND_HANDOFF.md`.
+
+Даты не переписываются автоматически по всему пакету. Обновляется только тот
+документ, чьи факты реально затронуты. Для проверки используется
+`python tools/validate_external_gpt_context.py`.
+
 ## 4. Разделение current / история / внутреннее
 
 - **Current** (`docs/current/`, `docs/architecture/`, `docs/governance/` rendered,
@@ -92,6 +118,8 @@ owner-процессов. Параметры риска/капитала — р�
 Внутренние ссылки не должны ломаться. Перед закрытием задачи прогонять
 `python tools/release_static_scan.py --scan markdown` и профильные
 documentation-тесты (например, `tests/test_phase10_docs_governance.py`).
+Если менялся Context Pack, дополнительно прогонять
+`python tools/validate_external_gpt_context.py`.
 
 Этот принцип закреплён также в корневом `AGENTS.md` (раздел Definition of Done).
 
