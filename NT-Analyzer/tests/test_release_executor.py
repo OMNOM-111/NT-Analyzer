@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -58,3 +59,41 @@ def test_remote_argument_rejects_shell_metacharacters(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path)
     with pytest.raises(release_executor.ReleaseExecutorError):
         release_executor._run_remote("build", "0.10.0-beta.1;touch", "beta", "a" * 40)
+
+
+def test_source_bundle_uses_verified_head_instead_of_raw_sha(monkeypatch, tmp_path):
+    repo = tmp_path / "source"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Release Test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "release@example.test"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("immutable source\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "source"], cwd=repo, check=True)
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        text=True, capture_output=True,
+    ).stdout.strip()
+
+    uploaded = {}
+    monkeypatch.setattr(release_executor, "_git_root", lambda: repo)
+    monkeypatch.setattr(
+        release_executor,
+        "_require_configuration",
+        lambda: {"host": "example.test", "user": "stratforge", "key": tmp_path / "key", "proxy": ""},
+    )
+    monkeypatch.setattr(release_executor, "_ssh_args", lambda config: ["ssh"])
+
+    def capture_upload(args, *, input_data=None, timeout=900):
+        uploaded["args"] = args
+        uploaded["bytes"] = input_data
+
+    monkeypatch.setattr(release_executor, "_run", capture_upload)
+    release_executor._upload_source_bundle(commit)
+
+    assert uploaded["args"][0] == "ssh"
+    assert uploaded["bytes"].startswith(b"# v2 git bundle")
+    assert len(uploaded["bytes"]) > 100
+
+    with pytest.raises(release_executor.ReleaseExecutorError, match="HEAD does not match"):
+        release_executor._upload_source_bundle("0" * 40)

@@ -182,10 +182,19 @@ def _git_root() -> Path:
 def _upload_source_bundle(commit_sha: str) -> None:
     config = _require_configuration()
     root = _git_root()
+    resolved = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root,
+        text=True, capture_output=True, check=False,
+    )
+    if resolved.returncode or resolved.stdout.strip().lower() != commit_sha.lower():
+        raise ReleaseExecutorError("release source HEAD does not match selected commit")
     with tempfile.TemporaryDirectory(prefix="stratforge-release-") as tmp:
         bundle = Path(tmp) / f"source-{commit_sha}.bundle"
         created = subprocess.run(
-            ["git", "bundle", "create", str(bundle), commit_sha], cwd=root,
+            # `git bundle create <file> <raw-sha>` produces an empty bundle.
+            # Release Center already requires the selected commit to equal the
+            # clean current HEAD, so bundle that verified symbolic ref.
+            ["git", "bundle", "create", str(bundle), "HEAD"], cwd=root,
             capture_output=True, check=False,
         )
         if created.returncode or not bundle.is_file():
