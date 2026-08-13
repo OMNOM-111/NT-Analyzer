@@ -5,6 +5,7 @@ Run: python -m tests.test_governance
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -117,6 +118,37 @@ def test_explicit_production_renders_governance_outside_immutable_release(
     governance.ensure_governance_files(render=True)
     assert (rendered / "README.md").is_file()
     assert not (release_root / "docs" / "governance").exists()
+
+
+def test_implicit_library_import_does_not_rewrite_tracked_governance(
+    tmp_path,
+) -> None:
+    project = tmp_path / "NT-Analyzer"
+    (project / "app").mkdir(parents=True)
+    rendered = project / "docs" / "governance"
+    rendered.mkdir(parents=True)
+    sentinel = rendered / "README.md"
+    sentinel.write_text("tracked governance sentinel\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["NT_ANALYZER_ROOT"] = str(project)
+    for name in ("DEPLOYMENT_ENV", "STRATFORGE_ENV", "NTA_APP_ENV", "NTA_ENV"):
+        env.pop(name, None)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(ROOT), env.get("PYTHONPATH", "")) if part
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.governance"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "tracked governance sentinel\n"
 
 
 def main() -> int:

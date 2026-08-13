@@ -8,9 +8,10 @@
 <link rel="stylesheet" href="assets/theme.css?v=20260812-phase12-owner1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 <style>
-  .docs-grid { display:grid; grid-template-columns: 280px minmax(0,1fr) 300px; gap:18px; align-items:start; }
-  @media (max-width: 1200px){ .docs-grid { grid-template-columns: 260px minmax(0,1fr); } .docs-hist { display:none; } }
-  @media (max-width: 860px){ .docs-grid { grid-template-columns: minmax(0,1fr); } }
+  .docs-grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px; align-items:start; }
+  .docs-grid.docs-privileged:not(.docs-journal-hidden) { grid-template-columns:280px minmax(0,1fr) 300px; }
+  @media (max-width: 1200px){ .docs-grid, .docs-grid.docs-privileged:not(.docs-journal-hidden) { grid-template-columns:260px minmax(0,1fr); } .docs-hist { display:none; } }
+  @media (max-width: 860px){ .docs-grid, .docs-grid.docs-privileged:not(.docs-journal-hidden) { grid-template-columns:minmax(0,1fr); } .docs-grid > aside { position:static !important; } }
   .doc-info { margin-top:22px; border:1px solid var(--line); border-radius:10px; background:var(--bg-1); }
   .doc-info > summary { cursor:pointer; padding:10px 14px; font-size:12.5px; color:var(--tx-2); list-style:none; user-select:none; }
   .doc-info > summary::-webkit-details-marker { display:none; }
@@ -92,11 +93,11 @@
     </aside>
   </div>
 
-<script src="assets/api.js?v=20260811-doc-closeout1"></script>
+<script src="assets/api.js?v=20260812-final-acceptance2"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260812-auth-entry1"></script>
+<script src="assets/ui.js?v=20260812-final-acceptance2"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/documents.js?v=20260811-doc-closeout1"></script>
+<script src="assets/pages/documents.js?v=20260812-final-acceptance1"></script>
 </body>
 </html>

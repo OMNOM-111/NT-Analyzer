@@ -106,6 +106,32 @@ def _to_canary_passed(cid):
         idempotency_key="cc-" + cid[:8])
 
 
+def _record_verified_production_executor(cid):
+    """Unit-test fixture for the explicit post-deploy verification boundary."""
+    doc = release_center._read_doc()
+    deployment = next(
+        d for d in doc["deployments"]
+        if d.get("candidate_id") == cid and d.get("environment") == "production"
+    )
+    deployment["document"] = {
+        **(deployment.get("document") or {}),
+        "status": "pass",
+        "external_result": "pass",
+    }
+    release_center._write_doc(doc)
+
+
+def _enable_verified_rollback(monkeypatch):
+    monkeypatch.setattr(release_center, "_adapter_status", lambda: {
+        "name": "stage9_ssh", "real_configured": True, "real_available": True,
+        "canary_available": True, "production_available": True,
+        "mode": "real", "configuration_state": "ready",
+    })
+    monkeypatch.setattr(release_center.release_executor, "rollback_production", lambda current, target: {
+        "status": "pass", "external_result": "pass", "rollback_verified": True,
+    })
+
+
 # --------------------------------------------------------------------------- #
 # State machine.
 # --------------------------------------------------------------------------- #
@@ -313,16 +339,28 @@ def test_promotion_does_not_auto_go_live(rc_store):
     assert release_center.get_release(cid)["summary"]["state"] != "production_live"
 
 
+def test_dry_run_cannot_be_confirmed_as_production_live(rc_store):
+    cid = _mk()
+    _to_canary_passed(cid)
+    release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-verify-1")
+    release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-verify-1")
+    with pytest.raises(release_center.ReleaseCenterError) as exc:
+        release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="lv-verify-1")
+    assert exc.value.code == "production_deploy_unverified"
+
+
 # --------------------------------------------------------------------------- #
 # Rollback.
 # --------------------------------------------------------------------------- #
-def test_rollback_to_known_prod_artifact(rc_store):
+def test_rollback_to_known_prod_artifact(rc_store, monkeypatch):
     cid = _mk()
     _to_canary_passed(cid)
     release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-000001")
     release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000001")
+    _record_verified_production_executor(cid)
     release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="lv-000001")
     artifact_id = release_center.get_release(cid)["summary"]["artifact_id"]
+    _enable_verified_rollback(monkeypatch)
     out = release_center.rollback_production(
         actor=OWNER, candidate_id=cid, to_artifact_id=artifact_id, reason="test",
         idempotency_key="rb-000001")
@@ -334,6 +372,7 @@ def test_rollback_unknown_artifact_denied(rc_store):
     _to_canary_passed(cid)
     release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-000001")
     release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000001")
+    _record_verified_production_executor(cid)
     release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="lv-000001")
     with pytest.raises(release_center.ReleaseCenterError) as exc:
         release_center.rollback_production(
@@ -352,6 +391,7 @@ def test_rollback_incompatible_artifact_denied(rc_store):
     _to_canary_passed(cid)
     release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-000001")
     release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000001")
+    _record_verified_production_executor(cid)
     release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="lv-000001")
     with pytest.raises(release_center.ReleaseCenterError) as exc:
         release_center.rollback_production(
@@ -419,6 +459,37 @@ def test_dry_run_adapter_never_reports_real_pass(rc_store):
     status = release_center.list_releases()["adapter"]
     assert status["real_available"] is False
     assert status["mode"] == "dry_run"
+
+
+def test_configured_but_unavailable_adapter_fails_canary_without_checking(rc_store, monkeypatch):
+    cid = _mk()
+    _to_signed(cid)
+    monkeypatch.setenv("STRATFORGE_RELEASE_DEPLOY_ADAPTER", "stage9_ssh")
+    monkeypatch.delenv("STRATFORGE_RELEASE_SSH_HOST", raising=False)
+    monkeypatch.delenv("STRATFORGE_RELEASE_SSH_KEY", raising=False)
+    out = release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-blocked-1")
+    assert out["ok"] is False
+    assert out["state"] == "canary_failed"
+    assert release_center.get_release(cid)["summary"]["state"] == "canary_failed"
+
+
+def test_real_canary_pass_advances_to_acceptance_checks(rc_store, monkeypatch):
+    cid = _mk()
+    _to_signed(cid)
+    monkeypatch.setattr(release_center.release_executor, "status", lambda: {
+        "name": "stage9_ssh", "real_configured": True, "real_available": True,
+        "canary_available": True, "production_available": False,
+        "mode": "real", "configuration_state": "ready",
+    })
+    monkeypatch.setattr(release_center.release_executor, "deploy", lambda env, artifact: {
+        "status": "pass", "external_result": "pass", "adapter": "stage9_ssh",
+        "environment": env, "artifact_id": artifact["artifact_id"], "steps": [],
+    })
+    monkeypatch.setenv("STRATFORGE_RELEASE_DEPLOY_ADAPTER", "stage9_ssh")
+    out = release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-realpass-1")
+    assert out["ok"] is True
+    assert out["state"] == "canary_checking"
+    assert out["deployment"]["state"] == "deployed"
 
 
 # --------------------------------------------------------------------------- #

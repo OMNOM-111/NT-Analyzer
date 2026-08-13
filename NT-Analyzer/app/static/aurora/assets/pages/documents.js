@@ -377,7 +377,7 @@ UI.ready(async function () {
   } catch (e) { privileged = false; }
   const ownerBanner = UI.qs('#owner-banner'); if (ownerBanner) ownerBanner.hidden = true;
   const histPanel = UI.qs('#hist-panel'); if (histPanel) histPanel.hidden = !privileged;
-  const grid = UI.qs('.docs-grid'); if (grid) grid.style.gridTemplateColumns = privileged ? '280px minmax(0,1fr) 300px' : '280px minmax(0,1fr)';
+  const grid = UI.qs('.docs-grid'); if (grid) grid.classList.toggle('docs-privileged', privileged);
   const editBtnEl = UI.qs('#edit-btn'); if (editBtnEl) editBtnEl.hidden = !privileged;
   const journalToggle = UI.qs('#journal-toggle');
   if (journalToggle) {
@@ -386,7 +386,7 @@ UI.ready(async function () {
     journalToggle.onclick = () => {
       const hp = UI.qs('#hist-panel'); if (!hp) return;
       hp.hidden = !hp.hidden;
-      const g = UI.qs('.docs-grid'); if (g) g.style.gridTemplateColumns = hp.hidden ? '280px minmax(0,1fr)' : '280px minmax(0,1fr) 300px';
+      const g = UI.qs('.docs-grid'); if (g) g.classList.toggle('docs-journal-hidden', hp.hidden);
       journalToggle.textContent = hp.hidden ? 'Журнал и параметры' : 'Скрыть журнал';
     };
   }

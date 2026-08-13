@@ -93,6 +93,31 @@ def _to_canary_passed(cid):
         idempotency_key="cc-" + cid[:8])
 
 
+def _record_verified_production_executor(cid):
+    doc = release_center._read_doc()
+    deployment = next(
+        d for d in doc["deployments"]
+        if d.get("candidate_id") == cid and d.get("environment") == "production"
+    )
+    deployment["document"] = {
+        **(deployment.get("document") or {}),
+        "status": "pass",
+        "external_result": "pass",
+    }
+    release_center._write_doc(doc)
+
+
+def _enable_verified_rollback(monkeypatch):
+    monkeypatch.setattr(release_center, "_adapter_status", lambda: {
+        "name": "stage9_ssh", "real_configured": True, "real_available": True,
+        "canary_available": True, "production_available": True,
+        "mode": "real", "configuration_state": "ready",
+    })
+    monkeypatch.setattr(release_center.release_executor, "rollback_production", lambda current, target: {
+        "status": "pass", "external_result": "pass", "rollback_verified": True,
+    })
+
+
 def _artifact(build_id="sf-0.10.0-dev.1-aaaaaaaaaaaa"):
     return {"artifact_id": "art_x", "build_id": build_id, "artifact_sha256": "A" * 64}
 
@@ -409,13 +434,15 @@ def test_rehearse_requires_built_artifact(rc_store):
     assert exc.value.code == "artifact_missing"
 
 
-def test_rollback_records_traffic_switch_evidence(rc_store):
+def test_rollback_records_traffic_switch_evidence(rc_store, monkeypatch):
     cid = _mk()
     _to_canary_passed(cid)
     release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-" + cid[:8])
     release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-" + cid[:8])
     # Owner-confirmed live (real deploy verified out-of-band), then roll back.
+    _record_verified_production_executor(cid)
     release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="ml-" + cid[:8])
+    _enable_verified_rollback(monkeypatch)
     detail = release_center.get_release(cid)
     target_artifact = detail["summary"]["artifact_id"]
     out = release_center.rollback_production(

@@ -2051,4 +2051,8 @@ def consistency_report() -> Dict[str, Any]:
     }
 
 
-ensure_governance_files(render=True)
+# Library and test imports do not select a deployment boundary and must never
+# rewrite tracked Markdown in the source checkout as a side effect. Real
+# Development/Canary/Production startup is explicit and renders into its
+# isolated governance-rendered data root.
+ensure_governance_files(render=runtime_env.environment_explicit())

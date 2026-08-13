@@ -91,6 +91,7 @@ class DeploymentConfig:
     trusted_proxy_ips: Tuple[str, ...]
     readiness_min_free_mb: int
     api_max_inflight: int
+    api_max_websockets: int
     api_backlog: int
     api_max_body_bytes: int
     worker_poll_ms: int
@@ -864,6 +865,10 @@ def deployment_config(*, strict: bool = False) -> DeploymentConfig:
         api_max_inflight=_positive_int(
             "STRATFORGE_API_MAX_INFLIGHT", 48,
             minimum=1, maximum=1024,
+        ),
+        api_max_websockets=_positive_int(
+            "STRATFORGE_API_MAX_WEBSOCKETS", 128,
+            minimum=1, maximum=4096,
         ),
         api_backlog=_positive_int(
             "STRATFORGE_API_BACKLOG",

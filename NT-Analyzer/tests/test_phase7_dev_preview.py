@@ -7,11 +7,15 @@ Canary and Production. No real Connector, account, PII or network is involved.
 """
 from __future__ import annotations
 
+import json
+import threading
 import time
+import urllib.request
+from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, dev_preview, google_auth, runtime_env
+from app import account_auth, dev_preview, google_auth, runtime_env, server
 
 
 @pytest.fixture()
@@ -191,6 +195,58 @@ def test_unauthenticated_persona_clears_session(dev_store):
     out = dev_preview.start_view_as(999, "unauthenticated")
     assert out.get("clear_session") is True
     assert "session_token" not in out
+
+
+def test_unauthenticated_persona_sets_loopback_preview_mode(dev_store):
+    handler = object.__new__(server.Handler)
+    handler._check_local_post = lambda: True
+    handler._read_body = lambda: {"persona": "unauthenticated"}
+    handler._remote_context = {"user_id": 999}
+    handler.headers = {}
+    handler._request_ips = lambda: ("127.0.0.1", "")
+    actions = []
+    handler._clear_session_cookie = lambda: actions.append("session_cleared")
+    handler._set_dev_preview_mode_cookie = lambda mode: actions.append(
+        f"preview:{mode}"
+    )
+    handler._set_session_cookie = lambda _token: actions.append("session_set")
+    handler._json = lambda _status, payload: actions.append(payload["persona"])
+
+    handler._dev_preview_post("/api/dev/preview/view-as")
+
+    assert actions == ["session_cleared", "preview:unauthenticated", "unauthenticated"]
+
+
+def test_loopback_preview_mode_disables_local_owner_fallback(dev_store):
+    handler = object.__new__(server.Handler)
+    handler._cookie_value = lambda name: (
+        "unauthenticated" if name == server._DEV_PREVIEW_MODE_COOKIE else ""
+    )
+    assert handler._local_development_cookie_context() is None
+
+
+def test_auth_status_exposes_dev_preview_preset(dev_store):
+    preview = dev_preview.start_view_as(999, "developer")
+    token = str(preview["session_token"])
+    httpd = ThreadingHTTPServer((server.HOST, 0), server.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://{httpd.server_address[0]}:{httpd.server_address[1]}/api/auth/status",
+            headers={
+                "Cookie": f"{runtime_env.session_cookie_name()}={token}",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["authenticated"] is True
+        assert payload["impersonating"] is True
+        assert payload["impersonation_preset"] == "dev_preview"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_exit_restores_owner_session(dev_store):

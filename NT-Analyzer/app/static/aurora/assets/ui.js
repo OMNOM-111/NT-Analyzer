@@ -1167,7 +1167,12 @@
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
       try {
-        await API.http.ownerImpersonateEnd();
+        if (auth.impersonation_preset === 'dev_preview') {
+          await API.http.devPreviewExit();
+          setDevPreviewLabel('');
+        } else {
+          await API.http.ownerImpersonateEnd();
+        }
         toast('Возврат в админку');
         setTimeout(() => location.reload(), 400);
       } catch (e) { reportError(e); btn.disabled = false; }
@@ -4007,32 +4012,13 @@
   }
 
   async function probeEnvironmentTarget(target, card) {
-    const origin = target.current ? location.origin : target.origin;
-    if (!origin) throw new Error('Origin не настроен.');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4500);
-    try {
-      const response = await fetch(origin + '/api/runtime/env', {
-        method: 'GET', credentials: 'omit', cache: 'no-store', signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const deployment = data.deployment || data;
-      const environment = String(deployment.deployment_environment || deployment.environment || '').toLowerCase();
-      if (environment !== target.environment) throw new Error(`Endpoint сообщил environment=${environment || 'unknown'}`);
-      target.version = deployment.app_version || deployment.build_version || '';
-      target.commit = deployment.git_commit_sha || '';
-      target.build_id = deployment.build_id || '';
-      target.release_channel = deployment.release_channel || '';
-      target.health = 'reachable';
-      target.readiness = 'runtime endpoint reachable';
-      target.probe_ok = true;
-      if (card) {
-        const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
-        const open = qs('[data-env-open]', card); if (open) open.disabled = false;
-      }
-      return target;
-    } finally { clearTimeout(timer); }
+    const data = await API.http.adminEnvironmentProbe(target.environment);
+    Object.assign(target, data.target || {});
+    if (card) {
+      const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
+      const open = qs('[data-env-open]', card); if (open) open.disabled = false;
+    }
+    return target;
   }
 
   function openEnvironmentOrigin(target) {
@@ -4220,7 +4206,9 @@
       `Подпись: ${s.signature_status || '—'}`,
       `Canary: ${s.canary_state || '—'} · Production: ${s.production_state || '—'}`,
       '',
-      'Реальное развёртывание не выполняется (dry-run). Продолжить?',
+      ((detail.adapter || {}).real_available
+        ? 'Будет выполнено реальное развёртывание immutable artifact. Продолжить?'
+        : 'Реальное развёртывание недоступно (dry-run/blocked). Продолжить?'),
     ];
     return window.confirm(lines.join('\n'));
   }
@@ -4230,12 +4218,15 @@
     const state = s.state;
     const btns = [];
     const has = c => hasAdminCapability(c);
-    // Actions that touch real Canary/Production infrastructure. In this phase no
-    // real executor is wired (adapter.real_available is false), so these are
-    // shown as explicitly blocked-by-infra rather than as working actions.
-    const infraReady = !!((detail.adapter || {}).real_available);
+    const adapter = detail.adapter || {};
+    const infraReady = !!adapter.real_available;
+    const productionReady = !!adapter.production_available;
     const INFRA_ACTIONS = new Set(['deploy-canary', 'promote-production', 'mark-production-live', 'rollback-production']);
-    const push = (action, label, critical) => btns.push([action, label, critical, INFRA_ACTIONS.has(action) && !infraReady]);
+    const push = (action, label, critical) => {
+      const prodAction = ['promote-production', 'mark-production-live', 'rollback-production'].includes(action);
+      const blocked = INFRA_ACTIONS.has(action) && !(prodAction ? productionReady : infraReady);
+      btns.push([action, label, critical, blocked]);
+    };
     if (state === 'draft' && has('releases.create')) push('build', 'Собрать артефакт', false);
     if (state === 'built' && has('releases.create')) push('verify', 'Проверить подпись', false);
     if (state === 'signed' && has('releases.deploy_canary')) push('deploy-canary', 'Развернуть в Canary', true);

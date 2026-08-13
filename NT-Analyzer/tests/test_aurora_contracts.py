@@ -144,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260811-doc-closeout1"}, versions
+    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -198,7 +198,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260812-auth-entry1"}, versions
+    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -466,12 +466,23 @@ def test_environment_switcher_never_transfers_browser_credentials() -> None:
     switcher = ui.split("async function probeEnvironmentTarget", 1)[1].split(
         "async function renderDelegatedUsersInto", 1,
     )[0]
-    assert "credentials: 'omit'" in switcher
+    assert "API.http.adminEnvironmentProbe(target.environment)" in switcher
+    assert "fetch(origin + '/api/runtime/env'" not in switcher
     assert "'_blank', 'noopener,noreferrer'" in switcher
     assert "origin + '/ui/'" in switcher
     assert "withMiniAppContext" not in switcher
     assert "localStorage.getItem" not in switcher
     assert "telegramInitData" not in switcher
+
+
+def test_dev_preview_return_uses_the_dev_only_exit_route() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    banner = ui.split("function renderImpersonationBanner", 1)[1].split(
+        "// ---- Developer Preview", 1,
+    )[0]
+    assert "auth.impersonation_preset === 'dev_preview'" in banner
+    assert "API.http.devPreviewExit()" in banner
+    assert "API.http.ownerImpersonateEnd()" in banner
 
 
 def test_aurora_trading_exposes_reconnect_modeling_control():
@@ -796,6 +807,11 @@ def test_documents_page_has_privileged_compact_revision_journal_and_law_anchors(
     assert "edit-actor" not in html
     assert "saveDocument(current.id, { content, reason })" in js
     assert "Object.values(me.admin_capabilities).some(Boolean)" not in js
+    assert "docs-privileged" in html
+    assert "docs-journal-hidden" in html
+    assert "style.gridTemplateColumns" not in js
+    assert "classList.toggle('docs-privileged'" in js
+    assert "classList.toggle('docs-journal-hidden'" in js
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
 

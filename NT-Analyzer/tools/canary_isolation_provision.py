@@ -535,6 +535,7 @@ def build_canary_env(args: argparse.Namespace, dsn: dict[str, str], signing_key:
         "STRATFORGE_LOG_NAMESPACE=canary",
         "STRATFORGE_READINESS_MIN_FREE_MB=2048",
         "STRATFORGE_API_MAX_INFLIGHT=24",
+        "STRATFORGE_API_MAX_WEBSOCKETS=128",
         "STRATFORGE_API_BACKLOG=96",
         "STRATFORGE_API_MAX_BODY_BYTES=1048576",
         "STRATFORGE_WORKER_POLL_MS=250",
