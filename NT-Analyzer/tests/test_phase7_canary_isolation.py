@@ -616,6 +616,8 @@ def test_canary_promotion_requires_lockdown_marker_and_full_topology():
 
     assert "LOCKDOWN_MARKER_PATH" in promote
     assert "canary-privilege-lockdown.ok.json" in promote
+    assert "canary_telegram_configured" in promote
+    assert "NTA_TELEGRAM_BOT_TOKEN" in promote
     assert "ensure_canary_telegram_supervisor_program" in promote
     assert "run-telegram-canary.sh.example" in promote
     assert "required Canary Supervisor program(s) missing" in promote
