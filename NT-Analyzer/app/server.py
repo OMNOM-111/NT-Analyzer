@@ -2413,7 +2413,7 @@ class Handler(BaseHTTPRequestHandler):
                         **failure,
                         "authenticated": False,
                         "auth_required": account_auth.auth_required(),
-                        "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                        "bot_username": telegram_service.bot_username(),
                         "storage": account_auth.storage_status(),
                         "providers": self._auth_providers_payload()["providers"],
                     })
@@ -2421,7 +2421,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.UNAUTHORIZED, {
                     "error": "Требуется вход.", "authenticated": False,
                     "auth_required": account_auth.auth_required(),
-                    "bot_username": str(telegram_service.load_settings().get("bot_username") or ""),
+                    "bot_username": telegram_service.bot_username(),
                     "storage": account_auth.storage_status(),
                     "providers": self._auth_providers_payload()["providers"],
                 })
@@ -3011,7 +3011,7 @@ class Handler(BaseHTTPRequestHandler):
             account_auth.ensure_owner(owner_id)
             if path == "/api/auth/login/start":
                 out = account_auth.start_login(
-                    bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                    bot_username=telegram_service.bot_username(),
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
             elif path == "/api/auth/login/status":
@@ -8524,7 +8524,7 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             try:
-                bot_username = str(telegram_service.load_settings().get("bot_username") or "")
+                bot_username = telegram_service.bot_username()
                 try:
                     public_url = str(telegram_remote.admin_status().get("public_url") or "")
                 except Exception:
@@ -8868,7 +8868,7 @@ class Handler(BaseHTTPRequestHandler):
                     out = telegram_remote.update_settings(body.get("settings") or body)
                 elif path == "/api/telegram/remote/pair/start":
                     out = telegram_remote.start_pairing(
-                        bot_username=str(telegram_service.load_settings().get("bot_username") or ""),
+                        bot_username=telegram_service.bot_username(),
                         role=str(body.get("role") or "read_only"),
                         expected_user_id=body.get("expected_user_id") or 0,
                         require_phone=bool(body.get("require_phone", True)),
