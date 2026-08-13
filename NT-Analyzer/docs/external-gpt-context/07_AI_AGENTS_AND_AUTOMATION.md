@@ -1,8 +1,8 @@
 # 07. AI Agents and Automation
 
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: DONE
 

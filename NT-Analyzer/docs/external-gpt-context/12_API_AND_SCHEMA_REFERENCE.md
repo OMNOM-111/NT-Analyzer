@@ -1,8 +1,8 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 

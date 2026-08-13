@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-13T09:03:17Z
+Дата актуализации: 2026-08-13T09:49:37Z
 
 ## О StratForge AI
 
@@ -38,5 +38,5 @@ StratForge AI — платформа автоматической торговл
 - Подробный журнал редакций и технические сведения доступны владельцу/разработчику справа во вкладке «Документы» через «Подробнее».
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-13T09:03:17Z | GPT-5.5 через Codex по запросу owner | Интегрировать подтверждённый owner mission-led CHARTER и Documents UX из сохранённого рабочего снимка, не активируя юридические проекты и не меняя market-data pipeline.
+2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Зафиксировать итоговый clean-SHA visual acceptance, точный подписанный Canary artifact, реальную rollback rehearsal и полный regression при неизменённом Production.
 -->

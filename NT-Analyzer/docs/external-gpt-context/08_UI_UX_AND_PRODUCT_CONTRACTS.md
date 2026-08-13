@@ -1,8 +1,8 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-08-13T08:31:00Z
-- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
 
@@ -51,11 +51,13 @@
 - Release Center should be treated as a structured owner/admin workflow, not as
   a public user feature.
 - The owner-facing workflow was accepted through a real Canary deploy and
-  rollback/re-promote rehearsal on artifact `de7acaed`; Production execution was
+  rollback/re-promote rehearsal on artifact `7ebda6fa`; Production execution was
   not approved or invoked.
 - Final design/spacing acceptance remains an owner gate. Functional chart
-  acceptance on clean `de7acaed` ran for `689 s` with MNQ/MES 5m across three
-  browser clients and recorded `0` grey/OFF/non-live marker states.
+  acceptance on clean `7ebda6fa` ran for `619.899 s` with MNQ/MES 5m across
+  independent in-app and Chrome clients and recorded `0` grey/OFF/non-live
+  marker states. Documents UI uses a mission-led CHARTER, nine legal DRAFT
+  badges and compact red/green semantic revisions with details collapsed.
 
 ## Canonical evidence
 

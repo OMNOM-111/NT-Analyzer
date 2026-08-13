@@ -1,33 +1,33 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-13T08:31:00Z
-- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Dynamic current work, blockers, next actions and dangerous zones
 - Status: DONE
-- Current Production version/build/artifact when known: Production is still on `0.10.0-beta.1`, artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`, `previous=0.10.0-beta.1-795db0c1`. Canary runs accepted git `de7acaedd9301b0b1f9a88ccf6f320316a68d881`; Production promotion is pending a separate owner answer.
+- Current Production version/build/artifact when known: Production is still on `0.10.0-beta.1`, artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`, `previous=0.10.0-beta.1-795db0c1`. Canary runs accepted git `7ebda6faf2e7c64d4a707a41062b29857882181a`; Production promotion is pending a separate owner answer.
 
 ## Snapshot
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `de7acaedd9301b0b1f9a88ccf6f320316a68d881` |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
 | Current branch | `codex/final-acceptance-hardening-20260812` |
 | Public version | `0.10.0-beta.1` |
 | Current operational artifact git SHA | `6b6dc4589407855526cf6cc345376d64cf95200e` |
 | Current operational build ID | `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z` |
-| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, app identity `de7acaed`, `dirty=false`, `deployment_environment=development`, isolated local owner session |
-| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, git `de7acaed`, build `sf-0.10.0-beta.1-de7acaedd930-20260813T081638Z`, manifest `A2D17E51…`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED` |
+| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, app identity `7ebda6fa`, `dirty=false`, `deployment_environment=development`, isolated local owner session |
+| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, git `7ebda6fa`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, manifest `CE09030A…`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED` |
 | PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous `0.10.0-beta.1-795db0c1` |
-| Active PR / release candidate | PR #30; candidate `rc_8c0369f31dff4cd689de596d32623987`, artifact `art_f2a45e910229474587ee10d645b54879`, state `canary_passed`; Production approval not created |
+| Active PR / release candidate | PR #30; candidate `rc_3be66a74f97d4c62b491ac071bd981ed`, artifact `art_4ef7bbcc95c34fd7a80b184a441e6bc1`, state `canary_passed`; Production approval not created |
 
 ## Last clearly completed milestone
 
-- Final hardening built and accepted the production-signed `de7acaed` artifact
+- Final hardening built and accepted the production-signed `7ebda6fa` artifact
   on Canary through the in-app Release Center. Real blue-green and
   rollback→re-promote passed; Production stayed on `6b6dc458`.
-- Clean-SHA DEV visual acceptance ran MNQ/MES for `689 s` across three browser
-  clients with `0` grey/OFF/non-live states. The accepted TopstepX architecture
+- Clean-SHA DEV visual acceptance ran MNQ/MES for `619.899 s` across independent
+  in-app and Chrome clients with `0` grey/OFF/non-live states. The accepted TopstepX architecture
   was preserved.
 - Canonical evidence is
   [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md).
@@ -75,7 +75,7 @@
 
 1. Keep [02_CURRENT_SYSTEM_STATE.md](02_CURRENT_SYSTEM_STATE.md), [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md) and this file in sync with every accepted Canary/Production closeout.
 2. Await the owner's explicit `Да / Нет` before any Production action for the
-   exact `de7acaed` artifact. Do not rebuild between Canary and Production.
+   exact `7ebda6fa` artifact. Do not rebuild between Canary and Production.
 3. Provision a separate Canary Telegram bot or keep its absence explicitly
    documented as `EXTERNAL BLOCKED`.
 4. Complete real authenticated Canary/Production chart and Windows Connector

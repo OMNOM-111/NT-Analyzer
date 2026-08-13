@@ -255,9 +255,9 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 ## Phase 12 — 0.10.0-beta.1 live Canary + exact-artifact Production
 
 - Current Production artifact: version `0.10.0-beta.1`, git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`. One-step Production rollback target is `0.10.0-beta.1-795db0c1` / `D1CB6FF4…`.
-- Current Canary artifact: git `de7acaedd9301b0b1f9a88ccf6f320316a68d881`, build `sf-0.10.0-beta.1-de7acaedd930-20260813T081638Z`, archive SHA256 `E26747873949633C9CC6A66CEECD400CC035DF0F1CD71A079FA45EDCC541D867`, manifest SHA256 `A2D17E51D4403C272A1F7A05DB1F2C346AE72B1459B7B8C9CC816836A29EF95F`. `/live` и `/ready` — `200`; isolated DB/queue/storage/cookie namespace unchanged. Telegram remains `EXTERNAL BLOCKED` (`disabled_pending_canary_bot_provisioning`).
+- Current Canary artifact: git `7ebda6faf2e7c64d4a707a41062b29857882181a`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, archive SHA256 `AFBCEADF571A925AED91D959B5AE9AF8E8B14207E4A27FACE5C6CE73386E4782`, manifest SHA256 `CE09030A2050CBF7D2BCE985D90E36D0C0294F298178B862F4AFBDB0C3D351D3`. `/live` и `/ready` — `200`; isolated DB/queue/storage/cookie namespace unchanged. Telegram remains `EXTERNAL BLOCKED` (`disabled_pending_canary_bot_provisioning`).
 - Production `https://app.stratforges.com`: same release directory `.../releases/0.10.0-beta.1-6b6dc458`. `/ready` 36ms. Browser: `[BETA]` `6b6dc45` + Sign in/Register; Telegram `login/start` 200 + waiting UI. Owner account not duplicated (5 users, 1 owner). Expand migrations 0005–0011 already applied. Live trading and real payments remain false.
-- Host mechanism: Supervisor `canary-current`/`canary-previous` and Production `current`/`previous` symlink pairs. Current Canary=`de7acaed`, Canary previous=`6b6dc458`; current Production=`6b6dc458`, Production previous=`795db0c1`. Production links were not touched by the 2026-08-13 acceptance.
+- Host mechanism: Supervisor `canary-current`/`canary-previous` and Production `current`/`previous` symlink pairs. Current Canary=`7ebda6fa`, Canary previous=`de7acaed`; current Production=`6b6dc458`, Production previous=`795db0c1`. Production links were not touched by the 2026-08-13 acceptance.
 - **`/ready` hang root cause (reproduced on previous live Production `795db0c1`):** `connector_protocol.readiness_status()` held the Connector lock and called `storage_router.read_document("connectors")`, which deserialized the full JSON document (~19s). Promote used `curl --max-time 5` against `/api/health/ready`; the handler does not write headers until every probe finishes, so each poll received 0 bytes while the previous probe was still running and stacked more inflight `/ready` work on `BoundedThreadingHTTPServer`. `/api/health/live` already includes deployment identity and stays cheap.
 - **Fix now live:** `DocumentRepository.ping()` does `SELECT 1` and never loads JSON; `/ready` runs control-plane probes concurrently with a 2s per-probe timeout, single-flight cache, and `probe_timeout` fail-closed. Environment Switcher defaults to `http://127.0.0.1:8765`, `https://canary.stratforges.com`, `https://app.stratforges.com`. Browser DEV→CANARY→PROD opened those origins in new tabs without copying cookies.
 - Isolation: Production cannot CONNECT to Canary DB and vice versa; live ACL negatives were rechecked 2026-08-13. No orders were placed. Authenticated Canary/Production TopstepX chart smoke remains `EXTERNAL BLOCKED` for a fresh browser (real Telegram action required; no session fabricated). Local DEV owner session shows paper Topstep account read-only.
@@ -288,12 +288,12 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
 ### Final acceptance hardening — Canary 2026-08-13
 
 - Release Center is now a real owner-facing Canary workflow rather than a
-  dry-run-only shell. Candidate `de7acaed` was built on the protected signer,
-  verified, deployed and accepted through the UI. Production execution retains
+  dry-run-only shell. Candidate `7ebda6fa` was built on the protected signer,
+  verified, deployed and accepted through the Release Center. Production execution retains
   a separate process-level gate and was not enabled.
 - Real Canary blue-green and rollback rehearsal PASS: all eight deploy stages
-  passed; previous `6b6dc458` was restored and verified, then the same
-  `de7acaed` artifact was re-promoted (`rollback_verified=true`,
+  passed; previous `de7acaed` was restored and verified, then the same
+  `7ebda6fa` artifact was re-promoted (`rollback_verified=true`,
   `re_promoted=true`, `online_safe=true`).
 - Release build defect found and fixed: `git bundle create <file> <raw-sha>`
   produced an empty bundle. The executor now first verifies selected SHA equals
@@ -302,16 +302,17 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
 - DEV chart regression found and fixed without changing the accepted
   TopstepX/SignalR architecture: HTTP history/health refreshes could discard a
   fresh WebSocket marker state. Browser acceptance on the artifact commit ran
-  `689 s` across two in-app clients and Chrome, MNQ/MES 5m, `32`
+  `619.899 s` across independent in-app and Chrome clients, MNQ/MES 5m, `44`
   observations, `0` grey/OFF/non-live states; raw quote, WS close, last bar and
   rendered label matched on stable frames.
 - Safe Canary load: 10/50/100 clients, `0 failed`; 100-client p95 `/live`
-  `1288.37 ms`, `/ready` `837.39 ms`, UI `1005.53 ms`.
+  `1258.94 ms`, `/ready` `1115.79 ms`, UI `1260.17 ms`.
 - Final automated closeout: targeted market-data/chart + governance/docs +
-  release/rollback `259 passed`; full pytest `1302 passed, 31 skipped, 0
+  release/rollback `259 passed`; full pytest `1303 passed, 31 skipped, 0
   failed`; repository harness `13/13` suites PASS. Static scan, context
-  validation, compileall/py_compile, 32 JavaScript syntax checks, four deploy
-  script syntax checks and diff check PASS. The 31 skips are only the explicit
+  validation, compileall plus all 382 tracked Python files, all 32 tracked
+  JavaScript syntax checks, all 6 tracked shell-script syntax checks and diff
+  check PASS. The 31 skips are only the explicit
   live-PostgreSQL suites requiring `STRATFORGE_TEST_POSTGRES_*`.
 - Canonical evidence:
   [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md).
@@ -321,6 +322,7 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
   owner answer.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Recorded exact 7ebda6fa Canary artifact, Documents UI closeout, 619.899-second chart soak, load and real rollback rehearsal; Production unchanged.
 2026-08-13T08:31:00Z | GPT-5.5 через Codex по запросу owner | Recorded final acceptance hardening, real Release Center Canary lifecycle and rollback rehearsal; Production unchanged.
 2026-08-12T23:50:00Z | Grok 4.6 через Cursor по запросу owner | Record PR #26 MERGED to main (5b43569d) and annotated tag stratforge-server-v0.10.0-beta.1-6b6dc458 on the live hang-fix artifact.
 2026-08-12T23:40:00Z | Grok 4.6 через Cursor по запросу owner | Record live 6b6dc458 hang-fix artifact: Canary then exact-artifact Production, /ready 36ms, Environment Switcher DEV→CANARY→PROD.
