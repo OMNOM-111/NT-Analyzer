@@ -32,6 +32,7 @@ jobs:
           cache-dependency-path: NT-Analyzer/requirements.txt
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python tools/release_static_scan.py --scan all
+      - run: python tools/validate_external_gpt_context.py
       - run: python -m compileall -q app tools
 
   tests:
