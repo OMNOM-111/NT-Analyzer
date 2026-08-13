@@ -54,6 +54,14 @@ LIVE_CURL_MAX_SEC="${LIVE_CURL_MAX_SEC:-3}"
 READY_CURL_MAX_SEC="${READY_CURL_MAX_SEC:-8}"
 TRUSTED_SIGNING_KEY_PATH="${TRUSTED_SIGNING_KEY_PATH:-$BASE/config/canary-trusted-signing-key.json}"
 LOCKDOWN_MARKER_PATH="${LOCKDOWN_MARKER_PATH:-$BASE/config/canary-privilege-lockdown.ok.json}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+config="$BASE/config"
+conf="$config/supervisord.conf"
+canary_env="$config/canary.env"
+evidence="$BASE/runtime/canary-promote-evidence"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup="$BASE/backups/canary-promote-$stamp"
+
 canary_telegram_configured=false
 if grep -qE '^NTA_TELEGRAM_BOT_TOKEN=.+$' "$canary_env" \
    && grep -qE '^NTA_TELEGRAM_WEBHOOK_SECRET=.+$' "$canary_env"; then
@@ -65,13 +73,6 @@ if [ -z "${CANARY_PROGRAMS:-}" ]; then
     CANARY_PROGRAMS="$CANARY_PROGRAMS telegram-canary"
   fi
 fi
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-config="$BASE/config"
-conf="$config/supervisord.conf"
-canary_env="$config/canary.env"
-evidence="$BASE/runtime/canary-promote-evidence"
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-backup="$BASE/backups/canary-promote-$stamp"
 
 test "$(id -u)" = 0
 test -d "$RELEASE_DIR"
