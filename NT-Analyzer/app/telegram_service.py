@@ -19,6 +19,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,7 @@ CHAT_ENV = "NTA_TELEGRAM_CHAT_ID"
 GROUP_ENV = "NTA_TELEGRAM_GROUP_ID"
 API_BASE_ENV = "NTA_TELEGRAM_API_BASE"
 WEBHOOK_SECRET_ENV = "NTA_TELEGRAM_WEBHOOK_SECRET"
+BOT_USERNAME_ENVS = ("STRATFORGE_TELEGRAM_BOT_USERNAME", "NTA_TELEGRAM_BOT_USERNAME")
 
 SETTING_DEFINITIONS = (
     ("enabled", "Уведомления Telegram", "Главный выключатель всех отправок."),
@@ -69,6 +71,7 @@ _UPDATES_LOCK = threading.Lock()
 _UPDATES_LEASE: Any = None
 _WEBHOOK_RUN_LOCK = threading.RLock()
 _WEBHOOK_ACTIVE: Dict[str, str] = {}
+_BOT_USERNAME_CACHE = ""
 WEBHOOK_MAX_PARALLEL = 6
 WEBHOOK_REORDER_GRACE_SEC = 0.75
 REPLY_MAX_ATTEMPTS = 5
@@ -161,10 +164,97 @@ def _remember_update_id(state: Dict[str, Any], update_id: int) -> None:
     state["chief_seen_update_ids"] = [*ordered, update_id][-4096:]
 
 
+def _server_environment_explicit() -> bool:
+    return runtime_env.environment_explicit() and (
+        runtime_env.is_server_environment() or runtime_env.is_production()
+    )
+
+
+def _update_message(update: Dict[str, Any]) -> Dict[str, Any]:
+    message = update.get("message") if isinstance(update, dict) else None
+    return message if isinstance(message, dict) else {}
+
+
+def _update_target_environment(update: Dict[str, Any]) -> str:
+    text = " ".join(str(_update_message(update).get("text") or "").strip().split())
+    if not text:
+        return ""
+    if re.search(r"(?:^|\s)\[CANARY\](?:\s|$)", text, flags=re.IGNORECASE):
+        return runtime_env.CANARY
+    if re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+canary_login_[A-Fa-f0-9]{8}", text, flags=re.IGNORECASE):
+        return runtime_env.CANARY
+    if re.search(r"(?:^|\s)\[DEV\](?:\s|$)", text, flags=re.IGNORECASE):
+        return runtime_env.DEVELOPMENT
+    return ""
+
+
+def _forward_origin(environment: str) -> str:
+    if environment != runtime_env.CANARY:
+        return ""
+    raw = str(os.environ.get("STRATFORGE_CANARY_ORIGIN") or "https://canary.stratforges.com").strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or port not in {None, 443} or host != "canary.stratforges.com":
+        return ""
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+        return ""
+    return "https://canary.stratforges.com"
+
+
+def _forward_secret(environment: str) -> str:
+    if environment == runtime_env.CANARY:
+        return str(
+            os.environ.get("STRATFORGE_CANARY_TELEGRAM_WEBHOOK_SECRET")
+            or os.environ.get(WEBHOOK_SECRET_ENV)
+            or ""
+        ).strip()
+    return ""
+
+
+def _forward_update_to_environment(update: Dict[str, Any], environment: str) -> bool:
+    if environment == runtime_env.deployment_environment():
+        return False
+    origin = _forward_origin(environment)
+    secret = _forward_secret(environment)
+    if not origin or not secret:
+        return False
+    try:
+        request = urllib.request.Request(
+            origin.rstrip("/") + "/api/telegram/webhook",
+            data=json.dumps(update, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": secret,
+                "X-StratForge-Telegram-Forwarded": "1",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return 200 <= int(response.status) < 300
+    except Exception as exc:
+        _record_delivery(success=False, error=f"Telegram environment forward failed: {exc.__class__.__name__}")
+        return False
+
+
+def _should_forward_contact_to_canary(update: Dict[str, Any]) -> bool:
+    if runtime_env.deployment_environment() == runtime_env.CANARY:
+        return False
+    message = _update_message(update)
+    if not isinstance(message.get("contact"), dict):
+        return False
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    sender = message.get("from") if isinstance(message.get("from"), dict) else {}
+    return bool(sender.get("id") and str(chat.get("type") or "") == "private")
+
+
 def _enqueue_update(update: Dict[str, Any], *, transport: str,
                     handle_owner_commands: Optional[bool] = None) -> bool:
     update_id = int(update.get("update_id") or 0)
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _server_environment_explicit():
         from . import production_telegram
         return production_telegram.get_queue().enqueue_update(
             update, transport=str(transport or "webhook"),
@@ -321,9 +411,9 @@ def _run_queued_update(item: Dict[str, Any]) -> None:
 
 
 def _dispatch_update_inbox() -> int:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
-        # The independently supervised PostgreSQL consumer owns Production
-        # dispatch; the API process must never spawn a competing thread.
+    if _server_environment_explicit():
+        # The independently supervised PostgreSQL consumer owns server dispatch;
+        # the API process must never spawn a competing thread.
         return 0
     claimed: List[Dict[str, Any]] = []
     with _WEBHOOK_RUN_LOCK:
@@ -549,6 +639,29 @@ def load_settings() -> Dict[str, Any]:
         if raw.get(key):
             out[key] = str(raw[key])
     return out
+
+
+def bot_username() -> str:
+    global _BOT_USERNAME_CACHE
+    settings = load_settings()
+    username = str(settings.get("bot_username") or "").strip().lstrip("@")
+    if username:
+        return username
+    for name in BOT_USERNAME_ENVS:
+        username = str(os.environ.get(name) or "").strip().lstrip("@")
+        if username:
+            return username
+    if _BOT_USERNAME_CACHE:
+        return _BOT_USERNAME_CACHE
+    if str(os.environ.get(TOKEN_ENV) or "").strip():
+        try:
+            username = str(_bot_identity().get("username") or "").strip().lstrip("@")
+        except TelegramServiceError:
+            username = ""
+        if username:
+            _BOT_USERNAME_CACHE = username
+            return username
+    return ""
 
 
 def _save_settings(settings: Dict[str, Any]) -> None:
@@ -1150,7 +1263,7 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
     body = str(text or "")
     if marker and not body.startswith(marker):
         body = marker + body
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _server_environment_explicit():
         from . import production_telegram
         queued = production_telegram.enqueue_text(
             body, silent=silent, thread_id=thread_id,
@@ -1340,7 +1453,7 @@ def status() -> Dict[str, Any]:
         "chat_configured": chat_configured,
         "notifications_enabled": (configured or group_ready) and bool(settings.get("enabled")),
         "commands_enabled": configured or group_ready,
-        "bot_username": str(settings.get("bot_username") or ""),
+        "bot_username": bot_username(),
         "bot_name": str(settings.get("bot_name") or ""),
         "chat_label": str(settings.get("chat_label") or ""),
         "group_mode": group_ready,
@@ -1945,10 +2058,10 @@ def _handle_chief_command(text: str, *, conversation_id: Optional[str] = None,
             )
             if scope:
                 chief_agent.migrate_legacy_conversation_to_scope(target_conversation, scope)
-            if runtime_env.is_production() and runtime_env.environment_explicit():
+            if _server_environment_explicit():
                 if not scope:
                     raise TelegramServiceError(
-                        "Production AI-запрос не привязан к пользователю "
+                        "Server AI-запрос не привязан к пользователю "
                         "и рабочей области."
                     )
                 from . import production_workers
@@ -2063,6 +2176,15 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
                              handle_owner_commands: bool) -> Dict[str, Any]:
     update_id = int(update.get("update_id") or 0)
     result = {"update_id": update_id, "handler": "ignored", "consumed": False, "error": ""}
+    target_environment = _update_target_environment(update)
+    if target_environment and target_environment != runtime_env.deployment_environment():
+        if _forward_update_to_environment(update, target_environment):
+            result.update({
+                "handler": f"{target_environment}_forward",
+                "consumed": True,
+                "forwarded": True,
+            })
+            return result
     try:
         if private_id and account_auth.process_update(
             update, api_call=_api_call, owner_chat_id=private_id,
@@ -2078,6 +2200,15 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
         result.update({"handler": "telegram_remote", "consumed": True, "error": str(exc)})
         _record_delivery(success=False, error=str(exc))
         return result
+
+    if _should_forward_contact_to_canary(update):
+        if _forward_update_to_environment(update, runtime_env.CANARY):
+            result.update({
+                "handler": "canary_contact_forward",
+                "consumed": True,
+                "forwarded": True,
+            })
+            return result
 
     message = update.get("message")
     if not isinstance(message, dict):
@@ -2552,8 +2683,8 @@ def _command_worker_loop() -> None:
 
 
 def start_background_notifier(interval_sec: int = 30) -> bool:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
-        # Production Telegram is an independently supervised, leased service.
+    if _server_environment_explicit():
+        # Server Telegram is an independently supervised, leased service.
         return False
     global _WORKER, _COMMAND_WORKER
     with _WORKER_LOCK:

@@ -43,7 +43,7 @@ Git branch, deployment environment and release channel are not synonyms.
 | Environment | Origin / opening mode | Isolation contract | Operational snapshot |
 | --- | --- | --- | --- |
 | DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`, app identity `7ebda6fa`, `dirty=false`, `deployment_environment=development`; final MNQ/MES multi-browser acceptance PASS |
-| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, git `7ebda6fa`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`; Telegram `EXTERNAL BLOCKED` |
+| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, isolated DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`; owner login uses existing Telegram bot via `[CANARY]` shared-webhook forwarding after hotfix redeploy |
 | PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Current release/build identity

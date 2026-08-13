@@ -153,8 +153,9 @@ Two coordinated deliverables in a single Phase 7 change set:
 
 Real external acceptance requires (owner-gated): a provisioned isolated Canary
 PostgreSQL database and DSN, a Canary Cloudflare tunnel + `canary.stratforges.com`
-DNS, a separate Canary Telegram bot token and webhook secret, and a Canary
-Connector test contour. None are present in this repository or environment.
+DNS, configured existing-bot shared-webhook routing or an optional separate
+Canary Telegram bot identity, and a Canary Connector test contour. None are
+present in this repository or environment.
 
 ## 9. Rollback
 

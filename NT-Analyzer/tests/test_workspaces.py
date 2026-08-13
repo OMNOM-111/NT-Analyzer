@@ -10,7 +10,16 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, personal_nt_security, secure_store, server as server_mod, subscriptions, workspaces
+from app import (
+    account_auth,
+    personal_nt_security,
+    runtime_env,
+    secure_store,
+    server as server_mod,
+    storage_router,
+    subscriptions,
+    workspaces,
+)
 
 
 @pytest.fixture
@@ -26,6 +35,74 @@ def workspace_store(monkeypatch, tmp_path):
     with account_auth._RATE_LOCK:
         account_auth._LOGIN_RATE.clear()
     return tmp_path
+
+
+def test_canary_workspace_state_uses_authoritative_server_storage(monkeypatch) -> None:
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(runtime_env, "is_production", lambda: False)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(secure_store, "available", lambda: False)
+
+    persisted = {
+        "version": 2,
+        "workspaces": [{"workspace_id": "ws_owner_training_CANARY1", "status": "active"}],
+        "memberships": [],
+        "active_workspaces": {},
+        "active_workspaces_by_uuid": {},
+        "connections": [],
+        "pairings": [],
+    }
+    writes = []
+    ledger_writes = []
+    audits = []
+    monkeypatch.setattr(
+        storage_router, "read_document",
+        lambda repository, default: dict(persisted) if repository == "workspaces" else dict(default),
+    )
+    monkeypatch.setattr(
+        storage_router, "write_document",
+        lambda repository, doc: writes.append((repository, doc)),
+    )
+    monkeypatch.setattr(
+        storage_router, "storage_status",
+        lambda: {"available": True, "backend": "postgresql"},
+    )
+    monkeypatch.setattr(
+        storage_router, "append_audit",
+        lambda repository, event, values: audits.append((repository, event, values)),
+    )
+    monkeypatch.setattr(
+        storage_router, "read_workspace_ledger",
+        lambda workspace_id, default: {**default, "workspace_id": workspace_id},
+    )
+    monkeypatch.setattr(
+        storage_router, "write_workspace_ledger",
+        lambda workspace_id, doc: ledger_writes.append((workspace_id, doc)),
+    )
+    monkeypatch.setattr(
+        workspaces, "_tenant_root",
+        lambda _workspace_id: (_ for _ in ()).throw(
+            AssertionError("Canary must not use local tenant paths")
+        ),
+    )
+
+    assert storage_router.production_enabled() is True
+    assert workspaces._read_doc()["workspaces"][0]["workspace_id"] == "ws_owner_training_CANARY1"
+    workspaces._write_doc(persisted)
+    assert writes and writes[-1][0] == "workspaces"
+    assert workspaces.storage_status()["backend"] == "postgresql"
+    workspaces._audit("canary_workspace_storage_test", owner_id=999)
+    assert audits == [("workspace_registry", "canary_workspace_storage_test", {"owner_id": 999})]
+    assert (
+        workspaces._read_ledger("ws_owner_training_CANARY1")["workspace_id"]
+        == "ws_owner_training_CANARY1"
+    )
+    workspaces._write_ledger("ws_owner_training_CANARY1", {"schema_version": 1, "accounts": {}})
+    assert ledger_writes and ledger_writes[-1][0] == "ws_owner_training_CANARY1"
+    workspaces._ensure_tenant_dirs("ws_owner_training_CANARY1")
+    context = {"active_workspace": {"workspace_id": "ws_owner_training_CANARY1"}}
+    assert workspaces.runtime_dir_for_context(context) == ""
+    assert workspaces.runtime_storage_dir_for_context(context) == ""
 
 
 def _json_request(base: str, path: str, *, method: str = "GET", body: dict | None = None,

@@ -1878,11 +1878,14 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
         })
         _write_doc(doc)
     _audit("login_started", ip=ip)
+    canary_login = runtime_env.deployment_environment() == runtime_env.CANARY
+    start_payload = f"canary_login_{code}" if canary_login else f"login_{code}"
+    manual_command = f"/login [CANARY] {code}" if canary_login else f"/login {code}"
     return {
         "challenge_id": challenge_id, "status": "created", "expires_in_sec": CHALLENGE_TTL_SEC,
-        "bot_url": f"https://t.me/{username}?start=login_{code}",
+        "bot_url": f"https://t.me/{username}?start={start_payload}",
         "code": code,
-        "manual_command": f"/login {code}",
+        "manual_command": manual_command,
     }
 
 
@@ -2166,9 +2169,13 @@ def _claim_login_challenge(doc: Dict[str, Any], *, code: str, uid: int,
 
 
 def _send_contact_request(api_call: Callable[..., Any], uid: int) -> None:
+    marker = runtime_env.telegram_environment_marker()
     api_call("sendMessage", {
         "chat_id": uid,
-        "text": "Подтвердите личность: отправьте свой Telegram-контакт кнопкой ниже. Чужой или введённый вручную номер не принимается.",
+        "text": (
+            f"{marker}Подтвердите личность: отправьте свой Telegram-контакт кнопкой ниже. "
+            "Чужой или введённый вручную номер не принимается."
+        ),
         "reply_markup": {"keyboard": [[{"text": "📱 Подтвердить мой номер", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True},
     })
 
@@ -2293,10 +2300,14 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             buttons.append([{"text": f"⛔ Отозвать {label}", "callback_data": f"account_revoke:{int(row['user_id'])}"}])
         api_call("sendMessage", {"chat_id": uid, "text": "\n".join(lines), "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}})
         return True
-    start = re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+login_([A-Fa-f0-9]{8})", text)
-    manual_login = re.fullmatch(r"/(?:login|code)(?:@[A-Za-z0-9_]+)?\s+(?:login_)?([A-Fa-f0-9]{8})", text, flags=re.IGNORECASE)
+    start = re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+(login|canary_login)_([A-Fa-f0-9]{8})", text)
+    manual_login = re.fullmatch(r"/(?:login|code)(?:@[A-Za-z0-9_]+)?\s+(?:\[CANARY\]\s+)?(?:login_)?([A-Fa-f0-9]{8})", text, flags=re.IGNORECASE)
     if start or manual_login:
-        code = (start or manual_login).group(1)
+        if start and start.group(1).lower() == "canary_login" and runtime_env.deployment_environment() != runtime_env.CANARY:
+            return False
+        if manual_login and "[CANARY]" in text.upper() and runtime_env.deployment_environment() != runtime_env.CANARY:
+            return False
+        code = start.group(2) if start else manual_login.group(1)
         with _LOCK:
             doc = _read_doc()
             challenge = _claim_login_challenge(doc, code=code, uid=uid, sender=sender)

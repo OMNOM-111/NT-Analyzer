@@ -442,6 +442,12 @@ _DEFAULT_ENVIRONMENT_ORIGINS = {
 _DEV_PREVIEW_MODE_COOKIE = "sf_dev_preview_mode"
 
 
+def _server_environment_explicit() -> bool:
+    return runtime_env.environment_explicit() and (
+        runtime_env.is_server_environment() or runtime_env.is_production()
+    )
+
+
 def _admin_environment_targets() -> Dict[str, Any]:
     active = runtime_env.deployment_environment()
     deployment = runtime_env.public_status()
@@ -830,7 +836,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                               from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
-    production_mode = bool(runtime_env.is_production() and runtime_env.environment_explicit())
+    production_mode = _server_environment_explicit()
     # Timestamp ranges power viewport history paging. Date-only parameters are
     # preserved for existing callers; explicit timestamps win and remain UTC.
     start: Optional[datetime] = None
@@ -1592,7 +1598,7 @@ class Handler(BaseHTTPRequestHandler):
         tunnel_ip, forwarded_ip = self._request_ips()
         client = forwarded_ip or tunnel_ip or "unknown"
         limit = _CONNECTOR_RATE_LIMITS[rate_class]
-        if runtime_env.is_production() and runtime_env.environment_explicit():
+        if _server_environment_explicit():
             try:
                 decision = production_workers.consume_rate_limit(
                     f"connector:{client}", f"connector.{rate_class}", limit=limit,
@@ -1965,7 +1971,7 @@ class Handler(BaseHTTPRequestHandler):
         user_id = str(context.get("user_id") or "anonymous")
         key = (user_id, str(tunnel_ip or ""), action)
         now = time.time()
-        if runtime_env.is_production() and runtime_env.environment_explicit():
+        if _server_environment_explicit():
             try:
                 decision = production_workers.consume_rate_limit(
                     f"user:{user_id}|origin:{tunnel_ip or 'unknown'}",
@@ -2329,8 +2335,7 @@ class Handler(BaseHTTPRequestHandler):
         return scope
 
     def _auth_providers_payload(self) -> Dict[str, Any]:
-        settings = telegram_service.load_settings()
-        bot_username = str(settings.get("bot_username") or "").strip().lstrip("@")
+        bot_username = telegram_service.bot_username()
         google = google_auth.status()
         email = account_auth.email_auth_status()
         return {
@@ -2519,13 +2524,13 @@ class Handler(BaseHTTPRequestHandler):
         payload = observability.dashboard()
         payload["worker"] = (
             production_workers.status()
-            if runtime_env.is_production() and runtime_env.environment_explicit()
+            if _server_environment_explicit()
             else local_worker.status()
         )
         try:
             payload["telegram"] = (
                 production_telegram.get_queue().status()
-                if runtime_env.is_production() and runtime_env.environment_explicit()
+                if _server_environment_explicit()
                 else telegram_service.status()
             )
         except production_telegram.StorageError as exc:
@@ -4650,7 +4655,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/telegram/status":
             status = telegram_service.status()
-            if runtime_env.is_production() and runtime_env.environment_explicit():
+            if _server_environment_explicit():
                 try:
                     status["production_queue"] = production_telegram.get_queue().status()
                 except production_telegram.StorageError as exc:
@@ -5626,7 +5631,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
                 if effective_points > 10000:
-                    if (not (runtime_env.is_production() and runtime_env.environment_explicit())
+                    if (not _server_environment_explicit()
                             and not market_data_failover.TopstepXProvider().configured()):
                         market_data.register_request(
                             instrument, timeframe, limit, range_days, from_date, to_date,
@@ -5651,7 +5656,7 @@ class Handler(BaseHTTPRequestHandler):
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
                 return True
-            if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+            if not _server_environment_explicit():
                 market_data.evaluate_alerts()
             self._json(HTTPStatus.OK, payload)
             return True
@@ -7042,9 +7047,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.BAD_REQUEST, "Не более 64 графиков в одном пакете."); return
             result = []
             try:
-                production_mode = bool(
-                    runtime_env.is_production() and runtime_env.environment_explicit()
-                )
+                production_mode = _server_environment_explicit()
                 if not production_mode and not market_data_failover.TopstepXProvider().configured():
                     market_data.register_requests(row for row in rows if isinstance(row, dict))
                 normalized_rows: list[Dict[str, Any]] = []
@@ -7562,7 +7565,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 dispatch = (
                     production_telegram.accept_webhook(body, supplied_secret)
-                    if runtime_env.is_production() and runtime_env.environment_explicit()
+                    if _server_environment_explicit()
                     else telegram_service.process_webhook_update(body, supplied_secret)
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "handler": dispatch.get("handler")})
@@ -9446,7 +9449,7 @@ def run(port: Optional[int] = None) -> None:
             except Exception as e:
                 print(f"[nta-backend] local worker process NOT started: {e}")
         if canary_api:
-            print("[nta-backend] Canary Telegram notifier stays disabled until a separate bot is provisioned")
+            print("[nta-backend] Canary Telegram is owned by the supervised server consumer when configured")
         else:
             try:
                 telegram_service.start_background_notifier(interval_sec=30)

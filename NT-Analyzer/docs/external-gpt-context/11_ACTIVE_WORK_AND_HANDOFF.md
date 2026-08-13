@@ -17,7 +17,7 @@
 | Current operational artifact git SHA | `6b6dc4589407855526cf6cc345376d64cf95200e` |
 | Current operational build ID | `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z` |
 | DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, app identity `7ebda6fa`, `dirty=false`, `deployment_environment=development`, isolated local owner session |
-| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, git `7ebda6fa`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, manifest `CE09030A…`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED` |
+| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`; owner-login hotfix uses existing Telegram bot shared-webhook routing, pending live redeploy |
 | PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous `0.10.0-beta.1-795db0c1` |
 | Active PR / release candidate | PR #30; candidate `rc_3be66a74f97d4c62b491ac071bd981ed`, artifact `art_4ef7bbcc95c34fd7a80b184a441e6bc1`, state `canary_passed`; Production approval not created |
 
@@ -43,7 +43,7 @@
 
 ## Current blockers
 
-- Canary Telegram bot is still not separately provisioned.
+- Canary owner login hotfix is implemented in code but still needs live Canary redeploy from a clean signed artifact; this workspace's release executor currently reports `dry_run`.
 - Google OAuth remains externally blocked in Production.
 - Transactional email auth remains externally blocked in Production.
 - Fresh-browser authenticated Canary and Production TopstepX/chart smoke remain
@@ -68,7 +68,7 @@
 1. When to treat `beta` Production as ready for broader public exposure.
 2. When and how to close the live-trading regulatory/release gate.
 3. Which transactional email provider and operational policy to use for email auth.
-4. Final policy for separate Canary bot identity and live acceptance evidence retention.
+4. Final policy for long-term separate Canary bot identity versus existing-bot shared-webhook routing, and live acceptance evidence retention.
 5. Legal entity/placeholders and counsel review timing for publication.
 
 ## Next actions
@@ -76,8 +76,8 @@
 1. Keep [02_CURRENT_SYSTEM_STATE.md](02_CURRENT_SYSTEM_STATE.md), [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md) and this file in sync with every accepted Canary/Production closeout.
 2. Await the owner's explicit `Да / Нет` before any Production action for the
    exact `7ebda6fa` artifact. Do not rebuild between Canary and Production.
-3. Provision a separate Canary Telegram bot or keep its absence explicitly
-   documented as `EXTERNAL BLOCKED`.
+3. Deploy the Canary owner-login hotfix artifact and verify real owner login;
+  a separate Canary bot is optional policy, not required for this fix.
 4. Complete real authenticated Canary/Production chart and Windows Connector
    acceptance when the required external sessions/hardware are available.
 5. Keep Google OAuth, transactional email and legal publication accurately

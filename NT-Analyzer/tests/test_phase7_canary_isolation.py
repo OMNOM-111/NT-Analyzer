@@ -568,6 +568,7 @@ def test_canary_deploy_assets_exist():
         "stratforge-canary-operations.timer",
         "run-api-canary.sh.example",
         "run-worker-canary.sh.example",
+        "run-telegram-canary.sh.example",
         "run-operations-canary.sh.example",
         "supervisor-canary-programs.conf.example",
     ):
@@ -593,16 +594,19 @@ def test_canary_supervisor_templates_declare_split_worker_topology():
     supervisor = (CANARY_DEPLOY / "supervisor-canary-programs.conf.example").read_text(encoding="utf-8")
     api = (CANARY_DEPLOY / "run-api-canary.sh.example").read_text(encoding="utf-8")
     worker = (CANARY_DEPLOY / "run-worker-canary.sh.example").read_text(encoding="utf-8")
+    telegram = (CANARY_DEPLOY / "run-telegram-canary.sh.example").read_text(encoding="utf-8")
     operations = (CANARY_DEPLOY / "run-operations-canary.sh.example").read_text(encoding="utf-8")
 
     assert "[program:api]" in supervisor
     assert "[program:worker-canary]" in supervisor
     assert "[program:operations-canary]" in supervisor
-    assert "[program:telegram-canary]" not in supervisor
+    assert "[program:telegram-canary]" in supervisor
     assert "--init-system supervisor" in api
     assert "--init-system supervisor" in worker
+    assert "--init-system supervisor" in telegram
     assert "--init-system supervisor" in operations
     assert "exec .venv/bin/python -m app.production_workers" in worker
+    assert "exec .venv/bin/python -m app.production_telegram" in telegram
     assert "--classes interactive_ai,chart,telemetry,maintenance" in worker
     assert ".venv/bin/python -m app.observability --maintenance" in operations
 
@@ -612,6 +616,8 @@ def test_canary_promotion_requires_lockdown_marker_and_full_topology():
 
     assert "LOCKDOWN_MARKER_PATH" in promote
     assert "canary-privilege-lockdown.ok.json" in promote
+    assert "ensure_canary_telegram_supervisor_program" in promote
+    assert "run-telegram-canary.sh.example" in promote
     assert "required Canary Supervisor program(s) missing" in promote
     assert "canary-current must exist before blue-green promotion" in promote
     assert "missing_targets" in promote

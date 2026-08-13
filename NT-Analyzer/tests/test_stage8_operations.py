@@ -243,6 +243,16 @@ class TestProductionTelegramStructure:
         assert production_telegram.MAX_OUTBOX_TEXT == 4000
         assert production_telegram.MAX_ATTEMPTS == 5
 
+    def test_canary_defaults_to_shared_telegram_webhook_mode(self, monkeypatch):
+        from app import production_telegram
+
+        monkeypatch.setattr(production_telegram.runtime_env, "is_canary", lambda: True)
+        monkeypatch.delenv("STRATFORGE_CANARY_TELEGRAM_SHARED_WEBHOOK", raising=False)
+        assert production_telegram._shared_webhook_mode() is True
+
+        monkeypatch.setenv("STRATFORGE_CANARY_TELEGRAM_SHARED_WEBHOOK", "0")
+        assert production_telegram._shared_webhook_mode() is False
+
     def test_webhook_fails_closed_when_production_storage_is_unavailable(self, monkeypatch):
         from app import server as server_mod
 

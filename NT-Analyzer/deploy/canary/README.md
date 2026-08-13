@@ -8,11 +8,12 @@ release artifact or Git.
 Canary is a **fully isolated** environment from Production. It has its own
 PostgreSQL database, app/migration roles, job queue, object-storage namespace,
 Connector test contour, cookie/CSRF namespace and browser local-storage
-namespace. A separate Canary Telegram bot identity is intentionally not
-provisioned yet; until it exists, Telegram stays disabled fail-closed and
-readiness reports that component as a disclosed partial, not a pass. A
-Production session token, Telegram bot, Connector installation or storage
-namespace must never be reachable from Canary, and vice versa.
+namespace. A separate Canary Telegram bot identity is optional and is not
+required for owner login; Canary can reuse the existing owner bot through
+environment-marked login payloads (`[CANARY]` / `canary_login_*`) and the
+Production webhook forwarder into Canary's isolated Telegram queue. A
+Production session token, Connector installation or storage namespace must
+never be reachable from Canary, and vice versa.
 `assert_environment_isolation()` fails closed at startup and in the service
 preflight if any Canary identity is ever set equal to the Production reference
 identity carried in `canary.env`.
@@ -92,21 +93,23 @@ For this real topology, provisioning and promotion are done with:
   symlinks or Supervisor.
 - `run-api-canary.sh.example`, `run-worker-canary.sh.example`,
   `run-operations-canary.sh.example`,
-  `supervisor-canary-programs.conf.example` — Canary now runs a real split
-  Supervisor topology: `api` (HTTP), `worker-canary` (PostgreSQL queue
-  consumer + worker heartbeat), and `operations-canary` (observability
-  maintenance loop). `app.production_workers` and `app.observability
+  `run-telegram-canary.sh.example`, `supervisor-canary-programs.conf.example`
+  — Canary now runs a real split Supervisor topology: `api` (HTTP),
+  `worker-canary` (PostgreSQL queue consumer + worker heartbeat),
+  `operations-canary` (observability maintenance loop), and `telegram-canary`
+  (Canary Telegram inbox/outbox consumer). `app.production_workers` and `app.observability
   --maintenance` are gated for Production **or Canary** via the server
   environment boundary, while the API process refuses worker-only roles and
-  does not start the Development-local queue consumer. `telegram-canary` is
-  still not a separate program until a separate Canary bot token is
-  provisioned; never reuse the Production token.
+  does not start the Development-local queue consumer. When the existing owner
+  bot is reused, `telegram-canary` runs in shared-webhook mode and never calls
+  `setWebhook` or `getUpdates`; Production forwards `[CANARY]` login/contact
+  updates into Canary's isolated queue.
 - `tools/canary_blue_green_promote.sh` — the real blue-green executor for
   this Supervisor topology: verifies the release manifest against a pinned
   trusted production public key, derives deploy identity only from the signed
   manifest, atomically swaps only the `canary-current`/`canary-previous`
   symlinks, restarts only configured Canary programs (`api worker-canary
-  operations-canary` by default), polls `canary.stratforges.com` `/api/health/live`
+  operations-canary telegram-canary` by default), polls `canary.stratforges.com` `/api/health/live`
   for the new git SHA first, then `/api/health/ready` with bounded per-request
   timeouts inside one overall deadline, and automatically rolls back only if the
   new identity never appears or mandatory `/ready` never becomes ready.
@@ -117,10 +120,9 @@ For this real topology, provisioning and promotion are done with:
   probes for Canary as for Production (against Canary's own isolated
   dependencies), per `service_readiness.PRODUCTION_COMPONENTS`. The queue
   probe requires the real `worker-canary` heartbeat, not Production's legacy
-  `background_ai` heartbeat. `telegram_consumer` remains visible as
-  `ok: false` with a disabled-pending-bot code while no Canary bot token is
-  configured, but it is excluded from the overall readiness decision so the
-  endpoint does not stay permanently 503 for an intentionally absent feature.
+  `background_ai` heartbeat. `telegram_consumer` is required once the protected
+  Telegram token/chat config exists; otherwise readiness still reports a
+  disclosed unavailable component instead of fabricating a pass.
 
 Canary's API already runs on `127.0.0.1:18765` (routed by the existing
 Cloudflare ingress); no new port was required for this isolation pass.
@@ -135,5 +137,6 @@ was promoted to Production **without rebuild** by pointing
 `.../releases/0.10.0-beta.1-2f9409c4` and restarting only Production Supervisor
 programs (`api-app`, `worker`, `operations`, `telegram`). Canary programs were
 not restarted for that promotion. Rollback target remains
-`0.9.0-dev.15-f05f287d`. Canary Telegram stays
-`disabled_pending_canary_bot_provisioning`.
+`0.9.0-dev.15-f05f287d`. Historical note: that release kept Canary Telegram
+blocked; the current auth hotfix replaces that with shared owner-bot routing
+and a Canary Telegram consumer.
