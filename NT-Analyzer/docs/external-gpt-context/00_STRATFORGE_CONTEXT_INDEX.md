@@ -2,7 +2,7 @@
 
 - Context Pack document: 00_STRATFORGE_CONTEXT_INDEX.md
 - Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: Entry point, pack inventory, reading order and status legend
 - Status: DONE
 

@@ -1,8 +1,8 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T08:31:00Z
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: Deployment environments, release channels, immutable promotion and rollback boundaries
 - Status: DONE
 
@@ -11,9 +11,9 @@
 - **Repository evidence** in this document describes what the repo implements:
   env/channel split, fail-closed startup, build scripts, Release Center schema
   and deploy templates.
-- **Operational evidence** describes what the last accepted closeout actually
-  deployed: the canonical source is
-  [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
+- **Operational evidence** is environment-specific. Current Canary evidence is
+  [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md); Production remains on the
+  [2026-08-12 snapshot](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
 - Do not answer a “what is live right now” question from repository templates
   alone when operational closeout evidence exists.
 
@@ -42,31 +42,37 @@ Git branch, deployment environment and release channel are not synonyms.
 
 | Environment | Origin / opening mode | Isolation contract | Operational snapshot |
 | --- | --- | --- | --- |
-| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`, app identity `6b6dc458`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
-| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, `instance=stratforge-canary-01`, `config_profile=production-canary`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, same artifact as Production |
+| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`, app identity `de7acaed`, `dirty=false`, `deployment_environment=development`; final MNQ/MES multi-browser acceptance PASS |
+| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, git `de7acaed`, build `sf-0.10.0-beta.1-de7acaedd930-20260813T081638Z`, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`; Telegram `EXTERNAL BLOCKED` |
 | PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Current release/build identity
 
 - Public version file: `0.10.0-beta.1`.
 - Build timestamp in `VERSION.json`: `2026-08-11T18:35:00Z`.
-- Repository evidence snapshot for this sync pass: `cad53f682e413db86bc3a77e57f8942baf4d4bc3`.
-- Operational live artifact: git `6b6dc4589407855526cf6cc345376d64cf95200e`,
-  build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256
+- Repository evidence snapshot for this sync pass: `de7acaedd9301b0b1f9a88ccf6f320316a68d881`.
+- Current Canary artifact: build
+  `sf-0.10.0-beta.1-de7acaedd930-20260813T081638Z`, archive SHA256
+  `E26747873949633C9CC6A66CEECD400CC035DF0F1CD71A079FA45EDCC541D867`, manifest
+  SHA256 `A2D17E51D4403C272A1F7A05DB1F2C346AE72B1459B7B8C9CC816836A29EF95F`.
+- Current Production artifact remains git
+  `6b6dc4589407855526cf6cc345376d64cf95200e`, build
+  `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256
   `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive
   SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`.
-- Accepted release path: Canary first, then the same release directory promoted
-  to Production (`same_release_dir=true`, no rebuild).
+- `de7acaed` passed Canary and is eligible for exact-artifact Production
+  promotion only after a separate owner approval. No Production rebuild or
+  switch occurred in this closeout.
 
 ## Release Center and signing
 
 | Area | Current state |
 | --- | --- |
-| Artifact creation | `tools/build_server_release.py` and `tools/build_connector_release.py` produce manifest, checksum and signature metadata |
-| Release ledger | `app/release_center.py` plus `sf_release_*` tables model candidates, artifacts, deployments, checks, approvals, notifications and rollbacks |
-| Blue-green | `app/blue_green.py` and `0010_blue_green_deploy_steps.sql` model slot switching and maintenance windows |
+| Artifact creation | protected `stage9_ssh` signer builds a production-trust artifact from the verified clean selected `HEAD`; `tools/build_server_release.py` produces manifest, checksum and signature metadata |
+| Release ledger | `app/release_center.py` records candidates, artifacts, real deployments, granular checks, approvals, notifications and rollbacks; `de7acaed` lifecycle was completed through the UI |
+| Blue-green | real Canary stages and a real rollback→re-promote rehearsal passed; `app/blue_green.py` and `0010_blue_green_deploy_steps.sql` retain the step/maintenance evidence |
 | Exact-artifact promotion | same artifact fingerprint is stored and compared in schema/contracts |
-| Live execution proof | accepted operational closeout exists for `6b6dc458` Canary -> same-directory Production |
+| Live execution proof | `de7acaed` has current real Canary build/deploy/rollback proof; earlier `6b6dc458` retains accepted Canary→Production same-directory proof |
 
 ## Environment Switcher
 
@@ -91,9 +97,13 @@ Git branch, deployment environment and release channel are not synonyms.
 
 - Migrations in Phases 3-11 are additive-first; rollback is expected to disable
   newer surfaces rather than drop identity links or release evidence.
-- Promotion from Canary to Production is designed for the **same artifact** and
-  this was operationally confirmed for `6b6dc458`.
-- Previous Production slot is `0.10.0-beta.1-795db0c1`.
+- Promotion from Canary to Production is restricted to the **same artifact**.
+  This was operationally confirmed for `6b6dc458`; `de7acaed` has passed Canary
+  but has not been approved or promoted.
+- Canary previous is `0.10.0-beta.1-6b6dc458`. Production previous is
+  `0.10.0-beta.1-795db0c1`.
+- Real Canary rollback rehearsal restored `6b6dc458`, verified readiness and
+  re-promoted `de7acaed` (`rollback_verified=true`, `re_promoted=true`).
 - The `/ready` hang root cause was full Connector JSON deserialization under
   lock plus overlapping short-timeout curl polling; the live fix uses a
   lightweight DB/Connector probe, bounded per-request timeouts, single-flight,
@@ -115,6 +125,7 @@ Git branch, deployment environment and release channel are not synonyms.
 - `app/release_center.py`
 - `app/blue_green.py`
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
 - [../../../.github/workflows/ci.yml](../../../.github/workflows/ci.yml)
 - [../../../.github/workflows/next-architecture-ci.yml](../../../.github/workflows/next-architecture-ci.yml)

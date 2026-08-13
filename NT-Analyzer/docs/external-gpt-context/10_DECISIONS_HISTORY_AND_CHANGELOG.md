@@ -1,8 +1,8 @@
 # 10. Decisions History and Changelog
 
 - Context Pack document: 10_DECISIONS_HISTORY_AND_CHANGELOG.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T08:31:00Z
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: High-value milestones and architectural decisions only
 - Status: DONE
 
@@ -23,6 +23,7 @@
 | 2026-08-12 | Auth/DEV fix shipped as signed artifact `795db0c1` and restored Sign in/Register plus local DEV owner flow | converted a reopened owner-acceptance failure into a real operational release artifact | superseded by the later hang-fix release, but still the direct previous slot |
 | 2026-08-12 | `/ready` hang was fixed in signed artifact `6b6dc458` and the exact same release directory was accepted on Canary then Production | proved the live promotion path, bounded readiness probes and environment switch behavior | current operational baseline |
 | 2026-08-13 | External GPT Context Pack introduced | created a compact, updateable handoff surface for external LLM projects with no repo access | current |
+| 2026-08-13 | Final hardening artifact `de7acaed` completed real Release Center Canary deploy, rollback/re-promote and clean-SHA chart acceptance | proved the owner-facing Canary workflow and preserved the TopstepX marker baseline while leaving Production unchanged | current Canary candidate; Production approval pending |
 
 ## What this history replaces
 
@@ -45,4 +46,5 @@
 - [../adr/0005-immutable-release-promotion.md](../adr/0005-immutable-release-promotion.md)
 - [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md)
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - [../legal/README.md](../legal/README.md)

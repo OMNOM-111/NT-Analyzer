@@ -1,52 +1,58 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T08:31:00Z
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: Dynamic current work, blockers, next actions and dangerous zones
 - Status: DONE
-- Current Production version/build/artifact when known: operational release evidence says Production is on `0.10.0-beta.1`, artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`, `previous=0.10.0-beta.1-795db0c1`.
+- Current Production version/build/artifact when known: Production is still on `0.10.0-beta.1`, artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`, `previous=0.10.0-beta.1-795db0c1`. Canary runs accepted git `de7acaedd9301b0b1f9a88ccf6f320316a68d881`; Production promotion is pending a separate owner answer.
 
 ## Snapshot
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `cad53f682e413db86bc3a77e57f8942baf4d4bc3` |
-| Current branch | `main` |
+| Current Git SHA | `de7acaedd9301b0b1f9a88ccf6f320316a68d881` |
+| Current branch | `codex/final-acceptance-hardening-20260812` |
 | Public version | `0.10.0-beta.1` |
 | Current operational artifact git SHA | `6b6dc4589407855526cf6cc345376d64cf95200e` |
 | Current operational build ID | `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z` |
-| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, app identity `6b6dc458`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development`, local owner session |
-| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, `instance=stratforge-canary-01`, `config_profile=production-canary`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, same artifact as Production, Telegram `PARTIAL` |
+| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, app identity `de7acaed`, `dirty=false`, `deployment_environment=development`, isolated local owner session |
+| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, git `de7acaed`, build `sf-0.10.0-beta.1-de7acaedd930-20260813T081638Z`, manifest `A2D17E51…`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED` |
 | PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, `config_profile=production-primary`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous `0.10.0-beta.1-795db0c1` |
-| Active PR / release candidate | not evidenced inside the repository at this snapshot |
+| Active PR / release candidate | PR #30; candidate `rc_8c0369f31dff4cd689de596d32623987`, artifact `art_f2a45e910229474587ee10d645b54879`, state `canary_passed`; Production approval not created |
 
 ## Last clearly completed milestone
 
-- Phase 12 live closeout recorded the current operational baseline: signed
-  artifact `6b6dc458`, Canary acceptance, same release directory promoted to
-  Production, readiness hang fixed.
-- External GPT Context Pack and owner export mechanism are now merged on `main`.
-- ADR set `0001` through `0008` plus migrations `0005` through `0011` remain the
-  repository-contract foundation under that live snapshot.
+- Final hardening built and accepted the production-signed `de7acaed` artifact
+  on Canary through the in-app Release Center. Real blue-green and
+  rollback→re-promote passed; Production stayed on `6b6dc458`.
+- Clean-SHA DEV visual acceptance ran MNQ/MES for `689 s` across three browser
+  clients with `0` grey/OFF/non-live states. The accepted TopstepX architecture
+  was preserved.
+- Canonical evidence is
+  [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md).
 
 ## Current work visible in the repo
 
-- Working tree already contains in-progress governance/documents UI/backend edits.
-- Working tree already contains in-progress desktop/chart-related edits and an
-  untracked `tests/test_desktop_instrument_fallback.py`.
-- Future Production/Canary release closeouts must refresh the canonical
-  operational snapshot and the three dynamic Context Pack files together.
+- PR #30 contains scoped final-acceptance hardening, Release Center real Canary
+  execution, chart-marker regression protection and documentation/UI closeout.
+- Canary is accepted with explicitly recorded external blockers. No Production
+  approval, schedule or deployment exists for this candidate.
+- Any later Production closeout must promote the exact recorded artifact
+  without rebuild and refresh the canonical operational snapshot.
 
 ## Current blockers
 
 - Canary Telegram bot is still not separately provisioned.
 - Google OAuth remains externally blocked in Production.
 - Transactional email auth remains externally blocked in Production.
-- Fresh-browser authenticated Production TopstepX/chart smoke remains partial
-  because it still requires a real owner Telegram tap; no session may be fabricated.
+- Fresh-browser authenticated Canary and Production TopstepX/chart smoke remain
+  externally blocked because they require real owner authentication; no session
+  may be fabricated.
 - Production Connector acceptance still depends on a real Windows VM path.
-- Licensed-provider market-data parity and broader load acceptance remain open.
+- DEV chart/API fanout reached 100 clients and Canary safe HTTP acceptance
+  reached 100 clients. Authenticated server-side licensed-provider parity and
+  full failover remain external.
 - Trusted-device / step-up coverage is not yet fully uniform for every critical
   admin/release/personal-NT action.
 
@@ -68,13 +74,14 @@
 ## Next actions
 
 1. Keep [02_CURRENT_SYSTEM_STATE.md](02_CURRENT_SYSTEM_STATE.md), [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md) and this file in sync with every accepted Canary/Production closeout.
-2. Refresh [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) or its successor on the next accepted deployment.
-3. Close the unrelated current governance/documents/desktop edits in their own scoped change.
-4. Provision a separate Canary Telegram bot or keep its absence explicitly documented as PARTIAL.
-5. Complete trusted-device / step-up UX for critical release and personal-NinjaTrader actions.
-6. Finish real Windows Connector acceptance evidence.
-7. Finish licensed-provider and higher-load market-data acceptance.
-8. Continue hardening the Admin Panel and Release Center user-facing shell around existing backend permissions.
+2. Await the owner's explicit `Да / Нет` before any Production action for the
+   exact `de7acaed` artifact. Do not rebuild between Canary and Production.
+3. Provision a separate Canary Telegram bot or keep its absence explicitly
+   documented as `EXTERNAL BLOCKED`.
+4. Complete real authenticated Canary/Production chart and Windows Connector
+   acceptance when the required external sessions/hardware are available.
+5. Keep Google OAuth, transactional email and legal publication accurately
+   blocked until their external requirements are supplied and accepted.
 
 ## Dangerous zones
 

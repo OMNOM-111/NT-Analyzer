@@ -1,8 +1,8 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T08:31:00Z
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: DONE
 
@@ -16,7 +16,14 @@
 | Full pytest | functional regression across repo | `python -m pytest -q` | canonical full automated suite |
 | Python compile check | syntax-level regression | `python -m compileall -q app tests` | required in CI |
 | JS syntax check | Aurora assets syntax | CI `node --check` over `app/static/aurora/assets/**/*.js` | required in CI |
-| Operational release closeout | accepted deployment/build/browser/readiness evidence | [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) | required to answer “what is live now” |
+| Operational release closeout | accepted deployment/build/browser/readiness evidence | current Canary: [2026-08-13 snapshot](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md); current Production: [2026-08-12 snapshot](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) | required to answer “what is live now” per environment |
+
+Current clean-branch closeout result: targeted acceptance `259 passed`; full
+pytest `1302 passed, 31 skipped, 0 failed`; repository harness `13/13` suites;
+static/context/compile/JS/shell/diff gates PASS. The skips are the live
+PostgreSQL groups `test_production_storage.py` (`11`),
+`test_production_workers.py` (`12`) and `test_stage8_postgresql.py` (`8`), gated
+by `STRATFORGE_TEST_POSTGRES_ADMIN_URL` and `STRATFORGE_TEST_POSTGRES_URL`.
 
 ## Targeted acceptance areas
 
@@ -36,8 +43,8 @@
 | --- | --- | --- |
 | Backtest parity vs Strategy Analyzer | baseline passed; rerun after result-contract or execution-setting changes | [../operations/manual-validation.md](../operations/manual-validation.md) |
 | Real Windows Connector acceptance | still required for Production-grade Connector confidence | [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md) |
-| Market-data visual and higher-load acceptance | still pending beyond current owner-accepted baseline | [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md) |
-| Canary / Production release acceptance | PASS for the accepted `6b6dc458` / `0.10.0-beta.1` snapshot; future releases still require their own closeout | [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) |
+| Market-data visual and higher-load acceptance | DEV PASS on `de7acaed`: 689-second three-browser MNQ/MES marker proof and 100-client fanout/load. Authenticated Canary/Production provider smoke remains external | [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md) |
+| Canary / Production release acceptance | Canary core PASS WITH EXTERNAL BLOCKERS for `de7acaed`; Production unchanged on accepted `6b6dc458` pending separate owner approval | [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md) |
 
 Operationally accepted does **not** mean every adjacent provider is ready:
 Canary Telegram remains `PARTIAL`, and Google/email auth remain `EXTERNAL BLOCKED`

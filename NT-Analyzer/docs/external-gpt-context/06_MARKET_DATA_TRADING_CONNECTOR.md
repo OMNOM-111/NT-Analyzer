@@ -1,8 +1,8 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T08:31:00Z
+- Verified against Git SHA: de7acaedd9301b0b1f9a88ccf6f320316a68d881
 - Scope: NinjaTrader authority, Connector protocol, market-data priorities and trading safety gates
 - Status: DONE
 
@@ -22,20 +22,23 @@
 | Area | Status | Current fact |
 | --- | --- | --- |
 | Connector protocol v1 | `PARTIAL` | pair/enroll/challenge/hello/heartbeat/market-data/commands protocol is implemented with device-owned P-256 keys and bounded capabilities |
-| Read-only charts | `DONE` | TopstepX history + realtime can operate with NinjaTrader OFF and feed multiple browser clients |
+| Read-only charts | `DONE` | TopstepX history + realtime operate with NinjaTrader OFF and feed multiple browser clients. Final clean-SHA proof: MNQ/MES 5m, three clients, `689 s`, `32` observations, `0` grey/OFF/non-live states |
 | Connector fallback | `PARTIAL` | fresh NinjaTrader Connector bars are a current fallback for charts when TopstepX is unavailable |
 | Simulation / paper / demo runtime control | `PARTIAL` | safe runtime commands exist for paper/demo/playback contours |
 | Account-mode execution gates | `PARTIAL` | Simulation vs real/live comes from the connected NinjaTrader account; app-side execution on that account is allowed or blocked by permissions, safety gates, release state and account capabilities |
-| Market-data entitlement / licensed-provider parity | `PARTIAL` | provider slots and contracts exist; full licensed-provider acceptance is still pending |
-| SignalR / session / freshness rules | `DONE` | provider health, cooldowns, freshness and provenance are part of the charting contract |
+| Market-data entitlement / licensed-provider parity | `EXTERNAL BLOCKED` | DEV owner feed and fanout are accepted; authenticated Canary/Production provider parity still needs real server-environment user authentication |
+| SignalR / session / freshness rules | `DONE` | provider health, quote heartbeat, cooldowns, freshness and provenance are part of the charting contract. A fresh quote heartbeat keeps the marker live even when price itself is unchanged |
 
 ## Stable baseline external GPT should assume
 
 - Charting is primarily a read-only market-data problem, not an execution
   authorization problem.
 - Trading mode comes from the connected NinjaTrader account/runtime state.
-- The accepted 2026-08-12 operational snapshot ran the same signed artifact on
-  Canary and Production and placed no orders during closeout.
+- The accepted 2026-08-13 DEV baseline kept TopstepX auth/session, SignalR,
+  rollover and backend cache/failover architecture unchanged. The scoped UI
+  fix preserves a fresh WebSocket bar/marker across health/history refreshes.
+- Canary runs `de7acaed`; Production remains on `6b6dc458`. No orders were
+  placed during either closeout.
 - Production Connector should work only via outbound HTTPS to the canonical
   origin; it does not open an inbound port for the server.
 - Market-data payloads are bounded and capability-scoped; workspace or account
@@ -78,3 +81,4 @@
 - `app/market_data_live_adapters.py`
 - `app/market_data_ws_http.py`
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
