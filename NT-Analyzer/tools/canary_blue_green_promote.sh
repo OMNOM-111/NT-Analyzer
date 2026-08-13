@@ -32,7 +32,9 @@
 #                    written only by tools/canary_isolation_provision.py
 #                    --lockdown-privileges after post-migration privilege
 #                    revocation succeeds)
-#   CANARY_PROGRAMS (default "api worker-canary operations-canary telegram-canary";
+#   CANARY_PROGRAMS (default "api worker-canary operations-canary", plus
+#                    `telegram-canary` only when Canary's protected Telegram
+#                    token and webhook secret are present in canary.env;
 #                    space-separated Supervisor program names
 #                    this script must restart; every requested name must have
 #                    a [program:NAME] section in supervisord.conf)
@@ -52,7 +54,17 @@ LIVE_CURL_MAX_SEC="${LIVE_CURL_MAX_SEC:-3}"
 READY_CURL_MAX_SEC="${READY_CURL_MAX_SEC:-8}"
 TRUSTED_SIGNING_KEY_PATH="${TRUSTED_SIGNING_KEY_PATH:-$BASE/config/canary-trusted-signing-key.json}"
 LOCKDOWN_MARKER_PATH="${LOCKDOWN_MARKER_PATH:-$BASE/config/canary-privilege-lockdown.ok.json}"
-CANARY_PROGRAMS="${CANARY_PROGRAMS:-api worker-canary operations-canary telegram-canary}"
+canary_telegram_configured=false
+if grep -qE '^NTA_TELEGRAM_BOT_TOKEN=.+$' "$canary_env" \
+   && grep -qE '^NTA_TELEGRAM_WEBHOOK_SECRET=.+$' "$canary_env"; then
+  canary_telegram_configured=true
+fi
+if [ -z "${CANARY_PROGRAMS:-}" ]; then
+  CANARY_PROGRAMS="api worker-canary operations-canary"
+  if [ "$canary_telegram_configured" = true ]; then
+    CANARY_PROGRAMS="$CANARY_PROGRAMS telegram-canary"
+  fi
+fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config="$BASE/config"
 conf="$config/supervisord.conf"
@@ -103,7 +115,9 @@ environment=HOME="/home/stratforge"
 EOF
 }
 
-ensure_canary_telegram_supervisor_program
+if [[ " $CANARY_PROGRAMS " = *" telegram-canary "* ]]; then
+  ensure_canary_telegram_supervisor_program
+fi
 
 python3 - "$LOCKDOWN_MARKER_PATH" <<'PY'
 import json, pathlib, sys
