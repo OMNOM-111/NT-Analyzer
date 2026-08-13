@@ -1483,10 +1483,11 @@ def rehearse_blue_green(
     *, actor: Any, candidate_id: str, environment: str = ENVIRONMENT_PRODUCTION,
     drain: Optional[Dict[str, Any]] = None, idempotency_key: str,
 ) -> Dict[str, Any]:
-    """Dry-run blue-green rehearsal for a built artifact — no state change.
+    """Rehearse blue-green without changing the release state.
 
-    Evaluates the full slot / expand-migrate / drain / switch / rollback plan
-    without deploying, migrating, draining or switching anything. Safe to repeat.
+    A configured real executor performs an actual Canary rollback, verifies the
+    previous slot, and re-promotes the selected immutable artifact.  Production
+    remains plan-only here; its traffic is never switched by a rehearsal.
     """
     key = _validate_idempotency_key(idempotency_key)
     env = str(environment or ENVIRONMENT_PRODUCTION).strip().lower()
@@ -1503,7 +1504,51 @@ def rehearse_blue_green(
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact ещё не собран.", 409, code="artifact_missing")
-        plan = blue_green.rehearse(env, artifact, drain=drain)
+        artifact_snapshot = dict(artifact)
+        candidate_state = str(candidate.get("state") or "")
+
+    adapter = _adapter_status()
+    real_canary = (
+        env == ENVIRONMENT_CANARY
+        and adapter.get("name") == release_executor.ADAPTER_NAME
+        and bool(adapter.get("canary_available"))
+        and candidate_state in {STATE_CANARY_CHECKING, STATE_CANARY_PASSED}
+    )
+    if real_canary:
+        try:
+            result = release_executor.rehearse_canary_rollback(artifact_snapshot)
+        except release_executor.ReleaseExecutorError as exc:
+            raise ReleaseCenterError(
+                str(exc), 503, code="canary_rollback_rehearsal_failed",
+            ) from None
+        verified = bool(result.get("rollback_verified")) and bool(result.get("re_promoted"))
+        plan = {
+            "environment": ENVIRONMENT_CANARY,
+            "strategy": "blue_green_symlink",
+            "mode": "real",
+            "external_result": "pass" if verified else "fail",
+            "online_safe": verified,
+            "rollback_verified": bool(result.get("rollback_verified")),
+            "re_promoted": bool(result.get("re_promoted")),
+            "previous_git_commit_sha": str(result.get("previous_git_commit_sha") or ""),
+            "current_git_commit_sha": str(result.get("current_git_commit_sha") or ""),
+            "blocked_stages": [] if verified else ["rollback_or_repromotion_verification"],
+            "secrets_redacted": True,
+        }
+    else:
+        plan = blue_green.rehearse(env, artifact_snapshot, drain=drain)
+
+    with _LOCK:
+        doc = _read_doc()
+        candidate = _find(doc["candidates"], "candidate_id", str(candidate_id or ""))
+        if candidate is None:
+            raise ReleaseCenterError("Release candidate не найден.", 404, code="candidate_not_found")
+        cached = _idempotent(doc, key, f"rehearse:{candidate_id}")
+        if cached:
+            return cached
+        artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
+        if not artifact or str(artifact.get("artifact_id") or "") != str(artifact_snapshot.get("artifact_id") or ""):
+            raise ReleaseCenterError("Artifact изменился во время rehearsal.", 409, code="artifact_mismatch")
         record = {
             "rehearsal_id": _new_id("reh"),
             "candidate_id": candidate["candidate_id"],
@@ -1517,7 +1562,11 @@ def rehearse_blue_green(
             "created_at_utc": _now_iso(),
         }
         doc["rehearsals"].append(record)
-        out = {"ok": True, "rehearsal": plan, "rehearsal_id": record["rehearsal_id"]}
+        out = {
+            "ok": bool(plan.get("online_safe")),
+            "rehearsal": plan,
+            "rehearsal_id": record["rehearsal_id"],
+        }
         _remember(doc, key, f"rehearse:{candidate_id}", out)
         _write_doc(doc)
     _audit("release.blue_green_rehearsed", candidate_id=candidate_id,

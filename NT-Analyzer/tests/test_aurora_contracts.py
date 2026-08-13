@@ -198,7 +198,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260813-release-adapter-status1"}, versions
+    assert set(versions.values()) == {"20260813-release-workflow2"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -833,6 +833,10 @@ def test_release_center_describes_real_executor_without_stale_dry_run_copy():
     assert "Canary executor подключён и готов" in ui
     assert "Production остаётся заблокирован до отдельного подтверждения владельца" in ui
     assert "реальный executor не подключён, поэтому внешний результат остаётся PENDING" not in ui
+    assert "function releaseBlueGreenSummary(detail)" in ui
+    assert "Canary deploy и rollback rehearsal выполняются реальным executor" in ui
+    assert "Проверить rollback в Canary (реально)" in ui
+    assert "Реальный executor не подключён: expand→migrate→contract" not in ui
 
 
 def test_desktop_removes_drawings_whose_backend_alert_was_deleted():

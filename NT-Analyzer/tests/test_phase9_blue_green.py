@@ -426,6 +426,43 @@ def test_rehearse_endpoint_no_state_change(rc_store):
     assert len(release_center.get_release(cid)["rehearsals"]) == 1
 
 
+def test_real_canary_rehearsal_rolls_back_and_repromotes_same_artifact(rc_store, monkeypatch):
+    cid = _mk()
+    _to_signed(cid)
+    release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-real-reh")
+    monkeypatch.setattr(release_center, "_adapter_status", lambda: {
+        "name": release_center.release_executor.ADAPTER_NAME,
+        "real_configured": True,
+        "real_available": True,
+        "canary_available": True,
+        "production_available": False,
+        "mode": "real",
+    })
+    seen = []
+    monkeypatch.setattr(
+        release_center.release_executor,
+        "rehearse_canary_rollback",
+        lambda artifact: seen.append(dict(artifact)) or {
+            "ok": True,
+            "rollback_verified": True,
+            "re_promoted": True,
+            "previous_git_commit_sha": "a" * 40,
+            "current_git_commit_sha": artifact["git_commit_sha"],
+            "secrets_redacted": True,
+        },
+    )
+    before = release_center.get_release(cid)["summary"]["state"]
+    out = release_center.rehearse_blue_green(
+        actor=OWNER, candidate_id=cid, environment="canary", idempotency_key="reh-real-1")
+    assert out["ok"] is True
+    assert out["rehearsal"]["mode"] == "real"
+    assert out["rehearsal"]["external_result"] == "pass"
+    assert out["rehearsal"]["rollback_verified"] is True
+    assert out["rehearsal"]["re_promoted"] is True
+    assert seen and seen[0]["artifact_id"]
+    assert release_center.get_release(cid)["summary"]["state"] == before
+
+
 def test_rehearse_requires_built_artifact(rc_store):
     cid = _mk()
     with pytest.raises(release_center.ReleaseCenterError) as exc:
