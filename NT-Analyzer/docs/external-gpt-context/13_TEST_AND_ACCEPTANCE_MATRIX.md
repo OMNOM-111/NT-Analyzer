@@ -47,7 +47,8 @@ by `STRATFORGE_TEST_POSTGRES_ADMIN_URL` and `STRATFORGE_TEST_POSTGRES_URL`.
 | Canary / Production release acceptance | Canary core PASS WITH EXTERNAL BLOCKERS for `7ebda6fa`; Production unchanged on accepted `6b6dc458` pending separate owner approval | [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md) |
 
 Operationally accepted does **not** mean every adjacent provider is ready:
-Canary Telegram remains `PARTIAL`, and Google/email auth remain `EXTERNAL BLOCKED`
+Canary Telegram remains `PARTIAL` until the owner-login hotfix is redeployed and
+verified, and Google/email auth remain `EXTERNAL BLOCKED`
 in Production.
 
 ## Browser E2E note

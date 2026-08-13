@@ -162,6 +162,29 @@ def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> 
     assert any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
 
 
+def test_canary_login_uses_environment_payload_and_marker(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(
+        account_auth.runtime_env,
+        "deployment_environment",
+        lambda: account_auth.runtime_env.CANARY,
+    )
+    account_auth.ensure_owner(999)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    calls, api = _api_recorder()
+
+    assert f"?start=canary_login_{login['code']}" in login["bot_url"]
+    assert login["manual_command"] == f"/login [CANARY] {login['code']}"
+    assert account_auth.process_update({"message": {
+        "text": f"/start canary_login_{login['code']}",
+        "from": {"id": 42, "first_name": "Ada", "username": "ada"},
+        "chat": {"id": 42, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_contact"
+    texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
+    assert any(text.startswith("[CANARY] ") for text in texts)
+
+
 def test_plain_start_gets_actionable_login_help(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()

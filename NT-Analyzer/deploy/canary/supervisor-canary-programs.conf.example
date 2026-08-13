@@ -19,6 +19,8 @@
 #                          systemd timer exists on this host, so
 #                          run-operations-canary.sh.example loops internally
 #                          instead of being timer-triggered.
+#   - `telegram-canary`    app.production_telegram, real isolated Telegram
+#                          inbox/outbox consumer against Canary's PostgreSQL.
 #
 # `app.worker_router` now routes Canary's queue operations (enqueue/list/
 # cancel/start_background_worker) to the real PostgreSQL-backed
@@ -26,20 +28,18 @@
 # queue, and the api process's own attempt to start an in-process consumer
 # becomes a safe no-op -- `worker-canary` is the only consumer.
 #
-# telegram-canary is deliberately NOT a thing to add here: the in-process
-# Telegram notifier stays disabled fail-closed until a real, separate
-# Canary Telegram bot token has been provisioned out-of-band by the owner
-# (never reuse the Production token). app/server.py does not register the
-# telegram_consumer readiness probe while no token is configured, so this
-# shows up as an honest, disclosed PARTIAL, not a fabricated PASS.
+# Telegram is owned by the server consumer in Canary too. When the same owner
+# bot integration is reused, Production's shared webhook forwards [CANARY]
+# login updates and follow-up contact updates to this isolated Canary queue;
+# Canary account/session/workspace data still remain in Canary storage.
 #
 # Apply by repointing the host's existing `[program:api]` block's `command=`
 # at run-api-canary.sh (the Production `api` role remains served by its own
 # separate program/port; see README.md for the real host's port layout),
-# adding the two new program blocks below, then:
+# adding the program blocks below, then:
 #   sudo supervisorctl -c <conf> reread
 #   sudo supervisorctl -c <conf> update
-#   sudo supervisorctl -c <conf> restart api worker-canary operations-canary
+#   sudo supervisorctl -c <conf> restart api worker-canary operations-canary telegram-canary
 
 [program:api]
 command=/home/stratforge/production_data/config/run-api-canary.sh
@@ -91,6 +91,24 @@ stopasgroup=true
 killasgroup=true
 redirect_stderr=true
 stdout_logfile=/home/stratforge/production_data/logs/operations-canary.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"
+
+[program:telegram-canary]
+command=/home/stratforge/production_data/config/run-telegram-canary.sh
+user=stratforge
+priority=80
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/telegram-canary.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
 environment=HOME="/home/stratforge"

@@ -32,7 +32,7 @@
 #                    written only by tools/canary_isolation_provision.py
 #                    --lockdown-privileges after post-migration privilege
 #                    revocation succeeds)
-#   CANARY_PROGRAMS (default "api worker-canary operations-canary";
+#   CANARY_PROGRAMS (default "api worker-canary operations-canary telegram-canary";
 #                    space-separated Supervisor program names
 #                    this script must restart; every requested name must have
 #                    a [program:NAME] section in supervisord.conf)
@@ -52,7 +52,7 @@ LIVE_CURL_MAX_SEC="${LIVE_CURL_MAX_SEC:-3}"
 READY_CURL_MAX_SEC="${READY_CURL_MAX_SEC:-8}"
 TRUSTED_SIGNING_KEY_PATH="${TRUSTED_SIGNING_KEY_PATH:-$BASE/config/canary-trusted-signing-key.json}"
 LOCKDOWN_MARKER_PATH="${LOCKDOWN_MARKER_PATH:-$BASE/config/canary-privilege-lockdown.ok.json}"
-CANARY_PROGRAMS="${CANARY_PROGRAMS:-api worker-canary operations-canary}"
+CANARY_PROGRAMS="${CANARY_PROGRAMS:-api worker-canary operations-canary telegram-canary}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config="$BASE/config"
 conf="$config/supervisord.conf"
@@ -70,6 +70,40 @@ test -f "$conf"
 test -f "$LOCKDOWN_MARKER_PATH"
 test ! -e "$backup"
 mkdir -p "$evidence"
+
+ensure_canary_telegram_supervisor_program() {
+  local launcher_source="$RELEASE_DIR/deploy/canary/run-telegram-canary.sh.example"
+  local launcher_target="$config/run-telegram-canary.sh"
+  test -f "$launcher_source"
+  install -o stratforge -g root -m 0700 "$launcher_source" "$launcher_target"
+  if grep -qE '^\[program:telegram-canary\]' "$conf"; then
+    return 0
+  fi
+  local conf_backup="$config/supervisord.conf.before-telegram-canary-$stamp"
+  install -o root -g root -m 0600 "$conf" "$conf_backup"
+  cat >>"$conf" <<'EOF'
+
+[program:telegram-canary]
+command=/home/stratforge/production_data/config/run-telegram-canary.sh
+user=stratforge
+priority=80
+autostart=true
+autorestart=true
+startsecs=5
+startretries=10
+stopsignal=TERM
+stopwaitsecs=90
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/home/stratforge/production_data/logs/telegram-canary.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=5
+environment=HOME="/home/stratforge"
+EOF
+}
+
+ensure_canary_telegram_supervisor_program
 
 python3 - "$LOCKDOWN_MARKER_PATH" <<'PY'
 import json, pathlib, sys

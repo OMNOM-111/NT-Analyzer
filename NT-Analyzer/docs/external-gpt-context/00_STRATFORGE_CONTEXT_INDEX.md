@@ -25,7 +25,7 @@ GitHub, локальному компьютеру, серверу или runtime
 | Repository evidence snapshot | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
 | Operational release snapshot | Canary accepted `7ebda6fa` / build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z` / manifest `CE09030A…`; Production remains accepted `6b6dc458` / build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z` / manifest `272045DB…` |
 | DEV | operationally confirmed as `http://127.0.0.1:8765/ui/` `[DEV]`, app identity `7ebda6fa`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
-| CANARY | operationally confirmed as `https://canary.stratforges.com` `[CANARY]`, git `7ebda6fa`, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED`, previous slot `de7acaed` |
+| CANARY | operationally confirmed as `https://canary.stratforges.com` `[CANARY]`, git `7ebda6fa`, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`, Telegram owner-login hotfix pending live redeploy, previous slot `de7acaed` |
 | PRODUCTION | operationally confirmed as `https://app.stratforges.com` `[BETA]`, git `6b6dc458`, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Порядок чтения

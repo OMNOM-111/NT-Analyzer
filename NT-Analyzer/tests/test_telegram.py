@@ -30,6 +30,7 @@ def _isolate(monkeypatch, tmp_path) -> None:
         telegram_service._PAIRING.clear()
     with telegram_service._WEBHOOK_RUN_LOCK:
         telegram_service._WEBHOOK_ACTIVE.clear()
+    telegram_service._BOT_USERNAME_CACHE = ""
 
 
 def test_token_is_validated_and_never_returned(monkeypatch, tmp_path) -> None:
@@ -48,6 +49,19 @@ def test_token_is_validated_and_never_returned(monkeypatch, tmp_path) -> None:
     assert token not in json.dumps(result)
     stored = json.loads(local_secrets.secrets_path().read_text(encoding="utf-8"))
     assert stored[telegram_service.TOKEN_ENV] == token
+
+
+def test_bot_username_falls_back_to_configured_token_identity(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456")
+    monkeypatch.setattr(
+        telegram_service,
+        "_bot_identity",
+        lambda value=None: {"is_bot": True, "username": "StratForge_bot"},
+    )
+    telegram_service._BOT_USERNAME_CACHE = ""
+
+    assert telegram_service.bot_username() == "StratForge_bot"
 
 
 def test_private_chat_pairing_uses_one_time_code(monkeypatch, tmp_path) -> None:
@@ -431,6 +445,61 @@ def test_command_receiver_uses_long_poll_for_low_latency(monkeypatch, tmp_path) 
     assert captured["method"] == "getUpdates"
     assert captured["payload"]["timeout"] == 20
     assert captured["timeout"] == 25
+
+
+def test_canary_login_update_is_forwarded_from_shared_webhook(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(telegram_service.runtime_env, "deployment_environment", lambda: runtime_env.PRODUCTION)
+    forwarded = []
+    monkeypatch.setattr(
+        telegram_service,
+        "_forward_update_to_environment",
+        lambda update, environment: forwarded.append((environment, update)) or True,
+    )
+    monkeypatch.setattr(
+        telegram_service.account_auth,
+        "process_update",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("production auth must not consume canary login")),
+    )
+
+    result = telegram_service._dispatch_command_update({
+        "update_id": 501,
+        "message": {
+            "text": "/start canary_login_ABCD1234",
+            "from": {"id": 987654},
+            "chat": {"id": 987654, "type": "private"},
+        },
+    }, private_id="987654", gid="", handle_owner_commands=False)
+
+    assert result["handler"] == "canary_forward"
+    assert result["consumed"] is True
+    assert forwarded and forwarded[0][0] == runtime_env.CANARY
+
+
+def test_unclaimed_contact_update_is_forwarded_to_canary(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(telegram_service.runtime_env, "deployment_environment", lambda: runtime_env.PRODUCTION)
+    monkeypatch.setattr(telegram_service.account_auth, "process_update", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(telegram_service.telegram_remote, "process_update", lambda *_args, **_kwargs: False)
+    forwarded = []
+    monkeypatch.setattr(
+        telegram_service,
+        "_forward_update_to_environment",
+        lambda update, environment: forwarded.append((environment, update)) or True,
+    )
+
+    result = telegram_service._dispatch_command_update({
+        "update_id": 502,
+        "message": {
+            "contact": {"user_id": 987654, "phone_number": "+15551234567"},
+            "from": {"id": 987654},
+            "chat": {"id": 987654, "type": "private"},
+        },
+    }, private_id="987654", gid="", handle_owner_commands=False)
+
+    assert result["handler"] == "canary_contact_forward"
+    assert result["consumed"] is True
+    assert forwarded and forwarded[0][0] == runtime_env.CANARY
 
 
 def test_forum_topic_is_created_once_and_dedupes(monkeypatch, tmp_path) -> None:

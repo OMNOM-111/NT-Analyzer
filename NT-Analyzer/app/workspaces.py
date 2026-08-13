@@ -161,8 +161,14 @@ def _cache_doc(path: Path, doc: Dict[str, Any]) -> None:
         _DOC_CACHE_DOC = copy.deepcopy(doc)
 
 
+def _authoritative_storage() -> bool:
+    """Route both Canary and Production workspace state through PostgreSQL."""
+    from . import storage_router
+    return storage_router.production_enabled()
+
+
 def _read_doc() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -219,7 +225,7 @@ def _read_doc() -> Dict[str, Any]:
 
 def _read_doc_reference() -> Dict[str, Any]:
     """Return an internal read-only cache view while the caller holds _LOCK."""
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         return _read_doc()
     path = _store_path()
     key = _doc_cache_key(path)
@@ -234,7 +240,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 def _write_doc(doc: Dict[str, Any]) -> None:
     doc, _ = _migrate_doc(doc)
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -276,14 +282,14 @@ def _write_doc(doc: Dict[str, Any]) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         return storage_router.storage_status()
     return {"available": secure_store.available(), "backend": secure_store.backend_name(), "encrypted": _store_path().is_file()}
 
 
 def _audit(event: str, **values: Any) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -360,7 +366,7 @@ def _ensure_membership(doc: Dict[str, Any], *, workspace_id: str, user_id: int, 
 
 
 def _ensure_tenant_dirs(workspace_id: str) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         return
     base = _tenant_root(workspace_id)
     for name in ("runtime", "ops", "portfolio", "reports", "statements"):
@@ -817,7 +823,7 @@ def bridge_setup(user_id: Any) -> Dict[str, Any]:
             "steps": [], "config_template": {},
         }
     workspace_id = str(row["workspace_id"])
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         origin = runtime_env.deployment_config(strict=False).public_origin
         return {
             "ok": True,
@@ -945,7 +951,7 @@ def _default_ledger() -> Dict[str, Any]:
 
 
 def _read_ledger(workspace_id: str) -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -967,7 +973,7 @@ def _read_ledger(workspace_id: str) -> Dict[str, Any]:
 
 
 def _write_ledger(workspace_id: str, doc: Dict[str, Any]) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         doc["updated_at_utc"] = _now_iso()
@@ -1105,7 +1111,7 @@ def uses_owner_runtime(context: Dict[str, Any]) -> bool:
 
 
 def runtime_dir_for_context(context: Dict[str, Any]) -> str:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         # Production Connectors use the signed HTTP protocol. A server path is
         # never returned to or trusted from a Connector client.
         return ""
@@ -1142,7 +1148,7 @@ def runtime_storage_dir_for_context(context: Dict[str, Any]) -> str:
     must never fall back to the owner's global ``data/runtime`` directory just
     because its bridge is temporarily offline.
     """
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         return ""
     active = (context or {}).get("active_workspace") if isinstance(context, dict) else {}
     if not isinstance(active, dict) or not active or active.get("uses_owner_runtime"):

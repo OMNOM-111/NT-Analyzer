@@ -478,6 +478,12 @@ def readiness_status() -> Dict[str, Any]:
 def _ensure_webhook(queue: ProductionTelegramQueue) -> bool:
     from . import telegram_service
 
+    if _shared_webhook_mode():
+        queue.update_bot_state(
+            webhook_configured=False,
+            document={"webhook_mode": "shared_production_forward"},
+        )
+        return False
     secret = str(os.environ.get(telegram_service.WEBHOOK_SECRET_ENV) or "").strip()
     token = str(os.environ.get(telegram_service.TOKEN_ENV) or "").strip()
     if not secret or not token:
@@ -506,6 +512,13 @@ def _ensure_webhook(queue: ProductionTelegramQueue) -> bool:
             document={"webhook_error": _safe_error(exc)},
         )
         return False
+
+
+def _shared_webhook_mode() -> bool:
+    if not runtime_env.is_canary():
+        return False
+    flag = str(os.environ.get("STRATFORGE_CANARY_TELEGRAM_SHARED_WEBHOOK") or "1").strip().lower()
+    return flag not in {"0", "false", "no", "off"}
 
 
 def _poll_updates(queue: ProductionTelegramQueue) -> int:
@@ -592,10 +605,10 @@ def _deliver_outbox(queue: ProductionTelegramQueue, item: Dict[str, Any]) -> Non
 
 def run(*, poll_interval_sec: float = 0.25) -> int:
     config = runtime_env.assert_startup_safe()
-    if config.environment != runtime_env.PRODUCTION:
-        raise ProductionTelegramError("Production Telegram service requires Production environment.")
+    if config.environment not in {runtime_env.PRODUCTION, runtime_env.CANARY}:
+        raise ProductionTelegramError("Server Telegram service requires Canary/Production environment.")
     if config.deployment_role not in {"telegram", "all-in-one"}:
-        raise ProductionTelegramError("Production Telegram service requires telegram role.")
+        raise ProductionTelegramError("Server Telegram service requires telegram role.")
     from . import storage_router, telegram_service
 
     storage_router.assert_production_storage_safe()
@@ -621,6 +634,7 @@ def run(*, poll_interval_sec: float = 0.25) -> int:
     next_renew = 0.0
     next_webhook = 0.0
     webhook_active = False
+    shared_webhook = _shared_webhook_mode()
     next_retention = time.monotonic() + 3600
     try:
         while not stop.is_set():
@@ -631,10 +645,18 @@ def run(*, poll_interval_sec: float = 0.25) -> int:
                 ):
                     raise TelegramConsumerBusy("Production Telegram consumer lease was lost.")
                 next_renew = now + 10
-            if now >= next_webhook:
+            if shared_webhook:
+                webhook_active = False
+                if now >= next_webhook:
+                    queue.update_bot_state(
+                        webhook_configured=False,
+                        document={"webhook_mode": "shared_production_forward"},
+                    )
+                    next_webhook = now + 300
+            elif now >= next_webhook:
                 webhook_active = _ensure_webhook(queue)
                 next_webhook = now + (300 if webhook_active else 30)
-            if not webhook_active:
+            if not webhook_active and not shared_webhook:
                 try:
                     _poll_updates(queue)
                 except Exception as exc:

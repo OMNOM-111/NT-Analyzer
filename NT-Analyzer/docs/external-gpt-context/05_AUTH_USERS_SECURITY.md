@@ -19,7 +19,7 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works and local DEV owner session works; Canary remains `disabled_pending_canary_bot_provisioning` |
+| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works and local DEV owner session works; Canary owner login now reuses the existing bot through `[CANARY]` shared-webhook forwarding into isolated Canary auth/session queues, pending live hotfix redeploy |
 | Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
 | Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 

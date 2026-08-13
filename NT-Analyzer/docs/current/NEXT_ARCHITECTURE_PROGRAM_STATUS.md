@@ -11,7 +11,7 @@
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
 - Next version: `0.10.0-beta.1` (live Canary + Production hang-fix artifact `6b6dc458` as of 2026-08-12)
 - Integration branch: `release/0.10.0-next-architecture` merged to `main` via [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) (`5b43569d`); live artifact remains `6b6dc4589407855526cf6cc345376d64cf95200e`
-- Production/Canary boundary: both live on the Supervisor host; Canary Telegram bot remains unprovisioned; Production Telegram is live; no live trading / real payments
+- Production/Canary boundary: both live on the Supervisor host; Canary auth now supports existing-owner Telegram shared-webhook routing in code; Production Telegram is live; no live trading / real payments
 
 ## Сводка
 
@@ -255,7 +255,7 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 ## Phase 12 — 0.10.0-beta.1 live Canary + exact-artifact Production
 
 - Current Production artifact: version `0.10.0-beta.1`, git `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive SHA256 `3EF790F05A24BC4EB7A9DFAD343F7284E0A61F832A1A3B8392C815E7C59E6730`. One-step Production rollback target is `0.10.0-beta.1-795db0c1` / `D1CB6FF4…`.
-- Current Canary artifact: git `7ebda6faf2e7c64d4a707a41062b29857882181a`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, archive SHA256 `AFBCEADF571A925AED91D959B5AE9AF8E8B14207E4A27FACE5C6CE73386E4782`, manifest SHA256 `CE09030A2050CBF7D2BCE985D90E36D0C0294F298178B862F4AFBDB0C3D351D3`. `/live` и `/ready` — `200`; isolated DB/queue/storage/cookie namespace unchanged. Telegram remains `EXTERNAL BLOCKED` (`disabled_pending_canary_bot_provisioning`).
+- Current Canary artifact before this auth hotfix evidence: git `7ebda6faf2e7c64d4a707a41062b29857882181a`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`, archive SHA256 `AFBCEADF571A925AED91D959B5AE9AF8E8B14207E4A27FACE5C6CE73386E4782`, manifest SHA256 `CE09030A2050CBF7D2BCE985D90E36D0C0294F298178B862F4AFBDB0C3D351D3`. `/live` и `/ready` — `200`; isolated DB/queue/storage/cookie namespace unchanged. Canary Telegram owner login is fixed in code by existing-bot shared-webhook forwarding and `telegram-canary` consumer support; live PASS still requires deploying that hotfix artifact.
 - Production `https://app.stratforges.com`: same release directory `.../releases/0.10.0-beta.1-6b6dc458`. `/ready` 36ms. Browser: `[BETA]` `6b6dc45` + Sign in/Register; Telegram `login/start` 200 + waiting UI. Owner account not duplicated (5 users, 1 owner). Expand migrations 0005–0011 already applied. Live trading and real payments remain false.
 - Host mechanism: Supervisor `canary-current`/`canary-previous` and Production `current`/`previous` symlink pairs. Current Canary=`7ebda6fa`, Canary previous=`de7acaed`; current Production=`6b6dc458`, Production previous=`795db0c1`. Production links were not touched by the 2026-08-13 acceptance.
 - **`/ready` hang root cause (reproduced on previous live Production `795db0c1`):** `connector_protocol.readiness_status()` held the Connector lock and called `storage_router.read_document("connectors")`, which deserialized the full JSON document (~19s). Promote used `curl --max-time 5` against `/api/health/ready`; the handler does not write headers until every probe finishes, so each poll received 0 bytes while the previous probe was still running and stacked more inflight `/ready` work on `BoundedThreadingHTTPServer`. `/api/health/live` already includes deployment identity and stays cheap.
@@ -331,4 +331,5 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
 2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen 0.10.0-beta.1: record real DEV/auth acceptance failures and the code fix that must ship as a new artifact.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.
 2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
+2026-08-13T21:46:54Z | GPT-5.5 через Codex по запросу owner | Recorded Canary owner-login auth hotfix scope: shared existing Telegram bot routing, isolated Canary queues/sessions, no Production change.
 -->
