@@ -402,6 +402,85 @@ def test_environment_switcher_defaults_canonical_origins(monkeypatch, tmp_path) 
     assert payload["transition_contract"]["credentials_transfer"] is False
 
 
+def test_environment_switcher_server_probe_reads_public_identity_without_credentials(
+    monkeypatch, tmp_path,
+) -> None:
+    development = tmp_path / "development"
+    development.mkdir()
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "production"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(development))
+    monkeypatch.delenv("STRATFORGE_CANARY_ORIGIN", raising=False)
+
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return json.dumps({
+                "deployment": {
+                    "deployment_environment": "canary",
+                    "app_version": "0.10.0-beta.2",
+                    "git_commit_sha": "a" * 40,
+                    "build_id": "sf-canary-build",
+                    "release_channel": "beta",
+                },
+            }).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(server_mod.urllib.request, "urlopen", fake_urlopen)
+    target = server_mod._admin_environment_probe("canary")
+
+    assert captured["url"] == "https://canary.stratforges.com/api/runtime/env"
+    assert captured["timeout"] == 4.5
+    assert "Cookie" not in captured["headers"]
+    assert "Authorization" not in captured["headers"]
+    assert target["version"] == "0.10.0-beta.2"
+    assert target["commit"] == "a" * 40
+    assert target["build_id"] == "sf-canary-build"
+    assert target["health"] == "reachable"
+    assert target["probe_ok"] is True
+    assert not any("Метаданные среды" in row for row in target["warnings"])
+
+
+def test_environment_switcher_server_probe_rejects_identity_mismatch(
+    monkeypatch, tmp_path,
+) -> None:
+    development = tmp_path / "development"
+    development.mkdir()
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(tmp_path / "production"))
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(development))
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return json.dumps({
+                "deployment": {"deployment_environment": "production"},
+            }).encode("utf-8")
+
+    monkeypatch.setattr(
+        server_mod.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(),
+    )
+    with pytest.raises(ValueError, match="не соответствует"):
+        server_mod._admin_environment_probe("canary")
+
+
 def test_consent_support_session_commands_and_monitoring(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")

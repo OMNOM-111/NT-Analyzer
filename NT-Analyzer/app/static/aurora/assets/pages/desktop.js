@@ -845,6 +845,19 @@ UI.ready(async function () {
           status: (res && res.status) || '',
           alerts: Array.isArray(res && res.alerts) ? res.alerts : [],
           history: (res && res.history) || {},
+          // Preserve backend liveness/provenance instead of accidentally
+          // dropping it at the UI seam. Dropping `freshness` made a healthy
+          // TopstepX SignalR heartbeat look stale on the next HTTP health poll,
+          // which muted a just-updated marker to grey/OFF in one browser.
+          freshness: (res && res.freshness) || {},
+          price_marker_live: !!(res && res.price_marker_live),
+          market_data_available: res && res.market_data_available,
+          offline_banner: !!(res && res.offline_banner),
+          strategy_source: (res && res.strategy_source) || '',
+          execution_source: (res && res.execution_source) || '',
+          diagnostics: (res && res.diagnostics) || {},
+          series_mode: (res && res.series_mode) || '',
+          resolved_instrument: (res && res.resolved_instrument) || '',
           resolvedInstrument: (res && res.resolved_instrument) || '',
         };
       } catch (e) {
@@ -1151,7 +1164,10 @@ UI.ready(async function () {
       let mergedBars = mergeChartBars(rec.historyBars, bars);
       const liveMs = rec.liveBar && Date.parse(rec.liveBar.t || rec.liveBar.time_utc || rec.liveBar.time || rec.liveBar.timestamp);
       const payloadMs = payloadLastBarMs(mergedBars);
-      const liveFresh = rec.liveBar && Number.isFinite(liveMs) && Date.now() - Number(rec.liveBarAt || 0) <= 15000;
+      const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh;
+      const liveFresh = rec.liveBar && Number.isFinite(liveMs) && (
+        Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh
+      );
       const liveProviderCompatible = !rec.liveBarProvider
         || rec.liveBarProvider === String(chartSource || '').toLowerCase();
       // A health/history poll is allowed to fill gaps, but it must not roll a

@@ -39,6 +39,7 @@ _ENV_KEYS = (
     "STRATFORGE_TRUSTED_PROXY_IPS",
     "STRATFORGE_READINESS_MIN_FREE_MB",
     "STRATFORGE_API_MAX_INFLIGHT",
+    "STRATFORGE_API_MAX_WEBSOCKETS",
     "STRATFORGE_API_BACKLOG",
     "STRATFORGE_API_MAX_BODY_BYTES",
     "STRATFORGE_WORKER_POLL_MS",
@@ -152,6 +153,7 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.environment_explicit is True
     assert Path(config.data_root) == development.resolve()
     assert config.api_max_inflight == 48
+    assert config.api_max_websockets == 128
     assert config.api_backlog == 96
     assert config.api_max_body_bytes == 1048576
     assert config.allowed_hosts == ("127.0.0.1", "localhost")

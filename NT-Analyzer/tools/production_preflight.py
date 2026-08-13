@@ -150,6 +150,7 @@ def run_preflight(
         checks.append(_check("application_release", app_files_ok, "ok" if app_files_ok else "incomplete"))
         bounded_runtime = (
             1 <= config.api_max_inflight <= 1024
+            and 1 <= config.api_max_websockets <= 4096
             and config.api_max_inflight <= config.api_backlog
             and 1024 <= config.api_max_body_bytes <= 8388608
             and 50 <= config.worker_poll_ms <= 10000

@@ -35,6 +35,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate, parsedate_to_datetime
@@ -438,6 +439,8 @@ _DEFAULT_ENVIRONMENT_ORIGINS = {
     runtime_env.PRODUCTION: "https://app.stratforges.com",
 }
 
+_DEV_PREVIEW_MODE_COOKIE = "sf_dev_preview_mode"
+
 
 def _admin_environment_targets() -> Dict[str, Any]:
     active = runtime_env.deployment_environment()
@@ -495,6 +498,79 @@ def _admin_environment_targets() -> Dict[str, Any]:
     }
 
 
+_ENVIRONMENT_PROBE_MAX_BYTES = 128 * 1024
+
+
+def _admin_environment_probe(environment: Any) -> Dict[str, Any]:
+    """Read a target's public runtime identity without browser credentials.
+
+    The Environment Switcher cannot safely rely on a cross-origin browser
+    ``fetch``: the isolated origins intentionally do not share CORS/session
+    state. The server probes only the validated, configured environment origin,
+    sends no authentication material, and returns the small public identity
+    subset that the switcher renders.
+    """
+    wanted = str(environment or "").strip().lower()
+    if wanted not in {
+        runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION,
+    }:
+        raise ValueError("Неизвестное окружение.")
+
+    payload = _admin_environment_targets()
+    target = next(
+        (row for row in payload["targets"] if row.get("environment") == wanted),
+        None,
+    )
+    if not isinstance(target, dict):
+        raise ValueError("Окружение не настроено.")
+    if target.get("current"):
+        return target
+
+    origin = _validated_environment_origin(wanted, target.get("origin"))
+    if not origin:
+        raise ValueError("Origin окружения не настроен.")
+    request = urllib.request.Request(
+        origin + "/api/runtime/env",
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "StratForge-Environment-Probe/1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=4.5) as response:
+        raw = response.read(_ENVIRONMENT_PROBE_MAX_BYTES + 1)
+    if len(raw) > _ENVIRONMENT_PROBE_MAX_BYTES:
+        raise ValueError("Ответ runtime identity слишком большой.")
+    document = json.loads(raw.decode("utf-8"))
+    deployment = document.get("deployment") if isinstance(document, dict) else None
+    if not isinstance(deployment, dict):
+        deployment = document if isinstance(document, dict) else {}
+    reported = str(
+        deployment.get("deployment_environment")
+        or deployment.get("environment")
+        or ""
+    ).strip().lower()
+    if reported != wanted:
+        raise ValueError("Runtime identity не соответствует выбранному окружению.")
+
+    target.update({
+        "version": str(
+            deployment.get("app_version") or deployment.get("build_version") or ""
+        ),
+        "commit": str(deployment.get("git_commit_sha") or ""),
+        "build_id": str(deployment.get("build_id") or ""),
+        "release_channel": str(deployment.get("release_channel") or ""),
+        "health": "reachable",
+        "readiness": "runtime endpoint reachable",
+        "probe_ok": True,
+    })
+    target["warnings"] = [
+        warning for warning in (target.get("warnings") or [])
+        if "Метаданные среды" not in str(warning)
+    ]
+    return target
+
+
 _BILLING_PROMO_POSTS = {
     "/api/billing/promo/preview",
     "/api/billing/promo/redeem",
@@ -543,6 +619,61 @@ _DESKTOP_INSTRUMENT_ROOTS = {
     "HE", "LE", "ZC", "ZW", "ZS", "ZM", "ZL",
     "ZT", "ZF", "ZN", "TN", "ZB", "UB",
 }
+_DESKTOP_ROOT_FALLBACK_SOURCE = "desktop_root_fallback"
+
+
+def apply_desktop_instrument_fallbacks(result: list, *, desktop: bool) -> list:
+    """Keep Desktop root selection usable without a local NT catalog.
+
+    The NinjaTrader instrument scan is local runtime data and is not part of a
+    server artifact. Desktop charts can still request a supported futures root
+    (for example ``MNQ``); the existing provider resolver selects the current
+    TopstepX contract or the configured runtime fallback later in the bars
+    pipeline. Trading selectors keep their catalog-only behavior.
+    """
+    if not desktop:
+        return result
+
+    out: list = []
+    seen: set[str] = set()
+    for row in result:
+        if not isinstance(row, dict):
+            continue
+        root = str(row.get("root") or "").strip()
+        if not root:
+            continue
+        seen.add(root)
+        front = row.get("front_month") if isinstance(row.get("front_month"), dict) else {}
+        if str(front.get("instrument") or "").strip():
+            out.append(row)
+            continue
+        fallback = {
+            "instrument": root,
+            "root": root,
+            "source": _DESKTOP_ROOT_FALLBACK_SOURCE,
+        }
+        patched = dict(row)
+        patched["front_month"] = fallback
+        contracts = [
+            item for item in (patched.get("contracts") or []) if isinstance(item, dict)
+        ]
+        if not any(str(item.get("instrument") or "") == root for item in contracts):
+            contracts = [dict(fallback), *contracts]
+        patched["contracts"] = contracts
+        out.append(patched)
+
+    for root in sorted(_DESKTOP_INSTRUMENT_ROOTS - seen):
+        fallback = {
+            "instrument": root,
+            "root": root,
+            "source": _DESKTOP_ROOT_FALLBACK_SOURCE,
+        }
+        out.append({
+            "root": root,
+            "front_month": dict(fallback),
+            "contracts": [dict(fallback)],
+        })
+    return out
 
 _MARKET_BARS_PAYLOAD_CACHE_LOCK = threading.RLock()
 _MARKET_BARS_PAYLOAD_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
@@ -1517,6 +1648,26 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._extra_headers.append(("Set-Cookie", value))
 
+    def _set_dev_preview_mode_cookie(self, mode: str) -> None:
+        secure = self._is_remote_api_request() or str(
+            self.headers.get("X-Forwarded-Proto") or ""
+        ).lower() == "https"
+        value = (
+            f"{_DEV_PREVIEW_MODE_COOKIE}={str(mode or '').strip()}; Path=/; Max-Age=300; "
+            "HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
+    def _clear_dev_preview_mode_cookie(self) -> None:
+        secure = self._is_remote_api_request() or str(
+            self.headers.get("X-Forwarded-Proto") or ""
+        ).lower() == "https"
+        value = (
+            f"{_DEV_PREVIEW_MODE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
+            + ("; Secure" if secure else "")
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
     def _clear_session_cookie(self) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
         value = f"{runtime_env.session_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
@@ -1600,6 +1751,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _local_development_cookie_context(self) -> Optional[Dict[str, Any]]:
         """Resolve localhost Development access without letting stale cookies lock out owner."""
+        if (
+            runtime_env.is_development()
+            and runtime_env.test_auth_enabled()
+            and self._cookie_value(_DEV_PREVIEW_MODE_COOKIE) == "unauthenticated"
+        ):
+            # The explicit View-As persona must reach the genuine unauthenticated
+            # path instead of being immediately converted back to local owner.
+            return None
         cookie = self._cookie_value(runtime_env.session_cookie_name())
         if not cookie:
             return self._local_owner_context()
@@ -2275,6 +2434,8 @@ class Handler(BaseHTTPRequestHandler):
                 "nt_access": context.get("nt_access") or account_auth.nt_action_gate(None, context=context),
                 "impersonating": bool(context.get("impersonating")),
                 "impersonator_owner_id": context.get("impersonator_owner_id"),
+                "impersonation_started_at_utc": context.get("impersonation_started_at_utc") or "",
+                "impersonation_preset": context.get("impersonation_preset") or "",
                 "runtime": runtime_env.status(),
                 "google_oauth": google_auth.status(),
                 "providers": self._auth_providers_payload()["providers"],
@@ -3120,6 +3281,7 @@ class Handler(BaseHTTPRequestHandler):
             self._err(exc.status, str(exc), code=exc.code)
             return
         self._set_session_cookie(str(out.get("session_token") or ""))
+        self._clear_dev_preview_mode_cookie()
         self.send_response(HTTPStatus.SEE_OTHER)
         for name, value in self._extra_headers:
             self.send_header(name, value)
@@ -3192,7 +3354,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if out.get("clear_session"):
                     self._clear_session_cookie()
+                    self._set_dev_preview_mode_cookie("unauthenticated")
                 elif out.get("session_token"):
+                    self._clear_dev_preview_mode_cookie()
                     self._set_session_cookie(str(out.get("session_token")))
                     out.pop("session_token", None)
             elif path == "/api/dev/preview/exit":
@@ -3201,6 +3365,7 @@ class Handler(BaseHTTPRequestHandler):
                     user_agent=str(self.headers.get("User-Agent") or "dev-return"),
                 )
                 if out.get("session_token"):
+                    self._clear_dev_preview_mode_cookie()
                     self._set_session_cookie(str(out.get("session_token")))
                     out.pop("session_token", None)
             elif path == "/api/dev/preview/reset-personas":
@@ -3865,6 +4030,19 @@ class Handler(BaseHTTPRequestHandler):
             # Reuse charts_realtime capability gate.
             if not self._authorize_api("/api/ops/runtime/bars"):
                 return
+            if (
+                str(self.headers.get("Upgrade") or "").lower() == "websocket"
+                and self.headers.get("Sec-WebSocket-Key")
+            ):
+                promote = getattr(self.server, "promote_websocket_request", None)
+                if callable(promote) and not promote():
+                    self._err(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        "WebSocket capacity is temporarily full.",
+                        code="websocket_admission_saturated",
+                        headers={"Retry-After": "1"},
+                    )
+                    return
             market_data_ws_http.handle_websocket_upgrade(self)
             return
 
@@ -3952,6 +4130,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/admin/environment-targets":
+            probe = str(qs.get("probe", [""])[0] or "").strip().lower()
+            if probe:
+                try:
+                    self._json(
+                        HTTPStatus.OK,
+                        {"ok": True, "target": _admin_environment_probe(probe)},
+                    )
+                except ValueError as exc:
+                    self._err(HTTPStatus.BAD_REQUEST, str(exc), code="environment_probe_invalid")
+                except Exception:
+                    self._err(
+                        HTTPStatus.BAD_GATEWAY,
+                        f"Endpoint {probe} недоступен.",
+                        code="environment_probe_failed",
+                    )
+                return
             payload = _admin_environment_targets()
             deployment = getattr(self.server, "deployment_config", None)
             if deployment is None:
@@ -5223,6 +5417,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ops/runtime/instruments":
             # Returns per-root current/all instruments for the Trading Online selector.
             # Each root entry has front_month (most recent), and all contracts.
+            desktop = str((qs.get("desktop") or ["0"])[0]).lower() in {"1", "true", "yes"}
             instr_doc = jobqueue.read_instruments_catalog() or {}
             all_instr = instr_doc.get("instruments") or []
             root_map: dict = {}
@@ -5233,7 +5428,7 @@ class Handler(BaseHTTPRequestHandler):
                 root = str(ins.get("root") or name.split(" ", 1)[0])
                 if not root:
                     continue
-                if str((qs.get("desktop") or ["0"])[0]).lower() in {"1", "true", "yes"} and root not in _DESKTOP_INSTRUMENT_ROOTS:
+                if desktop and root not in _DESKTOP_INSTRUMENT_ROOTS:
                     continue
                 root_map.setdefault(root, []).append(ins)
             result = []
@@ -5300,7 +5495,10 @@ class Handler(BaseHTTPRequestHandler):
                     "front_month": front,
                     "contracts": contracts_sorted,
                 })
-            self._json(HTTPStatus.OK, {"roots": result})
+            self._json(
+                HTTPStatus.OK,
+                {"roots": apply_desktop_instrument_fallbacks(result, desktop=desktop)},
+            )
             return True
 
         if path == "/api/ops/runtime/price-alerts":
@@ -9112,6 +9310,7 @@ def create_http_server(
     server = api_admission.BoundedThreadingHTTPServer(
         (deployment.bind_host, int(bind_port)), Handler,
         max_inflight=deployment.api_max_inflight,
+        max_websockets=deployment.api_max_websockets,
         backlog=deployment.api_backlog,
         max_body_bytes=deployment.api_max_body_bytes,
     )

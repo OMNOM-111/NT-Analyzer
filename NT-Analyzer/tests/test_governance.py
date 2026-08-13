@@ -5,6 +5,7 @@ Run: python -m tests.test_governance
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -28,6 +29,17 @@ def test_governance_documents_exist() -> None:
     for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map", "ai-lab-competitive-feedback"):
         assert required in docs, f"missing document registry row: {required}"
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
+
+
+def test_charter_is_mission_led_and_legal_package_remains_draft() -> None:
+    charter = governance.read_document("charter")["content"]
+    assert "## Миссия" in charter
+    assert "Автотрейдинг — ещё лучше" in charter
+    assert "TopstepX" in charter
+    assert "Google и e-mail identity paths" in charter
+    legal = [row for row in governance.list_documents() if row["id"].startswith("legal-")]
+    assert len(legal) == 9
+    assert all(row["draft"] is True for row in legal)
 
 
 def test_competitive_feedback_law_is_registered() -> None:
@@ -117,6 +129,37 @@ def test_explicit_production_renders_governance_outside_immutable_release(
     governance.ensure_governance_files(render=True)
     assert (rendered / "README.md").is_file()
     assert not (release_root / "docs" / "governance").exists()
+
+
+def test_implicit_library_import_does_not_rewrite_tracked_governance(
+    tmp_path,
+) -> None:
+    project = tmp_path / "NT-Analyzer"
+    (project / "app").mkdir(parents=True)
+    rendered = project / "docs" / "governance"
+    rendered.mkdir(parents=True)
+    sentinel = rendered / "README.md"
+    sentinel.write_text("tracked governance sentinel\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["NT_ANALYZER_ROOT"] = str(project)
+    for name in ("DEPLOYMENT_ENV", "STRATFORGE_ENV", "NTA_APP_ENV", "NTA_ENV"):
+        env.pop(name, None)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(ROOT), env.get("PYTHONPATH", "")) if part
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.governance"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "tracked governance sentinel\n"
 
 
 def main() -> int:

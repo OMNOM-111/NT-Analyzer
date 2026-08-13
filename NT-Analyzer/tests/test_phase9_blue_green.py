@@ -93,6 +93,31 @@ def _to_canary_passed(cid):
         idempotency_key="cc-" + cid[:8])
 
 
+def _record_verified_production_executor(cid):
+    doc = release_center._read_doc()
+    deployment = next(
+        d for d in doc["deployments"]
+        if d.get("candidate_id") == cid and d.get("environment") == "production"
+    )
+    deployment["document"] = {
+        **(deployment.get("document") or {}),
+        "status": "pass",
+        "external_result": "pass",
+    }
+    release_center._write_doc(doc)
+
+
+def _enable_verified_rollback(monkeypatch):
+    monkeypatch.setattr(release_center, "_adapter_status", lambda: {
+        "name": "stage9_ssh", "real_configured": True, "real_available": True,
+        "canary_available": True, "production_available": True,
+        "mode": "real", "configuration_state": "ready",
+    })
+    monkeypatch.setattr(release_center.release_executor, "rollback_production", lambda current, target: {
+        "status": "pass", "external_result": "pass", "rollback_verified": True,
+    })
+
+
 def _artifact(build_id="sf-0.10.0-dev.1-aaaaaaaaaaaa"):
     return {"artifact_id": "art_x", "build_id": build_id, "artifact_sha256": "A" * 64}
 
@@ -401,6 +426,43 @@ def test_rehearse_endpoint_no_state_change(rc_store):
     assert len(release_center.get_release(cid)["rehearsals"]) == 1
 
 
+def test_real_canary_rehearsal_rolls_back_and_repromotes_same_artifact(rc_store, monkeypatch):
+    cid = _mk()
+    _to_signed(cid)
+    release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-real-reh")
+    monkeypatch.setattr(release_center, "_adapter_status", lambda: {
+        "name": release_center.release_executor.ADAPTER_NAME,
+        "real_configured": True,
+        "real_available": True,
+        "canary_available": True,
+        "production_available": False,
+        "mode": "real",
+    })
+    seen = []
+    monkeypatch.setattr(
+        release_center.release_executor,
+        "rehearse_canary_rollback",
+        lambda artifact: seen.append(dict(artifact)) or {
+            "ok": True,
+            "rollback_verified": True,
+            "re_promoted": True,
+            "previous_git_commit_sha": "a" * 40,
+            "current_git_commit_sha": artifact["git_commit_sha"],
+            "secrets_redacted": True,
+        },
+    )
+    before = release_center.get_release(cid)["summary"]["state"]
+    out = release_center.rehearse_blue_green(
+        actor=OWNER, candidate_id=cid, environment="canary", idempotency_key="reh-real-1")
+    assert out["ok"] is True
+    assert out["rehearsal"]["mode"] == "real"
+    assert out["rehearsal"]["external_result"] == "pass"
+    assert out["rehearsal"]["rollback_verified"] is True
+    assert out["rehearsal"]["re_promoted"] is True
+    assert seen and seen[0]["artifact_id"]
+    assert release_center.get_release(cid)["summary"]["state"] == before
+
+
 def test_rehearse_requires_built_artifact(rc_store):
     cid = _mk()
     with pytest.raises(release_center.ReleaseCenterError) as exc:
@@ -409,13 +471,15 @@ def test_rehearse_requires_built_artifact(rc_store):
     assert exc.value.code == "artifact_missing"
 
 
-def test_rollback_records_traffic_switch_evidence(rc_store):
+def test_rollback_records_traffic_switch_evidence(rc_store, monkeypatch):
     cid = _mk()
     _to_canary_passed(cid)
     release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-" + cid[:8])
     release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-" + cid[:8])
     # Owner-confirmed live (real deploy verified out-of-band), then roll back.
+    _record_verified_production_executor(cid)
     release_center.mark_production_live(actor=OWNER, candidate_id=cid, idempotency_key="ml-" + cid[:8])
+    _enable_verified_rollback(monkeypatch)
     detail = release_center.get_release(cid)
     target_artifact = detail["summary"]["artifact_id"]
     out = release_center.rollback_production(

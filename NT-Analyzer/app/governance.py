@@ -950,15 +950,23 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
 
 CHARTER_DEFAULT = """# CHARTER — О StratForge AI
 
-Дата актуализации: 2026-08-10
+## Миссия
 
-## Цель
+StratForge AI существует, чтобы любой трейдер — независимо от опыта и навыков программирования — мог превратить торговую идею в автоматическую стратегию, проверенную на реальных исторических данных, и не проводить всё время у монитора.
 
-StratForge AI — торгово-аналитическая платформа для анализа рынков и стратегий: realtime-графики и market data из нескольких источников, NinjaTrader через StratForge Connector, AI-агенты, бэктестинг, управление стратегиями и учебная торговля. Aurora — веб-интерфейс; `NT-Analyzer` — техническое имя репозитория.
+> «Трейдер — это хорошо. Автотрейдинг — ещё лучше.» Твой опыт остаётся с тобой — а торгует за тебя стратегия.
+
+## Как ИИ разрабатывает стратегии
+
+Команда ИИ-агентов пишет код стратегии, тестирует его через NinjaTrader Strategy Analyzer на реальных исторических данных, анализирует результат и улучшает параметры до заданных критериев. Готовая стратегия передаётся трейдеру для бета-теста на демо-счёте.
+
+## Назначение платформы
+
+StratForge AI объединяет realtime-графики и market data, NinjaTrader через StratForge Connector, команду AI-агентов, бэктестинг, управление стратегиями и учебную торговлю. Основной независимый read-only источник графиков — TopstepX; NinjaTrader остаётся путём исполнения и источником истины по сделкам/runtime.
 
 ## Границы продукта
 
-- Источник истины по историческим результатам: `NinjaTrader -> StratForge Connector`.
+- Источник истины по исполнению, сделкам, метрикам и runtime-состоянию: `NinjaTrader -> StratForge Connector`.
 - Проект работает в режиме `local-first`: код, документы, research-артефакты и AI Lab живут локально в репозитории.
 - AI Lab — отдельная sandbox-ветвь для исследовательской генерации; production-код и paper/live процессы не пишутся туда автоматически.
 
@@ -1480,7 +1488,7 @@ def _render_overview_markdown() -> str:
         "",
         "## О StratForge AI",
         "",
-        "StratForge AI — торгово-аналитическая платформа для анализа рынков и стратегий: realtime-графики и market data из нескольких источников, NinjaTrader через StratForge Connector, AI-агенты, бэктестинг, управление стратегиями и учебная торговля. Полная цель, назначение и текущие возможности — в `CHARTER`.",
+        "StratForge AI — платформа автоматической торговли: трейдер превращает идею в автоматическую стратегию, которую ИИ-агенты пишут, тестируют на реальных исторических данных через NinjaTrader и улучшают до заданного результата. Полная цель, назначение и текущие возможности — в `CHARTER`.",
         "",
         "Этот документ (`OVERVIEW`) — сжатая рабочая сводка правил и параметров для разработчиков стратегий. Актуальная версия всегда определяется текущими законами и журналом поправок.",
         "",
@@ -2051,4 +2059,8 @@ def consistency_report() -> Dict[str, Any]:
     }
 
 
-ensure_governance_files(render=True)
+# Library and test imports do not select a deployment boundary and must never
+# rewrite tracked Markdown in the source checkout as a side effect. Real
+# Development/Canary/Production startup is explicit and renders into its
+# isolated governance-rendered data root.
+ensure_governance_files(render=runtime_env.environment_explicit())

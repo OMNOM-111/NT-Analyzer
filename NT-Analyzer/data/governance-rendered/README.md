@@ -18,5 +18,5 @@
 - `data/governance/change_log.jsonl` — последовательный журнал поправок с датой, временем, автором и before/after.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Записать фактическое финальное Development smoke-evidence принятого TopstepX market-data/chart baseline без изменения реализации.
+2026-08-13T09:03:17Z | GPT-5.5 через Codex по запросу owner | Интегрировать подтверждённый owner mission-led CHARTER и Documents UX из сохранённого рабочего снимка, не активируя юридические проекты и не меняя market-data pipeline.
 -->

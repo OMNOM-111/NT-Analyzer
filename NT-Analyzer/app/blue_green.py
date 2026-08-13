@@ -1,13 +1,12 @@
-"""Phase 9: Blue-green Production deployment tooling (fail-closed dry-run).
+"""Phase 9: Blue-green deployment planning plus an opt-in real executor.
 
 The Release Center (Phase 8) promotes *exactly one immutable artifact* from
 Canary to Production. Phase 9 adds the deployment *mechanism* that actually moves
 traffic to that artifact with zero/minimal downtime, a graceful worker drain,
 expand→migrate→contract compatible migrations and a proven rollback switch — all
-as a **safe, fail-closed dry-run**. No real executor is wired in this phase: no
-SSH, systemd, symlink switch, DNS, Cloudflare or database command is ever run,
-and the external result of every stage is reported as PENDING/BLOCKED, never as a
-real PASS.
+as a **safe, fail-closed dry-run** by default.  When the separately configured
+``stage9_ssh`` adapter is available, Release Center delegates execution to the
+checked-in host scripts; this module remains the pure plan/rehearsal engine.
 
 Deployment model (owner decision #7): a ``current`` symlink points at one of two
 release slots (``blue`` / ``green``). A deployment stages the new immutable
@@ -28,7 +27,7 @@ import os
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from . import observability, runtime_env, service_readiness
+from . import observability, release_executor, runtime_env, service_readiness
 
 
 # --------------------------------------------------------------------------- #
@@ -114,8 +113,19 @@ def _real_executor_requested() -> bool:
 
 
 def deployment_strategy() -> Dict[str, Any]:
-    """Return the blue-green strategy status. A real executor is never available
-    in this phase, so a real deployment can never be executed here."""
+    """Return the redacted blue-green strategy/executor status."""
+    release_status = release_executor.status()
+    if release_status.get("real_configured"):
+        available = bool(release_status.get("real_available"))
+        return {
+            "strategy": "blue_green_symlink",
+            "executor": release_executor.ADAPTER_NAME,
+            "real_requested": True,
+            "real_available": available,
+            "mode": STATUS_PASS if available else STATUS_BLOCKED,
+            "slots": list(_SLOTS),
+            "current_link": "current",
+        }
     requested = _real_executor_requested()
     return {
         "strategy": "blue_green_symlink",

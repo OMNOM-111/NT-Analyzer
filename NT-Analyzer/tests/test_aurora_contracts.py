@@ -144,7 +144,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260811-doc-closeout1"}, versions
+    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -198,7 +198,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260812-auth-entry1"}, versions
+    assert set(versions.values()) == {"20260813-release-workflow2"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -466,12 +466,23 @@ def test_environment_switcher_never_transfers_browser_credentials() -> None:
     switcher = ui.split("async function probeEnvironmentTarget", 1)[1].split(
         "async function renderDelegatedUsersInto", 1,
     )[0]
-    assert "credentials: 'omit'" in switcher
+    assert "API.http.adminEnvironmentProbe(target.environment)" in switcher
+    assert "fetch(origin + '/api/runtime/env'" not in switcher
     assert "'_blank', 'noopener,noreferrer'" in switcher
     assert "origin + '/ui/'" in switcher
     assert "withMiniAppContext" not in switcher
     assert "localStorage.getItem" not in switcher
     assert "telegramInitData" not in switcher
+
+
+def test_dev_preview_return_uses_the_dev_only_exit_route() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    banner = ui.split("function renderImpersonationBanner", 1)[1].split(
+        "// ---- Developer Preview", 1,
+    )[0]
+    assert "auth.impersonation_preset === 'dev_preview'" in banner
+    assert "API.http.devPreviewExit()" in banner
+    assert "API.http.ownerImpersonateEnd()" in banner
 
 
 def test_aurora_trading_exposes_reconnect_modeling_control():
@@ -796,6 +807,20 @@ def test_documents_page_has_privileged_compact_revision_journal_and_law_anchors(
     assert "edit-actor" not in html
     assert "saveDocument(current.id, { content, reason })" in js
     assert "Object.values(me.admin_capabilities).some(Boolean)" not in js
+    assert "docs-privileged" in html
+    assert "docs-journal-hidden" in html
+    assert "style.gridTemplateColumns" not in js
+    assert "classList.toggle('docs-privileged'" in js
+    assert "classList.toggle('docs-journal-hidden'" in js
+    assert "STATUS_PILL" in js
+    assert "doc-tablewrap" in js and "listStack" in js
+    assert "bq-lead" in js
+    assert "Юридические документы (проекты)" in js
+    assert js.count("badge: 'ПРОЕКТ'") >= 9
+    assert ".doc .st-pill" in html
+    assert ".doc .doc-tablewrap" in html
+    assert ".rev-summary del" in html and "var(--neg)" in html
+    assert ".rev-summary ins" in html and "var(--pos)" in html
     assert ".tl-item.clickable" in theme
     assert ".doc-law-highlight" in theme
 
@@ -808,6 +833,19 @@ def test_admin_panel_module_switching_uses_stale_render_guard():
     assert "moduleBody.replaceChildren(container);" in ui
     assert "await renderAdminModule(container, id, overview);" in ui
     assert "renderAdminModule(moduleBody, id, overview)" not in ui
+
+
+def test_release_center_describes_real_executor_without_stale_dry_run_copy():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "function releaseAdapterSummary(adapter)" in ui
+    assert "if (adapter.real_available)" in ui
+    assert "Canary executor подключён и готов" in ui
+    assert "Production остаётся заблокирован до отдельного подтверждения владельца" in ui
+    assert "реальный executor не подключён, поэтому внешний результат остаётся PENDING" not in ui
+    assert "function releaseBlueGreenSummary(detail)" in ui
+    assert "Canary deploy и rollback rehearsal выполняются реальным executor" in ui
+    assert "Проверить rollback в Canary (реально)" in ui
+    assert "Реальный executor не подключён: expand→migrate→contract" not in ui
 
 
 def test_desktop_removes_drawings_whose_backend_alert_was_deleted():
@@ -849,6 +887,17 @@ def test_chart_live_price_marker_follows_latest_tick_not_candle_open():
     assert "this.host.dataset.renderedPriceMarkerText = label" in js
     assert "this.host.dataset.renderedPriceMarkerColor = tagColor" in js
     assert "this.host.dataset.renderedPriceMarkerLive = String(live)" in js
+
+
+def test_desktop_preserves_backend_freshness_across_http_poll():
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    html = (AURORA / "desktop.html").read_text(encoding="utf-8")
+
+    assert "freshness: (res && res.freshness) || {}" in js
+    assert "price_marker_live: !!(res && res.price_marker_live)" in js
+    assert "const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh" in js
+    assert "Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh" in js
+    assert "desktop.js?v=20260813-live-marker-freshness1" in html
 
 
 def test_command_language_covers_every_desktop_instrument():

@@ -1,8 +1,8 @@
 # StratForge AI External GPT Context Pack
 
 - Context Pack document: 00_STRATFORGE_CONTEXT_INDEX.md
-- Last verified UTC: 2026-08-13T04:59:15Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Entry point, pack inventory, reading order and status legend
 - Status: DONE
 
@@ -22,11 +22,11 @@ GitHub, локальному компьютеру, серверу или runtime
 | Проверенный Git root | корень репозитория; живой продуктовый код находится в `NT-Analyzer/` |
 | Public version | `0.10.0-beta.1` |
 | Release status | `beta`, `pre_release` |
-| Repository evidence snapshot | `cad53f682e413db86bc3a77e57f8942baf4d4bc3` |
-| Operational release snapshot | accepted closeout `0.10.0-beta.1` / `6b6dc4589407855526cf6cc345376d64cf95200e`, build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z`, manifest SHA256 `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, `same_release_dir=true`, `previous=795db0c1` |
-| DEV | operationally confirmed as `http://127.0.0.1:8765/ui/` `[DEV]`, app identity `6b6dc458`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
-| CANARY | operationally confirmed as `https://canary.stratforges.com` `[CANARY]`, same artifact as Production, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `PARTIAL` |
-| PRODUCTION | operationally confirmed as `https://app.stratforges.com` `[BETA]`, same artifact as Canary, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
+| Repository evidence snapshot | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
+| Operational release snapshot | Canary accepted `7ebda6fa` / build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z` / manifest `CE09030A…`; Production remains accepted `6b6dc458` / build `sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z` / manifest `272045DB…` |
+| DEV | operationally confirmed as `http://127.0.0.1:8765/ui/` `[DEV]`, app identity `7ebda6fa`, `dirty=false`, `deployment_environment=development`, `config_profile=local-development` |
+| CANARY | operationally confirmed as `https://canary.stratforges.com` `[CANARY]`, git `7ebda6fa`, `instance=stratforge-canary-01`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary`, Telegram `EXTERNAL BLOCKED`, previous slot `de7acaed` |
+| PRODUCTION | operationally confirmed as `https://app.stratforges.com` `[BETA]`, git `6b6dc458`, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`, previous slot `0.10.0-beta.1-795db0c1` |
 
 ## Порядок чтения
 
@@ -84,7 +84,8 @@ smaller external vocabulary.
 - **Repository evidence**: current code, schema, config and current canonical docs
 	that describe what the repository implements.
 - **Operational evidence**: the latest accepted release/deployment closeout
-	captured in canonical repo docs, currently
+	captured in canonical repo docs: current Canary in
+	[../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md), current Production in
 	[../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
 - **Historical evidence**: plans, older audits and handoffs used only to explain
 	why the system looks the way it does today.

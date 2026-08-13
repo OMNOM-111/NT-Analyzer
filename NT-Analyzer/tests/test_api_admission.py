@@ -7,6 +7,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler
 
+import pytest
+
 from app.api_admission import BoundedThreadingHTTPServer
 
 
@@ -26,6 +28,30 @@ class _BlockingHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+class _PromotingHandler(BaseHTTPRequestHandler):
+    websocket_entered = threading.Event()
+    websocket_release = threading.Event()
+
+    def log_message(self, _format, *_args):
+        return
+
+    def _reply(self, status: int, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/websocket-hold":
+            if not self.server.promote_websocket_request():
+                self._reply(503, b'{"code":"websocket_admission_saturated"}')
+                return
+            type(self).websocket_entered.set()
+            type(self).websocket_release.wait(timeout=5)
+        self._reply(200, b'{"ok":true}')
 
 
 def test_bounded_server_rejects_saturation_without_spawning_another_handler() -> None:
@@ -86,6 +112,77 @@ def test_admission_metrics_bound_payload_samples() -> None:
     assert metrics["max_body_bytes"] == 8192
     assert metrics["payload_bytes"]["p50"] == 100
     assert metrics["payload_bytes"]["max"] == 1000
+
+
+def test_promoted_websocket_does_not_starve_short_http_requests() -> None:
+    _PromotingHandler.websocket_entered.clear()
+    _PromotingHandler.websocket_release.clear()
+    server = BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0), _PromotingHandler,
+        max_inflight=1, max_websockets=2, backlog=4,
+    )
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    root = f"http://127.0.0.1:{server.server_address[1]}"
+    held = threading.Thread(
+        target=lambda: urllib.request.urlopen(
+            root + "/websocket-hold", timeout=5,
+        ).read(),
+    )
+    held.start()
+    assert _PromotingHandler.websocket_entered.wait(timeout=3)
+    try:
+        with urllib.request.urlopen(root + "/health", timeout=3) as response:
+            assert response.status == 200
+            assert json.loads(response.read().decode("utf-8")) == {"ok": True}
+        during = server.admission_metrics()
+        assert during["websockets"]["active"] == 1
+        assert during["websockets"]["promoted"] == 1
+        assert during["rejected"] == 0
+    finally:
+        _PromotingHandler.websocket_release.set()
+        held.join(timeout=5)
+        server.shutdown()
+        server.server_close()
+        serving.join(timeout=5)
+
+    after = server.admission_metrics()
+    assert after["websockets"]["active"] == 0
+    assert after["websockets"]["completed"] == 1
+
+
+def test_promoted_websocket_pool_remains_bounded() -> None:
+    _PromotingHandler.websocket_entered.clear()
+    _PromotingHandler.websocket_release.clear()
+    server = BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0), _PromotingHandler,
+        max_inflight=2, max_websockets=1, backlog=4,
+    )
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    root = f"http://127.0.0.1:{server.server_address[1]}"
+    held = threading.Thread(
+        target=lambda: urllib.request.urlopen(
+            root + "/websocket-hold", timeout=5,
+        ).read(),
+    )
+    held.start()
+    assert _PromotingHandler.websocket_entered.wait(timeout=3)
+    try:
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(root + "/websocket-hold", timeout=3).read()
+        assert caught.value.code == 503
+        payload = json.loads(caught.value.read().decode("utf-8"))
+        assert payload["code"] == "websocket_admission_saturated"
+        metrics = server.admission_metrics()
+        assert metrics["websockets"]["active"] == 1
+        assert metrics["websockets"]["rejected"] == 1
+    finally:
+        _PromotingHandler.websocket_release.set()
+        held.join(timeout=5)
+        server.shutdown()
+        server.server_close()
+        serving.join(timeout=5)
 
 
 def test_saturation_burst_returns_structured_503_without_transport_resets() -> None:

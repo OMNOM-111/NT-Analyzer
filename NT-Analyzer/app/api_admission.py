@@ -34,11 +34,15 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self, server_address: Any, handler_class: Any, *,
         max_inflight: int = 64, backlog: int = 128,
         max_body_bytes: int = 1024 * 1024,
+        max_websockets: int = 128,
     ) -> None:
         self.max_inflight = max(1, min(1024, int(max_inflight or 64)))
         self.request_queue_size = max(1, min(4096, int(backlog or 128)))
         self.max_body_bytes = max(1024, min(8 * 1024 * 1024, int(max_body_bytes)))
+        self.max_websockets = max(1, min(4096, int(max_websockets or 128)))
         self._slots = threading.BoundedSemaphore(self.max_inflight)
+        self._websocket_slots = threading.BoundedSemaphore(self.max_websockets)
+        self._request_slot = threading.local()
         self._rejector_limit = max(2, min(16, self.max_inflight))
         self._rejector_slots = threading.BoundedSemaphore(self._rejector_limit)
         self._metrics_lock = threading.Lock()
@@ -50,6 +54,12 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self._rejection_peak = 0
         self._rejection_dropped = 0
         self._completed = 0
+        self._websocket_active = 0
+        self._websocket_peak = 0
+        self._websocket_promoted = 0
+        self._websocket_rejected = 0
+        self._websocket_completed = 0
+        self._websocket_durations_ms: deque[float] = deque(maxlen=10000)
         self._durations_ms: deque[float] = deque(maxlen=10000)
         self._payload_bytes: deque[int] = deque(maxlen=10000)
         super().__init__(server_address, handler_class)
@@ -167,15 +177,53 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
     def process_request_thread(self, request: Any, client_address: Any) -> None:
         started = time.perf_counter()
+        self._request_slot.kind = "http"
         try:
             super().process_request_thread(request, client_address)
         finally:
             elapsed = (time.perf_counter() - started) * 1000.0
+            slot_kind = str(getattr(self._request_slot, "kind", "http"))
+            try:
+                if slot_kind == "websocket":
+                    with self._metrics_lock:
+                        self._websocket_active = max(0, self._websocket_active - 1)
+                        self._websocket_completed += 1
+                        self._websocket_durations_ms.append(elapsed)
+                    self._websocket_slots.release()
+                else:
+                    with self._metrics_lock:
+                        self._active = max(0, self._active - 1)
+                        self._completed += 1
+                        self._durations_ms.append(elapsed)
+                    self._slots.release()
+            finally:
+                try:
+                    del self._request_slot.kind
+                except AttributeError:
+                    pass
+
+    def promote_websocket_request(self) -> bool:
+        """Move the current upgraded request out of the short HTTP pool.
+
+        A WebSocket handler lives for the browser session. Counting it against
+        ``max_inflight`` permanently starves bars, auth and admin HTTP once a
+        large chart layout reaches that limit. The connection remains bounded
+        by its own pool, while the short request slot is released immediately.
+        """
+        if str(getattr(self._request_slot, "kind", "")) != "http":
+            return False
+        if not self._websocket_slots.acquire(blocking=False):
             with self._metrics_lock:
-                self._active = max(0, self._active - 1)
-                self._completed += 1
-                self._durations_ms.append(elapsed)
-            self._slots.release()
+                self._websocket_rejected += 1
+            return False
+        with self._metrics_lock:
+            self._active = max(0, self._active - 1)
+            self._websocket_active += 1
+            self._websocket_peak = max(self._websocket_peak, self._websocket_active)
+            self._websocket_promoted += 1
+        self._request_slot.kind = "websocket"
+        self._slots.release()
+        return True
 
     def record_payload(self, size_bytes: int) -> None:
         with self._metrics_lock:
@@ -184,6 +232,7 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     def admission_metrics(self) -> Dict[str, Any]:
         with self._metrics_lock:
             durations = list(self._durations_ms)
+            websocket_durations = list(self._websocket_durations_ms)
             payloads = [float(value) for value in self._payload_bytes]
             return {
                 "max_inflight": self.max_inflight,
@@ -200,6 +249,19 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
                     "dropped": self._rejection_dropped,
                 },
                 "completed": self._completed,
+                "websockets": {
+                    "max": self.max_websockets,
+                    "active": self._websocket_active,
+                    "peak": self._websocket_peak,
+                    "promoted": self._websocket_promoted,
+                    "rejected": self._websocket_rejected,
+                    "completed": self._websocket_completed,
+                    "duration_ms": {
+                        "p50": _percentile(websocket_durations, 0.50),
+                        "p95": _percentile(websocket_durations, 0.95),
+                        "max": max(websocket_durations, default=0.0),
+                    },
+                },
                 "duration_ms": {
                     "p50": _percentile(durations, 0.50),
                     "p95": _percentile(durations, 0.95),

@@ -21,10 +21,12 @@ rejected; an altered manifest or invalid/missing signature is rejected; a
 Production promotion requires the matching Canary pass, a separate owner approval
 and a fresh step-up; rollback only targets a known compatible artifact.
 
-Real deployment is out of scope for this phase: the deployment adapter is a safe,
-fail-closed dry-run. Missing external infrastructure is reported as PENDING/BLOCKED
-and never as PASS. No signing key, token, secret or raw credential is ever stored
-in the document, evidence, audit or notifications.
+Without an explicitly configured executor the deployment adapter is a safe,
+fail-closed dry-run.  The opt-in ``stage9_ssh`` adapter builds with the protected
+host-side production signing key and deploys the frozen artifact through the
+checked-in blue-green scripts. Missing infrastructure is reported as
+PENDING/BLOCKED and never as PASS. No signing key, token, secret, host-local path
+or raw credential is stored in the public document, audit or notifications.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import account_auth, blue_green, observability, runtime_env, secure_store
+from . import account_auth, blue_green, observability, release_executor, runtime_env, secure_store
 
 
 # --------------------------------------------------------------------------- #
@@ -587,7 +589,8 @@ def _public_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
         "git_commit_sha", "artifact_sha256", "manifest_sha256",
         "signature_algorithm", "signature_status", "trust_tier",
         "built_at_utc", "dirty", "storage_uri", "file_count",
-        "migration_count", "immutable",
+        "migration_count", "immutable", "archive_sha256",
+        "runtime_artifact_sha256",
     )
     return {k: artifact.get(k) for k in keys}
 
@@ -602,7 +605,7 @@ def _public_approval(approval: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Deployment adapter (fail-closed dry-run).
+# Deployment adapter (dry-run by default; real only when explicitly configured).
 # --------------------------------------------------------------------------- #
 def _adapter_name() -> str:
     return str(os.environ.get("STRATFORGE_RELEASE_DEPLOY_ADAPTER") or "dry_run").strip().lower()
@@ -610,33 +613,41 @@ def _adapter_name() -> str:
 
 def _adapter_status() -> Dict[str, Any]:
     name = _adapter_name()
+    if name == release_executor.ADAPTER_NAME:
+        return release_executor.status()
     real_configured = name not in {"", "dry_run"}
     return {
         "name": name if name else "dry_run",
         "real_configured": bool(real_configured),
-        # A real adapter is not wired in this phase, so a real deployment can
-        # never be executed here. Absence is reported, never treated as a pass.
         "real_available": False,
-        "mode": "real" if real_configured else "dry_run",
+        "canary_available": False,
+        "production_available": False,
+        "mode": "blocked" if real_configured else "dry_run",
+        "configuration_state": "adapter_unknown" if real_configured else "not_configured",
     }
 
 
 def _run_deploy_adapter(environment: str, artifact: Dict[str, Any]) -> Dict[str, Any]:
-    """Fail-closed deployment. A real adapter is never executed in this phase.
-
-    The deployment mechanism is the Phase 9 blue-green engine
-    (:mod:`app.blue_green`), which produces the ordered slot/drain/switch plan as
-    a dry-run. Missing external infrastructure stays PENDING and never a PASS.
-    """
+    """Execute an explicitly configured adapter or return a fail-closed plan."""
     status = _adapter_status()
+    if status["name"] == release_executor.ADAPTER_NAME and status["real_available"]:
+        try:
+            return release_executor.deploy(environment, artifact)
+        except release_executor.ReleaseExecutorError as exc:
+            return {
+                "status": "fail",
+                "adapter": status["name"],
+                "external_result": "fail",
+                "environment": environment,
+                "artifact_id": artifact.get("artifact_id"),
+                "note": str(exc)[:300],
+            }
     if status["real_configured"]:
-        # A real adapter name was requested but the real blue-green executor does
-        # not exist yet (Phase 9). Never fabricate a real deployment.
         return {
             "status": "blocked",
             "adapter": status["name"],
             "external_result": "pending",
-            "note": "real deployment executor not available in this phase",
+            "note": "real deployment executor configuration is unavailable",
         }
     return blue_green.execute_deployment(environment, artifact)
 
@@ -892,7 +903,14 @@ def build_release(
 
 
 def _default_builder(candidate: Dict[str, Any], git_commit_sha: str) -> Dict[str, Any]:
-    """Invoke the real, clean-git server release build (Development trust tier)."""
+    """Build locally for DEV or on the protected signer for a real release."""
+    adapter = _adapter_status()
+    if adapter.get("name") == release_executor.ADAPTER_NAME:
+        if not adapter.get("real_available"):
+            raise release_executor.ReleaseExecutorError(
+                "real release executor configuration is incomplete"
+            )
+        return release_executor.build(candidate, git_commit_sha)
     import argparse
     from tools import build_server_release
     args = argparse.Namespace(
@@ -942,6 +960,13 @@ def _record_artifact(doc: Dict[str, Any], candidate: Dict[str, Any], report: Dic
         "built_at_utc": str(report.get("built_at_utc") or _now_iso()),
         "dirty": bool(report.get("dirty")),
         "storage_uri": str(report.get("storage_uri") or "")[:500],
+        # Private operational locator. It is required by the executor but is
+        # deliberately omitted by _public_artifact and all ordinary UI views.
+        "executor_ref": str(report.get("executor_ref") or "")[:200],
+        "archive_sha256": str(report.get("archive_sha256") or artifact_sha),
+        "runtime_artifact_sha256": str(
+            report.get("runtime_artifact_sha256") or manifest_sha
+        ),
         "file_count": int(report.get("file_count") or 0),
         "migration_count": int(report.get("migration_count") or 0),
         "immutable": True,
@@ -1036,7 +1061,12 @@ def deploy_canary(
             "updated_at_utc": _now_iso(),
         }
         outcome = _run_deploy_adapter(ENVIRONMENT_CANARY, artifact)
-        deployment["state"] = "deploying"
+        failed = str(outcome.get("status") or "").lower() in {"fail", "failed", "blocked"} \
+            or str(outcome.get("external_result") or "").lower() == "fail"
+        real_pass = str(outcome.get("status") or "").lower() == "pass" \
+            and str(outcome.get("external_result") or "").lower() == "pass"
+        deployment["state"] = "failed" if failed else ("deployed" if real_pass else "deploying")
+        deployment["failure_reason"] = str(outcome.get("note") or "")[:300] if failed else ""
         deployment["document"] = outcome
         doc["deployments"].append(deployment)
         _record_deploy_plan(doc, candidate, deployment, outcome)
@@ -1044,10 +1074,19 @@ def deploy_canary(
         _transition(doc, candidate, STATE_CANARY_DEPLOYING, actor=actor,
                     event_type="release.canary_deploy_requested", idempotency_key=key,
                     evidence={"deployment_id": deployment["deployment_id"], "adapter": deployment["adapter"]})
-        _transition(doc, candidate, STATE_CANARY_CHECKING, actor=actor,
-                    event_type="release.canary_checking", idempotency_key=key,
-                    evidence={"external_result": outcome.get("external_result")})
-        result = {"ok": True, "state": STATE_CANARY_CHECKING, "deployment": dict(deployment)}
+        if failed:
+            _record_notification(doc, candidate["candidate_id"], "deploy_failed", environment=ENVIRONMENT_CANARY)
+            _transition(doc, candidate, STATE_CANARY_FAILED, actor=actor,
+                        event_type="release.canary_deploy_failed", idempotency_key=key,
+                        failure_reason="canary_deploy_failed",
+                        evidence={"external_result": outcome.get("external_result"),
+                                  "adapter": deployment["adapter"]})
+            result = {"ok": False, "state": STATE_CANARY_FAILED, "deployment": dict(deployment)}
+        else:
+            _transition(doc, candidate, STATE_CANARY_CHECKING, actor=actor,
+                        event_type="release.canary_checking", idempotency_key=key,
+                        evidence={"external_result": outcome.get("external_result")})
+            result = {"ok": True, "state": STATE_CANARY_CHECKING, "deployment": dict(deployment)}
         _remember(doc, key, f"deploy_canary:{candidate_id}", result)
         _write_doc(doc)
     return result
@@ -1255,9 +1294,13 @@ def promote_production(
             "created_at_utc": _now_iso(),
             "updated_at_utc": _now_iso(),
         }
-        approval["status"] = "consumed"
         outcome = _run_deploy_adapter(ENVIRONMENT_PRODUCTION, artifact)
-        deployment["state"] = "deploying"
+        failed = str(outcome.get("status") or "").lower() in {"fail", "failed", "blocked"} \
+            or str(outcome.get("external_result") or "").lower() == "fail"
+        real_pass = str(outcome.get("status") or "").lower() == "pass" \
+            and str(outcome.get("external_result") or "").lower() == "pass"
+        deployment["state"] = "failed" if failed else ("deployed" if real_pass else "deploying")
+        deployment["failure_reason"] = str(outcome.get("note") or "")[:300] if failed else ""
         deployment["document"] = outcome
         doc["deployments"].append(deployment)
         _record_deploy_plan(doc, candidate, deployment, outcome)
@@ -1265,15 +1308,26 @@ def promote_production(
         _transition(doc, candidate, STATE_PRODUCTION_DEPLOYING, actor=actor,
                     event_type="release.production_deploy_requested", idempotency_key=key,
                     evidence={"deployment_id": deployment["deployment_id"], "adapter": deployment["adapter"]})
-        # Because no real executor exists, Production stays deploying with a
-        # PENDING external result rather than being marked live falsely.
-        result = {
-            "ok": True,
-            "state": candidate["state"],
-            "deployment": dict(deployment),
-            "external_result": outcome.get("external_result"),
-            "note": "dry-run: real Production deployment not performed",
-        }
+        if failed:
+            _record_notification(doc, candidate["candidate_id"], "deploy_failed", environment=ENVIRONMENT_PRODUCTION)
+            _transition(doc, candidate, STATE_PRODUCTION_FAILED, actor=actor,
+                        event_type="release.production_deploy_failed", idempotency_key=key,
+                        failure_reason="production_deploy_failed",
+                        evidence={"external_result": outcome.get("external_result"),
+                                  "adapter": deployment["adapter"]})
+            result = {"ok": False, "state": STATE_PRODUCTION_FAILED,
+                      "deployment": dict(deployment),
+                      "external_result": outcome.get("external_result")}
+        else:
+            approval["status"] = "consumed"
+            result = {
+                "ok": True,
+                "state": candidate["state"],
+                "deployment": dict(deployment),
+                "external_result": outcome.get("external_result"),
+                "note": ("real deployment verified; owner may confirm production_live"
+                         if real_pass else "dry-run: real Production deployment not performed"),
+            }
         _remember(doc, key, f"promote:{candidate_id}", result)
         _write_doc(doc)
     return result
@@ -1303,8 +1357,12 @@ def mark_production_live(*, actor: Any, candidate_id: str, idempotency_key: str)
              if str(d.get("candidate_id")) == str(candidate_id) and d.get("environment") == ENVIRONMENT_PRODUCTION),
             None,
         )
-        if deployment is not None:
-            deployment["state"] = "live"
+        if deployment is None or str((deployment.get("document") or {}).get("external_result") or "") != "pass":
+            raise ReleaseCenterError(
+                "production_live требует подтверждённый PASS реального deployment executor.",
+                409, code="production_deploy_unverified",
+            )
+        deployment["state"] = "live"
         _record_notification(doc, candidate["candidate_id"], "deploy_successful", environment=ENVIRONMENT_PRODUCTION)
         _record_notification(doc, candidate["candidate_id"], "reload_available", environment=ENVIRONMENT_PRODUCTION)
         _transition(doc, candidate, STATE_PRODUCTION_LIVE, actor=actor,
@@ -1348,6 +1406,24 @@ def rollback_production(
                 409, code="rollback_incompatible",
             )
         current = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or "")) or {}
+        adapter = _adapter_status()
+        if not adapter.get("production_available"):
+            raise ReleaseCenterError(
+                "Production rollback executor недоступен или не получил отдельный owner gate.",
+                409, code="rollback_executor_unavailable",
+            )
+        try:
+            executor_outcome = release_executor.rollback_production(current, target)
+        except release_executor.ReleaseExecutorError as exc:
+            raise ReleaseCenterError(
+                f"Production rollback не выполнен: {str(exc)[:240]}",
+                503, code="rollback_executor_failed",
+            ) from None
+        if str(executor_outcome.get("external_result") or "") != "pass":
+            raise ReleaseCenterError(
+                "Production rollback executor не подтвердил PASS.",
+                503, code="rollback_executor_unverified",
+            )
         switch = blue_green.plan_rollback_switch(
             to_build_id=str(target.get("build_id") or ""), reason=str(reason or ""),
         )
@@ -1360,7 +1436,16 @@ def rollback_production(
             "requested_by_user_uuid": _actor_uuid(actor),
             "requested_by_legacy_id": _actor_id(actor),
             "reason": str(reason or "")[:500],
-            "evidence": {"to_build_id": target.get("build_id"), "traffic_switch": switch},
+            "evidence": {
+                "to_build_id": target.get("build_id"),
+                "traffic_switch": switch,
+                "executor": {
+                    "status": executor_outcome.get("status"),
+                    "external_result": executor_outcome.get("external_result"),
+                    "rollback_verified": bool(executor_outcome.get("rollback_verified")),
+                    "secrets_redacted": True,
+                },
+            },
             "idempotency_key": key,
             "created_at_utc": _now_iso(),
         }
@@ -1398,10 +1483,11 @@ def rehearse_blue_green(
     *, actor: Any, candidate_id: str, environment: str = ENVIRONMENT_PRODUCTION,
     drain: Optional[Dict[str, Any]] = None, idempotency_key: str,
 ) -> Dict[str, Any]:
-    """Dry-run blue-green rehearsal for a built artifact — no state change.
+    """Rehearse blue-green without changing the release state.
 
-    Evaluates the full slot / expand-migrate / drain / switch / rollback plan
-    without deploying, migrating, draining or switching anything. Safe to repeat.
+    A configured real executor performs an actual Canary rollback, verifies the
+    previous slot, and re-promotes the selected immutable artifact.  Production
+    remains plan-only here; its traffic is never switched by a rehearsal.
     """
     key = _validate_idempotency_key(idempotency_key)
     env = str(environment or ENVIRONMENT_PRODUCTION).strip().lower()
@@ -1418,7 +1504,51 @@ def rehearse_blue_green(
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact ещё не собран.", 409, code="artifact_missing")
-        plan = blue_green.rehearse(env, artifact, drain=drain)
+        artifact_snapshot = dict(artifact)
+        candidate_state = str(candidate.get("state") or "")
+
+    adapter = _adapter_status()
+    real_canary = (
+        env == ENVIRONMENT_CANARY
+        and adapter.get("name") == release_executor.ADAPTER_NAME
+        and bool(adapter.get("canary_available"))
+        and candidate_state in {STATE_CANARY_CHECKING, STATE_CANARY_PASSED}
+    )
+    if real_canary:
+        try:
+            result = release_executor.rehearse_canary_rollback(artifact_snapshot)
+        except release_executor.ReleaseExecutorError as exc:
+            raise ReleaseCenterError(
+                str(exc), 503, code="canary_rollback_rehearsal_failed",
+            ) from None
+        verified = bool(result.get("rollback_verified")) and bool(result.get("re_promoted"))
+        plan = {
+            "environment": ENVIRONMENT_CANARY,
+            "strategy": "blue_green_symlink",
+            "mode": "real",
+            "external_result": "pass" if verified else "fail",
+            "online_safe": verified,
+            "rollback_verified": bool(result.get("rollback_verified")),
+            "re_promoted": bool(result.get("re_promoted")),
+            "previous_git_commit_sha": str(result.get("previous_git_commit_sha") or ""),
+            "current_git_commit_sha": str(result.get("current_git_commit_sha") or ""),
+            "blocked_stages": [] if verified else ["rollback_or_repromotion_verification"],
+            "secrets_redacted": True,
+        }
+    else:
+        plan = blue_green.rehearse(env, artifact_snapshot, drain=drain)
+
+    with _LOCK:
+        doc = _read_doc()
+        candidate = _find(doc["candidates"], "candidate_id", str(candidate_id or ""))
+        if candidate is None:
+            raise ReleaseCenterError("Release candidate не найден.", 404, code="candidate_not_found")
+        cached = _idempotent(doc, key, f"rehearse:{candidate_id}")
+        if cached:
+            return cached
+        artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
+        if not artifact or str(artifact.get("artifact_id") or "") != str(artifact_snapshot.get("artifact_id") or ""):
+            raise ReleaseCenterError("Artifact изменился во время rehearsal.", 409, code="artifact_mismatch")
         record = {
             "rehearsal_id": _new_id("reh"),
             "candidate_id": candidate["candidate_id"],
@@ -1432,7 +1562,11 @@ def rehearse_blue_green(
             "created_at_utc": _now_iso(),
         }
         doc["rehearsals"].append(record)
-        out = {"ok": True, "rehearsal": plan, "rehearsal_id": record["rehearsal_id"]}
+        out = {
+            "ok": bool(plan.get("online_safe")),
+            "rehearsal": plan,
+            "rehearsal_id": record["rehearsal_id"],
+        }
         _remember(doc, key, f"rehearse:{candidate_id}", out)
         _write_doc(doc)
     _audit("release.blue_green_rehearsed", candidate_id=candidate_id,

@@ -1,8 +1,8 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-08-13T02:25:57Z
-- Verified against Git SHA: cad53f682e413db86bc3a77e57f8942baf4d4bc3
+- Last verified UTC: 2026-08-13T09:49:37Z
+- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
 
@@ -21,7 +21,7 @@
 | Telegram / auth entry | ordinary user + owner | `PARTIAL` | login, profile, pairing, notifications, session revoke |
 | Documents | ordinary user + owner | `PARTIAL` | governance/public docs with actor/reason aware saves and revisions |
 | Environment Switcher | owner / developer / admin | `PARTIAL` | separate-origin navigation by capability, not an in-place backend swap |
-| Release Center | owner / developer / admin | `PARTIAL` | candidate/build/check/deploy/promote/rollback workflow |
+| Release Center | owner / explicitly permitted operator | `BETA` | real clean-candidate/build/sign/Canary/check/rollback workflow; Production promotion remains a separate owner gate |
 
 ## Visibility contracts
 
@@ -40,19 +40,30 @@
 4. Save/update actions in documents should record actor and reason.
 5. The first product explanation should start from product purpose and current
    capabilities, not from internal owner or amendment mechanics.
+6. A fresh TopstepX quote heartbeat keeps the right-side price marker live even
+   when the numeric price has not changed; candle direction and marker direction
+   remain independent.
 
 ## Admin and Release Center visibility
 
-- Admin capability exists before the UI is considered complete.
+- Admin capability is enforced server-side; UI visibility is only the secondary
+  presentation layer.
 - Release Center should be treated as a structured owner/admin workflow, not as
   a public user feature.
-- Current repo evidence shows UI wiring and backend contracts, not a proof of a
-  specific live deployment record.
+- The owner-facing workflow was accepted through a real Canary deploy and
+  rollback/re-promote rehearsal on artifact `7ebda6fa`; Production execution was
+  not approved or invoked.
+- Final design/spacing acceptance remains an owner gate. Functional chart
+  acceptance on clean `7ebda6fa` ran for `619.899 s` with MNQ/MES 5m across
+  independent in-app and Chrome clients and recorded `0` grey/OFF/non-live
+  marker states. Documents UI uses a mission-led CHARTER, nine legal DRAFT
+  badges and compact red/green semantic revisions with details collapsed.
 
 ## Canonical evidence
 
 - [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
+- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - `app/static/aurora/assets/ui.js`
 - `app/static/aurora/assets/api.js`
 - `app/static/aurora/assets/pages/desktop.js`

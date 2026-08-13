@@ -1167,7 +1167,12 @@
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
       try {
-        await API.http.ownerImpersonateEnd();
+        if (auth.impersonation_preset === 'dev_preview') {
+          await API.http.devPreviewExit();
+          setDevPreviewLabel('');
+        } else {
+          await API.http.ownerImpersonateEnd();
+        }
         toast('Возврат в админку');
         setTimeout(() => location.reload(), 400);
       } catch (e) { reportError(e); btn.disabled = false; }
@@ -4007,32 +4012,13 @@
   }
 
   async function probeEnvironmentTarget(target, card) {
-    const origin = target.current ? location.origin : target.origin;
-    if (!origin) throw new Error('Origin не настроен.');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4500);
-    try {
-      const response = await fetch(origin + '/api/runtime/env', {
-        method: 'GET', credentials: 'omit', cache: 'no-store', signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const deployment = data.deployment || data;
-      const environment = String(deployment.deployment_environment || deployment.environment || '').toLowerCase();
-      if (environment !== target.environment) throw new Error(`Endpoint сообщил environment=${environment || 'unknown'}`);
-      target.version = deployment.app_version || deployment.build_version || '';
-      target.commit = deployment.git_commit_sha || '';
-      target.build_id = deployment.build_id || '';
-      target.release_channel = deployment.release_channel || '';
-      target.health = 'reachable';
-      target.readiness = 'runtime endpoint reachable';
-      target.probe_ok = true;
-      if (card) {
-        const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
-        const open = qs('[data-env-open]', card); if (open) open.disabled = false;
-      }
-      return target;
-    } finally { clearTimeout(timer); }
+    const data = await API.http.adminEnvironmentProbe(target.environment);
+    Object.assign(target, data.target || {});
+    if (card) {
+      const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
+      const open = qs('[data-env-open]', card); if (open) open.disabled = false;
+    }
+    return target;
   }
 
   function openEnvironmentOrigin(target) {
@@ -4114,6 +4100,36 @@
 
   function shortSha(value) { return String(value || '').slice(0, 12) || '—'; }
 
+  function releaseAdapterSummary(adapter) {
+    const mode = esc(adapter.mode || 'dry_run');
+    if (adapter.real_available) {
+      const production = adapter.production_available
+        ? 'Production executor разрешён текущим отдельным owner-gate.'
+        : 'Production остаётся заблокирован до отдельного подтверждения владельца.';
+      return `Развёртывание выполняется в режиме <strong>${mode}</strong>. Canary executor подключён и готов. ${production}`;
+    }
+    if (adapter.real_configured) {
+      return `Развёртывание настроено в режиме <strong>${mode}</strong>, но executor сейчас недоступен; внешнее выполнение будет BLOCKED.`;
+    }
+    return `Развёртывание выполняется в режиме <strong>${mode}</strong>; инфраструктурный executor не настроен, поэтому внешний результат остаётся PENDING.`;
+  }
+
+  function releaseBlueGreenSummary(detail) {
+    const bg = detail.blue_green || {};
+    const adapter = detail.adapter || {};
+    const prefix = `<strong>${esc(bg.strategy || 'blue_green_symlink')}</strong> · слоты ${esc((bg.slots || ['blue', 'green']).join('/'))} · символьная ссылка «${esc(bg.current_link || 'current')}». `;
+    if (adapter.real_available) {
+      const production = adapter.production_available
+        ? 'Production executor разрешён отдельным owner-gate.'
+        : 'Production traffic switch заблокирован до отдельного подтверждения владельца.';
+      return prefix + `Canary deploy и rollback rehearsal выполняются реальным executor с readiness/identity verification. ${production}`;
+    }
+    if (adapter.real_configured) {
+      return prefix + 'Executor настроен, но недоступен; реальный deploy/rehearsal будет BLOCKED.';
+    }
+    return prefix + 'Инфраструктурный executor не настроен: доступен только безопасный dry-run plan с внешним результатом PENDING.';
+  }
+
   function renderReleaseRow(r) {
     return `<div class="row" data-release-row="${esc(r.candidate_id)}">
       <div class="row-main">
@@ -4140,7 +4156,7 @@
     const offsets = schedOpts.explicit_offsets || [];
     const marketClose = schedOpts.market_close || {};
     node.innerHTML = `
-      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. Развёртывание в этой фазе выполняется в режиме <strong>${esc(adapter.mode || 'dry_run')}</strong>; реальный executor не подключён, поэтому внешний результат остаётся PENDING, а не PASS.</div>
+      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. ${releaseAdapterSummary(adapter)}</div>
       <div class="flex gap-sm">
         ${canCreate ? '<button class="btn primary" id="rc-new">Новый релиз-кандидат</button>' : ''}
         <button class="btn ghost" id="rc-refresh">Обновить</button>
@@ -4220,7 +4236,9 @@
       `Подпись: ${s.signature_status || '—'}`,
       `Canary: ${s.canary_state || '—'} · Production: ${s.production_state || '—'}`,
       '',
-      'Реальное развёртывание не выполняется (dry-run). Продолжить?',
+      ((detail.adapter || {}).real_available
+        ? 'Будет выполнено реальное развёртывание immutable artifact. Продолжить?'
+        : 'Реальное развёртывание недоступно (dry-run/blocked). Продолжить?'),
     ];
     return window.confirm(lines.join('\n'));
   }
@@ -4230,12 +4248,15 @@
     const state = s.state;
     const btns = [];
     const has = c => hasAdminCapability(c);
-    // Actions that touch real Canary/Production infrastructure. In this phase no
-    // real executor is wired (adapter.real_available is false), so these are
-    // shown as explicitly blocked-by-infra rather than as working actions.
-    const infraReady = !!((detail.adapter || {}).real_available);
+    const adapter = detail.adapter || {};
+    const infraReady = !!adapter.real_available;
+    const productionReady = !!adapter.production_available;
     const INFRA_ACTIONS = new Set(['deploy-canary', 'promote-production', 'mark-production-live', 'rollback-production']);
-    const push = (action, label, critical) => btns.push([action, label, critical, INFRA_ACTIONS.has(action) && !infraReady]);
+    const push = (action, label, critical) => {
+      const prodAction = ['promote-production', 'mark-production-live', 'rollback-production'].includes(action);
+      const blocked = INFRA_ACTIONS.has(action) && !(prodAction ? productionReady : infraReady);
+      btns.push([action, label, critical, blocked]);
+    };
     if (state === 'draft' && has('releases.create')) push('build', 'Собрать артефакт', false);
     if (state === 'built' && has('releases.create')) push('verify', 'Проверить подпись', false);
     if (state === 'signed' && has('releases.deploy_canary')) push('deploy-canary', 'Развернуть в Canary', true);
@@ -4289,7 +4310,7 @@
       <div class="cab-sub" id="rc-action-msg"></div>
       <div class="section-title">Развёртывания</div><div class="list">${deployments}</div>
       <div class="section-title">Blue-green деплой</div>
-      <div class="finance-note"><strong>${esc(bg.strategy || 'blue_green_symlink')}</strong> · режим <strong>${esc(bg.mode || 'dry_run')}</strong> · слоты ${esc((bg.slots || ['blue', 'green']).join('/'))} · символьная ссылка «${esc(bg.current_link || 'current')}». Реальный executor не подключён: expand→migrate→contract, дренаж воркеров и переключение трафика планируются как dry-run, внешний результат остаётся PENDING.</div>
+      <div class="finance-note">${releaseBlueGreenSummary(detail)}</div>
       <div class="flex gap-sm wrap" id="rc-bg-actions"></div>
       <div class="cab-sub" id="rc-bg-msg"></div>
       <div class="cap-panel">${steps}</div>
@@ -4320,7 +4341,10 @@
       actions.appendChild(btn);
     });
     if (blockedInfra && msg) {
-      msg.innerHTML = 'Реальный деплой в Canary/Production заблокирован: инфраструктура (внешний executor, целевые окружения) не настроена. Локально доступны создание кандидата, просмотр артефакта/манифеста/checksum, предпросмотр уведомления и репетиция blue-green (dry-run).';
+      const adapter = detail.adapter || {};
+      msg.textContent = adapter.real_available && !adapter.production_available
+        ? 'Canary executor готов. Production остаётся заблокирован до отдельного owner-подтверждения.'
+        : 'Реальный deploy заблокирован: executor или целевое окружение не настроены.';
     }
     if (!actions.children.length) actions.innerHTML = '<span class="cab-sub">Нет доступных переходов для вашей роли в этом состоянии.</span>';
     const bgActions = qs('#rc-bg-actions', body);
@@ -4328,13 +4352,18 @@
     if (bgActions && (a.build_id || s.build_id) && hasAdminCapability('releases.deploy_canary')) {
       ['production', 'canary'].forEach(env => {
         const btn = el('<button class="btn ghost sm"></button>');
-        btn.textContent = 'Репетиция blue-green (' + env + ')';
+        const realCanary = env === 'canary' && (detail.adapter || {}).canary_available
+          && ['canary_checking', 'canary_passed'].includes(s.state);
+        btn.textContent = realCanary
+          ? 'Проверить rollback в Canary (реально)'
+          : 'План blue-green (' + env + ')';
         btn.onclick = async () => {
-          if (bgMsg) bgMsg.textContent = 'Репетирую (dry-run)…';
+          if (realCanary && !confirm('Canary будет временно переключён на previous slot, проверен и возвращён на этот же immutable artifact. Продолжить?')) return;
+          if (bgMsg) bgMsg.textContent = realCanary ? 'Проверяю rollback и возврат Canary…' : 'Строю dry-run plan…';
           try {
             const out = await API.http.adminReleaseRehearse(candidateId, { environment: env, idempotency_key: releaseKey() });
             const r = out.rehearsal || {};
-            toast('Репетиция готова: online_safe=' + (r.online_safe ? 'да' : 'нет'));
+            toast((realCanary ? 'Canary rollback rehearsal' : 'План') + ': online_safe=' + (r.online_safe ? 'да' : 'нет'));
             openReleaseDetail(candidateId);
           } catch (e) { if (bgMsg) bgMsg.textContent = e.message || String(e); }
         };

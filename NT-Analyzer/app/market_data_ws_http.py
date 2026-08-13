@@ -326,11 +326,21 @@ def handle_websocket_upgrade(handler: Any) -> bool:
     except Exception:
         user_id = ""
 
-    handler.send_response(101, "Switching Protocols")
-    handler.send_header("Upgrade", "websocket")
-    handler.send_header("Connection", "Upgrade")
-    handler.send_header("Sec-WebSocket-Accept", accept_key(key))
-    handler.end_headers()
+    # ``BaseHTTPRequestHandler`` defaults to an HTTP/1.0 status line. Chromium
+    # accepts that leniently, but RFC6455 clients (including ``websockets``)
+    # correctly reject an HTTP/1.0 Upgrade response before any frame is read.
+    # Change only this response line; normal HTTP handlers retain their current
+    # connection semantics.
+    previous_protocol = getattr(handler, "protocol_version", "HTTP/1.0")
+    handler.protocol_version = "HTTP/1.1"
+    try:
+        handler.send_response(101, "Switching Protocols")
+        handler.send_header("Upgrade", "websocket")
+        handler.send_header("Connection", "Upgrade")
+        handler.send_header("Sec-WebSocket-Accept", accept_key(key))
+        handler.end_headers()
+    finally:
+        handler.protocol_version = previous_protocol
 
     client = WsClient(handler, user_id=user_id)
     welcome = {
