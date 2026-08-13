@@ -4100,6 +4100,20 @@
 
   function shortSha(value) { return String(value || '').slice(0, 12) || '—'; }
 
+  function releaseAdapterSummary(adapter) {
+    const mode = esc(adapter.mode || 'dry_run');
+    if (adapter.real_available) {
+      const production = adapter.production_available
+        ? 'Production executor разрешён текущим отдельным owner-gate.'
+        : 'Production остаётся заблокирован до отдельного подтверждения владельца.';
+      return `Развёртывание выполняется в режиме <strong>${mode}</strong>. Canary executor подключён и готов. ${production}`;
+    }
+    if (adapter.real_configured) {
+      return `Развёртывание настроено в режиме <strong>${mode}</strong>, но executor сейчас недоступен; внешнее выполнение будет BLOCKED.`;
+    }
+    return `Развёртывание выполняется в режиме <strong>${mode}</strong>; инфраструктурный executor не настроен, поэтому внешний результат остаётся PENDING.`;
+  }
+
   function renderReleaseRow(r) {
     return `<div class="row" data-release-row="${esc(r.candidate_id)}">
       <div class="row-main">
@@ -4126,7 +4140,7 @@
     const offsets = schedOpts.explicit_offsets || [];
     const marketClose = schedOpts.market_close || {};
     node.innerHTML = `
-      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. Развёртывание в этой фазе выполняется в режиме <strong>${esc(adapter.mode || 'dry_run')}</strong>; реальный executor не подключён, поэтому внешний результат остаётся PENDING, а не PASS.</div>
+      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. ${releaseAdapterSummary(adapter)}</div>
       <div class="flex gap-sm">
         ${canCreate ? '<button class="btn primary" id="rc-new">Новый релиз-кандидат</button>' : ''}
         <button class="btn ghost" id="rc-refresh">Обновить</button>

@@ -87,6 +87,48 @@ def test_ws_accept_key_stable() -> None:
     assert market_data_ws_http.accept_key(key) == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 
 
+def test_websocket_upgrade_uses_http_11_status_line() -> None:
+    """Strict RFC6455 clients must not receive BaseHTTPRequestHandler HTTP/1.0."""
+    observed = []
+
+    class Reader:
+        def read1(self, _size):
+            return b""
+
+    class Writer:
+        def write(self, raw):
+            assert raw
+            return len(raw)
+
+        def flush(self):
+            return None
+
+    class Handler:
+        path = "/ws/market-data"
+        headers = {
+            "Upgrade": "websocket",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        }
+        protocol_version = "HTTP/1.0"
+        rfile = Reader()
+        wfile = Writer()
+        _remote_context = {"user_id": 1}
+
+        def send_response(self, code, message):
+            observed.append((self.protocol_version, code, message))
+
+        def send_header(self, _name, _value):
+            return None
+
+        def end_headers(self):
+            return None
+
+    handler = Handler()
+    assert market_data_ws_http.handle_websocket_upgrade(handler) is True
+    assert observed == [("HTTP/1.1", 101, "Switching Protocols")]
+    assert handler.protocol_version == "HTTP/1.0"
+
+
 def test_browser_ws_reader_returns_available_frame_without_waiting_for_buffer_fill() -> None:
     class Reader:
         def read1(self, size):
