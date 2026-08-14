@@ -22,6 +22,29 @@ Production не принимает wildcard Host, HTTP scheme, прямой orig
 `X-Forwarded-*` от неизвестного peer. Приложение проверяет это повторно после
 Cloudflare. Порт 18765 не открывается в firewall/router/security group.
 
+## Обязательный release contract
+
+Production deployment всегда подчиняется схеме `DEV → CANARY → PRODUCTION`:
+
+1. DEV — локальная рабочая версия и источник готового релиза. Перед сборкой
+   release требуется доказать чистый или намеренно сохранённый Git commit.
+2. Из точного commit собирается один signed immutable artifact с manifest,
+   archive SHA256, runtime/manifest SHA256, build id и Git SHA.
+3. Этот artifact сначала разворачивается в CANARY. CANARY acceptance проверяет
+   тот же код, UI/static assets, backend logic, Documents, Charts, функции и
+   поведение, что и DEV. Различаться могут только environment-specific DB,
+   secrets, sessions, cookies, origins, runtime config и state/artifact roots.
+4. Только после полного CANARY PASS тот же release directory / artifact без
+   rebuild и без изменения файлов продвигается в PRODUCTION.
+5. PRODUCTION после promotion обязан быть функционально 1:1 с проверенным
+   CANARY. Любое новое изменение после Canary acceptance требует нового
+   commit, нового artifact и полного повторения цикла.
+
+Запрещено: собирать отдельную Production-версию, копировать отдельные файлы,
+делать частичный hotfix-deploy, менять код между CANARY и PRODUCTION или
+лечить Production отличающимся artifact. Если обнаружен дефект, релиз
+останавливается или начинается новый полный цикл.
+
 ## Неподлежащие публикации поверхности
 
 - RDP, NinjaTrader ports, local market-data IPC и Windows file shares;
@@ -223,3 +246,7 @@ NinjaTrader. Private admin RDP/PowerShell разрешены лишь через
    destructive in-place downgrade запрещён.
 6. Запустить старый release, проверить local readiness, затем edge smoke.
 7. Зафиксировать incident timestamps, release/schema/backup IDs и проверки.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T05:06:04Z | GPT-5.5 через Codex по запросу owner | Зафиксирован обязательный release contract DEV → CANARY → PRODUCTION: один immutable artifact, Canary acceptance, затем exact same artifact в Production без rebuild/partial hotfix.
+-->

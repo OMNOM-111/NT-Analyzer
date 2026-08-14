@@ -2348,7 +2348,15 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 return True
             user = _user(doc, uid)
             tg = challenge.get("telegram_user") or {}
-            if user and user.get("phone_hash") and not hmac.compare_digest(str(user.get("phone_hash")), _phone_hash(phone)):
+            configured_owner = str(owner_chat_id or "").strip()
+            owner_contact_refresh = bool(
+                user and user.get("is_owner") and configured_owner and str(uid) == configured_owner
+            )
+            if (
+                user and user.get("phone_hash")
+                and not hmac.compare_digest(str(user.get("phone_hash")), _phone_hash(phone))
+                and not owner_contact_refresh
+            ):
                 challenge["status"] = "phone_mismatch"
                 _write_doc(doc)
                 api_call("sendMessage", {"chat_id": uid, "text": "Номер не совпадает с аккаунтом. Вход отклонён.", "reply_markup": {"remove_keyboard": True}})
