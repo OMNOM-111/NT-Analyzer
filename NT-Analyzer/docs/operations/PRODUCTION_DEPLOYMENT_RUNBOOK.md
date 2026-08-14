@@ -45,6 +45,35 @@ Production deployment всегда подчиняется схеме `DEV → CA
 лечить Production отличающимся artifact. Если обнаружен дефект, релиз
 останавливается или начинается новый полный цикл.
 
+### Обычный релиз выполняется кнопками в Release Center
+
+Ручные SSH/Git-команды для обычного релиза не нужны. Owner открывает Release
+Center на LOCAL DEV и проходит последовательность:
+
+| Кнопка | Состояние после | Что происходит |
+| --- | --- | --- |
+| Новый релиз-кандидат | `draft` | проверяется чистый worktree и текущий commit |
+| Собрать артефакт | `built` | bundle уходит на хост, там собирается и подписывается один immutable artifact |
+| Проверить подпись | `signed` | сверяются archive/manifest SHA256, build id и Git SHA |
+| Развернуть в Canary | `canary_checking` | blue/green на Canary, восемь стадий с их статусами на странице |
+| Отметить проверку: PASS | `canary_passed` | owner подтверждает Canary после реальной проверки |
+| Одобрить Production | `approved_for_production` | отдельный gate перед Production |
+| Продвинуть в Production | `production_deploying` | **тот же artifact SHA** без пересборки |
+| Подтвердить production_live | `production_live` | фиксация итога |
+| Откатить Production | `rolled_back` | доступна из `production_live`, `production_deploying`, `production_failed` |
+
+Если Canary-деплой упал, доступна кнопка «Повторить Canary (тот же артефакт)» —
+пересборка не требуется, идентичность артефакта проверяется на каждой попытке.
+
+Для работы кнопок на LOCAL DEV должны быть заданы
+`STRATFORGE_RELEASE_DEPLOY_ADAPTER=stage9_ssh`, `STRATFORGE_RELEASE_SSH_HOST`,
+`STRATFORGE_RELEASE_SSH_USER`, `STRATFORGE_RELEASE_SSH_KEY`,
+`STRATFORGE_RELEASE_SSH_PROXY_COMMAND`, а для Production —
+`STRATFORGE_RELEASE_PRODUCTION_EXECUTION=owner_approved`. В Development они
+живут в `data/development/integrations/secrets.local.json` (gitignored).
+Состояние адаптера видно на самой странице: `mode: real` означает, что кнопки
+выполняют настоящий деплой, `dry_run` — что выполняется только план.
+
 ## Неподлежащие публикации поверхности
 
 - RDP, NinjaTrader ports, local market-data IPC и Windows file shares;
