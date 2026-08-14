@@ -4260,6 +4260,7 @@
     if (state === 'draft' && has('releases.create')) push('build', 'Собрать артефакт', false);
     if (state === 'built' && has('releases.create')) push('verify', 'Проверить подпись', false);
     if (state === 'signed' && has('releases.deploy_canary')) push('deploy-canary', 'Развернуть в Canary', true);
+    if (state === 'canary_failed' && has('releases.deploy_canary')) push('deploy-canary', 'Повторить Canary (тот же артефакт)', true);
     if (state === 'canary_checking' && has('releases.deploy_canary')) {
       push('record-canary-check:pass', 'Отметить проверку: PASS (final)', false);
       push('record-canary-check:fail', 'Отметить проверку: FAIL', false);

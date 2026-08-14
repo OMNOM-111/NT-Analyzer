@@ -655,3 +655,27 @@ def test_delegated_viewer_cannot_create_candidate(rc_http):
         rc_http, "/api/admin/releases/candidates", token=token, csrf=csrf, method="POST",
         body={"app_version": "0.10.0-dev.1", "release_channel": "dev", "idempotency_key": "http-key-1"})
     assert status == 403
+
+
+def test_failed_canary_can_retry_the_same_artifact_without_rebuild(rc_store, monkeypatch):
+    # An environment problem must not force a rebuild: the immutable artifact
+    # is still valid, and the transition map already allows the retry.
+    cid = _mk(key="canary-retry-key-1")
+    _to_signed(cid)
+    original_adapter = release_center._run_deploy_adapter
+
+    def failing(environment, artifact):
+        return {"status": "fail", "adapter": "test", "external_result": "fail",
+                "environment": environment, "note": "health check failed"}
+
+    monkeypatch.setattr(release_center, "_run_deploy_adapter", failing)
+    release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-retry-01")
+    detail = release_center.get_release(cid)
+    assert detail["summary"]["state"] == "canary_failed"
+    artifact_before = detail["summary"]["artifact_sha256"]
+
+    monkeypatch.setattr(release_center, "_run_deploy_adapter", original_adapter)
+    release_center.deploy_canary(actor=OWNER, candidate_id=cid, idempotency_key="dc-retry-02")
+    detail = release_center.get_release(cid)
+    assert detail["summary"]["state"] in {"canary_deploying", "canary_checking"}
+    assert detail["summary"]["artifact_sha256"] == artifact_before
