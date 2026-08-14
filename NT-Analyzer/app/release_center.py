@@ -1038,8 +1038,15 @@ def deploy_canary(
         cached = _idempotent(doc, key, f"deploy_canary:{candidate_id}")
         if cached:
             return cached
-        if candidate.get("state") != STATE_SIGNED:
-            raise ReleaseCenterError("Canary deploy доступен только из состояния signed.", 409, code="invalid_transition")
+        # A failed Canary deploy is usually an environment problem, not an
+        # artifact problem, and the transition map already allows the retry.
+        # Forcing a rebuild would contradict the immutable-artifact contract;
+        # `_assert_exact_artifact` below still pins the identity.
+        if candidate.get("state") not in {STATE_SIGNED, STATE_CANARY_FAILED}:
+            raise ReleaseCenterError(
+                "Canary deploy доступен из состояний signed и canary_failed.",
+                409, code="invalid_transition",
+            )
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact отсутствует.", 409, code="artifact_missing")
