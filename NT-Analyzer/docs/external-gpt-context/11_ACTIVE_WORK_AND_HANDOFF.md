@@ -1,51 +1,48 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-14T06:20:00Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Last verified UTC: 2026-08-14T17:12:00Z
+- Verified against Git SHA: 77e8645f1725d20545992efdeabafdf2f3d0e684
 - Scope: Dynamic current work, blockers, next actions and dangerous zones
-- Status: PARTIAL
-- Current Production version/build/artifact when known: Canary and Production `/live` `/ready` `/runtime/env` plus active `canary-current`/`current` and `/proc` cwd for all eight app processes report git `1fae1f3966dc53294b73772be47992d844575115`, build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256 `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`. Previous slot is `0f2a90ea`. Repository Documents/Charts follow-up is not that live artifact. Local DEV was not listening.
+- Status: DONE
+- Current Production version/build/artifact when known: LOCAL/CANARY/PRODUCTION git `77e8645f1725d20545992efdeabafdf2f3d0e684`, build `sf-0.10.0-beta.1-77e8645f1725-20260814T164341Z`, public artifact SHA256 `1F0C95E48447632CB97EF88A85E38354D6A71AC32C41285600DACA182A8748C6`, archive SHA256 `DBC79FC6834C82AC383240ED03C1A505C1367AEB2DE0D02DBDD17BBCAE4F2980`. `canary-current` = `current` = `.../0.10.0-beta.1-77e8645f1725`; previous is `1fae1f39`. All eight app `/proc` cwd match. Owner Documents/Release Center 200 and TopstepX LIVE on Canary and Production.
 
 ## Snapshot
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
-| Live public API Git SHA | `1fae1f3966dc53294b73772be47992d844575115` |
+| Current Git SHA | `77e8645f1725d20545992efdeabafdf2f3d0e684` |
+| Live public API Git SHA | `77e8645f1725d20545992efdeabafdf2f3d0e684` |
 | Public version | `0.10.0-beta.1` |
-| Live operational build ID | `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z` |
-| Live artifact SHA256 | `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B` |
-| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`; local process was not listening in this session |
-| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`; active slot and `/proc` cwd `1fae1f39` |
-| PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`; same active slot and `/proc` cwd `1fae1f39` |
-| Follow-up in repository | Documents/Release Center allowlist + server TopstepX chart fallback; not yet the live artifact |
+| Live operational build ID | `sf-0.10.0-beta.1-77e8645f1725-20260814T164341Z` |
+| Live artifact SHA256 | `1F0C95E48447632CB97EF88A85E38354D6A71AC32C41285600DACA182A8748C6` |
+| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`, git `77e8645f`, `build_id=dev-0.10.0-beta.1-77e8645f1725` |
+| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`; `/proc` cwd `77e8645f` |
+| PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`; same `/proc` cwd `77e8645f` |
+| Follow-up in repository | Documents/Charts server defects closed on this live artifact |
 
 ## Last clearly completed milestone
 
-- Public HTTP identity on Canary and Production agrees on `1fae1f39` / same
-  artifact SHA256. Host `/proc` cwd for all eight app processes matches that
-  active slot. `0f2a90ea` is previous-slot only.
-- Historical Canary acceptance `7ebda6fa` and hang-fix Production `6b6dc458`
-  remain in changelog as prior closeouts.
+- PR #37 merged; CI green; one signed artifact from merge SHA `77e8645f`
+  promoted Canary then Production without rebuild.
+  [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md).
+- Owner Documents/Release Center are HTTP 200 (no `Unknown repository`).
+- Server charts serve TopstepX history + realtime when NinjaTrader is down.
+- Historical `1fae1f39`, Canary `7ebda6fa` and hang-fix `6b6dc458` remain in
+  changelog as prior closeouts.
 
 ## Current work visible in the repo
 
-- Production live owner session found two code defects on `1fae1f39`:
-  `Unknown repository` for `releases`/`doc_specs`, and Charts returning
-  `workspace_runtime_not_connected` instead of TopstepX.
-- Repository now lets chart bars through `runtime_stub` and uses TopstepX →
-  Connector → other live provider → OFFLINE in server environments.
-- Optional `STRATFORGE_CANARY_INTERNAL_ORIGIN` is already set on live
-  Production telegram (`http://127.0.0.1:18765`).
-- Unauthenticated `/ui/` and `/ui/desktop.html` shells match between Canary
-  and Production. Authenticated page sweep was not completed here.
+- Documents/Charts server defects from live `1fae1f39` are closed on `77e8645f`.
+- Host overlays outside the signed zip: TopstepX credentials + remote
+  authorization flags in Canary/Production env files; `websockets==16.0` in
+  the release `.venv`. `requirements.txt` now names `websockets` for the next
+  build.
+- `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765` remains on
+  Production telegram.
 
 ## Current blockers
 
-- This change set is not live until a new signed artifact is built and
-  deployed DEV → CANARY → PRODUCTION.
-- Local DEV `http://127.0.0.1:8765` was not listening in this session.
 - Google OAuth remains externally blocked in Production.
 - Transactional email auth remains externally blocked in Production.
 - Production Connector acceptance still depends on a real Windows VM path.
@@ -67,12 +64,10 @@
 
 ## Next actions
 
-1. Build/sign the Documents/Charts follow-up from a clean commit and deploy
-   DEV → CANARY → PRODUCTION without rebuild; re-prove `/proc` cwd on the new SHA.
-2. Re-test Production Documents, Release Center and TopstepX history/realtime
-   with a real owner session.
-3. Keep Google OAuth, transactional email and legal publication accurately
+1. Keep Google OAuth, transactional email and legal publication accurately
    blocked until their external requirements are supplied and accepted.
+2. Next signed build must install `websockets` from `requirements.txt` into
+   the release `.venv` instead of relying on host overlay drift.
 
 ## Dangerous zones
 
@@ -89,5 +84,6 @@ Do not change these casually without a reproducible defect, explicit test scope
 and release-impact reasoning.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | STAGE CLOSED: live 77e8645f LOCAL/CANARY/PRODUCTION; Documents+TopstepX PASS.
 2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Handoff: live process identity 1fae1f39; 0f2a90ea previous slot; Documents/Charts follow-up not deployed.
 -->

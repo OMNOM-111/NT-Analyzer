@@ -1,8 +1,8 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-14T06:20:00Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Last verified UTC: 2026-08-14T17:12:00Z
+- Verified against Git SHA: 77e8645f1725d20545992efdeabafdf2f3d0e684
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: DONE
 
@@ -19,7 +19,7 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works; Canary and Production `/ready` telegram_consumer is `ready` on `1fae1f39`; Canary reuses the existing bot via `[CANARY]` shared-webhook forwarding. Live Production already sets loopback `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765`. |
+| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works; Canary and Production `/ready` telegram_consumer is `ready` on `77e8645f`; Canary reuses the existing bot via `[CANARY]` shared-webhook forwarding. Live Production already sets loopback `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765`. |
 | Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
 | Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 

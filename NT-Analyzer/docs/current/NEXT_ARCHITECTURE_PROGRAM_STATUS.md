@@ -9,9 +9,9 @@
 - Baseline branch: `main`; при старте `HEAD == origin/main`, working tree clean
 - Version at baseline: `0.9.0-dev.10`
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
-- Next version: `0.10.0-beta.1` (live Canary + Production HTTP identity `1fae1f3966dc` as of 2026-08-14; hang-fix `6b6dc458` is historical)
-- Integration branch: `release/0.10.0-next-architecture` merged to `main` via [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) (`5b43569d`); live public API identity is `1fae1f3966dc53294b73772be47992d844575115`
-- Production/Canary boundary: both live on the Supervisor host; public `/live`/`/ready`/`/runtime/env` agree on the same `1fae1f39` artifact; process cwd/exe still requires host `/proc` proof; no live trading / real payments
+- Next version: `0.10.0-beta.1` (live LOCAL/CANARY/PRODUCTION `77e8645f1725` as of 2026-08-14; previous slot `1fae1f3966dc`; hang-fix `6b6dc458` is historical)
+- Integration branch: `release/0.10.0-next-architecture` merged to `main` via [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) (`5b43569d`); live public API identity is `77e8645f1725d20545992efdeabafdf2f3d0e684` via [PR #37](https://github.com/OMNOM-111/NT-Analyzer/pull/37)
+- Production/Canary boundary: both live on the Supervisor host; public `/runtime/env` and `/proc` cwd agree on the same `77e8645f` artifact; no live trading / real payments
 
 ## Сводка
 
@@ -254,14 +254,14 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 
 ## Phase 12 — 0.10.0-beta.1 live Canary + exact-artifact Production
 
-- Live public HTTP identity (2026-08-14): Canary and Production `/live` `/ready` `/runtime/env` both report git `1fae1f3966dc53294b73772be47992d844575115`, build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256 `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`. Telegram consumer and queue probes are `ready` on both. Host `/proc` cwd/exe: `canary-current` and `current` are the same directory `.../0.10.0-beta.1-1fae1f3966dc`; all eight app processes (Canary `api`/`worker-canary`/`operations-canary`/`telegram-canary`, Production `api-app`/`worker`/`operations`/`telegram`) run from that directory. `0f2a90ea` is the previous slot only.
-- Historical hang-fix artifact remains `6b6dc458` / previous Production slot `795db0c1`. Historical Canary acceptance artifact `7ebda6fa` is superseded on the live HTTP surface.
-- Repository follow-up (not in live `1fae1f39`): Production Documents/Release Center `Unknown repository` allowlist and server-environment TopstepX chart fallback. See [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md).
-- Production `https://app.stratforges.com` and Canary `https://canary.stratforges.com` public API identity is `1fae1f39` as of 2026-08-14. Live trading and real payments remain false. Expand migrations 0005–0011 already applied.
-- Host mechanism: Supervisor `canary-current`/`canary-previous` and Production `current`/`previous` symlink pairs. Active slot is `0.10.0-beta.1-1fae1f3966dc` for both; previous slot is `0.10.0-beta.1-0f2a90ead358`. `/proc` cwd matches the active slot for all eight app processes.
+- Live public HTTP identity (2026-08-14): LOCAL/CANARY/PRODUCTION git `77e8645f1725d20545992efdeabafdf2f3d0e684`, build `sf-0.10.0-beta.1-77e8645f1725-20260814T164341Z`, public artifact SHA256 `1F0C95E48447632CB97EF88A85E38354D6A71AC32C41285600DACA182A8748C6`, archive SHA256 `DBC79FC6834C82AC383240ED03C1A505C1367AEB2DE0D02DBDD17BBCAE4F2980`. `canary-current` = `current` = `.../0.10.0-beta.1-77e8645f1725`; previous is `1fae1f3966dc`. All eight app `/proc` cwd match. Owner Documents/Release Center 200 and TopstepX LIVE. See [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md).
+- Historical hang-fix artifact remains `6b6dc458`. Historical Canary acceptance artifact `7ebda6fa` is superseded on the live HTTP surface.
+- Documents/Charts follow-up from [PR #37](https://github.com/OMNOM-111/NT-Analyzer/pull/37) **is** this live artifact.
+- Production `https://app.stratforges.com` and Canary `https://canary.stratforges.com` public API identity is `77e8645f` as of 2026-08-14. Live trading and real payments remain false. Expand migrations 0005–0011 already applied.
+- Host mechanism: Supervisor `canary-current`/`canary-previous` and Production `current`/`previous` symlink pairs. Active slot is `0.10.0-beta.1-77e8645f1725` for both; previous slot is `0.10.0-beta.1-1fae1f3966dc`. `/proc` cwd matches the active slot for all eight app processes.
 - **`/ready` hang root cause (reproduced on previous live Production `795db0c1`):** `connector_protocol.readiness_status()` held the Connector lock and called `storage_router.read_document("connectors")`, which deserialized the full JSON document (~19s). Promote used `curl --max-time 5` against `/api/health/ready`; the handler does not write headers until every probe finishes, so each poll received 0 bytes while the previous probe was still running and stacked more inflight `/ready` work on `BoundedThreadingHTTPServer`. `/api/health/live` already includes deployment identity and stays cheap.
 - **Fix now live:** `DocumentRepository.ping()` does `SELECT 1` and never loads JSON; `/ready` runs control-plane probes concurrently with a 2s per-probe timeout, single-flight cache, and `probe_timeout` fail-closed. Environment Switcher defaults to `http://127.0.0.1:8765`, `https://canary.stratforges.com`, `https://app.stratforges.com`. Browser DEV→CANARY→PROD opened those origins in new tabs without copying cookies.
-- Isolation: Production cannot CONNECT to Canary DB and vice versa; live ACL negatives were rechecked 2026-08-13. No orders were placed. Authenticated Canary/Production TopstepX chart smoke remains `EXTERNAL BLOCKED` for a fresh browser (real Telegram action required; no session fabricated). Local DEV owner session shows paper Topstep account read-only.
+- Isolation: Production cannot CONNECT to Canary DB and vice versa; live ACL negatives were rechecked 2026-08-13. No orders were placed. Authenticated Canary/Production TopstepX charts PASS on `77e8645f` with NinjaTrader unavailable.
 - Previous Production hang-fix closeout: artifact commit `6b6dc458`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) merged as `5b43569d`. Live HTTP identity is now `1fae1f39`. The Documents/Charts follow-up is still a repository change set, not a new signed artifact.
 
 ### `/ready` hang-fix — required new artifact
@@ -317,11 +317,12 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
   live-PostgreSQL suites requiring `STRATFORGE_TEST_POSTGRES_*`.
 - Canonical evidence:
   [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md).
-- Status: **NOT STAGE CLOSED.** Live Canary+Production process identity is
-  `1fae1f39`. Repository Documents/Charts fixes are not that artifact.
-  Authenticated server TopstepX PASS and local DEV process identity remain open.
+- Status: **STAGE CLOSED** for Documents/Charts server defects. Live
+  LOCAL/CANARY/PRODUCTION identity is `77e8645f`. Google OAuth and Production
+  transactional email stay EXTERNAL BLOCKED.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | STAGE CLOSED Documents/Charts: live 77e8645f LOCAL/CANARY/PRODUCTION; TopstepX LIVE; /proc cwd match.
 2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea is previous only; not STAGE CLOSED.
 2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Recorded exact 7ebda6fa Canary artifact, Documents UI closeout, 619.899-second chart soak, load and real rollback rehearsal; Production unchanged.
 2026-08-13T08:31:00Z | GPT-5.5 через Codex по запросу owner | Recorded final acceptance hardening, real Release Center Canary lifecycle and rollback rehearsal; Production unchanged.

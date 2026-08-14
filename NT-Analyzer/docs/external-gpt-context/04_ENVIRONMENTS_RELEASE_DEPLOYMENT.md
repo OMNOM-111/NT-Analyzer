@@ -1,8 +1,8 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-14T06:20:00Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Last verified UTC: 2026-08-14T17:12:00Z
+- Verified against Git SHA: 77e8645f1725d20545992efdeabafdf2f3d0e684
 - Scope: Deployment environments, release channels, immutable promotion and rollback boundaries
 - Status: DONE
 
@@ -11,11 +11,11 @@
 - **Repository evidence** in this document describes what the repo implements:
   env/channel split, fail-closed startup, build scripts, Release Center schema
   and deploy templates.
-- **Operational evidence** is environment-specific. Live public API identity
-  (2026-08-14) is `1fae1f39` on both Canary and Production:
-  [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md).
-  Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458` remain in
-  changelog.
+- **Operational evidence** is environment-specific. Live identity (2026-08-14)
+  is `77e8645f` on LOCAL/CANARY/PRODUCTION:
+  [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md).
+  Historical `1fae1f39`, Canary `7ebda6fa` and hang-fix Production `6b6dc458`
+  remain in changelog.
 - Do not answer a “what is live right now” question from repository templates
   alone when operational closeout evidence exists.
 
@@ -61,25 +61,25 @@ Git branch, deployment environment and release channel are not synonyms.
 
 | Environment | Origin / opening mode | Isolation contract | Operational snapshot |
 | --- | --- | --- | --- |
-| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`; local process was not listening in this session |
-| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, process git `1fae1f39`, isolated DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary` |
-| PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, process git `1fae1f39`, `instance=stratforge-linux-production-01`, DB `stratforge_production` |
+| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`; git `77e8645f` |
+| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, process git `77e8645f`, isolated DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary` |
+| PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, process git `77e8645f`, `instance=stratforge-linux-production-01`, DB `stratforge_production` |
 
 ## Current release/build identity
 
 - Public version file: `0.10.0-beta.1`.
 - Build timestamp in `VERSION.json`: `2026-08-11T18:35:00Z`.
-- Repository evidence snapshot for this sync pass: `7ebda6faf2e7c64d4a707a41062b29857882181a`.
+- Repository evidence snapshot for this sync pass: `77e8645f1725d20545992efdeabafdf2f3d0e684`.
 - Live public API identity (Canary and Production): git
-  `1fae1f3966dc53294b73772be47992d844575115`, build
-  `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256
-  `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`.
+  `77e8645f1725d20545992efdeabafdf2f3d0e684`, build
+  `sf-0.10.0-beta.1-77e8645f1725-20260814T164341Z`, artifact SHA256
+  `1F0C95E48447632CB97EF88A85E38354D6A71AC32C41285600DACA182A8748C6`.
 - Host `/proc` cwd for Canary `api`/`worker-canary`/`operations-canary`/`telegram-canary`
   and Production `api-app`/`worker`/`operations`/`telegram` matches that active
-  slot. Previous slot is `0f2a90ea`.
-- Repository Documents/Charts follow-up is not that live artifact.
-- Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458` remain in
-  changelog.
+  slot. Previous slot is `1fae1f39`.
+- Owner Documents/Release Center and TopstepX history+realtime PASS on this
+  artifact. Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458`
+  remain in changelog.
 
 ## Release Center and signing
 
@@ -89,7 +89,7 @@ Git branch, deployment environment and release channel are not synonyms.
 | Release ledger | `app/release_center.py` records candidates, artifacts, real deployments, granular checks, approvals, notifications and rollbacks; `7ebda6fa` lifecycle was completed through the Release Center |
 | Blue-green | real Canary stages and a real rollback→re-promote rehearsal passed; `app/blue_green.py` and `0010_blue_green_deploy_steps.sql` retain the step/maintenance evidence |
 | Exact-artifact promotion | same artifact fingerprint is stored and compared in schema/contracts |
-| Live execution proof | `7ebda6fa` has current real Canary build/deploy/rollback proof; earlier `6b6dc458` retains accepted Canary→Production same-directory proof |
+| Live execution proof | `77e8645f` is the current LOCAL/CANARY/PRODUCTION slot; `7ebda6fa` retains Canary build/deploy/rollback proof; `6b6dc458` retains the hang-fix Production proof |
 
 ## Environment Switcher
 
@@ -141,6 +141,7 @@ Git branch, deployment environment and release channel are not synonyms.
 - `app/runtime_env.py`
 - `app/release_center.py`
 - `app/blue_green.py`
+- [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md)
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
@@ -148,6 +149,7 @@ Git branch, deployment environment and release channel are not synonyms.
 - [../../../.github/workflows/next-architecture-ci.yml](../../../.github/workflows/next-architecture-ci.yml)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | Live LOCAL/CANARY/PRODUCTION 77e8645f; Documents/Charts PASS.
 2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea is previous only.
 2026-08-14T05:06:04Z | GPT-5.5 через Codex по запросу owner | Strengthened the canonical DEV → CANARY → PRODUCTION release contract for all future updates: one immutable artifact, Canary acceptance, exact same artifact to Production.
 -->

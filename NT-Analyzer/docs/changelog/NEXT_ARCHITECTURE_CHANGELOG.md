@@ -1,5 +1,6 @@
 # Next Architecture Program — Changelog (0.10.0 line)
 
+История поправки: 2026-08-14T17:12:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: live LOCAL/CANARY/PRODUCTION `77e8645f`; Documents/Release Center 200; TopstepX LIVE.
 История поправки: 2026-08-14T06:20:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: live HTTP identity `1fae1f39` on Canary+Production; repository Documents/Charts fix not yet that artifact.
 История поправки: 2026-08-12T23:50:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: PR #26 merged to main; hang-fix tag on `6b6dc458`.
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — создать честный changelog новой архитектурной программы с разделением по аудитории и по фактическому статусу развёртывания.
@@ -85,17 +86,26 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   Production secrets отсутствуют.
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
 
-## Развёрнуто 2026-08-14 (live HTTP identity `1fae1f39` — not STAGE CLOSED)
+## Развёрнуто 2026-08-14 (live identity `77e8645f` — Documents/Charts STAGE CLOSED)
+
+- Public `/api/runtime/env` on Canary and Production plus local DEV report git
+  `77e8645f1725d20545992efdeabafdf2f3d0e684`, build
+  `sf-0.10.0-beta.1-77e8645f1725-20260814T164341Z`, public artifact SHA256
+  `1F0C95E48447632CB97EF88A85E38354D6A71AC32C41285600DACA182A8748C6`.
+- Host `/proc` cwd for all eight app processes matches
+  `.../0.10.0-beta.1-77e8645f1725`. Previous slot is `1fae1f39`.
+- Owner Documents/Release Center HTTP 200. TopstepX MNQ history + realtime LIVE
+  with NinjaTrader unavailable.
+- Evidence: `docs/changelog/2026-08-14-live-release-77e8645f-documents-charts.md`.
+
+## Развёрнуто 2026-08-14 (live HTTP identity `1fae1f39` — historical)
 
 - Public `/live` `/ready` `/runtime/env` on Canary and Production both report
   git `1fae1f3966dc53294b73772be47992d844575115`, build
   `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256
   `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`.
-- Host `/proc` cwd for all eight app processes matches that active slot.
-  Previous slot is `0f2a90ea`. Local DEV was not listening.
-- Live Production still 500s Documents/Release Center (`Unknown repository`)
-  and stubs server charts without TopstepX. Those fixes exist in the repository
-  and are not this live artifact.
+- That artifact 500'd Documents/Release Center and stubbed server charts.
+  Superseded by `77e8645f`.
 - Evidence: `docs/changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md`.
 
 ## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — historical)
@@ -150,6 +160,7 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   public Cloudflare 1010 and `/proc` identity proof remain open.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | Live 77e8645f LOCAL/CANARY/PRODUCTION; Documents/Charts STAGE CLOSED.
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39; hang-fix 6b6dc458 is historical; Documents/Charts follow-up not STAGE CLOSED.
 2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 auth/DEV fix artifact on Canary and Production.
 2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen: owner auth/DEV acceptance failed on live 2f9409c4; record UUID hydrate + launcher + primary Sign in/Register fix requiring a new artifact.

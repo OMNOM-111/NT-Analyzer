@@ -1,8 +1,8 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-14T06:20:00Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Last verified UTC: 2026-08-14T17:12:00Z
+- Verified against Git SHA: 77e8645f1725d20545992efdeabafdf2f3d0e684
 - Scope: NinjaTrader authority, Connector protocol, market-data priorities and trading safety gates
 - Status: DONE
 
@@ -22,11 +22,11 @@
 | Area | Status | Current fact |
 | --- | --- | --- |
 | Connector protocol v1 | `PARTIAL` | pair/enroll/challenge/hello/heartbeat/market-data/commands protocol is implemented with device-owned P-256 keys and bounded capabilities |
-| Read-only charts | `PARTIAL` | TopstepX history + realtime operate with NinjaTrader OFF in DEV. Repository now uses the same order on Canary/Production; live `1fae1f39` still stubs/skips TopstepX on server environments |
+| Read-only charts | `BETA` | TopstepX history + realtime operate with NinjaTrader OFF on DEV, Canary and Production owner sessions of live `77e8645f` |
 | Connector fallback | `PARTIAL` | fresh NinjaTrader Connector bars are a current fallback for charts when TopstepX is unavailable |
 | Simulation / paper / demo runtime control | `PARTIAL` | safe runtime commands exist for paper/demo/playback contours |
 | Account-mode execution gates | `PARTIAL` | Simulation vs real/live comes from the connected NinjaTrader account; app-side execution on that account is allowed or blocked by permissions, safety gates, release state and account capabilities |
-| Market-data entitlement / licensed-provider parity | `EXTERNAL BLOCKED` | DEV owner feed and fanout are accepted; authenticated Canary/Production provider parity still needs real server-environment user authentication |
+| Market-data entitlement / licensed-provider parity | `PARTIAL` | DEV/Canary/Production owner TopstepX charts PASS on `77e8645f`. Other licensed providers remain EXTERNAL BLOCKED |
 | SignalR / session / freshness rules | `DONE` | provider health, quote heartbeat, cooldowns, freshness and provenance are part of the charting contract. A fresh quote heartbeat keeps the marker live even when price itself is unchanged |
 
 ## Stable baseline external GPT should assume
@@ -37,8 +37,8 @@
 - The accepted 2026-08-13 DEV baseline kept TopstepX auth/session, SignalR,
   rollover and backend cache/failover architecture unchanged. The scoped UI
   fix preserves a fresh WebSocket bar/marker across health/history refreshes.
-- Live public API identity is `1fae1f39` on Canary and Production. The
-  repository Documents/Charts follow-up is not that artifact. No orders were
+- Live public API identity is `77e8645f` on Canary and Production. Owner
+  Documents/Charts TopstepX PASS. No orders were
   placed during this record.
 - Production Connector should work only via outbound HTTPS to the canonical
   origin; it does not open an inbound port for the server.
@@ -83,8 +83,10 @@
 - `app/market_data_ws_http.py`
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
+- [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md)
 - [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | Live 77e8645f TopstepX history+realtime PASS on Canary and Production.
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
 -->

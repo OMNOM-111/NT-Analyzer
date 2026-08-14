@@ -1,8 +1,8 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-08-14T06:20:00Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Last verified UTC: 2026-08-14T17:12:00Z
+- Verified against Git SHA: 77e8645f1725d20545992efdeabafdf2f3d0e684
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: DONE
 
@@ -16,7 +16,7 @@
 | Full pytest | functional regression across repo | `python -m pytest -q` | canonical full automated suite |
 | Python compile check | syntax-level regression | `python -m compileall -q app tests` | required in CI |
 | JS syntax check | Aurora assets syntax | CI `node --check` over `app/static/aurora/assets/**/*.js` | required in CI |
-| Operational release closeout | accepted deployment/build/browser/readiness evidence | live HTTP identity: [2026-08-14](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md); historical Canary: [2026-08-13](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md); historical hang-fix Production: [2026-08-12](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) | required to answer “what is live now” per environment |
+| Operational release closeout | accepted deployment/build/browser/readiness evidence | live: [2026-08-14 77e8645f](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md); prior HTTP identity: [2026-08-14 1fae1f39](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md); historical Canary: [2026-08-13](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md); historical hang-fix Production: [2026-08-12](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md) | required to answer “what is live now” per environment |
 
 Current clean-branch closeout result: targeted acceptance `259 passed`; full
 pytest `1303 passed, 31 skipped, 0 failed`; repository harness `13/13` suites;
@@ -44,7 +44,7 @@ by `STRATFORGE_TEST_POSTGRES_ADMIN_URL` and `STRATFORGE_TEST_POSTGRES_URL`.
 | Backtest parity vs Strategy Analyzer | baseline passed; rerun after result-contract or execution-setting changes | [../operations/manual-validation.md](../operations/manual-validation.md) |
 | Real Windows Connector acceptance | still required for Production-grade Connector confidence | [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md) |
 | Market-data visual and higher-load acceptance | DEV PASS on `7ebda6fa`: 619.899-second independent in-app/Chrome MNQ/MES marker proof and prior 100-client fanout baseline. Authenticated Canary/Production provider smoke remains external | [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md) |
-| Canary / Production release acceptance | Live Canary+Production process identity `1fae1f39` (active slot + `/proc` cwd). `0f2a90ea` is previous-slot only. Repository Documents/Charts follow-up is not that artifact | [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md) |
+| Canary / Production release acceptance | Live LOCAL/CANARY/PRODUCTION `77e8645f` (active slot + `/proc` cwd). Owner Documents/Release Center 200 and TopstepX LIVE. Previous slot `1fae1f39` | [../changelog/2026-08-14-live-release-77e8645f-documents-charts.md](../changelog/2026-08-14-live-release-77e8645f-documents-charts.md) |
 
 Operationally accepted does **not** mean every adjacent provider is ready:
 Canary Telegram shared-webhook forwarding can still hit Cloudflare 1010 on the
@@ -58,5 +58,6 @@ visual QA as targeted manual or explicit-owner actions, not a default automated
 gate.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T17:12:00Z | Grok 4.6 через Cursor по запросу owner | Live acceptance 77e8645f Documents/Charts PASS; /proc cwd on all eight app processes.
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Pointed live Canary/Production acceptance at 1fae1f39 HTTP identity; /proc still open.
 -->
