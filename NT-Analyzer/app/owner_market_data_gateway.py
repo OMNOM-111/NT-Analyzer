@@ -14,6 +14,7 @@ import json
 import os
 import secrets
 import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -37,6 +38,7 @@ _ALLOWED_PUBLIC_HOSTS = {"app.stratforges.com", "canary.stratforges.com"}
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _MIN_TOKEN_LEN = 16
 _DEFAULT_BIND_PORT = 8765
+_LOCAL_BIND_PORT = 0
 _LEASE_TTL_SEC = 45
 # The hub renews well inside the TTL.  A hub that holds an open SignalR socket
 # for hours without a chart request must not let its lease lapse: an expired
@@ -137,16 +139,40 @@ def gateway_url() -> str:
     return ""
 
 
+def set_local_bind_port(port: Any) -> None:
+    """Record the port this process actually bound.
+
+    The self-loop guard has to know it, and the server takes its port from
+    ``sys.argv`` (``python -m app.server 18767`` on the deployment host), so
+    neither an env var nor the default is reliable on its own.
+    """
+    global _LOCAL_BIND_PORT
+    try:
+        value = int(port or 0)
+    except (TypeError, ValueError):
+        return
+    if 1 <= value <= 65535:
+        _LOCAL_BIND_PORT = value
+
+
+def _local_bind_port() -> int:
+    if _LOCAL_BIND_PORT:
+        return _LOCAL_BIND_PORT
+    for candidate in (os.environ.get("STRATFORGE_BIND_PORT"), *sys.argv[1:2]):
+        try:
+            value = int(candidate or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= value <= 65535:
+            return value
+    return _DEFAULT_BIND_PORT
+
+
 def _own_listen_targets() -> List[Tuple[str, int]]:
     targets: List[Tuple[str, int]] = []
     deployment = _deployment()
     bind_host = str(getattr(deployment, "bind_host", "") or "127.0.0.1").lower()
-    try:
-        bind_port = int(os.environ.get("STRATFORGE_BIND_PORT") or 0)
-    except (TypeError, ValueError):
-        bind_port = 0
-    if not bind_port:
-        bind_port = _DEFAULT_BIND_PORT
+    bind_port = _local_bind_port()
     hosts = {bind_host, "127.0.0.1", "localhost"}
     if bind_host in {"0.0.0.0", "::"}:
         hosts.update({"127.0.0.1", "localhost"})
@@ -312,10 +338,38 @@ def lease_path() -> Path:
     return Path("/tmp/stratforge-owner-market-data-hub.lease.json")
 
 
+def _pid_alive_windows(pid: int) -> bool:
+    """Probe liveness with OpenProcess.
+
+    ``os.kill(pid, 0)`` must never be used here on Windows: signal ``0`` is
+    ``CTRL_C_EVENT``, so the "probe" actually delivers a Ctrl+C to that
+    process's console group instead of reporting whether it is running.
+    """
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+    if not handle:
+        # Access denied means the process exists but belongs to another user.
+        return ctypes.get_last_error() == error_access_denied
+    try:
+        code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return int(code.value) == still_active
+        return True
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int) -> bool:
     if int(pid or 0) <= 0:
         return False
     try:
+        if os.name == "nt":
+            return _pid_alive_windows(int(pid))
         os.kill(int(pid), 0)
         return True
     except PermissionError:
@@ -408,12 +462,17 @@ def acquire_hub_lease() -> Dict[str, Any]:
         existing_id = str(existing.get("lease_id") or "")
         existing_pid = int(existing.get("pid") or 0)
         ours = bool(_LEASE_ID and existing_id == _LEASE_ID)
+        # A pid only means something on the host that wrote it.  If the lease
+        # came from a different hostname, never use local pid liveness to
+        # decide it is dead — only its expiry may release it.
+        same_host = str(existing.get("hostname") or "") == identity["hostname"]
+        holder_running = _pid_alive(existing_pid) if same_host else True
         living_other = bool(
             existing
             and not ours
             and not _lease_expired(existing)
-            and _pid_alive(existing_pid)
-            and int(existing_pid) != os.getpid()
+            and holder_running
+            and not (same_host and int(existing_pid) == os.getpid())
         )
         if living_other:
             _DUPLICATE_WARNING = "duplicate_owner_market_data_hub_blocked"

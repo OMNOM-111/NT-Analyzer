@@ -193,6 +193,24 @@ def test_self_url_auto_is_isolated(monkeypatch) -> None:
     assert gw.effective_role() == "isolated"
 
 
+def test_self_loop_guard_uses_the_port_the_server_actually_bound(monkeypatch) -> None:
+    # The deployment host starts the API as `python -m app.server 18767`, so
+    # STRATFORGE_BIND_PORT is absent and the default 8765 is wrong.
+    _reset_provider()
+    monkeypatch.setattr(gw, "_LOCAL_BIND_PORT", 0)
+    monkeypatch.delenv("STRATFORGE_BIND_PORT", raising=False)
+    monkeypatch.setenv("STRATFORGE_DEPLOYMENT_ROLE", "api")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "consumer")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_URL", "http://127.0.0.1:18767")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", TOKEN)
+    assert gw.points_at_self("http://127.0.0.1:18767") is False
+    assert gw.should_consume() is True
+    gw.set_local_bind_port(18767)
+    assert gw.points_at_self("http://127.0.0.1:18767") is True
+    assert gw.should_consume() is False
+    assert gw.effective_role() == "isolated"
+
+
 def test_production_auto_is_fail_closed(monkeypatch) -> None:
     monkeypatch.setenv("DEPLOYMENT_ENV", "production")
     monkeypatch.setenv("STRATFORGE_DEPLOYMENT_ROLE", "api")
@@ -342,6 +360,44 @@ def test_hub_lease_blocks_duplicate_owner(monkeypatch) -> None:
     obs = gw.connection_observability()
     assert "duplicate_owner_market_data_hub_blocked" in obs["warnings"]
     assert obs["fanout"]["internal_clients_do_not_multiply_provider_connections"] is True
+
+
+def test_pid_liveness_probe_never_signals_the_target(monkeypatch) -> None:
+    # On Windows signal 0 is CTRL_C_EVENT: probing a lease holder with
+    # os.kill(pid, 0) delivers a Ctrl+C to that console group instead of
+    # reporting liveness, which killed the test run itself.
+    if os.name == "nt":
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("os.kill must not be used to probe pid liveness")
+
+        monkeypatch.setattr(gw.os, "kill", refuse)
+    assert gw._pid_alive(os.getpid()) is True
+    assert gw._pid_alive(0) is False
+    assert gw._pid_alive(-1) is False
+    assert gw._pid_alive(4_000_000_000) is False
+
+
+def test_lease_from_another_host_is_never_stolen_on_local_pid(monkeypatch) -> None:
+    _hub_env(monkeypatch)
+    path = Path(os.environ["NTA_OWNER_MARKET_DATA_GATEWAY_LEASE_PATH"])
+    expires = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+    path.write_text(json.dumps({
+        "lease_id": "remote-hub",
+        # A pid that is certainly not running locally; it belongs to the other
+        # host and must not be probed for liveness here.
+        "pid": 4_000_000_000,
+        "environment": "production",
+        "instance_id": "stratforge-prod-01",
+        "public_origin": "https://app.stratforges.com",
+        "hostname": "some-other-host",
+        "heartbeat_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expires_at_utc": expires,
+    }), encoding="utf-8")
+    blocked = gw.acquire_hub_lease()
+    assert blocked["held"] is False
+    assert blocked["duplicate_blocked"] is True
+    assert gw._read_lease(path)["lease_id"] == "remote-hub"
+    gw.reset_lease_for_tests()
 
 
 def test_hub_lease_is_renewed_before_it_expires(monkeypatch) -> None:

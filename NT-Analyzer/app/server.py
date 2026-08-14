@@ -9449,6 +9449,9 @@ def run(port: Optional[int] = None) -> None:
     )
     bind_host = deployment.bind_host
     bind_port = port or _bind_or_pick_port(DEFAULT_PORT, host=bind_host)
+    # The owner market-data gateway refuses to consume an origin that resolves
+    # back to this process; it needs the port we actually bound.
+    owner_market_data_gateway.set_local_bind_port(bind_port)
     server = create_http_server(deployment, bind_port=bind_port)
     print(f"[nta-backend] listening on http://{bind_host}:{bind_port}/")
     print(f"[nta-backend] UI:           http://{bind_host}:{bind_port}/ui/")
