@@ -244,6 +244,38 @@ def test_canary_auto_consumes_production_internal_origin(monkeypatch) -> None:
     assert gw.should_open_direct_hub() is False
 
 
+def test_explicit_consumer_uses_the_environment_hub_origin(monkeypatch) -> None:
+    # Naming the role must not leave Canary with fewer ways to reach the hub
+    # than ROLE=auto: without this, a deployed consumer went isolated and
+    # served empty charts.
+    monkeypatch.setenv("STRATFORGE_DEPLOYMENT_ROLE", "api")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "consumer")
+    monkeypatch.delenv("NTA_OWNER_MARKET_DATA_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN", "http://127.0.0.1:18767")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", TOKEN)
+    monkeypatch.setattr(gw, "_environment", lambda: "canary")
+    monkeypatch.setattr(gw, "_api_role", lambda: True)
+    monkeypatch.setattr(gw, "_own_listen_targets", lambda: [("127.0.0.1", 18765)])
+    assert gw.gateway_url() == "http://127.0.0.1:18767"
+    assert gw.should_consume() is True
+    assert gw.effective_role() == "consumer"
+    assert gw.chart_source_mode() == "owner_gateway_consumer"
+
+
+def test_explicit_consumer_without_any_hub_origin_stays_isolated(monkeypatch) -> None:
+    monkeypatch.setenv("STRATFORGE_DEPLOYMENT_ROLE", "api")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "consumer")
+    monkeypatch.delenv("NTA_OWNER_MARKET_DATA_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN", raising=False)
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", TOKEN)
+    monkeypatch.setattr(gw, "_environment", lambda: "canary")
+    monkeypatch.setattr(gw, "_api_role", lambda: True)
+    assert gw.gateway_url() == ""
+    assert gw.should_consume() is False
+    assert gw.should_open_direct_hub() is False
+    assert gw.effective_role() == "isolated"
+
+
 def _auth_request(headers: dict, path: str = "/api/ops/runtime/bars"):
     errors = []
 
