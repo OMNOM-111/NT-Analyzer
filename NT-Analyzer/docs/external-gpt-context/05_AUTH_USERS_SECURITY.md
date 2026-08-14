@@ -1,7 +1,7 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-14T06:20:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: DONE
@@ -19,7 +19,7 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works and local DEV owner session works; Canary owner login now reuses the existing bot through `[CANARY]` shared-webhook forwarding into isolated Canary auth/session queues, pending live hotfix redeploy |
+| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works; Canary and Production `/ready` telegram_consumer is `ready` on `1fae1f39`; Canary reuses the existing bot via `[CANARY]` shared-webhook forwarding. Live Production already sets loopback `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765`. |
 | Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
 | Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 
@@ -102,3 +102,7 @@ Key admin capability names already in the contract: `admin.view`,
 - `app/security_devices.py`
 - `app/personal_nt_security.py`
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Noted live Telegram login on 1fae1f39 and remaining Canary Cloudflare 1010 forward gap.
+-->

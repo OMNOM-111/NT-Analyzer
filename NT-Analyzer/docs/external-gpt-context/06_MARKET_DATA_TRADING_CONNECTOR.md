@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-14T06:20:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: NinjaTrader authority, Connector protocol, market-data priorities and trading safety gates
 - Status: DONE
@@ -22,7 +22,7 @@
 | Area | Status | Current fact |
 | --- | --- | --- |
 | Connector protocol v1 | `PARTIAL` | pair/enroll/challenge/hello/heartbeat/market-data/commands protocol is implemented with device-owned P-256 keys and bounded capabilities |
-| Read-only charts | `DONE` | TopstepX history + realtime operate with NinjaTrader OFF and feed multiple browser clients. Final clean-SHA proof: MNQ/MES 5m, independent in-app and Chrome clients, `619.899 s`, `44` observations, `0` grey/OFF/non-live states |
+| Read-only charts | `PARTIAL` | TopstepX history + realtime operate with NinjaTrader OFF in DEV. Repository now uses the same order on Canary/Production; live `1fae1f39` still stubs/skips TopstepX on server environments |
 | Connector fallback | `PARTIAL` | fresh NinjaTrader Connector bars are a current fallback for charts when TopstepX is unavailable |
 | Simulation / paper / demo runtime control | `PARTIAL` | safe runtime commands exist for paper/demo/playback contours |
 | Account-mode execution gates | `PARTIAL` | Simulation vs real/live comes from the connected NinjaTrader account; app-side execution on that account is allowed or blocked by permissions, safety gates, release state and account capabilities |
@@ -37,8 +37,9 @@
 - The accepted 2026-08-13 DEV baseline kept TopstepX auth/session, SignalR,
   rollover and backend cache/failover architecture unchanged. The scoped UI
   fix preserves a fresh WebSocket bar/marker across health/history refreshes.
-- Canary runs `7ebda6fa`; Production remains on `6b6dc458`. No orders were
-  placed during either closeout.
+- Live public API identity is `1fae1f39` on Canary and Production. The
+  repository Documents/Charts follow-up is not that artifact. No orders were
+  placed during this record.
 - Production Connector should work only via outbound HTTPS to the canonical
   origin; it does not open an inbound port for the server.
 - Market-data payloads are bounded and capability-scoped; workspace or account
@@ -82,3 +83,8 @@
 - `app/market_data_ws_http.py`
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
+- [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md)
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
+-->

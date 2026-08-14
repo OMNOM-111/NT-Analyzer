@@ -243,6 +243,20 @@ class TestProductionTelegramStructure:
         assert production_telegram.MAX_OUTBOX_TEXT == 4000
         assert production_telegram.MAX_ATTEMPTS == 5
 
+    def test_document_repository_allowlist_covers_live_modules(self):
+        from app import doc_specs, release_center
+        from app.production_storage.core import REPOSITORIES
+
+        used = {
+            "auth",
+            "workspaces",
+            "entitlements",
+            "connectors",
+            release_center._STORE_KEY,
+            doc_specs._STORE_KEY,
+        }
+        assert used <= REPOSITORIES
+
     def test_canary_defaults_to_shared_telegram_webhook_mode(self, monkeypatch):
         from app import production_telegram
 
