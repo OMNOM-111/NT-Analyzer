@@ -172,7 +172,13 @@ def _run_remote(action: str, *values: str, timeout: int = 900) -> Dict[str, Any]
 def _git_root() -> Path:
     completed = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], cwd=_project_root(),
-        text=True, capture_output=True, check=False,
+        # git reports paths as UTF-8. Decoding them with the console locale
+        # (cp1251 on a Russian Windows install) corrupts every non-ASCII
+        # directory name, and the corrupted path then fails to open as a
+        # working directory — WinError 267 on a checkout such as
+        # "Анализатор стратегий NinjaTrader".
+        text=True, encoding="utf-8", errors="strict",
+        capture_output=True, check=False,
     )
     if completed.returncode:
         raise ReleaseExecutorError("release source repository is unavailable")
@@ -184,7 +190,8 @@ def _upload_source_bundle(commit_sha: str) -> None:
     root = _git_root()
     resolved = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root,
-        text=True, capture_output=True, check=False,
+        text=True, encoding="utf-8", errors="replace",
+        capture_output=True, check=False,
     )
     if resolved.returncode or resolved.stdout.strip().lower() != commit_sha.lower():
         raise ReleaseExecutorError("release source HEAD does not match selected commit")

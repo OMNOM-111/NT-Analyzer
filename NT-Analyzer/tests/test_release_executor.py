@@ -97,3 +97,21 @@ def test_source_bundle_uses_verified_head_instead_of_raw_sha(monkeypatch, tmp_pa
 
     with pytest.raises(release_executor.ReleaseExecutorError, match="HEAD does not match"):
         release_executor._upload_source_bundle("0" * 40)
+
+
+def test_git_root_is_decoded_as_utf8_for_non_ascii_checkouts(monkeypatch):
+    # The owner's checkout is "…/Анализатор стратегий NinjaTrader". Decoding
+    # git output with the console locale corrupted the path and every build
+    # died with WinError 267 before reaching the host.
+    checkout = "C:/Users/dimon/Documents/Анализатор стратегий NinjaTrader"
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout=checkout + "\n", stderr="")
+
+    monkeypatch.setattr(release_executor.subprocess, "run", fake_run)
+    root = release_executor._git_root()
+
+    assert seen.get("encoding") == "utf-8"
+    assert root.name == "Анализатор стратегий NinjaTrader"
