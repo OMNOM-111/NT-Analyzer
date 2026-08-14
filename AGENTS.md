@@ -20,6 +20,15 @@
 - Закрытый этап должен иметь commit SHA, branch, PR URL, проверенный `git status`, результаты тестов/статических проверок и явное разделение `IMPLEMENTATION COMPLETE`, `GIT CLOSEOUT COMPLETE`, `STAGE CLOSED`.
 - Перед merge задавать owner ровно один вопрос о слиянии. Production readiness или Production confirmation всегда отдельны от вопроса о merge.
 
+## Обязательный release contract DEV → CANARY → PRODUCTION
+
+- Единственная разрешённая схема обновления StratForge: `DEV → clean Git commit → one signed immutable artifact → CANARY acceptance → same exact artifact → PRODUCTION`.
+- DEV — локальный источник готового релиза. Если в локальном working tree есть полезные изменения относительно HEAD, сначала сохранить их в Git, протестировать и строить artifact только из этого итогового commit. Нельзя считать старый или dirty DEV равным релизу без классификации `git status`/diff.
+- CANARY и PRODUCTION должны получать один и тот же artifact без rebuild, изменения файлов, ручных hotfix-копий или изменения кода между средами. Различаться могут только environment-specific DB, secrets, sessions, cookies, origins, runtime config и изолированные state/artifact roots.
+- CANARY acceptance должна доказать тот же код, UI/static assets, backend logic, Documents, Charts и функции, что и DEV. После PASS в CANARY Production promotion — только переключение того же artifact.
+- Любое новое изменение после Canary acceptance начинает цикл заново: новый commit, новый immutable artifact, новый CANARY, затем PRODUCTION. Запрещены отдельная Production-версия, частичный deploy и «быстрый» hotfix поверх уже проверенного artifact.
+- Перед любым release/deploy closeout обязательно фиксировать exact identity: Git SHA, build id, archive SHA256, manifest/runtime artifact SHA256, release dir, Canary/Production symlink targets, readiness/live status и результаты проверок.
+
 ## Видимая история поправок документов
 
 - Каждая модель, которая по запросу owner меняет документы, должна записать в изменённые документы и применимый журнал поправок: модель, инструмент/поверхность, requester, UTC дату и краткий scope.

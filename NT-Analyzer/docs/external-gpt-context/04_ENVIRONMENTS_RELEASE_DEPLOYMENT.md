@@ -29,6 +29,23 @@ flowchart LR
   Promote --> Prod[PRODUCTION deploy]
 ```
 
+This is a hard release contract, not a preference. Every update must follow
+`DEV -> CANARY -> PRODUCTION` with one exact immutable artifact:
+
+- DEV is the source of the release. If the local working tree has meaningful
+  changes, they must be committed and tested before the artifact is built.
+- The artifact is built once from the exact clean commit and carries Git SHA,
+  build id, archive SHA256 and manifest/runtime artifact SHA256.
+- CANARY receives that artifact first and must be functionally identical to DEV
+  in code, UI/static assets, backend logic, Documents, Charts and behavior.
+  Only environment-specific DB, secrets, sessions, cookies, origins and runtime
+  config/state may differ.
+- PRODUCTION may receive only the same artifact that passed CANARY, with no
+  rebuild, no file copy, no partial hotfix and no code/config drift except the
+  intended environment-specific runtime config.
+- Any code/UI/function change after Canary acceptance starts a new full cycle:
+  new commit, new artifact, new Canary acceptance, then Production promotion.
+
 ## Two separate axes
 
 | Axis | Current meaning |
@@ -129,3 +146,7 @@ Git branch, deployment environment and release channel are not synonyms.
 - [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
 - [../../../.github/workflows/ci.yml](../../../.github/workflows/ci.yml)
 - [../../../.github/workflows/next-architecture-ci.yml](../../../.github/workflows/next-architecture-ci.yml)
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T05:06:04Z | GPT-5.5 через Codex по запросу owner | Strengthened the canonical DEV → CANARY → PRODUCTION release contract for all future updates: one immutable artifact, Canary acceptance, exact same artifact to Production.
+-->

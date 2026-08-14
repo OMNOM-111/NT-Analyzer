@@ -146,6 +146,38 @@ def test_contact_must_belong_to_sender(auth_store) -> None:
     assert account_auth.login_state(login["challenge_id"])["status"] == "identity_mismatch"
 
 
+def test_owner_contact_refresh_ignores_stale_phone_hash(auth_store) -> None:
+    owner = account_auth.ensure_owner(999)
+    doc = account_auth._read_doc()
+    row = account_auth._user(doc, 999)
+    row.update({
+        "first_name": "Owner",
+        "last_name": "Tester",
+        "email": "owner@example.test",
+        "phone_hash": account_auth._phone_hash("15550000000"),
+    })
+    account_auth._write_doc(doc)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    calls, api = _api_recorder()
+
+    assert owner and owner["is_owner"] is True
+    assert account_auth.process_update({"message": {
+        "text": f"/start login_{login['code']}",
+        "from": {"id": 999, "first_name": "Owner", "username": "owner"},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.process_update({"message": {
+        "contact": {"user_id": 999, "phone_number": "+15551234567"},
+        "from": {"id": 999}, "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
+    refreshed = account_auth._user(account_auth._read_doc(), 999)
+    assert refreshed["phone_hash"] == account_auth._phone_hash("15551234567")
+    texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
+    assert not any("Номер не совпадает" in text for text in texts)
+
+
 def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> None:
     account_auth.ensure_owner(999)
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
