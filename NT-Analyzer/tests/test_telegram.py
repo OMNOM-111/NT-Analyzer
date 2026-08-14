@@ -484,6 +484,38 @@ def test_canary_login_update_is_forwarded_from_shared_webhook(monkeypatch, tmp_p
     assert forwarded and forwarded[0][0] == runtime_env.CANARY
 
 
+def test_canary_forward_can_use_internal_loopback_origin(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATFORGE_CANARY_INTERNAL_ORIGIN", "http://127.0.0.1:18765")
+    monkeypatch.setenv(telegram_service.WEBHOOK_SECRET_ENV, "secret")
+    monkeypatch.setattr(telegram_service.runtime_env, "deployment_environment", lambda: runtime_env.PRODUCTION)
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["host"] = request.get_header("Host")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(telegram_service.urllib.request, "urlopen", fake_urlopen)
+
+    assert telegram_service._forward_update_to_environment({"update_id": 1}, runtime_env.CANARY) is True
+    assert captured == {
+        "url": "http://127.0.0.1:18765/api/telegram/webhook",
+        "host": "canary.stratforges.com",
+        "timeout": 5,
+    }
+
+
 def test_unclaimed_contact_update_is_forwarded_to_canary(monkeypatch, tmp_path) -> None:
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(telegram_service.runtime_env, "deployment_environment", lambda: runtime_env.PRODUCTION)

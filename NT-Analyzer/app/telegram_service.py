@@ -191,6 +191,24 @@ def _update_target_environment(update: Dict[str, Any]) -> str:
 def _forward_origin(environment: str) -> str:
     if environment != runtime_env.CANARY:
         return ""
+    internal = str(os.environ.get("STRATFORGE_CANARY_INTERNAL_ORIGIN") or "").strip()
+    if internal:
+        try:
+            parsed = urllib.parse.urlsplit(internal)
+            port = parsed.port
+        except (TypeError, ValueError):
+            return ""
+        host = str(parsed.hostname or "").lower().rstrip(".")
+        if (
+            parsed.scheme == "http"
+            and host in {"127.0.0.1", "localhost"}
+            and port and 1 <= int(port) <= 65535
+            and not (parsed.username or parsed.password or parsed.query or parsed.fragment)
+            and parsed.path in {"", "/"}
+        ):
+            normalized_host = "127.0.0.1" if host == "127.0.0.1" else "localhost"
+            return f"http://{normalized_host}:{port}"
+        return ""
     raw = str(os.environ.get("STRATFORGE_CANARY_ORIGIN") or "https://canary.stratforges.com").strip()
     try:
         parsed = urllib.parse.urlsplit(raw)
@@ -228,6 +246,7 @@ def _forward_update_to_environment(update: Dict[str, Any], environment: str) -> 
             data=json.dumps(update, ensure_ascii=False).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
+                **({"Host": "canary.stratforges.com"} if origin.startswith("http://127.0.0.1:") or origin.startswith("http://localhost:") else {}),
                 "X-Telegram-Bot-Api-Secret-Token": secret,
                 "X-StratForge-Telegram-Forwarded": "1",
             },
