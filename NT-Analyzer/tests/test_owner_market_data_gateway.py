@@ -130,6 +130,10 @@ def test_consumer_does_not_open_projectx_hub(monkeypatch) -> None:
     assert payload["source"]["via"] == "owner_gateway"
     assert payload["source"]["direct_market_hub"] is False
     assert payload["instrument"] == "MNQ 09-26"
+    # The hub serves already-normalised t/o/h/l/c/v rows; they must survive the
+    # consumer hop unchanged, otherwise charts render empty behind the gateway.
+    assert [row["c"] for row in payload["bars"]] == [21001.0]
+    assert payload["bars"][0]["v"] == 12
     health = provider._adapter().health()
     assert health["session_audit"]["login_key_calls"] == 0
     assert isinstance(provider._adapter(), gw.OwnerGatewayChartAdapter)
