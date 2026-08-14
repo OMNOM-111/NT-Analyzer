@@ -368,11 +368,15 @@ def _git_state() -> Tuple[str, bool]:
     import subprocess
     root = _root()
     try:
+        # git reports paths as UTF-8; the console locale would corrupt a
+        # non-ASCII checkout path and turn a clean tree into a dirty one.
         revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True,
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True,
+            encoding="utf-8", errors="replace", capture_output=True,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=root, text=True, capture_output=True,
+            ["git", "status", "--porcelain"], cwd=root, text=True,
+            encoding="utf-8", errors="replace", capture_output=True,
         ).stdout.strip()
     except (OSError, ValueError):
         return "", True
