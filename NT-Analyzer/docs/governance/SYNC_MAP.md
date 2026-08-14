@@ -1,6 +1,6 @@
 # SYNC_MAP
 
-Дата актуализации: 2026-08-13T09:49:37Z
+Дата актуализации: 2026-08-14T06:20:00Z
 
 Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.
 
@@ -210,5 +210,5 @@
 
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Зафиксировать итоговый clean-SHA visual acceptance, точный подписанный Canary artifact, реальную rollback rehearsal и полный regression при неизменённом Production.
+2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Зафиксировать live HTTP identity 1fae1f39 на Canary+Production и repository-фикс Documents/Release Center allowlist + TopstepX fallback на сервере. Не STAGE CLOSED: нет /proc cwd/exe и нет нового signed artifact.
 -->
