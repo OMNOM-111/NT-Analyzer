@@ -17,6 +17,8 @@ def test_integration_status_never_exposes_secrets(monkeypatch) -> None:
     for name in (
         "NTA_TOPSTEPX_USERNAME", "NTA_TOPSTEPX_API_KEY",
         "NTA_ENABLE_TOPSTEPX_MARKET_DATA", "NTA_ENABLE_TOPSTEPX_LIVE",
+        "NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "NTA_OWNER_MARKET_DATA_GATEWAY_URL",
+        "NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", "STRATFORGE_PRODUCTION_INTERNAL_ORIGIN",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("NTA_TELEGRAM_BOT_TOKEN", "secret-telegram-token")

@@ -4,10 +4,14 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+import os
+import tempfile
+from pathlib import Path
 
 from app import market_data_live_adapters as la
 from app import market_data_live_supervisor as sup
 from app import market_data_router
+from app import owner_market_data_gateway as gw
 
 
 def test_databento_raw_symbol_mapping() -> None:
@@ -703,6 +707,12 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     monkeypatch.setattr(la.secure_store, "available", lambda: False)
     monkeypatch.setenv("NTA_APP_ENV", "development")
     monkeypatch.setenv("NTA_ENABLE_TOPSTEPX_LIVE", "1")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "hub")
+    monkeypatch.setenv(
+        "NTA_OWNER_MARKET_DATA_GATEWAY_LEASE_PATH",
+        str(Path(tempfile.gettempdir()) / f"sf-md-hub-lease-{os.getpid()}-live.json"),
+    )
+    gw.reset_lease_for_tests()
     monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "test_owner")
     monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-api-key-here")
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

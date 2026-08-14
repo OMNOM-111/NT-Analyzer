@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from . import local_secrets, market_data_live_adapters, runtime_env
+from . import local_secrets, market_data_live_adapters, owner_market_data_gateway, runtime_env
 
 
 class MarketDataProviderError(RuntimeError):
@@ -485,7 +485,7 @@ class TopstepXProvider(MarketDataProvider):
     name = "topstepx"
     tier = "user_owned_credentialed_market_data"
     _adapter_lock = threading.RLock()
-    _adapter_instance: Optional[market_data_live_adapters.TopstepXProjectXAdapter] = None
+    _adapter_instance: Any = None
     _credential_fingerprint = ""
 
     @staticmethod
@@ -500,12 +500,20 @@ class TopstepXProvider(MarketDataProvider):
             "requested": bool(cfg.get("requested")),
             "policy_allowed": bool(cfg.get("policy_allowed")),
             "data_mode": str(cfg.get("data_mode") or ""),
+            "gateway_role": "consumer" if owner_market_data_gateway.should_consume() else (
+                "hub" if owner_market_data_gateway.should_open_direct_hub() else "none"
+            ),
+            "gateway_url": owner_market_data_gateway.gateway_url() if owner_market_data_gateway.should_consume() else "",
         }
         return hashlib.sha256(
             json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
     def configured(self) -> bool:
+        if owner_market_data_gateway.should_consume():
+            return True
+        if not owner_market_data_gateway.should_open_direct_hub():
+            return False
         cfg = self._settings()
         return bool(
             cfg["credentials_present"] and cfg["requested"]
@@ -543,6 +551,7 @@ class TopstepXProvider(MarketDataProvider):
             "remote_server_authorized": cfg["remote_server_authorized"],
             "redistribution_authorized": cfg["redistribution_authorized"],
             "blocking_reasons": list(cfg["blocking_reasons"]),
+            "owner_market_data_gateway": owner_market_data_gateway.public_status(),
             "runtime_health": {
                 "runtime_state": runtime_state,
                 "connected_at_utc": str(runtime_health.get("connected_at_utc") or ""),
@@ -568,7 +577,7 @@ class TopstepXProvider(MarketDataProvider):
             "note": "ProjectX/TopstepX read-only bars; no account, order or trade API is used.",
         }
 
-    def _adapter(self) -> market_data_live_adapters.TopstepXProjectXAdapter:
+    def _adapter(self) -> Any:
         cfg = self._settings()
         fingerprint = self._fingerprint(cfg)
         with self._adapter_lock:
@@ -584,7 +593,10 @@ class TopstepXProvider(MarketDataProvider):
                         old_adapter.disconnect()
                     except Exception:
                         pass
-                adapter = market_data_live_adapters.TopstepXProjectXAdapter()
+                if owner_market_data_gateway.should_consume():
+                    adapter = owner_market_data_gateway.OwnerGatewayChartAdapter()
+                else:
+                    adapter = market_data_live_adapters.TopstepXProjectXAdapter()
                 # The adapter's Market SignalR callbacks are the authoritative
                 # read-only display stream for this provider.  History fetches
                 # populate the initial chart; live events must take the same
@@ -609,7 +621,7 @@ class TopstepXProvider(MarketDataProvider):
                 self.__class__._credential_fingerprint = fingerprint
             return self.__class__._adapter_instance
 
-    def _existing_adapter(self) -> Optional[market_data_live_adapters.TopstepXProjectXAdapter]:
+    def _existing_adapter(self) -> Any:
         cfg = self._settings()
         adapter = self.__class__._adapter_instance
         if not self.configured() or adapter is None:
@@ -737,10 +749,12 @@ class TopstepXProvider(MarketDataProvider):
                     "instrument": exact_contract, "bars": [], "total": 0, "raw_total": 0,
                     "live": False, "status": "external_history_exhausted",
                     "requested_timeframe": tf, "matched_timeframe": tf,
-                    "source": {"kind": "external_provider", "provider": self.name,
-                               "provider_symbol": exact_contract, "independent": True,
-                               "tier": self.tier, "read_only": True, "trade_routing": False,
-                               "data_mode": cfg["data_mode"], "history_exhausted": True},
+                    "source": owner_market_data_gateway.annotate_source({
+                        "kind": "external_provider", "provider": self.name,
+                        "provider_symbol": exact_contract, "independent": True,
+                        "tier": self.tier, "read_only": True, "trade_routing": False,
+                        "data_mode": cfg["data_mode"], "history_exhausted": True,
+                    }),
                     "freshness": {"fresh": False, "stale": False, "age_sec": None},
                     "history": {"requested_start_utc": history.get("requested_start_utc") or "",
                                 "requested_end_utc": history.get("requested_end_utc") or "",
@@ -797,7 +811,7 @@ class TopstepXProvider(MarketDataProvider):
             "status": "external_live" if feed.get("fresh") else "external_connecting",
             "requested_timeframe": tf,
             "matched_timeframe": tf,
-            "source": {
+            "source": owner_market_data_gateway.annotate_source({
                 "kind": "external_provider",
                 "provider": self.name,
                 "provider_symbol": exact_contract,
@@ -819,7 +833,7 @@ class TopstepXProvider(MarketDataProvider):
                 "history_chunks": int(history.get("chunks") or 0),
                 "history_exhausted": bool(history.get("history_exhausted")),
                 "native_aggregation_fallback": bool(history.get("native_aggregation_fallback")),
-            },
+            }),
             "freshness": freshness,
             "quote": _quote(last, _root_symbol(exact_contract), source=self.name),
             "note": "TopstepX read-only market data; execution remains NinjaTrader-only.",
@@ -1393,6 +1407,7 @@ def status(*, include_file: bool = True) -> Dict[str, Any]:
             "live_order_authority": False, "cooldown_after_failures": _FAILURES_BEFORE_COOLDOWN,
             "cooldown_sec": _COOLDOWN_SEC,
         },
+        "owner_market_data_gateway": owner_market_data_gateway.public_status(),
     }
     if include_file and not last:
         path = _status_path()

@@ -16,6 +16,12 @@
 4. Synthetic candles are not created.
 5. A delayed/history feed must never be labeled live.
 6. An external chart feed never authorizes orders.
+7. Exactly one designated process opens the owner TopstepX/ProjectX session.
+   `NTA_OWNER_MARKET_DATA_GATEWAY_ROLE` is fail-closed by default (`auto` =
+   isolated): DEV, Canary, Production and developer copies do not open a
+   provider session unless explicitly designated `hub`. Every other environment
+   consumes that hub or uses cache/replay/runtime sources. See
+   [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md).
 
 ## Current status matrix
 
@@ -24,6 +30,7 @@
 | Connector protocol v1 | `PARTIAL` | pair/enroll/challenge/hello/heartbeat/market-data/commands protocol is implemented with device-owned P-256 keys and bounded capabilities |
 | Read-only charts | `PARTIAL` | TopstepX history + realtime operate with NinjaTrader OFF in DEV. Repository now uses the same order on Canary/Production; live `1fae1f39` still stubs/skips TopstepX on server environments |
 | Connector fallback | `PARTIAL` | fresh NinjaTrader Connector bars are a current fallback for charts when TopstepX is unavailable |
+| Owner market-data gateway | `IN DEVELOPMENT` | repository has fail-closed roles, same-host hub lease with renewal, consumer adapter and connection observability; not yet in a signed artifact, so every environment must be given its role in the env file at promote time |
 | Simulation / paper / demo runtime control | `PARTIAL` | safe runtime commands exist for paper/demo/playback contours |
 | Account-mode execution gates | `PARTIAL` | Simulation vs real/live comes from the connected NinjaTrader account; app-side execution on that account is allowed or blocked by permissions, safety gates, release state and account capabilities |
 | Market-data entitlement / licensed-provider parity | `EXTERNAL BLOCKED` | DEV owner feed and fanout are accepted; authenticated Canary/Production provider parity still needs real server-environment user authentication |
@@ -86,5 +93,6 @@
 - [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T18:45:00Z | Claude Opus 5 через Claude Code по запросу owner | Записано правило единственного назначенного owner market-data hub и его fail-closed default.
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
 -->

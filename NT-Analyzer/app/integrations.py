@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-from . import market_data_failover, market_data_live_adapters, market_data_live_supervisor, runtime_env
+from . import market_data_failover, market_data_live_adapters, market_data_live_supervisor, owner_market_data_gateway, runtime_env
 
 
 def _root() -> Path:
@@ -77,6 +77,7 @@ def topstep_status() -> Dict[str, Any]:
         "live_actions_enabled": False,
         "trade_routing_enabled": False,
         "read_only": True,
+        "owner_market_data_gateway": owner_market_data_gateway.public_status(),
         "ninjatrader_independent": True,
         "transport": "ProjectX REST + SignalR",
         "remote_environment": cfg["remote_environment"],

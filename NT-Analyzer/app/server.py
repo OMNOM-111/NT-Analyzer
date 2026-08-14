@@ -82,6 +82,7 @@ if __package__ is None or __package__ == "":
     from app import market_data_cache_keys  # type: ignore[no-redef]
     from app import market_data_subscriptions  # type: ignore[no-redef]
     from app import market_data_live_supervisor  # type: ignore[no-redef]
+    from app import owner_market_data_gateway  # type: ignore[no-redef]
     from app import data_platform  # type: ignore[no-redef]
     from app import secure_store as _secure_store  # type: ignore[no-redef]
     from app import marginrefresh  # type: ignore[no-redef]
@@ -170,6 +171,7 @@ else:
     from . import market_data_cache_keys
     from . import market_data_subscriptions
     from . import market_data_live_supervisor
+    from . import owner_market_data_gateway
     from . import data_platform
     from . import secure_store as _secure_store
     from . import marginrefresh
@@ -2035,6 +2037,28 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _authorize_api(self, path: str) -> bool:
+        # Internal owner market-data consumers authenticate with a shared
+        # token on chart endpoints only.  This never grants Admin, Documents
+        # or Release Center.  A consumer process rejects inbound consume
+        # requests so Canary cannot recurse through another consumer.
+        supplied_gateway_token = str(self.headers.get(owner_market_data_gateway.TOKEN_HEADER) or "").strip()
+        if supplied_gateway_token and owner_market_data_gateway.request_is_chart_endpoint(self, path):
+            if owner_market_data_gateway.loop_consume_rejected(self):
+                self._err(
+                    HTTPStatus.FORBIDDEN,
+                    "Owner market-data gateway loop rejected.",
+                    code="owner_gateway_loop_detected",
+                )
+                return False
+            if owner_market_data_gateway.authorize_gateway_request(self, path):
+                self._remote_context = owner_market_data_gateway.service_context()
+                return True
+            self._err(
+                HTTPStatus.UNAUTHORIZED,
+                "Owner market-data gateway token rejected.",
+                code="owner_gateway_unauthorized",
+            )
+            return False
         # The local-owner bypass (no Telegram login) is ONLY safe for requests
         # that physically originate on the owner's machine: loopback, no Telegram
         # initData header and no public tunnel host. A remote request — the public
@@ -3904,6 +3928,8 @@ class Handler(BaseHTTPRequestHandler):
         """
         deployment = getattr(self.server, "deployment_config", None)
         if deployment is None:
+            return True
+        if owner_market_data_gateway.allows_loopback_chart_edge(self):
             return True
         decision = edge_security.evaluate_request(
             deployment,

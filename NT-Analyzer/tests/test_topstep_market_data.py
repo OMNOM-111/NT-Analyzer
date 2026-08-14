@@ -4,12 +4,16 @@ import asyncio
 from datetime import datetime, timezone
 from datetime import timedelta
 import json
+import os
+import tempfile
 import threading
 import time
 import urllib.error
+from pathlib import Path
 
 from app import integrations, market_data_failover as failover
 from app import market_data_live_adapters as live_adapters
+from app import owner_market_data_gateway as gw
 
 
 def _local_topstep_env(monkeypatch) -> None:
@@ -22,9 +26,18 @@ def _local_topstep_env(monkeypatch) -> None:
     monkeypatch.setenv("NTA_TOPSTEPX_USERNAME", "owner_user")
     monkeypatch.setenv("NTA_TOPSTEPX_API_KEY", "real-projectx-key")
     monkeypatch.setenv("NTA_TOPSTEPX_DATA_MODE", "sim")
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "hub")
+    monkeypatch.setenv(
+        "NTA_OWNER_MARKET_DATA_GATEWAY_LEASE_PATH",
+        str(Path(tempfile.gettempdir()) / f"sf-md-hub-lease-{os.getpid()}.json"),
+    )
+    gw.reset_lease_for_tests()
     monkeypatch.delenv("NTA_ENABLE_TOPSTEPX_LIVE", raising=False)
     monkeypatch.delenv("NTA_TOPSTEPX_REMOTE_SERVER_AUTHORIZED", raising=False)
     monkeypatch.delenv("NTA_TOPSTEPX_REDISTRIBUTION_AUTHORIZED", raising=False)
+    monkeypatch.delenv("NTA_OWNER_MARKET_DATA_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN", raising=False)
+    monkeypatch.delenv("STRATFORGE_DEPLOYMENT_ROLE", raising=False)
 
 
 def test_topstep_provider_auth_search_and_bars_contract(monkeypatch) -> None:
