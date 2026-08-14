@@ -1110,3 +1110,96 @@ def test_phase3_relinked_google_identity_clears_durable_revocation(auth_store) -
 
     assert "revoked_at=EXCLUDED.revoked_at" in google_insert[0]
     assert google_insert[1][-2] is None
+
+
+def _resend_env(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_EMAIL_AUTH_PROVIDER", "resend")
+    monkeypatch.setenv("NTA_RESEND_API_KEY", "re_test_key_value")
+    monkeypatch.setenv("NTA_EMAIL_AUTH_FROM", "StratForge <auth@stratforges.com>")
+
+
+def test_configured_resend_provider_replaces_the_development_test_backend(monkeypatch) -> None:
+    _resend_env(monkeypatch)
+    status = account_auth.email_auth_status()
+    assert status["available"] is True
+    assert status["operational"] is True
+    assert status["provider"] == "resend"
+    assert status["test_backend"] is False
+    assert status["production_ready"] is True
+    assert status["code"] == "ok"
+
+
+def test_missing_resend_pieces_stay_unconfigured(monkeypatch) -> None:
+    monkeypatch.setenv("NTA_EMAIL_AUTH_PROVIDER", "resend")
+    monkeypatch.setenv("NTA_RESEND_API_KEY", "re_test_key_value")
+    monkeypatch.delenv("NTA_EMAIL_AUTH_FROM", raising=False)
+    monkeypatch.setattr(account_auth.runtime_env, "is_development", lambda: False)
+    status = account_auth.email_auth_status()
+    assert status["available"] is False
+    assert status["provider"] == "resend"
+    assert status["code"] == "transactional_provider_not_configured"
+
+
+def test_live_email_delivery_hides_the_code_and_still_verifies(auth_store, monkeypatch) -> None:
+    _resend_env(monkeypatch)
+    account_auth.ensure_owner(999)
+    sent: list = []
+
+    def deliver(recipient, code, *, purpose, send=None):
+        sent.append((recipient, code, purpose))
+        return {"provider": "resend", "message_id": "msg_1"}
+
+    monkeypatch.setattr(account_auth, "_deliver_email_code", deliver)
+    started = account_auth.start_email_auth("grace@example.com", ip="127.0.0.1")
+
+    assert started["delivery"] == "resend"
+    # The one-time code must never travel back to the browser once a real
+    # provider delivers it out of band.
+    assert "test_code" not in started
+    assert "test_magic_token" not in started
+    assert sent and sent[0][0] == "grace@example.com"
+
+    _calls, api = _api_recorder()
+    delivered_code = sent[0][1]
+    pending = account_auth.verify_email_auth(
+        started["challenge_id"], code=delivered_code,
+        profile={"first_name": "Grace", "last_name": "Hopper", "accept_terms": True},
+        ip="127.0.0.1", user_agent="pytest", api_call=api, owner_chat_id="999",
+    )
+    assert pending["status"] == "pending_owner"
+
+
+def test_email_delivery_failure_is_a_service_error_without_provider_internals(
+    auth_store, monkeypatch,
+) -> None:
+    _resend_env(monkeypatch)
+
+    def explode(payload):
+        raise RuntimeError("resend rejected key re_test_key_value")
+
+    with pytest.raises(account_auth.AccountAuthError) as excinfo:
+        account_auth._deliver_email_code(
+            "ada@example.com", "123456", purpose="login", send=explode,
+        )
+    assert excinfo.value.status == 503
+    assert "re_test_key_value" not in str(excinfo.value)
+
+
+def test_delivered_message_carries_the_code_and_no_credentials(monkeypatch) -> None:
+    _resend_env(monkeypatch)
+    captured: dict = {}
+
+    def send(payload):
+        captured.update(payload)
+        return {"id": "msg_2"}
+
+    receipt = account_auth._deliver_email_code(
+        "ada@example.com", "424242", purpose="login", send=send,
+    )
+    assert receipt == {"provider": "resend", "message_id": "msg_2"}
+    assert captured["to"] == ["ada@example.com"]
+    assert captured["from"] == "StratForge <auth@stratforges.com>"
+    assert "424242" in captured["text"]
+    assert "424242" in captured["html"]
+    serialized = json.dumps(captured)
+    assert "re_test_key_value" not in serialized

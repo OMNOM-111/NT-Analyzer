@@ -3025,9 +3025,40 @@ def create_session_for_user(
     }
 
 
+EMAIL_PROVIDER_RESEND = "resend"
+_RESEND_ENDPOINT = "https://api.resend.com/emails"
+_RESEND_USER_AGENT = "StratForge-Auth/1 (+https://app.stratforges.com)"
+
+
+def _email_provider_config() -> Dict[str, str]:
+    return {
+        "provider": str(os.environ.get("NTA_EMAIL_AUTH_PROVIDER") or "").strip().lower(),
+        "api_key": str(os.environ.get("NTA_RESEND_API_KEY") or "").strip(),
+        "sender": str(os.environ.get("NTA_EMAIL_AUTH_FROM") or "").strip(),
+    }
+
+
+def _email_provider_live() -> bool:
+    cfg = _email_provider_config()
+    return bool(
+        cfg["provider"] == EMAIL_PROVIDER_RESEND and cfg["api_key"] and cfg["sender"]
+    )
+
+
 def email_auth_status() -> Dict[str, Any]:
     test_backend = bool(runtime_env.is_development() and runtime_env.test_auth_enabled())
     configured_provider = str(os.environ.get("NTA_EMAIL_AUTH_PROVIDER") or "").strip().lower()
+    if _email_provider_live():
+        # A configured transactional provider wins over the Development test
+        # backend so a real code is delivered instead of being disclosed.
+        return {
+            "available": True,
+            "operational": True,
+            "provider": EMAIL_PROVIDER_RESEND,
+            "test_backend": False,
+            "production_ready": True,
+            "code": "ok",
+        }
     return {
         "available": test_backend,
         "operational": test_backend,
@@ -3036,6 +3067,85 @@ def email_auth_status() -> Dict[str, Any]:
         "production_ready": False,
         "code": "ok" if test_backend else "transactional_provider_not_configured",
     }
+
+
+def _email_code_message(code: str, purpose: str) -> Tuple[str, str, str]:
+    action = "привязки e-mail" if purpose == "link" else "входа в StratForge"
+    subject = f"StratForge: код {code}"
+    minutes = max(1, EMAIL_CHALLENGE_TTL_SEC // 60)
+    text = (
+        f"Код для {action}: {code}\n\n"
+        f"Код действителен {minutes} минут и используется один раз.\n"
+        "Если вы не запрашивали этот код, просто проигнорируйте письмо."
+    )
+    body = html.escape(text).replace("\n", "<br>")
+    return subject, text, f"<div style=\"font-family:system-ui,sans-serif\">{body}</div>"
+
+
+def _deliver_email_code(
+    recipient: str, code: str, *, purpose: str, send: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    """Send the one-time code through the configured transactional provider."""
+    cfg = _email_provider_config()
+    subject, text, html_body = _email_code_message(code, purpose)
+    payload = {
+        "from": cfg["sender"],
+        "to": [recipient],
+        "subject": subject,
+        "text": text,
+        "html": html_body,
+    }
+    def _post(body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            _RESEND_ENDPOINT,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {cfg['api_key']}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                # Cloudflare fronts api.resend.com and rejects the default
+                # Python-urllib agent with error 1010 before Resend sees the
+                # request, so the client must identify itself explicitly.
+                "User-Agent": _RESEND_USER_AGENT,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read().decode("utf-8", "replace")
+                status = int(response.status)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace") if exc.fp else ""
+            status = int(exc.code)
+        try:
+            return status, json.loads(raw)
+        except Exception:
+            return status, {}
+
+    # Any transport failure becomes one service error.  Provider responses and
+    # exception messages can echo the API key, so nothing from them reaches the
+    # caller — the audit log records the outcome instead.
+    try:
+        if send is not None:
+            status, document = 200, send(payload)
+        else:
+            status, document = _post(payload)
+    except Exception:
+        raise AccountAuthError(
+            "Не удалось отправить код на e-mail. Повторите попытку позже.",
+            503,
+            code="email_delivery_failed",
+        ) from None
+    if status >= 300 or not isinstance(document, dict) or not document.get("id"):
+        raise AccountAuthError(
+            "Не удалось отправить код на e-mail. Повторите попытку позже.",
+            503,
+            code="email_delivery_failed",
+        )
+    return {"provider": EMAIL_PROVIDER_RESEND, "message_id": str(document.get("id") or "")}
 
 
 def _email_code_hash(challenge_id: str, salt: str, code: str) -> str:
@@ -3102,23 +3212,36 @@ def start_email_auth(
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
         })
         _write_doc(doc)
+    delivery = "development_test"
+    message_id = ""
+    if _email_provider_live():
+        receipt = _deliver_email_code(normalized, code, purpose=purpose_id)
+        delivery = str(receipt.get("provider") or EMAIL_PROVIDER_RESEND)
+        message_id = str(receipt.get("message_id") or "")
     _audit(
         "email_auth_started",
         user_id=actor_id,
         ip=ip,
-        extra={"purpose": purpose_id, "email_hash": hashlib.sha256(normalized.encode()).hexdigest()},
+        extra={
+            "purpose": purpose_id,
+            "email_hash": hashlib.sha256(normalized.encode()).hexdigest(),
+            "delivery": delivery,
+            "message_id": message_id,
+        },
     )
-    # Test credentials are disclosed only behind the explicit Development test
-    # auth gate. A real provider integration must deliver them out-of-band.
-    return {
+    out = {
         "ok": True,
         "challenge_id": challenge_id,
         "status": "email_code_sent",
         "expires_in_sec": EMAIL_CHALLENGE_TTL_SEC,
-        "delivery": "development_test",
-        "test_code": code,
-        "test_magic_token": magic_token,
+        "delivery": delivery,
     }
+    if delivery == "development_test":
+        # Test credentials are disclosed only behind the explicit Development
+        # test auth gate. A real provider delivers them out-of-band instead.
+        out["test_code"] = code
+        out["test_magic_token"] = magic_token
+    return out
 
 
 def _email_challenge_verified(
