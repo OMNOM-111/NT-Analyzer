@@ -1376,6 +1376,14 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             blocking_reasons.append("remote_server_authorization_missing")
         if remote and not redistribution_authorized:
             blocking_reasons.append("market_data_redistribution_authorization_missing")
+        from . import owner_market_data_gateway
+        if not owner_market_data_gateway.should_open_direct_hub():
+            if owner_market_data_gateway.should_consume():
+                blocking_reasons.append("owner_market_data_gateway_consumer")
+            else:
+                blocking_reasons.append("owner_market_data_gateway_fail_closed")
+            if credentials_present:
+                blocking_reasons.append("owner_credentials_present_but_direct_hub_forbidden")
         return {
             "username": username,
             "api_key": api_key,
@@ -1394,6 +1402,9 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
 
     @staticmethod
     def enabled() -> bool:
+        from . import owner_market_data_gateway
+        if not owner_market_data_gateway.should_open_direct_hub():
+            return False
         cfg = TopstepXProjectXAdapter.settings()
         return bool(cfg["requested"] and cfg["policy_allowed"] and cfg["data_mode"] != "invalid")
 
@@ -1420,6 +1431,12 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             cfg = self.settings()
             self._runtime_state = "POLICY_BLOCKED" if not cfg["policy_allowed"] else "DISABLED"
             self._last_error = ",".join(cfg["blocking_reasons"]) or "TopstepX market data disabled"
+            return False
+        from . import owner_market_data_gateway
+        lease = owner_market_data_gateway.acquire_hub_lease()
+        if lease.get("duplicate_blocked") or not lease.get("held"):
+            self._runtime_state = "POLICY_BLOCKED"
+            self._last_error = str(lease.get("warning") or "owner_market_data_hub_lease_unavailable")
             return False
         if not self.credentials_present():
             self._runtime_state = "ENTITLEMENT_MISSING"
@@ -2790,8 +2807,9 @@ def default_live_adapters(*, include_topstep: bool = False) -> List[LiveMarketDa
         adapters.append(CmeWebsocketReferenceAdapter())
 
     # TopstepX is owned by the chart provider's credential-scoped session
-    # manager.  Starting it here as a shadow adapter would create a second JWT
-    # and a second Market SignalR socket with zero display subscriptions.
+    # manager, or by the owner market-data gateway consumer adapter.  Starting
+    # it here as a shadow adapter would create a second JWT and a second
+    # Market SignalR socket with zero display subscriptions.
     if include_topstep:
         adapters.append(TopstepXProjectXAdapter())
 

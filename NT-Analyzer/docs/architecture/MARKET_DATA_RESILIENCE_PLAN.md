@@ -359,6 +359,43 @@ Shadow comparison: Last, Bid/Ask, 1s/1m/5m bars, OHLCV, session boundaries, exac
 
 ---
 
+## Designated owner market-data gateway
+
+Одно назначенное соединение с provider на всю топологию. Количество открытых
+Aurora-графиков, браузеров, устройств и копий разработчиков **не** увеличивает
+число provider connections: подписка на instrument/timeframe дедуплицируется и
+раздаётся через StratForge cache/router/WebSocket.
+
+| Роль | `NTA_OWNER_MARKET_DATA_GATEWAY_ROLE` | Поведение |
+|---|---|---|
+| Hub | `hub` | Единственный процесс, который открывает ProjectX loginKey + Market SignalR. Требует lease. |
+| Consumer | `consumer` (или `auto` на Canary при заданном `STRATFORGE_PRODUCTION_INTERNAL_ORIGIN`) | Ходит на chart-эндпоинты hub'а с `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN`; loginKey никогда не вызывает. |
+| Isolated | `auto` без назначения (по умолчанию) | Fail-closed: provider не открывается даже при наличии owner credentials; графики идут из cache/replay/runtime. |
+
+- Fail-closed — это значение по умолчанию для DEV, Canary, Production и любой
+  локальной копии разработчика. Owner credentials в окружении, которое не
+  назначено hub'ом, игнорируются, а observability поднимает предупреждение
+  `owner_credentials_present_but_direct_hub_forbidden`.
+- Дубли на одном хосте блокирует lease-файл
+  (`NTA_OWNER_MARKET_DATA_GATEWAY_LEASE_PATH`, TTL 45 с, продление каждые 15 с
+  фоновым потоком). Второй процесс с `ROLE=hub` получает
+  `duplicate_owner_market_data_hub_blocked` и не аутентифицируется.
+- Токен авторизует **только** chart-пути (`/api/ops/runtime/bars`,
+  `/api/ops/runtime/bars/status`, `/ws/market-data`). Он никогда не даёт Admin,
+  Documents или Release Center. Consumer отклоняет входящий `consume`-запрос,
+  чтобы цепочка consumer→consumer не зациклилась.
+- Наблюдаемость (`/api/integrations/topstep`, market-data status):
+  `direct_provider_connections`, `authentication_sessions`,
+  `signalr_connections_open`, `browser_websockets`, `logical_subscriptions`
+  против `wire_subscriptions`, владелец lease (environment/instance/pid/host).
+
+**Известное ограничение:** lease файловый и защищает от дублей в пределах
+одного хоста. Кросс-хостовый дубль (например, локальная копия разработчика с
+`ROLE=hub` при уже назначенном hub'е на сервере) не блокируется механически —
+поэтому локальные копии должны консьюмить назначенный hub, а не назначать себя.
+
+---
+
 ## Обязательные доказательства завершения
 
 baseline до изменений; схема после; p50/p95/p99; callback→backend; backend→browser; browser paint; queue metrics; source-switch log; gap-recovery log; parity report; restart test; NT stop test; UI status screenshots; список тестов и результаты; production runbook; rollback plan.
@@ -376,5 +413,7 @@ baseline до изменений; схема после; p50/p95/p99; callback�
 После каждой фазы: targeted tests → regression → git diff review → docs → без несвязанных изменений → старые fallback не удалять до зелёных новых тестов.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T18:45:00Z | Claude Opus 5 через Claude Code по запросу owner | Gateway доведён до рабочего состояния: продление hub lease фоновым потоком, expired lease больше не считается held, secret-гигиена env-шаблонов восстановлена, websockets объявлен в requirements.txt, документация роли/lease/ограничений.
+2026-08-14T18:10:00Z | Grok 4.6 через Cursor по запросу owner | Fail-closed designated owner market-data gateway: one ProjectX hub, lease against duplicates, consumer/cache fan-out; status IN DEVELOPMENT until the next signed artifact.
 2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Current-блок приведён к принятому TopstepX-first functional baseline; исторический фазовый план сохранён без переписывания market-data implementation.
 -->

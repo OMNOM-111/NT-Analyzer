@@ -283,3 +283,8 @@ def test_server_environment_uses_topstepx_when_connector_snapshot_is_missing(tmp
     assert result["source"]["provider"] == "topstepx"
     assert result["resolved_instrument"] == "MNQ 09-26"
     assert result.get("source", {}).get("kind") != "workspace_runtime_not_connected"
+
+
+def test_requirements_declares_websockets_for_topstepx_signalr() -> None:
+    text = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
+    assert "websockets" in text

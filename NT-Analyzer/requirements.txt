@@ -23,6 +23,10 @@ cryptography>=49.0.0,<50
 # DPAPI/files/SQLite unless an isolated PostgreSQL test profile is selected.
 psycopg[binary]>=3.2.0,<4
 
+# TopstepX / ProjectX Market SignalR. History uses stdlib HTTPS; realtime
+# requires this client. Without it, charts stay history-only (CONNECTING).
+websockets>=14,<17
+
 # Optional live market-data vendor clients (install when credentials exist):
 #   python -m pip install databento
 # Without this package + NTA_DATABENTO_API_KEY, Databento Live stays PRODUCTION BLOCKED.
