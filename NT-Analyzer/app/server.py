@@ -894,21 +894,124 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         market_data_baseline.mark("backend.bars_payload_cache_hit")
         return cached
     primary_healthy = False
-    if remote_bars:
+    out: Optional[Dict[str, Any]] = None
+    # Canonical chart order in every environment: TopstepX -> fresh NinjaTrader
+    # Connector snapshot -> another credentialed live provider -> OFFLINE.
+    # Production previously skipped TopstepX and returned an empty warning
+    # object whenever the active workspace had no Connector snapshot.
+    topstep = market_data_failover.TopstepXProvider()
+    topstep_request = requested_instrument if " " not in requested_instrument else resolved_instrument
+    if topstep.configured():
+        out = market_data_failover.fetch_external_series(
+            topstep_request, timeframe, limit, providers=[topstep],
+            start_time=start, end_time=end,
+        )
+        if out is not None and " " not in requested_instrument:
+            resolved_instrument = str(out.get("instrument") or resolved_instrument).upper()
+    if out is None and remote_bars:
         primary_healthy = bool(
             remote_bars.get("live")
             and ((remote_bars.get("freshness") or {}).get("fresh"))
         )
-        out = remote_bars if primary_healthy else market_data_failover.mark_offline_snapshot(
-            remote_bars,
-            reason="connector_remote_snapshot_stale",
-            last_source="ninjatrader_connector",
-            backup_providers_available=0,
-        )
-    elif production_mode:
-        primary_healthy = False
-        out = market_data_failover.mark_offline_snapshot(
-            {
+        if primary_healthy:
+            out = remote_bars
+            freshness = market_data_failover.series_freshness(out.get("bars") or [], timeframe)
+            source = dict(out.get("source") or {})
+            selection = market_data_failover.remember_selected_provider(
+                "ninjatrader", resolved_instrument, timeframe, reason="topstepx_unavailable",
+            )
+            source.update({
+                "provider": "ninjatrader", "active": "ninjatrader",
+                "fresh": True, "runtime_state": "LIVE",
+                "failover_from": selection.get("transition_from") or "topstepx",
+                "failover_status": "switched",
+            })
+            out.update({
+                "source": source, "freshness": freshness, "live": True,
+                "status": "failover_live", "market_data_available": True,
+                "price_marker_live": True,
+                "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable.",
+            })
+    if out is None and not production_mode:
+        if snapshot_index is not None:
+            runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
+        else:
+            with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
+                runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
+        heartbeat = ops_runtime.read_heartbeat()
+        primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
+        runtime_fresh = bool((runtime_bars or {}).get("bars") and market_data_failover.series_freshness(
+            (runtime_bars or {}).get("bars") or [], timeframe,
+        ).get("fresh"))
+        if primary_healthy and runtime_fresh:
+            out = runtime_bars
+            freshness = market_data_failover.series_freshness(out.get("bars") or [], timeframe)
+            source = dict(out.get("source") or {})
+            selection = market_data_failover.remember_selected_provider(
+                "ninjatrader", resolved_instrument, timeframe, reason="topstepx_unavailable",
+            )
+            source.update({"provider": "ninjatrader", "active": "ninjatrader",
+                           "fresh": True, "runtime_state": "LIVE",
+                           "failover_from": selection.get("transition_from") or "topstepx",
+                           "failover_status": "switched"})
+            out.update({"source": source, "freshness": freshness, "live": True,
+                        "status": "failover_live", "market_data_available": True,
+                        "price_marker_live": True,
+                        "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable."})
+        else:
+            backups = [provider for provider in market_data_failover.live_backup_candidates()
+                       if provider.name != "topstepx"]
+            out = market_data_failover.fetch_external_series(
+                resolved_instrument, timeframe, limit, providers=backups,
+                start_time=start, end_time=end,
+            ) if backups else None
+            if out is not None:
+                source = out.setdefault("source", {})
+                source.setdefault("failover_from", "topstepx")
+                source["failover_status"] = "switched"
+                out.setdefault("gap_recovery", {
+                    "attempted": True, "provider_available": True,
+                    "mode": "independent_failover", "provider": source.get("provider") or "",
+                    "recovered_bars": 0, "unresolved_gaps": 0,
+                    "primary_healthy": False,
+                })
+            else:
+                with market_data_baseline.StageTimer("backend.failover_ms"):
+                    unified = market_data_failover.apply_failover(
+                        runtime_bars, resolved_instrument, timeframe, limit,
+                        primary_healthy=False, providers=[],
+                    )
+                if unified and (unified.get("bars") or unified.get("status") == "offline"):
+                    out = unified
+                else:
+                    out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
+                    out["status"] = "historical_fallback" if out.get("bars") else ((runtime_bars or {}).get("status") or "waiting")
+                    out["bridge"] = {"status": (runtime_bars or {}).get("status") or "subscription_requested", "error": (runtime_bars or {}).get("error") or ""}
+                    if not out.get("bars"):
+                        detail = out["bridge"]["error"]
+                        out["note"] = detail or "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных."
+                    out["gap_recovery"] = {"attempted": True, "provider_available": False, "mode": "historical_artifact" if out.get("bars") else "unavailable", "recovered_bars": 0, "unresolved_gaps": 0, "primary_healthy": primary_healthy}
+                    if not primary_healthy:
+                        out = market_data_failover.mark_offline_snapshot(out, reason="all_live_providers_unavailable", last_source="historical_artifact" if out.get("bars") else "none", backup_providers_available=0)
+    elif out is None:
+        backups = [provider for provider in market_data_failover.live_backup_candidates()
+                   if provider.name != "topstepx"]
+        out = market_data_failover.fetch_external_series(
+            resolved_instrument, timeframe, limit, providers=backups,
+            start_time=start, end_time=end,
+        ) if backups else None
+        if out is not None:
+            source = out.setdefault("source", {})
+            source.setdefault("failover_from", "topstepx")
+            source["failover_status"] = "switched"
+            out.setdefault("gap_recovery", {
+                "attempted": True, "provider_available": True,
+                "mode": "independent_failover", "provider": source.get("provider") or "",
+                "recovered_bars": 0, "unresolved_gaps": 0,
+                "primary_healthy": False,
+            })
+        else:
+            seed = remote_bars or {
                 "instrument": resolved_instrument,
                 "bars": [],
                 "total": 0,
@@ -919,90 +1022,13 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                     "provider": "ninjatrader",
                     "transport": "connector_https",
                 },
-            },
-            reason="no_workspace_connector_snapshot",
-            last_source="none",
-            backup_providers_available=0,
-        )
-    else:
-        # Development chart data uses one normalized source per response:
-        # TopstepX (preferred read-only feed) -> fresh NinjaTrader Connector ->
-        # another configured credentialed provider.  Do not merge OHLCV bars
-        # from different feeds: contract/session differences must remain visible
-        # as an explicit source transition, not a synthetic composite series.
-        topstep = market_data_failover.TopstepXProvider()
-        # A root request is the explicit Desktop auto-roll contract: let
-        # ProjectX select its currently active contract instead of pinning it
-        # to a stale bridge/catalog expiry. Exact ``ROOT MM-YY`` input remains
-        # exact for a user-selected historical chart.
-        topstep_request = requested_instrument if " " not in requested_instrument else resolved_instrument
-        out = market_data_failover.fetch_external_series(
-            topstep_request, timeframe, limit, providers=[topstep],
-            start_time=start, end_time=end,
-        ) if topstep.configured() else None
-        if out is not None and " " not in requested_instrument:
-            resolved_instrument = str(out.get("instrument") or resolved_instrument).upper()
-        if out is None:
-            if snapshot_index is not None:
-                runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
-            else:
-                with market_data_baseline.StageTimer("backend.read_runtime_series_ms"):
-                    runtime_bars = market_data.read_runtime_series(resolved_instrument, timeframe, limit)
-            heartbeat = ops_runtime.read_heartbeat()
-            primary_healthy = bool(jobqueue.ninjatrader_running() and heartbeat.get("fresh"))
-            runtime_fresh = bool((runtime_bars or {}).get("bars") and market_data_failover.series_freshness(
-                (runtime_bars or {}).get("bars") or [], timeframe,
-            ).get("fresh"))
-            if primary_healthy and runtime_fresh:
-                out = runtime_bars
-                freshness = market_data_failover.series_freshness(out.get("bars") or [], timeframe)
-                source = dict(out.get("source") or {})
-                selection = market_data_failover.remember_selected_provider(
-                    "ninjatrader", resolved_instrument, timeframe, reason="topstepx_unavailable",
-                )
-                source.update({"provider": "ninjatrader", "active": "ninjatrader",
-                               "fresh": True, "runtime_state": "LIVE",
-                               "failover_from": selection.get("transition_from") or "topstepx",
-                               "failover_status": "switched"})
-                out.update({"source": source, "freshness": freshness, "live": True,
-                            "status": "failover_live", "market_data_available": True,
-                            "price_marker_live": True,
-                            "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable."})
-            else:
-                backups = [provider for provider in market_data_failover.live_backup_candidates()
-                           if provider.name != "topstepx"]
-                out = market_data_failover.fetch_external_series(
-                    resolved_instrument, timeframe, limit, providers=backups,
-                    start_time=start, end_time=end,
-                ) if backups else None
-                if out is not None:
-                    source = out.setdefault("source", {})
-                    source.setdefault("failover_from", "topstepx")
-                    source["failover_status"] = "switched"
-                    out.setdefault("gap_recovery", {
-                        "attempted": True, "provider_available": True,
-                        "mode": "independent_failover", "provider": source.get("provider") or "",
-                        "recovered_bars": 0, "unresolved_gaps": 0,
-                        "primary_healthy": False,
-                    })
-                else:
-                    with market_data_baseline.StageTimer("backend.failover_ms"):
-                        unified = market_data_failover.apply_failover(
-                            runtime_bars, resolved_instrument, timeframe, limit,
-                            primary_healthy=False, providers=[],
-                        )
-                    if unified and (unified.get("bars") or unified.get("status") == "offline"):
-                        out = unified
-                    else:
-                        out = jobqueue.read_instrument_bars(resolved_instrument, timeframe, limit)
-                        out["status"] = "historical_fallback" if out.get("bars") else ((runtime_bars or {}).get("status") or "waiting")
-                        out["bridge"] = {"status": (runtime_bars or {}).get("status") or "subscription_requested", "error": (runtime_bars or {}).get("error") or ""}
-                        if not out.get("bars"):
-                            detail = out["bridge"]["error"]
-                            out["note"] = detail or "Подписка отправлена в NinjaTrader Bridge. Проверьте подключение к провайдеру данных."
-                        out["gap_recovery"] = {"attempted": True, "provider_available": False, "mode": "historical_artifact" if out.get("bars") else "unavailable", "recovered_bars": 0, "unresolved_gaps": 0, "primary_healthy": primary_healthy}
-                        if not primary_healthy:
-                            out = market_data_failover.mark_offline_snapshot(out, reason="all_live_providers_unavailable", last_source="historical_artifact" if out.get("bars") else "none", backup_providers_available=0)
+            }
+            out = market_data_failover.mark_offline_snapshot(
+                seed,
+                reason="all_live_providers_unavailable" if remote_bars else "no_workspace_connector_snapshot",
+                last_source="ninjatrader_connector" if remote_bars else "none",
+                backup_providers_available=0,
+            )
     if start or end:
         out["bars"] = [row for row in (out.get("bars") or []) if isinstance(row, dict)
                        and (lambda dt: dt is not None and (start is None or dt >= start)

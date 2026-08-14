@@ -38,9 +38,9 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Multi-device (pending/approve/reject/revoke, session invalidation) | IMPLEMENTED | `app/security_devices.py`; `tests/test_phase4_trusted_devices.py` |
 | Permissions (owner/developer/ordinary, product modes, Mini App) | IMPLEMENTED | `app/permissions.py`; `tests/test_permissions.py`, `tests/test_ux_mode.py` |
 | Environment isolation (cookie/CSRF/storage/DB/queue/host) | IMPLEMENTED live | Distinct Canary vs Production DB/role/queue/cookie/origin; CONNECT privilege negatives verified 2026-08-12 |
-| Telegram separation (per-env marker/queue/dedupe) | PARTIAL | Production Telegram READY. Canary uses `[CANARY]` / `canary_login_*` payloads, shared-webhook forwarding and its own PostgreSQL Telegram queue/session store; live PASS still requires deploying the hotfix artifact and host env/consumer readiness. |
-| Release promotion (clean commit, signature, artifact/manifest SHA, Canary checks, exact-artifact Production) | BETA | Release Center UI and real executor accepted through Canary on `7ebda6fa` / archive `AFBCEADF…` / manifest `CE09030A…`. Exact-artifact Production invariant remains enforced; this candidate has not been approved or promoted to Production |
-| Blue-green / rollback (green readiness, drain, expand/migrate/contract, rollback switch) | BETA | Real Canary stages and rollback→re-promote PASS. Canary previous=`de7acaed`; Production remains `6b6dc458`, previous=`795db0c1`; no Production switch in this task |
+| Telegram separation (per-env marker/queue/dedupe) | PARTIAL | Production Telegram READY on `1fae1f39`. Canary uses `[CANARY]` / `canary_login_*` and shared-webhook forwarding. Live Production already sets `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765`. |
+| Release promotion (clean commit, signature, artifact/manifest SHA, Canary checks, exact-artifact Production) | BETA | Live public API identity is `1fae1f39` on both Canary and Production. Repository Documents/Charts follow-up is not yet that artifact. Exact-artifact invariant remains enforced. |
+| Blue-green / rollback (green readiness, drain, expand/migrate/contract, rollback switch) | BETA | Real Canary stages and rollback→re-promote previously PASS. Live HTTP identity is now `1fae1f39` on Canary and Production; `/proc` cwd/exe still required to prove every Supervisor program |
 | Connector pairing (P-256, signed hello, workspace/capability mismatch, canary contour) | IMPLEMENTED; real pairing EXTERNAL | `app/connector_protocol.py`; `tests/test_connector*`. Real device enrollment = EXTERNAL |
 | Shared NinjaTrader locking (exclusive/queue/TTL/heartbeat/cancel) | IMPLEMENTED | `app/ninjatrader_resources.py`; `tests/test_phase6_*` |
 | Documentation permissions (global governance not mutable by workspace/strategy override) | IMPLEMENTED | `app/server.py` `_require_governance_manage`, `app/governance.py` (global-only, no workspace param), `app/jobqueue.py` `update_strategy_profile` allowlist; `tests/test_phase10_docs_governance.py` |
@@ -59,8 +59,8 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 
 | Item | Status | Note |
 |---|---|---|
-| Real Canary provisioning (isolated DB/DSN, Cloudflare tunnel, `canary.stratforges.com` DNS, Telegram routing, Canary Connector) | PARTIAL | Isolated DB/DNS/tunnel and real Release Center executor live; cross-environment DB CONNECT negatives rechecked 2026-08-13. Canary Telegram no longer requires a separate bot in code, but live owner login still needs the hotfix artifact and configured host consumer; no authenticated Canary Connector/chart session fabricated |
-| Real Production deployment + exact-artifact promotion + real blue-green switch | EXTERNAL BLOCKED | Previous `6b6dc458` exact-artifact Production deployment remains live. New `7ebda6fa` artifact passed Canary but Production approval/execution requires a separate owner answer and was intentionally not performed |
+| Real Canary provisioning (isolated DB/DSN, Cloudflare tunnel, `canary.stratforges.com` DNS, Telegram routing, Canary Connector) | PARTIAL | Isolated DB/DNS/tunnel and Release Center executor live; cross-environment DB CONNECT negatives rechecked 2026-08-13. Canary Telegram no longer requires a separate bot in code; public forward can still hit Cloudflare 1010. No authenticated Canary Connector/chart session fabricated |
+| Real Production deployment + exact-artifact promotion + real blue-green switch | PARTIAL | Live Canary+Production process identity is `1fae1f39` (active slot + `/proc` cwd). The Documents/Charts follow-up artifact is still open |
 | Live PostgreSQL migration acceptance (apply 0005–0011 to a real DB, RLS/restore) | IMPLEMENTED on live Canary+Production | Applied 2026-08-12. Isolated restore drill of Production dump PASS (5 users / 3 workspaces / max migration 4 before expand). UUID DML required postgres/BYPASSRLS replay |
 | Production transactional email provider (email OTP / magic link delivery) | EXTERNAL BLOCKED | Code path exists; `available` is Development test-auth only. No `NTA_EMAIL_AUTH_PROVIDER` in Production. |
 | Google OAuth login | EXTERNAL BLOCKED | Implementation present; Production env has no `NTA_GOOGLE_CLIENT_ID` / `SECRET` / `NTA_GOOGLE_REDIRECT_URI`. Redirect contract: `https://app.stratforges.com/api/auth/google/callback` |
@@ -73,9 +73,9 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 
 ## E. Version readiness
 
-- Current candidate version: `0.10.0-beta.1` (`VERSION.json`; channel `beta`, status `pre_release`). Canary runs git `7ebda6faf2e7c64d4a707a41062b29857882181a`, manifest SHA256 `CE09030A2050CBF7D2BCE985D90E36D0C0294F298178B862F4AFBDB0C3D351D3`, build `sf-0.10.0-beta.1-7ebda6faf2e7-20260813T093530Z`. Production remains on `6b6dc4589407855526cf6cc345376d64cf95200e`.
+- Current candidate version: `0.10.0-beta.1` (`VERSION.json`; channel `beta`, status `pre_release`). Live public API identity: git `1fae1f3966dc53294b73772be47992d844575115`, build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256 `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B` on both Canary and Production.
 - Development runtime still defaults `RELEASE_CHANNEL=dev` even while VERSION.json describes the next candidate.
-- `0.10.0-beta.1` current status: **CANARY CORE PASS WITH AUTH HOTFIX PENDING LIVE REDEPLOY** on `7ebda6fa` evidence; Production unchanged pending a separate owner answer. Remaining external blockers after the auth hotfix: authenticated server chart smoke, Google OAuth and Production transactional email.
+- `0.10.0-beta.1` current status: **NOT STAGE CLOSED.** Live Canary+Production process identity is `1fae1f39`; repository Documents/Charts TopstepX fix needs a new signed artifact; authenticated server charts remain open. Google OAuth and Production transactional email stay EXTERNAL BLOCKED.
 - Environment vs release channel vs SemVer remain distinct: `DEPLOYMENT_ENV` (development/canary/production), `RELEASE_CHANNEL` (dev/beta/stable) and the SemVer string are separate fields.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
@@ -86,4 +86,6 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 2026-08-13T08:31:00Z | GPT-5.5 через Codex по запросу owner | Recorded real Release Center Canary lifecycle, exact artifact identity, rollback rehearsal and browser acceptance; Production remained unchanged.
 2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Recorded exact 7ebda6fa Canary artifact, mission-led Documents UI, live market-data soak and rollback/load acceptance; Production remained unchanged.
 2026-08-13T21:46:54Z | GPT-5.5 через Codex по запросу owner | Documented Canary owner-login hotfix: existing Telegram bot shared-webhook routing into isolated Canary auth/session queues, with Production unchanged.
+2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea previous only; Documents/Charts follow-up not STAGE CLOSED.
+2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39 and repository Documents/Charts TopstepX fix; not STAGE CLOSED.
 -->

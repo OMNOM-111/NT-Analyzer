@@ -1162,7 +1162,26 @@ def runtime_storage_dir_for_context(context: Dict[str, Any]) -> str:
     return str(runtime_dir)
 
 
+def _independent_chart_path(path: str) -> bool:
+    """Chart history/realtime is independent of a personal NinjaTrader bridge.
+
+    TopstepX (and other credentialed chart providers) must still serve
+    ``/api/ops/runtime/bars*`` when a personal workspace has no Connector.
+    Accounts, orders, positions and strategy runtime stay stubbed.
+    """
+    value = str(path or "")
+    if value in {
+        "/api/ops/runtime/bars",
+        "/api/ops/runtime/bars/status",
+        "/api/ops/runtime/bars/batch",
+    }:
+        return True
+    return value.startswith("/api/ops/runtime/market-data/")
+
+
 def runtime_stub(path: str, query: Dict[str, list[str]], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if _independent_chart_path(path):
+        return None
     active = (context or {}).get("active_workspace") if isinstance(context, dict) else {}
     if not isinstance(active, dict) or active.get("uses_owner_runtime"):
         return None

@@ -242,3 +242,44 @@ def test_root_managed_chart_resolves_current_topstep_contract(tmp_path: Path, mo
     assert provider.requested == ["MBT"]
     assert result["resolved_instrument"] == "MBT 08-26"
     assert result["source"]["provider"] == "topstepx"
+
+
+def test_server_environment_uses_topstepx_when_connector_snapshot_is_missing(tmp_path: Path, monkeypatch) -> None:
+    class ProductionTopstep(StaticProvider):
+        name = "topstepx"
+
+        def __init__(self) -> None:
+            super().__init__([_bar(_iso(1), 21450.25)])
+            self.requested = []
+
+        @staticmethod
+        def configured() -> bool:
+            return True
+
+        def fetch_range(self, instrument, timeframe, limit, **_kwargs):
+            self.requested.append(instrument)
+            payload = super().fetch(instrument, timeframe, limit)
+            payload["source"]["provider"] = "topstepx"
+            payload["instrument"] = "MNQ 09-26"
+            return payload
+
+        def fetch(self, instrument, timeframe, limit):
+            return self.fetch_range(instrument, timeframe, limit)
+
+    failover.reset_runtime_state()
+    provider = ProductionTopstep()
+    monkeypatch.setattr(server, "_server_environment_explicit", lambda: True)
+    monkeypatch.setattr(failover, "_root", lambda: tmp_path)
+    monkeypatch.setattr(failover, "TopstepXProvider", lambda: provider)
+    monkeypatch.setattr(server.market_data_ingestion, "workspace_series", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server, "_market_payload_cache_get", lambda _key: None)
+    monkeypatch.setattr(server, "_market_payload_cache_put", lambda _key, _payload: None)
+    monkeypatch.setattr(market_data, "list_alerts", lambda **_kwargs: {"alerts": []})
+
+    result = server._market_bars_payload("MNQ", "5m", 40, workspace_id="ws_personal_TEST1234")
+
+    assert provider.requested == ["MNQ"]
+    assert result["bars"][-1]["c"] == 21450.25
+    assert result["source"]["provider"] == "topstepx"
+    assert result["resolved_instrument"] == "MNQ 09-26"
+    assert result.get("source", {}).get("kind") != "workspace_runtime_not_connected"

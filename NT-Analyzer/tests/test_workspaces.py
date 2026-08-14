@@ -259,6 +259,22 @@ def test_runtime_stub_without_workspace_is_safe_and_never_raises() -> None:
     assert instruments and instruments["instruments"] == []
 
 
+def test_runtime_stub_does_not_swallow_independent_chart_paths() -> None:
+    context = {
+        "active_workspace": {
+            "workspace_id": "ws_personal_TEST1234",
+            "kind": "personal",
+            "uses_owner_runtime": False,
+        }
+    }
+    assert workspaces.runtime_stub("/api/ops/runtime/bars", {}, context) is None
+    assert workspaces.runtime_stub("/api/ops/runtime/bars/status", {}, context) is None
+    assert workspaces.runtime_stub("/api/ops/runtime/bars/batch", {}, context) is None
+    assert workspaces.runtime_stub("/api/ops/runtime/market-data/live-sources", {}, context) is None
+    accounts = workspaces.runtime_stub("/api/ops/runtime/accounts", {}, context)
+    assert accounts and accounts["source"] == "workspace_runtime_not_connected"
+
+
 def _seed_auth(owner_token: str, owner_csrf: str, user_token: str, user_csrf: str) -> None:
     account_auth._write_doc({
         "version": 1,

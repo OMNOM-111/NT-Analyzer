@@ -18,7 +18,9 @@ from urllib.parse import parse_qs, urlparse
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-REPOSITORIES = frozenset({"auth", "workspaces", "entitlements", "connectors"})
+REPOSITORIES = frozenset({
+    "auth", "workspaces", "entitlements", "connectors", "releases", "doc_specs",
+})
 _WORKSPACE_RE = re.compile(r"^ws_[A-Za-z0-9_-]{8,80}$")
 _CLIENT: Optional["PostgresClient"] = None
 _CLIENT_LOCK = threading.RLock()

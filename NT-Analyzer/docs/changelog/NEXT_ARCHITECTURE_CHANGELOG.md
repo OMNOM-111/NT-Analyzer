@@ -1,5 +1,6 @@
 # Next Architecture Program — Changelog (0.10.0 line)
 
+История поправки: 2026-08-14T06:20:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: live HTTP identity `1fae1f39` on Canary+Production; repository Documents/Charts fix not yet that artifact.
 История поправки: 2026-08-12T23:50:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: PR #26 merged to main; hang-fix tag on `6b6dc458`.
 История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — создать честный changelog новой архитектурной программы с разделением по аудитории и по фактическому статусу развёртывания.
 
@@ -39,8 +40,8 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   через реальные серверные права, только в Development (Phase 7).
 - Центр релизов в Admin Panel: создание release candidate, сборка immutable
   artifact, Canary-проверки, owner approval, продвижение того же artifact,
-  расписание, rollback-записи, репетиция blue-green (Phase 8–9). **Все внешние
-  развёртывания — dry-run** (см. ниже).
+  расписание, rollback-записи, репетиция blue-green (Phase 8–9). Real Canary
+  deploy/rollback now exists; Production promotion stays a separate owner gate.
 - Governance amendment workflow ужесточён: запись глобального governance доступна
   только owner или администратору с `docs.manage_global` (Phase 10A).
 
@@ -75,15 +76,29 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 
 ## Внешне заблокировано (External acceptance gates — не «готово»)
 
-- Отдельный Canary Telegram bot (BotFather) + webhook — не provisioned;
-  Canary readiness честно сообщает `disabled_pending_canary_bot_provisioning`.
+- Отдельный Canary Telegram bot (BotFather) remains unused: Canary reuses the
+  existing bot via shared-webhook forwarding. Public HTTPS forward can still
+  hit Cloudflare 1010; optional loopback origin is not a live host env yet.
 - Реальный Production transactional email provider для email OTP / magic link.
 - Google OAuth client (`NTA_GOOGLE_CLIENT_ID` / `SECRET` + redirect
   `https://app.stratforges.com/api/auth/google/callback`) — реализация есть,
   Production secrets отсутствуют.
 - Утверждённый market-calendar provider для расписания «после закрытия рынка».
 
-## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — live)
+## Развёрнуто 2026-08-14 (live HTTP identity `1fae1f39` — not STAGE CLOSED)
+
+- Public `/live` `/ready` `/runtime/env` on Canary and Production both report
+  git `1fae1f3966dc53294b73772be47992d844575115`, build
+  `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256
+  `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`.
+- Host `/proc` cwd for all eight app processes matches that active slot.
+  Previous slot is `0f2a90ea`. Local DEV was not listening.
+- Live Production still 500s Documents/Release Center (`Unknown repository`)
+  and stubs server charts without TopstepX. Those fixes exist in the repository
+  and are not this live artifact.
+- Evidence: `docs/changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md`.
+
+## Развёрнуто 2026-08-12 (0.10.0-beta.1 `/ready` hang-fix — historical)
 
 - Signed artifact git `6b6dc4589407855526cf6cc345376d64cf95200e`, manifest SHA256
   `272045DB15D98C8505D770BAC9389215FD90E9C70F0BB14C19CEABABD31BD9F3`, archive
@@ -131,9 +146,11 @@ Dry-run, mock, тестовый backend и неподключённые внеш
 
 - Полная модель workspace/strategy specification revision закрыта в Phase 11
   (`strategy.spec.manage`, migration `0011`, `app/doc_specs.py`). Остаётся
-  owner design/UI acceptance и Canary Telegram bot provisioning.
+  owner design/UI acceptance. Canary Telegram uses shared-webhook forwarding;
+  public Cloudflare 1010 and `/proc` identity proof remain open.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39; hang-fix 6b6dc458 is historical; Documents/Charts follow-up not STAGE CLOSED.
 2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 auth/DEV fix artifact on Canary and Production.
 2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen: owner auth/DEV acceptance failed on live 2f9409c4; record UUID hydrate + launcher + primary Sign in/Register fix requiring a new artifact.
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary/Production deployment; remove stale "not deployed" claims.
