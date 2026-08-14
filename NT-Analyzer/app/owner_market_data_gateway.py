@@ -132,8 +132,11 @@ def gateway_url() -> str:
         return ""
     if explicit:
         return explicit
-    if named == "consumer":
-        return ""
+    # An explicit ``consumer`` falls back to the same environment-derived hub
+    # origin as ``auto``.  Naming the role must never leave an environment with
+    # fewer ways to reach the hub than not naming it: a Canary configured
+    # ROLE=consumer + STRATFORGE_PRODUCTION_INTERNAL_ORIGIN would otherwise go
+    # isolated and serve empty charts.
     if environment == runtime_env.CANARY:
         return normalize_gateway_origin(os.environ.get("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN") or "")
     return ""
