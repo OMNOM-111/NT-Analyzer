@@ -6,11 +6,28 @@
 и не проводила повторную диагностику**. Всё в разделе «Зафиксировано» —
 проверено на живых окружениях; переизобретать не нужно.
 
-**Статус на 2026-08-15 (вторая сессия).** Закрыты пункты 2, 5, 6; пункт 3
-покрыт в тестах и ждёт живой прогон. Полный прогон: 1363 passed, 31 skipped.
-Открыты: 1 (ждёт владельца), 4 (удаление данных на живых окружениях — нужно
-подтверждение), 7–12 (требуют релиза и живых окружений). Ничего из открытого
-не блокируется кодом.
+**Статус на 2026-08-15 (вторая сессия).** Закрыты пункты 2, 5, 6, 7, 8, 10;
+код для п.4 готов и в проде; п.3 и 9 закрыты в тестах, живой прогон за
+владельцем. Полный прогон: **1375 passed, 31 skipped**.
+
+Смержено и выкачено: PR #51 … #58, пять релизов
+`0.10.0-beta.1 → beta.5`, каждый Canary → acceptance → **тот же immutable
+artifact** → Production, 8/8 blue-green шагов на обоих окружениях.
+
+Открыто только то, что физически требует владельца — см. **WAITING FOR
+OWNER** в конце. Общая причина у почти всего: автоматизации недоступны
+учётные данные владельца, поэтому любая аутентифицированная проверка на
+живых Canary/Production выполняется только человеком.
+
+Найдено и починено попутно, вне исходного списка:
+
+- **удаление аккаунта было неполным** — оставляло identities, devices и
+  security challenges (п.4);
+- **релиз не доезжал до браузеров** — `?v=` штампы ассетов правились руками и
+  разъехались на девять значений (старейшее от `20260629`), а CDN держит эти
+  URL 4 часа. Зелёный деплой ≠ доставленный деплой (PR #57);
+- **аватар инлайнился base64 в каждый payload** — ~27 КБ на пользователя
+  (п.8).
 
 ---
 
@@ -99,14 +116,36 @@ logout/login (одна запись, trust сохраняется) → очис�
 Осталось живьём (после п.1 и релиза): та же цепочка на Canary и Production
 с настоящим Telegram/письмом и браузером.
 
-### 4. Удаление test fixtures
+### 4. Удаление test fixtures — код готов, само удаление за владельцем
 
-Удалить `9de0d410…` (legacy `123456`) и `bca76cf5…` (legacy `505`) вместе с их
-identities/sessions/workspaces/devices. У каждого по 1 workspace, сессий и
-устройств нет. Перед удалением — dependency-check по `sf_workspaces`,
-`sf_workspace_memberships`, `sf_active_workspaces`, `sf_jobs`, `sf_commands`,
-`sf_audit_events` (FK на `user_uuid` объявлены `NOT VALID`, поэтому проверять
-явно). Чистить **в auth-документе**, не в проекционных таблицах.
+Удалить `9de0d410…` (legacy `123456`) и `bca76cf5…` (legacy `505`).
+
+**Сначала пришлось починить сам механизм удаления.** `delete_user()` удалял
+только запись пользователя, сессии, challenges и файл аватара — а identities,
+trusted devices и security challenges (ключ `user_uuid`) оставались. Это не
+косметика: осевшая identity-строка держит subject привязанным к
+несуществующему пользователю, и `_link_identity_in_doc` навсегда отвечает
+`identity_already_linked` — освободившийся Telegram id или e-mail уже никогда
+нельзя привязать к живому аккаунту. Если бы п.4 выполнили старым кодом,
+фикстуры удалились бы наполовину.
+
+Исправлено (PR #53, в проде с `0.10.0-beta.3`):
+
+- удаление покрывает identities, devices, security challenges и sessions;
+- строки сопоставляются по каноническому UUID с fallback на legacy id —
+  до Phase 3 backfill строки несут только legacy id, после — только UUID;
+- workspaces живут в отдельном документе и чистятся через
+  `workspaces.purge_user()`, который **отказывается** забирать рабочую
+  область, где остаются другие участники;
+- отказ проверяется **до** мутации auth-документа, поэтому rejection не может
+  оставить полуудалённый аккаунт; owner protection проверяется первой;
+- `account_auth.account_footprint()` — тот же учёт read-only, это и есть
+  dependency-check перед удалением (FK на `user_uuid` объявлены `NOT VALID`,
+  поэтому снизу никто не откажет).
+
+Осталось владельцу: выполнить удаление на Canary и Production через Users →
+кнопка удаления (`POST /api/auth/users/<legacy_id>/delete`). Автоматизация
+это сделать не может: нужна аутентифицированная сессия владельца.
 
 ### 5. LOCAL owner profile — ЗАКРЫТО
 
@@ -148,13 +187,67 @@ LOCAL-костыль. Сама запись `424242` — локальная work
 
 Тесты: `tests/test_phase11_ui_wiring.py`, секции one-click и owner-label.
 
-### 7–12. Остальное
+### 7. Users/Admin CRUD и owner protection — ЗАКРЫТО
 
-Регистрация нового пользователя и изоляция; Users/Admin CRUD и owner
-protection; производительность Cabinet/Users/Admin/Release Center/Documents/
-Environment Switcher (before/after); market-data regression (Production=hub,
-Canary=consumer, одна provider connection, live charts); browser E2E
-LOCAL→CANARY→PRODUCTION.
+Owner protection проверена и усилена: `delete_user()` отказывает по владельцу
+раньше всех прочих причин (403 «Аккаунт владельца нельзя удалить»), и это
+покрыто тестом — до фикса общий workspace владельца давал 409 вместо 403.
+Полный аудит удаления — п.4. Остальные мутации (`role`, `status`, `features`,
+`permission`, `admin-permission`, `sessions`) идут через
+`_require_admin_capability_in_doc(..., "users.manage")` и уже покрыты
+`tests/test_account_auth.py` / `tests/test_cabinet.py`.
+
+### 8. Производительность — ЗАКРЫТО, с before/after
+
+Профиль всех эндпоинтов за Cabinet / Users / Admin / Release Center /
+Documents / Environment Switcher (LOCAL, 12 замеров, первый отброшен).
+
+**Латентность здорова**: максимум `48 ms p50` (`/api/admin/operations`),
+всё остальное ниже. Оптимизировать нечего.
+
+**Реальная проблема — объём.** `_public_user()` инлайнил аватар как base64
+data URL рядом с `avatar_url`, который и так отдавался. Data URL не
+кэшируется, поэтому те же ~27 КБ уходили в каждом ответе, называющем
+пользователя — включая `/api/auth/me` и `/api/auth/status` (UI дёргает их на
+каждой странице) и `/api/auth/users`, где это платилось **за каждого**
+пользователя.
+
+| endpoint | было | стало | Δ |
+| --- | ---: | ---: | ---: |
+| `/api/auth/me` | 39 780 B | 12 444 B | −69 % |
+| `/api/auth/status` | 34 853 B | 7 519 B | −78 % |
+| `/api/auth/users` | 84 715 B | 15 288 B | −82 % |
+
+`/api/auth/users` больше не растёт на 27 КБ с каждым новым пользователем.
+Аватар едет только как `avatar_url` со штампом `?v=<avatar_updated_at_utc>`,
+эндпоинт отдаёт `private, max-age=86400, immutable`. PR #55, в проде с
+`0.10.0-beta.4`.
+
+### 9. Market-data regression — репозиторная часть закрыта
+
+`test_market_data*.py` + `test_owner_market_data_gateway.py` +
+`test_topstep_market_data.py` — **136 passed**. Живая проверка
+(Production=hub, Canary=consumer, одна provider connection, live charts)
+требует аутентифицированной сессии владельца — см. WAITING FOR OWNER.
+
+### 10. Environment Switcher / Release Center — ЗАКРЫТО
+
+Release Center прогнан end-to-end **пять раз** (beta.2 … beta.5), всё
+кнопками из LOCAL DEV: `run` → build → verify → deploy-canary →
+`record-canary-check` → `approve-production` → `promote-production`. Каждый
+раз 8/8 blue-green шагов pass на обоих окружениях, и на Production уезжал тот
+же самый immutable artifact, что проверялся на Canary. Adapter:
+`stage9_ssh`, `mode: real`, `configuration_state: ready`.
+
+Грабли, подтверждённые заново: Release Center отказывает на грязном дереве
+(`dirty_worktree`), а приложение **перегенерирует `data/governance-rendered/*`
+при каждом старте**, поэтому перед каждым билдом эти файлы приходится
+складывать в stash. Это стоит починить отдельно — приложение не должно писать
+в tracked-файлы на старте.
+
+### 11–12. Регистрация нового пользователя, browser E2E
+
+Требуют браузера и живых учётных данных — см. WAITING FOR OWNER.
 
 ---
 
@@ -192,18 +285,76 @@ LOCAL→CANARY→PRODUCTION.
 
 ## WAITING FOR OWNER
 
-1. Ввести OTP из письма для превращения email в login-identity (Canary и
-   Production).
-2. Подтвердить устройство после того, как доставка кода заработает.
-3. Перевыпустить раскрытые секреты перед публичным запуском: Google Client
-   Secret ×2, Resend API key ×2. Места замены —
+Единственная общая причина: **у автоматизации нет учётных данных владельца**.
+Прочитать сохранённые session-cookie ей запрещено, а хост-скрипты, читающие
+живые данные аккаунтов, заблокированы политикой. Поэтому всё, что требует
+аутентифицированной сессии на Canary/Production, делает человек. Всё
+остальное уже сделано, выкачено и проверено.
+
+Каждый пункт доведён до последнего клика.
+
+1. **Email → login-identity** (п.1, блокирует п.2 из исходного списка).
+   Кабинет → Безопасность → «Привязать e-mail» на Canary, затем на
+   Production. Код придёт письмом: доставка проверена —
+   `/api/auth/providers` на обоих окружениях отдаёт
+   `email: {provider: resend, operational: true, production_ready: true,
+   test_backend: false}`. Ввести OTP. Ожидаемо: в `auth_identities`
+   появляется строка `provider=email` с `verified_at_utc` на **том же**
+   UUID, нового аккаунта не создаётся.
+
+2. **Подтверждение устройства** (п.3, живой прогон). После п.1 в
+   подтверждении устройства должны предлагаться Telegram, email и Google —
+   до этого только Telegram. Кабинет → Безопасность → устройство в
+   `pending` → «Подтвердить» → выбрать канал → код теперь **реально
+   приходит** (это и был корневой баг, PR #51). Пройти цепочку целиком:
+   `pending → код → verify → trusted → logout/login → revoke → повторный
+   вход`. Та же цепочка автоматически прогоняется в
+   `test_trusted_device_lifecycle_end_to_end_with_real_delivery`.
+
+3. **Удаление test fixtures** (п.4). Users → найти `123456`
+   (`9de0d410…`) и `505` (`bca76cf5…`) → удалить, на Canary и на
+   Production. Механизм удаления починен и уже в проде (`0.10.0-beta.3`):
+   теперь уносит identities, devices, security challenges, sessions и
+   workspaces, отказывается забирать общую рабочую область и защищает
+   владельца. `ARTUR_CA` (`75c34783…`), canonical owner
+   (`eb9d8e32…`) и `stage9_canary_operator` (`c33c5adb…`) **не трогать**.
+
+4. **Google на Canary** (живая проверка). `/api/auth/providers` уже
+   подтверждает `google: {available: true, configured: true,
+   test_auth_fallback: false}` на обоих окружениях — то есть настроен
+   реальный Google, а не тестовая заглушка. Остаётся сам вход: войти на
+   Canary через Google и убедиться, что `google_sub` лёг в **тот же** UUID
+   и второй аккаунт не создан (на Production это уже доказано).
+
+5. **Market-data live** (п.9). Репозиторная регрессия зелёная (136 passed).
+   Живьём: Production=hub, Canary=consumer, одна provider connection,
+   живые графики.
+
+6. **Регистрация нового пользователя и browser E2E** (п.11–12).
+   LOCAL → CANARY → PRODUCTION в браузере. Заодно проверить, что после
+   PR #57 страница подтягивает ассеты со свежим `?v=<build_id>` — раньше
+   релиз мог не доехать до браузера четыре часа.
+
+7. **Перевыпустить раскрытые секреты** перед публичным запуском: Google
+   Client Secret ×2, Resend API key ×2. Места замены —
    `/home/stratforge/production_data/config/{production-app,canary}.env`
    (ключи `NTA_GOOGLE_CLIENT_ID`, `NTA_GOOGLE_CLIENT_SECRET`,
    `NTA_RESEND_API_KEY`), локально —
    `NT-Analyzer/data/development/integrations/secrets.local.json`.
    После правки: `supervisorctl restart api api-app`.
 
+## Стоит починить отдельно
+
+- Приложение **перегенерирует `data/governance-rendered/*` при каждом
+  старте**, а Release Center отказывает на грязном дереве, поэтому перед
+  каждым билдом эти файлы приходится складывать в stash. Приложение не
+  должно писать в tracked-файлы на старте.
+- CDN отдаёт ассеты с `public, max-age=14400`, тогда как origin ставит
+  `max-age=120`. После PR #57 это безопасно (URL меняется с каждым билдом),
+  но расхождение стоит осознанно зафиксировать в правилах CDN.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-15T01:20:00Z | Claude Opus 5 через Claude Code по запросу owner | Handoff незакрытого auth/user контура: owner UUID и Telegram/Google подтверждены, email-identity и доставка кода подтверждения остаются открытыми; зафиксированы root cause, порядок работ и готовые инструменты.
 2026-08-15T00:00:00Z | Claude Opus 5 через Claude Code по запросу owner | Закрыты п.2 (доставка кода подтверждения устройства: реальная отправка Telegram/email, честный 503 и сожжённый challenge при провале), п.5 (owner без профиля подписывается по роли) и п.6 (Telegram one-click); п.3 покрыт E2E-тестом жизненного цикла на пути реальной доставки. П.1 ждёт OTP владельца, п.4 — подтверждения на удаление данных, п.7–12 — релиза и живых окружений.
+2026-08-15T22:45:00Z | Claude Opus 5 через Claude Code по запросу owner | Закрытие этапа: PR #51–#58 смержены, пять релизов beta.1→beta.5 через Canary → acceptance → тот же immutable artifact → Production. Дополнительно закрыты п.7 (owner protection), п.8 (профиль производительности и сокращение payload: me −69%, status −78%, users −82%), п.10 (Release Center end-to-end ×5); п.9 закрыт в тестах. Попутно найдены и починены три дефекта вне списка: неполное удаление аккаунта, релиз не доезжавший до браузеров из-за ручных ?v= штампов и CDN, инлайн base64 аватара. Открытое сведено к WAITING FOR OWNER — всё оно требует учётных данных владельца.
 -->
