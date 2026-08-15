@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import errno
 import copy
+import functools
 import hashlib
 import ipaddress
 import json
@@ -1422,6 +1423,33 @@ CONTENT_TYPES = {
     ".ico":  "image/x-icon",
     ".png":  "image/png",
 }
+
+# `src="assets/ui.js?v=20260813-release-workflow2"` -> the ?v= value is
+# replaced with the build stamp. Only local .js/.css references are touched;
+# anything absolute or cross-origin is left exactly as authored.
+_ASSET_REF_RE = re.compile(
+    rb'(?P<head>(?:src|href)="(?!https?://|//)[^"?]+\.(?:js|css)\?v=)'
+    rb'[^"]*'
+    rb'(?P<tail>")'
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _asset_build_stamp() -> str:
+    """Stable per-build stamp for asset URLs.
+
+    Cached for the process lifetime: a build cannot change under a running
+    server, and this runs on every HTML response.
+    """
+    try:
+        status = runtime_env.status()
+    except Exception:
+        return ""
+    for key in ("build_id", "git_commit_sha", "app_version"):
+        value = re.sub(r"[^0-9A-Za-z._-]", "", str(status.get(key) or ""))[:64]
+        if value:
+            return value
+    return ""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3826,6 +3854,26 @@ class Handler(BaseHTTPRequestHandler):
             return "no-cache"
         return "public, max-age=120, must-revalidate"
 
+    def _stamp_asset_refs(self, data: bytes) -> bytes:
+        """Rewrite ``?v=`` on local asset references to this build's stamp.
+
+        The stamps were hand-maintained per file and had drifted badly (nine
+        different values across thirteen pages, the oldest from 20260629), so a
+        release shipped new JS under a URL that had not changed since June. The
+        CDN in front of the app caches those URLs for four hours, which is how
+        a green deploy could still serve the previous bundle to browsers.
+
+        Deriving the stamp from the build makes every release a new URL, which
+        is what the long cache lifetime already assumes.
+        """
+        stamp = _asset_build_stamp()
+        if not stamp:
+            return data
+        return _ASSET_REF_RE.sub(
+            lambda m: m.group("head") + stamp.encode("ascii") + m.group("tail"),
+            data,
+        )
+
     def _not_modified(self, target: Path) -> bool:
         raw_ims = self.headers.get("If-Modified-Since")
         if not raw_ims:
@@ -3888,6 +3936,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             data = target.read_bytes()
+            if target.suffix.lower() == ".html":
+                data = self._stamp_asset_refs(data)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data)))
