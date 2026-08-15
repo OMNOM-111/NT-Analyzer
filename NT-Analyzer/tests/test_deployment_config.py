@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app import runtime_env
+
+
+# The Development profile reports the project version file. Reading it here
+# asserts that wiring instead of a literal, so cutting a release is not also a
+# test edit -- pinning the number made every version bump fail CI on a file
+# that has nothing to do with the change being released.
+_VERSION = json.loads(
+    (Path(__file__).resolve().parent.parent / "VERSION.json").read_text(encoding="utf-8")
+)
+PROJECT_VERSION = str(_VERSION["version"])
+PROJECT_BUILD_TIMESTAMP = str(_VERSION["build_timestamp_utc"])
 
 
 _ENV_KEYS = (
@@ -161,22 +173,22 @@ def test_development_profile_is_explicit_and_isolated(tmp_path, monkeypatch) -> 
     assert config.edge_mode == "direct-local"
     assert config.live_trading_allowed is False
     assert config.real_payments_allowed is False
-    assert config.build_version == "0.10.0-beta.1"
+    assert config.build_version == PROJECT_VERSION
     assert config.release_channel == "dev"
     assert config.release_status == "in_development"
     assert len(config.git_commit_sha) == 40
-    assert config.build_id.startswith("dev-0.10.0-beta.1-")
-    assert config.build_timestamp_utc == "2026-08-11T18:35:00Z"
+    assert config.build_id.startswith(f"dev-{PROJECT_VERSION}-")
+    assert config.build_timestamp_utc == PROJECT_BUILD_TIMESTAMP
     assert config.artifact_sha256 == ""
     assert runtime_env.impersonation_enabled() is True
     status = runtime_env.status()
     assert status["deployment_environment"] == "development"
-    assert status["app_version"] == "0.10.0-beta.1"
+    assert status["app_version"] == PROJECT_VERSION
     assert status["release_channel"] == "dev"
     assert status["build_id"] == config.build_id
     assert status["git_commit_sha"] == config.git_commit_sha
     assert status["dirty"] is config.dirty
-    assert status["deployment"]["app_version"] == "0.10.0-beta.1"
+    assert status["deployment"]["app_version"] == PROJECT_VERSION
 
 
 def test_legacy_staging_is_a_development_compatibility_profile(
