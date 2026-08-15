@@ -508,3 +508,14 @@ def test_run_mode_launchers_are_unambiguous() -> None:
     assert "OPEN-SERVER.cmd" in guide
     assert "`DEV`" in guide and "`CANARY`" in guide and "`BETA`" in guide
     assert "`STABLE` пользователю не показывается" in guide
+
+
+def test_project_version_file_dates_agree() -> None:
+    """build_date must be the date half of build_timestamp_utc.
+
+    The backend fails closed when they disagree (STRATFORGE_BUILD_DATE
+    конфликтует с BUILD_TIMESTAMP_UTC), which means a release bump that
+    updates only one of them takes the app down on the next start. Cutting a
+    release is exactly when that mistake is easy to make.
+    """
+    assert PROJECT_BUILD_TIMESTAMP.startswith(str(_VERSION["build_date"]))
