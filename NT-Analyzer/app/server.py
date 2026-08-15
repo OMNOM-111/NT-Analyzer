@@ -1543,7 +1543,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Cache-Control", "no-store")
+            # A caller may opt a response out of no-store (an avatar is content
+            # addressed by its ?v= stamp), but never by accident: it has to name
+            # Cache-Control itself.
+            if not (headers or {}).get("Cache-Control"):
+                self.send_header("Cache-Control", "no-store")
             if download_name:
                 quoted = urllib.parse.quote(download_name)
                 self.send_header(
@@ -2154,7 +2158,7 @@ class Handler(BaseHTTPRequestHandler):
                 # over the Telegram Mini App, exactly like the desktop session path.
                 if account:
                     self._remote_context["user"] = account_auth._public_user(
-                        account, include_contact=True, include_avatar=True)
+                        account, include_contact=True)
                 self._remote_context = self._decorate_workspace_context(self._remote_context)
                 method = self.command.upper()
                 admin_route = bool(permissions.required_admin_capability(path, method))
@@ -2470,7 +2474,7 @@ class Handler(BaseHTTPRequestHandler):
                     forwarded_ip=forwarded_ip,
                 )
                 user = account_auth.find_active_user(context.get("user_id"))
-                context["user"] = account_auth._public_user(user or {}, include_contact=True, include_avatar=True)
+                context["user"] = account_auth._public_user(user or {}, include_contact=True)
                 context["role"] = str((user or {}).get("role") or context.get("role") or "read_only")
                 context["is_owner"] = bool((user or {}).get("is_owner"))
                 # Record the Mini App session for the admin login history (throttled
@@ -2968,7 +2972,11 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.NOT_FOUND, "avatar not found"); return
         ext = path.suffix.lstrip(".").lower()
         ctype = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-        self._bytes(HTTPStatus.OK, blob, ctype)
+        # avatar_url carries ?v=<avatar_updated_at_utc>, so a given URL always
+        # names the same bytes and a new avatar produces a new URL. Private,
+        # because the handler above authorised this requester for this avatar.
+        self._bytes(HTTPStatus.OK, blob, ctype,
+                    headers={"Cache-Control": "private, max-age=86400, immutable"})
 
     def _refresh_avatar(self) -> None:
         context = getattr(self, "_remote_context", None) or {}

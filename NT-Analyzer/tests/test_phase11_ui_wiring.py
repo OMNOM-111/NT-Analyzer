@@ -176,3 +176,22 @@ def test_owner_without_a_profile_is_labelled_as_owner():
     assert label, "userLabel must stay a named function"
     body = label.group(0)
     assert "user.is_owner ? 'Владелец' : 'Пользователь'" in body
+
+
+# --------------------------------------------------------------------------- #
+# Avatars travel as cacheable URLs, not as base64 inside every JSON payload.
+# --------------------------------------------------------------------------- #
+def test_avatars_are_never_inlined_into_json_payloads():
+    account_src = (ROOT / "app" / "account_auth.py").read_text(encoding="utf-8")
+    assert "avatar_data_url" not in account_src, (
+        "an inlined base64 avatar is ~27KB per user in every payload naming one"
+    )
+    assert "avatar_data_url" not in UI_JS
+
+
+def test_avatar_endpoint_is_cacheable_and_private():
+    # The URL is stamped with ?v=<avatar_updated_at_utc>, so a given URL always
+    # names the same bytes -- immutable is correct and a new avatar busts it.
+    assert '"Cache-Control": "private, max-age=86400, immutable"' in SERVER_SRC
+    # The generic byte responder must not clobber that with no-store.
+    assert 'if not (headers or {}).get("Cache-Control"):' in SERVER_SRC
