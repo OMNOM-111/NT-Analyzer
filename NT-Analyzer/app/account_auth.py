@@ -995,44 +995,55 @@ def _machine_label() -> str:
     return label[:64] or "Этот компьютер"
 
 
-def _device_id(user_agent: Any) -> str:
-    basis = "|".join((
-        _machine_label().lower(),
-        str(os.environ.get("USERNAME") or os.environ.get("USER") or "").lower(),
-        _device_label(user_agent).lower(),
-    ))
-    return hashlib.sha256(basis.encode("utf-8", errors="ignore")).hexdigest()[:16]
+DEVICE_CREDENTIAL_BYTES = 32
+
+
+def new_device_credential() -> str:
+    """Opaque per-browser credential. Only its HMAC is ever stored."""
+    return secrets.token_urlsafe(DEVICE_CREDENTIAL_BYTES)
+
+
+def _device_id(user_agent: Any = "", *, device_credential: Any = "") -> str:
+    """Stable identity for one browser profile.
+
+    The credential is a random value the browser holds in an httpOnly cookie,
+    so one browser profile is one device across refresh, logout and re-login,
+    and two different browsers are never the same device.
+
+    It must never be derived from the server's hostname or account name — those
+    are identical for every user of a deployment, which both split one browser
+    into several devices whenever its User-Agent changed and collapsed
+    different users' browsers onto one record.  The User-Agent is display
+    metadata only.  A client with no cookie jar (the Connector) supplies its own
+    credential; without either, the caller gets a per-session value that never
+    silently merges with another device.
+    """
+    credential = str(device_credential or "").strip()
+    if not credential:
+        return "anon:" + secrets.token_hex(8)
+    return hashlib.sha256(
+        ("device-credential/v1\0" + credential).encode("utf-8", errors="ignore")
+    ).hexdigest()[:32]
 
 
 def _upsert_device(user: Dict[str, Any], *, source: str, ip: str = "",
-                   user_agent: str = "", email: str = "") -> None:
-    now = _now_iso()
-    device_id = _device_id(user_agent)
-    device = _device_label(user_agent)
-    machine = _machine_label()
-    rows = user.get("devices") if isinstance(user.get("devices"), list) else []
-    existing = next((row for row in rows if str(row.get("device_id") or "") == device_id), None)
-    if existing is None:
-        existing = {
-            "device_id": device_id,
-            "label": machine,
-            "client": device,
-            "first_seen_at_utc": now,
-        }
-        rows.append(existing)
-    existing.update({
-        "label": machine,
-        "client": device,
-        "last_seen_at_utc": now,
-        "last_source": source,
-        "last_ip": _mask_ip(ip),
-    })
+                   user_agent: str = "", email: str = "",
+                   device_credential: str = "") -> None:
+    """Record last-login metadata only.
+
+    Devices themselves live in one place — ``doc["trusted_devices"]``, managed
+    by ``security_devices``.  The per-user ``devices`` list this function used
+    to maintain was a second, unconstrained store of the same thing, and the
+    Cabinet showed both, which is where the duplicates came from.
+    """
+    user.pop("devices", None)
+    user["last_login_device_id"] = _device_id(user_agent, device_credential=device_credential)
+    user["last_login_at_utc"] = _now_iso()
+    user["last_login_source"] = str(source or "")
+    user["last_login_ip"] = _mask_ip(ip)
     profile_email = str(email or "").strip().lower()
     if profile_email:
-        existing["email"] = profile_email
-    user["devices"] = rows[-20:]
-    user["last_login_device_id"] = device_id
-    user["last_login_machine"] = machine
+        user["last_login_email"] = profile_email
 
 
 def _mask_ip(ip: Any) -> str:
@@ -1050,18 +1061,20 @@ def _mask_ip(ip: Any) -> str:
 
 
 def _append_login(user: Dict[str, Any], *, source: str, ip: str = "",
-                  user_agent: str = "", email: str = "") -> None:
+                  user_agent: str = "", email: str = "",
+                  device_credential: str = "") -> None:
     now = _now_iso()
     device = _device_label(user_agent)
     machine = _machine_label()
-    device_id = _device_id(user_agent)
+    device_id = _device_id(user_agent, device_credential=device_credential)
     user["last_login_at_utc"] = now
     user["last_login_source"] = source
     user["last_login_device"] = device
     user["last_login_machine"] = machine
     user["last_login_device_id"] = device_id
     _upsert_device(user, source=source, ip=ip, user_agent=user_agent,
-                   email=email or str(user.get("email") or ""))
+                   email=email or str(user.get("email") or ""),
+                   device_credential=device_credential)
     history = user.get("login_history") if isinstance(user.get("login_history"), list) else []
     history.append({
         "at": now, "source": source, "device": device,
@@ -1073,7 +1086,7 @@ def _append_login(user: Dict[str, Any], *, source: str, ip: str = "",
 def _observe_session_device(
     doc: Dict[str, Any], session: Dict[str, Any], user: Dict[str, Any], *,
     ip: str = "", user_agent: str = "", source: str = "",
-    connector_installation_id: str = "",
+    connector_installation_id: str = "", device_credential: str = "",
 ) -> list:
     """Register the trusted device for a new session (Phase 4).
 
@@ -1088,6 +1101,7 @@ def _observe_session_device(
         return security_devices.observe_session(
             doc, session, user, ip=ip, user_agent=user_agent, source=source,
             connector_installation_id=connector_installation_id,
+            device_credential=device_credential,
         )
     except Exception:
         # Device correlation must never block a legitimate login.
@@ -1228,9 +1242,11 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         out["email"] = str(user.get("email") or "")
         phone = str(user.get("phone") or "")
         out["phone_mask"] = ("+•••" + phone[-4:]) if phone else ""
-        devices = user.get("devices") if isinstance(user.get("devices"), list) else []
-        out["devices"] = [dict(row) for row in reversed(devices[-20:]) if isinstance(row, dict)]
-        out["device_count"] = len(devices)
+        # Devices are served by /api/account/devices from the single
+        # trusted-device store; echoing a second copy here is what made one
+        # browser appear twice in the Cabinet.
+        out["devices"] = []
+        out["device_count"] = 0
         # Never expose raw google_sub to non-owner clients in lists; ok in own profile.
         out["google_sub_suffix"] = str(user.get("google_sub") or "")[-8:]
     if include_avatar:
@@ -2426,7 +2442,8 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
     return False
 
 
-def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str) -> Dict[str, Any]:
+def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
+                                 device_credential: str = "") -> Dict[str, Any]:
     with _LOCK:
         doc = _read_doc()
         challenge = _challenge(
@@ -2459,14 +2476,17 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str)
             "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(), "revoked": False,
-            "device_id": _device_id(user_agent), "client": _device_label(user_agent),
+            "device_id": _device_id(user_agent, device_credential=device_credential),
+            "client": _device_label(user_agent),
             "machine": _machine_label(), "ip": _mask_ip(ip),
             "source": source,
         })
         challenge["status"] = "consumed"
-        _append_login(user, source=source, ip=ip, user_agent=user_agent)
+        _append_login(user, source=source, ip=ip, user_agent=user_agent,
+                      device_credential=device_credential)
         device_events = _observe_session_device(
             doc, doc["sessions"][-1], user, ip=ip, user_agent=user_agent, source=source,
+            device_credential=device_credential,
         )
         _cleanup(doc)
         _write_doc(doc)
@@ -2957,6 +2977,7 @@ def create_session_for_user(
     impersonator_owner_id: int = 0,
     impersonation_preset: str = "",
     ttl_sec: int = 0,
+    device_credential: str = "",
 ) -> Dict[str, Any]:
     uid = int(user_id)
     with _LOCK:
@@ -2987,7 +3008,7 @@ def create_session_for_user(
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
             "revoked": False,
-            "device_id": _device_id(user_agent),
+            "device_id": _device_id(user_agent, device_credential=device_credential),
             "client": _device_label(user_agent),
             "machine": _machine_label(),
             "ip": _mask_ip(ip),
@@ -2998,10 +3019,12 @@ def create_session_for_user(
             row["impersonation_started_at_utc"] = _now_iso()
             row["impersonation_preset"] = str(impersonation_preset or "")[:40]
         doc["sessions"].append(row)
-        _append_login(user, source=str(source or "desktop_session"), ip=ip, user_agent=user_agent)
+        _append_login(user, source=str(source or "desktop_session"), ip=ip,
+                      user_agent=user_agent, device_credential=device_credential)
         device_events = _observe_session_device(
             doc, row, user, ip=ip, user_agent=user_agent,
             source=str(source or "desktop_session"),
+            device_credential=device_credential,
         )
         _cleanup(doc)
         _write_doc(doc)
@@ -3307,6 +3330,7 @@ def verify_email_auth(
     actor_user_id: Any = 0,
     api_call: Optional[Callable[..., Any]] = None,
     owner_chat_id: str = "",
+    device_credential: str = "",
 ) -> Dict[str, Any]:
     profile = profile if isinstance(profile, dict) else {}
     cid = str(challenge_id or "")
@@ -3397,7 +3421,9 @@ def verify_email_auth(
         except Exception:
             pass
     if active_uid:
-        return create_session_for_challenge(cid, ip=ip, user_agent=user_agent)
+        return create_session_for_challenge(
+            cid, ip=ip, user_agent=user_agent, device_credential=device_credential,
+        )
     _audit("email_identity_verified", user_id=verified_uid, ip=ip)
     state = login_state(cid)
     state["user"] = public
@@ -3415,6 +3441,7 @@ def login_via_google_identity(
     user_agent: str = "",
     api_call: Optional[Callable[..., Any]] = None,
     owner_chat_id: str = "",
+    device_credential: str = "",
 ) -> Dict[str, Any]:
     sub = str(google_sub or "").strip()
     if not sub:
@@ -3506,6 +3533,7 @@ def login_via_google_identity(
         return create_session_for_user(
             active_uid, ip=ip, user_agent=user_agent,
             source="google_login", require_google=False,
+            device_credential=device_credential,
         )
     _audit("google_login_pending", user_id=int(user.get("user_id") or 0), ip=ip)
     return {

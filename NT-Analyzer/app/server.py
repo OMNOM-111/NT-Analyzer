@@ -1682,6 +1682,35 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._extra_headers.append(("Set-Cookie", value))
 
+    def _device_cookie_name(self) -> str:
+        return runtime_env.session_cookie_name() + "_device"
+
+    def _device_credential(self) -> str:
+        """Stable per-browser credential, minted on first contact.
+
+        Only its digest is ever stored, and it is scoped per environment like
+        the session cookie so one browser is a distinct device on Development,
+        Canary and Production.  SameSite=Lax (not Strict) so the credential
+        survives the return trip from Telegram and Google.
+        """
+        name = self._device_cookie_name()
+        existing = str(self._cookie_value(name) or "").strip()
+        if existing and 16 <= len(existing) <= 128 and re.fullmatch(r"[A-Za-z0-9_-]+", existing):
+            return existing
+        minted = getattr(self, "_minted_device_credential", "")
+        if minted:
+            return minted
+        minted = account_auth.new_device_credential()
+        self._minted_device_credential = minted
+        secure = self._is_remote_api_request() or str(
+            self.headers.get("X-Forwarded-Proto") or ""
+        ).lower() == "https"
+        self._extra_headers.append(("Set-Cookie", (
+            f"{name}={minted}; Path=/; Max-Age={400 * 24 * 3600}; "
+            "HttpOnly; SameSite=Lax" + ("; Secure" if secure else "")
+        )))
+        return minted
+
     def _set_dev_preview_mode_cookie(self, mode: str) -> None:
         secure = self._is_remote_api_request() or str(
             self.headers.get("X-Forwarded-Proto") or ""
@@ -2724,6 +2753,7 @@ class Handler(BaseHTTPRequestHandler):
             if identity.get("purpose") == "login":
                 tunnel_ip, forwarded_ip = self._request_ips()
                 out = account_auth.login_via_google_identity(
+                    device_credential=self._device_credential(),
                     google_sub=identity["google_sub"],
                     google_email=identity.get("google_email") or "",
                     google_name=identity.get("google_name") or "",
@@ -3068,6 +3098,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = account_auth.create_session_for_challenge(
                     str(body.get("challenge_id") or ""), ip=ip,
                     user_agent=str(self.headers.get("User-Agent") or ""),
+                    device_credential=self._device_credential(),
                 )
                 if out.get("status") == "authenticated":
                     self._set_session_cookie(str(out.pop("session_token")))
@@ -3092,6 +3123,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/auth/email/verify":
                 out = account_auth.verify_email_auth(
                     body.get("challenge_id"), code=body.get("code"),
+                    device_credential=self._device_credential(),
                     magic_token=body.get("magic_token"),
                     profile=body.get("profile") or body,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
@@ -3106,6 +3138,7 @@ class Handler(BaseHTTPRequestHandler):
                     email=str(body.get("email") or ""),
                 )
                 out = account_auth.login_via_google_identity(
+                    device_credential=self._device_credential(),
                     google_sub=identity["google_sub"],
                     google_email=identity["google_email"],
                     google_name=str(body.get("google_name") or identity.get("google_name") or ""),
@@ -7696,6 +7729,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     out = account_auth.verify_email_auth(
                         body.get("challenge_id"), code=body.get("code"),
+                        device_credential=self._device_credential(),
                         magic_token=body.get("magic_token"),
                         ip=forwarded_ip or tunnel_ip,
                         user_agent=str(self.headers.get("User-Agent") or ""),

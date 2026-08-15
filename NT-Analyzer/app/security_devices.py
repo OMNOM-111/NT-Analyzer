@@ -118,9 +118,9 @@ def _normalize_uuid(value: Any) -> str:
 
 
 def _fingerprint(user_uuid: str, raw_fingerprint: str) -> str:
-    """Correlate a session to a device without storing a full fingerprint.
+    """Correlate a session to a device without storing the credential itself.
 
-    The raw value is the server-side ``account_auth._device_id`` hash. We fold
+    The raw value is the digest of the browser-held device credential. We fold
     the account UUID in so the same browser under two accounts maps to two
     distinct devices, and we keep only a short digest as masked metadata.
     """
@@ -327,6 +327,7 @@ def observe_session(
     user_agent: str = "",
     source: str = "",
     connector_installation_id: str = "",
+    device_credential: str = "",
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """Register/touch the trusted device for a freshly created session.
 
@@ -338,7 +339,12 @@ def observe_session(
     user_uuid = _normalize_uuid(account_auth._user_uuid(user))
     if not user_uuid:
         return []
-    raw_fp = account_auth._device_id(user_agent)
+    credential = str(device_credential or "")
+    if not credential and str(connector_installation_id or "").strip():
+        # The Connector has no cookie jar; its installation id is already a
+        # stable per-device secret issued during enrollment.
+        credential = "connector:" + str(connector_installation_id).strip()
+    raw_fp = account_auth._device_id(user_agent, device_credential=credential)
     fingerprint = _fingerprint(user_uuid, raw_fp)
     now_iso = account_auth._now_iso()
     profile = _classify(user_agent, source, connector_installation_id)

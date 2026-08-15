@@ -615,9 +615,11 @@ def test_existing_account_email_is_not_overwritten_by_second_device(auth_store, 
 
     user = account_auth._user(account_auth._read_doc(), 42)
     assert user["email"] == "pc1@example.com"
-    device_emails = {row.get("label"): row.get("email") for row in user.get("devices", [])}
-    assert device_emails["PC1"] == "pc1@example.com"
-    assert device_emails["PC2"] == "pc2@example.com"
+    # Devices are no longer a second list on the user document; the account
+    # keeps only the last-login metadata, and the e-mail of record is the one
+    # the account registered with.
+    assert user.get("devices") in (None, [])
+    assert user["last_login_email"] == "pc2@example.com"
 
 
 def test_foreign_dpapi_account_store_is_quarantined(auth_store, monkeypatch) -> None:

@@ -69,10 +69,11 @@ def store(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _login(uid: int, *, user_agent: str = "Mozilla/5.0 (Windows NT 10.0) Chrome/120") -> str:
+def _login(uid: int, *, user_agent: str = "Mozilla/5.0 (Windows NT 10.0) Chrome/120",
+           device_credential: str = "browser-credential-a") -> str:
     out = account_auth.create_session_for_user(
         uid, ip="203.0.113.5", user_agent=user_agent, require_google=False,
-        skip_dual_auth_gate=True,
+        skip_dual_auth_gate=True, device_credential=device_credential,
     )
     return out["session_token"]
 
@@ -105,16 +106,42 @@ def test_new_session_registers_pending_device(store):
     assert session["trusted_device_id"] == device["device_id"]
 
 
-def test_same_fingerprint_reuses_device_distinct_users_separate(store):
+def test_browser_credential_identifies_the_device_not_the_user_agent(store):
+    # One browser profile is one device: repeated logins, and a User-Agent that
+    # changes under it (a browser update), must not split it in two.
     _login(42)
-    _login(42)  # same UA -> same device reused
-    _login(7)   # different account -> different device
+    _login(42)
+    _login(42, user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/121")
+    # A different account on the same browser is still a separate device.
+    _login(7)
     doc = account_auth._read_doc()
     alice = [d for d in doc["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
     bob = [d for d in doc["trusted_devices"] if d["user_uuid"] == BOB_UUID]
     assert len(alice) == 1
     assert len(bob) == 1
     assert alice[0]["device_id"] != bob[0]["device_id"]
+
+
+def test_a_second_browser_is_a_second_device_even_with_one_user_agent(store):
+    # The old fingerprint mixed in the server hostname and account name, so two
+    # different browsers presenting the same User-Agent collapsed onto one
+    # record. They must stay separate.
+    _login(42, device_credential="browser-credential-a")
+    _login(42, device_credential="browser-credential-b")
+    doc = account_auth._read_doc()
+    alice = [d for d in doc["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
+    assert len(alice) == 2
+    assert alice[0]["fingerprint"] != alice[1]["fingerprint"]
+
+
+def test_device_identity_never_depends_on_server_environment(store, monkeypatch):
+    _login(42)
+    monkeypatch.setenv("USERNAME", "another-service-account")
+    monkeypatch.setenv("NTA_DEVICE_LABEL", "SOME-OTHER-HOST")
+    _login(42)
+    doc = account_auth._read_doc()
+    alice = [d for d in doc["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
+    assert len(alice) == 1
 
 
 def test_pending_to_trusted_via_approve(store):
@@ -309,8 +336,10 @@ def test_challenge_wrong_user(store):
 
 def test_challenge_wrong_device(store):
     # Alice logs in from two different clients -> two devices.
-    _login(42, user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/120")
-    _login(42, user_agent="Mozilla/5.0 (X11; Linux) Firefox/119")
+    _login(42, user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/120",
+           device_credential="browser-credential-a")
+    _login(42, user_agent="Mozilla/5.0 (X11; Linux) Firefox/119",
+           device_credential="browser-credential-b")
     doc = account_auth._read_doc()
     devices = [d for d in doc["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
     assert len(devices) == 2
@@ -419,8 +448,10 @@ def test_list_devices_scoped_to_owner(store):
 # Sessions.
 # --------------------------------------------------------------------------- #
 def test_revoke_device_only_affects_that_device(store):
-    token_a = _login(42, user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/120")
-    token_b = _login(42, user_agent="Mozilla/5.0 (X11; Linux) Firefox/119")
+    token_a = _login(42, user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/120",
+                     device_credential="browser-credential-a")
+    token_b = _login(42, user_agent="Mozilla/5.0 (X11; Linux) Firefox/119",
+                     device_credential="browser-credential-b")
     token_bob = _login(7)
     doc = account_auth._read_doc()
     devices = [d for d in doc["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
