@@ -132,3 +132,47 @@ def test_admin_panel_has_no_fake_placeholder_shell():
     assert "плановой фазе" not in UI_JS
     assert "renderAdminDocsGlobalInto" in UI_JS
     assert "renderAdminDocsWorkspaceInto" in UI_JS
+
+
+# --------------------------------------------------------------------------- #
+# Telegram login is one click: the deep link opens itself and the page polls
+# for the result. The manual /login command stays, but only as a fallback.
+# --------------------------------------------------------------------------- #
+def test_telegram_login_opens_the_deep_link_itself():
+    assert "openedDeepLinks" in UI_JS, "the deep link must be opened by the page"
+    assert "window.open(botUrl, '_blank', 'noopener')" in UI_JS
+    # Opened at most once per challenge: the waiting screen re-renders on every
+    # poll, and re-opening a tab each time would be a popup storm.
+    assert "openedDeepLinks.has(challengeId)" in UI_JS
+    assert "openedDeepLinks.add(challengeId)" in UI_JS
+
+
+def test_telegram_login_polls_for_the_result():
+    assert "setInterval(() => check(challengeId), 2000)" in UI_JS
+    assert "API.http.authLoginStatus(challengeId)" in UI_JS
+
+
+def test_manual_login_command_is_a_fallback_not_the_instruction():
+    # The /login command is behind a collapsed "Telegram не открылся?" details
+    # block instead of being presented as the way in.
+    assert 'class="auth-manual-fallback"' in UI_JS
+    assert "<summary>Telegram не открылся?</summary>" in UI_JS
+    assert "auth-copy-code" in UI_JS, "the fallback keeps its copy button"
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert ".auth-manual-fallback" in theme
+
+
+def test_blocked_popup_still_leaves_a_usable_button():
+    assert 'id="auth-open-telegram"' in UI_JS
+    assert "Браузер заблокировал автоматическое открытие" in UI_JS
+
+
+# --------------------------------------------------------------------------- #
+# A nameless profile still has a role: the LOCAL owner (authenticated without a
+# Telegram login, so with an empty profile) must not read as "Пользователь".
+# --------------------------------------------------------------------------- #
+def test_owner_without_a_profile_is_labelled_as_owner():
+    label = re.search(r"function userLabel\(user\) \{.*?\n  \}", UI_JS, re.S)
+    assert label, "userLabel must stay a named function"
+    body = label.group(0)
+    assert "user.is_owner ? 'Владелец' : 'Пользователь'" in body

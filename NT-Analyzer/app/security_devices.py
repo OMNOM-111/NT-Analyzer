@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import time
@@ -73,6 +74,8 @@ class SecurityDeviceError(RuntimeError):
         super().__init__(message)
         self.status = int(status)
         self.code = str(code or "")
+        # Operator-facing cause, audited but never returned to the caller.
+        self.detail = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -489,6 +492,140 @@ def _dev_code_echo() -> bool:
     return bool(runtime_env.is_development() and runtime_env.test_auth_enabled())
 
 
+# --------------------------------------------------------------------------- #
+# Challenge delivery.
+#
+# The code is generated here, so it must also be *sent* from here: a challenge
+# whose code was never delivered is unusable, and reporting it as created would
+# be a false success. Delivery targets are resolved from server-side identity
+# state only — a client never names the address a code is sent to.
+# --------------------------------------------------------------------------- #
+_TELEGRAM_TOKEN_ENV = "NTA_TELEGRAM_BOT_TOKEN"
+
+_DELIVERY_PURPOSE_TEXT = {
+    PURPOSE_DEVICE_CONFIRM: "подтверждения нового устройства",
+    PURPOSE_STEP_UP: "подтверждения действия",
+    PURPOSE_REVOKE: "отзыва устройства",
+}
+
+
+def _delivery_target(doc: Dict[str, Any], user: Dict[str, Any], provider: str) -> str:
+    """Address for ``provider``, taken from verified identity state only."""
+    if provider == "telegram":
+        subject = account_auth._telegram_subject_for_user(doc, user)
+        return str(subject) if subject > 0 else ""
+    if provider == "email":
+        for row in account_auth._identities_for_user(doc, user):
+            if str(row.get("provider") or "") == "email" and row.get("verified_at_utc"):
+                return str(row.get("provider_subject") or "").strip()
+        return ""
+    if provider == "google":
+        return str(user.get("google_email") or "").strip()
+    return ""
+
+
+def _telegram_configured() -> bool:
+    return bool(str(os.environ.get(_TELEGRAM_TOKEN_ENV) or "").strip())
+
+
+def _delivery_unavailable(reason: str) -> "SecurityDeviceError":
+    # ``reason`` names the missing configuration for the audit log only; the
+    # caller-visible message and code stay generic.
+    exc = SecurityDeviceError(
+        "Доставка кода подтверждения недоступна. Обратитесь к владельцу.",
+        503, code="challenge_delivery_unavailable",
+    )
+    exc.detail = str(reason or "")
+    return exc
+
+
+def _delivery_failed() -> "SecurityDeviceError":
+    return SecurityDeviceError(
+        "Не удалось отправить код подтверждения. Повторите попытку позже.",
+        503, code="challenge_delivery_failed",
+    )
+
+
+def _challenge_code_text(code: str, purpose: str) -> str:
+    what = _DELIVERY_PURPOSE_TEXT.get(purpose, "подтверждения")
+    minutes = max(1, CHALLENGE_TTL_SEC // 60)
+    return (
+        f"{runtime_env.telegram_environment_marker()}Код для {what}: {code}\n\n"
+        f"Код действителен {minutes} минут и используется один раз.\n"
+        "Если вы этого не запрашивали — не вводите код и отзовите устройство "
+        "в разделе «Безопасность»."
+    )
+
+
+def _deliver_telegram_code(chat_id: str, code: str, *, purpose: str) -> Dict[str, Any]:
+    from . import telegram_service
+
+    try:
+        target = int(chat_id)
+    except (TypeError, ValueError):
+        raise _delivery_unavailable("telegram_subject_invalid") from None
+    # Provider errors can echo the bot token, so nothing from them reaches the
+    # caller; the audit log records the outcome instead.
+    try:
+        result = telegram_service._api_call(  # noqa: SLF001
+            "sendMessage",
+            {"chat_id": target, "text": _challenge_code_text(code, purpose)},
+        )
+    except Exception:
+        raise _delivery_failed() from None
+    message_id = ""
+    if isinstance(result, dict):
+        message_id = str(result.get("message_id") or "")
+    return {"provider": "telegram", "message_id": message_id}
+
+
+def _deliver_challenge_code(
+    *, provider: str, target: str, code: str, purpose: str,
+) -> Dict[str, Any]:
+    """Send ``code`` over ``provider``. Raises rather than faking success."""
+    if not target:
+        raise SecurityDeviceError(
+            "Этот канал подтверждения недоступен для аккаунта.",
+            409, code="provider_unavailable",
+        )
+    if provider == "telegram":
+        if not _telegram_configured():
+            raise _delivery_unavailable("telegram_not_configured")
+        return _deliver_telegram_code(target, code, purpose=purpose)
+    if provider in {"email", "google"}:
+        if not account_auth._email_provider_live():
+            raise _delivery_unavailable("email_provider_not_configured")
+        try:
+            receipt = account_auth._deliver_email_code(
+                target, code, purpose=purpose, ttl_sec=CHALLENGE_TTL_SEC,
+            )
+        except account_auth.AccountAuthError:
+            raise _delivery_failed() from None
+        return {
+            "provider": str(receipt.get("provider") or "email"),
+            "message_id": str(receipt.get("message_id") or ""),
+        }
+    raise SecurityDeviceError(
+        "Этот канал подтверждения недоступен для аккаунта.",
+        409, code="provider_unavailable",
+    )
+
+
+def _fail_challenge(challenge_id: str, *, reason: str) -> None:
+    """Make an undelivered challenge permanently unusable."""
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        for row in _challenges(doc):
+            if not isinstance(row, dict):
+                continue
+            if hmac.compare_digest(str(row.get("challenge_id") or ""), str(challenge_id)):
+                row["status"] = "failed"
+                row["failure_reason"] = str(reason or "")[:40]
+                row["retain_until"] = _now() + _CHALLENGE_RETENTION_SEC
+                break
+        account_auth._write_doc(doc)
+
+
 def create_challenge(
     *,
     user_id: Any,
@@ -553,6 +690,7 @@ def create_challenge(
                 409, code="provider_unavailable",
             )
 
+        delivery_target = _delivery_target(doc, user, provider_id)
         _challenges(doc).append({
             "challenge_id": challenge_id,
             "user_uuid": user_uuid,
@@ -572,6 +710,37 @@ def create_challenge(
         })
         account_auth._write_doc(doc)
 
+    # Delivery runs outside the store lock (it is network I/O) but before the
+    # challenge is reported as created: if the code cannot be sent, the pending
+    # challenge is burned and the caller gets the failure instead of a code that
+    # will never arrive.
+    echo = _dev_code_echo()
+    receipt: Dict[str, Any] = {}
+    if not echo:
+        try:
+            receipt = _deliver_challenge_code(
+                provider=provider_id, target=delivery_target,
+                code=code, purpose=purpose_id,
+            )
+        except SecurityDeviceError as exc:
+            _fail_challenge(challenge_id, reason=exc.code or "delivery_failed")
+            account_auth._audit(
+                "security.challenge_delivery_failed",
+                user_id=uid,
+                ip=ip,
+                extra={
+                    "challenge_id": challenge_id,
+                    "purpose": purpose_id,
+                    "provider": provider_id,
+                    "environment": environment,
+                    "device_id": target_device_id,
+                    "reason": exc.code,
+                    "detail": getattr(exc, "detail", ""),
+                },
+            )
+            raise
+
+    delivery = "development_test" if echo else str(receipt.get("provider") or provider_id)
     account_auth._audit(
         "security.challenge_created",
         user_id=uid,
@@ -582,6 +751,8 @@ def create_challenge(
             "provider": provider_id,
             "environment": environment,
             "device_id": target_device_id,
+            "delivery": delivery,
+            "message_id": str(receipt.get("message_id") or ""),
         },
     )
     out = {
@@ -591,11 +762,11 @@ def create_challenge(
         "provider": provider_id,
         "environment": environment,
         "expires_in_sec": CHALLENGE_TTL_SEC,
-        "delivery": "development_test" if _dev_code_echo() else provider_id,
+        "delivery": delivery,
     }
     # The one-time code is only ever disclosed behind the explicit Development
-    # test-auth gate. Real Telegram/email delivery happens out-of-band.
-    if _dev_code_echo():
+    # test-auth gate; every other environment receives it out-of-band above.
+    if echo:
         out["test_code"] = code
     return out
 

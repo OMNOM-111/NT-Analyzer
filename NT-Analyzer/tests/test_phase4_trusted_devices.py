@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -16,7 +17,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, security_devices
+from app import account_auth, security_devices, telegram_service
 from app import server as server_mod
 
 OWNER_UUID = "00000000-0000-4000-8000-000000000999"
@@ -520,6 +521,249 @@ def test_challenge_store_and_audit_have_no_plaintext_code(store):
     for entry in created:
         assert "code" not in entry
         assert code not in [str(v) for v in entry.values()]
+
+
+# --------------------------------------------------------------------------- #
+# Challenge delivery.
+#
+# A challenge that generates a code but never sends it is a false success: the
+# user is told to enter a code that cannot arrive. Outside the Development
+# echo gate the code must leave over a real transport, and a transport failure
+# must surface as an error with the challenge burned.
+# --------------------------------------------------------------------------- #
+@pytest.fixture()
+def live_delivery(store, monkeypatch):
+    """Turn the Development code echo off so delivery has to actually happen."""
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "0")
+    assert security_devices._dev_code_echo() is False
+    return store
+
+
+def _capture_telegram(monkeypatch, *, fail: bool = False) -> list:
+    calls = []
+
+    def _api_call(method, payload=None, **kwargs):
+        calls.append((method, payload))
+        if fail:
+            raise RuntimeError("Telegram недоступен: bot123:TOKENSECRET")
+        return {"message_id": 4242}
+
+    monkeypatch.setenv(security_devices._TELEGRAM_TOKEN_ENV, "123456:test-bot-token")
+    monkeypatch.setattr(telegram_service, "_api_call", _api_call)
+    return calls
+
+
+def _pending_challenge_for(uid: int) -> dict:
+    doc = account_auth._read_doc()
+    user = account_auth._user(doc, uid)
+    uuid_val = account_auth._user_uuid(user)
+    rows = [c for c in doc.get("security_challenges") or [] if c.get("user_uuid") == uuid_val]
+    return rows[-1] if rows else {}
+
+
+def test_challenge_code_is_actually_delivered_over_telegram(live_delivery, monkeypatch):
+    calls = _capture_telegram(monkeypatch)
+    _login(42)
+    device = _device_for(42)
+    started = security_devices.create_challenge(
+        user_id=42, purpose="device_confirm", device_id=device["device_id"],
+    )
+    assert started["provider"] == "telegram"
+    assert started["delivery"] == "telegram"
+    assert len(calls) == 1
+    method, payload = calls[0]
+    assert method == "sendMessage"
+    # The recipient comes from the server-side identity, never from the client.
+    assert payload["chat_id"] == 42
+    code = re.search(r"(\d{6})", payload["text"]).group(1)
+    # The delivered code is never echoed back to the caller.
+    assert "test_code" not in started
+    assert code not in json.dumps(started)
+    # And it is the code that confirms the device.
+    out = security_devices.confirm_challenge(
+        user_id=42, challenge_id=started["challenge_id"], code=code,
+    )
+    assert out["device"]["status"] == "trusted"
+
+
+def test_challenge_delivery_failure_is_reported_and_burns_the_challenge(
+    live_delivery, monkeypatch,
+):
+    calls = _capture_telegram(monkeypatch, fail=True)
+    _login(42)
+    device = _device_for(42)
+    with pytest.raises(security_devices.SecurityDeviceError) as exc:
+        security_devices.create_challenge(
+            user_id=42, purpose="device_confirm", device_id=device["device_id"],
+        )
+    assert exc.value.status == 503
+    assert exc.value.code == "challenge_delivery_failed"
+    # Provider errors can echo the bot token; nothing from them reaches the caller.
+    assert "TOKENSECRET" not in str(exc.value)
+    assert calls, "delivery must have been attempted"
+    # The undelivered challenge is burned, not left waiting for a code that
+    # will never arrive, and the device stays pending.
+    challenge = _pending_challenge_for(42)
+    assert challenge["status"] == "failed"
+    with pytest.raises(security_devices.SecurityDeviceError) as replay:
+        security_devices.confirm_challenge(
+            user_id=42, challenge_id=challenge["challenge_id"], code="000000",
+        )
+    assert replay.value.code == "challenge_not_pending"
+    assert _device_for(42)["status"] == "pending"
+
+
+def test_challenge_without_a_configured_transport_fails_closed(live_delivery, monkeypatch):
+    monkeypatch.delenv(security_devices._TELEGRAM_TOKEN_ENV, raising=False)
+    _login(42)
+    device = _device_for(42)
+    with pytest.raises(security_devices.SecurityDeviceError) as exc:
+        security_devices.create_challenge(
+            user_id=42, purpose="device_confirm", device_id=device["device_id"],
+        )
+    assert exc.value.status == 503
+    assert exc.value.code == "challenge_delivery_unavailable"
+    assert _pending_challenge_for(42)["status"] == "failed"
+
+
+def test_email_challenge_is_delivered_to_the_verified_identity(live_delivery, monkeypatch):
+    doc = account_auth._read_doc()
+    account_auth._link_identity_in_doc(
+        doc, account_auth._user(doc, 42), provider="email",
+        subject="alice@example.com", verified_at_utc=account_auth._now_iso(),
+        source="test",
+    )
+    account_auth._write_doc(doc)
+    sent = {}
+
+    def _deliver(recipient, code, *, purpose, ttl_sec=0, send=None):
+        sent.update(
+            {"recipient": recipient, "code": code, "purpose": purpose, "ttl_sec": ttl_sec},
+        )
+        return {"provider": "resend", "message_id": "msg-1"}
+
+    monkeypatch.setattr(account_auth, "_email_provider_live", lambda: True)
+    monkeypatch.setattr(account_auth, "_deliver_email_code", _deliver)
+    _login(42)
+    device = _device_for(42)
+    started = security_devices.create_challenge(
+        user_id=42, purpose="device_confirm", device_id=device["device_id"],
+        provider="email",
+    )
+    assert started["delivery"] == "resend"
+    assert sent["recipient"] == "alice@example.com"
+    assert sent["purpose"] == "device_confirm"
+    assert sent["ttl_sec"] == security_devices.CHALLENGE_TTL_SEC
+    assert sent["code"] not in json.dumps(started)
+    out = security_devices.confirm_challenge(
+        user_id=42, challenge_id=started["challenge_id"], code=sent["code"],
+    )
+    assert out["device"]["status"] == "trusted"
+    assert out["device"]["confirmation_provider"] == "email"
+
+
+def test_email_challenge_without_a_provider_never_claims_success(live_delivery, monkeypatch):
+    doc = account_auth._read_doc()
+    account_auth._link_identity_in_doc(
+        doc, account_auth._user(doc, 42), provider="email",
+        subject="alice@example.com", verified_at_utc=account_auth._now_iso(),
+        source="test",
+    )
+    account_auth._write_doc(doc)
+    _login(42)
+    device = _device_for(42)
+    with pytest.raises(security_devices.SecurityDeviceError) as exc:
+        security_devices.create_challenge(
+            user_id=42, purpose="device_confirm", device_id=device["device_id"],
+            provider="email",
+        )
+    assert exc.value.status == 503
+    assert exc.value.code == "challenge_delivery_unavailable"
+
+
+def test_email_code_message_names_the_device_purpose_and_its_own_ttl():
+    subject, text, _html = account_auth._email_code_message(
+        "123456", "device_confirm", ttl_sec=security_devices.CHALLENGE_TTL_SEC,
+    )
+    assert "123456" in subject
+    assert "устройства" in text
+    assert f"{security_devices.CHALLENGE_TTL_SEC // 60} минут" in text
+
+
+def test_trusted_device_lifecycle_end_to_end_with_real_delivery(live_delivery, monkeypatch):
+    """The whole chain over the delivery path a real user goes through.
+
+    pending -> delivered code -> confirm -> trusted -> logout/login keeps trust
+    on one record -> a cleared browser is a new pending device -> revoke kills
+    the sessions and never resurrects trust.
+    """
+    calls = _capture_telegram(monkeypatch)
+
+    def _code_from_last_call() -> str:
+        return re.search(r"(\d{6})", calls[-1][1]["text"]).group(1)
+
+    # pending on first login.
+    token = _login(42, device_credential="browser-a")
+    device = _device_for(42)
+    assert device["status"] == "pending"
+
+    # delivered code -> confirm -> trusted.
+    started = security_devices.create_challenge(
+        user_id=42, purpose="device_confirm", device_id=device["device_id"],
+    )
+    security_devices.approve_device(
+        user_id=42, device_id=device["device_id"],
+        challenge_id=started["challenge_id"], code=_code_from_last_call(),
+    )
+    assert _device_for(42)["status"] == "trusted"
+
+    # logout / login again on the same browser: still one device, still trusted,
+    # no second confirmation demanded.
+    account_auth.revoke_session(token)
+    assert account_auth.authenticate_session(token) is None
+    token = _login(42, device_credential="browser-a")
+    devices = [d for d in account_auth._read_doc()["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
+    assert len(devices) == 1
+    assert devices[0]["status"] == "trusted"
+    assert account_auth.authenticate_session(token) is not None
+
+    # Clearing browser data drops the credential: that is a new, pending device.
+    other = _login(42, device_credential="browser-cleared")
+    devices = [d for d in account_auth._read_doc()["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
+    assert len(devices) == 2
+    assert _device_for(42, status="pending")["device_id"] != devices[0]["device_id"]
+
+    # Revoking the trusted device kills only its sessions.
+    trusted_id = devices[0]["device_id"]
+    security_devices.revoke_device(user_id=42, device_id=trusted_id)
+    assert account_auth.authenticate_session(token) is None
+    assert account_auth.authenticate_session(other) is not None
+
+    # Logging in again on the revoked browser starts over at pending: the login
+    # works, but trust is not resurrected and the revoked record is kept.
+    after = _login(42, device_credential="browser-a")
+    rows = [d for d in account_auth._read_doc()["trusted_devices"] if d["user_uuid"] == ALICE_UUID]
+    assert all(d["status"] != "trusted" for d in rows)
+    assert any(d["device_id"] == trusted_id and d["status"] == "revoked" for d in rows)
+    assert account_auth.authenticate_session(after) is not None
+    session = next(
+        s for s in account_auth._read_doc()["sessions"]
+        if s["token_hash"] == hashlib.sha256(after.encode()).hexdigest()
+    )
+    assert session["trusted_device_id"] != trusted_id
+    assert session["device_trust_status"] == "pending"
+
+
+def test_development_test_gate_echoes_instead_of_delivering(store, monkeypatch):
+    calls = _capture_telegram(monkeypatch)
+    _login(42)
+    device = _device_for(42)
+    started = security_devices.create_challenge(
+        user_id=42, purpose="device_confirm", device_id=device["device_id"],
+    )
+    assert started["delivery"] == "development_test"
+    assert started["test_code"]
+    assert calls == [], "the echo gate discloses the code instead of sending it"
 
 
 # --------------------------------------------------------------------------- #
