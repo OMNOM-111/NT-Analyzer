@@ -566,7 +566,47 @@ class DocumentRepository:
         self._sync_trusted_devices(conn, doc, user_uuids)
         self._delete_missing(conn, "sf_auth_challenges", "challenge_id", challenge_ids)
         self._delete_missing(conn, "sf_auth_sessions", "session_id", session_ids)
+        self._purge_departed_accounts(conn, user_ids)
         self._delete_missing(conn, "sf_users", "user_id", user_ids)
+
+    # Operational records owned by an account, living only in their relational
+    # table with no representation in the auth document. Their foreign keys are
+    # ON DELETE RESTRICT, so a deleted account cannot be pruned from sf_users
+    # while any of them survive -- and NOT VALID does not help here, it only
+    # skips validating rows that already existed, never the enforcement.
+    _ACCOUNT_OWNED_TABLES = (
+        ("sf_commands", "user_id"),
+        ("sf_jobs", "user_id"),
+        ("sf_artifacts", "user_id"),
+        ("sf_ai_usage_events", "user_id"),
+        ("sf_ai_reservations", "user_id"),
+        ("sf_market_data_subscriptions", "requested_by_user_id"),
+    )
+
+    def _purge_departed_accounts(self, conn: Any, user_ids: Sequence[int]) -> None:
+        """Remove operational rows owned by accounts leaving the document.
+
+        Deleting an account has to take its own operational records with it.
+        Without this the account cannot be deleted at all: the write fails with
+        a foreign-key violation and the whole document write is rolled back, so
+        a user "deleted" in the UI silently stays.
+        """
+        for table, column in self._ACCOUNT_OWNED_TABLES:
+            # A table from a later migration may not exist yet. Ask first: a
+            # failed statement aborts the surrounding transaction in Postgres,
+            # so catching the error here would poison the whole document write.
+            present = conn.execute(
+                "SELECT to_regclass(%s) IS NOT NULL", (table,),
+            ).fetchone()
+            if not present or not list(present)[0]:
+                continue
+            if user_ids:
+                conn.execute(
+                    f"DELETE FROM {table} WHERE NOT ({column} = ANY(%s))",
+                    (list(user_ids),),
+                )
+            else:
+                conn.execute(f"DELETE FROM {table}")
 
     def _sync_trusted_devices(
         self, conn: Any, doc: Dict[str, Any], user_uuids: Dict[int, str],
