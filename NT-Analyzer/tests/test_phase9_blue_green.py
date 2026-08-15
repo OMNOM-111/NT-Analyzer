@@ -532,5 +532,8 @@ def test_migration_set_still_starts_at_one_and_is_contiguous():
     from app.production_storage.core import MigrationRunner
 
     versions = [row["version"] for row in MigrationRunner.migrations()]
+    # Contiguous from 1 with no gaps or duplicates. The count itself is not
+    # pinned: adding a migration is not a reason to edit this test, and a pin
+    # here only ever fails on the migration that was correctly added.
     assert versions == list(range(1, len(versions) + 1))
-    assert versions[-1] == 11
+    assert len(versions) >= 11
