@@ -139,6 +139,17 @@ def gateway_url() -> str:
     # isolated and serve empty charts.
     if environment == runtime_env.CANARY:
         return normalize_gateway_origin(os.environ.get("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN") or "")
+    # Development and staging had no rule at all, so a developer copy resolved
+    # to no hub, went ``isolated`` and painted OFFLINE with zero live backups --
+    # while the hub it should have been consuming was serving Production fine.
+    # They reach the hub over its public origin; the token still gates access,
+    # and consuming is what keeps a developer copy from opening a second
+    # ProjectX session on the owner's credential.
+    if environment in {runtime_env.DEVELOPMENT, runtime_env.STAGING}:
+        for name in ("STRATFORGE_PRODUCTION_INTERNAL_ORIGIN", "STRATFORGE_PRODUCTION_ORIGIN"):
+            origin = normalize_gateway_origin(os.environ.get(name) or "")
+            if origin:
+                return origin
     return ""
 
 
