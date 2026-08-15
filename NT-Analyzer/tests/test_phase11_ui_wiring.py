@@ -195,3 +195,43 @@ def test_avatar_endpoint_is_cacheable_and_private():
     assert '"Cache-Control": "private, max-age=86400, immutable"' in SERVER_SRC
     # The generic byte responder must not clobber that with no-store.
     assert 'if not (headers or {}).get("Cache-Control"):' in SERVER_SRC
+
+
+# --------------------------------------------------------------------------- #
+# Asset URLs are stamped by the build, not by hand.
+#
+# The ?v= stamps were hand-maintained per page and had drifted to nine
+# different values (oldest 20260629), so a release shipped new JS under a URL
+# that had not changed in months. The CDN caches those URLs for four hours,
+# which is how a green deploy could still serve the previous bundle.
+# --------------------------------------------------------------------------- #
+def test_html_asset_stamps_are_rewritten_to_the_build():
+    stamp = server_mod._asset_build_stamp()
+    assert stamp, "a build with no identity cannot stamp its assets"
+    html = b'<script src="assets/ui.js?v=20260813-release-workflow2"></script>'
+    out = server_mod.Handler._stamp_asset_refs(server_mod.Handler, html)
+    assert b"20260813-release-workflow2" not in out
+    assert f'assets/ui.js?v={stamp}"'.encode() in out
+
+
+def test_asset_stamping_leaves_cross_origin_and_unversioned_refs_alone():
+    rewrite = lambda raw: server_mod.Handler._stamp_asset_refs(server_mod.Handler, raw)
+    # No ?v= -> untouched (nothing to bust).
+    assert rewrite(b'<script src="assets/x.js"></script>') == b'<script src="assets/x.js"></script>'
+    # Cross-origin -> untouched, we do not rewrite other people's URLs.
+    for raw in (b'<script src="https://cdn.example/x.js?v=1"></script>',
+                b'<script src="//cdn.example/x.js?v=1"></script>'):
+        assert rewrite(raw) == raw
+    # Non-asset extensions -> untouched.
+    assert rewrite(b'<a href="report.pdf?v=1">') == b'<a href="report.pdf?v=1">'
+
+
+def test_every_versioned_asset_ref_is_rewritable():
+    # Guards against a page using a form the rewriter does not match, which
+    # would silently keep serving a stale stamp for that page only.
+    stamp = server_mod._asset_build_stamp()
+    for page in sorted(AURORA.glob("*.html")):
+        raw = page.read_bytes()
+        out = server_mod.Handler._stamp_asset_refs(server_mod.Handler, raw)
+        stale = re.findall(rb'(?:src|href)="(?!https?://|//)[^"?]+\.(?:js|css)\?v=([^"]*)"', out)
+        assert all(v.decode() == stamp for v in stale), f"{page.name} kept a hand-written stamp: {stale}"
