@@ -1162,27 +1162,10 @@ def avatar_file(user_id: Any) -> Optional[Path]:
     return path if path.is_file() else None
 
 
-def _avatar_data_url(user: Dict[str, Any]) -> str:
-    ext = str(user.get("avatar_ext") or "")
-    try:
-        uid = int(user.get("user_id") or 0)
-    except (TypeError, ValueError):
-        uid = 0
-    if not ext or uid <= 0:
-        return ""
-    path = _avatars_dir() / f"{uid}.{ext}"
-    try:
-        blob = path.read_bytes()
-    except OSError:
-        return ""
-    if not blob or len(blob) > 500_000:
-        return ""
-    mime = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-    return f"data:{mime};base64," + base64.b64encode(blob).decode("ascii")
 
 
 def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
-                 include_avatar: bool = False, include_legacy: bool = False) -> Dict[str, Any]:
+                 include_legacy: bool = False) -> Dict[str, Any]:
     out = {key: user.get(key) for key in (
         "username", "first_name", "last_name", "role", "status",
         "is_owner", "created_at_utc", "approved_at_utc", "revoked_at_utc",
@@ -1249,8 +1232,6 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         out["device_count"] = 0
         # Never expose raw google_sub to non-owner clients in lists; ok in own profile.
         out["google_sub_suffix"] = str(user.get("google_sub") or "")[-8:]
-    if include_avatar:
-        out["avatar_data_url"] = _avatar_data_url(user)
     return out
 
 
@@ -1288,7 +1269,7 @@ def refresh_avatar(user_id: Any, *, fetcher: Callable[[int], Optional[Dict[str, 
         with _LOCK:
             doc = _read_doc()
             snap = _user(doc, uid)
-        return {"ok": True, "unchanged": True, "user": _public_user(snap or {}, include_contact=True, include_avatar=True)}
+        return {"ok": True, "unchanged": True, "user": _public_user(snap or {}, include_contact=True)}
     for stale in directory.glob(f"{uid}.*"):
         try:
             stale.unlink()
@@ -1309,7 +1290,7 @@ def refresh_avatar(user_id: Any, *, fetcher: Callable[[int], Optional[Dict[str, 
         _write_doc(doc)
         snapshot = dict(user)
     _audit("avatar_refreshed", user_id=uid)
-    return {"ok": True, "user": _public_user(snapshot, include_contact=True, include_avatar=True)}
+    return {"ok": True, "user": _public_user(snapshot, include_contact=True)}
 
 
 def set_user_feature(owner_id: Any, user_id: Any, feature: str, enabled: bool) -> Dict[str, Any]:
@@ -1484,7 +1465,7 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
         _sync_user_identity_summary(doc, existing)
         if changed:
             _write_doc(doc)
-        return _public_user(existing, include_contact=True, include_avatar=True)
+        return _public_user(existing, include_contact=True)
 
 
 def _primary_owner_row() -> Optional[Dict[str, Any]]:
@@ -1523,7 +1504,7 @@ def primary_owner() -> Optional[Dict[str, Any]]:
     row = _primary_owner_row()
     if row is None:
         return None
-    return _public_user(row, include_contact=True, include_avatar=True)
+    return _public_user(row, include_contact=True)
 
 
 def ensure_service_account_user(
@@ -1631,7 +1612,7 @@ def list_users(owner_id: Any) -> Dict[str, Any]:
         users = sorted(doc["users"], key=lambda row: (not bool(row.get("is_owner")), str(row.get("created_at_utc") or "")))
         return {
             "users": [
-                _public_user(row, include_contact=True, include_avatar=True, include_legacy=True)
+                _public_user(row, include_contact=True, include_legacy=True)
                 for row in users
             ],
             "feature_catalog": feature_catalog(),
@@ -1879,7 +1860,7 @@ def user_detail(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
-        pub = _public_user(user, include_contact=True, include_avatar=True, include_legacy=True)
+        pub = _public_user(user, include_contact=True, include_legacy=True)
         history = user.get("login_history") if isinstance(user.get("login_history"), list) else []
         pub["login_history"] = list(reversed(history))[:20]
         pub["blocked_at_utc"] = str(user.get("blocked_at_utc") or "")
@@ -2241,7 +2222,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
         "authenticated": status_out == "active",
         "status": status_out,
         "challenge_id": challenge_id,
-        "user": _public_user(snapshot, include_contact=True, include_avatar=True),
+        "user": _public_user(snapshot, include_contact=True),
     }
 
 
@@ -2602,7 +2583,7 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
     _audit("login_succeeded", user_id=uid, ip=ip)
     for _event, _extra in device_events:
         _audit(_event, user_id=uid, ip=ip, extra=_extra)
-    return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True, include_avatar=True)}
+    return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True)}
 
 
 def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
@@ -2630,7 +2611,7 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
             "device_id": str(session.get("device_id") or ""),
             "csrf_hash": str(session.get("csrf_hash") or ""),
             "csrf_token": str(session.get("csrf_token") or ""),
-            "user": _public_user(user, include_contact=True, include_avatar=True),
+            "user": _public_user(user, include_contact=True),
             "needs_google": user_needs_google(user),
             "dual_auth_complete": True,
             "nt_elevated_until": float(session.get("nt_elevated_until") or 0),
@@ -2962,7 +2943,7 @@ def link_google_identity(
         if email and not str(user.get("email") or "").strip():
             user["email"] = email
         _write_doc(doc)
-        public = _public_user(user, include_contact=True, include_avatar=True)
+        public = _public_user(user, include_contact=True)
     _audit("google_linked", user_id=uid, extra={"source": source, "google_email": email})
     return {"ok": True, "user": public}
 
@@ -3137,7 +3118,7 @@ def create_session_for_user(
         )
         _cleanup(doc)
         _write_doc(doc)
-        public = _public_user(user, include_contact=True, include_avatar=True)
+        public = _public_user(user, include_contact=True)
     _audit(
         "impersonation_started" if impersonator_owner_id else "login_succeeded",
         user_id=uid,
@@ -3493,7 +3474,7 @@ def verify_email_auth(
             _sync_user_identity_summary(doc, user)
             challenge["status"] = "consumed"
             _write_doc(doc)
-            public = _public_user(user, include_contact=True, include_avatar=True)
+            public = _public_user(user, include_contact=True)
             _audit("email_linked", user_id=actor_id, ip=ip)
             return {"ok": True, "status": "linked", "user": public}
 
@@ -3533,7 +3514,7 @@ def verify_email_auth(
         else:
             challenge["status"] = "pending_owner"
             challenge["expires_at"] = time.time() + OWNER_APPROVAL_TTL_SEC
-        public = _public_user(user, include_contact=True, include_avatar=True)
+        public = _public_user(user, include_contact=True)
         _write_doc(doc)
     if notify and api_call is not None:
         try:
@@ -3660,7 +3641,7 @@ def login_via_google_identity(
         "ok": True,
         "status": "pending_owner",
         "challenge_id": challenge_id,
-        "user": _public_user(user, include_contact=True, include_avatar=True),
+        "user": _public_user(user, include_contact=True),
     }
 
 
@@ -3771,7 +3752,7 @@ def create_or_update_virtual_user(
         )
         _sync_user_identity_summary(doc, user)
         _write_doc(doc)
-        public = _public_user(user, include_contact=True, include_avatar=True, include_legacy=True)
+        public = _public_user(user, include_contact=True, include_legacy=True)
     _audit("virtual_user_upsert", user_id=uid, extra={"preset": preset, "ux_mode": mode})
     return public
 

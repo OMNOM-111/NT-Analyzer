@@ -1590,7 +1590,9 @@
   }
   function avatarHtml(user, cls) {
     user = user || {};
-    const url = user.avatar_data_url || user.avatar_url || '';
+    // avatar_url carries a ?v= stamp and is cached by the browser; the old
+    // inline base64 copy re-sent ~27KB per user on every payload that named one.
+    const url = user.avatar_url || '';
     const label = userLabel(user);
     const initials = (label.trim().split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('') || '·').toUpperCase();
     const hue = Math.abs(hashCode(String(user.id || user.user_id || label))) % 360;

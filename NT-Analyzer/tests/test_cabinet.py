@@ -120,7 +120,10 @@ def test_refresh_avatar_writes_file_and_is_idempotent(cabinet_store) -> None:
     public = out["user"]
     assert public["has_avatar"] is True
     assert public["avatar_url"].startswith("/api/auth/avatar/999")
-    assert public["avatar_data_url"].startswith("data:image/png;base64,")
+    # The avatar travels as a cacheable versioned URL, never inlined: the old
+    # base64 copy was ~27KB per user on every payload that named one.
+    assert "avatar_data_url" not in public
+    assert "?v=" in public["avatar_url"]
 
     path = account_auth.avatar_file(999)
     assert path is not None and path.read_bytes() == FAKE_PNG

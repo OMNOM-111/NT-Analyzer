@@ -531,7 +531,7 @@ def authorize(raw: str, bot_token: str, *, method: str, path: str, tunnel_ip: st
         context["username"] = str(tg_user.get("username") or user.get("username") or "")
         public_user = (
             account_auth._public_user(
-                user, include_contact=True, include_avatar=True,
+                user, include_contact=True,
             )
             if account is not None else _public_user(user)
         )
