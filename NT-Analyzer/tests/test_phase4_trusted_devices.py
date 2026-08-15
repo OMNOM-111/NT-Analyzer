@@ -1113,3 +1113,49 @@ def test_purge_clears_everything_when_no_accounts_remain():
     DocumentRepository._purge_departed_accounts(DocumentRepository, conn, [])
     deletes = [s for s, _ in conn.statements if s.startswith("DELETE FROM")]
     assert deletes and all("WHERE" not in s for s in deletes)
+
+
+# --------------------------------------------------------------------------- #
+# Every identity UUID foreign key has an explicit ON DELETE rule.
+#
+# 0005 created them all with no delete action, so each defaulted to NO ACTION
+# and blocked account deletion on every table carrying a user_uuid. NOT VALID
+# never helped: it only skips validating rows that already exist.
+# --------------------------------------------------------------------------- #
+def test_migration_0012_gives_every_identity_fk_a_delete_rule():
+    from app.production_storage.core import MigrationRunner
+
+    migrations = {row["version"]: row for row in MigrationRunner.migrations()}
+    assert 12 in migrations
+    sql = migrations[12]["sql"]
+    assert "drop table" not in sql.lower()
+    # History outlives the account, unlinked from it.
+    for table in ("sf_audit_events", "sf_operational_events"):
+        assert table in sql
+    assert "'SET NULL'" in sql
+    # Owned records go with the account.
+    assert "'CASCADE'" in sql
+    # A workspace is handed over deliberately, never dropped with its owner.
+    assert "ON DELETE RESTRICT" in sql
+    # Recreated NOT VALID so an existing database is not forced into a full
+    # table scan on deploy; new deletes are enforced either way.
+    assert "NOT VALID" in sql
+    # Tables from later migrations may be absent on an older database.
+    assert "to_regclass" in sql
+
+
+def test_migration_0012_covers_every_fk_migration_0005_created():
+    from app.production_storage.core import MigrationRunner
+
+    migrations = {row["version"]: row for row in MigrationRunner.migrations()}
+    # The tables 0005 loops over, plus the three it names individually.
+    loop = re.search(r"FOREACH table_name IN ARRAY ARRAY\[(.*?)\]",
+                     migrations[5]["sql"], re.S)
+    assert loop, "0005 no longer declares its table list the same way"
+    created = set(re.findall(r"'(sf_[a-z_]+)'", loop.group(1)))
+    created |= {"sf_workspaces", "sf_migration_runs", "sf_market_data_subscriptions"}
+    fixed = migrations[12]["sql"]
+    # Every table 0005 gave a user_uuid FK must get an explicit rule here;
+    # one left behind keeps blocking account deletion on its own.
+    missing = sorted(t for t in created if f"'{t}'" not in fixed)
+    assert not missing, f"0005 tables left with NO ACTION: {missing}"

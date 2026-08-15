@@ -492,3 +492,95 @@ def test_consumer_subscriptions_dedupe_same_instrument(monkeypatch) -> None:
     health = adapter.health()
     assert health["wire_subscriptions"] == 1
     assert health["logical_subscription_refcount"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# A developer copy consumes the hub instead of going isolated.
+#
+# Development had no rule for deriving a hub origin -- only Canary did -- so a
+# developer copy resolved to no hub, reported effective_role "isolated" and
+# painted OFFLINE with zero live backups, while the hub it should have been
+# consuming was serving Production fine.
+# --------------------------------------------------------------------------- #
+def _gateway_env(monkeypatch, **values):
+    from app import owner_market_data_gateway as gw
+
+    for name in ("NTA_OWNER_MARKET_DATA_GATEWAY_ROLE", "NTA_OWNER_MARKET_DATA_GATEWAY_URL",
+                 "NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", "STRATFORGE_PRODUCTION_ORIGIN",
+                 "STRATFORGE_PRODUCTION_INTERNAL_ORIGIN"):
+        monkeypatch.delenv(name, raising=False)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    return gw
+
+
+def test_development_derives_the_hub_from_the_production_origin(monkeypatch):
+    from app import runtime_env
+
+    gw = _gateway_env(monkeypatch, STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com")
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.DEVELOPMENT)
+    assert gw.gateway_url() == "https://app.stratforges.com"
+
+
+def test_development_prefers_the_internal_origin_when_both_are_set(monkeypatch):
+    from app import runtime_env
+
+    gw = _gateway_env(
+        monkeypatch,
+        STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com",
+        STRATFORGE_PRODUCTION_INTERNAL_ORIGIN="http://127.0.0.1:9101",
+    )
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.DEVELOPMENT)
+    assert gw.gateway_url() == "http://127.0.0.1:9101"
+
+
+def test_development_ignores_an_internal_origin_the_normaliser_rejects(monkeypatch):
+    from app import runtime_env
+
+    # Only loopback HTTP with a port, or the canonical public HTTPS hosts, are
+    # accepted. An arbitrary internal address must fall through to the public
+    # origin rather than leaving the copy isolated.
+    gw = _gateway_env(
+        monkeypatch,
+        STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com",
+        STRATFORGE_PRODUCTION_INTERNAL_ORIGIN="http://10.0.0.5:8765",
+    )
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.DEVELOPMENT)
+    assert gw.gateway_url() == "https://app.stratforges.com"
+
+
+def test_development_consumes_only_with_a_token(monkeypatch):
+    from app import runtime_env
+
+    gw = _gateway_env(monkeypatch, STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com")
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.DEVELOPMENT)
+    # The origin alone must not be enough: the token is the access gate.
+    assert gw.should_consume() is False
+    assert gw.effective_role() == "isolated"
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", "x" * 32)
+    assert gw.should_consume() is True
+    assert gw.effective_role() == "consumer"
+    assert gw.chart_source_mode() == "owner_gateway_consumer"
+
+
+def test_a_developer_copy_never_becomes_the_hub_by_deriving_an_origin(monkeypatch):
+    from app import runtime_env
+
+    gw = _gateway_env(
+        monkeypatch,
+        STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com",
+        NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN="x" * 32,
+    )
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.DEVELOPMENT)
+    # Consuming is exactly what stops a second ProjectX session on the owner
+    # credential; deriving an origin must never flip a copy into a hub.
+    assert gw.is_hub() is False
+    assert gw.should_open_direct_hub() is False
+
+
+def test_production_still_never_auto_consumes_another_origin(monkeypatch):
+    from app import runtime_env
+
+    gw = _gateway_env(monkeypatch, STRATFORGE_PRODUCTION_ORIGIN="https://app.stratforges.com")
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: runtime_env.PRODUCTION)
+    assert gw.gateway_url() == ""
