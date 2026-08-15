@@ -1051,3 +1051,65 @@ def test_shared_workspace_blocks_deletion_before_anything_is_removed(store, monk
     assert account_auth._user(doc, 7) is not None
     assert any(r["user_uuid"] == BOB_UUID for r in doc["auth_identities"])
     assert any(r["user_uuid"] == BOB_UUID for r in doc["trusted_devices"])
+
+
+# --------------------------------------------------------------------------- #
+# Deleting an account also releases its operational records.
+#
+# sf_commands / sf_jobs / sf_artifacts / sf_ai_* / sf_market_data_subscriptions
+# reference sf_users with ON DELETE RESTRICT and have no representation in the
+# auth document. Without an explicit purge the sf_users prune raises a foreign
+# key violation, the whole document write rolls back, and a user "deleted" in
+# the UI silently stays.
+# --------------------------------------------------------------------------- #
+class _RecordingConn:
+    def __init__(self, missing=()):
+        self.statements = []
+        self._missing = set(missing)
+
+    def execute(self, sql, params=None):
+        text = " ".join(str(sql).split())
+        self.statements.append((text, params))
+        if "to_regclass" in text:
+            table = (params or ("",))[0]
+            self._last = table not in self._missing
+            return self
+        return self
+
+    def fetchone(self):
+        return (getattr(self, "_last", True),)
+
+
+def test_account_owned_operational_rows_are_released_before_the_user_prune():
+    from app.production_storage.core import DocumentRepository
+
+    conn = _RecordingConn()
+    DocumentRepository._purge_departed_accounts(DocumentRepository, conn, [42])
+    deletes = [s for s, _ in conn.statements if s.startswith("DELETE FROM")]
+    tables = {s.split()[2] for s in deletes}
+    assert "sf_commands" in tables, "the table that actually blocked production"
+    assert {"sf_jobs", "sf_artifacts", "sf_ai_usage_events",
+            "sf_ai_reservations", "sf_market_data_subscriptions"} <= tables
+    # Surviving accounts keep their rows.
+    assert all("NOT (" in s for s in deletes)
+
+
+def test_purge_skips_tables_a_older_database_does_not_have():
+    from app.production_storage.core import DocumentRepository
+
+    conn = _RecordingConn(missing={"sf_ai_reservations", "sf_market_data_subscriptions"})
+    DocumentRepository._purge_departed_accounts(DocumentRepository, conn, [42])
+    deletes = [s for s, _ in conn.statements if s.startswith("DELETE FROM")]
+    tables = {s.split()[2] for s in deletes}
+    assert "sf_ai_reservations" not in tables
+    assert "sf_market_data_subscriptions" not in tables
+    assert "sf_commands" in tables
+
+
+def test_purge_clears_everything_when_no_accounts_remain():
+    from app.production_storage.core import DocumentRepository
+
+    conn = _RecordingConn()
+    DocumentRepository._purge_departed_accounts(DocumentRepository, conn, [])
+    deletes = [s for s, _ in conn.statements if s.startswith("DELETE FROM")]
+    assert deletes and all("WHERE" not in s for s in deletes)
