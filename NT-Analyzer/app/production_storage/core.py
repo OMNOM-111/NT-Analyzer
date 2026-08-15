@@ -563,9 +563,100 @@ class DocumentRepository:
                     _timestamp(row.get("expires_at")), _jsonb(row),
                 ),
             )
+        self._sync_trusted_devices(conn, doc, user_uuids)
         self._delete_missing(conn, "sf_auth_challenges", "challenge_id", challenge_ids)
         self._delete_missing(conn, "sf_auth_sessions", "session_id", session_ids)
         self._delete_missing(conn, "sf_users", "user_id", user_ids)
+
+    def _sync_trusted_devices(
+        self, conn: Any, doc: Dict[str, Any], user_uuids: Dict[int, str],
+    ) -> None:
+        """Project trusted devices into their relational table.
+
+        The table carries a unique index over (user_uuid, fingerprint) for
+        active rows.  Until devices were mirrored here that constraint could
+        never fire, and duplicates were only ever visible in the UI.  A
+        duplicate now fails the write instead of being persisted.
+        """
+        rows = [row for row in doc.get("trusted_devices", []) if isinstance(row, dict)]
+        device_ids: list[str] = []
+        seen_active: set[tuple[str, str]] = set()
+        for row in rows:
+            device_id = _uuid(row.get("device_id"))
+            user_uuid = _uuid(row.get("user_uuid"))
+            legacy_user_id = _int(row.get("legacy_user_id"))
+            fingerprint = str(row.get("fingerprint") or "").strip()
+            status = _status(
+                row.get("status"), {"pending", "trusted", "revoked", "expired"}, "pending",
+            )
+            if not device_id or not user_uuid or not fingerprint:
+                continue
+            if user_uuids and user_uuids.get(legacy_user_id) not in (None, user_uuid):
+                raise StorageConstraintError(
+                    "Trusted device does not match its canonical user UUID."
+                )
+            if status in {"pending", "trusted"}:
+                key = (user_uuid, fingerprint)
+                if key in seen_active:
+                    raise StorageConstraintError(
+                        "Duplicate active trusted device for one account fingerprint."
+                    )
+                seen_active.add(key)
+            device_ids.append(device_id)
+            device_type = _status(
+                row.get("device_type"),
+                {"phone", "tablet", "desktop", "browser", "connector"},
+                "browser",
+            )
+            provider = _status(
+                row.get("confirmation_provider"), {"", "telegram", "email", "google"}, "",
+            )
+            audit = row.get("audit_metadata") if isinstance(row.get("audit_metadata"), dict) else {}
+            conn.execute(
+                """
+                INSERT INTO sf_trusted_devices(
+                  device_id,user_uuid,legacy_user_id,fingerprint,device_type,display_name,
+                  os_family,os_version,client,app_version,connector_installation_id,
+                  status,confirmation_provider,first_seen_at,last_seen_at,last_auth_at,
+                  confirmed_at,revoked_at,expires_at,audit_metadata
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       COALESCE(%s,clock_timestamp()),%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(device_id) DO UPDATE SET
+                  fingerprint=EXCLUDED.fingerprint,
+                  device_type=EXCLUDED.device_type,
+                  display_name=EXCLUDED.display_name,
+                  os_family=EXCLUDED.os_family,
+                  os_version=EXCLUDED.os_version,
+                  client=EXCLUDED.client,
+                  app_version=EXCLUDED.app_version,
+                  connector_installation_id=EXCLUDED.connector_installation_id,
+                  status=EXCLUDED.status,
+                  confirmation_provider=EXCLUDED.confirmation_provider,
+                  last_seen_at=EXCLUDED.last_seen_at,
+                  last_auth_at=EXCLUDED.last_auth_at,
+                  confirmed_at=EXCLUDED.confirmed_at,
+                  revoked_at=EXCLUDED.revoked_at,
+                  expires_at=EXCLUDED.expires_at,
+                  audit_metadata=EXCLUDED.audit_metadata
+                """,
+                (
+                    device_id, user_uuid, legacy_user_id, fingerprint[:128], device_type,
+                    str(row.get("display_name") or "")[:160],
+                    str(row.get("os_family") or "")[:40], str(row.get("os_version") or "")[:40],
+                    str(row.get("client") or "")[:80], str(row.get("app_version") or "")[:80],
+                    str(row.get("connector_installation_id") or "")[:128],
+                    status, provider,
+                    _timestamp(row.get("first_seen_at_utc")),
+                    _timestamp(row.get("last_seen_at_utc")),
+                    _timestamp(row.get("last_auth_at_utc")),
+                    _timestamp(row.get("confirmed_at_utc")),
+                    _timestamp(row.get("revoked_at_utc")),
+                    _timestamp(row.get("expires_at_utc")),
+                    _jsonb(audit),
+                ),
+            )
+        self._delete_missing(conn, "sf_trusted_devices", "device_id", device_ids)
 
     def _sync_workspaces(self, conn: Any, doc: Dict[str, Any]) -> None:
         workspaces = [row for row in doc.get("workspaces", []) if isinstance(row, dict)]

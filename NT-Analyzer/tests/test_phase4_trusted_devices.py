@@ -632,3 +632,83 @@ def test_migration_0006_is_additive_and_scoped():
     # No plaintext one-time code column: only a salted hash is stored.
     assert "code_hash" in sql
     assert "code_salt" in sql
+
+
+# --------------------------------------------------------------------------- #
+# Relational mirror (runs without PostgreSQL: the SQL is captured, not executed)
+# --------------------------------------------------------------------------- #
+class _FakeCursor:
+    def __init__(self, log):
+        self._log = log
+
+    def fetchone(self):
+        return None
+
+
+class _FakeConn:
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, sql, params=None):
+        self.statements.append((" ".join(str(sql).split()), params))
+        return _FakeCursor(self.statements)
+
+
+def _device_row(**overrides):
+    row = {
+        "device_id": "11111111-1111-4111-8111-111111111111",
+        "user_uuid": "22222222-2222-4222-8222-222222222222",
+        "legacy_user_id": 42,
+        "fingerprint": "fp-alpha",
+        "device_type": "browser",
+        "display_name": "Chrome",
+        "status": "trusted",
+        "confirmation_provider": "telegram",
+        "audit_metadata": {"last_ip": "203.0.•.•"},
+    }
+    row.update(overrides)
+    return row
+
+
+def test_devices_are_mirrored_into_their_relational_table():
+    from app.production_storage.core import DocumentRepository
+
+    conn = _FakeConn()
+    doc = {"trusted_devices": [_device_row()]}
+    DocumentRepository._sync_trusted_devices(
+        DocumentRepository, conn, doc, {42: "22222222-2222-4222-8222-222222222222"},
+    )
+    inserts = [s for s, _ in conn.statements if "INSERT INTO sf_trusted_devices" in s]
+    assert len(inserts) == 1
+    prune = [s for s, _ in conn.statements if "DELETE FROM sf_trusted_devices" in s]
+    assert prune, "rows removed from the document must be pruned from the table"
+
+
+def test_duplicate_active_device_fingerprint_is_rejected_before_write():
+    from app.production_storage import StorageConstraintError
+    from app.production_storage.core import DocumentRepository
+
+    conn = _FakeConn()
+    doc = {"trusted_devices": [
+        _device_row(),
+        _device_row(device_id="33333333-3333-4333-8333-333333333333"),
+    ]}
+    with pytest.raises(StorageConstraintError):
+        DocumentRepository._sync_trusted_devices(
+            DocumentRepository, conn, doc, {42: "22222222-2222-4222-8222-222222222222"},
+        )
+
+
+def test_revoked_duplicate_fingerprint_is_allowed_to_coexist():
+    from app.production_storage.core import DocumentRepository
+
+    conn = _FakeConn()
+    doc = {"trusted_devices": [
+        _device_row(status="revoked", device_id="44444444-4444-4444-8444-444444444444"),
+        _device_row(),
+    ]}
+    DocumentRepository._sync_trusted_devices(
+        DocumentRepository, conn, doc, {42: "22222222-2222-4222-8222-222222222222"},
+    )
+    inserts = [s for s, _ in conn.statements if "INSERT INTO sf_trusted_devices" in s]
+    assert len(inserts) == 2
