@@ -1579,7 +1579,15 @@
 
   // ---- avatars + personal / owner cabinet -----------------------------------
   function hashCode(str) { let h = 0; for (let i = 0; i < String(str).length; i++) { h = (h << 5) - h + String(str).charCodeAt(i); h |= 0; } return h; }
-  function userLabel(user) { user = user || {}; return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Пользователь'; }
+  // A profile with no name still has a role. An owner account bootstrapped
+  // without a Telegram profile (the LOCAL build authenticates as the owner
+  // without a login) used to read as the anonymous "Пользователь".
+  function userLabel(user) {
+    user = user || {};
+    const named = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username;
+    if (named) return named;
+    return user.is_owner ? 'Владелец' : 'Пользователь';
+  }
   function avatarHtml(user, cls) {
     user = user || {};
     const url = user.avatar_data_url || user.avatar_url || '';
@@ -3460,19 +3468,36 @@
         if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
       }
     };
+    // A deep link is opened at most once per challenge: `check` re-renders the
+    // waiting screen on every poll, and re-opening a tab each time would be a
+    // popup storm.
+    const openedDeepLinks = new Set();
     const renderWaiting = (login, knownState) => {
       const challengeId = login.challenge_id;
       const status = (knownState || {}).status || 'created';
       if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
       const pendingOwner = status === 'pending_owner';
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Откройте одноразовую ссылку, нажмите Start и отправьте свой контакт кнопкой Telegram.'}</p></div>${login.bot_url ? `<a class="btn primary auth-main-action" href="${esc(login.bot_url)}" target="_blank" rel="noopener">Открыть Telegram</a>` : ''}${manual ? `<div class="finance-note"><strong>Если Telegram открылся без подтверждения:</strong><br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code">Копировать</button></div>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Проверяем статус…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
+      const botUrl = pendingOwner ? '' : String(login.bot_url || '');
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Telegram открывается сам — нажмите Start и отправьте контакт кнопкой Telegram. Вход завершится на этой странице автоматически.'}</p></div>${botUrl ? `<a class="btn primary auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" target="_blank" rel="noopener">Открыть Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>` : ''}${manual ? `<details class="auth-manual-fallback"><summary>Telegram не открылся?</summary><div class="finance-note">Отправьте боту команду вручную:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
         catch (e) { toast(manual); }
       };
       const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
+      // One click, not two: the deep link opens itself and the poll below
+      // finishes the login, so the code never has to be copied by hand. A
+      // browser that blocks the automatic tab still has the button.
+      if (botUrl && !openedDeepLinks.has(challengeId)) {
+        openedDeepLinks.add(challengeId);
+        let opened = null;
+        try { opened = window.open(botUrl, '_blank', 'noopener'); } catch (e) { opened = null; }
+        const hint = qs('#auth-telegram-hint', content);
+        if (hint) hint.textContent = opened
+          ? 'Telegram открыт в новой вкладке — нажмите Start и вернитесь сюда.'
+          : 'Браузер заблокировал автоматическое открытие — нажмите кнопку выше.';
+      }
       stopPolling();
       polling = setInterval(() => check(challengeId), 2000);
       check(challengeId);

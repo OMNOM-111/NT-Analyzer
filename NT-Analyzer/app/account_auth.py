@@ -3092,10 +3092,20 @@ def email_auth_status() -> Dict[str, Any]:
     }
 
 
-def _email_code_message(code: str, purpose: str) -> Tuple[str, str, str]:
-    action = "привязки e-mail" if purpose == "link" else "входа в StratForge"
+_EMAIL_CODE_ACTIONS = {
+    "link": "привязки e-mail",
+    "login": "входа в StratForge",
+    # Step-up purposes owned by ``security_devices``.
+    "device_confirm": "подтверждения нового устройства в StratForge",
+    "step_up": "подтверждения действия в StratForge",
+    "revoke": "отзыва устройства в StratForge",
+}
+
+
+def _email_code_message(code: str, purpose: str, *, ttl_sec: int = 0) -> Tuple[str, str, str]:
+    action = _EMAIL_CODE_ACTIONS.get(str(purpose or ""), "входа в StratForge")
     subject = f"StratForge: код {code}"
-    minutes = max(1, EMAIL_CHALLENGE_TTL_SEC // 60)
+    minutes = max(1, int(ttl_sec or EMAIL_CHALLENGE_TTL_SEC) // 60)
     text = (
         f"Код для {action}: {code}\n\n"
         f"Код действителен {minutes} минут и используется один раз.\n"
@@ -3106,11 +3116,12 @@ def _email_code_message(code: str, purpose: str) -> Tuple[str, str, str]:
 
 
 def _deliver_email_code(
-    recipient: str, code: str, *, purpose: str, send: Optional[Callable[..., Any]] = None,
+    recipient: str, code: str, *, purpose: str, ttl_sec: int = 0,
+    send: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     """Send the one-time code through the configured transactional provider."""
     cfg = _email_provider_config()
-    subject, text, html_body = _email_code_message(code, purpose)
+    subject, text, html_body = _email_code_message(code, purpose, ttl_sec=ttl_sec)
     payload = {
         "from": cfg["sender"],
         "to": [recipient],

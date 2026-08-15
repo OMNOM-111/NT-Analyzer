@@ -6,6 +6,12 @@
 и не проводила повторную диагностику**. Всё в разделе «Зафиксировано» —
 проверено на живых окружениях; переизобретать не нужно.
 
+**Статус на 2026-08-15 (вторая сессия).** Закрыты пункты 2, 5, 6; пункт 3
+покрыт в тестах и ждёт живой прогон. Полный прогон: 1363 passed, 31 skipped.
+Открыты: 1 (ждёт владельца), 4 (удаление данных на живых окружениях — нужно
+подтверждение), 7–12 (требуют релиза и живых окружений). Ничего из открытого
+не блокируется кодом.
+
 ---
 
 ## Зафиксировано (не переисследовать)
@@ -47,32 +53,51 @@ devices 1, workspaces 4. Canary: users 1, identities 1, devices 1, workspaces 1.
 без нового аккаунта. Код придёт письмом (delivery уже работает).
 Требует ввода OTP человеком → `WAITING FOR OWNER`.
 
-### 2. Доставка кода подтверждения устройства (корневой баг)
+### 2. Доставка кода подтверждения устройства (корневой баг) — ЗАКРЫТО
 
-`security_devices.create_challenge()` (`app/security_devices.py:492`)
-генерирует код, сохраняет `code_hash`, возвращает `delivery: <provider>` —
-**и не вызывает ни одной отправки**. В модуле нет ни `api_call`, ни email.
-Код раскрывается только через `test_code` за Development-гейтом.
+Было: `create_challenge()` генерировал код, сохранял `code_hash`, возвращал
+`delivery: <provider>` — и не вызывал ни одной отправки. «Код не приходит»,
+потому что он никогда не отправлялся.
 
-Поэтому «код не приходит» — он никогда не отправлялся.
+Сделано в `app/security_devices.py`:
 
-Что делать:
-- Telegram — `telegram_service._api_call` (используется в `account_auth`
-  для owner-approval, шаблон готов);
-- email — `account_auth._deliver_email_code(recipient, code, purpose=...)`
-  (уже рабочий, с User-Agent для Cloudflare перед `api.resend.com`);
-- при неуспехе доставки возвращать честную ошибку (по образцу
-  `email_delivery_failed`, 503), а не мнимый успех.
+- секция «Challenge delivery»: `_delivery_target()` резолвит адрес **только**
+  из серверного identity-состояния (клиент никогда не называет получателя),
+  `_deliver_telegram_code()` через `telegram_service._api_call`,
+  email/google через `account_auth._deliver_email_code(...)`;
+- `create_challenge()` отправляет код после записи challenge, но **до** того
+  как отдать успех. Сеть вызывается вне store-lock;
+- провал доставки → `_fail_challenge()` жжёт challenge (`status: failed`,
+  подтвердить его уже нельзя) + audit `security.challenge_delivery_failed`,
+  наружу `503 challenge_delivery_failed`; не настроен транспорт →
+  `503 challenge_delivery_unavailable`. Мнимого успеха больше нет;
+- ошибки провайдера могут содержать токен бота, поэтому наружу уходит
+  фиксированный текст; причина пишется в audit (`detail`);
+- Development-гейт не изменился: при `_dev_code_echo()` код раскрывается
+  через `test_code` и отправка не выполняется.
 
-Тесты: доставка вызвана; провал доставки → 503 и challenge не выдаётся как
-успешный; секреты не попадают в ответ.
+В `app/account_auth.py`: `_email_code_message()` получил step-up-цели
+(`device_confirm` / `step_up` / `revoke`), `_deliver_email_code()` — `ttl_sec`,
+чтобы письмо называло TTL device-challenge, а не email-login.
 
-### 3. Trusted-device E2E
+Тесты (`tests/test_phase4_trusted_devices.py`, секция «Challenge delivery»):
+доставка реально вызвана и получатель взят из identity; доставленный код
+подтверждает устройство; кода нет в ответе; провал → 503, challenge сожжён,
+устройство осталось `pending`, токен не утёк; нет транспорта → 503;
+email уходит на verified identity с правильными purpose/TTL; echo-гейт не
+отправляет ничего.
 
-После пунктов 1–2 проверить цепочку целиком:
-`pending → real delivery → verify → trusted → refresh → logout/login →
-approve → revoke → delete → login после revoke`, отсутствие дублей,
-очистка данных браузера создаёт новое устройство, изоляция Canary/Production.
+### 3. Trusted-device E2E — покрыто в харнессе, живая проверка ждёт п.1
+
+`test_trusted_device_lifecycle_end_to_end_with_real_delivery` проходит цепочку
+через реальный путь доставки: `pending → доставленный код → confirm → trusted →
+logout/login (одна запись, trust сохраняется) → очистка данных браузера даёт
+новое pending-устройство → revoke гасит только его сессии → повторный вход не
+воскрешает trust`. Изоляция окружений уже закрыта
+`test_challenge_wrong_environment`.
+
+Осталось живьём (после п.1 и релиза): та же цепочка на Canary и Production
+с настоящим Telegram/письмом и браузером.
 
 ### 4. Удаление test fixtures
 
@@ -83,21 +108,32 @@ identities/sessions/workspaces/devices. У каждого по 1 workspace, се
 `sf_audit_events` (FK на `user_uuid` объявлены `NOT VALID`, поэтому проверять
 явно). Чистить **в auth-документе**, не в проекционных таблицах.
 
-### 5. LOCAL owner profile
+### 5. LOCAL owner profile — ЗАКРЫТО
 
-`127.0.0.1:8765` показывает владельца как «Пользователь». Не диагностировано.
-Запущенный процесс LOCAL отстал от репозитория — перед проверкой перезапустить
-на актуальном commit (`DEPLOYMENT_ENV=development python -m app.server 8765`
-из `NT-Analyzer`), затем сверить `/api/auth/me` с owner-документом.
+Диагноз: не баг рендера. Owner-запись LOCAL (`user_id 999`,
+`2c347848-1eff-4493-a5d8-880ece389c1d` в
+`data/development/integrations/accounts.dpapi`) физически пуста —
+`username`, `first_name`, `last_name`, `email` пустые строки. На LOCAL владелец
+аутентифицируется без Telegram-логина, поэтому профиль ничем не заполняется, и
+`userLabel()` честно падал в анонимное «Пользователь».
 
-### 6. Telegram one-click UX
+Исправлено в `userLabel()` (`app/static/aurora/assets/ui.js`): безымянный
+профиль подписывается по роли — владелец видит «Владелец». Это общий фикс,
+не LOCAL-костыль: пустой профиль владельца в любом окружении больше не
+выглядит анонимным. Заполнять сам LOCAL-документ не требуется.
 
-Сейчас `/api/auth/login/start` возвращает `bot_url` вида
-`https://t.me/StratForgeAI_bot?start=canary_login_<CODE>` — deep link уже есть.
-Нужно: кнопка открывает его сама, страница поллит `/api/auth/login/status` и
-входит без ручного копирования; `manual_command` оставить аварийным fallback.
-Архитектуру общего бота не менять: Production принимает webhook, `[CANARY]`
-форвардится во внутренний Canary origin.
+### 6. Telegram one-click UX — ЗАКРЫТО
+
+`renderWaiting()` (`app/static/aurora/assets/ui.js`) теперь открывает deep link
+сам (`window.open`), ровно один раз на challenge (`openedDeepLinks`, иначе
+поллинг каждые 2 с устраивал бы popup-шторм), поллинг
+`/api/auth/login/status` уже был и оставлен. `manual_command` спрятан в
+свёрнутый `<details class="auth-manual-fallback">` «Telegram не открылся?» —
+аварийный fallback, а не инструкция. Если браузер заблокировал вкладку, кнопка
+`#auth-open-telegram` остаётся, и подсказка это говорит. Стили —
+`.auth-manual-fallback` в `theme.css`. Архитектура общего бота не менялась.
+
+Тесты: `tests/test_phase11_ui_wiring.py`, секции one-click и owner-label.
 
 ### 7–12. Остальное
 
@@ -156,4 +192,5 @@ LOCAL→CANARY→PRODUCTION.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-15T01:20:00Z | Claude Opus 5 через Claude Code по запросу owner | Handoff незакрытого auth/user контура: owner UUID и Telegram/Google подтверждены, email-identity и доставка кода подтверждения остаются открытыми; зафиксированы root cause, порядок работ и готовые инструменты.
+2026-08-15T00:00:00Z | Claude Opus 5 через Claude Code по запросу owner | Закрыты п.2 (доставка кода подтверждения устройства: реальная отправка Telegram/email, честный 503 и сожжённый challenge при провале), п.5 (owner без профиля подписывается по роли) и п.6 (Telegram one-click); п.3 покрыт E2E-тестом жизненного цикла на пути реальной доставки. П.1 ждёт OTP владельца, п.4 — подтверждения на удаление данных, п.7–12 — релиза и живых окружений.
 -->
