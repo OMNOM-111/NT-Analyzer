@@ -110,17 +110,30 @@ identities/sessions/workspaces/devices. У каждого по 1 workspace, се
 
 ### 5. LOCAL owner profile — ЗАКРЫТО
 
-Диагноз: не баг рендера. Owner-запись LOCAL (`user_id 999`,
-`2c347848-1eff-4493-a5d8-880ece389c1d` в
-`data/development/integrations/accounts.dpapi`) физически пуста —
-`username`, `first_name`, `last_name`, `email` пустые строки. На LOCAL владелец
-аутентифицируется без Telegram-логина, поэтому профиль ничем не заполняется, и
-`userLabel()` честно падал в анонимное «Пользователь».
+LOCAL перезапущен через `start.ps1` (это единственный правильный лаунчер: он
+форсирует `DEPLOYMENT_ENV=development` и
+`STRATFORGE_DEVELOPMENT_DATA_ROOT=<repo>/data`). На актуальном commit
+`/api/runtime/env` отдаёт `development / dev / c487ee05`, а `/api/auth/me` —
+полный профиль владельца: `dimon_check`, `DMYTRO CHEREVKO`,
+`6b0738c8-efca-4285-9100-905e34633d56`, `profile_complete: true`.
+`userLabel()` на нём рисует «DMYTRO CHEREVKO». Самого симптома «Пользователь»
+на `/api/auth/me` нет.
+
+Что реально нашлось: в LOCAL-хранилище (`data/integrations/accounts.dpapi`)
+есть **вторая** запись с `is_owner: true` — `user_id 424242`,
+`643f4ab5-536c-4122-86e5-4d702a9f2043`, с пустыми `username` / `first_name` /
+`last_name` и verified telegram identity на subject `424242`. Именно она в
+списках пользователей рисовалась анонимным «Пользователь».
 
 Исправлено в `userLabel()` (`app/static/aurora/assets/ui.js`): безымянный
-профиль подписывается по роли — владелец видит «Владелец». Это общий фикс,
-не LOCAL-костыль: пустой профиль владельца в любом окружении больше не
-выглядит анонимным. Заполнять сам LOCAL-документ не требуется.
+профиль подписывается по роли — владелец виден как «Владелец». Фикс общий, не
+LOCAL-костыль. Сама запись `424242` — локальная workstation-фикстура, к
+серверным окружениям отношения не имеет; в п.4 она не входит и не трогается.
+
+Предупреждение на будущее: `NTA_APP_ENV=development` уводит на
+`data/development/integrations/accounts.dpapi` — **не** то хранилище, которое
+обслуживает LOCAL. Сверять только через запущенный сервер или через
+`STRATFORGE_DEVELOPMENT_DATA_ROOT`.
 
 ### 6. Telegram one-click UX — ЗАКРЫТО
 
