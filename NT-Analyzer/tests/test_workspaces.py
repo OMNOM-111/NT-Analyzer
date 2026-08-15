@@ -489,3 +489,61 @@ def test_bridge_pairing_registry_for_personal_workspace(workspace_store) -> None
 
     with pytest.raises(workspaces.WorkspaceError):
         workspaces.complete_bridge_pairing(7, code=pairing["code"])
+
+
+# --------------------------------------------------------------------------- #
+# Account deletion must not strand other members of a shared workspace.
+# --------------------------------------------------------------------------- #
+def test_purge_user_refuses_to_take_a_shared_workspace_with_it(workspace_store):
+    workspaces._write_doc({
+        "version": workspaces.WORKSPACE_STORE_VERSION,
+        "workspaces": [{"workspace_id": "ws_shared", "owner_user_id": 7,
+                        "owner_user_uuid": "u-7", "kind": "personal"}],
+        "memberships": [
+            {"workspace_id": "ws_shared", "user_id": 7, "user_uuid": "u-7",
+             "role": "owner", "revoked_at_utc": ""},
+            {"workspace_id": "ws_shared", "user_id": 42, "user_uuid": "u-42",
+             "role": "analyst", "revoked_at_utc": ""},
+        ],
+        "active_workspaces": {}, "active_workspaces_by_uuid": {},
+        "connections": [], "pairings": [],
+    })
+    report = workspaces.user_footprint("u-7", 7)
+    assert report["shared_workspaces"] == ["ws_shared"]
+    assert report["safe_to_delete"] is False
+    with pytest.raises(workspaces.WorkspaceError) as exc:
+        workspaces.purge_user("u-7", 7)
+    assert exc.value.status == 409
+    # Nothing was removed by the refused purge.
+    assert len(workspaces._read_doc()["workspaces"]) == 1
+
+
+def test_purge_user_removes_a_solely_owned_workspace(workspace_store):
+    workspaces._write_doc({
+        "version": workspaces.WORKSPACE_STORE_VERSION,
+        "workspaces": [{"workspace_id": "ws_solo", "owner_user_id": 7,
+                        "owner_user_uuid": "u-7", "kind": "personal"},
+                       {"workspace_id": "ws_other", "owner_user_id": 42,
+                        "owner_user_uuid": "u-42", "kind": "personal"}],
+        "memberships": [
+            {"workspace_id": "ws_solo", "user_id": 7, "user_uuid": "u-7",
+             "role": "owner", "revoked_at_utc": ""},
+            {"workspace_id": "ws_other", "user_id": 42, "user_uuid": "u-42",
+             "role": "owner", "revoked_at_utc": ""},
+        ],
+        "active_workspaces": {"7": "ws_solo"},
+        "active_workspaces_by_uuid": {"u-7": "ws_solo"},
+        "connections": [{"connection_id": "conn_a", "workspace_id": "ws_solo",
+                         "owner_user_id": 7}],
+        "pairings": [{"pairing_id": "pair_a", "workspace_id": "ws_solo",
+                      "created_by_user_id": 7}],
+    })
+    assert workspaces.user_footprint("u-7", 7)["safe_to_delete"] is True
+    workspaces.purge_user("u-7", 7)
+    doc = workspaces._read_doc()
+    assert [w["workspace_id"] for w in doc["workspaces"]] == ["ws_other"]
+    assert [m["workspace_id"] for m in doc["memberships"]] == ["ws_other"]
+    assert doc["connections"] == []
+    assert doc["pairings"] == []
+    assert "u-7" not in doc["active_workspaces_by_uuid"]
+    assert "7" not in doc["active_workspaces"]

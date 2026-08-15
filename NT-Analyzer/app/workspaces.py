@@ -441,6 +441,139 @@ def ensure_owner_workspace(owner_id: Any) -> Dict[str, Any]:
     return _public_workspace(row, _membership(doc, str(row["workspace_id"]), owner))
 
 
+def _row_matches_user(row: Dict[str, Any], uuid_key: str, legacy_key: str,
+                      user_uuid: str, legacy_user_id: int) -> bool:
+    """Match a row by canonical UUID, falling back to the legacy id.
+
+    Rows written before the Phase 3 backfill may carry only the legacy id, and
+    rows written after it may carry only the UUID, so account deletion has to
+    look at both or it leaves half the footprint behind.
+    """
+    row_uuid = str(row.get(uuid_key) or "").strip()
+    if user_uuid and row_uuid:
+        return row_uuid == user_uuid
+    try:
+        return legacy_user_id > 0 and int(row.get(legacy_key) or 0) == legacy_user_id
+    except (TypeError, ValueError):
+        return False
+
+
+def user_footprint(user_uuid: Any = "", legacy_user_id: Any = 0) -> Dict[str, Any]:
+    """Everything in the workspace store that references one account.
+
+    Read-only: this is the dependency check that runs *before* a deletion, so
+    an account that still co-owns a shared workspace is reported instead of
+    silently orphaning the other members.
+    """
+    canonical = str(user_uuid or "").strip()
+    try:
+        legacy = int(legacy_user_id or 0)
+    except (TypeError, ValueError):
+        legacy = 0
+    with _LOCK:
+        doc = _read_doc_reference()
+        memberships = [
+            row for row in doc.get("memberships") or []
+            if isinstance(row, dict)
+            and _row_matches_user(row, "user_uuid", "user_id", canonical, legacy)
+        ]
+        owned = [
+            row for row in doc.get("workspaces") or []
+            if isinstance(row, dict)
+            and _row_matches_user(row, "owner_user_uuid", "owner_user_id", canonical, legacy)
+        ]
+        owned_ids = {str(row.get("workspace_id") or "") for row in owned}
+        # A workspace this account owns but other people are still members of
+        # cannot be removed along with the account.
+        shared: list[str] = []
+        for workspace_id in sorted(owned_ids):
+            others = [
+                row for row in doc.get("memberships") or []
+                if isinstance(row, dict)
+                and str(row.get("workspace_id") or "") == workspace_id
+                and not row.get("revoked_at_utc")
+                and not _row_matches_user(row, "user_uuid", "user_id", canonical, legacy)
+            ]
+            if others:
+                shared.append(workspace_id)
+        connections = [
+            row for row in doc.get("connections") or []
+            if isinstance(row, dict) and (
+                str(row.get("workspace_id") or "") in owned_ids
+                or _row_matches_user(row, "owner_user_uuid", "owner_user_id", canonical, legacy)
+            )
+        ]
+        pairings = [
+            row for row in doc.get("pairings") or []
+            if isinstance(row, dict) and (
+                str(row.get("workspace_id") or "") in owned_ids
+                or _row_matches_user(row, "created_by_user_uuid", "created_by_user_id", canonical, legacy)
+            )
+        ]
+        active = bool(
+            (canonical and str(doc.get("active_workspaces_by_uuid", {}).get(canonical) or ""))
+            or (legacy and str((doc.get("active_workspaces") or {}).get(str(legacy)) or ""))
+        )
+    return {
+        "user_uuid": canonical,
+        "legacy_user_id": legacy,
+        "owned_workspaces": sorted(owned_ids),
+        "memberships": len(memberships),
+        "connections": len(connections),
+        "pairings": len(pairings),
+        "active_selection": active,
+        "shared_workspaces": shared,
+        "safe_to_delete": not shared,
+    }
+
+
+def purge_user(user_uuid: Any = "", legacy_user_id: Any = 0) -> Dict[str, Any]:
+    """Remove one account's workspace footprint.
+
+    Refuses when the account owns a workspace other members still belong to:
+    deleting it there would take their data with it.
+    """
+    footprint = user_footprint(user_uuid, legacy_user_id)
+    if footprint["shared_workspaces"]:
+        raise WorkspaceError(
+            "Аккаунт владеет рабочей областью с другими участниками: "
+            + ", ".join(footprint["shared_workspaces"]),
+            409,
+        )
+    canonical = footprint["user_uuid"]
+    legacy = footprint["legacy_user_id"]
+    owned = set(footprint["owned_workspaces"])
+    with _LOCK:
+        doc = _read_doc()
+        doc["workspaces"] = [
+            row for row in doc.get("workspaces") or []
+            if str(row.get("workspace_id") or "") not in owned
+        ]
+        doc["memberships"] = [
+            row for row in doc.get("memberships") or []
+            if str(row.get("workspace_id") or "") not in owned
+            and not _row_matches_user(row, "user_uuid", "user_id", canonical, legacy)
+        ]
+        doc["connections"] = [
+            row for row in doc.get("connections") or []
+            if str(row.get("workspace_id") or "") not in owned
+            and not _row_matches_user(row, "owner_user_uuid", "owner_user_id", canonical, legacy)
+        ]
+        doc["pairings"] = [
+            row for row in doc.get("pairings") or []
+            if str(row.get("workspace_id") or "") not in owned
+            and not _row_matches_user(row, "created_by_user_uuid", "created_by_user_id", canonical, legacy)
+        ]
+        if canonical:
+            doc.get("active_workspaces_by_uuid", {}).pop(canonical, None)
+        if legacy:
+            (doc.get("active_workspaces") or {}).pop(str(legacy), None)
+        _write_doc(doc)
+    _audit("workspace_user_purged", user_id=legacy, user_uuid=canonical,
+           workspaces=len(owned))
+    return footprint
+
+
 def ensure_training_membership(user_id: Any, owner_id: Any) -> None:
     user = int(user_id or 0)
     owner = int(owner_id or 0)
