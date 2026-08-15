@@ -956,3 +956,98 @@ def test_revoked_duplicate_fingerprint_is_allowed_to_coexist():
     )
     inserts = [s for s, _ in conn.statements if "INSERT INTO sf_trusted_devices" in s]
     assert len(inserts) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Account deletion removes the whole footprint.
+#
+# Sessions and avatars were never all of it: an account also owns auth
+# identities, trusted devices and step-up challenges keyed by user_uuid. A
+# stranded identity row is not cosmetic -- the subject stays bound to a user
+# that no longer exists, so it can never be linked to a real account again.
+# --------------------------------------------------------------------------- #
+def _fixture_account(uid: int, uuid_val: str, subject: str) -> None:
+    doc = account_auth._read_doc()
+    user = account_auth._user(doc, uid)
+    account_auth._link_identity_in_doc(
+        doc, user, provider="telegram", subject=subject,
+        verified_at_utc=account_auth._now_iso(), source="test",
+    )
+    account_auth._write_doc(doc)
+
+
+def test_deleting_an_account_removes_its_identities_and_devices(store):
+    _fixture_account(7, BOB_UUID, "7")
+    _login(7)
+    device = _device_for(7)
+    security_devices.create_challenge(
+        user_id=7, purpose="device_confirm", device_id=device["device_id"],
+    )
+    doc = account_auth._read_doc()
+    assert any(r["user_uuid"] == BOB_UUID for r in doc["auth_identities"])
+    assert any(r["user_uuid"] == BOB_UUID for r in doc["trusted_devices"])
+    assert any(r["user_uuid"] == BOB_UUID for r in doc["security_challenges"])
+
+    account_auth.delete_user(999, 7)
+
+    doc = account_auth._read_doc()
+    assert not any(int(r.get("user_id") or 0) == 7 for r in doc["users"])
+    for key in ("auth_identities", "trusted_devices", "security_challenges", "sessions"):
+        left = [r for r in doc.get(key) or [] if r.get("user_uuid") == BOB_UUID]
+        assert left == [], f"{key} left behind: {left}"
+
+
+def test_a_deleted_subject_can_be_linked_to_a_real_account_again(store):
+    # The regression the stranded identity row caused: the freed Telegram
+    # subject stayed bound to the deleted user and was refused for everyone.
+    _fixture_account(7, BOB_UUID, "505")
+    account_auth.delete_user(999, 7)
+    doc = account_auth._read_doc()
+    account_auth._link_identity_in_doc(
+        doc, account_auth._user(doc, 42), provider="telegram", subject="505",
+        verified_at_utc=account_auth._now_iso(), source="test",
+    )
+    account_auth._write_doc(doc)
+    doc = account_auth._read_doc()
+    row = next(r for r in doc["auth_identities"]
+               if str(r.get("provider_subject")) == "505")
+    assert row["user_uuid"] == ALICE_UUID
+
+
+def test_owner_account_is_protected_from_deletion(store):
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.delete_user(999, 999)
+    assert exc.value.status == 403
+    assert account_auth._user(account_auth._read_doc(), 999) is not None
+
+
+def test_footprint_reports_before_deleting(store):
+    _fixture_account(7, BOB_UUID, "7")
+    _login(7)
+    report = account_auth.account_footprint(999, 7)
+    assert report["user_uuid"] == BOB_UUID
+    assert report["account"]["identities"] == 1
+    assert report["account"]["sessions"] == 1
+    assert report["account"]["trusted_devices"] == 1
+    assert report["safe_to_delete"] is True
+    assert account_auth.account_footprint(999, 999)["safe_to_delete"] is False
+
+
+def test_shared_workspace_blocks_deletion_before_anything_is_removed(store, monkeypatch):
+    # The workspace store is a separate document, so its refusal has to land
+    # before the account document is touched.
+    from app import workspaces
+
+    _fixture_account(7, BOB_UUID, "7")
+    _login(7)
+    monkeypatch.setattr(
+        workspaces, "user_footprint",
+        lambda *a, **k: {"safe_to_delete": False, "shared_workspaces": ["ws_shared"]},
+    )
+    with pytest.raises(account_auth.AccountAuthError) as exc:
+        account_auth.delete_user(999, 7)
+    assert exc.value.status == 409
+    doc = account_auth._read_doc()
+    assert account_auth._user(doc, 7) is not None
+    assert any(r["user_uuid"] == BOB_UUID for r in doc["auth_identities"])
+    assert any(r["user_uuid"] == BOB_UUID for r in doc["trusted_devices"])

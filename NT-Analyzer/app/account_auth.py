@@ -1734,9 +1734,99 @@ def set_user_status(owner_id: Any, user_id: Any, status: str) -> Dict[str, Any]:
     return list_users(owner_id)
 
 
-def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
-    """Permanently remove a user, their sessions, challenges and avatar files."""
+def account_footprint(owner_id: Any, user_id: Any) -> Dict[str, Any]:
+    """Read-only dependency check for one account, before deleting it.
+
+    The FK constraints on ``user_uuid`` are declared NOT VALID in the
+    relational mirror, so nothing downstream refuses a delete that would strand
+    rows. This reports the footprint explicitly instead.
+    """
     uid = int(user_id)
+    with _LOCK:
+        doc = _read_doc()
+        _require_admin_capability_in_doc(doc, owner_id, "users.manage")
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        canonical = _user_uuid(user)
+        counts = {
+            "identities": len(_identities_for_user(doc, user)),
+            "sessions": len(_rows_for_account(doc, "sessions", canonical, uid)),
+            "challenges": len(_rows_for_account(doc, "challenges", canonical, uid)),
+            "trusted_devices": len(_rows_for_account(doc, "trusted_devices", canonical, uid)),
+            "security_challenges": len(_rows_for_account(doc, "security_challenges", canonical, uid)),
+        }
+        is_owner = bool(user.get("is_owner"))
+    from . import workspaces
+    try:
+        workspace_footprint = workspaces.user_footprint(canonical, uid)
+    except Exception:
+        workspace_footprint = {"safe_to_delete": True, "shared_workspaces": []}
+    return {
+        "user_id": uid,
+        "user_uuid": canonical,
+        "is_owner": is_owner,
+        "account": counts,
+        "workspaces": workspace_footprint,
+        "safe_to_delete": bool(
+            not is_owner and workspace_footprint.get("safe_to_delete", True)
+        ),
+    }
+
+
+def _rows_for_account(
+    doc: Dict[str, Any], key: str, user_uuid: str, legacy_user_id: int,
+) -> list[Dict[str, Any]]:
+    """Rows in ``doc[key]`` belonging to one account, by UUID or legacy id.
+
+    Rows written before the Phase 3 backfill carry only the legacy id and rows
+    written after it carry only the UUID, so a delete keyed on one of them
+    leaves the other half behind.
+    """
+    out = []
+    for row in doc.get(key) or []:
+        if not isinstance(row, dict):
+            continue
+        row_uuid = auth_identity.normalize_user_uuid(row.get("user_uuid"))
+        if user_uuid and row_uuid:
+            if hmac.compare_digest(row_uuid, user_uuid):
+                out.append(row)
+            continue
+        try:
+            legacy = int(row.get("user_id") or row.get("legacy_user_id") or 0)
+        except (TypeError, ValueError):
+            legacy = 0
+        if legacy_user_id and legacy == legacy_user_id:
+            out.append(row)
+    return out
+
+
+def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
+    """Permanently remove a user and everything keyed to that account.
+
+    Sessions and avatars were never the whole footprint: an account also owns
+    auth identities, trusted devices and step-up challenges keyed by
+    ``user_uuid``. Leaving an identity row behind is not cosmetic — the subject
+    stays bound to a user that no longer exists, so it can never be linked to a
+    real account again (``identity_already_linked``).
+    """
+    uid = int(user_id)
+    from . import workspaces
+    # The workspace store is a separate document, so its refusal has to happen
+    # before this one is mutated -- otherwise a shared-workspace rejection
+    # leaves the account deleted and its workspaces orphaned.
+    report = account_footprint(owner_id, uid)
+    # Owner protection outranks every other reason to refuse: the owner account
+    # is never deletable, whatever its workspaces look like.
+    if report["is_owner"]:
+        raise AccountAuthError("Аккаунт владельца нельзя удалить.", 403)
+    shared = report["workspaces"].get("shared_workspaces") or []
+    if shared:
+        raise AccountAuthError(
+            "Аккаунт владеет рабочей областью с другими участниками: "
+            + ", ".join(shared) + ". Передайте её другому владельцу.",
+            409, code="workspace_shared",
+        )
     with _LOCK:
         doc = _read_doc()
         try:
@@ -1748,16 +1838,35 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
             raise AccountAuthError("Пользователь не найден.", 404)
         if user.get("is_owner"):
             raise AccountAuthError("Аккаунт владельца нельзя удалить.", 403)
+        canonical = _user_uuid(user)
+        removed = {
+            "identities": len(_identities_for_user(doc, user)),
+            "sessions": len(_rows_for_account(doc, "sessions", canonical, uid)),
+            "challenges": len(_rows_for_account(doc, "challenges", canonical, uid)),
+            "trusted_devices": len(_rows_for_account(doc, "trusted_devices", canonical, uid)),
+            "security_challenges": len(_rows_for_account(doc, "security_challenges", canonical, uid)),
+        }
         doc["users"] = [row for row in doc["users"] if int(row.get("user_id") or 0) != uid]
-        doc["sessions"] = [row for row in doc["sessions"] if int(row.get("user_id") or 0) != uid]
-        doc["challenges"] = [row for row in doc["challenges"] if int(row.get("user_id") or 0) != uid]
+        for key in ("sessions", "challenges", "trusted_devices", "security_challenges"):
+            doomed = {id(row) for row in _rows_for_account(doc, key, canonical, uid)}
+            doc[key] = [row for row in doc.get(key) or [] if id(row) not in doomed]
+        if canonical:
+            doc["auth_identities"] = [
+                row for row in _identity_rows(doc)
+                if not hmac.compare_digest(
+                    auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical,
+                )
+            ]
         _write_doc(doc)
+    # Workspaces live in their own store and refuse to strand co-members.
+    workspaces.purge_user(canonical, uid)
     for stale in _avatars_dir().glob(f"{uid}.*"):
         try:
             stale.unlink()
         except OSError:
             pass
-    _audit("user_deleted", owner_id=int(owner_id), user_id=uid)
+    _audit("user_deleted", owner_id=int(owner_id), user_id=uid,
+           extra={"user_uuid": canonical, "removed": removed})
     return list_users(owner_id)
 
 
