@@ -9,6 +9,7 @@
 | --- | --- |
 | Canary | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
 | Production | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
+| Release state | исправлено (PR #79): verified deploy → `production_live`; ошибочная попытка остаётся retryable |
 | Parity | **EXACT MATCH**, acceptance PASS на обоих |
 | migration 0012 | применена на Canary **и** Production, FK-семантика проверена |
 | repo HEAD | `baeddbe5` |
@@ -88,9 +89,42 @@ credential — `production-maintenance.env` никогда не создавал
 Гейт доказан и в отрицательном сценарии: первый промоут Production **отказал**
 до деплоя, потому что DSN читался пустым (см. грабли ниже).
 
+## Item 2 — LOCAL market data: контур доказан, UI-подтверждение за владельцем
+
+Токен `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` перенесён в LOCAL secret store
+(`data/integrations/secrets.local.json`, gitignored, значение нигде не
+печаталось, второй credential не создавался).
+
+Роли подтверждены из живых процессов:
+
+| | effective_role | chart_source_mode |
+| --- | --- | --- |
+| Production | **hub** | `direct_hub` |
+| Canary | consumer | `owner_gateway_consumer` |
+| LOCAL | consumer | `owner_gateway_consumer` |
+
+LOCAL `/api/ops/runtime/bars/status`: `topstepx runtime_state=LIVE`,
+`blocking_reasons: [owner_market_data_gateway_consumer,
+owner_credentials_present_but_direct_hub_forbidden]` — то есть LOCAL получает
+данные через hub и **не открывает свою сессию**.
+
+**Одна provider connection** доказана lease-механизмом: держатель ровно один —
+Production `api-app` (pid 2068227, environment `production`), heartbeat свежий.
+
+Market-data regression: **142 passed**.
+
+**Не подтверждено автоматизацией:** живые графики в UI Canary/Production —
+`/api/ops/runtime/bars/status` там отдаёт 401 без сессии владельца. Требуется
+владелец (см. WAITING FOR OWNER). Мультиплексирование подписок и live-failover
+измерены только регрессией, не на живом трафике.
+
+Ловушка: разовый in-process probe без окружения `start.ps1` покажет
+`isolated`, потому что `data_path` разрешается в другой data root. Верить
+только запущенному серверу.
+
 ## Осталось (не начато)
 
-1. **LOCAL market data** — код consumer'а смержен (PR #62), осталось положить
+1. ~~LOCAL market data~~ — см. выше — код consumer'а смержен (PR #62), осталось положить
    `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` в LOCAL secret store и доказать
    LIVE на LOCAL + Canary + Production при одной provider connection.
 3. RBAC/Admin во всех окружениях.
