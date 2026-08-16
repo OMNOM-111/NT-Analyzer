@@ -87,6 +87,57 @@ PY
   validate_sha "$archive_sha"; validate_sha "$manifest_sha"; validate_build "$build_id"
   test "$report_commit" = "$commit"
 
+  # An existing release directory is reused only if it is genuinely the same
+  # immutable release. A directory left behind by an interrupted deploy has a
+  # manifest that no longer matches a fresh build of the same version, and
+  # reusing it made that (version, commit) permanently unbuildable: every
+  # rebuild aborted on the artifact_sha256 check below. Such a directory is
+  # quarantined rather than reused, and never overwritten in place.
+  if [ -e "$release_dir" ]; then
+    # A directory that is currently serving traffic is never touched, whatever
+    # its state: the live symlinks are the authority on that.
+    local live=0 slot
+    for slot in "$CANARY_CURRENT" "$CANARY_PREVIOUS" /home/stratforge/current \
+                /home/stratforge/previous; do
+      if [ -e "$slot" ] && [ "$(readlink -f "$slot")" = "$(readlink -f "$release_dir")" ]; then
+        live=1
+      fi
+    done
+    local existing_ok=0
+    if [ "$live" -eq 1 ]; then
+      existing_ok=1
+    elif [ -d "$release_dir" ] && [ -x "$release_dir/.venv/bin/python" ] \
+         && [ -f "$release_dir/manifest.json" ] && [ -f "$release_dir/manifest.sig" ]; then
+      # Reuse only if the directory verifies as this exact immutable release --
+      # the same predicate the artifact_sha256 assertion below applies.
+      local existing_identity
+      if existing_identity="$(python3 "$release_dir/tools/canary_manifest_trust.py" \
+            "$release_dir" "$TRUSTED_KEY" --required-environment canary 2>/dev/null)"; then
+        if python3 - "$existing_identity" "$commit" "$version" "$channel" "$manifest_sha" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+ok = (d.get("ok") is True
+      and d.get("git_commit_sha") == sys.argv[2]
+      and d.get("version") == sys.argv[3]
+      and d.get("channel") == sys.argv[4]
+      and str(d.get("artifact_sha256", "")).lower() == sys.argv[5].lower())
+raise SystemExit(0 if ok else 1)
+PY
+        then
+          existing_ok=1
+        fi
+      fi
+    fi
+    if [ "$existing_ok" -ne 1 ]; then
+      # Incomplete or superseded: park it instead of deleting, so an operator
+      # can still inspect what an interrupted deploy left behind.
+      local quarantine="$RELEASES/.quarantine"
+      install -d -m 0750 "$quarantine"
+      local parked="$quarantine/$(basename "$release_dir").$(date -u +%Y%m%dT%H%M%SZ)"
+      echo "QUARANTINE_INCOMPLETE_RELEASE=$parked" >&2
+      mv "$release_dir" "$parked"
+    fi
+  fi
   if [ ! -e "$release_dir" ]; then
     local extract="$tmp/extracted"
     mkdir "$extract"
