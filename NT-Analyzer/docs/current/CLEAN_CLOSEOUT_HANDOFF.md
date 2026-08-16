@@ -1,262 +1,118 @@
 # Clean closeout — executable handoff
 
-Дата: `2026-08-16` UTC. Продолжать **с первого FAIL**, повторный аудит не нужен.
+Дата: `2026-08-16` UTC. Продолжать **с первого невыполненного пункта**,
+повторный аудит не нужен.
 
-## LIVE состояние (проверено)
+## LIVE состояние (проверено прямым чтением)
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.8`, commit `3897e471`, artifact `F584E2E0BB580F6E…`, **migration 0012 применена** |
-| Production | `0.10.0-beta.6`, commit `c7b2ed23`, artifact `E370051663484F77…`, 0012 **не** применена |
-| repo HEAD | `3897e471` (`0.10.0-beta.8`) |
-| LOCAL | запущен на HEAD, дерево чистое |
+| Canary | `0.10.0-beta.10`, commit `baeddbe5`, artifact `CF7425B7A63D1B71…` |
+| Production | `0.10.0-beta.10`, commit `baeddbe5`, artifact `CF7425B7A63D1B71…` |
+| Parity | **EXACT MATCH**, acceptance PASS на обоих |
+| migration 0012 | применена на Canary **и** Production, FK-семантика проверена |
+| repo HEAD | `baeddbe5` |
 
-Canary acceptance PASS. Parity Canary/Production **временно нарушена намеренно**:
-Canary впереди, Production ждёт применения 0012.
-
-## РЕШЕНО: модель прав и порядок миграций
-
-Прошлая запись «0012 требует ownership, роль приложения им не обладает» была
-**верной по факту, но не тем выводом**. Правильная модель уже существует и
-работает — менять архитектуру не нужно:
-
-| окружение | runtime role | владелец таблиц |
-| --- | --- | --- |
-| Canary | `stratforge_canary_app` | `stratforge_canary_migration` (53 таблицы) |
-| Production | `stratforge_app` | `stratforge_migration` (53 таблицы) |
-
-`InsufficientPrivilege` возникал только потому, что воспроизведение шло по
-runtime-DSN из `/proc`. Под migration-ролью 0012 применяется чисто, идемпотентна,
-и даёт ровно задуманные `ON DELETE` (проверено на живой Canary):
-CASCADE для owned-строк, **SET NULL для `sf_audit_events` / `sf_operational_events`
-/ `sf_migration_runs`** (история сохраняется), RESTRICT для `sf_workspaces`.
-`still NO ACTION: none`.
-
-**Главное операционное открытие.** Шаг `expand_migrate` в blue/green —
-**косметический**: `stage9_remote_release.sh` печатает фиксированный список
-шагов со статусом `pass`, а `canary_blue_green_promote.sh` миграции **не
-запускает вообще** (`grep -n "migrat" tools/canary_blue_green_promote.sh` —
-пусто). Миграции применяются отдельно, вручную:
+### База очищена — на обоих окружениях ровно один human user
 
 ```
-tools/production_storage_cli.py schema --apply \
-  --url-env STRATFORGE_MIGRATION_DATABASE_URL \
-  --confirm-migration-set-sha256 <set sha>
+production: users=1 identities=3 sessions=6 devices=1 workspaces=2
+canary:     users=1 identities=3 sessions=7 devices=1 workspaces=1
+
+eb9d8e32-8db0-d590-9b35-ef1bd07ec61f  dimon_check  DMYTRO CHEREVKO  is_owner=True
+  identities = telegram + google + email     devices = 1
 ```
 
-Поэтому деплой beta.7/beta.8 и падал в `ROLLING_BACK`: новый код проверяет
-готовность против БД, где его миграции ещё нет. **Порядок обязателен:
-expand-миграция → затем промоут кода.** Именно так Canary и поехала.
+Удалены: `stage9_canary_operator`, `123456`, `505`, `ARTUR_CA`.
+Orphan integrity PASS: во всех RESTRICT-таблицах `held_by_doomed={}`.
+Backup перед операцией: `pre-identity-cleanup-20260815T223000Z`.
 
-Готовые скрипты: `scratchpad/apply_schema.py` (canary),
-`scratchpad/own_model.py` (модель прав), `scratchpad/test_0012_mig.py`
-(0012 в транзакции с откатом + вывод получившихся FK-правил).
+## Что было починено, чтобы это стало возможно
 
-## FIRST FAIL — на Production нет persisted migration credential
+Удаление аккаунта не работало вообще — четыре независимых дефекта, каждый
+маскировал следующий:
 
-Production нельзя мигрировать: **ни один конфиг на хосте не объявляет
-`STRATFORGE_MIGRATION_DATABASE_URL` для Production.** Проверено явно:
+1. **PR #60** — операционные строки (`sf_commands`, `sf_jobs`, `sf_artifacts`,
+   `sf_ai_*`, `sf_market_data_subscriptions`) держали `sf_users` через
+   `RESTRICT` и не освобождались.
+2. **PR #62 / migration 0012** — все `sf_identity_*_user_uuid_fk` были созданы
+   без `ON DELETE` (т.е. `NO ACTION`) и блокировали удаление на каждой таблице
+   с `user_uuid`. Теперь: CASCADE для owned-строк, **SET NULL** для
+   `sf_audit_events` / `sf_operational_events` / `sf_migration_runs`
+   (история сохраняется), RESTRICT для `sf_workspaces`.
+3. **PR #71** — audit удаления ссылался на только что удалённый аккаунт.
+   `append_audit` берёт scope из `values["user_id"]`, а это FK на `sf_users`;
+   INSERT падал. `ON DELETE SET NULL` тут не помогает — он про удаление
+   родителя, а не про вставку ссылки на уже удалённого.
+4. **PR #73** — workspaces чистились **после** записи account-документа, а
+   `sf_workspaces.owner_user_id` — `RESTRICT`. Purge не мог сработать никогда:
+   запись, которую он ждал, к тому моменту уже откатилась.
 
-```
-production-maintenance.env : absent
-production-app.env         : has STRATFORGE_MIGRATION_DATABASE_URL = False
-production.env             : has STRATFORGE_MIGRATION_DATABASE_URL = False
-```
+## Восстановление Production migration credential (выполнено)
 
-У Canary такой файл есть — `canary-maintenance.env` (mode 0600), создан
-`tools/canary_isolation_provision.py`. Производственного аналога не создавалось.
-Старый `production_data/runtime/promote-0.10.0-beta.1.sh` читает
-`os.environ["STRATFORGE_MIGRATION_DATABASE_URL"]` и проверяет, что пользователь
-именно `stratforge_migration` — то есть значение подавалось извне и нигде не
-сохранилось.
+Модель прав была правильной изначально: runtime `stratforge_app` ≠ владелец,
+таблицами владеет `stratforge_migration`. Отсутствовал только persisted
+credential — `production-maintenance.env` никогда не создавался.
 
-**Это и есть первый FAIL для следующей сессии.**
+Выполнено по санкции владельца: ACL снят в snapshot, `postgres` получил
+**только traverse (x)**, нерекурсивно; peer-admin probe PASS; пароль
+`stratforge_migration` сгенерирован на хосте и нигде не выведен;
+`production-maintenance.env` создан (0600); соединение и DDL проверены в
+транзакции с откатом; ACL восстановлен из snapshot — **EXACT MATCH**, доступ
+`postgres` к сокету снова DENIED.
 
-### Что уже проверено (не повторять)
+Дальнейшие миграции ACL не требуют: DSN — обычный loopback SCRAM.
 
-Поиск существующего credential по всему хосту — `config/`, `runtime/`, `run/`,
-`/home/stratforge`, `/etc/supervisor`, `/etc/default`, `/etc/systemd` — с
-выводом только *формы* присваивания, без значений:
-**реального Production migration DSN нет нигде.** Все совпадения с
-`LITERAL-DSN` — это тестовые фикстуры в `tests/test_phase7_canary_isolation.py`
-внутри старых build-каталогов. `/root` доступен через sudo, но **пуст**.
-`/etc/stratforge` отсутствует.
+## Порядок применения миграций (важно, не забыть)
 
-Попытка пойти по разрешённому пути ротации остановлена на шаге доказательства
-«роль maintenance-only». Установлено:
-
-- ни одна supervisor-программа не называет роль в своём environment;
-- живых сессий роли в БД нет (только `stratforge_app`);
-- cron/systemd-таймеров с ролью нет;
-- **НО** у двух процессов environment нечитаем: `postgresql` и
-  **`offhost-backup-scheduler`**. На Canary `STRATFORGE_BACKUP_DATABASE_URL`
-  **равен** migration DSN, поэтому вероятно, что Production backup-планировщик
-  ходит именно этой ролью. Ротация пароля сломала бы off-host backup.
-- `sudo -n -u postgres psql` по умолчанию **не подключается**
-  (`/var/run/postgresql/.s.PGSQL.5432` — не тот сокет; кластер живёт в
-  `/home/stratforge/production_data/run/postgresql`). Проверить проектный сокет
-  не удалось: дальнейшая инспекция была заблокирована политикой.
-
-### Диагностика ЗАВЕРШЕНА — осталось только привилегированное действие
-
-**1. Backup scheduler НЕ использует `stratforge_migration`. Ротация безопасна.**
-Доказано трижды:
-
-- `offhost-backup-scheduler` (user `root`, команда
-  `production_data/bin/offhost-backup-loop.sh`) — в его environment **нет ни
-  одного `*DATABASE_URL`**;
-- сам `offhost-backup-loop.sh` (22 строки) не содержит **ни одной** ссылки на
-  DB-credential (`DATABASE_URL`, `.env`, `psql`, `pg_dump`, `source`,
-  `production_storage_cli`, `PGPASSWORD/PGUSER/PGHOST`);
-- в кластере есть **отдельная роль `stratforge_backup`** (`rolbypassrls=true`).
-
-**2. Админ-путь найден и однозначен.** `pg_hba.conf`:
+Шаг `expand_migrate` в blue/green — **косметический**, миграции он не
+выполняет. Их применяют отдельно и **до** промоута кода:
 
 ```
-local     all  postgres  peer
-local     all  all       scram-sha-256
-hostssl   all  all  127.0.0.1/32  scram-sha-256
-hostnossl all  all  127.0.0.1/32  reject
-host      all  all  0.0.0.0/0     reject
+tools/production_storage_cli.py schema --apply   --url-env STRATFORGE_MIGRATION_DATABASE_URL   --confirm-migration-set-sha256 <set sha>
 ```
 
-`listen_addresses='127.0.0.1'`, `unix_socket_directories=
-'/home/stratforge/production_data/run/postgresql'`.
+Иначе новый код не проходит readiness и blue/green откатывается.
 
-Суперпользователь достижим **только** через `local … postgres peer`, то есть
-из-под OS-пользователя `postgres` по unix-сокету. Единственное препятствие —
-traversal: `/home/stratforge/production_data/run` имеет режим `drwx------`
-(owner `stratforge:root`), поэтому `postgres` не может дойти до сокета,
-хотя сам postmaster работает под `postgres` и сокет уже держит.
+## Осталось (не начато)
 
-```
-drwxr-x---+ stratforge root  /home/stratforge
-drwx--x---+ stratforge root  /home/stratforge/production_data
-drwx------+ stratforge root  /home/stratforge/production_data/run
-drwxr-x---  postgres postgres  …/run/postgresql
-```
+1. **Release Center: честный pipeline** — `expand_migrate` должен реально
+   выполнять миграции через maintenance DSN, при отсутствии — `SKIPPED`, при
+   провале — код не выкатывается. Затрагивает `stage9_remote_release.sh`,
+   `release_executor.py`, `blue_green.py`. Нужны regression-тесты.
+2. **LOCAL market data** — код consumer'а смержен (PR #62), осталось положить
+   `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` в LOCAL secret store и доказать
+   LIVE на LOCAL + Canary + Production при одной provider connection.
+3. RBAC/Admin во всех окружениях.
+4. Встроенный Connectors/Telegram dashboard.
+5. Environment Switcher auto-load.
+6. New-user onboarding E2E + удаление тестового пользователя.
+7. Market-data regression (репозиторная часть зелёная: 136 passed).
+8. Browser E2E LOCAL → CANARY → PRODUCTION.
+9. Повторный perf-замер.
 
-**3. Обходного пути через существующие credential нет.** Во всём кластере ни у
-одной роли нет `rolsuper`/`rolcreaterole`, кроме `postgres`:
-`stratforge_app`, `stratforge_backup`, `stratforge_canary_app`,
-`stratforge_canary_migration`, `stratforge_migration`, `stratforge_restore` —
-все обычные. Canary и Production живут в одном кластере
-(`stratforge_canary`, `stratforge_production`), но credential
-`stratforge_canary_migration`, который у нас есть, **не может** сделать
-`ALTER ROLE stratforge_migration`.
+## Готовые инструменты (в репозитории)
 
-Санкционированного инструмента для создания `production-maintenance.env` тоже
-нет: `tools/canary_isolation_provision.py` — только для Canary.
+`tools/drive_release.py`, `tools/host_user_cleanup.py`, `tools/host_fk_audit.py`,
+`tools/host_blockers.py`, `tools/admin_reach.py`.
+Запуск host-скриптов: `scratchpad/run_host_script.py`,
+интерпретатор через `SF_REMOTE_PYTHON=canary|production`.
 
-### Что именно заблокировано
+## Грабли
 
-Скрипт `scratchpad/admin_reach.py` (root делает `cd` в каталог сокета, затем
-опускается до `postgres` и подключается по относительному пути — **без единого
-изменения прав**) блокируется permission-классификатором даже в виде
-`timeout 400 python run_host_script.py admin_reach.py sf-admin-reach.py`,
-то есть при уже выданном правиле `Bash(timeout * python run_host_script.py:*)`.
-
-Значит блокировка **не по шаблону команды, а по смыслу действия**: эскалация до
-DB-суперпользователя ради смены пароля роли. Bash-allow-rule это не снимает.
-
-Разблокировать может только одно из:
-
-1. интерактивное подтверждение владельцем этого конкретного действия
-   (сессия в режиме, где классификатор спрашивает, а не отклоняет);
-2. запуск сессии без auto-mode классификатора для этой операции;
-3. владелец один раз выполняет ротацию сам — но тогда достаточно, чтобы он
-   **только** создал `config/production-maintenance.env` (0600,
-   owner `stratforge`) с `STRATFORGE_MIGRATION_DATABASE_URL`; сам DSN
-   автоматизации показывать не нужно, она читает его по имени ключа.
-
-После любого из трёх — всё остальное уже готово и идёт без остановок.
-
-## Порядок работ после того, как 0012 применится на Production
-
-1. Применить 0012 на Production **до** промоута кода (см. FIRST FAIL), затем
-   `approve-production → promote-production` для уже собранного кандидата
-   `rc_ea3c6d37fb43400aa679fa6e7e2c49fa` (`0.10.0-beta.8`, artifact
-   `F584E2E0BB580F6E…`) — тот же immutable artifact, что уже принят на Canary.
-2. Проверить FK-семантику на Production: `tools/host_fk_audit.py`.
-3. **Production DB cleanup** — всё готово, скрипт написан и dependency-check
-   пройден: `scratchpad/host_user_cleanup.py`.
-   Dry-run: `SF_REMOTE_PYTHON=production python run_host_script.py
-   host_user_cleanup.py sf-user-cleanup.py production eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`
-   Применение: то же с `--apply`.
-   Удаляются 4 аккаунта (все `safe_to_delete=True`, разрешение владельца дано):
-   `stage9_canary_operator` (9000000000728), `123456`, `505`,
-   `ARTUR_CA` (1279070095).
-4. Counts + orphan integrity: `scratchpad/host_user_mapping.py`,
-   `scratchpad/host_blockers.py`.
-
-## Что уже сделано и в проде (`beta.6`)
-
-- **PR #60** — удаление аккаунта освобождает его операционные строки
-  (`sf_commands`, `sf_jobs`, `sf_artifacts`, `sf_ai_usage_events`,
-  `sf_ai_reservations`, `sf_market_data_subscriptions`). Без этого удаление
-  любого non-owner аккаунта откатывалось целиком и пользователь молча оставался.
-- Ранее: доставка кода подтверждения устройства (#51), полное удаление аккаунта
-  (#53), сокращение payload аватара (#55), build-derived asset stamps (#57).
-
-## Что merged, но ещё НЕ в проде (ждёт 0012)
-
-- **PR #62** — migration 0012 (ON DELETE semantics для всех
-  `sf_identity_*_user_uuid_fk`) **+ LOCAL market-data gateway fix**.
-- **PR #64** — согласованность `build_date` / `build_timestamp_utc`.
-- **PR #65** — `0.10.0-beta.8`.
-
-## Зафиксированные факты (не переисследовать)
-
-- Canary DB **уже чистая**: 1 owner, 3 identities, 1 device.
-- Production DB: owner + 4 аккаунта на удаление. Backup
-  `pre-identity-cleanup-20260815T223000Z` снят и проверен против live counts.
-- `stage9_canary_operator` **не используется кодом** — grep по `app/` пустой,
-  переносить в service principal не требуется, можно просто удалить.
-- Owner на Production: `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, identities
-  telegram + google + email, devices = 1. Совпадает с ручной проверкой владельца.
-- `NOT VALID` у FK **не отключает enforcement** — только пропускает проверку
-  уже существующих строк. Прежняя запись в handoff была неверной.
-- LOCAL market data: причина найдена и исправлена в коде (`gateway_url()` не
-  имел правила для Development → `isolated` → 0 backup providers). Осталось
-  положить `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` в local secret store.
-
-## Грабли этой сессии
-
-- ~~Прерванный деплой делает свою версию невозможной для пересборки.~~
-  **ИСПРАВЛЕНО (PR #68).** Каталог переиспользуется только если проходит
-  `canary_manifest_trust` как ровно этот immutable release; иначе уезжает в
-  `$RELEASES/.quarantine/<ref>.<timestamp>` (паркуется, не удаляется).
-  Каталог, на который смотрит живой симлинк, не трогается никогда.
-- `release_buttons.py` умирает молча, если его убить в фоне: буферизованный
-  вывод теряется и candidate остаётся в неконсистентном состоянии.
-  Использовать `drive_release.py`.
-- Приложение перегенерирует `data/governance-rendered/*` при каждом старте, а
-  Release Center отказывает на грязном дереве → перед каждым билдом
-  `git stash push -- NT-Analyzer/data/`.
-- `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`,
-  иначе бэкенд не стартует (теперь есть тест).
-
-## Не начато
-
-- **Release Center: честный pipeline** (крупный пункт, не начат). Сейчас
-  `expand_migrate` — косметический `pass`. Нужно:
-  `backup/verify → expand migration через maintenance DSN → migration
-  verification → blue-green deploy → readiness → acceptance → promote`;
-  отсутствие миграций = честный `SKIPPED`; провал миграции = код не
-  выкатывается; maintenance credential не попадает в artifact/browser/log;
-  regression/integration тесты. Затрагивает `stage9_remote_release.sh`
-  (жёстко зашитый список шагов), `release_executor.py`, `blue_green.py`.
-- RBAC/Admin во всех средах, встроенный connector dashboard,
-  Environment Switcher auto-load, new-user E2E, browser E2E, повторный
-  perf-замер, LOCAL gateway token.
+- Прерванный деплой раньше делал версию непересобираемой — **исправлено
+  (PR #68)**: каталог уходит в `$RELEASES/.quarantine`, живой не трогается.
+- Приложение перегенерирует `data/governance-rendered/*` при старте, а Release
+  Center отказывает на грязном дереве → `git stash push -- NT-Analyzer/data/`.
+- `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`.
 
 ## WAITING FOR OWNER
 
-1. Физический клик в Google/Telegram consent там, где браузерная автоматизация
-   не может пройти OAuth за человека.
-2. Ротация 4 секретов — **только после полного технического PASS**
-   (Google Client Secret ×2, Resend API key ×2).
+1. Физический Google/Telegram/email клик там, где OAuth-consent нельзя пройти
+   автоматизацией.
+2. Ротация четырёх секретов (Google ×2, Resend ×2) — **только после полного
+   технического PASS**.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-16T01:30:00Z | Claude Opus 5 через Claude Code по запросу owner | Executable handoff чистого закрытия этапа. Первый FAIL: migration 0012 требует ownership таблиц, роль приложения им не обладает — блокирует Canary-деплой beta.7/beta.8 и, следовательно, Production cleanup. Live остаётся beta.6 с полным artifact parity. Зафиксированы готовые скрипты, порядок работ и грабли.
+2026-08-16T21:30:00Z | Claude Opus 5 через Claude Code по запросу owner | Production migration credential восстановлен по санкции владельца (ACL temporary + exact restore), migration 0012 применена на обоих окружениях, четыре дефекта удаления аккаунта исправлены (PR #60/#62/#71/#73), база очищена до canonical owner на Canary и Production, parity beta.10 EXACT MATCH, orphan integrity PASS.
 -->
