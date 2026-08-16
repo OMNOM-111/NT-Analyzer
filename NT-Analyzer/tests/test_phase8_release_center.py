@@ -679,3 +679,64 @@ def test_failed_canary_can_retry_the_same_artifact_without_rebuild(rc_store, mon
     detail = release_center.get_release(cid)
     assert detail["summary"]["state"] in {"canary_deploying", "canary_checking"}
     assert detail["summary"]["artifact_sha256"] == artifact_before
+
+
+# --------------------------------------------------------------------------- #
+# A verified Production deploy must reach a terminal state, and an errored
+# attempt must stay retryable.
+#
+# A promotion that errored before the executor reported an outcome left the
+# candidate in production_deploying with nothing deployed: not live, not
+# failed, and with no transition out of it. The retry was refused as an
+# invalid transition, so the ledger disagreed with the live environment
+# permanently.
+# --------------------------------------------------------------------------- #
+def _real_pass_adapter(monkeypatch):
+    monkeypatch.setattr(release_center, "_run_deploy_adapter", lambda env, artifact: {
+        "status": "pass", "external_result": "pass", "verified": True,
+    })
+
+
+def _stuck_adapter(monkeypatch):
+    """Neither pass nor fail -- exactly what an errored attempt records."""
+    monkeypatch.setattr(release_center, "_run_deploy_adapter", lambda env, artifact: {
+        "status": "pending", "external_result": "pending",
+    })
+
+
+def test_verified_production_deploy_reaches_production_live(rc_store, monkeypatch):
+    cid = _mk()
+    _to_canary_passed(cid)
+    release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-" + cid[:8])
+    _real_pass_adapter(monkeypatch)
+    out = release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-" + cid[:8])
+    assert out["state"] == "production_live"
+    detail = release_center.get_release(cid)
+    assert detail["summary"]["state"] == "production_live"
+    assert detail["summary"]["production_state"] == "live"
+
+
+def test_an_errored_promotion_stays_retryable(rc_store, monkeypatch):
+    cid = _mk()
+    _to_canary_passed(cid)
+    release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-" + cid[:8])
+    _stuck_adapter(monkeypatch)
+    first = release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000001")
+    assert first["state"] == "production_deploying"
+    # Nothing landed, so the retry must be allowed rather than refused.
+    _real_pass_adapter(monkeypatch)
+    second = release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000002")
+    assert second["state"] == "production_live"
+    assert release_center.get_release(cid)["summary"]["state"] == "production_live"
+
+
+def test_a_landed_deploy_is_not_promoted_twice(rc_store, monkeypatch):
+    cid = _mk()
+    _to_canary_passed(cid)
+    release_center.approve_production(actor=OWNER, candidate_id=cid, idempotency_key="ap-" + cid[:8])
+    _real_pass_adapter(monkeypatch)
+    release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000001")
+    # production_live is terminal; a fresh promotion is an invalid transition.
+    with pytest.raises(release_center.ReleaseCenterError) as exc:
+        release_center.promote_production(actor=OWNER, candidate_id=cid, idempotency_key="pr-000002")
+    assert exc.value.code == "invalid_transition"
