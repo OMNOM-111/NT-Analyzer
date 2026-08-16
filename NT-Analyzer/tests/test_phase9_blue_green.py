@@ -537,3 +537,59 @@ def test_migration_set_still_starts_at_one_and_is_contiguous():
     # here only ever fails on the migration that was correctly added.
     assert versions == list(range(1, len(versions) + 1))
     assert len(versions) >= 11
+
+
+# --------------------------------------------------------------------------- #
+# A stale release directory must not make its (version, commit) unbuildable.
+#
+# The remote script names a release directory $RELEASES/<version>-<commit12>
+# and used to reuse whatever was there. An interrupted deploy left a directory
+# whose manifest no longer matched a fresh build of the same version, so every
+# rebuild aborted on the artifact_sha256 assertion -- that pair was
+# permanently unbuildable, which is what forced 0.10.0-beta.7 to be abandoned.
+# --------------------------------------------------------------------------- #
+def _release_script() -> str:
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parent.parent / "tools" /
+            "stage9_remote_release.sh").read_text(encoding="utf-8")
+
+
+def test_stale_release_directory_is_quarantined_not_reused():
+    sql = _release_script()
+    assert "QUARANTINE_INCOMPLETE_RELEASE=" in sql
+    assert "$RELEASES/.quarantine" in sql
+    # Parked, not deleted: an operator can still inspect what was left behind.
+    assert "mv \"$release_dir\" \"$parked\"" in sql
+
+
+def test_a_live_release_directory_is_never_quarantined():
+    sql = _release_script()
+    # The live symlinks are the authority: a directory currently serving
+    # traffic is never moved, whatever state its manifest is in.
+    for slot in ("$CANARY_CURRENT", "$CANARY_PREVIOUS",
+                 "/home/stratforge/current", "/home/stratforge/previous"):
+        assert slot in sql
+    assert 'if [ "$live" -eq 1 ]; then' in sql
+    assert "existing_ok=1" in sql
+
+
+def test_existing_release_is_reused_only_when_it_verifies_as_the_same_artifact():
+    sql = _release_script()
+    # Reuse is gated on the same predicate the later assertion applies, so a
+    # superseded directory can never masquerade as the current release.
+    assert "canary_manifest_trust.py" in sql
+    assert 'd.get("git_commit_sha") == sys.argv[2]' in sql
+    assert 'str(d.get("artifact_sha256", "")).lower() == sys.argv[5].lower()' in sql
+
+
+def test_release_script_is_valid_shell():
+    import shutil, subprocess
+    from pathlib import Path
+
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash unavailable")
+    script = Path(__file__).resolve().parent.parent / "tools" / "stage9_remote_release.sh"
+    done = subprocess.run([bash, "-n", str(script)], capture_output=True)
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
