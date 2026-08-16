@@ -29,7 +29,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import local_secrets, market_data_live_adapters, owner_market_data_gateway, runtime_env
 
@@ -1373,7 +1373,34 @@ def apply_failover(primary: Optional[Dict[str, Any]], instrument: str, timeframe
     return result
 
 
-def status(*, include_file: bool = True) -> Dict[str, Any]:
+# Building the snapshot costs ~90ms warm, most of it one provider's
+# public_status(), and it is read by both the bars status endpoint and the
+# Admin connectors dashboard -- which the UI polls. Recomputing it per request
+# was pure repeated work: the underlying health state cannot meaningfully
+# change inside a couple of seconds, and every caller here is a status display.
+_STATUS_CACHE: Dict[bool, Tuple[float, Dict[str, Any]]] = {}
+_STATUS_CACHE_TTL_SEC = 3.0
+
+
+def invalidate_status_cache() -> None:
+    """Drop the memoised snapshot. Tests and health transitions use this."""
+    with _LOCK:
+        _STATUS_CACHE.clear()
+
+
+def status(*, include_file: bool = True, fresh: bool = False) -> Dict[str, Any]:
+    if not fresh:
+        with _LOCK:
+            cached = _STATUS_CACHE.get(bool(include_file))
+        if cached and (time.time() - cached[0]) < _STATUS_CACHE_TTL_SEC:
+            return copy.deepcopy(cached[1])
+    doc = _status_uncached(include_file=include_file)
+    with _LOCK:
+        _STATUS_CACHE[bool(include_file)] = (time.time(), copy.deepcopy(doc))
+    return doc
+
+
+def _status_uncached(*, include_file: bool = True) -> Dict[str, Any]:
     providers = configured_providers()
     with _LOCK:
         health = copy.deepcopy(_HEALTH)
