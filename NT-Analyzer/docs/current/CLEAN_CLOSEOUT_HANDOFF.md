@@ -1,156 +1,101 @@
 # Clean closeout — executable handoff
 
-Дата: `2026-08-16` UTC. Продолжать **с первого невыполненного пункта**,
-повторный аудит не нужен.
+Дата: `2026-08-17` UTC. Продолжать **с FIRST NEXT STEP**, повторный аудит не нужен.
 
-## LIVE состояние (проверено прямым чтением)
+## LIVE состояние (проверено)
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.12`, commit `bfc3ccd5`, artifact `DD0CD571E294FD36…` |
-| Production | `0.10.0-beta.12`, commit `bfc3ccd5`, artifact `DD0CD571E294FD36…` |
-| Release state | исправлено (PR #79): verified deploy → `production_live`; ошибочная попытка остаётся retryable |
-| Parity | **EXACT MATCH**, acceptance PASS на обоих |
-| migration 0012 | применена на Canary **и** Production, FK-семантика проверена |
-| repo HEAD | `baeddbe5` |
+| Canary | `0.10.0-beta.13`, artifact `CF2C053DEA3D6FA8…`, schema **13** |
+| Production | `0.10.0-beta.13`, artifact `CF2C053DEA3D6FA8…`, schema **13** |
+| Parity | EXACT MATCH, acceptance PASS |
+| Human users | 1 canonical owner `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, identities Telegram+Google+email, 1 trusted device |
 
-### База очищена — на обоих окружениях ровно один human user
+## FIRST NEXT STEP — 0014 не применяется: InsufficientPrivilege
 
-```
-production: users=1 identities=3 sessions=6 devices=1 workspaces=2
-canary:     users=1 identities=3 sessions=7 devices=1 workspaces=1
+`0.10.0-beta.14` (PR #90/#91, migration 0014 identity history) **не выкачена**.
+Canary-деплой корректно отказал, откатился, обе среды остались на `beta.13`.
+Это ровно то поведение, ради которого делался честный `expand_migrate`:
+код не поехал на несмигрированную схему.
 
-eb9d8e32-8db0-d590-9b35-ef1bd07ec61f  dimon_check  DMYTRO CHEREVKO  is_owner=True
-  identities = telegram + google + email     devices = 1
-```
-
-Удалены: `stage9_canary_operator`, `123456`, `505`, `ARTUR_CA`.
-Orphan integrity PASS: во всех RESTRICT-таблицах `held_by_doomed={}`.
-Backup перед операцией: `pre-identity-cleanup-20260815T223000Z`.
-
-## Что было починено, чтобы это стало возможно
-
-Удаление аккаунта не работало вообще — четыре независимых дефекта, каждый
-маскировал следующий:
-
-1. **PR #60** — операционные строки (`sf_commands`, `sf_jobs`, `sf_artifacts`,
-   `sf_ai_*`, `sf_market_data_subscriptions`) держали `sf_users` через
-   `RESTRICT` и не освобождались.
-2. **PR #62 / migration 0012** — все `sf_identity_*_user_uuid_fk` были созданы
-   без `ON DELETE` (т.е. `NO ACTION`) и блокировали удаление на каждой таблице
-   с `user_uuid`. Теперь: CASCADE для owned-строк, **SET NULL** для
-   `sf_audit_events` / `sf_operational_events` / `sf_migration_runs`
-   (история сохраняется), RESTRICT для `sf_workspaces`.
-3. **PR #71** — audit удаления ссылался на только что удалённый аккаунт.
-   `append_audit` берёт scope из `values["user_id"]`, а это FK на `sf_users`;
-   INSERT падал. `ON DELETE SET NULL` тут не помогает — он про удаление
-   родителя, а не про вставку ссылки на уже удалённого.
-4. **PR #73** — workspaces чистились **после** записи account-документа, а
-   `sf_workspaces.owner_user_id` — `RESTRICT`. Purge не мог сработать никогда:
-   запись, которую он ждал, к тому моменту уже откатилась.
-
-## Восстановление Production migration credential (выполнено)
-
-Модель прав была правильной изначально: runtime `stratforge_app` ≠ владелец,
-таблицами владеет `stratforge_migration`. Отсутствовал только persisted
-credential — `production-maintenance.env` никогда не создавался.
-
-Выполнено по санкции владельца: ACL снят в snapshot, `postgres` получил
-**только traverse (x)**, нерекурсивно; peer-admin probe PASS; пароль
-`stratforge_migration` сгенерирован на хосте и нигде не выведен;
-`production-maintenance.env` создан (0600); соединение и DDL проверены в
-транзакции с откатом; ACL восстановлен из snapshot — **EXACT MATCH**, доступ
-`postgres` к сокету снова DENIED.
-
-Дальнейшие миграции ACL не требуют: DSN — обычный loopback SCRAM.
-
-## Release Center: expand_migrate теперь настоящий — ЗАКРЫТО (PR #76)
-
-`promote_release` выполняет pending-миграции окружения **до** любого движения
-кода, через maintenance-DSN именно этого окружения:
-`plan → сверка checksum набора → apply → проверка, что pending пуст`.
-
-- любой сбой → **промоут отменяется**, код не уезжает на схему, которая не
-  дошла до нужного состояния;
-- нет pending → честный **SKIPPED**, а не выдуманный pass;
-- статус шага в payload — реальный результат, а не константа;
-- **отсутствие maintenance credential = отказ**, а не тихий пропуск (именно
-  это состояние и позволило Production незаметно разъехаться);
-- DSN читается в subshell, наружу уходят только производные значения без
-  секретов.
-
-Проверено end-to-end на обоих окружениях (`beta.11`):
+Прямой запуск под migration-ролью:
 
 ```
-2. canary/expand_migrate     -> skipped  {"pending":0,"migration_set_sha256":"af4fe7bb…"}
-2. production/expand_migrate -> skipped  {"pending":0,"migration_set_sha256":"af4fe7bb…"}
+tools/production_storage_cli.py schema --apply --url-env STRATFORGE_MIGRATION_DATABASE_URL
+  -> {"ok": false, "code": "storage_error",
+      "error": "PostgreSQL migration failed: InsufficientPrivilege"}
 ```
 
-Гейт доказан и в отрицательном сценарии: первый промоут Production **отказал**
-до деплоя, потому что DSN читался пустым (см. грабли ниже).
+Роль `stratforge_canary_migration` владеет таблицами и успешно применила 0013,
+поэтому проблема в конкретном statement внутри 0014. **Проверено и исключено:**
+`sf_identity_uuid_v1` не имеет REVOKE (PUBLIC может выполнять).
 
-## Item 2 — LOCAL market data: контур доказан, UI-подтверждение за владельцем
+Наиболее вероятный кандидат — `CREATE POLICY`, чьё выражение вызывает
+`sf_scope_global()` / `sf_scope_user()`: в 0001 у них
+`REVOKE ALL ... FROM PUBLIC` и `GRANT EXECUTE ... TO stratforge_app`,
+migration-роли EXECUTE не выдан. 0006 создаёт RLS-политику похожим образом —
+надо сравнить, чем она отличается, и либо выдать EXECUTE migration-роли
+отдельной миграцией, либо сформулировать политику 0014 так же, как в 0006.
 
-Токен `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` перенесён в LOCAL secret store
-(`data/integrations/secrets.local.json`, gitignored, значение нигде не
-печаталось, второй credential не создавался).
+Диагностика в один шаг (печатает конкретный failing statement):
 
-Роли подтверждены из живых процессов:
+```
+scratchpad/apply_schema.py canary 0.10.0-beta.14-199e73cd5422 --apply sha:<set sha>
+```
 
-| | effective_role | chart_source_mode |
+Полезно добавить вывод `exc.diag.message_primary`/`context` в
+`production_storage_cli`, сейчас наружу отдаётся только имя класса ошибки.
+
+## Программа (порядок задан владельцем)
+
+`2 → 3 → 6 → 4 → 7 → 8 → 9 → 5 → 10 → 11 → 12`
+
+| # | что | статус |
 | --- | --- | --- |
-| Production | **hub** | `direct_hub` |
-| Canary | consumer | `owner_gateway_consumer` |
-| LOCAL | consumer | `owner_gateway_consumer` |
+| 1 | identity uniqueness + DB constraints | **ЗАКРЫТО**, 0013 live, UniqueViolation подтверждён |
+| 2 | identity history | код смержен (PR #90); **ждёт применения 0014** |
+| 3 | Physical Device → Clients → Sessions | не начато |
+| 6 | Environment Registry (LOCAL публикует heartbeat) | не начато |
+| 4 | User Card / Cabinet поверх итоговых моделей | не начато |
+| 7 | Connectors: partial render + per-source timeout | не начато (frontend; backend уже 173→50 ms) |
+| 8 | Documents: один раздел | не начато |
+| 9 | Admin UX: Monitoring / Subscriptions / Journal | не начато |
+| 5 | NinjaTrader per-environment binding | требует запущенного NT у владельца |
+| 10 | security/adversarial suite | частично: 37 тестов identity + 19 history |
+| 11–12 | new-user E2E, browser E2E | требуют provider consent |
 
-LOCAL `/api/ops/runtime/bars/status`: `topstepx runtime_state=LIVE`,
-`blocking_reasons: [owner_market_data_gateway_consumer,
-owner_credentials_present_but_direct_hub_forbidden]` — то есть LOCAL получает
-данные через hub и **не открывает свою сессию**.
+## Что сделано в этой сессии
 
-**Одна provider connection** доказана lease-механизмом: держатель ровно один —
-Production `api-app` (pid 2068227, environment `production`), heartbeat свежий.
+- **PR #88 + 0013** — verified e-mail уникален **по всем провайдерам**
+  (старый индекс был `WHERE provider = 'email'` — дыра для Google-с-тем-же-адресом);
+  `verified_phone_e164` с E.164 CHECK и unique index (раньше телефона в
+  constraints не было вовсе); нормализация отвергает control/zero-width/RTL,
+  сохраняет точки и plus-теги, предлагает исправление опечатки (включая
+  транспозицию `gmial`→`gmail`) и **никогда не правит адрес молча**.
+- **PR #89 / beta.13** — первый релиз, где `expand_migrate` реально
+  **применил** миграцию: `{"applied_now": [13], "pending_after": 0}` на обеих
+  средах.
+- **PR #90** — `sf_identity_history`: append-only, `add → verify → activate →
+  retire` одним шагом, два partial unique index (одна живая заявка на
+  идентификатор глобально; одно активное значение на аккаунт на провайдер),
+  `ON DELETE SET NULL` чтобы история пережила удаление аккаунта, маскированный
+  рендер, переприсвоение только явным audited flow.
 
-Market-data regression: **142 passed**.
+## Грабли
 
-**Не подтверждено автоматизацией:** живые графики в UI Canary/Production —
-`/api/ops/runtime/bars/status` там отдаёт 401 без сессии владельца. Требуется
-владелец (см. WAITING FOR OWNER). Мультиплексирование подписок и live-failover
-измерены только регрессией, не на живом трафике.
+- Значение в `*-maintenance.env` **обязано** быть в одинарных кавычках: DSN
+  содержит `&`/`?`/`=`, без кавычек `set -a; . file` даёт пустую переменную.
+- Приложение перегенерирует `data/governance-rendered/*` при старте →
+  `git stash push -- NT-Analyzer/data/` перед каждым билдом.
+- `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`.
+- Ad-hoc python-проба без окружения `start.ps1` резолвит другой data root и
+  врёт про `isolated`/`not_configured`. Верить только запущенному серверу.
 
-Ловушка: разовый in-process probe без окружения `start.ps1` покажет
-`isolated`, потому что `data_path` разрешается в другой data root. Верить
-только запущенному серверу.
+## WAITING FOR OWNER (не блокирует пункты 2–4, 6–9)
 
-## Item 5 — Environment Switcher: ЗАКРЫТО (PR #83)
-
-Метаданные грузятся сами при открытии, параллельно и независимо: медленное
-окружение не задерживает остальные, ошибка пишет конкретную причину на своей
-карточке. Добавлен `artifact_sha256` — паритет Canary/Production виден прямо
-в панели. Проверено живьём: все три окружения отдают version/commit/build/
-artifact/health/readiness без единого клика.
-
-## Item 6 — остаточные sessions/workspaces: ЗАКРЫТО, удалять нечего
-
-Классификация (прямое чтение, ничего не удалялось):
-
-| | sessions | из них expired/revoked | workspaces | orphans |
-| --- | --- | --- | --- | --- |
-| Production | 6 | **0 / 0** | 2 | **0** |
-| Canary | 7 | **0 / 0** | 1 | **0** |
-
-Все сессии принадлежат canonical owner, ни одна не истекла и не отозвана
-(TTL 30 дней, истекают через +15…+28 дней). Это повторные входы владельца
-14–15 августа, а не мусор. Все workspaces принадлежат canonical owner, в
-каждой ровно он сам участником; `ws_personal_*` на Production — рабочая,
-`ws_owner_training_*` есть на обоих. Записей, принадлежащих не-canonical
-пользователю: **0** и в workspaces, и в memberships.
-
-**Доказанного stale-мусора нет — поэтому не удалено ничего.** Удаление
-действующих сессий просто разлогинило бы владельца без причины.
-
-Trusted device: по одному на окружение, оба `trusted`, last_seen совпадает с
-последней сессией.
+1. Физический Telegram/Google/e-mail consent для temporary user (пункты 11–12).
+2. Запущенный NinjaTrader на LOCAL и на Production-машине (пункт 5).
+3. Ротация 4 секретов — только после полного технического PASS.
 
 ## Item 9 — performance: ЗАКРЫТО (PR #85)
 
