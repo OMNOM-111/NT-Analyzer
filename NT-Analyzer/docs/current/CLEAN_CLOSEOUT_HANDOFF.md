@@ -70,21 +70,46 @@ production.env             : has STRATFORGE_MIGRATION_DATABASE_URL = False
 именно `stratforge_migration` — то есть значение подавалось извне и нигде не
 сохранилось.
 
-**Это и есть первый FAIL для следующей сессии.** Варианты, по возрастанию
-инвазивности:
+**Это и есть первый FAIL для следующей сессии.**
 
-1. Найти, откуда значение подавалось при прошлых промоутах (оператор/менеджер
-   секретов), и создать `config/production-maintenance.env` по образцу
-   canary — mode 0600, владелец `stratforge`, вне Git, не source-ится из
-   supervisor-программы api.
-2. Провижнить production-maintenance.env инструментом, аналогичным
-   `canary_isolation_provision.py`. Учесть: это может **сменить пароль роли**,
-   что затрагивает и другие потребители.
-3. Применить 0012 под `sudo -u postgres` — обходит ledger `sf_schema_migrations`
-   и рассинхронизирует учёт миграций. **Не рекомендуется.**
+### Что уже проверено (не повторять)
 
-Автоматизация дальше не пошла сознательно: путь (1) требует обращения с
-секретом, который в конфигурации хоста отсутствует.
+Поиск существующего credential по всему хосту — `config/`, `runtime/`, `run/`,
+`/home/stratforge`, `/etc/supervisor`, `/etc/default`, `/etc/systemd` — с
+выводом только *формы* присваивания, без значений:
+**реального Production migration DSN нет нигде.** Все совпадения с
+`LITERAL-DSN` — это тестовые фикстуры в `tests/test_phase7_canary_isolation.py`
+внутри старых build-каталогов. `/root` доступен через sudo, но **пуст**.
+`/etc/stratforge` отсутствует.
+
+Попытка пойти по разрешённому пути ротации остановлена на шаге доказательства
+«роль maintenance-only». Установлено:
+
+- ни одна supervisor-программа не называет роль в своём environment;
+- живых сессий роли в БД нет (только `stratforge_app`);
+- cron/systemd-таймеров с ролью нет;
+- **НО** у двух процессов environment нечитаем: `postgresql` и
+  **`offhost-backup-scheduler`**. На Canary `STRATFORGE_BACKUP_DATABASE_URL`
+  **равен** migration DSN, поэтому вероятно, что Production backup-планировщик
+  ходит именно этой ролью. Ротация пароля сломала бы off-host backup.
+- `sudo -n -u postgres psql` по умолчанию **не подключается**
+  (`/var/run/postgresql/.s.PGSQL.5432` — не тот сокет; кластер живёт в
+  `/home/stratforge/production_data/run/postgresql`). Проверить проектный сокет
+  не удалось: дальнейшая инспекция была заблокирована политикой.
+
+### Что нужно сделать следующей сессии
+
+1. Выяснить, каким credential ходит `offhost-backup-scheduler` (его environment
+   читается только root/самим процессом). Пока это не выяснено — **не
+   ротировать**: это единственный кандидат на активного потребителя роли.
+2. Проверить админ-доступ через проектный сокет:
+   `sudo -n -u postgres psql -h /home/stratforge/production_data/run/postgresql`.
+   Если он работает и п.1 подтверждает, что роль maintenance-only — ротировать
+   **только** пароль `stratforge_migration`, записать DSN **только** в
+   `config/production-maintenance.env` (0600, owner `stratforge`), runtime
+   app credential не трогать, значение не печатать, затем проверить DDL в
+   транзакции с откатом.
+3. Если ни credential, ни админ-пути нет — это настоящий `WAITING FOR OWNER`.
 
 ## Порядок работ после того, как 0012 применится на Production
 
@@ -137,11 +162,11 @@ production.env             : has STRATFORGE_MIGRATION_DATABASE_URL = False
 
 ## Грабли этой сессии
 
-- **Прерванный деплой делает свою версию невозможной для пересборки.**
-  Remote-скрипт именует каталог релиза `$RELEASES/<version>-<commit12>` и
-  переиспользует его, если он есть; пересборка той же версии даёт другой
-  manifest → build падает на assertion `artifact_sha256` в
-  `canary_manifest_trust`. Обход — новая версия. Починить отдельно.
+- ~~Прерванный деплой делает свою версию невозможной для пересборки.~~
+  **ИСПРАВЛЕНО (PR #68).** Каталог переиспользуется только если проходит
+  `canary_manifest_trust` как ровно этот immutable release; иначе уезжает в
+  `$RELEASES/.quarantine/<ref>.<timestamp>` (паркуется, не удаляется).
+  Каталог, на который смотрит живой симлинк, не трогается никогда.
 - `release_buttons.py` умирает молча, если его убить в фоне: буферизованный
   вывод теряется и candidate остаётся в неконсистентном состоянии.
   Использовать `drive_release.py`.
@@ -153,9 +178,17 @@ production.env             : has STRATFORGE_MIGRATION_DATABASE_URL = False
 
 ## Не начато
 
-Пункты 4 (RBAC/Admin во всех средах, встроенный connector dashboard,
-Environment Switcher auto-load), 5 (new-user E2E), 6 (browser E2E),
-7 (повторный perf-замер).
+- **Release Center: честный pipeline** (крупный пункт, не начат). Сейчас
+  `expand_migrate` — косметический `pass`. Нужно:
+  `backup/verify → expand migration через maintenance DSN → migration
+  verification → blue-green deploy → readiness → acceptance → promote`;
+  отсутствие миграций = честный `SKIPPED`; провал миграции = код не
+  выкатывается; maintenance credential не попадает в artifact/browser/log;
+  regression/integration тесты. Затрагивает `stage9_remote_release.sh`
+  (жёстко зашитый список шагов), `release_executor.py`, `blue_green.py`.
+- RBAC/Admin во всех средах, встроенный connector dashboard,
+  Environment Switcher auto-load, new-user E2E, browser E2E, повторный
+  perf-замер, LOCAL gateway token.
 
 ## WAITING FOR OWNER
 
