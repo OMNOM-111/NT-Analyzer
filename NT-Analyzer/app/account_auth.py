@@ -245,6 +245,44 @@ def _link_identity_in_doc(
             "Этот способ входа уже связан с другим профилем.", 409,
             code="identity_already_linked",
         )
+    # A verified address belongs to one account across every provider that can
+    # carry one. Without this, the same mailbox could be an e-mail identity on
+    # one account and the address behind a Google sub on another -- two
+    # accounts one person can prove ownership of, which is the silent merge the
+    # model forbids. The database enforces the same rule; this exists so the
+    # caller gets a specific error instead of a constraint violation.
+    claimed_email = ""
+    if provider_id == "email":
+        claimed_email = normalized
+    elif isinstance(metadata, dict) and metadata.get("email"):
+        try:
+            claimed_email = auth_identity.normalize_email(metadata.get("email"))
+        except auth_identity.IdentityError:
+            claimed_email = ""
+    if claimed_email and (verified_at_utc or provider_id == "email"):
+        for row in _identity_rows(doc):
+            if not isinstance(row, dict) or row.get("revoked_at_utc"):
+                continue
+            if not row.get("verified_at_utc"):
+                continue
+            other = str((row.get("metadata") or {}).get("email") or "")
+            if str(row.get("provider") or "") == "email":
+                other = str(row.get("provider_subject") or "")
+            if not other:
+                continue
+            try:
+                other = auth_identity.normalize_email(other)
+            except auth_identity.IdentityError:
+                continue
+            if other != claimed_email:
+                continue
+            if not hmac.compare_digest(
+                auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical,
+            ):
+                raise AccountAuthError(
+                    "Этот e-mail уже подтверждён в другом профиле.", 409,
+                    code="email_already_verified_elsewhere",
+                )
     now = _now_iso()
     if existing is None:
         existing = {
