@@ -7,8 +7,8 @@
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
-| Production | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
+| Canary | `0.10.0-beta.12`, commit `bfc3ccd5`, artifact `DD0CD571E294FD36…` |
+| Production | `0.10.0-beta.12`, commit `bfc3ccd5`, artifact `DD0CD571E294FD36…` |
 | Release state | исправлено (PR #79): verified deploy → `production_live`; ошибочная попытка остаётся retryable |
 | Parity | **EXACT MATCH**, acceptance PASS на обоих |
 | migration 0012 | применена на Canary **и** Production, FK-семантика проверена |
@@ -151,6 +151,31 @@ artifact/health/readiness без единого клика.
 
 Trusted device: по одному на окружение, оба `trusted`, last_seen совпадает с
 последней сессией.
+
+## Item 9 — performance: ЗАКРЫТО (PR #85)
+
+Профиль всех Admin-поверхностей. Выше 120 ms p50 оказались два эндпоинта, и
+причина у обоих одна: `market_data_failover.status()` пересобирал снимок
+провайдеров на каждый запрос (~90 ms тёплый, из них ~47 ms — один
+`public_status()`), а читают его и bars/status, и дашборд коннекторов,
+который UI опрашивает.
+
+Снимок мемоизирован на 3 секунды, наружу отдаются независимые копии,
+`fresh=True` обходит кэш.
+
+| endpoint | p50 | p95 |
+| --- | --- | --- |
+| `/api/admin/connectors` | **173.5 → 49.9 ms** | 354.8 → 108.8 ms |
+| `/api/ops/runtime/bars/status` | **128.0 → 30.9 ms** | 286.8 → 36.5 ms |
+
+Остальное ниже 50 ms p50 — не трогалось. Payload'ы в норме после более раннего
+сокращения аватара; самый крупный — снимок баров ~32 КБ, это сами данные.
+
+## Release Center: терминальное состояние подтверждено
+
+`0.10.0-beta.12` — первый релиз, дошедший до **`production_live`** (фикс
+PR #79). `expand_migrate` на обоих окружениях отдал честный `skipped` с
+реальным checksum набора.
 
 ## Осталось (не начато)
 
