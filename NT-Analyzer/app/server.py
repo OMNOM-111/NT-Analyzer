@@ -366,17 +366,26 @@ _ADMIN_MODULES = (
     {"id": "payment", "label": "Настройки оплаты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
     {"id": "ai-ratings", "label": "Оценки ИИ", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
     {"id": "journal", "label": "Журнал владельца", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+    # QA impersonation drives virtual users and View-As personas. Those are
+    # unsafe test hooks that exist only in Development, so the module is not
+    # offered elsewhere -- on a server it could only ever render "unavailable",
+    # which reads as Admin being crippled rather than as one dev-only tool
+    # being absent. Every other module here is gated by capability alone and is
+    # fully available to the owner on Canary and Production.
+    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view", "owner_only": True,
+     "development_only": True, "group": "Владелец"},
 )
 
 
 def _admin_overview_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     caps = context.get("admin_capabilities")
     caps = caps if isinstance(caps, dict) else {}
+    development = runtime_env.is_development()
     modules = [
         dict(row) for row in _ADMIN_MODULES
         if caps.get(str(row["capability"]))
         and (not row.get("owner_only") or context.get("is_owner"))
+        and (not row.get("development_only") or development)
     ]
     return {
         "ok": True,

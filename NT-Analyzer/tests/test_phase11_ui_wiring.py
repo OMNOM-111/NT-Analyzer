@@ -235,3 +235,53 @@ def test_every_versioned_asset_ref_is_rewritable():
         out = server_mod.Handler._stamp_asset_refs(server_mod.Handler, raw)
         stale = re.findall(rb'(?:src|href)="(?!https?://|//)[^"?]+\.(?:js|css)\?v=([^"]*)"', out)
         assert all(v.decode() == stamp for v in stale), f"{page.name} kept a hand-written stamp: {stale}"
+
+
+# --------------------------------------------------------------------------- #
+# Admin is gated by role, not by environment.
+#
+# Every operational and diagnostic module is available to the owner on Canary
+# and Production. Only the QA impersonation module -- virtual users and View-As
+# personas, which are unsafe test hooks -- is Development-only, and it is
+# withheld rather than offered as a dead "unavailable" panel.
+# --------------------------------------------------------------------------- #
+def _admin_modules(*, is_owner=True, development=False, monkeypatch=None):
+    from app import runtime_env
+
+    monkeypatch.setattr(runtime_env, "is_development", lambda: development)
+    caps = {row["capability"]: True for row in server_mod._ADMIN_MODULES}
+    payload = server_mod._admin_overview_payload(
+        {"admin_capabilities": caps, "is_owner": is_owner, "user_id": 1}
+    )
+    return {m["id"] for m in payload["modules"]}
+
+
+OPERATIONAL = {"overview", "users", "connectors", "operations", "releases", "environments"}
+
+
+def test_operational_admin_modules_are_available_on_servers(monkeypatch):
+    ids = _admin_modules(development=False, monkeypatch=monkeypatch)
+    missing = OPERATIONAL - ids
+    assert not missing, f"operational modules withheld from a server environment: {missing}"
+
+
+def test_qa_impersonation_is_withheld_on_servers(monkeypatch):
+    server = _admin_modules(development=False, monkeypatch=monkeypatch)
+    local = _admin_modules(development=True, monkeypatch=monkeypatch)
+    assert "staging" not in server, "the dev-only QA module must not be offered on a server"
+    assert "staging" in local
+    # Withholding it must not take anything else with it.
+    assert OPERATIONAL <= server
+
+
+def test_a_non_owner_admin_still_sees_no_owner_only_modules(monkeypatch):
+    ids = _admin_modules(is_owner=False, development=True, monkeypatch=monkeypatch)
+    owner_only = {row["id"] for row in server_mod._ADMIN_MODULES if row.get("owner_only")}
+    assert not (ids & owner_only)
+
+
+def test_only_the_qa_module_is_environment_gated():
+    gated = {row["id"] for row in server_mod._ADMIN_MODULES if row.get("development_only")}
+    assert gated == {"staging"}, (
+        "an operational module became environment-gated; Admin must be role-gated"
+    )
