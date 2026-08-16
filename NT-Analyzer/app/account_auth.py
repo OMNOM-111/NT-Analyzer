@@ -1846,8 +1846,15 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
             stale.unlink()
         except OSError:
             pass
-    _audit("user_deleted", owner_id=int(owner_id), user_id=uid,
-           extra={"user_uuid": canonical, "removed": removed})
+    # The audit actor is the owner who performed the deletion, never the
+    # account just removed: storage_router.append_audit turns values["user_id"]
+    # into the scope that fills sf_audit_events.user_id, which is a foreign key
+    # to sf_users. Naming the deleted account there fails the INSERT outright --
+    # ON DELETE SET NULL governs deletes of the parent, not inserts pointing at
+    # a row that is already gone. The deleted identity stays as plain payload.
+    _audit("user_deleted", owner_id=int(owner_id), user_id=0,
+           extra={"deleted_user_uuid": canonical, "deleted_legacy_user_id": uid,
+                  "removed": removed})
     return list_users(owner_id)
 
 

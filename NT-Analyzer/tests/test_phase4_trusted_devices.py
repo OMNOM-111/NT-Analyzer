@@ -1159,3 +1159,64 @@ def test_migration_0012_covers_every_fk_migration_0005_created():
     # one left behind keeps blocking account deletion on its own.
     missing = sorted(t for t in created if f"'{t}'" not in fixed)
     assert not missing, f"0005 tables left with NO ACTION: {missing}"
+
+
+# --------------------------------------------------------------------------- #
+# The audit trail for a deletion must not point at the deleted account.
+#
+# storage_router.append_audit turns values["user_id"] (falling back to
+# owner_id) into the scope that fills sf_audit_events.user_id, a foreign key to
+# sf_users. Naming the account just removed fails the INSERT: ON DELETE SET
+# NULL governs deletes of the parent row, not inserts referencing a row that is
+# already gone. On Production this aborted the whole delete transaction.
+# --------------------------------------------------------------------------- #
+def test_deletion_audit_is_attributed_to_the_owner_not_the_deleted_account():
+    import inspect
+
+    from app import account_auth as aa
+
+    source = inspect.getsource(aa.delete_user)
+    assert 'user_id=0' in source, "the deleted account must not become the audit scope"
+    assert "deleted_user_uuid" in source and "deleted_legacy_user_id" in source, (
+        "the deleted identity still has to be recorded, as plain payload"
+    )
+    assert "owner_id=int(owner_id)" in source
+
+
+def test_workspace_purge_audit_does_not_reference_the_deleted_account():
+    import inspect
+
+    from app import workspaces
+
+    source = inspect.getsource(workspaces.purge_user)
+    assert "purged_user_uuid" in source and "purged_legacy_user_id" in source
+    # A bare user_id= keyword would be picked up by append_audit as the audit
+    # scope; the prefixed payload names must not be mistaken for it.
+    audit_call = source[source.index("_audit("):]
+    assert not re.search(r"(?<![a-z_])user_id\s*=", audit_call)
+    assert not re.search(r"(?<![a-z_])user_uuid\s*=", audit_call)
+
+
+def test_append_audit_scope_falls_back_to_the_owner(monkeypatch):
+    from app import storage_router
+
+    captured = {}
+
+    class _Repo:
+        def __init__(self, client):
+            pass
+
+        def append(self, event, values, *, source, scope, event_id=""):
+            captured["scope_user"] = scope.user_id
+            return "audit_test"
+
+    monkeypatch.setattr(storage_router, "AuditRepository", _Repo)
+    monkeypatch.setattr(storage_router, "get_client", lambda **kw: object())
+    # No user_id -> the owner becomes the scope, which is a row that exists.
+    storage_router.append_audit("workspace_registry", "workspace_user_purged",
+                                {"owner_id": 999, "purged_legacy_user_id": 7})
+    assert captured["scope_user"] == 999
+    # Neither -> global service scope, so the foreign key column stays NULL.
+    storage_router.append_audit("workspace_registry", "workspace_user_purged",
+                                {"purged_legacy_user_id": 7})
+    assert not captured["scope_user"]

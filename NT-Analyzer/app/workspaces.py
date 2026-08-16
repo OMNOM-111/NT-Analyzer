@@ -569,8 +569,13 @@ def purge_user(user_uuid: Any = "", legacy_user_id: Any = 0) -> Dict[str, Any]:
         if legacy:
             (doc.get("active_workspaces") or {}).pop(str(legacy), None)
         _write_doc(doc)
-    _audit("workspace_user_purged", user_id=legacy, user_uuid=canonical,
-           workspaces=len(owned))
+    # The account this records is already gone, so the identity cannot travel
+    # in the audit row's user_uuid column: that column carries a foreign key to
+    # sf_users, and ON DELETE SET NULL does not help an INSERT naming a user
+    # that no longer exists. The identity is kept as plain payload instead, so
+    # the record stays readable without pointing at a missing row.
+    _audit("workspace_user_purged", purged_user_uuid=canonical,
+           purged_legacy_user_id=legacy, workspaces=len(owned))
     return footprint
 
 
