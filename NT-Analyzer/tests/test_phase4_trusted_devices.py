@@ -1220,3 +1220,24 @@ def test_append_audit_scope_falls_back_to_the_owner(monkeypatch):
     storage_router.append_audit("workspace_registry", "workspace_user_purged",
                                 {"purged_legacy_user_id": 7})
     assert not captured["scope_user"]
+
+
+def test_workspaces_are_purged_before_the_account_document_is_written():
+    """sf_workspaces.owner_user_id is ON DELETE RESTRICT.
+
+    Pruning sf_users while a workspace still names the account raises a foreign
+    key violation that rolls the whole document write back, so purging
+    workspaces afterwards could never succeed -- the write it was waiting for
+    had already failed.
+    """
+    import inspect
+
+    from app import account_auth as aa
+
+    source = inspect.getsource(aa.delete_user)
+    purge = source.index("workspaces.purge_user(")
+    write = source.index("_write_doc(doc)")
+    assert purge < write, "the workspace purge has to precede the account write"
+    # And it must still run only after the refusals, never before them.
+    assert source.index('report["is_owner"]') < purge
+    assert source.index("workspace_shared") < purge
