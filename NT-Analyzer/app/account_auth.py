@@ -1808,6 +1808,12 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
             + ", ".join(shared) + ". Передайте её другому владельцу.",
             409, code="workspace_shared",
         )
+    # Workspaces go first. sf_workspaces.owner_user_id is ON DELETE RESTRICT,
+    # so pruning sf_users while a workspace still names the account raises a
+    # foreign key violation that rolls the whole document write back. Purging
+    # afterwards -- as this did -- could therefore never succeed: the write it
+    # was waiting for had already failed.
+    workspaces.purge_user(report["user_uuid"], uid)
     with _LOCK:
         doc = _read_doc()
         try:
@@ -1839,8 +1845,6 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
                 )
             ]
         _write_doc(doc)
-    # Workspaces live in their own store and refuse to strand co-members.
-    workspaces.purge_user(canonical, uid)
     for stale in _avatars_dir().glob(f"{uid}.*"):
         try:
             stale.unlink()
