@@ -593,3 +593,59 @@ def test_release_script_is_valid_shell():
     script = Path(__file__).resolve().parent.parent / "tools" / "stage9_remote_release.sh"
     done = subprocess.run([bash, "-n", str(script)], capture_output=True)
     assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+
+
+# --------------------------------------------------------------------------- #
+# expand_migrate must actually migrate.
+#
+# The stage used to be drawn as a fixed "pass" while nothing ran, so a release
+# whose migration had not been applied failed readiness and rolled back with no
+# indication why. That cost two abandoned releases (beta.7, beta.8) before the
+# cause was found.
+# --------------------------------------------------------------------------- #
+def test_expand_migrate_runs_before_the_code_is_promoted():
+    sql = _release_script()
+    promote = sql.index("promote_release()")
+    body = sql[promote:sql.index("# Applies pending migrations")]
+    migrate = body.index("run_expand_migrations")
+    # The deploy is the sudo invocation that hands the release to the
+    # blue-green script, not the earlier assignment of its path.
+    deploy = body.index("sudo -n env RELEASE_DIR=")
+    assert migrate < deploy, "migrations must run before the blue-green deploy"
+
+
+def test_a_failed_migration_stops_the_deploy():
+    sql = _release_script()
+    assert "REFUSING: expand migrations failed; code was not promoted" in sql
+    # And every internal failure path returns non-zero rather than continuing.
+    for reason in ("migration plan failed",
+                   "migration apply failed",
+                   "migrations still pending after apply"):
+        assert reason in sql
+
+
+def test_no_pending_migrations_reports_skipped_not_pass():
+    sql = _release_script()
+    assert 'MIGRATE_STATUS="skipped"' in sql
+    assert '"detail":"no pending migrations"' in sql
+    # The stage status in the emitted payload comes from the real outcome.
+    assert 'steps.append({"ordinal":i+1,"stage":s,"status":migrate_status' in sql
+
+
+def test_migration_uses_the_environment_specific_maintenance_dsn():
+    sql = _release_script()
+    assert '"$CONFIG/${environment}-maintenance.env"' in sql
+    assert "--url-env STRATFORGE_MIGRATION_DATABASE_URL" in sql
+    # A missing maintenance credential is a refusal, never a silent skip.
+    assert "cannot run migrations for $environment" in sql
+
+
+def test_the_maintenance_secret_never_reaches_the_payload():
+    sql = _release_script()
+    migrate_fn = sql[sql.index("run_expand_migrations()"):]
+    # The DSN is sourced into a subshell and only derived, secret-free values
+    # are carried out in MIGRATE_EVIDENCE.
+    assert "MIGRATE_EVIDENCE" in migrate_fn
+    for leak in ("STRATFORGE_MIGRATION_DATABASE_URL=", "$STRATFORGE_MIGRATION_DATABASE_URL"):
+        assert leak not in migrate_fn.split("MIGRATE_EVIDENCE=")[-1]
+    assert "2>/dev/null" in migrate_fn

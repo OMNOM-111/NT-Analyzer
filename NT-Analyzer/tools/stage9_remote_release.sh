@@ -6,6 +6,7 @@ set -Eeuo pipefail
 umask 077
 
 BASE=/home/stratforge/production_data
+CONFIG="$BASE/config"
 RC="$BASE/release-center"
 RELEASES="$BASE/releases"
 ARTIFACTS="$BASE/artifacts"
@@ -213,17 +214,40 @@ promote_release() {
     script="$release_dir/tools/production_blue_green_promote.sh"
   fi
   test -f "$script"
+
+  # Expand migrations run here, before any code moves. This step used to be
+  # drawn as a fixed "pass" while nothing ran, so a release whose migration had
+  # never been applied failed readiness and rolled back with no indication why.
+  # The maintenance DSN is read inside run_expand_migrations and never leaves
+  # it: not into the payload, not into the log, not into the artifact.
+  local migrate_status migrate_evidence
+  if ! run_expand_migrations "$environment" "$release_dir"; then
+    echo "REFUSING: expand migrations failed; code was not promoted" >&2
+    exit 1
+  fi
+  migrate_status="$MIGRATE_STATUS"
+  migrate_evidence="$MIGRATE_EVIDENCE"
+
   sudo -n env RELEASE_DIR="$release_dir" EXPECTED_VERSION="$version" EXPECTED_CHANNEL="$channel" EXPECTED_GIT_COMMIT_SHA="$commit" \
     HEALTH_TIMEOUT_SEC=90 bash "$script" >/dev/null
   local current
   if [ "$environment" = canary ]; then current="$(readlink -f "$CANARY_CURRENT")"; else current="$(readlink -f /home/stratforge/current)"; fi
   test "$current" = "$release_dir"
   local payload
-  payload="$(python3 - "$environment" "$version" "$channel" "$commit" "$archive_sha" "$manifest_sha" "$build_id" <<'PY'
+  payload="$(python3 - "$environment" "$version" "$channel" "$commit" "$archive_sha" "$manifest_sha" "$build_id" "$migrate_status" "$migrate_evidence" <<'PY'
 import json, sys
-env,version,channel,commit,archive_sha,manifest_sha,build_id=sys.argv[1:]
-steps=[{"ordinal":i+1,"stage":s,"status":"pass","evidence":{"verified":True}} for i,s in enumerate(
- ["prepare_green","expand_migrate","start_green","green_readiness","drain_blue","switch_traffic","verify_live","contract_migrate"])]
+env,version,channel,commit,archive_sha,manifest_sha,build_id,migrate_status,migrate_evidence=sys.argv[1:]
+try:
+    evidence = json.loads(migrate_evidence)
+except Exception:
+    evidence = {"detail": "unavailable"}
+steps=[]
+for i, s in enumerate(["prepare_green","expand_migrate","start_green","green_readiness",
+                       "drain_blue","switch_traffic","verify_live","contract_migrate"]):
+    if s == "expand_migrate":
+        steps.append({"ordinal":i+1,"stage":s,"status":migrate_status,"evidence":evidence})
+    else:
+        steps.append({"ordinal":i+1,"stage":s,"status":"pass","evidence":{"verified":True}})
 print(json.dumps({"ok":True,"environment":env,"version":version,"channel":channel,
  "git_commit_sha":commit,"archive_sha256":archive_sha.upper(),"manifest_sha256":manifest_sha.upper(),
  "build_id":build_id,"steps":steps,"maintenance_window":{"environment":env,"kind":"deploy","state":"completed"},
@@ -231,6 +255,72 @@ print(json.dumps({"ok":True,"environment":env,"version":version,"channel":channe
 PY
 )"
   emit_result "$payload"
+}
+
+# Applies pending migrations for one environment using that environment's
+# maintenance DSN. Sets MIGRATE_STATUS (pass|skipped) and MIGRATE_EVIDENCE
+# (JSON, secret-free). Returns non-zero if anything failed, so the caller can
+# refuse to promote code onto a schema that did not move.
+run_expand_migrations() {
+  local environment="$1" release_dir="$2"
+  local maint="$CONFIG/${environment}-maintenance.env"
+  MIGRATE_STATUS="skipped"
+  MIGRATE_EVIDENCE='{"detail":"no maintenance credential configured"}'
+  if [ ! -f "$maint" ]; then
+    echo "REFUSING: $maint is missing; cannot run migrations for $environment" >&2
+    return 1
+  fi
+  local plan
+  if ! plan="$(set -a; . "$maint"; set +a; cd "$release_dir" && \
+      ./.venv/bin/python tools/production_storage_cli.py schema \
+        --url-env STRATFORGE_MIGRATION_DATABASE_URL 2>/dev/null)"; then
+    echo "REFUSING: migration plan failed for $environment" >&2
+    return 1
+  fi
+  local pending_count set_sha
+  eval "$(python3 - "$plan" <<'PY'
+import json, shlex, sys
+d = json.loads(sys.argv[1])
+print("pending_count=" + shlex.quote(str(len(d.get("pending") or []))))
+print("set_sha=" + shlex.quote(str(d.get("migration_set_sha256") or "")))
+PY
+)"
+  if [ "$pending_count" = "0" ]; then
+    MIGRATE_STATUS="skipped"
+    MIGRATE_EVIDENCE="$(python3 -c 'import json,sys; print(json.dumps({"pending":0,"detail":"no pending migrations","migration_set_sha256":sys.argv[1]}))' "$set_sha")"
+    return 0
+  fi
+  local applied
+  if ! applied="$(set -a; . "$maint"; set +a; cd "$release_dir" && \
+      ./.venv/bin/python tools/production_storage_cli.py schema --apply \
+        --url-env STRATFORGE_MIGRATION_DATABASE_URL \
+        --confirm-migration-set-sha256 "$set_sha" 2>/dev/null)"; then
+    echo "REFUSING: migration apply failed for $environment" >&2
+    return 1
+  fi
+  # The apply must actually leave nothing pending, or the schema did not reach
+  # the state this release expects and the code must not go out.
+  if ! python3 - "$applied" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+raise SystemExit(0 if not (d.get("pending") or []) else 1)
+PY
+  then
+    echo "REFUSING: migrations still pending after apply for $environment" >&2
+    return 1
+  fi
+  MIGRATE_STATUS="pass"
+  MIGRATE_EVIDENCE="$(python3 - "$applied" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+print(json.dumps({"applied_now": d.get("applied_now") or [],
+                  "latest_version": d.get("latest_version"),
+                  "migration_set_sha256": d.get("migration_set_sha256"),
+                  "pending_after": len(d.get("pending") or [])},
+                 separators=(",", ":")))
+PY
+)"
+  return 0
 }
 
 rollback_canary() {
