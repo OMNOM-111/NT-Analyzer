@@ -377,6 +377,130 @@ _ADMIN_MODULES = (
 )
 
 
+def _connector_probe(label: str, fn: Any) -> Dict[str, Any]:
+    """One dashboard row. A source that raises degrades that row only.
+
+    Every value here is a status, never a credential: the callers below pass
+    booleans and identifiers, and nothing reads a token.
+    """
+    try:
+        value = fn()
+    except Exception as exc:  # one broken source must not blank the dashboard
+        return {"id": label, "state": "error", "detail": type(exc).__name__}
+    row = {"id": label, "state": "unknown"}
+    if isinstance(value, dict):
+        row.update(value)
+    return row
+
+
+def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregated connector/integration status for the Admin panel.
+
+    This exists so the ordinary question -- is Telegram up, is the webhook
+    registered, which environment holds the market-data hub -- is answered on
+    the Admin page itself instead of behind another screen.
+    """
+    from . import owner_market_data_gateway as gateway
+
+    def telegram() -> Dict[str, Any]:
+        status = telegram_service.status() or {}
+        return {
+            "label": "Telegram bot",
+            "state": "healthy" if status.get("configured") else "not_configured",
+            "configured": bool(status.get("configured")),
+            "bot_username": str(status.get("bot_username") or ""),
+            "detail": str(status.get("state") or status.get("mode") or ""),
+        }
+
+    def webhook() -> Dict[str, Any]:
+        status = telegram_service.status() or {}
+        hook = status.get("webhook") if isinstance(status.get("webhook"), dict) else {}
+        registered = bool(hook.get("url") or hook.get("configured"))
+        return {
+            "label": "Telegram webhook",
+            "state": "healthy" if registered else "not_configured",
+            "configured": registered,
+            "last_error": str(hook.get("last_error_message") or "")[:200],
+            "pending_updates": hook.get("pending_update_count"),
+        }
+
+    def canary_routing() -> Dict[str, Any]:
+        environment = runtime_env.deployment_environment()
+        marker = runtime_env.telegram_environment_marker().strip()
+        return {
+            "label": "Canary routing",
+            "state": "healthy",
+            "environment": environment,
+            "marker": marker or "(production, unmarked)",
+            "detail": "Production accepts the webhook; [CANARY] is forwarded internally",
+        }
+
+    def market_gateway() -> Dict[str, Any]:
+        role = gateway.effective_role()
+        return {
+            "label": "Owner market-data gateway",
+            "state": "healthy" if role in {"hub", "consumer"} else "degraded",
+            "role": role,
+            "chart_source_mode": gateway.chart_source_mode(),
+            "is_hub": gateway.is_hub(),
+            "consuming": gateway.should_consume(),
+            "token_configured": gateway.token_configured(),
+        }
+
+    def providers() -> Dict[str, Any]:
+        from . import market_data_failover
+
+        snapshot = market_data_failover.status(include_file=False)
+        rows = []
+        for row in (snapshot or {}).get("external_providers") or []:
+            rows.append({
+                "name": row.get("name"),
+                "runtime_state": row.get("runtime_state"),
+                "configured": bool(row.get("configured")),
+                "live_eligible": bool(row.get("live_eligible")),
+                "blocking_reasons": list(row.get("blocking_reasons") or [])[:4],
+            })
+        live = [r["name"] for r in rows if r.get("runtime_state") == "LIVE"]
+        return {
+            "label": "Market data providers",
+            "state": "healthy" if live else "degraded",
+            "providers": rows,
+            "live": live,
+            "preferred_primary": (snapshot or {}).get("preferred_primary"),
+        }
+
+    def connector_installations() -> Dict[str, Any]:
+        out = connector_protocol.list_installations(context.get("user_id"))
+        rows = list(out.get("installations") or [])
+        online = [r for r in rows if str(r.get("status") or "") in {"online", "active"}]
+        return {
+            "label": "Windows Connector / NinjaTrader",
+            "state": "healthy" if online else ("degraded" if rows else "not_configured"),
+            "installations": len(rows),
+            "online": len(online),
+            "last_heartbeat_utc": max(
+                [str(r.get("last_heartbeat_utc") or "") for r in rows] or [""]
+            ),
+        }
+
+    rows = [
+        _connector_probe("telegram", telegram),
+        _connector_probe("webhook", webhook),
+        _connector_probe("canary_routing", canary_routing),
+        _connector_probe("market_gateway", market_gateway),
+        _connector_probe("providers", providers),
+        _connector_probe("connector", connector_installations),
+    ]
+    return {
+        "ok": True,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "environment": runtime_env.deployment_environment(),
+        "sections": rows,
+        # Stated explicitly so the contract is visible to the client too.
+        "secrets_exposed": False,
+    }
+
+
 def _admin_overview_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     caps = context.get("admin_capabilities")
     caps = caps if isinstance(caps, dict) else {}
@@ -4284,6 +4408,16 @@ class Handler(BaseHTTPRequestHandler):
                     getattr(self, "_remote_context", None) or {},
                 ),
             )
+            return
+
+        if path == "/api/admin/connectors":
+            context = getattr(self, "_remote_context", None) or {}
+            caps = context.get("admin_capabilities")
+            if not (isinstance(caps, dict) and caps.get("connectors.manage")):
+                self._err(HTTPStatus.FORBIDDEN, "Нет прав на коннекторы.",
+                          code="capability_required")
+                return
+            self._json(HTTPStatus.OK, _connectors_dashboard_payload(context))
             return
 
         if path == "/api/admin/environment-targets":

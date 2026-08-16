@@ -13,6 +13,7 @@ pass so they cannot silently regress:
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 import threading
@@ -285,3 +286,52 @@ def test_only_the_qa_module_is_environment_gated():
     assert gated == {"staging"}, (
         "an operational module became environment-gated; Admin must be role-gated"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Connectors status is answered on the Admin page itself.
+#
+# The module used to be a single button to another screen, so the ordinary
+# question -- is Telegram up, which environment holds the market-data hub --
+# cost an extra navigation.
+# --------------------------------------------------------------------------- #
+def test_connectors_module_renders_status_in_place():
+    assert "renderConnectorsInto" in UI_JS
+    assert "adminConnectors" in UI_JS
+    # The old placeholder (one button, no status) must be gone.
+    assert "Открыть Telegram / Connector</button>'" not in UI_JS
+    # The detailed screen stays reachable as a secondary action.
+    assert "Подробный экран Telegram / Connector" in UI_JS
+
+
+def test_connectors_dashboard_covers_the_required_sections():
+    assert '"/api/admin/connectors"' in SERVER_SRC
+    for section in ("telegram", "webhook", "canary_routing",
+                    "market_gateway", "providers", "connector"):
+        assert f'_connector_probe("{section}"' in SERVER_SRC
+
+
+def test_connectors_dashboard_is_capability_gated():
+    assert 'caps.get("connectors.manage")' in SERVER_SRC
+    assert 'code="capability_required"' in SERVER_SRC
+
+
+def test_connectors_dashboard_exposes_no_secret():
+    payload = server_mod._connectors_dashboard_payload(
+        {"user_id": 1, "admin_capabilities": {"connectors.manage": True}}
+    )
+    assert payload["secrets_exposed"] is False
+    blob = json.dumps(payload, ensure_ascii=False).lower()
+    for forbidden in ("token", "api_key", "password", "secret", "dsn", "bot"):
+        # token_configured / bot_username are booleans and identifiers; a raw
+        # value would show up as a long opaque string, never as these keys.
+        assert f'"{forbidden}"' not in blob
+
+
+def test_one_broken_source_does_not_blank_the_dashboard():
+    def boom():
+        raise RuntimeError("provider down")
+
+    row = server_mod._connector_probe("providers", boom)
+    assert row["state"] == "error"
+    assert row["detail"] == "RuntimeError"

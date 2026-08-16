@@ -336,6 +336,7 @@
     testAuthGoogleLogin: (body) => send('/api/auth/test/google-login', 'POST', body || {}),
     runtimeEnv: (o) => getJSON('/api/runtime/env', o),
     adminOverview: (o) => getJSON('/api/admin/overview', o),
+    adminConnectors: (o) => getJSON('/api/admin/connectors', o),
     adminEnvironmentTargets: (o) => getJSON('/api/admin/environment-targets', o),
     adminEnvironmentProbe: (environment, o) => getJSON('/api/admin/environment-targets?probe=' + encodeURIComponent(environment || ''), o),
     adminOperations: (o) => getJSON('/api/admin/operations', o),

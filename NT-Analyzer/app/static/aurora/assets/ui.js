@@ -3243,6 +3243,56 @@
     }
   }
 
+  // Connector and integration status, rendered on the Admin page itself.
+  // Previously this module was a single button to another screen, so the
+  // ordinary question -- is Telegram up, which environment holds the
+  // market-data hub -- cost an extra navigation. No secret is ever rendered:
+  // the endpoint returns states and identifiers only.
+  const CONNECTOR_STATE_LABEL = {
+    healthy: 'работает', degraded: 'деградация', not_configured: 'не настроено',
+    error: 'ошибка', unknown: 'неизвестно',
+  };
+
+  function connectorBadge(state) {
+    const key = String(state || 'unknown');
+    const label = CONNECTOR_STATE_LABEL[key] || key;
+    return `<span class="conn-badge conn-${esc(key)}">${esc(label)}</span>`;
+  }
+
+  function connectorDetails(row) {
+    const skip = new Set(['id', 'label', 'state', 'providers']);
+    const parts = Object.keys(row).filter(k => !skip.has(k) && row[k] !== '' && row[k] !== null && row[k] !== undefined)
+      .map(k => `<div class="conn-kv"><span>${esc(k)}</span><b>${esc(String(row[k]))}</b></div>`);
+    if (Array.isArray(row.providers) && row.providers.length) {
+      parts.push(row.providers.map(p => `<div class="conn-kv"><span>${esc(p.name || '')}</span><b>${esc(String(p.runtime_state || ''))}</b></div>`).join(''));
+    }
+    return parts.join('');
+  }
+
+  async function renderConnectorsInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка статусов…</div>';
+    let doc;
+    try { doc = await API.http.adminConnectors(); }
+    catch (e) { node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`; return; }
+    const rows = (doc.sections || []).map(row => `
+      <div class="conn-card">
+        <div class="conn-head"><b>${esc(row.label || row.id)}</b>${connectorBadge(row.state)}</div>
+        <div class="conn-body">${connectorDetails(row)}</div>
+      </div>`).join('');
+    node.innerHTML = `
+      <div class="cab-sub">Окружение: <b>${esc(doc.environment || '')}</b> · обновлено ${esc(doc.generated_at_utc || '')}</div>
+      <div class="finance-note">Секреты и токены здесь не показываются — только статусы и явные действия.</div>
+      <div class="conn-grid">${rows}</div>
+      <div class="row" style="margin-top:12px;gap:8px">
+        <button class="btn" id="conn-refresh">Обновить</button>
+        <button class="btn ghost" id="conn-detail">Подробный экран Telegram / Connector</button>
+      </div>`;
+    const refresh = qs('#conn-refresh', node);
+    if (refresh) refresh.onclick = () => renderConnectorsInto(node);
+    const detail = qs('#conn-detail', node);
+    if (detail) detail.onclick = () => { closeDrawer(); showTelegram(); };
+  }
+
   async function renderStagingInto(node) {
     node.innerHTML = `<div class="cab-sub">Разработка / QA · открыть приложение глазами любого пользователя (только Development, 127.0.0.1)</div><div class="muted">Загрузка…</div>`;
     let status, usersDoc;
@@ -4631,8 +4681,7 @@
     if (moduleId === 'journal') return renderJournalInto(node);
     if (moduleId === 'staging') return renderStagingInto(node);
     if (moduleId === 'connectors') {
-      node.innerHTML = '<div class="finance-note">Секреты и токены здесь не показываются. Доступны только configured/health/session status и явные действия.</div><button class="btn primary" id="admin-open-connectors">Открыть Telegram / Connector</button>';
-      qs('#admin-open-connectors', node).onclick = () => { closeDrawer(); showTelegram(); };
+      await renderConnectorsInto(node);
       return;
     }
     const meta = (overview.modules || []).find(row => row.id === moduleId) || {};
