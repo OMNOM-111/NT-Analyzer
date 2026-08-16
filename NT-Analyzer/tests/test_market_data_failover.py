@@ -288,3 +288,62 @@ def test_server_environment_uses_topstepx_when_connector_snapshot_is_missing(tmp
 def test_requirements_declares_websockets_for_topstepx_signalr() -> None:
     text = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
     assert "websockets" in text
+
+
+# --------------------------------------------------------------------------- #
+# The provider snapshot is memoised for a few seconds.
+#
+# Building it costs ~90ms warm, most of it one provider's public_status(), and
+# it is read by both the bars status endpoint and the Admin connectors
+# dashboard, which the UI polls. Recomputing per request was repeated work.
+# --------------------------------------------------------------------------- #
+def test_status_snapshot_is_cached_briefly():
+    from app import market_data_failover as mf
+
+    mf.invalidate_status_cache()
+    calls = []
+    real = mf._status_uncached
+
+    def counted(**kwargs):
+        calls.append(1)
+        return real(**kwargs)
+
+    mf._status_uncached = counted
+    try:
+        mf.status(include_file=False)
+        mf.status(include_file=False)
+        mf.status(include_file=False)
+        assert len(calls) == 1, "the snapshot was rebuilt on every call"
+        # An explicit caller can still bypass it.
+        mf.status(include_file=False, fresh=True)
+        assert len(calls) == 2
+    finally:
+        mf._status_uncached = real
+        mf.invalidate_status_cache()
+
+
+def test_cached_snapshot_cannot_be_mutated_by_a_caller():
+    from app import market_data_failover as mf
+
+    mf.invalidate_status_cache()
+    try:
+        first = mf.status(include_file=False)
+        if first.get("external_providers"):
+            first["external_providers"][0]["name"] = "MUTATED"
+        second = mf.status(include_file=False)
+        if second.get("external_providers"):
+            assert second["external_providers"][0]["name"] != "MUTATED"
+    finally:
+        mf.invalidate_status_cache()
+
+
+def test_include_file_variants_are_cached_separately():
+    from app import market_data_failover as mf
+
+    mf.invalidate_status_cache()
+    try:
+        mf.status(include_file=False)
+        mf.status(include_file=True)
+        assert set(mf._STATUS_CACHE) == {False, True}
+    finally:
+        mf.invalidate_status_cache()
