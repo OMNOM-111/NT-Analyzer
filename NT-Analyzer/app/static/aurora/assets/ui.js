@@ -4083,9 +4083,10 @@
       <div><span>Версия</span><strong>${esc(target.version || 'неизвестно')}</strong></div>
       <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || 'неизвестно')}</strong></div>
       <div><span>Build</span><strong class="mono">${esc(target.build_id || 'неизвестно')}</strong></div>
+      <div><span>Artifact</span><strong class="mono">${esc((target.artifact_sha256 || '').slice(0, 16) || '—')}</strong></div>
       <div><span>Состояние</span><strong>${esc(healthRu[health] || health)}</strong></div>
       <div><span>Готовность</span><strong>${esc(readyRu[readiness] || readiness)}</strong></div>
-    </div>${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
+    </div>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
   }
 
   async function probeEnvironmentTarget(target, card) {
@@ -4113,10 +4114,34 @@
         <div class="admin-env-head"><div><span class="badge ${target.current ? 'live' : (target.configured ? 'pending' : 'archived')}">${esc(target.environment.toUpperCase())}</span>${target.current ? '<span class="cab-sub"> текущая</span>' : ''}</div><span class="mono cab-sub">${esc(target.current ? location.origin : (target.origin || 'origin не задан'))}</span></div>
         <div data-env-meta>${environmentMetaHtml(target)}</div>
         <div class="flex gap-sm wrap">
-          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Проверить доступность</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
+          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Обновить</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
         </div><div data-env-confirm></div>
       </section>`).join('')}</div>
       <div class="flex gap-sm wrap"><button class="btn ghost" id="admin-env-compare">Сравнить Canary / Production в отдельных вкладках</button></div>`;
+    // Metadata loads by itself when the panel opens. Requiring a click meant
+    // Development and Canary sat on "неизвестно" while only the current
+    // environment showed anything. Each target is probed independently so a
+    // slow or unreachable one cannot hold up the others, and a failure shows
+    // its own reason on its own card.
+    const autoProbe = (target, index) => {
+      if (target.current || !target.origin) return Promise.resolve();
+      const card = qs(`[data-env-card="${index}"]`, node);
+      const meta = card && qs('[data-env-meta]', card);
+      if (meta) meta.classList.add('is-loading');
+      return probeEnvironmentTarget(target, card).then(() => {
+        const review = card && qs('[data-env-review]', card);
+        if (review) review.disabled = false;
+      }).catch(e => {
+        target.probe_ok = false;
+        target.health = 'unreachable';
+        target.probe_error = String((e && e.message) || e || 'endpoint недоступен');
+        if (meta) meta.innerHTML = environmentMetaHtml(target);
+      }).finally(() => {
+        if (meta) meta.classList.remove('is-loading');
+      });
+    };
+    Promise.all(targets.map(autoProbe));
+
     qsa('[data-env-probe]', node).forEach(button => button.onclick = async () => {
       const target = targets[Number(button.dataset.envProbe)];
       const card = button.closest('[data-env-card]');
