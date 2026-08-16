@@ -701,6 +701,9 @@ def _admin_environment_probe(environment: Any) -> Dict[str, Any]:
         ),
         "commit": str(deployment.get("git_commit_sha") or ""),
         "build_id": str(deployment.get("build_id") or ""),
+        # The artifact digest is what proves Canary and Production really run
+        # the same immutable build, so the switcher shows it beside the commit.
+        "artifact_sha256": str(deployment.get("artifact_sha256") or ""),
         "release_channel": str(deployment.get("release_channel") or ""),
         "health": "reachable",
         "readiness": "runtime endpoint reachable",

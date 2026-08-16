@@ -335,3 +335,36 @@ def test_one_broken_source_does_not_blank_the_dashboard():
     row = server_mod._connector_probe("providers", boom)
     assert row["state"] == "error"
     assert row["detail"] == "RuntimeError"
+
+
+# --------------------------------------------------------------------------- #
+# Environment Switcher loads its metadata by itself.
+#
+# Requiring a click meant Development and Canary sat on "неизвестно" while
+# only the current environment showed anything.
+# --------------------------------------------------------------------------- #
+def test_environment_switcher_probes_every_target_on_open():
+    assert "const autoProbe = (target, index) =>" in UI_JS
+    assert "Promise.all(targets.map(autoProbe))" in UI_JS
+    # Independent probes: one slow or unreachable environment must not hold up
+    # the others, which a sequential await would do.
+    assert "probeEnvironmentTarget(target, card).then(" in UI_JS
+
+
+def test_environment_switcher_shows_a_concrete_failure_reason():
+    assert "target.probe_error = String((e && e.message) || e || 'endpoint недоступен')" in UI_JS
+    assert "target.health = 'unreachable'" in UI_JS
+    assert "${esc(target.probe_error)}" in UI_JS
+
+
+def test_environment_switcher_button_is_a_refresh_not_a_prerequisite():
+    # The old label made the probe look like a required step.
+    assert "Проверить доступность" not in UI_JS
+    assert ">Обновить</button>" in UI_JS
+
+
+def test_environment_probe_reports_the_artifact_digest():
+    # Artifact parity between Canary and Production is the whole point of the
+    # switcher's metadata, so the digest travels with version and commit.
+    assert '"artifact_sha256": str(deployment.get("artifact_sha256") or "")' in SERVER_SRC
+    assert "target.artifact_sha256" in UI_JS
