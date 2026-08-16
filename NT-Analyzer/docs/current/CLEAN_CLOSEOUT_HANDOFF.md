@@ -6,59 +6,93 @@
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.6`, commit `c7b2ed23`, artifact `E370051663484F77…` |
-| Production | `0.10.0-beta.6`, commit `c7b2ed23`, artifact `E370051663484F77…` |
-| Parity | ✅ идентичный artifact, acceptance PASS, оба здоровы |
-| repo HEAD | `3897e471` (`0.10.0-beta.8` в VERSION.json) |
+| Canary | `0.10.0-beta.8`, commit `3897e471`, artifact `F584E2E0BB580F6E…`, **migration 0012 применена** |
+| Production | `0.10.0-beta.6`, commit `c7b2ed23`, artifact `E370051663484F77…`, 0012 **не** применена |
+| repo HEAD | `3897e471` (`0.10.0-beta.8`) |
 | LOCAL | запущен на HEAD, дерево чистое |
 
-`beta.7` и `beta.8` — **не live**, обе откатились. Считать live только `beta.6`.
+Canary acceptance PASS. Parity Canary/Production **временно нарушена намеренно**:
+Canary впереди, Production ждёт применения 0012.
 
-## FIRST FAIL — migration 0012 не может примениться
+## РЕШЕНО: модель прав и порядок миграций
 
-**Это единственное, что блокирует всё остальное.**
+Прошлая запись «0012 требует ownership, роль приложения им не обладает» была
+**верной по факту, но не тем выводом**. Правильная модель уже существует и
+работает — менять архитектуру не нужно:
 
-Canary-деплой и `beta.7`, и `beta.8` падает на шаге миграции. Точная причина
-воспроизведена напрямую против Canary DB:
+| окружение | runtime role | владелец таблиц |
+| --- | --- | --- |
+| Canary | `stratforge_canary_app` | `stratforge_canary_migration` (53 таблицы) |
+| Production | `stratforge_app` | `stratforge_migration` (53 таблицы) |
+
+`InsufficientPrivilege` возникал только потому, что воспроизведение шло по
+runtime-DSN из `/proc`. Под migration-ролью 0012 применяется чисто, идемпотентна,
+и даёт ровно задуманные `ON DELETE` (проверено на живой Canary):
+CASCADE для owned-строк, **SET NULL для `sf_audit_events` / `sf_operational_events`
+/ `sf_migration_runs`** (история сохраняется), RESTRICT для `sf_workspaces`.
+`still NO ACTION: none`.
+
+**Главное операционное открытие.** Шаг `expand_migrate` в blue/green —
+**косметический**: `stage9_remote_release.sh` печатает фиксированный список
+шагов со статусом `pass`, а `canary_blue_green_promote.sh` миграции **не
+запускает вообще** (`grep -n "migrat" tools/canary_blue_green_promote.sh` —
+пусто). Миграции применяются отдельно, вручную:
 
 ```
-InsufficientPrivilege: must be owner of table sf_auth_challenges
-CONTEXT: SQL statement "ALTER TABLE sf_auth_challenges
-         DROP CONSTRAINT IF EXISTS sf_identity_sf_auth_challenges_user_uuid_fk"
-PL/pgSQL function inline_code_block line 30 at EXECUTE
+tools/production_storage_cli.py schema --apply \
+  --url-env STRATFORGE_MIGRATION_DATABASE_URL \
+  --confirm-migration-set-sha256 <set sha>
 ```
 
-Роль приложения (DSN `STRATFORGE_DATABASE_URL` из `/proc/<api pid>/environ`)
-**не владелец таблиц**, а `ALTER TABLE … DROP CONSTRAINT` требует владения.
-Отдельного migration-DSN в коде нет: `grep -rn "MIGRATION_DSN\|STRATFORGE_MIGRATION"
-app/production_storage/ app/storage_router.py` — пусто.
+Поэтому деплой beta.7/beta.8 и падал в `ROLLING_BACK`: новый код проверяет
+готовность против БД, где его миграции ещё нет. **Порядок обязателен:
+expand-миграция → затем промоут кода.** Именно так Canary и поехала.
 
-Открытый вопрос, с которого начинать: **чем именно 0005 сумел выполнить
-`ADD CONSTRAINT`, если 0012 не может выполнить `DROP CONSTRAINT`?** Варианты:
+Готовые скрипты: `scratchpad/apply_schema.py` (canary),
+`scratchpad/own_model.py` (модель прав), `scratchpad/test_0012_mig.py`
+(0012 в транзакции с откатом + вывод получившихся FK-правил).
 
-1. `expand_migrate` в blue/green запускает миграции под другой ролью, чем
-   работающий api-процесс — тогда мой тест использовал не тот DSN, и настоящую
-   ошибку деплоя надо взять из host-логов blue/green, а не из моего теста;
-2. владелец таблиц сменился после 0001/0005 — тогда нужно вернуть ownership
-   или выдать роли приложения права;
-3. 0012 нужно переписать так, чтобы он не требовал ownership (для смены FK
-   semantics это невозможно) либо применялся отдельным привилегированным шагом.
+## FIRST FAIL — на Production нет persisted migration credential
 
-Проверить (1) первым: это самый дешёвый и самый вероятный.
+Production нельзя мигрировать: **ни один конфиг на хосте не объявляет
+`STRATFORGE_MIGRATION_DATABASE_URL` для Production.** Проверено явно:
 
-Воспроизведение под рукой:
-`scratchpad/test_0012.py` — применяет 0012 в транзакции и откатывает,
-печатает точную ошибку. Запуск:
-`SF_REMOTE_PYTHON=canary python run_host_script.py test_0012.py sf-test-0012.py canary`
+```
+production-maintenance.env : absent
+production-app.env         : has STRATFORGE_MIGRATION_DATABASE_URL = False
+production.env             : has STRATFORGE_MIGRATION_DATABASE_URL = False
+```
 
-## Порядок работ после того, как 0012 применится
+У Canary такой файл есть — `canary-maintenance.env` (mode 0600), создан
+`tools/canary_isolation_provision.py`. Производственного аналога не создавалось.
+Старый `production_data/runtime/promote-0.10.0-beta.1.sh` читает
+`os.environ["STRATFORGE_MIGRATION_DATABASE_URL"]` и проверяет, что пользователь
+именно `stratforge_migration` — то есть значение подавалось извне и нигде не
+сохранилось.
 
-1. Новый candidate из HEAD → `build → verify → deploy-canary → record-canary-check
-   → approve-production → promote-production`. Драйвер:
-   `scratchpad/drive_release.py <version> <commit>` (пишет каждый шаг с flush,
-   в отличие от `release_buttons.py`, который умирал молча).
-2. Проверить, что 0012 реально применена и FK delete-семантика соответствует
-   задуманной: `scratchpad/host_fk_audit.py`.
+**Это и есть первый FAIL для следующей сессии.** Варианты, по возрастанию
+инвазивности:
+
+1. Найти, откуда значение подавалось при прошлых промоутах (оператор/менеджер
+   секретов), и создать `config/production-maintenance.env` по образцу
+   canary — mode 0600, владелец `stratforge`, вне Git, не source-ится из
+   supervisor-программы api.
+2. Провижнить production-maintenance.env инструментом, аналогичным
+   `canary_isolation_provision.py`. Учесть: это может **сменить пароль роли**,
+   что затрагивает и другие потребители.
+3. Применить 0012 под `sudo -u postgres` — обходит ledger `sf_schema_migrations`
+   и рассинхронизирует учёт миграций. **Не рекомендуется.**
+
+Автоматизация дальше не пошла сознательно: путь (1) требует обращения с
+секретом, который в конфигурации хоста отсутствует.
+
+## Порядок работ после того, как 0012 применится на Production
+
+1. Применить 0012 на Production **до** промоута кода (см. FIRST FAIL), затем
+   `approve-production → promote-production` для уже собранного кандидата
+   `rc_ea3c6d37fb43400aa679fa6e7e2c49fa` (`0.10.0-beta.8`, artifact
+   `F584E2E0BB580F6E…`) — тот же immutable artifact, что уже принят на Canary.
+2. Проверить FK-семантику на Production: `tools/host_fk_audit.py`.
 3. **Production DB cleanup** — всё готово, скрипт написан и dependency-check
    пройден: `scratchpad/host_user_cleanup.py`.
    Dry-run: `SF_REMOTE_PYTHON=production python run_host_script.py
