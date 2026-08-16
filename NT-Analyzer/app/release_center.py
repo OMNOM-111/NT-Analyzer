@@ -1242,6 +1242,22 @@ def schedule_production(
     return out
 
 
+def _production_deploy_succeeded(doc: Dict[str, Any], candidate_id: Any) -> bool:
+    """True when a Production deployment for this candidate really landed.
+
+    Used to tell "still deploying" apart from "the attempt errored and nothing
+    was deployed", which look identical from the candidate state alone.
+    """
+    for row in doc.get("deployments") or []:
+        if str(row.get("candidate_id")) != str(candidate_id):
+            continue
+        if row.get("environment") != ENVIRONMENT_PRODUCTION:
+            continue
+        if str(row.get("state") or "") in {"deployed", "live"}:
+            return True
+    return False
+
+
 def promote_production(
     *, actor: Any, candidate_id: str, idempotency_key: str, step_up_challenge_id: str = "",
 ) -> Dict[str, Any]:
@@ -1258,7 +1274,15 @@ def promote_production(
         cached = _idempotent(doc, key, f"promote:{candidate_id}")
         if cached:
             return cached
-        if candidate.get("state") not in {STATE_APPROVED, STATE_PRODUCTION_SCHEDULED, STATE_PRODUCTION_FAILED}:
+        retryable = {STATE_APPROVED, STATE_PRODUCTION_SCHEDULED, STATE_PRODUCTION_FAILED}
+        # A promotion that errored before the executor reported an outcome left
+        # the candidate in production_deploying with nothing deployed. That is
+        # not a success and must stay retryable, otherwise a transient failure
+        # strands the candidate permanently: the state is neither live nor
+        # failed, so no transition out of it exists.
+        if candidate.get("state") == STATE_PRODUCTION_DEPLOYING and not _production_deploy_succeeded(doc, candidate_id):
+            retryable.add(STATE_PRODUCTION_DEPLOYING)
+        if candidate.get("state") not in retryable:
             raise ReleaseCenterError("Promotion доступен только после approval/scheduling.", 409, code="invalid_transition")
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
@@ -1330,13 +1354,31 @@ def promote_production(
                       "deployment": dict(deployment),
                       "external_result": outcome.get("external_result")}
         else:
-            approval["status"] = "consumed"
+            # The approval is spent only when the artifact actually landed. An
+            # attempt that errored without deploying must leave it active, or
+            # the retry is refused for want of an approval it already used up.
+            if real_pass:
+                approval["status"] = "consumed"
+                # The executor verified a real deployment of this exact
+                # artifact, which is the whole evidence bar mark_production_live
+                # applies. Leaving the candidate in production_deploying made
+                # the ledger disagree with the live environment -- and a retry
+                # after an earlier failure could never reach a terminal state.
+                deployment["state"] = "live"
+                _record_notification(doc, candidate["candidate_id"], "deploy_successful",
+                                     environment=ENVIRONMENT_PRODUCTION)
+                _record_notification(doc, candidate["candidate_id"], "reload_available",
+                                     environment=ENVIRONMENT_PRODUCTION)
+                _transition(doc, candidate, STATE_PRODUCTION_LIVE, actor=actor,
+                            event_type="release.production_live", idempotency_key=key,
+                            evidence={"deployment_id": deployment["deployment_id"],
+                                      "external_result": outcome.get("external_result")})
             result = {
                 "ok": True,
                 "state": candidate["state"],
                 "deployment": dict(deployment),
                 "external_result": outcome.get("external_result"),
-                "note": ("real deployment verified; owner may confirm production_live"
+                "note": ("real deployment verified; candidate is production_live"
                          if real_pass else "dry-run: real Production deployment not performed"),
             }
         _remember(doc, key, f"promote:{candidate_id}", result)
