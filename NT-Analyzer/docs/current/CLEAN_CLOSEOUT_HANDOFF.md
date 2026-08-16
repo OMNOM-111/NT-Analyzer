@@ -7,8 +7,8 @@
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.10`, commit `baeddbe5`, artifact `CF7425B7A63D1B71…` |
-| Production | `0.10.0-beta.10`, commit `baeddbe5`, artifact `CF7425B7A63D1B71…` |
+| Canary | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
+| Production | `0.10.0-beta.11`, commit `0cd4bde7`, artifact `62CAC04AE8351F8B…` |
 | Parity | **EXACT MATCH**, acceptance PASS на обоих |
 | migration 0012 | применена на Canary **и** Production, FK-семантика проверена |
 | repo HEAD | `baeddbe5` |
@@ -63,24 +63,34 @@ credential — `production-maintenance.env` никогда не создавал
 
 Дальнейшие миграции ACL не требуют: DSN — обычный loopback SCRAM.
 
-## Порядок применения миграций (важно, не забыть)
+## Release Center: expand_migrate теперь настоящий — ЗАКРЫТО (PR #76)
 
-Шаг `expand_migrate` в blue/green — **косметический**, миграции он не
-выполняет. Их применяют отдельно и **до** промоута кода:
+`promote_release` выполняет pending-миграции окружения **до** любого движения
+кода, через maintenance-DSN именно этого окружения:
+`plan → сверка checksum набора → apply → проверка, что pending пуст`.
+
+- любой сбой → **промоут отменяется**, код не уезжает на схему, которая не
+  дошла до нужного состояния;
+- нет pending → честный **SKIPPED**, а не выдуманный pass;
+- статус шага в payload — реальный результат, а не константа;
+- **отсутствие maintenance credential = отказ**, а не тихий пропуск (именно
+  это состояние и позволило Production незаметно разъехаться);
+- DSN читается в subshell, наружу уходят только производные значения без
+  секретов.
+
+Проверено end-to-end на обоих окружениях (`beta.11`):
 
 ```
-tools/production_storage_cli.py schema --apply   --url-env STRATFORGE_MIGRATION_DATABASE_URL   --confirm-migration-set-sha256 <set sha>
+2. canary/expand_migrate     -> skipped  {"pending":0,"migration_set_sha256":"af4fe7bb…"}
+2. production/expand_migrate -> skipped  {"pending":0,"migration_set_sha256":"af4fe7bb…"}
 ```
 
-Иначе новый код не проходит readiness и blue/green откатывается.
+Гейт доказан и в отрицательном сценарии: первый промоут Production **отказал**
+до деплоя, потому что DSN читался пустым (см. грабли ниже).
 
 ## Осталось (не начато)
 
-1. **Release Center: честный pipeline** — `expand_migrate` должен реально
-   выполнять миграции через maintenance DSN, при отсутствии — `SKIPPED`, при
-   провале — код не выкатывается. Затрагивает `stage9_remote_release.sh`,
-   `release_executor.py`, `blue_green.py`. Нужны regression-тесты.
-2. **LOCAL market data** — код consumer'а смержен (PR #62), осталось положить
+1. **LOCAL market data** — код consumer'а смержен (PR #62), осталось положить
    `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` в LOCAL secret store и доказать
    LIVE на LOCAL + Canary + Production при одной provider connection.
 3. RBAC/Admin во всех окружениях.
@@ -105,6 +115,11 @@ tools/production_storage_cli.py schema --apply   --url-env STRATFORGE_MIGRATION_
 - Приложение перегенерирует `data/governance-rendered/*` при старте, а Release
   Center отказывает на грязном дереве → `git stash push -- NT-Analyzer/data/`.
 - `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`.
+- **Значение в `*-maintenance.env` обязано быть в одинарных кавычках.** DSN
+  содержит `&`, `?`, `=`; без кавычек `set -a; . file` даёт **пустую**
+  переменную (bash читает `&` как оператор), и миграции падают с
+  «Required database URL environment variable is empty». Ошибку видно только
+  по пустому значению, не по ошибке sourcing.
 
 ## WAITING FOR OWNER
 
