@@ -59,6 +59,7 @@ if __package__ is None or __package__ == "":
     from app import account_auth  # type: ignore[no-redef]
     from app import security_devices  # type: ignore[no-redef]
     from app import environment_registry  # type: ignore[no-redef]
+    from app import user_card  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -149,6 +150,7 @@ else:
     from . import account_auth
     from . import security_devices
     from . import environment_registry
+    from . import user_card
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -4449,6 +4451,21 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
+        if path == "/api/account/card":
+            # The Cabinet's own view. Deliberately takes no subject parameter:
+            # an account can only ask for its own card, so there is no id for a
+            # caller to tamper with.
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                self._json(HTTPStatus.OK, user_card.build(
+                    actor_id=context.get("user_id"), scope=user_card.SCOPE_SELF,
+                ))
+            except user_card.UserCardError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path in {"/api/account/security", "/api/account/devices", "/api/account/machines"}:
             context = getattr(self, "_remote_context", None) or {}
             try:
@@ -5263,6 +5280,23 @@ class Handler(BaseHTTPRequestHandler):
                     detail["nt_connection"] = self._user_nt_info(target, bool(user.get("is_owner")))
                     detail["public_plans"] = subscriptions.list_plans().get("public_plans") or []
                     self._json(HTTPStatus.OK, detail)
+                except account_auth.AccountAuthError as exc:
+                    self._err(exc.status, str(exc))
+                return
+            if len(uparts) == 5 and uparts[4] == "card":
+                # GET /api/auth/users/<id>/card -- the same card the account
+                # sees in its Cabinet, at admin detail. Same builder, same
+                # facts; scope decides how much is returned, never what is
+                # computed, so the two views cannot drift apart.
+                context = getattr(self, "_remote_context", None) or {}
+                try:
+                    self._json(HTTPStatus.OK, user_card.build(
+                        actor_id=context.get("user_id"),
+                        target_id=uparts[3],
+                        scope=user_card.SCOPE_ADMIN,
+                    ))
+                except user_card.UserCardError as exc:
+                    self._err(exc.status, str(exc), code=exc.code)
                 except account_auth.AccountAuthError as exc:
                     self._err(exc.status, str(exc))
                 return
