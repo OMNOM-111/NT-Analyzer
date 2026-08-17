@@ -47,8 +47,9 @@ param(
     [string]$RunnerName = "stratforge-dev-$env:COMPUTERNAME",
     [string]$RepoUrl = 'https://github.com/OMNOM-111/NT-Analyzer',
     [string]$Labels = 'self-hosted,windows,x64,stratforge-ci',
-    [string]$RunnerVersion = '2.328.0',
-    [string]$RunnerSha256 = 'd1a1b6ba0a4e4b6b0d0c5c0f5b1b4e0a6c3f1d2e9a8b7c6d5e4f3a2b1c0d9e8f'
+    [string]$RunnerVersion = '2.336.0',
+    # Published by GitHub in the v2.336.0 release notes as the win-x64 digest.
+    [string]$RunnerSha256 = 'd59123a43003e357b0805b5d0f611d0bd2f65ab67d51bd070dd4e7a0f685c162'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,8 +153,12 @@ $service = Get-Service -Name 'actions.runner.*' -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like "*$RunnerName*" -or $_.DisplayName -like "*$RunnerName*" }
 if ($null -eq $service) { throw 'Runner service was not created.' }
 Set-Service -Name $service.Name -StartupType Automatic
+# Restart on failure instead of staying dead: a runner that died overnight
+# would silently stop gating merges, which is worse than a noisy failure.
+& sc.exe failure $service.Name reset= 86400 actions= restart/30000/restart/60000/restart/120000 | Out-Null
+& sc.exe failureflag $service.Name 1 | Out-Null
 Start-Service -Name $service.Name
-Write-Host "      $($service.Name) running as .\$AccountName"
+Write-Host "      $($service.Name) running as .\$AccountName, auto-start + restart-on-failure"
 
 Write-Host '[6/6] verification'
 Write-Host '      confirm the runner shows Idle with the expected labels:'
