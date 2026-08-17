@@ -535,6 +535,24 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .udetail-tabs { margin-bottom: 10px; }
 .docs-tabs { margin-bottom: 10px; }
 
+/* Owner Journal as a timeline. The day heading carries the date so each row
+   needs only a time, which is what lets three hundred entries read as a
+   sequence of days rather than one undifferentiated column. */
+.jtimeline { display: flex; flex-direction: column; gap: 14px; }
+.jday-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+.jday-date { font-weight: 600; font-size: 12px; }
+.jday-rows { display: flex; flex-direction: column; border-left: 2px solid var(--line); margin-left: 4px; }
+.jrow { display: flex; gap: 10px; padding: 6px 0 6px 12px; position: relative; }
+.jrow::before { content: ''; position: absolute; left: -5px; top: 12px; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.jrow-warn::before { background: var(--warn); }
+.jrow-time { flex: 0 0 auto; color: var(--tx-3); font-size: 11.5px; padding-top: 1px; }
+.jrow-body { min-width: 0; }
+.jrow-title { font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* A KPI that only shows a number makes the reader guess what it is out of. */
+.kpi-sub { font-size: 10.5px; color: var(--tx-3); margin-top: 2px; }
+.kpi-warn .kpi-value { color: var(--warn); }
+
 /* Avatars (Telegram photo or initials) */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; font-weight: 700; font-size: 11px; color: #fff; background: hsl(var(--av-h, 210) 42% 34%); letter-spacing: .2px; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
