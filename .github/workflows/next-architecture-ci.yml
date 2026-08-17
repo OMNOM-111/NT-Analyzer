@@ -61,10 +61,21 @@ jobs:
         run: git clean -xdf; git reset --hard
         continue-on-error: true
       - uses: actions/checkout@v4
+      # Only the hosted leg provisions a Python: setup-python writes HKLM
+      # registry entries the self-hosted runner's non-admin service account
+      # cannot, and that account stays unprivileged on purpose.
       - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted'
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: NT-Analyzer/requirements.txt
+      - name: Verify the pre-installed toolchain
+        if: runner.environment == 'self-hosted'
+        shell: pwsh
+        run: |
+          $py = (python --version)
+          Write-Host $py
+          if ($py -notmatch '^Python 3\.12\.') { throw "Expected Python 3.12.x, got '$py'." }
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -B -m pytest -q -p no:cacheprovider
