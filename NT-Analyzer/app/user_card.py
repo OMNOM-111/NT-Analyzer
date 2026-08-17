@@ -238,6 +238,10 @@ def _client_view(doc: Dict[str, Any], client: Dict[str, Any], *,
         "confirmed_at_utc": public["confirmed_at_utc"],
         "revoked_at_utc": public["revoked_at_utc"],
         "bound_via": public["bound_via"],
+        # Which machine this client belongs to, empty when none is proven. The
+        # UI needs it to render the tree, and a consumer that only checked
+        # bound_via would have to infer the id from position in the payload.
+        "physical_device_id": public["physical_device_id"],
         "sessions": _sessions_for_client(doc, public["device_id"], scope=scope),
         # The two terminations are different actions with different blast
         # radius, so they are advertised separately and never behind one button.
@@ -465,6 +469,57 @@ def _read_audit(*, limit: int) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Admin-only extras.
+#
+# Additions to the same card, not a second card. They are absent from the self
+# view because the builder does not produce them for that scope -- the renderer
+# does not decide what to hide.
+# --------------------------------------------------------------------------- #
+def _admin_extras(user: Dict[str, Any], user_uuid: str) -> Dict[str, Any]:
+    grants = []
+    try:
+        from . import permissions
+
+        resolved = permissions.resolve_admin_capabilities(user)
+        grants = sorted(name for name, enabled in (resolved or {}).items() if enabled)
+    except Exception:
+        grants = []
+
+    workspaces = []
+    try:
+        from . import workspaces as workspace_store
+
+        footprint = workspace_store.user_footprint(
+            user_uuid, int(user.get("user_id") or 0),
+        )
+        for row in footprint.get("owned_workspaces") or footprint.get("owned") or []:
+            entry = row if isinstance(row, dict) else {"workspace_id": str(row)}
+            workspaces.append({
+                "workspace_id": str(entry.get("workspace_id") or ""),
+                "kind": str(entry.get("kind") or ""),
+                "status": str(entry.get("status") or ""),
+                "role": "owner",
+            })
+        for row in footprint.get("memberships") or []:
+            if not isinstance(row, dict):
+                continue
+            workspace_id = str(row.get("workspace_id") or "")
+            if any(w["workspace_id"] == workspace_id for w in workspaces):
+                continue
+            workspaces.append({
+                "workspace_id": workspace_id,
+                "kind": "",
+                "status": str(row.get("status") or ""),
+                "role": str(row.get("role") or "member"),
+            })
+    except Exception:
+        # A workspace store that cannot be read costs one panel, not the card.
+        workspaces = []
+
+    return {"grants": grants, "workspaces": workspaces}
+
+
+# --------------------------------------------------------------------------- #
 # The one entry point.
 # --------------------------------------------------------------------------- #
 def build(*, actor_id: Any, target_id: Any = None, scope: str = SCOPE_SELF) -> Dict[str, Any]:
@@ -512,6 +567,7 @@ def build(*, actor_id: Any, target_id: Any = None, scope: str = SCOPE_SELF) -> D
         environments = _environments(doc, user_uuid)
         summary = _summary(doc, user, scope=scope, identities=identities, devices=devices)
         step_up = security_devices._available_providers(doc, user)
+        extras = _admin_extras(user, user_uuid) if scope == SCOPE_ADMIN else None
 
     return {
         "ok": True,
@@ -526,6 +582,7 @@ def build(*, actor_id: Any, target_id: Any = None, scope: str = SCOPE_SELF) -> D
         "devices": devices,
         "environments": environments,
         "timeline": _timeline(user, scope=scope),
+        **({"admin": extras} if extras is not None else {}),
         "policy": {
             "device_confirmation_required": True,
             "trust_ttl_sec": security_devices.DEVICE_TRUST_TTL_SEC,

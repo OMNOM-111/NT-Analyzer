@@ -1986,6 +1986,46 @@ def revoke_user_sessions(owner_id: Any, user_id: Any, *, session_id: str = "",
     return {"ok": True, "revoked": revoked, "sessions": sessions}
 
 
+def revoke_own_session(user_id: Any, session_id: str) -> Dict[str, Any]:
+    """End one of the caller's own sessions.
+
+    Separate from ``revoke_user_sessions``, which is the administrative action
+    and requires ``users.manage``. An account ending its own session needs no
+    capability, but it also cannot name a subject: the owner of the session is
+    taken from the authenticated caller, never from the request, so a session id
+    is not enough to reach someone else's login.
+    """
+    uid = int(user_id or 0)
+    target = str(session_id or "").strip()
+    if uid <= 0:
+        raise AccountAuthError("Требуется вход.", 401)
+    if not target:
+        raise AccountAuthError("Не указана сессия.", 400)
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if user is None:
+            raise AccountAuthError("Пользователь не найден.", 404)
+        revoked = 0
+        for session in doc["sessions"]:
+            if int(session.get("user_id") or 0) != uid:
+                continue
+            if not hmac.compare_digest(_session_id(session), target):
+                continue
+            if session.get("revoked"):
+                break
+            session["revoked"] = True
+            session["revoked_at_utc"] = _now_iso()
+            session["revoked_reason"] = "self_service"
+            revoked += 1
+            break
+        if revoked:
+            _write_doc(doc)
+    if revoked:
+        _audit("session.revoked", user_id=uid, extra={"reason": "self_service"})
+    return {"ok": True, "revoked": revoked}
+
+
 def _cleanup(doc: Dict[str, Any]) -> None:
     now = time.time()
     doc["challenges"] = [row for row in doc["challenges"] if float(row.get("expires_at") or 0) > now][-100:]

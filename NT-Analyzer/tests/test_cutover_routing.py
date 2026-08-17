@@ -77,7 +77,12 @@ def test_admin_operations_dashboard_uses_capability_contract():
     cabinet = ui.split("function renderCabinet", 1)[1].split(
         "async function renderAiRatingsInto", 1,
     )[0]
-    assert "const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
+    # 'card' is the canonical user card -- self-service, fed by the same
+    # builder the Admin page uses at a wider scope. The point of this
+    # assertion is that no *system* tab appears in the Cabinet, which the
+    # negative checks below still enforce.
+    assert ("const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], "
+            "['security', 'Безопасность'], ['plans', 'Тарифы']]") in cabinet
     assert "['operations'," not in cabinet
 
 

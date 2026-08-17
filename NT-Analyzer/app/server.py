@@ -3374,6 +3374,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/account/machines/revoke",
             "/api/account/machines/pair",
             "/api/account/machines/pair/redeem",
+            "/api/account/sessions/revoke",
         }
         if path not in routes:
             self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
@@ -3439,13 +3440,24 @@ class Handler(BaseHTTPRequestHandler):
                     device_id=str(body.get("device_id") or ""),
                     ip=ip,
                 )
-            else:
+            elif path == "/api/account/machines/pair/redeem":
                 out = security_devices.redeem_pairing_code(
                     user_id=user_id,
                     device_id=str(body.get("device_id") or ""),
                     code=str(body.get("code") or ""),
                     ip=ip,
                 )
+            else:
+                # Ending one of your own sessions. The subject is the
+                # authenticated caller, so a session id alone cannot reach
+                # somebody else's login.
+                try:
+                    out = account_auth.revoke_own_session(
+                        user_id, str(body.get("session_id") or ""),
+                    )
+                except account_auth.AccountAuthError as exc:
+                    self._err(exc.status, str(exc), code="session_revoke_failed")
+                    return
             self._json(HTTPStatus.OK, out)
         except security_devices.SecurityDeviceError as exc:
             self._err(exc.status, str(exc), code=exc.code)

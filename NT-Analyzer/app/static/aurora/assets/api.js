@@ -342,6 +342,15 @@
     // Registry: what each environment reported about itself, and when. Unlike
     // the probe above this reaches LOCAL, which nothing can call into.
     adminEnvironments: (o) => getJSON('/api/admin/environments', o),
+    // The canonical user card. One builder on the server; these two differ only
+    // in scope, never in what they compute.
+    accountCard: (o) => getJSON('/api/account/card', o),
+    adminUserCard: (id, o) => getJSON('/api/auth/users/' + encodeURIComponent(id) + '/card', o),
+    accountRevokeMachine: (id) => send('/api/account/machines/revoke', 'POST', { physical_device_id: id }),
+    accountRevokeDevice: (id) => send('/api/account/devices/revoke', 'POST', { device_id: id }),
+    accountEndSession: (id) => send('/api/account/sessions/revoke', 'POST', { session_id: id }),
+    accountRedeemPairing: (deviceId, code) => send('/api/account/machines/pair/redeem', 'POST', { device_id: deviceId, code }),
+    accountIssuePairing: (deviceId) => send('/api/account/machines/pair', 'POST', { device_id: deviceId }),
     adminOperations: (o) => getJSON('/api/admin/operations', o),
     authMe: (o) => getJSON('/api/auth/me', o),
     devPreviewStatus: (o) => getJSON('/api/dev/preview/status', o),
