@@ -558,7 +558,13 @@ def build(*, actor_id: Any, target_id: Any = None, scope: str = SCOPE_SELF) -> D
 
         # Expiring stale devices before rendering, so the card never shows a
         # device as trusted when the next request would call it expired.
-        if security_devices._expire_stale(doc):
+        dirty = security_devices._expire_stale(doc)
+        # Identities that predate the history model have no history rows, and
+        # without this the card reports an account with three verified
+        # identities as having none. Migration 0014 backfilled the relational
+        # table; the document the card reads never got the same treatment.
+        dirty = bool(identity_history.backfill_from_identities(doc)) or dirty
+        if dirty:
             account_auth._write_doc(doc)
 
         user_uuid = _normalize_uuid(account_auth._user_uuid(user))
