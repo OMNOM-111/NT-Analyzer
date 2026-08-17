@@ -32,6 +32,8 @@ def clean(monkeypatch):
     registry.reset_for_tests()
     monkeypatch.delenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", raising=False)
     monkeypatch.delenv("STRATFORGE_ENVIRONMENT_REGISTRY_PEERS", raising=False)
+    for name in ("DEVELOPMENT", "CANARY", "PRODUCTION"):
+        monkeypatch.delenv("STRATFORGE_REGISTRY_KEY_" + name, raising=False)
     # Development: the registry stays in memory, which is what these tests want.
     monkeypatch.setattr(registry, "_authoritative", lambda: False)
     yield
@@ -48,6 +50,8 @@ def beat(environment="canary", **overrides):
         "release_channel": "beta",
         "schema_version": 16,
         "readiness": "ready",
+        "market_data": "consumer",
+        "connector": "ok",
     }
     payload.update(overrides)
     return payload
@@ -148,27 +152,207 @@ def test_details_that_are_not_an_object_are_dropped():
 
 
 # --------------------------------------------------------------------------- #
-# Authentication.
+# Authentication: signed, identity-bound, replay-proof.
+#
+# The key never crosses the wire, so most of these tests are about the two
+# properties that follow from that: who a heartbeat is from is decided by which
+# key verified it, and a captured request is useless.
 # --------------------------------------------------------------------------- #
-def test_token_must_be_configured_and_long_enough(monkeypatch):
-    assert registry.token_configured() is False
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "short")
-    assert registry.token_configured() is False
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    assert registry.token_configured() is True
+KEY_CANARY = "c" * 48
+KEY_PRODUCTION = "p" * 48
+KEY_DEVELOPMENT = "d" * 48
 
 
-def test_unconfigured_token_matches_nothing(monkeypatch):
-    """An empty token must not mean "everything is authorized"."""
-    assert registry.token_matches("") is False
-    assert registry.token_matches("anything") is False
+@pytest.fixture()
+def keys(monkeypatch):
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_CANARY", KEY_CANARY)
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_PRODUCTION", KEY_PRODUCTION)
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_DEVELOPMENT", KEY_DEVELOPMENT)
+    return {
+        "canary": KEY_CANARY,
+        "production": KEY_PRODUCTION,
+        "development": KEY_DEVELOPMENT,
+    }
 
 
-def test_token_comparison_rejects_a_prefix(monkeypatch):
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    assert registry.token_matches("t" * 39) is False
-    assert registry.token_matches("t" * 41) is False
-    assert registry.token_matches("t" * 40) is True
+_NONCE_SEQ = iter(range(1_000_000))
+
+
+def signed(payload, key, *, timestamp=None, nonce=None):
+    """Body bytes plus the headers a real publisher would send."""
+    body = dict(payload)
+    body["nonce"] = nonce or ("nonce%016d" % next(_NONCE_SEQ))
+    raw = json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ts = int(registry._now()) if timestamp is None else int(timestamp)
+    return raw, ts, registry.SIGNATURE_VERSION + "=" + registry.sign(key, timestamp=ts, body=raw)
+
+
+def verify(raw, ts, signature, *, claimed=None, now=None):
+    body = json.loads(raw.decode("utf-8"))
+    return registry.verify_publisher(
+        body=raw, timestamp=ts, signature=signature,
+        claimed_environment=claimed if claimed is not None else body.get("environment"),
+        nonce=body.get("nonce"), now=now,
+    )
+
+
+def test_a_correctly_signed_heartbeat_names_its_publisher(keys):
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    assert verify(raw, ts, sig) == "canary"
+
+
+def test_identity_comes_from_the_key_not_from_the_body(keys):
+    """The forged-publisher case. Canary's key is real and the signature checks
+    out, but the body claims to be Production. Believing the body would let any
+    environment impersonate any other."""
+    raw, ts, sig = signed(beat("production"), KEY_CANARY)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "environment_identity_mismatch"
+
+
+def test_an_unknown_key_is_refused(keys):
+    raw, ts, sig = signed(beat("canary"), "z" * 48)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "signature_invalid"
+
+
+def test_a_tampered_body_invalidates_the_signature(keys):
+    """The signature covers the transmitted bytes, so an edit in flight is
+    caught even when it keeps the body the same length."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    tampered = raw.replace(b"0.10.0-beta.16", b"9.9.9-attacker")
+    assert len(tampered) == len(raw)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        registry.verify_publisher(
+            body=tampered, timestamp=ts, signature=sig,
+            claimed_environment="canary",
+            nonce=json.loads(tampered)["nonce"],
+        )
+    assert exc.value.code == "signature_invalid"
+
+
+def test_a_stale_capture_is_refused(keys):
+    """Replay defence one: a request older than the window is dead even with a
+    perfect signature."""
+    old = registry._now() - registry.MAX_CLOCK_SKEW_SEC - 30
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY, timestamp=old)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "timestamp_out_of_window"
+
+
+def test_moving_the_timestamp_forward_breaks_the_signature(keys):
+    """The timestamp is inside the signature, so a captured request cannot be
+    refreshed by editing its clock claim."""
+    old = registry._now() - registry.MAX_CLOCK_SKEW_SEC - 30
+    raw, _, sig = signed(beat("canary"), KEY_CANARY, timestamp=old)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, int(registry._now()), sig)
+    assert exc.value.code == "signature_invalid"
+
+
+def test_a_replayed_request_is_refused(keys):
+    """Replay defence two: inside the window, where the timestamp still passes,
+    the nonce catches it."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    assert verify(raw, ts, sig) == "canary"
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "nonce_replayed"
+
+
+def test_the_same_nonce_from_a_different_environment_is_not_a_replay(keys):
+    """Nonces are remembered per publisher; two environments picking the same
+    random value is a coincidence, not an attack."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY, nonce="shared-nonce-value")
+    assert verify(raw, ts, sig) == "canary"
+    raw, ts, sig = signed(beat("production"), KEY_PRODUCTION, nonce="shared-nonce-value")
+    assert verify(raw, ts, sig) == "production"
+
+
+def test_a_heartbeat_without_a_nonce_is_refused(keys):
+    payload = dict(beat("canary"))
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ts = int(registry._now())
+    sig = registry.SIGNATURE_VERSION + "=" + registry.sign(KEY_CANARY, timestamp=ts, body=raw)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        registry.verify_publisher(
+            body=raw, timestamp=ts, signature=sig,
+            claimed_environment="canary", nonce="",
+        )
+    assert exc.value.code == "nonce_missing"
+
+
+@pytest.mark.parametrize("signature, code", [
+    ("", "signature_malformed"),
+    ("deadbeef", "signature_malformed"),
+    ("v2=deadbeef", "signature_malformed"),
+])
+def test_malformed_signature_headers_are_refused(keys, signature, code):
+    raw, ts, _ = signed(beat("canary"), KEY_CANARY)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, signature)
+    assert exc.value.code == code
+
+
+def test_a_missing_timestamp_is_refused(keys):
+    raw, _, sig = signed(beat("canary"), KEY_CANARY)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, "", sig)
+    assert exc.value.code == "timestamp_invalid"
+
+
+def test_with_no_keys_configured_nothing_authenticates():
+    """Unconfigured must mean closed, never open."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "registry_not_configured"
+    assert exc.value.status == 503
+
+
+def test_short_keys_are_ignored_entirely(monkeypatch):
+    """A truncated or placeholder key must not quietly become a valid one."""
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_CANARY", "tooshort")
+    assert registry.inbound_configured() is False
+
+
+def test_rotation_accepts_both_keys_at_once(monkeypatch):
+    """The whole rotation procedure, and it is configuration only: add the new
+    key beside the old, move the publisher onto it, then drop the old one."""
+    old, new = "o" * 48, "w" * 48
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_CANARY", old + "," + new)
+    raw, ts, sig = signed(beat("canary"), old)
+    assert verify(raw, ts, sig) == "canary"
+    raw, ts, sig = signed(beat("canary"), new)
+    assert verify(raw, ts, sig) == "canary"
+
+
+def test_a_retired_key_stops_working(monkeypatch):
+    old, new = "o" * 48, "w" * 48
+    monkeypatch.setenv("STRATFORGE_REGISTRY_KEY_CANARY", new)
+    raw, ts, sig = signed(beat("canary"), old)
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        verify(raw, ts, sig)
+    assert exc.value.code == "signature_invalid"
+
+
+def test_record_refuses_an_unverified_identity(keys):
+    """Defence in depth: even a future caller that forgets to authenticate
+    cannot reach storage with a mismatched identity."""
+    with pytest.raises(registry.EnvironmentRegistryError) as exc:
+        registry.record(beat("production"), verified_environment="canary")
+    assert exc.value.code == "environment_identity_mismatch"
+
+
+def test_no_key_ever_appears_in_what_a_browser_reads(keys, monkeypatch):
+    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", KEY_CANARY)
+    registry.record(beat("canary"))
+    rendered = json.dumps(registry.snapshot(), ensure_ascii=False)
+    for key in list(keys.values()) + [KEY_CANARY]:
+        assert key not in rendered
 
 
 # --------------------------------------------------------------------------- #
@@ -235,9 +419,12 @@ def test_publish_round_survives_an_unreachable_peer(monkeypatch):
     assert out["peers"]["https://up.example.com"]["ok"] is True
 
 
-def test_token_travels_in_a_header_not_the_url(monkeypatch):
-    """A token in a query string ends up in access logs and proxy caches."""
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
+def test_the_key_never_leaves_the_process(monkeypatch):
+    """It signs; it is not sent. Nothing on the wire -- URL, headers or body --
+    contains the key, so a proxy log or a TLS-terminating middlebox cannot
+    capture it."""
+    key = "t" * 40
+    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", key)
     monkeypatch.setattr(registry, "self_heartbeat",
                         lambda **_: registry.normalize_heartbeat(beat()))
     captured = {}
@@ -245,6 +432,7 @@ def test_token_travels_in_a_header_not_the_url(monkeypatch):
     def urlopen(request, timeout=None):
         captured["url"] = request.full_url
         captured["headers"] = dict(request.header_items())
+        captured["body"] = request.data
 
         class _Response:
             def __enter__(self_inner):
@@ -260,8 +448,42 @@ def test_token_travels_in_a_header_not_the_url(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
     registry.publish_to("https://canary.example.com", force=True)
-    assert "t" * 40 not in captured["url"]
-    assert captured["headers"].get("X-stratforge-registry-token") == "t" * 40
+
+    assert key not in captured["url"]
+    assert key not in json.dumps(captured["headers"])
+    assert key.encode("utf-8") not in captured["body"]
+    # What does travel: a signature, a timestamp, and a fresh nonce.
+    headers = {k.lower(): v for k, v in captured["headers"].items()}
+    assert headers[registry.SIGNATURE_HEADER.lower()].startswith("v1=")
+    assert headers[registry.TIMESTAMP_HEADER.lower()]
+    assert json.loads(captured["body"])["nonce"]
+
+
+def test_each_heartbeat_carries_a_fresh_nonce(monkeypatch):
+    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
+    monkeypatch.setattr(registry, "self_heartbeat",
+                        lambda **_: registry.normalize_heartbeat(beat()))
+    seen = []
+
+    def urlopen(request, timeout=None):
+        seen.append(json.loads(request.data)["nonce"])
+
+        class _Response:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *args):
+                return False
+
+            def read(self_inner, _n=0):
+                return b"{}"
+
+        return _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    registry.publish_to("https://canary.example.com", force=True)
+    registry.publish_to("https://canary.example.com", force=True)
+    assert len(set(seen)) == 2, "a reused nonce would be rejected as a replay"
 
 
 def test_publishing_is_throttled(monkeypatch):
@@ -358,63 +580,112 @@ def http_server():
         server.shutdown()
 
 
-def _heartbeat(base, payload, token):
+def _post(base, raw, timestamp, signature):
     headers = {"Content-Type": "application/json", "Origin": base}
-    if token is not None:
-        headers["X-StratForge-Registry-Token"] = token
+    if timestamp is not None:
+        headers[registry.TIMESTAMP_HEADER] = str(timestamp)
+    if signature is not None:
+        headers[registry.SIGNATURE_HEADER] = signature
     request = urllib.request.Request(
-        base + registry.HEARTBEAT_PATH,
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST", headers=headers,
+        base + registry.HEARTBEAT_PATH, data=raw, method="POST", headers=headers,
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_heartbeat_requires_the_token(http_server, monkeypatch):
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    for token in (None, "", "w" * 40):
-        with pytest.raises(urllib.error.HTTPError) as exc:
-            _heartbeat(http_server, beat(), token)
-        assert exc.value.code == 401
-
-
-def test_heartbeat_401_says_nothing_about_the_token(http_server, monkeypatch):
-    """A refusal must not reveal whether the token was absent, wrong or how
-    long the real one is."""
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        _heartbeat(http_server, beat(), "w" * 40)
-    body = exc.value.read().decode("utf-8")
-    assert "t" * 40 not in body
-    assert json.loads(body)["code"] == "registry_unauthorized"
-
-
-def test_heartbeat_without_a_configured_token_is_unavailable_not_open(http_server):
-    """No token configured must mean "closed", never "anyone may write"."""
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        _heartbeat(http_server, beat(), "anything")
-    assert exc.value.code == 503
-    assert json.loads(exc.value.read().decode("utf-8"))["code"] == "registry_not_configured"
-
-
-def test_heartbeat_is_accepted_and_reaches_the_snapshot(http_server, monkeypatch):
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    out = _heartbeat(http_server, beat(), "t" * 40)
+def test_a_signed_heartbeat_is_accepted_over_http(http_server, keys):
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    out = _post(http_server, raw, ts, sig)
     assert out["ok"] is True
     canary = next(
         row for row in registry.snapshot()["environments"] if row["environment"] == "canary"
     )
     assert canary["state"] == "live"
     assert canary["app_version"] == "0.10.0-beta.16"
+    assert canary["market_data"] == "consumer"
+    assert canary["connector"] == "ok"
 
 
-def test_heartbeat_payload_is_validated_even_when_authenticated(http_server, monkeypatch):
-    monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
+@pytest.mark.parametrize("mutate", [
+    "no_signature",
+    "no_timestamp",
+    "wrong_key",
+    "stale_timestamp",
+    "impersonation",
+])
+def test_every_rejection_looks_identical_from_outside(http_server, keys, mutate):
+    """A prober must not be able to tell which check it failed. All of these are
+    genuinely different faults internally and all of them must return the same
+    401 with the same code and no detail."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    if mutate == "no_signature":
+        sig = None
+    elif mutate == "no_timestamp":
+        ts = None
+    elif mutate == "wrong_key":
+        raw, ts, sig = signed(beat("canary"), "z" * 48)
+    elif mutate == "stale_timestamp":
+        raw, ts, sig = signed(
+            beat("canary"), KEY_CANARY,
+            timestamp=registry._now() - registry.MAX_CLOCK_SKEW_SEC - 60,
+        )
+    elif mutate == "impersonation":
+        raw, ts, sig = signed(beat("production"), KEY_CANARY)
+
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _heartbeat(http_server, {"environment": "nowhere"}, "t" * 40)
+        _post(http_server, raw, ts, sig)
+    assert exc.value.code == 401
+    body = json.loads(exc.value.read().decode("utf-8"))
+    assert body["code"] == "registry_unauthorized"
+    assert body["error"] == "Не авторизовано."
+    # And nothing that hints at the real key.
+    assert KEY_CANARY not in json.dumps(body, ensure_ascii=False)
+
+
+def test_a_replay_over_http_is_refused(http_server, keys):
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    assert _post(http_server, raw, ts, sig)["ok"] is True
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(http_server, raw, ts, sig)
+    assert exc.value.code == 401
+
+
+def test_http_without_configured_keys_is_unavailable_not_open(http_server):
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(http_server, raw, ts, sig)
+    assert exc.value.code == 503
+    assert json.loads(exc.value.read().decode("utf-8"))["code"] == "registry_not_configured"
+
+
+def test_a_malformed_body_is_refused_before_any_key_is_touched(http_server, keys):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(http_server, b"not json at all", int(registry._now()), "v1=abc")
     assert exc.value.code == 400
-    assert json.loads(exc.value.read().decode("utf-8"))["code"] == "environment_unknown"
+
+
+def test_payload_is_validated_even_after_a_valid_signature(http_server, keys):
+    """Authentication says who sent it, not that what they sent is well formed."""
+    bad = dict(beat("canary"))
+    bad["artifact_sha256"] = "not-a-digest"
+    raw, ts, sig = signed(bad, KEY_CANARY)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(http_server, raw, ts, sig)
+    assert exc.value.code == 400
+    assert json.loads(exc.value.read().decode("utf-8"))["code"] == "artifact_invalid"
+
+
+def test_the_signature_covers_the_exact_bytes_sent(http_server, keys):
+    """Re-serialising the parsed body would change key order and spacing. If
+    the server verified against its own re-encoding rather than the received
+    bytes, this identical-meaning-but-different-bytes body would pass."""
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    body = json.loads(raw.decode("utf-8"))
+    reordered = json.dumps(body, ensure_ascii=False, sort_keys=False, indent=1).encode("utf-8")
+    assert reordered != raw
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(http_server, reordered, ts, sig)
+    assert exc.value.code == 401
 
 
 # --------------------------------------------------------------------------- #
