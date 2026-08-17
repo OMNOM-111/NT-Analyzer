@@ -344,12 +344,17 @@ def reset_for_tests() -> None:
 #
 # What an environment says about itself, and where it says it.
 # --------------------------------------------------------------------------- #
-def self_heartbeat() -> Dict[str, Any]:
+def self_heartbeat(*, readiness: Optional[Any] = None) -> Dict[str, Any]:
     """This process's own runtime identity, in heartbeat shape.
 
     Everything comes from the deployment config the process was started with.
     Nothing is asked of the caller, so an environment cannot be made to
     misreport itself by anything arriving over the network.
+
+    ``readiness`` is the supplier the HTTP server uses for ``/api/ready``. It
+    has to be passed in: readiness is only meaningful with the component probes
+    the server registered at startup, and computing it here without them
+    reported a perfectly healthy Production as ``not_ready``.
     """
     deployment = runtime_env.public_status()
     payload = {
@@ -360,7 +365,7 @@ def self_heartbeat() -> Dict[str, Any]:
         "artifact_sha256": deployment.get("artifact_sha256"),
         "release_channel": deployment.get("release_channel"),
         "schema_version": _schema_version(),
-        "readiness": _readiness(),
+        "readiness": _readiness(readiness),
         "details": {
             "runtime_profile": deployment.get("runtime_profile"),
             "region": deployment.get("region"),
@@ -386,12 +391,20 @@ def _schema_version() -> int:
         return 0
 
 
-def _readiness() -> str:
-    try:
-        from . import service_readiness
+def _readiness(supplier: Optional[Any] = None) -> str:
+    """Readiness as this process actually reports it, or nothing at all.
 
-        payload = service_readiness.readiness_payload(runtime_env.deployment_config())
-        status = str(payload.get("status") or "").strip().lower()
+    Without the server's registered component probes the answer is not merely
+    approximate, it is wrong: the required components look absent and a healthy
+    service reports ``not_ready``. So when there is no supplier the field is
+    left empty, and the compare view shows it as "not reported" rather than as
+    a fault that does not exist.
+    """
+    if supplier is None:
+        return ""
+    try:
+        payload = supplier()
+        status = str((payload or {}).get("status") or "").strip().lower()
         return status if status in _READINESS else ""
     except Exception:
         return ""
@@ -411,18 +424,19 @@ def _due(key: str, *, now: Optional[float] = None) -> bool:
     return True
 
 
-def publish_local(*, force: bool = False) -> Optional[Dict[str, Any]]:
+def publish_local(*, force: bool = False, readiness: Optional[Any] = None) -> Optional[Dict[str, Any]]:
     """Record this environment's own identity in its own registry."""
     if not force and not _due("self"):
         return None
-    return record(self_heartbeat())
+    return record(self_heartbeat(readiness=readiness))
 
 
 HEARTBEAT_PATH = "/api/environments/heartbeat"
 _PUBLISH_TIMEOUT_SEC = 4.0
 
 
-def publish_to(origin: str, *, force: bool = False) -> Dict[str, Any]:
+def publish_to(origin: str, *, force: bool = False,
+               readiness: Optional[Any] = None) -> Dict[str, Any]:
     """Push this environment's identity to one peer.
 
     Returns a result rather than raising: a peer being down is an ordinary
@@ -442,7 +456,7 @@ def publish_to(origin: str, *, force: bool = False) -> Dict[str, Any]:
     if not force and not _due("peer:" + target):
         return {"ok": False, "code": "throttled"}
 
-    body = json.dumps(self_heartbeat(), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(self_heartbeat(readiness=readiness), ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         target + HEARTBEAT_PATH,
         data=body,
@@ -483,15 +497,15 @@ def peer_origins() -> List[str]:
     return origins
 
 
-def publish_round(*, force: bool = False) -> Dict[str, Any]:
+def publish_round(*, force: bool = False, readiness: Optional[Any] = None) -> Dict[str, Any]:
     """One publishing pass: record locally, then tell every configured peer."""
     results: Dict[str, Any] = {"local": None, "peers": {}}
     try:
-        results["local"] = publish_local(force=force)
+        results["local"] = publish_local(force=force, readiness=readiness)
     except EnvironmentRegistryError as exc:
         results["local"] = {"error": exc.code}
     for origin in peer_origins():
-        results["peers"][origin] = publish_to(origin, force=force)
+        results["peers"][origin] = publish_to(origin, force=force, readiness=readiness)
     return results
 
 
@@ -503,8 +517,11 @@ class HeartbeatPublisher:
     registry itself, as the peer's ``last_seen_at`` falling behind.
     """
 
-    def __init__(self, interval_sec: float = 30.0) -> None:
+    def __init__(self, interval_sec: float = 30.0,
+                 readiness: Optional[Any] = None) -> None:
         self.interval_sec = max(5.0, float(interval_sec))
+        # The same supplier /api/ready uses, so the two can never disagree.
+        self.readiness = readiness
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_result: Dict[str, Any] = {}
@@ -526,7 +543,7 @@ class HeartbeatPublisher:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self.last_result = publish_round(force=True)
+                self.last_result = publish_round(force=True, readiness=self.readiness)
             except Exception:
                 pass
             self._stop.wait(self.interval_sec)
