@@ -36,19 +36,48 @@ jobs:
       - run: python -m compileall -q app tools
 
   tests:
-    name: Tests (${{ matrix.os }})
+    # The Windows leg runs the same full suite as ci.yml's python-tests, so it
+    # belongs on the self-hosted runner rather than burning billed minutes to
+    # repeat it. The Linux leg stays hosted: it is the only cross-platform
+    # coverage there is, and the runner is Windows.
+    name: Tests (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+          - label: windows-self-hosted
+            runner: [self-hosted, windows, x64, stratforge-ci]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
+      # A self-hosted workspace persists between jobs; a hosted image does not.
+      # Without this a file deleted on a branch lingers and the suite passes
+      # against a tree that no longer exists.
+      - name: Clean the persistent workspace
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        run: git clean -xdf; git reset --hard
+        continue-on-error: true
       - uses: actions/checkout@v4
+      # Only the hosted leg provisions a Python: setup-python writes HKLM
+      # registry entries the self-hosted runner's non-admin service account
+      # cannot, and that account stays unprivileged on purpose.
       - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted'
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: NT-Analyzer/requirements.txt
+      - name: Verify the pre-installed toolchain
+        if: runner.environment == 'self-hosted'
+        # See ci.yml: pwsh is a per-user MSIX package here and unavailable to
+        # the runner service account.
+        shell: powershell
+        run: |
+          $py = (python --version)
+          Write-Host $py
+          if ($py -notmatch '^Python 3\.12\.') { throw "Expected Python 3.12.x, got '$py'." }
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -B -m pytest -q -p no:cacheprovider

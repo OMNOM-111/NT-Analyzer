@@ -6,24 +6,63 @@ on:
   pull_request:
     branches: [main]
 
+# The heavy Windows suite runs on the self-hosted runner on the development PC.
+# It is deliberately Windows-native: the bridge build needs real NinjaTrader
+# assemblies, which no hosted image has.
+#
+# Least privilege is explicit here. These jobs read the repository and nothing
+# else, and no workflow in this repo references `secrets.` at all -- the runner
+# never sees a Production credential or a deployment key, and there is nothing
+# for a compromised step to exfiltrate beyond the source it already checked out.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-tests:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, stratforge-ci]
+    timeout-minutes: 30
     env:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: utf-8
     defaults:
       run:
-        shell: pwsh
+        # Windows PowerShell, not pwsh. PowerShell 7 is installed here only as
+        # a per-user MSIX package under WindowsApps, which the runner's own
+        # service account cannot execute; 5.1 ships with Windows and is always
+        # reachable. These steps use no 7-only syntax.
+        shell: powershell
         working-directory: NT-Analyzer
     steps:
+      # A self-hosted runner keeps its working directory between jobs, unlike a
+      # hosted image that starts clean. Without this, a file deleted in a branch
+      # lingers and the suite passes against a tree that no longer exists.
+      - name: Clean the persistent workspace
+        run: git clean -xdf; git reset --hard
+        working-directory: .
+        continue-on-error: true
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
+      # The self-hosted runner is a provisioned machine, not an ephemeral
+      # image, so it uses the toolchain that is already installed. The setup-*
+      # actions write HKLM registry entries, which the non-admin service
+      # account cannot do -- and granting it admin to satisfy an action would
+      # give arbitrary repository code local administrator rights, which is the
+      # opposite of why it runs unprivileged.
+      - name: Verify toolchain
+        run: |
+          $tools = @{ python = '3.12'; node = ''; git = '' }
+          foreach ($name in $tools.Keys) {
+            $cmd = Get-Command $name -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "$name is not on PATH for the runner service account." }
+            Write-Host "$name -> $($cmd.Source)"
+          }
+          $py = (python --version)
+          Write-Host $py
+          if ($py -notmatch '^Python 3\.12\.') { throw "Expected Python 3.12.x, got '$py'." }
+          node --version
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
       - name: Validate External GPT context pack
@@ -42,16 +81,25 @@ jobs:
           }
 
   bridge-build-if-nt8-present:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, stratforge-ci]
+    timeout-minutes: 20
     defaults:
       run:
-        shell: pwsh
+        # Windows PowerShell, not pwsh. PowerShell 7 is installed here only as
+        # a per-user MSIX package under WindowsApps, which the runner's own
+        # service account cannot execute; 5.1 ships with Windows and is always
+        # reachable. These steps use no 7-only syntax.
+        shell: powershell
         working-directory: NT-Analyzer
     steps:
+      - name: Clean the persistent workspace
+        run: git clean -xdf; git reset --hard
+        working-directory: .
+        continue-on-error: true
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: "10.0.x"
+      # Same reasoning as above: dotnet is installed machine-wide here.
+      - name: Verify dotnet
+        run: dotnet --version
       - name: Build bridge when NinjaTrader assemblies are available
         run: |
           $ntCore = "C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Core.dll"
