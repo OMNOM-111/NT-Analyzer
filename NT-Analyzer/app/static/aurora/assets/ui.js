@@ -2443,7 +2443,11 @@
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка тарифов…</div>';
     try {
       const isOwner = !!(me && me.is_owner);
-      const data = isOwner ? await API.http.ownerPlans() : await API.http.billingPlans();
+      // One self-service endpoint for everyone. /api/owner/plans returns the
+      // same list behind an owner gate, so the branch bought nothing and put an
+      // owner-scoped call in a personal surface. Subscription *management*
+      // lives in the Admin panel and is unaffected.
+      const data = await API.http.billingPlans();
       let donate = { payment: {}, tiers: [] };
       try { donate = await API.http.billingDonate(); } catch (e) { /* optional */ }
       const catalog = data.feature_catalog || [];
@@ -2785,7 +2789,43 @@
   let PENDING_USER_DETAIL = '';
   const JOURNAL_STATE = { category: '', q: '', suspicious: false };
   function journalRowHtml(e) {
-    return `<div class="row jrow ${e.suspicious ? 'jrow-warn' : ''}"><div class="row-main"><div class="row-title">${esc(e.event || '—')}${e.suspicious ? ' <span class="badge pending">внимание</span>' : ''}</div><div class="row-sub">${esc(shortDt(e.timestamp))} · <span class="badge">${esc(e.category_label || e.category)}</span> ${esc(e.summary || '')}</div></div></div>`;
+    // The time alone on the row; the date is carried by the day heading above
+    // it. Repeating the full timestamp on every line is what made three hundred
+    // rows read as an undifferentiated wall.
+    const stamp = String(e.timestamp || '');
+    const clock = stamp.includes('T') ? stamp.split('T')[1].slice(0, 5) : stamp.slice(0, 5);
+    return `<div class="jrow ${e.suspicious ? 'jrow-warn' : ''}">
+      <div class="jrow-time mono">${esc(clock)}</div>
+      <div class="jrow-body">
+        <div class="jrow-title">${esc(e.event || '—')}${
+          e.suspicious ? ' <span class="badge pending">внимание</span>' : ''}</div>
+        <div class="cab-sub"><span class="badge">${esc(e.category_label || e.category)}</span> ${esc(e.summary || '')}</div>
+      </div>
+    </div>`;
+  }
+
+  function journalTimelineHtml(entries) {
+    if (!entries.length) return '<div class="empty-state">Записей нет.</div>';
+    // Grouped by day, newest first, so a question like "what happened yesterday
+    // evening" is answered by looking rather than by reading every timestamp.
+    const days = [];
+    const byDay = new Map();
+    for (const entry of entries) {
+      const day = String(entry.timestamp || '').slice(0, 10) || 'без даты';
+      if (!byDay.has(day)) { byDay.set(day, []); days.push(day); }
+      byDay.get(day).push(entry);
+    }
+    return `<div class="jtimeline">${days.map(day => {
+      const rows = byDay.get(day);
+      const flagged = rows.filter(r => r.suspicious).length;
+      return `<section class="jday">
+        <div class="jday-head">
+          <span class="jday-date mono">${esc(day)}</span>
+          <span class="cab-sub">${rows.length} ${flagged ? `· внимание: ${flagged}` : ''}</span>
+        </div>
+        <div class="jday-rows">${rows.map(journalRowHtml).join('')}</div>
+      </section>`;
+    }).join('')}</div>`;
   }
   async function renderJournalInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка журнала…</div>';
@@ -2805,7 +2845,10 @@
           <label class="flex gap-sm" style="align-items:center">Только подозрительные<input type="checkbox" id="jr-sus" ${JOURNAL_STATE.suspicious ? 'checked' : ''}></label>
           <button class="btn ghost" id="jr-refresh">Обновить</button>
         </div>
-        <div class="list account-user-list">${entries.map(journalRowHtml).join('') || '<div class="empty-state">Записей нет.</div>'}</div>`;
+        <div class="cab-sub">Показано записей: ${entries.length}${
+          JOURNAL_STATE.category || JOURNAL_STATE.q || JOURNAL_STATE.suspicious
+            ? ' (с учётом фильтров)' : ''}</div>
+        ${journalTimelineHtml(entries)}`;
       const apply = () => {
         JOURNAL_STATE.category = (qs('#jr-cat', node) || {}).value || '';
         JOURNAL_STATE.q = ((qs('#jr-q', node) || {}).value || '').trim();
@@ -3556,11 +3599,23 @@
       const users = data.users || [];
       const sessions = data.auth_sessions || [];
       const note = esc(data.telemetry_note || 'Метрики вкладки браузера, не ОС.');
+      // Derived here rather than added to the payload: both are simple facts
+      // about the session list the page already has, and a second source for
+      // them would be a second thing to keep in step.
+      const impersonating = sessions.filter(s => s.impersonating).length;
+      const accountsWithSession = new Set(sessions.map(s => String(s.user_id))).size;
       node.innerHTML = `
         <div class="cab-sub">${note}</div>
-        <div class="kpi-row cab-kpi"><div class="kpi"><div class="kpi-label">Online</div><div class="kpi-value">${Number(data.online_count || 0)}</div></div>
-        <div class="kpi"><div class="kpi-label">Алерты</div><div class="kpi-value">${Number(data.alert_count || 0)}</div></div>
-        <div class="kpi"><div class="kpi-label">Auth-сессии</div><div class="kpi-value">${sessions.length}</div></div></div>
+        <div class="kpi-row cab-kpi">
+          <div class="kpi"><div class="kpi-label">Сейчас online</div><div class="kpi-value">${Number(data.online_count || 0)}</div>
+            <div class="kpi-sub">из ${users.length} с телеметрией</div></div>
+          <div class="kpi ${Number(data.alert_count || 0) ? 'kpi-warn' : ''}"><div class="kpi-label">Требуют внимания</div><div class="kpi-value">${Number(data.alert_count || 0)}</div>
+            <div class="kpi-sub">${Number(data.alert_count || 0) ? 'проверьте список ниже' : 'алертов нет'}</div></div>
+          <div class="kpi"><div class="kpi-label">Активные сессии</div><div class="kpi-value">${sessions.length}</div>
+            <div class="kpi-sub">${impersonating ? impersonating + ' под impersonation' : 'без impersonation'}</div></div>
+          <div class="kpi"><div class="kpi-label">Аккаунтов с сессией</div><div class="kpi-value">${accountsWithSession}</div>
+            <div class="kpi-sub">${sessions.length > accountsWithSession ? 'есть вход с нескольких клиентов' : 'по одному клиенту'}</div></div>
+        </div>
         <h4 class="cab-section-title">Пользователи online</h4>
         <div class="list">${users.length ? users.map(u => {
           const name = esc(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username || u.user_id);
