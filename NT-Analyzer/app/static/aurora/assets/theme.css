@@ -509,6 +509,31 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .admin-env-compare tbody th { color: var(--tx-3); font-weight: 500; }
 .admin-env-compare tr.is-diff th, .admin-env-compare tr.is-diff td { color: var(--warn); }
 
+/* Canonical user card. The nesting is the model: machine > client > session,
+   so each level is indented and separated rather than flattened into one list. */
+.card-summary-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.card-summary-id { min-width: 0; }
+.card-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.card-row:last-child { border-bottom: 0; }
+.card-row-main { min-width: 0; }
+.card-row-title { font-size: 12.5px; overflow-wrap: anywhere; }
+.card-row-side { flex: 0 0 auto; }
+.card-details { margin-top: 10px; }
+.card-details > summary { cursor: pointer; font-size: 11.5px; color: var(--tx-3); padding: 6px 0; }
+.card-chain { margin-top: 8px; }
+.card-machine { border-left: 2px solid var(--brand-line); }
+.card-machine-note { margin: 6px 0 10px; }
+.card-clients { display: flex; flex-direction: column; gap: 10px; }
+.card-client { padding-left: 12px; border-left: 1px solid var(--line); }
+.card-sessions { padding-left: 12px; }
+.card-row-nested { border-bottom: 0; padding: 4px 0; }
+.card-empty { padding-left: 12px; }
+.card-pair-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.card-pair-row .input { min-width: 0; flex: 1 1 140px; }
+.card-timeline-row { padding: 5px 0; }
+.card-timeline-icon { display: inline-block; width: 1.2em; color: var(--tx-3); }
+.udetail-tabs { margin-bottom: 10px; }
+
 /* Avatars (Telegram photo or initials) */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; font-weight: 700; font-size: 11px; color: #fff; background: hsl(var(--av-h, 210) 42% 34%); letter-spacing: .2px; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }

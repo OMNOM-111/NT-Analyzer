@@ -2260,40 +2260,62 @@
           const expiry = String(grant.expires_at_utc || '').replace('Z', '').slice(0, 16);
           return `<div class="admin-grant-row"><div><strong>${esc(c.label)}</strong><div class="cab-sub mono">${esc(c.id)} · risk=${esc(c.risk || 'high')}</div></div>${canGrant ? `<input type="datetime-local" aria-label="UTC expiry" data-admin-cap-expiry="${esc(c.id)}" value="${esc(expiry)}"><label class="switch"><input type="checkbox" data-admin-cap-toggle="${esc(uid)}" data-admin-cap-id="${esc(c.id)}" ${adminCaps[c.id] ? 'checked' : ''}><span class="sl"></span></label>` : `<span class="badge ${adminCaps[c.id] ? 'live' : 'archived'}">${adminCaps[c.id] ? 'активно' : 'нет'}</span>`}</div>`;
         }).join('')}</div>`;
+      // Three tabs instead of one long column of technical fields. The card tab
+      // is the canonical builder at admin scope: the same facts the account
+      // sees in its own Cabinet, rendered by the same function. The identity,
+      // device and session lists that used to live here were a second,
+      // independent description of the same things, and are gone.
       panel.innerHTML = `
-        <div class="udetail-grid">
-          <div class="cab-kv"><span class="k">Статус</span><span class="v">${esc(u.status || '—')}${u.blocked_at_utc ? ' · заблокирован ' + esc(shortDt(u.blocked_at_utc)) : ''}</span></div>
-          <div class="cab-kv"><span class="k">Тариф</span><span class="v">${esc(planLabel)}</span></div>
-          <div class="cab-kv"><span class="k">Роль доступа</span><span class="v">${esc(u.role || '—')}</span></div>
-          <div class="cab-kv"><span class="k">Регистрация</span><span class="v">${esc(shortDt(u.created_at_utc) || '—')}</span></div>
-          <div class="cab-kv"><span class="k">Подтверждён</span><span class="v">${esc(shortDt(u.approved_at_utc) || '—')}</span></div>
-          <div class="cab-kv"><span class="k">Телефон</span><span class="v">${esc(u.phone_mask || '—')} ${u.phone_verified_at_utc ? '✓' : ''}</span></div>
-          <div class="cab-kv"><span class="k">Telegram</span><span class="v">${u.username ? '@' + esc(u.username) : esc((telegramIdentity && telegramIdentity.label) || 'Telegram привязан')}</span></div>
-          <div class="cab-kv"><span class="k">Последний вход</span><span class="v">${esc(shortDt(u.last_login_at_utc) || '—')}${u.last_login_device ? ' · ' + esc(u.last_login_device) : ''}${u.last_login_machine ? ' · ' + esc(u.last_login_machine) : ''}</span></div>
-          <div class="cab-kv"><span class="k">NinjaTrader</span><span class="v">${esc(ntMode)}${nt.workspace ? ' · ' + esc(nt.workspace) : ''} ${nt.connected ? '<span class="badge live">подключён</span>' : '<span class="badge pending">нет</span>'}</span></div>
+        <div class="cab-tabs udetail-tabs">
+          <button class="cab-tab on" data-udetail-tab="card">Карточка</button>
+          <button class="cab-tab" data-udetail-tab="rights">Права</button>
+          <button class="cab-tab" data-udetail-tab="support">Поддержка</button>
         </div>
-        <div class="section-title">История способов входа</div>
-        <div class="finance-note">Это техническая история авторизаций. Актуальные устройства, их понятные имена и активные сессии находятся ниже в блоке поддержки.</div>
-        <div class="list">${devices.length ? devices.map(device => `<div class="row"><div class="row-main"><div class="row-title">${esc(device.label || 'Этот компьютер')} · ${esc(device.client || 'Браузер')}</div><div class="row-sub">${esc(shortDt(device.last_seen_at_utc) || '—')}${device.email ? ' · ' + esc(device.email) : ''}${device.last_ip ? ' · ' + esc(device.last_ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Устройств пока нет.</div>'}</div>
-        <div class="section-title">История входов</div>
-        <div class="list">${hist.length ? hist.map(h => `<div class="row"><div class="row-main"><div class="row-title">${esc(h.machine || 'Этот компьютер')} · ${esc(h.device || '—')}</div><div class="row-sub">${esc(shortDt(h.at))} · ${esc(h.source === 'telegram_mini_app' ? 'Telegram Mini App' : 'Браузер')}${h.ip ? ' · ' + esc(h.ip) : ''}</div></div></div>`).join('') : '<div class="empty-state">Входов пока нет.</div>'}</div>
-        <div class="section-title">Поддержка, сессии и ресурсы</div>
-        <div class="user-support-live" data-user-support-live="${esc(uid)}"><div class="state-loading"><span class="spinner"></span>Загрузка мониторинга…</div></div>
-        ${permissionsHtml}
-        ${adminPermissionsHtml}`;
-      qsa('[data-cap-toggle]', panel).forEach(t => t.onchange = async () => { t.disabled = true; try { await API.http.authUserPermission(t.dataset.capToggle, t.dataset.capId, t.checked); toast('Разрешение обновлено'); } catch (e) { t.checked = !t.checked; reportError(e); } finally { t.disabled = false; } });
-      qsa('[data-admin-cap-toggle]', panel).forEach(t => t.onchange = async () => {
-        t.disabled = true;
-        const expiryInput = qs(`[data-admin-cap-expiry="${t.dataset.adminCapId}"]`, panel);
-        let expiresAt = '';
-        try {
-          if (t.checked && expiryInput && expiryInput.value) expiresAt = new Date(expiryInput.value + 'Z').toISOString();
-          await API.http.authUserAdminPermission(t.dataset.adminCapToggle, t.dataset.adminCapId, t.checked, expiresAt);
-          toast(t.checked ? 'Административный grant выдан' : 'Административный grant отозван');
-          await renderUserDetail(panel, uid, listNode);
-        } catch (e) { t.checked = !t.checked; reportError(e); t.disabled = false; }
-      });
-      startUserSupportPoll(qs('[data-user-support-live]', panel), uid);
+        <div class="udetail-tabbody" data-udetail-body></div>`;
+      const tabBody = qs('[data-udetail-body]', panel);
+      const wireRights = () => {
+        qsa('[data-cap-toggle]', tabBody).forEach(t => t.onchange = async () => {
+          t.disabled = true;
+          try {
+            await API.http.authUserPermission(t.dataset.capToggle, t.dataset.capId, t.checked);
+            toast('Разрешение обновлено');
+          } catch (e) { t.checked = !t.checked; reportError(e); }
+          finally { t.disabled = false; }
+        });
+        qsa('[data-admin-cap-toggle]', tabBody).forEach(t => t.onchange = async () => {
+          t.disabled = true;
+          const expiryInput = qs('[data-admin-cap-expiry="' + t.dataset.adminCapId + '"]', tabBody);
+          let expiresAt = '';
+          try {
+            if (t.checked && expiryInput && expiryInput.value) expiresAt = new Date(expiryInput.value + 'Z').toISOString();
+            await API.http.authUserAdminPermission(t.dataset.adminCapToggle, t.dataset.adminCapId, t.checked, expiresAt);
+            toast(t.checked ? 'Административный grant выдан' : 'Административный grant отозван');
+            await renderUserDetail(panel, uid, listNode);
+          } catch (e) { t.checked = !t.checked; reportError(e); t.disabled = false; }
+        });
+      };
+      const showTab = (which) => {
+        qsa('[data-udetail-tab]', panel).forEach(
+          b => b.classList.toggle('on', b.dataset.udetailTab === which));
+        if (which === 'rights') {
+          tabBody.innerHTML = `
+            <div class="udetail-grid">
+              <div class="cab-kv"><span class="k">Тариф</span><span class="v">${esc(planLabel)}</span></div>
+              <div class="cab-kv"><span class="k">NinjaTrader</span><span class="v">${esc(ntMode)}${nt.workspace ? ' · ' + esc(nt.workspace) : ''} ${nt.connected ? '<span class="badge live">подключён</span>' : '<span class="badge pending">нет</span>'}</span></div>
+            </div>
+            ${permissionsHtml}
+            ${adminPermissionsHtml}`;
+          wireRights();
+        } else if (which === 'support') {
+          tabBody.innerHTML = `<div class="user-support-live" data-user-support-live="${esc(uid)}"><div class="state-loading"><span class="spinner"></span>Загрузка мониторинга…</div></div>`;
+          startUserSupportPoll(qs('[data-user-support-live]', tabBody), uid);
+        } else {
+          renderUserCardInto(tabBody, () => API.http.adminUserCard(uid));
+        }
+      };
+      qsa('[data-udetail-tab]', panel).forEach(
+        b => b.onclick = () => showTab(b.dataset.udetailTab));
+      showTab('card');
     } catch (e) { renderError(panel, e, () => renderUserDetail(panel, uid, listNode)); }
   }
   async function renderUsersInto(node) {
@@ -2947,6 +2969,339 @@
     </div>`;
   }
 
+  // ---- Canonical user card (Phase 5) ----------------------------------------
+  //
+  // One renderer for the Cabinet and for the Admin user page, fed by one server
+  // builder. Two renderers over the same facts drift the same way two builders
+  // would: a device revoked in one view still looks live in the other, and
+  // nothing says which is wrong. `card.scope` is the server's word for how much
+  // detail it returned; the renderer shows what is present and never guesses.
+  const CARD_STATE_LABEL = {
+    trusted: 'доверено', pending: 'ожидает подтверждения',
+    revoked: 'отозвано', expired: 'истекло',
+  };
+  const CARD_STATE_CLASS = {
+    trusted: 'live', pending: 'pending', revoked: 'failed', expired: 'archived',
+  };
+  const CARD_IDENTITY_LABEL = {
+    telegram: 'Telegram', google: 'Google', email: 'E-mail', phone: 'Телефон',
+  };
+  const CARD_ATTENTION = {
+    no_verified_identity: 'Нет подтверждённого способа входа',
+    single_recovery_channel: 'Только один способ восстановить доступ',
+    devices_awaiting_confirmation: 'Есть устройства, ожидающие подтверждения',
+  };
+  const CARD_TIMELINE_ICON = {
+    login: '→', session: '×', identity: '@', device: '▢', machine: '▣', admin: '!',
+  };
+
+  function cardBadge(status) {
+    const key = String(status || '');
+    return `<span class="badge ${CARD_STATE_CLASS[key] || 'archived'}">${esc(CARD_STATE_LABEL[key] || key)}</span>`;
+  }
+
+  function cardWhen(value) {
+    const text = String(value || '');
+    return text ? esc(text.replace('T', ' ').replace('Z', '')) : '—';
+  }
+
+  function cardSummaryHtml(card) {
+    const s = card.summary || {};
+    const sec = s.security || {};
+    const attention = (sec.attention || []).map(
+      code => `<div>⚠ ${esc(CARD_ATTENTION[code] || code)}</div>`).join('');
+    // Counts, not a score. "Two devices awaiting confirmation" is actionable;
+    // a single number invites belief in a precision that is not there.
+    const counts = [
+      ['Подтверждённые идентификаторы', sec.verified_identities],
+      ['Доверенные клиенты', sec.trusted_devices],
+      ['Ожидают подтверждения', sec.pending_devices],
+      ['Известные компьютеры', sec.known_machines],
+      ['Активные сессии', sec.live_sessions],
+    ].map(([label, value]) =>
+      `<div><span>${esc(label)}</span><strong>${esc(String(value ?? 0))}</strong></div>`).join('');
+
+    const uuidRow = s.user_uuid
+      ? `<div><span>UUID</span><strong class="mono">${esc(s.user_uuid)}</strong></div>` : '';
+    const legacyRow = s.legacy_user_id
+      ? `<div><span>Внутренний id</span><strong class="mono">${esc(String(s.legacy_user_id))}</strong></div>` : '';
+
+    return `<section class="cab-card card-summary">
+      <div class="card-summary-head">
+        ${avatarHtml({ first_name: s.display_name, username: s.username, avatar_url: s.avatar_url }, 'avatar-lg')}
+        <div class="card-summary-id">
+          <div class="cab-name">${esc(s.display_name || s.username || '—')}</div>
+          <div class="cab-sub">${s.username ? '@' + esc(s.username) : ''}</div>
+          <div class="cab-badges">
+            <span class="badge ${s.is_owner ? 'live' : 'demo'}">${esc(s.role || '—')}</span>
+            <span class="badge ${s.status === 'active' ? 'live' : 'failed'}">${esc(s.status || '—')}</span>
+          </div>
+        </div>
+      </div>
+      <div class="admin-env-meta">
+        ${uuidRow}${legacyRow}
+        <div><span>Создан</span><strong>${cardWhen(s.created_at_utc)}</strong></div>
+        <div><span>Последний вход</span><strong>${cardWhen(s.last_login_at_utc)}</strong></div>
+        ${counts}
+      </div>
+      ${attention ? `<div class="admin-env-warnings">${attention}</div>` : ''}
+    </section>`;
+  }
+
+  function cardIdentityRow(row) {
+    const provider = esc(CARD_IDENTITY_LABEL[row.provider] || row.provider || '');
+    const verified = row.verified_at
+      ? '<span class="badge live">подтверждён</span>'
+      : '<span class="badge pending">не подтверждён</span>';
+    return `<div class="card-row">
+      <div class="card-row-main">
+        <div class="card-row-title">${provider} · <span class="mono">${esc(row.display_value || '')}</span></div>
+        <div class="cab-sub">действует с ${cardWhen(row.valid_from)}</div>
+      </div>
+      <div class="card-row-side">${verified}</div>
+    </div>`;
+  }
+
+  function cardRetiredRow(row) {
+    const provider = esc(CARD_IDENTITY_LABEL[row.provider] || row.provider || '');
+    // Retired-because-superseded and revoked-because-compromised are different
+    // events. Collapsing them would lose the distinction that matters most when
+    // reading a compromise.
+    const why = row.state === 'revoked'
+      ? '<span class="badge failed">отозван</span>'
+      : '<span class="badge archived">заменён</span>';
+    const reason = row.replacement_reason ? ` · ${esc(row.replacement_reason)}` : '';
+    return `<div class="card-row">
+      <div class="card-row-main">
+        <div class="card-row-title">${provider} · <span class="mono">${esc(row.display_value || '')}</span></div>
+        <div class="cab-sub">${cardWhen(row.valid_from)} → ${cardWhen(row.valid_to)}${reason}</div>
+      </div>
+      <div class="card-row-side">${why}</div>
+    </div>`;
+  }
+
+  function cardIdentitiesHtml(card) {
+    const ids = card.identities || {};
+    const current = ids.current || [];
+    const history = ids.history || [];
+    const chains = ids.replacement_timeline || [];
+
+    const chainHtml = chains.length
+      ? `<div class="card-chain">${chains.map(chain => `
+          <div class="cab-sub"><strong>${esc(CARD_IDENTITY_LABEL[chain.provider] || chain.provider)}</strong>: ${
+            (chain.steps || []).map(step =>
+              `<span class="mono">${esc(step.from || '')}</span> → <span class="mono">${esc(step.to || '')}</span> <span class="cab-sub">(${cardWhen(step.at_utc)})</span>`
+            ).join(' · ')}</div>`).join('')}</div>`
+      : '';
+
+    return `<section class="cab-card">
+      <h4>Идентификаторы</h4>
+      ${current.length ? current.map(cardIdentityRow).join('')
+        : '<div class="cab-sub">Нет активных идентификаторов.</div>'}
+      ${history.length ? `<details class="card-details">
+        <summary>Предыдущие идентификаторы (${history.length})</summary>
+        ${history.map(cardRetiredRow).join('')}
+        ${chainHtml}
+      </details>` : ''}
+    </section>`;
+  }
+
+  function cardSessionsHtml(client) {
+    const sessions = client.sessions || [];
+    if (!sessions.length) return '<div class="cab-sub card-empty">Нет активных сессий.</div>';
+    return `<div class="card-sessions">${sessions.map(session => `
+      <div class="card-row card-row-nested">
+        <div class="card-row-main">
+          <div class="card-row-title">Сессия <span class="mono">${esc(String(session.session_id || '').slice(0, 12))}</span></div>
+          <div class="cab-sub">${esc(session.environment || '—')} · с ${cardWhen(session.created_at_utc)}${
+            session.last_region ? ' · ' + esc(session.last_region) : ''}</div>
+        </div>
+        <div class="card-row-side">
+          <button class="btn sm ghost" data-card-end-session="${esc(session.session_id || '')}">Завершить сессию</button>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  function cardClientHtml(client) {
+    const isConnector = client.kind === 'connector';
+    const name = isConnector ? 'Windows Connector' : (client.display_name || client.client || 'Клиент');
+    const bound = client.bound_via === 'connector_self'
+      ? '<span class="badge live">собственный клиент компьютера</span>'
+      : (client.bound_via === 'attested_pairing'
+        ? '<span class="badge live">привязан кодом Connector</span>' : '');
+    const revoke = client.actions && client.actions.revoke_client
+      ? `<button class="btn sm ghost" data-card-revoke-client="${esc(client.device_id)}">Отозвать клиента</button>`
+      : '';
+    return `<div class="card-client">
+      <div class="card-row">
+        <div class="card-row-main">
+          <div class="card-row-title">${isConnector ? '▣' : '▢'} ${esc(name)}${
+            client.online ? ' <span class="badge live">онлайн</span>' : ''}</div>
+          <div class="cab-sub">${esc(client.os_family || '')} ${esc(client.os_version || '')} · впервые ${
+            cardWhen(client.first_seen_at_utc)} · активность ${cardWhen(client.last_seen_at_utc)}</div>
+          <div class="cab-badges">${cardBadge(client.status)}${bound}</div>
+        </div>
+        <div class="card-row-side">${revoke}</div>
+      </div>
+      ${cardSessionsHtml(client)}
+    </div>`;
+  }
+
+  function cardMachineHtml(machine) {
+    const revoke = machine.actions && machine.actions.revoke_physical_device
+      ? `<button class="btn sm danger" data-card-revoke-machine="${esc(machine.physical_device_id)}">Отозвать компьютер</button>`
+      : '';
+    return `<section class="cab-card card-machine">
+      <div class="card-row">
+        <div class="card-row-main">
+          <div class="card-row-title">🖥 ${esc(machine.display_name || 'Компьютер')}</div>
+          <div class="cab-sub">${esc(machine.os_family || '')} ${esc(machine.os_version || '')} · впервые ${
+            cardWhen(machine.first_seen_at_utc)} · активность ${cardWhen(machine.last_seen_at_utc)}</div>
+          <div class="cab-badges">${cardBadge(machine.status)}</div>
+        </div>
+        <div class="card-row-side">${revoke}</div>
+      </div>
+      <div class="cab-sub card-machine-note">Отзыв компьютера завершает все его клиенты и сессии. Завершение отдельной сессии или клиента компьютер не затрагивает.</div>
+      <div class="card-clients">${(machine.clients || []).map(cardClientHtml).join('')}</div>
+    </section>`;
+  }
+
+  function cardDevicesHtml(card) {
+    const devices = card.devices || {};
+    const machines = devices.machines || [];
+    const unbound = devices.unbound_clients || [];
+
+    const machineHtml = machines.length
+      ? machines.map(cardMachineHtml).join('')
+      : '<section class="cab-card"><h4>Компьютеры</h4><div class="cab-sub">Ни один компьютер ещё не подтвердил себя через Windows Connector.</div></section>';
+
+    // Unpaired clients are shown apart on purpose. Chrome and Edge on one
+    // workstation are indistinguishable from the server side, so presenting
+    // them under a shared machine would be a guess dressed as a fact.
+    const unboundHtml = unbound.length
+      ? `<section class="cab-card">
+          <h4>Клиенты без привязки к компьютеру (${unbound.length})</h4>
+          <div class="cab-sub">${esc(devices.unbound_explanation || '')}</div>
+          <div class="card-clients">${unbound.map(cardClientHtml).join('')}</div>
+          <div class="cab-sub card-machine-note">Чтобы привязать браузер к компьютеру, запросите код в Windows Connector на этом компьютере и введите его здесь. Объединение по имени компьютера, IP или User-Agent не выполняется никогда — это не доказательство.</div>
+          <div class="card-pair-row">
+            <input class="input" id="card-pair-code" inputmode="numeric" autocomplete="one-time-code" placeholder="Код привязки" maxlength="8">
+            <select class="input" id="card-pair-client">${unbound.map(
+              c => `<option value="${esc(c.device_id)}">${esc(c.display_name || c.client || c.device_id)}</option>`).join('')}</select>
+            <button class="btn primary" id="card-pair-submit">Привязать к компьютеру</button>
+          </div>
+        </section>`
+      : '';
+
+    return machineHtml + unboundHtml;
+  }
+
+  function cardTimelineHtml(card) {
+    const rows = card.timeline || [];
+    if (!rows.length) {
+      return `<section class="cab-card"><h4>Журнал безопасности</h4>
+        <div class="cab-sub">Событий пока нет.</div></section>`;
+    }
+    return `<section class="cab-card">
+      <h4>Журнал безопасности</h4>
+      <div class="card-timeline">${rows.slice(0, 60).map(row => `
+        <div class="card-row card-timeline-row">
+          <div class="card-row-main">
+            <div class="card-row-title"><span class="card-timeline-icon">${esc(CARD_TIMELINE_ICON[row.category] || '·')}</span> ${esc(row.label || row.event || '')}</div>
+            <div class="cab-sub">${cardWhen(row.at_utc)}${
+              row.actor_user_id ? ' · инициатор #' + esc(String(row.actor_user_id)) : ''}${
+              row.origin ? ' · ' + esc(row.origin) : ''}</div>
+          </div>
+        </div>`).join('')}</div>
+    </section>`;
+  }
+
+  function cardExtrasHtml(card) {
+    // Admin-only blocks. Absent from the self view because the server does not
+    // send them, not because the renderer hides them.
+    const extras = card.admin || {};
+    const blocks = [];
+    const grants = extras.grants || [];
+    if (grants.length) {
+      blocks.push(`<section class="cab-card"><h4>Права и гранты</h4>
+        <div class="cab-badges">${grants.map(g => `<span class="chip-tag">${esc(g)}</span>`).join('')}</div></section>`);
+    }
+    const workspaces = extras.workspaces || [];
+    if (workspaces.length) {
+      blocks.push(`<section class="cab-card"><h4>Рабочие пространства (${workspaces.length})</h4>
+        ${workspaces.map(w => `<div class="card-row"><div class="card-row-main">
+          <div class="card-row-title mono">${esc(w.workspace_id || '')}</div>
+          <div class="cab-sub">${esc(w.kind || '')} · ${esc(w.status || '')}</div>
+        </div></div>`).join('')}</section>`);
+    }
+    return blocks.join('');
+  }
+
+  function userCardHtml(card) {
+    return cardSummaryHtml(card)
+      + cardIdentitiesHtml(card)
+      + cardExtrasHtml(card)
+      + cardDevicesHtml(card)
+      + cardTimelineHtml(card);
+  }
+
+  // One wiring function too. The actions are the same actions in both views;
+  // only who may reach the page differs, and that is enforced on the server.
+  function wireUserCard(node, reload) {
+    qsa('[data-card-revoke-machine]', node).forEach(button => button.onclick = async () => {
+      const id = button.dataset.cardRevokeMachine;
+      if (!confirm('Отозвать компьютер? Это завершит все его клиенты и сессии.')) return;
+      button.disabled = true;
+      try {
+        const out = await API.http.accountRevokeMachine(id);
+        toast(`Компьютер отозван · клиентов: ${out.revoked_clients} · сессий: ${out.revoked_sessions}`);
+        await reload();
+      } catch (e) { reportError(e); button.disabled = false; }
+    });
+    qsa('[data-card-revoke-client]', node).forEach(button => button.onclick = async () => {
+      const id = button.dataset.cardRevokeClient;
+      if (!confirm('Отозвать этот клиент? Компьютер и остальные клиенты не затрагиваются.')) return;
+      button.disabled = true;
+      try {
+        await API.http.accountRevokeDevice(id);
+        toast('Клиент отозван');
+        await reload();
+      } catch (e) { reportError(e); button.disabled = false; }
+    });
+    qsa('[data-card-end-session]', node).forEach(button => button.onclick = async () => {
+      const id = button.dataset.cardEndSession;
+      button.disabled = true;
+      try {
+        await API.http.accountEndSession(id);
+        toast('Сессия завершена');
+        await reload();
+      } catch (e) { reportError(e); button.disabled = false; }
+    });
+    const pair = qs('#card-pair-submit', node);
+    if (pair) pair.onclick = async () => {
+      const code = (qs('#card-pair-code', node) || {}).value || '';
+      const client = (qs('#card-pair-client', node) || {}).value || '';
+      if (!code.trim()) { toast('Введите код привязки из Windows Connector.'); return; }
+      pair.disabled = true;
+      try {
+        await API.http.accountRedeemPairing(client, code.trim());
+        toast('Клиент привязан к компьютеру');
+        await reload();
+      } catch (e) { reportError(e); pair.disabled = false; }
+    };
+  }
+
+  async function renderUserCardInto(node, loader) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка карточки…</div>';
+    try {
+      const card = await loader();
+      node.innerHTML = userCardHtml(card);
+      wireUserCard(node, () => renderUserCardInto(node, loader));
+    } catch (e) {
+      renderError(node, e, () => renderUserCardInto(node, loader));
+    }
+  }
+
   async function renderSecurityInto(cb, me) {
     cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка устройств…</div>';
     let data, nt = null;
@@ -3102,7 +3457,7 @@
     // Cabinet is personal self-service only. System operations, user
     // management, monitoring and owner controls live in the capability-gated
     // Admin Panel.
-    const tabs = [['profile', 'Профиль'], ['security', 'Безопасность'], ['plans', 'Тарифы']];
+    const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['plans', 'Тарифы']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
     const cb = qs('#cab-body', body);
@@ -3115,6 +3470,7 @@
       else if (t === 'staging') renderStagingInto(cb);
       else if (t === 'requests') renderRequestsInto(cb);
       else if (t === 'plans') renderPlansInto(cb, me);
+      else if (t === 'card') renderUserCardInto(cb, () => API.http.accountCard());
       else if (t === 'security') renderSecurityInto(cb, me);
       else if (t === 'invites') renderInvitesInto(cb);
       else if (t === 'payment') renderPaymentInto(cb);
