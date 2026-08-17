@@ -3704,6 +3704,54 @@
     </div>`;
   }
 
+  // Enrolling a Connector is a routine act and should not need a terminal.
+  // The code is environment-bound: one minted here works only against this
+  // deployment, which is why the panel states which environment issued it.
+  function connectorEnrollHtml(environment) {
+    return `<section class="cab-card" id="conn-enroll">
+      <h4>Подключить NinjaTrader Connector</h4>
+      <div class="cab-sub">Код действует только для окружения <b>${esc(environment || '—')}</b>. Connector, подключённый этим кодом, будет работать только здесь.</div>
+      <div class="grid cols-2" style="margin-top:8px">
+        <label class="field"><span>Название компьютера</span><input id="conn-enroll-label" placeholder="например, DIMONCHECK"></label>
+        <label class="field"><span>Workspace ID (необязательно)</span><input id="conn-enroll-ws" placeholder="ws_…"></label>
+      </div>
+      <div class="flex gap-sm" style="margin-top:8px">
+        <button class="btn primary" id="conn-enroll-start">Выдать код подключения</button>
+      </div>
+      <div id="conn-enroll-out" class="cab-sub"></div>
+    </section>`;
+  }
+
+  function wireConnectorEnroll(node) {
+    const button = qs('#conn-enroll-start', node);
+    if (!button) return;
+    button.onclick = async () => {
+      const out = qs('#conn-enroll-out', node);
+      button.disabled = true;
+      out.innerHTML = '<span class="spinner"></span> Выдаём код…';
+      try {
+        const body = {
+          machine_label: (qs('#conn-enroll-label', node).value || '').trim(),
+          workspace_id: (qs('#conn-enroll-ws', node).value || '').trim(),
+        };
+        const res = await API.http.bridgePairStart(body);
+        const minutes = Math.max(1, Math.round((res.expires_in_sec || 600) / 60));
+        // Shown once. It is a credential for the duration of its life, so it is
+        // not stored anywhere in the page and not repeated after a refresh.
+        out.innerHTML = `<div class="finance-note">
+          <div>Код подключения (действует ${minutes} мин, показывается один раз):</div>
+          <div class="mono" style="font-size:18px;letter-spacing:2px;margin:6px 0">${esc(res.code || '')}</div>
+          <div>Введите его в NinjaTrader → StratForge Connector → «Подключить».</div>
+          ${res.workspace && res.workspace.workspace_id ? `<div class="cab-sub mono">workspace: ${esc(res.workspace.workspace_id)}</div>` : ''}
+        </div>`;
+      } catch (e) {
+        out.innerHTML = `<div class="admin-env-warnings"><div>⚠ ${esc((e && e.message) || e)}</div></div>`;
+      } finally {
+        button.disabled = false;
+      }
+    };
+  }
+
   async function renderConnectorsInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка статусов…</div>';
 
@@ -3754,11 +3802,13 @@
         doc.probe_timeout_sec ? ` · таймаут источника ${esc(String(doc.probe_timeout_sec))} с` : ''}</div>
       <div class="finance-note">Секреты и токены здесь не показываются — только статусы и явные действия.</div>
       ${partialNote}
+      ${connectorEnrollHtml(doc.environment)}
       <div class="conn-grid">${sections.map(connectorSectionHtml).join('')}</div>
       <div class="row" style="margin-top:12px;gap:8px">
         <button class="btn" id="conn-refresh">Обновить</button>
         <button class="btn ghost" id="conn-detail">Подробный экран Telegram / Connector</button>
       </div>`;
+    wireConnectorEnroll(node);
     const refresh = qs('#conn-refresh', node);
     if (refresh) refresh.onclick = () => renderConnectorsInto(node);
     const detail = qs('#conn-detail', node);
