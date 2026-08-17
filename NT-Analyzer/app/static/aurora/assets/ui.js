@@ -5061,6 +5061,44 @@
 
   const DOC_STATUS_BADGE = { draft: 'trial', review: 'pending', approved: 'pending', published: 'live', superseded: 'archived' };
 
+  // One Documents section, two scopes. Which tabs exist depends on what the
+  // caller may manage: showing a tab that opens onto a permission error is
+  // worse than not showing it, because it reads as a fault rather than as a
+  // boundary.
+  async function renderAdminDocumentsInto(node, initial) {
+    const canGlobal = hasAdminCapability('docs.manage_global');
+    const canWorkspace = hasAdminCapability('docs.manage_workspace')
+      || hasAdminCapability('strategy.spec.manage');
+    const tabs = [];
+    if (canGlobal) tabs.push(['global', 'Глобальные (governance)']);
+    if (canWorkspace) tabs.push(['workspace', 'Рабочие области и стратегии']);
+
+    if (!tabs.length) {
+      node.innerHTML = `<div class="finance-note">Нет прав на управление документами.
+        Нужно <span class="mono">docs.manage_global</span> или
+        <span class="mono">docs.manage_workspace</span>.</div>`;
+      return;
+    }
+
+    const start = tabs.some(t => t[0] === initial) ? initial : tabs[0][0];
+    node.innerHTML = `
+      <div class="cab-sub">Глобальные governance-документы и спецификации рабочих областей — один раздел. Рабочая область не может изменить governance-документ или safety-limits.</div>
+      ${tabs.length > 1 ? `<div class="cab-tabs docs-tabs">${tabs.map(
+        ([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-docs-tab="${id}">${label}</button>`).join('')}</div>` : ''}
+      <div data-docs-body></div>`;
+
+    const body = qs('[data-docs-body]', node);
+    const show = (which) => {
+      qsa('[data-docs-tab]', node).forEach(
+        b => b.classList.toggle('on', b.dataset.docsTab === which));
+      if (which === 'workspace') renderAdminDocsWorkspaceInto(body);
+      else renderAdminDocsGlobalInto(body);
+    };
+    qsa('[data-docs-tab]', node).forEach(
+      b => b.onclick = () => show(b.dataset.docsTab));
+    show(start);
+  }
+
   async function renderAdminDocsGlobalInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка governance…</div>';
     try {
@@ -5203,8 +5241,11 @@
     if (moduleId === 'releases') return renderReleaseCenterInto(node);
     if (moduleId === 'monitoring') return renderMonitoringInto(node);
     if (moduleId === 'requests') return renderRequestsInto(node);
-    if (moduleId === 'docs-global') return renderAdminDocsGlobalInto(node);
-    if (moduleId === 'docs-workspace') return renderAdminDocsWorkspaceInto(node);
+    if (moduleId === 'docs') return renderAdminDocumentsInto(node);
+    // The two old ids stay routable so an existing deep link still lands
+    // somewhere sensible rather than on an empty panel.
+    if (moduleId === 'docs-global') return renderAdminDocumentsInto(node, 'global');
+    if (moduleId === 'docs-workspace') return renderAdminDocumentsInto(node, 'workspace');
     if (moduleId === 'subscriptions') {
       node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
       try { return renderPlansInto(node, await API.http.authMe()); }

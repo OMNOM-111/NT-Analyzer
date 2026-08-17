@@ -533,6 +533,7 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .card-timeline-row { padding: 5px 0; }
 .card-timeline-icon { display: inline-block; width: 1.2em; color: var(--tx-3); }
 .udetail-tabs { margin-bottom: 10px; }
+.docs-tabs { margin-bottom: 10px; }
 
 /* Avatars (Telegram photo or initials) */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; font-weight: 700; font-size: 11px; color: #fff; background: hsl(var(--av-h, 210) 42% 34%); letter-spacing: .2px; }
