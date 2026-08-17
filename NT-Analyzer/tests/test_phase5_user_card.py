@@ -439,6 +439,17 @@ def test_an_account_with_one_identity_is_flagged(store):
 
 
 def test_an_account_with_no_verified_identity_is_flagged(store):
+    """The fixture account carries legacy Telegram and e-mail fields, which
+    document migration turns into verified identities, so they are removed here
+    to actually get an account with none."""
+    doc = account_auth._read_doc()
+    doc["auth_identities"] = []
+    doc["identity_history"] = []
+    for user in doc["users"]:
+        user.pop("telegram_user_id", None)
+        user.pop("email", None)
+    account_auth._write_doc(doc)
+
     security = user_card.build(actor_id=42, scope="self")["summary"]["security"]
     assert "no_verified_identity" in security["attention"]
 
@@ -493,3 +504,122 @@ def test_an_unreadable_audit_trail_does_not_break_the_card(store, monkeypatch):
     card = user_card.build(actor_id=42, scope="self")
     assert card["timeline"] == []
     assert card["summary"]["user_uuid"] == ALICE_UUID
+
+
+
+def _only_these_identities(rows):
+    """Replace the account's identities with exactly ``rows``.
+
+    The fixture users carry legacy telegram_user_id/email fields, and document
+    migration re-derives identities from them on every read, so those have to
+    go or the test is measuring the migration rather than the backfill.
+    """
+    doc = account_auth._read_doc()
+    doc["identity_history"] = []
+    for user in doc["users"]:
+        user.pop("telegram_user_id", None)
+        user.pop("email", None)
+    account_auth._write_doc(doc)
+
+    doc = account_auth._read_doc()
+    doc["identity_history"] = []
+    doc["auth_identities"] = list(rows)
+    account_auth._write_doc(doc)
+
+
+# --------------------------------------------------------------------------- #
+# Backfill: identities that predate the history model.
+# --------------------------------------------------------------------------- #
+def test_identities_predating_the_history_model_still_appear(store):
+    """Found on the live Canary, not in a test: migration 0014 backfilled the
+    relational table, the account document never got the same treatment, and an
+    owner with three verified identities rendered a card claiming none."""
+    _only_these_identities([{
+        "identity_id": "id-1",
+        "user_uuid": ALICE_UUID,
+        "provider": "email",
+        "provider_subject": "alice@example.com",
+        "normalized_email": "alice@example.com",
+        "verified_at_utc": "2026-02-01T00:00:00Z",
+        "linked_at_utc": "2026-01-15T00:00:00Z",
+    }])
+
+    identities = user_card.build(actor_id=42, scope="self")["identities"]
+    assert [r["provider"] for r in identities["current"]] == ["email"]
+    assert identities["current"][0]["display_value"]
+    # The identity's own link time, not today: a card showing every identity as
+    # created at first render would misstate the age of the account.
+    assert identities["current"][0]["valid_from"] == "2026-01-15T00:00:00Z"
+
+
+def test_the_backfill_never_competes_with_real_history(store):
+    """An account that already has history for a provider keeps it. The real
+    record of what happened must never be shadowed by a row derived later."""
+    doc = account_auth._read_doc()
+    doc["identity_history"] = []
+    for user in doc["users"]:
+        user.pop("telegram_user_id", None)
+        user.pop("email", None)
+    account_auth._write_doc(doc)
+    _add_identity(42, "email", "current@example.com",
+                  valid_from="2026-05-01T00:00:00Z")
+
+    doc = account_auth._read_doc()
+    doc["auth_identities"] = [{
+        "identity_id": "id-1",
+        "user_uuid": ALICE_UUID,
+        "provider": "email",
+        "provider_subject": "someone-else@example.com",
+        "normalized_email": "someone-else@example.com",
+        "verified_at_utc": "2026-02-01T00:00:00Z",
+        "linked_at_utc": "2026-01-15T00:00:00Z",
+    }]
+    account_auth._write_doc(doc)
+
+    identities = user_card.build(actor_id=42, scope="self")["identities"]
+    emails = [r for r in identities["current"] if r["provider"] == "email"]
+    assert len(emails) == 1
+    assert emails[0]["valid_from"] == "2026-05-01T00:00:00Z"
+
+
+def test_the_backfill_is_idempotent(store):
+    _only_these_identities([{
+        "identity_id": "id-1",
+        "user_uuid": ALICE_UUID,
+        "provider": "telegram",
+        "provider_subject": "42",
+        "verified_at_utc": "2026-02-01T00:00:00Z",
+        "linked_at_utc": "2026-01-15T00:00:00Z",
+    }])
+
+    first = user_card.build(actor_id=42, scope="self")["identities"]["current"]
+    second = user_card.build(actor_id=42, scope="self")["identities"]["current"]
+    assert len(first) == len(second) == 1
+    assert len(account_auth._read_doc()["identity_history"]) == 1
+
+
+def test_an_unverified_identity_is_not_backfilled(store):
+    _only_these_identities([{
+        "identity_id": "id-1",
+        "user_uuid": ALICE_UUID,
+        "provider": "email",
+        "provider_subject": "unverified@example.com",
+        "normalized_email": "unverified@example.com",
+        "verified_at_utc": "",
+        "linked_at_utc": "2026-01-15T00:00:00Z",
+    }])
+    assert user_card.build(actor_id=42, scope="self")["identities"]["current"] == []
+
+
+def test_a_revoked_identity_is_not_backfilled(store):
+    _only_these_identities([{
+        "identity_id": "id-1",
+        "user_uuid": ALICE_UUID,
+        "provider": "email",
+        "provider_subject": "revoked@example.com",
+        "normalized_email": "revoked@example.com",
+        "verified_at_utc": "2026-02-01T00:00:00Z",
+        "revoked_at_utc": "2026-03-01T00:00:00Z",
+        "linked_at_utc": "2026-01-15T00:00:00Z",
+    }])
+    assert user_card.build(actor_id=42, scope="self")["identities"]["current"] == []

@@ -246,3 +246,66 @@ def public_history(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "actor_source": row.get("actor_source") or "",
         })
     return out
+
+
+def backfill_from_identities(doc: Dict[str, Any]) -> int:
+    """Create missing active history rows from verified auth identities.
+
+    Migration 0014 did exactly this for the relational table. The account
+    document never received the same backfill, so an account whose identities
+    predate the history model rendered as having none at all.
+
+    Idempotent and conservative: a provider that already has any history row
+    for this account is skipped entirely. Real history is the record of what
+    happened; a row derived after the fact must never compete with it.
+
+    Returns the number of rows added, so the caller can decide whether the
+    document needs writing.
+    """
+    rows = _rows(doc)
+    added = 0
+    for identity in doc.get("auth_identities") or []:
+        if not isinstance(identity, dict):
+            continue
+        if not identity.get("verified_at_utc") or identity.get("revoked_at_utc"):
+            continue
+        user_uuid = auth_identity.normalize_user_uuid(identity.get("user_uuid"))
+        provider = str(identity.get("provider") or "").strip().lower()
+        if not user_uuid or provider not in PROVIDERS:
+            continue
+        if any(
+            isinstance(row, dict)
+            and str(row.get("provider") or "") == provider
+            and auth_identity.normalize_user_uuid(row.get("user_uuid")) == user_uuid
+            for row in rows
+        ):
+            continue
+        raw = identity.get("normalized_email") or identity.get("provider_subject")
+        try:
+            normalized = normalize_key(provider, raw)
+        except Exception:
+            continue
+        if not normalized:
+            continue
+        verified = str(identity.get("verified_at_utc") or "")
+        rows.append({
+            "history_id": "hist_" + hashlib.sha256(
+                (user_uuid + "|" + provider + "|" + normalized).encode("utf-8")
+            ).hexdigest()[:24],
+            "user_uuid": user_uuid,
+            "provider": provider,
+            "normalized_key": normalized,
+            "display_value": display_value(provider, normalized),
+            "key_hash": key_hash(normalized),
+            "state": STATE_ACTIVE,
+            "verified_at": verified,
+            # The identity's own link time, not today: a card that showed every
+            # identity as created at first render would be lying about the age
+            # of the account.
+            "valid_from": str(identity.get("linked_at_utc") or verified),
+            "valid_to": "",
+            "replacement_reason": "",
+            "actor_source": "backfill",
+        })
+        added += 1
+    return added

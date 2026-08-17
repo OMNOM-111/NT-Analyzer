@@ -74,8 +74,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
           git clean -xdf
           Write-Host ("checked out " + (git rev-parse HEAD))
-      - uses: actions/checkout@v7
-        if: runner.environment != 'self-hosted'
 
       # The self-hosted runner is a provisioned machine, not an ephemeral
       # image, so it uses the toolchain that is already installed. The setup-*
@@ -158,8 +156,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
           git clean -xdf
           Write-Host ("checked out " + (git rev-parse HEAD))
-      - uses: actions/checkout@v7
-        if: runner.environment != 'self-hosted'
 
       # Same reasoning as above: dotnet is installed machine-wide here.
       - name: Verify dotnet
