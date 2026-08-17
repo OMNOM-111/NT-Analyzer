@@ -1217,10 +1217,10 @@ class EnvironmentRegistryRepository:
                 """
                 INSERT INTO sf_environment_registry(
                   environment,app_version,git_commit_sha,build_id,artifact_sha256,
-                  release_channel,schema_version,readiness,details,
-                  first_seen_at,last_seen_at,heartbeat_count
+                  release_channel,schema_version,readiness,market_data,connector,
+                  details,first_seen_at,last_seen_at,heartbeat_count
                 )
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                        clock_timestamp(),clock_timestamp(),1)
                 ON CONFLICT(environment) DO UPDATE SET
                   app_version=EXCLUDED.app_version,
@@ -1230,6 +1230,8 @@ class EnvironmentRegistryRepository:
                   release_channel=EXCLUDED.release_channel,
                   schema_version=EXCLUDED.schema_version,
                   readiness=EXCLUDED.readiness,
+                  market_data=EXCLUDED.market_data,
+                  connector=EXCLUDED.connector,
                   details=EXCLUDED.details,
                   last_seen_at=clock_timestamp(),
                   heartbeat_count=sf_environment_registry.heartbeat_count + 1
@@ -1244,6 +1246,8 @@ class EnvironmentRegistryRepository:
                     str(heartbeat.get("release_channel") or "")[:32],
                     int(heartbeat.get("schema_version") or 0),
                     str(heartbeat.get("readiness") or ""),
+                    str(heartbeat.get("market_data") or ""),
+                    str(heartbeat.get("connector") or ""),
                     _jsonb(heartbeat.get("details") or {}),
                 ),
             ).fetchone()
