@@ -6,45 +6,40 @@
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.13`, artifact `CF2C053DEA3D6FA8…`, schema **13** |
-| Production | `0.10.0-beta.13`, artifact `CF2C053DEA3D6FA8…`, schema **13** |
-| Parity | EXACT MATCH, acceptance PASS |
+| Canary | `0.10.0-beta.15`, artifact `022FD4034FE98EF1…`, schema **14** |
+| Production | `0.10.0-beta.15`, artifact `022FD4034FE98EF1…`, schema **14** |
+| Parity | EXACT MATCH — build stamp `sf-0.10.0-beta.15-d8ee4815b493-20260817T014256Z` на обеих средах |
 | Human users | 1 canonical owner `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, identities Telegram+Google+email, 1 trusted device |
 
-## FIRST NEXT STEP — 0014 не применяется: InsufficientPrivilege
+Item 2 закрыт. `sf_identity_history` живёт на обеих средах, backfill
+email/google/telegram по одной active-записи, и все инварианты **проверены на
+живой БД, а не только в тестах**: дубль active-ключа → UniqueViolation,
+`active` без `verified_at` → CheckViolation, `active` с `valid_to` →
+CheckViolation, вторая active-identity того же пользователя → UniqueViolation,
+чтение без scope → 0 строк (RLS).
 
-`0.10.0-beta.14` (PR #90/#91, migration 0014 identity history) **не выкачена**.
-Canary-деплой корректно отказал, откатился, обе среды остались на `beta.13`.
-Это ровно то поведение, ради которого делался честный `expand_migrate`:
-код не поехал на несмигрированную схему.
+> Ловушка при проверке: запрос к `sf_identity_history` **до**
+> `SET LOCAL stratforge.service_scope` возвращает пусто из-за RLS, и это
+> выглядит как «backfill не сработал». `SET LOCAL` умирает вместе с
+> транзакцией — после каждого `rollback()` scope нужно объявлять заново, иначе
+> отказывает RLS, а не проверяемое ограничение.
 
-Прямой запуск под migration-ролью:
+## FIRST NEXT STEP — item 3 в релиз, дальше item 6
 
-```
-tools/production_storage_cli.py schema --apply --url-env STRATFORGE_MIGRATION_DATABASE_URL
-  -> {"ok": false, "code": "storage_error",
-      "error": "PostgreSQL migration failed: InsufficientPrivilege"}
-```
+Код item 3 (physical device → clients → sessions) готов и смержен.
+Осталось прогнать релизный цикл: `drive_release.py` → Canary
+(`expand_migrate` должен показать `applied_now: [15]`) → проверка схемы →
+`promote_prod.py` того же кандидата. После этого сразу item 6
+(Environment Registry), без вопросов — порядок зафиксирован владельцем.
 
-Роль `stratforge_canary_migration` владеет таблицами и успешно применила 0013,
-поэтому проблема в конкретном statement внутри 0014. **Проверено и исключено:**
-`sf_identity_uuid_v1` не имеет REVOKE (PUBLIC может выполнять).
-
-Наиболее вероятный кандидат — `CREATE POLICY`, чьё выражение вызывает
-`sf_scope_global()` / `sf_scope_user()`: в 0001 у них
-`REVOKE ALL ... FROM PUBLIC` и `GRANT EXECUTE ... TO stratforge_app`,
-migration-роли EXECUTE не выдан. 0006 создаёт RLS-политику похожим образом —
-надо сравнить, чем она отличается, и либо выдать EXECUTE migration-роли
-отдельной миграцией, либо сформулировать политику 0014 так же, как в 0006.
-
-Диагностика в один шаг (печатает конкретный failing statement):
-
-```
-scratchpad/apply_schema.py canary 0.10.0-beta.14-199e73cd5422 --apply sha:<set sha>
-```
-
-Полезно добавить вывод `exc.diag.message_primary`/`context` в
-`production_storage_cli`, сейчас наружу отдаётся только имя класса ошибки.
+Миграция 0015 **проверена на живых Canary и Production** до коммита: все
+statements применяются, и backfill отдельно прогнан на синтетических
+Connector-строках внутри откатываемой транзакции (`scratchpad/backfill_0015.py`).
+Результат: два разных installation → две машины; installation,
+зарегистрированный дважды (revoked + trusted), схлопывается в одну машину с
+двумя клиентами; машина наследует таймлайн живой записи, а не дату миграции;
+browser-клиенты остаются непривязанными; hash, который считает приложение,
+совпадает с тем, что пишет SQL.
 
 ## Программа (порядок задан владельцем)
 
@@ -53,15 +48,15 @@ scratchpad/apply_schema.py canary 0.10.0-beta.14-199e73cd5422 --apply sha:<set s
 | # | что | статус |
 | --- | --- | --- |
 | 1 | identity uniqueness + DB constraints | **ЗАКРЫТО**, 0013 live, UniqueViolation подтверждён |
-| 2 | identity history | код смержен (PR #90); **ждёт применения 0014** |
-| 3 | Physical Device → Clients → Sessions | не начато |
+| 2 | identity history | **ЗАКРЫТО**, 0014 live на обеих средах, инварианты проверены на живой БД |
+| 3 | Physical Device → Clients → Sessions | **код готов**, 0015 проверена на живых средах; ждёт релизного цикла |
 | 6 | Environment Registry (LOCAL публикует heartbeat) | не начато |
 | 4 | User Card / Cabinet поверх итоговых моделей | не начато |
 | 7 | Connectors: partial render + per-source timeout | не начато (frontend; backend уже 173→50 ms) |
 | 8 | Documents: один раздел | не начато |
 | 9 | Admin UX: Monitoring / Subscriptions / Journal | не начато |
 | 5 | NinjaTrader per-environment binding | требует запущенного NT у владельца |
-| 10 | security/adversarial suite | частично: 37 тестов identity + 19 history |
+| 10 | security/adversarial suite | частично: 37 тестов identity + 19 history + 34 physical devices |
 | 11–12 | new-user E2E, browser E2E | требуют provider consent |
 
 ## Что сделано в этой сессии
@@ -80,6 +75,39 @@ scratchpad/apply_schema.py canary 0.10.0-beta.14-199e73cd5422 --apply sha:<set s
   идентификатор глобально; одно активное значение на аккаунт на провайдер),
   `ON DELETE SET NULL` чтобы история пережила удаление аккаунта, маскированный
   рендер, переприсвоение только явным audited flow.
+
+## Item 3 — модель устройств: что именно сделано
+
+Три уровня вместо одного плоского: **машина → клиент → сессия**.
+`sf_trusted_devices` всегда был *клиентом* (профиль браузера или установка
+приложения) — он им и остался, expand-only, без переписывания строк.
+Новая `sf_physical_devices` — это машина.
+
+Главное правило, ради которого уровень и вводился: **машина никогда не
+выводится эвристикой**. User-Agent, IP, hostname и имя аккаунта одинаковы для
+всех пользователей деплоймента и меняются сами по себе — по ним один ноутбук
+разъезжается на несколько «машин», а ноутбуки разных людей слипаются в один.
+Единственный источник machine identity — hardware-bound credential Windows
+Connector'а. Браузер такого не имеет и **не может** получить машину сам: он
+входит в неё только через одноразовый pairing-код, выданный уже доверенным
+Connector'ом на этой же машине. Клиент без машины — нормальное состояние.
+
+Доверие раздельное по уровням:
+
+- подтверждение Connector'а подтверждает и его машину (credential привязан к
+  железу, код пришёл по уже верифицированному каналу);
+- подтверждение браузера **не** подтверждает никакую машину;
+- доверенная машина **не** делает доверенным новый клиент на ней;
+- отзыв клиента не трогает машину и соседние клиенты;
+- **отзыв машины каскадит**: все её клиенты и все их сессии, плюс живой
+  pairing-код. Это единственное направление каскада, и ровно ради него уровень
+  существует.
+
+Два дефекта, найденных собственными тестами и исправленных здесь же:
+`PhysicalDeviceError` уходил наружу мимо HTTP-слоя (500 вместо 404), и —
+серьёзнее — неудачные попытки pairing не сохранялись, потому что исключение
+летело до `_write_doc`; счётчик попыток не накапливался, и восьмизначный код
+можно было подбирать без лимита.
 
 ## Грабли
 
