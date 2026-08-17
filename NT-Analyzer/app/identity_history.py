@@ -85,13 +85,28 @@ def _rows(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def active_row(doc: Dict[str, Any], provider: str, normalized: str) -> Optional[Dict[str, Any]]:
-    """The live claim on this key, whoever holds it."""
+    """The live claim on this key, whoever holds it.
+
+    An e-mail address is matched across every provider, not just within one.
+    Keying purely on (provider, value) would let a Google account whose address
+    is already someone else's verified e-mail be linked as a separate identity
+    -- the same person to a reader, two rows to the index -- which is exactly
+    the hijack migration 0013 closed for sf_auth_identities and
+    ``email_already_verified_elsewhere`` closes at the account layer. The
+    canonical history has to agree with both.
+
+    A Google subject that is not an address keeps provider-scoped matching:
+    a bare sub means nothing outside Google.
+    """
+    is_address = "@" in str(normalized or "")
     for row in _rows(doc):
         if not isinstance(row, dict):
             continue
         if row.get("state") != STATE_ACTIVE:
             continue
-        if str(row.get("provider") or "") == provider and str(row.get("normalized_key") or "") == normalized:
+        if str(row.get("normalized_key") or "") != normalized:
+            continue
+        if is_address or str(row.get("provider") or "") == provider:
             return row
     return None
 

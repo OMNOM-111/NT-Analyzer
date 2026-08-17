@@ -155,6 +155,9 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if not isinstance(doc.get(key), list):
             doc[key] = []
             changed = True
+    # Stamp before anything reads an installation, so _assert_environment can
+    # refuse an unstamped record instead of accepting it everywhere.
+    changed = bool(_stamp_environments(doc)) or changed
     for row in doc["enrollments"]:
         if isinstance(row, dict):
             changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
@@ -546,16 +549,75 @@ def _find_installation(doc: Dict[str, Any], installation_id: str) -> Dict[str, A
     return row
 
 
+def _store_proves_environment(doc: Mapping[str, Any]) -> str:
+    """The environment this store demonstrably belongs to, or "" if ambiguous.
+
+    Each environment keeps a physically separate Connector repository:
+    Production in the Production database, Canary in the Canary database,
+    Development in a local file under its own data root. A record present in
+    one of them was therefore enrolled against that one -- presence is the
+    evidence.
+
+    That inference holds only while the store is internally consistent. If any
+    record here is stamped for a *different* environment, then records from two
+    environments have been mixed and presence proves nothing at all, so no
+    stamp is issued and the ambiguous records are left alone for a human to
+    resolve.
+    """
+    current = runtime_env.deployment_environment()
+    for key in ("installations", "enrollments", "sessions", "commands"):
+        for row in doc.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            stamped = str(row.get("deployment_environment") or "").strip()
+            if stamped and stamped != current:
+                return ""
+    return current
+
+
+def _stamp_environments(doc: Dict[str, Any]) -> int:
+    """Stamp unstamped installations, but only where the store proves it.
+
+    Records enrolled before stamping existed carry no environment, and
+    _assert_environment refuses those -- correctly, since an unstamped record
+    would otherwise be usable from every environment at once. This closes that
+    gap for the records whose origin is provable and deliberately leaves the
+    rest untouched: guessing at an ambiguous record is exactly how a Connector
+    ends up bound to the wrong environment.
+
+    ``environment_source`` records why the value was chosen, so a later reader
+    can tell a proven stamp from one written at enrollment.
+
+    Returns how many were stamped, so the caller can decide whether to write.
+    """
+    proven = _store_proves_environment(doc)
+    if not proven:
+        return 0
+    stamped = 0
+    for row in doc.get("installations") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("deployment_environment") or "").strip():
+            continue
+        row["deployment_environment"] = proven
+        row["environment_source"] = "store_origin"
+        stamped += 1
+    return stamped
+
+
 def _assert_environment(installation: Mapping[str, Any]) -> None:
     """Fail-closed: an installation may only be used in the environment that
-    enrolled it. A Canary Connector must never be driven from Production (and
-    vice-versa). Installations enrolled before environment stamping (empty
-    field) are grandfathered and adopt the current environment on next write.
+    enrolled it. A Canary Connector must never be driven from Production, and
+    vice-versa.
+
+    An unstamped record is refused rather than accepted. The previous early
+    return made such a record valid in *every* environment -- the exact
+    fail-open this check exists to close -- and on live Production five
+    installations were still unstamped, so the clause was not theoretical.
+    _stamp_environments fills them in from the store they live in.
     """
     stamped = str(installation.get("deployment_environment") or "").strip()
-    if not stamped:
-        return
-    if stamped != runtime_env.deployment_environment():
+    if not stamped or stamped != runtime_env.deployment_environment():
         raise ConnectorProtocolError(
             "Connector installation принадлежит другому окружению.",
             403,
