@@ -361,8 +361,17 @@ _ADMIN_MODULES = (
     {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view", "group": "Операции"},
     {"id": "releases", "label": "Центр релизов", "capability": "releases.view", "group": "Релизы и окружения"},
     {"id": "environments", "label": "Переключение окружений", "capability": "environment.switch", "group": "Релизы и окружения"},
-    {"id": "docs-global", "label": "Глобальные документы", "capability": "docs.manage_global", "group": "Документы"},
-    {"id": "docs-workspace", "label": "Документы рабочих областей", "capability": "docs.manage_workspace", "group": "Документы"},
+    # One Documents entry, not two. Global governance and workspace
+    # specifications are two scopes of the same thing, and splitting them into
+    # sibling menu items made the reader choose between them before knowing
+    # which one held the document they wanted. The section shows whichever
+    # scopes the caller may actually manage.
+    #
+    # admin.view rather than a documents capability: an operator who can open
+    # the panel may look at the section, and each scope inside it is gated on
+    # its own capability -- so someone with only one of the two sees only that
+    # one instead of an entry that opens onto a permission error.
+    {"id": "docs", "label": "Документы", "capability": "admin.view", "group": "Документы"},
     {"id": "monitoring", "label": "Мониторинг пользователей", "capability": "users.manage", "owner_only": True, "group": "Владелец"},
     {"id": "requests", "label": "Запросы доступа", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
     {"id": "subscriptions", "label": "Подписки и гранты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
