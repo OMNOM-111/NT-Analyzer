@@ -4137,8 +4137,14 @@
 
     const header = known.map(row => `<th>${esc(row.environment.toUpperCase())}</th>`).join('');
     const body = ((compare.fields) || []).map(field => {
+      const readable = {
+        ready: 'готов', degraded: 'деградация', not_ready: 'не готов',
+        hub: 'hub', consumer: 'consumer', disabled: 'выключено',
+        ok: 'ок', unavailable: 'недоступен',
+      };
       const cells = known.map(row => {
-        const value = field.values[row.environment];
+        const raw = field.values[row.environment];
+        const value = readable[raw] || raw;
         const missing = (field.missing || []).includes(row.environment);
         // Missing and different are rendered differently on purpose: calling
         // absent data a mismatch teaches the reader to ignore the panel.

@@ -106,6 +106,14 @@
 /NT-Analyzer/**/*.local.json
 /NT-Analyzer/**/*.user.json
 
+# Local environment-registry signing key.
+#
+# The key authenticates this machine as the "development" publisher to the
+# Canary and Production registries. Only this rule belongs in Git; the key
+# itself never does, which is why the directory is excluded wholesale rather
+# than by filename.
+/NT-Analyzer/data/secrets/
+
 # Explicit audit/runtime artifacts called out before first public push.
 /NT-Analyzer/data/ops/audit_log.jsonl
 /NT-Analyzer/data/audit/

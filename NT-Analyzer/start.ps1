@@ -44,6 +44,26 @@ if (-not $env:STRATFORGE_INSTANCE_ID) {
 }
 if (-not $env:STRATFORGE_DEPLOYMENT_ROLE) { $env:STRATFORGE_DEPLOYMENT_ROLE = 'all-in-one' }
 if (-not $env:STRATFORGE_CONFIG_PROFILE) { $env:STRATFORGE_CONFIG_PROFILE = 'local-development' }
+
+# Environment-registry signing key, if this machine has been enrolled as the
+# development publisher.  The file is git-ignored and holds nothing but the key
+# and the peer list; absent, LOCAL simply does not publish and every other
+# feature works unchanged.  Values are never echoed.
+$registryKeyFile = Join-Path $projectRoot 'data\secrets\environment-registry.env'
+if (Test-Path -LiteralPath $registryKeyFile) {
+    foreach ($line in Get-Content -LiteralPath $registryKeyFile -Encoding UTF8) {
+        $entry = $line.Trim()
+        if (-not $entry -or $entry.StartsWith('#') -or -not $entry.Contains('=')) { continue }
+        $name = $entry.Substring(0, $entry.IndexOf('=')).Trim()
+        $value = $entry.Substring($entry.IndexOf('=') + 1).Trim()
+        # The file is written for POSIX `set -a`, so values are single-quoted.
+        if ($value.Length -ge 2 -and $value[0] -eq "'" -and $value[-1] -eq "'") {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if ($name) { Set-Item -Path "Env:$name" -Value $value }
+    }
+    Write-Host "Environment registry: development publisher key loaded." -ForegroundColor DarkGray
+}
 $versionFile = Join-Path $projectRoot 'VERSION.json'
 if (-not (Test-Path -LiteralPath $versionFile)) {
     Write-Host "ERROR: project version file not found: $versionFile" -ForegroundColor Red

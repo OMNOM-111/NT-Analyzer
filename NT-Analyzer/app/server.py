@@ -1729,6 +1729,29 @@ class Handler(BaseHTTPRequestHandler):
                 return
             raise
 
+    def _read_raw_body(self) -> Optional[bytes]:
+        """The exact bytes that were sent.
+
+        A signature covers what was transmitted, not what a JSON round-trip
+        happens to re-emit: key order, spacing and unicode escaping all survive
+        parsing but would change the digest.
+        """
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            self._err(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            return None
+        if n <= 0:
+            return b""
+        max_body = int(getattr(self.server, "max_body_bytes", 1 * 1024 * 1024))
+        if n > max_body:
+            self._err(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body too large")
+            return None
+        recorder = getattr(self.server, "record_payload", None)
+        if callable(recorder):
+            recorder(n)
+        return self.rfile.read(n)
+
     def _read_body(self) -> Optional[Dict[str, Any]]:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -3437,24 +3460,55 @@ class Handler(BaseHTTPRequestHandler):
         A wrong or missing token gets one generic 401 with no hint about which
         it was, and nothing about the token reaches the response or the log.
         """
-        if not environment_registry.token_configured():
-            self._err(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                "Реестр окружений не настроен.",
-                code="registry_not_configured",
-            )
-            return
-        supplied = self.headers.get("X-StratForge-Registry-Token") or ""
-        if not environment_registry.token_matches(supplied):
-            self._err(HTTPStatus.UNAUTHORIZED, "Не авторизовано.", code="registry_unauthorized")
-            return
         if not self._check_json_content_type():
             return
-        body = self._read_body()
-        if body is None:
+        raw = self._read_raw_body()
+        if raw is None:
             return
         try:
-            row = environment_registry.record(body)
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+        except Exception:
+            # Unparseable bodies are refused before any key is touched, so a
+            # malformed request cannot be used to probe signature behaviour.
+            self._err(HTTPStatus.BAD_REQUEST, "invalid json", code="invalid_body")
+            return
+
+        try:
+            verified = environment_registry.verify_publisher(
+                body=raw,
+                timestamp=self.headers.get(environment_registry.TIMESTAMP_HEADER),
+                signature=self.headers.get(environment_registry.SIGNATURE_HEADER),
+                claimed_environment=body.get("environment"),
+                nonce=body.get("nonce"),
+            )
+        except environment_registry.EnvironmentRegistryError as exc:
+            # Every authentication failure -- bad signature, stale timestamp,
+            # replayed nonce, an environment signing as another -- collapses to
+            # the same 401 with the same text. The specific reason is recorded
+            # server-side and never told to the caller, so a prober cannot use
+            # the response to work out which part it got wrong.
+            if exc.status == HTTPStatus.UNAUTHORIZED:
+                observability.event(
+                    "environment_registry", "publish_rejected",
+                    severity="warning",
+                    payload={
+                        "reason": exc.code,
+                        # What it claimed to be, which is not what it was.
+                        "claimed": str(body.get("environment") or "")[:32],
+                    },
+                )
+                self._err(
+                    HTTPStatus.UNAUTHORIZED, "Не авторизовано.",
+                    code="registry_unauthorized",
+                )
+            else:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        try:
+            row = environment_registry.record(body, verified_environment=verified)
         except environment_registry.EnvironmentRegistryError as exc:
             self._err(exc.status, str(exc), code=exc.code)
             return

@@ -24,14 +24,24 @@ and they are the whole design:
   build *as of* a specific moment, so nobody mistakes a stale fact for a
   current one.
 
-The heartbeat carries no secrets and is authenticated by a shared token that is
-compared in constant time and never logged, echoed or returned.
+Authentication is by signature, not by bearer token: the key never crosses the
+wire, and who sent a heartbeat is decided by which key verified it rather than
+by what the body claims. A validly signed body that names a different
+environment is a forgery and is refused. Timestamps and nonces make a captured
+request useless, and each environment's accepted keys are a list, so rotation
+is a configuration change rather than a code change.
+
+Nothing here is ever handed to a browser: the keys are server-to-server only,
+and the snapshot the UI reads carries no key material at all.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import os
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -63,6 +73,11 @@ _READINESS = ("", "ready", "degraded", "not_ready")
 _DETAILS_MAX_KEYS = 20
 _DETAILS_MAX_VALUE = 200
 
+# Operational posture, reported as a small closed vocabulary rather than free
+# text so the compare view can say "these disagree" without guessing.
+_MARKET_DATA_STATES = ("", "hub", "consumer", "disabled")
+_CONNECTOR_STATES = ("", "ok", "degraded", "unavailable")
+
 
 class EnvironmentRegistryError(RuntimeError):
     def __init__(self, message: str, status: int = 400, *, code: str = ""):
@@ -73,8 +88,43 @@ class EnvironmentRegistryError(RuntimeError):
 
 # --------------------------------------------------------------------------- #
 # Authentication.
+#
+# A heartbeat is signed, not bearer-authenticated. The key never crosses the
+# wire, so it cannot be captured from a proxy log, a TLS-terminating middlebox
+# or a mistakenly verbose error page.
+#
+# Publisher identity is decided by *which key verified the signature*, never by
+# what the payload says about itself. A body claiming to be Production is
+# accepted as Production only if it was signed with Production's key; otherwise
+# it is a forgery and is refused, even though the signature itself was valid.
+#
+# Each environment has its own key. Receivers hold a list per publisher, which
+# is what makes rotation possible without touching code: add the new key beside
+# the old, move the publisher onto it, then drop the old one.
 # --------------------------------------------------------------------------- #
+SIGNATURE_VERSION = "v1"
+SIGNATURE_HEADER = "X-StratForge-Registry-Signature"
+TIMESTAMP_HEADER = "X-StratForge-Registry-Timestamp"
+
+# How far a heartbeat's own timestamp may be from ours. Wide enough for
+# ordinary clock drift and a slow link, narrow enough that a captured request
+# is useless within a couple of minutes.
+MAX_CLOCK_SKEW_SEC = 120
+# A nonce only has to be remembered for as long as its timestamp could still be
+# accepted; past that the skew check rejects the replay on its own.
+_NONCE_TTL_SEC = MAX_CLOCK_SKEW_SEC * 2
+_NONCE_SEEN: Dict[str, float] = {}
+_NONCE_LOCK = threading.Lock()
+
+_INBOUND_KEY_ENV = {
+    runtime_env.DEVELOPMENT: "STRATFORGE_REGISTRY_KEY_DEVELOPMENT",
+    runtime_env.CANARY: "STRATFORGE_REGISTRY_KEY_CANARY",
+    runtime_env.PRODUCTION: "STRATFORGE_REGISTRY_KEY_PRODUCTION",
+}
+
+
 def token() -> str:
+    """This environment's own publishing key. Outbound use only."""
     return str(os.environ.get(_TOKEN_ENV) or "").strip()
 
 
@@ -82,13 +132,129 @@ def token_configured() -> bool:
     return len(token()) >= _MIN_TOKEN_LEN
 
 
-def token_matches(supplied: Any) -> bool:
-    """Constant-time comparison. Never logs, echoes or returns either value."""
-    expected = token()
-    value = str(supplied or "").strip()
-    if len(expected) < _MIN_TOKEN_LEN or len(value) != len(expected):
-        return False
-    return hmac.compare_digest(value, expected)
+def _inbound_keys() -> Dict[str, List[str]]:
+    """Accepted publishing keys, per publisher environment.
+
+    A comma-separated list per environment so an old and a new key can be valid
+    at once. That overlap is the whole rotation procedure, and it needs no code
+    change: add, switch the publisher, remove.
+    """
+    keys: Dict[str, List[str]] = {}
+    for environment, name in _INBOUND_KEY_ENV.items():
+        raw = str(os.environ.get(name) or "")
+        accepted = [
+            chunk.strip() for chunk in re.split(r"[,\s]+", raw)
+            if len(chunk.strip()) >= _MIN_TOKEN_LEN
+        ]
+        if accepted:
+            keys[environment] = accepted
+    return keys
+
+
+def inbound_configured() -> bool:
+    return bool(_inbound_keys())
+
+
+def sign(key: str, *, timestamp: int, body: bytes) -> str:
+    """Signature over the timestamp and the exact bytes that were sent.
+
+    Binding the timestamp into the signature is what stops it from being
+    rewritten: an attacker who moves the clock forward to defeat the skew check
+    invalidates the signature by doing so.
+    """
+    digest = hashlib.sha256(body).hexdigest()
+    material = f"{SIGNATURE_VERSION}\n{int(timestamp)}\n{digest}".encode("utf-8")
+    return hmac.new(key.encode("utf-8"), material, hashlib.sha256).hexdigest()
+
+
+def _remember_nonce(environment: str, nonce: str, *, now: float) -> bool:
+    """False when this nonce has already been used inside the accept window."""
+    marker = f"{environment}\0{nonce}"
+    with _NONCE_LOCK:
+        for seen, when in list(_NONCE_SEEN.items()):
+            if when + _NONCE_TTL_SEC <= now:
+                _NONCE_SEEN.pop(seen, None)
+        if marker in _NONCE_SEEN:
+            return False
+        _NONCE_SEEN[marker] = now
+        return True
+
+
+def verify_publisher(
+    *,
+    body: bytes,
+    timestamp: Any,
+    signature: Any,
+    claimed_environment: Any,
+    nonce: Any,
+    now: Optional[float] = None,
+) -> str:
+    """Authenticate one heartbeat and return who really sent it.
+
+    Raises rather than returning a verdict, so a caller cannot accidentally
+    treat "unauthenticated" as falsey-but-continue. Every rejection carries a
+    distinct internal code for the audit trail; the HTTP layer collapses them
+    into one generic 401 so a prober learns nothing.
+    """
+    moment = _now() if now is None else float(now)
+    keys = _inbound_keys()
+    if not keys:
+        raise EnvironmentRegistryError(
+            "Реестр окружений не настроен.", 503, code="registry_not_configured",
+        )
+
+    try:
+        sent_at = int(str(timestamp or "").strip())
+    except (TypeError, ValueError):
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="timestamp_invalid",
+        ) from None
+    if abs(moment - sent_at) > MAX_CLOCK_SKEW_SEC:
+        # Covers both a replayed capture and a publisher whose clock is wrong
+        # enough that its freshness claims cannot be trusted.
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="timestamp_out_of_window",
+        )
+
+    supplied = str(signature or "").strip()
+    prefix = SIGNATURE_VERSION + "="
+    if not supplied.startswith(prefix):
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="signature_malformed",
+        )
+    supplied = supplied[len(prefix):]
+
+    # Every configured key is tried, and the one that verifies names the
+    # publisher. The loop does not stop early on a match so that the work does
+    # not depend on which environment signed.
+    matched = ""
+    for environment, accepted in keys.items():
+        for key in accepted:
+            if hmac.compare_digest(sign(key, timestamp=sent_at, body=body), supplied):
+                matched = matched or environment
+    if not matched:
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="signature_invalid",
+        )
+
+    claimed = str(claimed_environment or "").strip().lower()
+    if claimed != matched:
+        # A validly signed body that claims to be a different environment. The
+        # signature proves who sent it; the payload does not get a vote.
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="environment_identity_mismatch",
+        )
+
+    marker = str(nonce or "").strip()
+    if len(marker) < 16:
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="nonce_missing",
+        )
+    if not _remember_nonce(matched, marker, now=moment):
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="nonce_replayed",
+        )
+    return matched
 
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +310,16 @@ def normalize_heartbeat(payload: Any) -> Dict[str, Any]:
         raise EnvironmentRegistryError(
             "schema_version должен быть неотрицательным.", 400, code="schema_version_invalid",
         )
+    market_data = str(payload.get("market_data") or "").strip().lower()
+    if market_data not in _MARKET_DATA_STATES:
+        raise EnvironmentRegistryError(
+            "Недопустимое значение market_data.", 400, code="market_data_invalid",
+        )
+    connector = str(payload.get("connector") or "").strip().lower()
+    if connector not in _CONNECTOR_STATES:
+        raise EnvironmentRegistryError(
+            "Недопустимое значение connector.", 400, code="connector_invalid",
+        )
     return {
         "environment": environment,
         "app_version": _text(payload.get("app_version"), 64),
@@ -153,6 +329,12 @@ def normalize_heartbeat(payload: Any) -> Dict[str, Any]:
         "release_channel": _text(payload.get("release_channel"), 32),
         "schema_version": schema_version,
         "readiness": readiness,
+        # Two operational facts that differ legitimately between environments
+        # and are the usual reason a deploy behaves differently: which side of
+        # the owner market-data gateway this environment is on, and whether its
+        # Connector control plane is answering.
+        "market_data": market_data,
+        "connector": connector,
         "details": _normalize_details(payload.get("details")),
     }
 
@@ -226,6 +408,8 @@ def public_row(row: Dict[str, Any], *, now: Optional[float] = None) -> Dict[str,
         "release_channel": str(row.get("release_channel") or ""),
         "schema_version": int(row.get("schema_version") or 0),
         "readiness": str(row.get("readiness") or ""),
+        "market_data": str(row.get("market_data") or ""),
+        "connector": str(row.get("connector") or ""),
         "details": row.get("details") if isinstance(row.get("details"), dict) else {},
         "metadata_is_current": live["state"] == STATE_LIVE,
         "metadata_known": known,
@@ -247,6 +431,8 @@ def empty_row(environment: str) -> Dict[str, Any]:
         "release_channel": "",
         "schema_version": 0,
         "readiness": "",
+        "market_data": "",
+        "connector": "",
         "first_seen_at": None,
         "last_seen_at": None,
         "heartbeat_count": 0,
@@ -271,9 +457,65 @@ def _authoritative() -> bool:
     return storage_router.production_enabled()
 
 
-def record(payload: Any) -> Dict[str, Any]:
-    """Validate and store one heartbeat. Returns the public view of the row."""
+# Identity fields worth an audit entry when they move. Deliberately not
+# last_seen_at or heartbeat_count: those change every tick and would bury the
+# entries that matter under a stream of noise.
+_AUDITED_FIELDS = (
+    "app_version", "git_commit_sha", "build_id", "artifact_sha256",
+    "release_channel", "schema_version", "market_data", "connector",
+)
+
+
+def _previous(environment: str) -> Dict[str, Any]:
+    if _authoritative():
+        from . import storage_router
+        from .production_storage import StorageError
+
+        try:
+            for row in storage_router.read_environment_registry():
+                if str(row.get("environment") or "") == environment:
+                    return dict(row)
+        except StorageError:
+            return {}
+        return {}
+    return dict(_LOCAL.get(environment) or {})
+
+
+def _audit(event: str, values: Dict[str, Any]) -> None:
+    """Record a registry event. Never carries key material -- the values are
+    build identifiers, which are already public in the switcher."""
+    try:
+        from . import storage_router
+
+        if storage_router.production_enabled():
+            storage_router.append_audit("environment_registry", event, values)
+    except Exception:
+        # An audit sink being unavailable must not drop the heartbeat itself:
+        # losing one log line is a smaller failure than losing the registry.
+        pass
+
+
+def record(payload: Any, *, verified_environment: str = "") -> Dict[str, Any]:
+    """Validate and store one heartbeat. Returns the public view of the row.
+
+    ``verified_environment`` is the identity the signature proved. When it is
+    supplied it must equal what the body claims -- the check is repeated here
+    so the storage layer cannot be reached with an unverified identity even by
+    a future caller that forgets to authenticate.
+    """
     heartbeat = normalize_heartbeat(payload)
+    if verified_environment and heartbeat["environment"] != verified_environment:
+        raise EnvironmentRegistryError(
+            "Не авторизовано.", 401, code="environment_identity_mismatch",
+        )
+
+    environment = heartbeat["environment"]
+    before = _previous(environment)
+    changed = sorted(
+        field for field in _AUDITED_FIELDS
+        if str(before.get(field, "")) != str(heartbeat.get(field, ""))
+    ) if before else []
+
     if _authoritative():
         from . import storage_router
         from .production_storage import StorageError
@@ -284,15 +526,32 @@ def record(payload: Any) -> Dict[str, Any]:
             raise EnvironmentRegistryError(
                 f"Реестр окружений недоступен ({exc.code}).", 503, code=exc.code,
             ) from None
-        return public_row(row)
+    else:
+        now = _now()
+        existing = _LOCAL.get(environment) or {}
+        row = dict(heartbeat)
+        row["first_seen_at"] = existing.get("first_seen_at") or now
+        row["last_seen_at"] = now
+        row["heartbeat_count"] = int(existing.get("heartbeat_count") or 0) + 1
+        _LOCAL[environment] = row
 
-    now = _now()
-    existing = _LOCAL.get(heartbeat["environment"]) or {}
-    row = dict(heartbeat)
-    row["first_seen_at"] = existing.get("first_seen_at") or now
-    row["last_seen_at"] = now
-    row["heartbeat_count"] = int(existing.get("heartbeat_count") or 0) + 1
-    _LOCAL[heartbeat["environment"]] = row
+    if not before:
+        _audit("environment.registered", {
+            "environment": environment,
+            "app_version": heartbeat.get("app_version"),
+            "git_commit_sha": heartbeat.get("git_commit_sha"),
+            "artifact_sha256": heartbeat.get("artifact_sha256"),
+            "schema_version": heartbeat.get("schema_version"),
+        })
+    elif changed:
+        _audit("environment.changed", {
+            "environment": environment,
+            "changed": ",".join(changed),
+            "app_version": heartbeat.get("app_version"),
+            "git_commit_sha": heartbeat.get("git_commit_sha"),
+            "artifact_sha256": heartbeat.get("artifact_sha256"),
+            "schema_version": heartbeat.get("schema_version"),
+        })
     return public_row(row)
 
 
@@ -337,6 +596,8 @@ def snapshot() -> Dict[str, Any]:
 def reset_for_tests() -> None:
     _LOCAL.clear()
     _PUBLISH_STATE.clear()
+    with _NONCE_LOCK:
+        _NONCE_SEEN.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -366,6 +627,8 @@ def self_heartbeat(*, readiness: Optional[Any] = None) -> Dict[str, Any]:
         "release_channel": deployment.get("release_channel"),
         "schema_version": _schema_version(),
         "readiness": _readiness(readiness),
+        "market_data": _market_data_state(),
+        "connector": _connector_state(),
         "details": {
             "runtime_profile": deployment.get("runtime_profile"),
             "region": deployment.get("region"),
@@ -373,6 +636,39 @@ def self_heartbeat(*, readiness: Optional[Any] = None) -> Dict[str, Any]:
         },
     }
     return normalize_heartbeat(payload)
+
+
+def _market_data_state() -> str:
+    """Which side of the owner market-data gateway this environment is on.
+
+    Production is the hub that holds the single provider connection; Canary and
+    LOCAL consume it. Two environments both claiming ``hub`` would mean two live
+    provider connections, which the lease exists to prevent -- so this being
+    visible side by side is the point.
+    """
+    try:
+        from . import owner_market_data_gateway
+
+        # effective_role() answers hub / consumer / isolated.
+        role = str(owner_market_data_gateway.effective_role() or "").strip().lower()
+        if role == "hub":
+            return "hub"
+        if role == "consumer":
+            return "consumer"
+        return "disabled"
+    except Exception:
+        return ""
+
+
+def _connector_state() -> str:
+    """Whether the Connector control plane answers here."""
+    try:
+        from . import connector_protocol
+
+        status = connector_protocol.readiness_status()
+        return "ok" if status.get("ok") else "degraded"
+    except Exception:
+        return ""
 
 
 def _schema_version() -> int:
@@ -441,10 +737,12 @@ def publish_to(origin: str, *, force: bool = False,
 
     Returns a result rather than raising: a peer being down is an ordinary
     condition, and one unreachable peer must not stop the others from being
-    told. The token goes in a header, never in the URL -- query strings end up
-    in access logs and proxy caches.
+    told.
+
+    The key is used to sign, never sent. Each heartbeat carries a fresh nonce
+    and its own timestamp, both covered by the signature, so a captured request
+    cannot be replayed and its clock claim cannot be edited.
     """
-    import json
     import urllib.error
     import urllib.request
 
@@ -456,7 +754,10 @@ def publish_to(origin: str, *, force: bool = False,
     if not force and not _due("peer:" + target):
         return {"ok": False, "code": "throttled"}
 
-    body = json.dumps(self_heartbeat(readiness=readiness), ensure_ascii=False).encode("utf-8")
+    payload = self_heartbeat(readiness=readiness)
+    payload["nonce"] = secrets.token_hex(16)
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    timestamp = int(_now())
     request = urllib.request.Request(
         target + HEARTBEAT_PATH,
         data=body,
@@ -464,7 +765,10 @@ def publish_to(origin: str, *, force: bool = False,
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "X-StratForge-Registry-Token": token(),
+            TIMESTAMP_HEADER: str(timestamp),
+            SIGNATURE_HEADER: SIGNATURE_VERSION + "=" + sign(
+                token(), timestamp=timestamp, body=body,
+            ),
             "User-Agent": "StratForge-Environment-Heartbeat/1",
         },
     )
@@ -558,6 +862,10 @@ _COMPARED_FIELDS = (
     ("artifact_sha256", "Артефакт"),
     ("release_channel", "Канал"),
     ("schema_version", "Схема БД"),
+    ("build_id", "Build"),
+    ("readiness", "Готовность"),
+    ("market_data", "Market data"),
+    ("connector", "Connector"),
 )
 
 
