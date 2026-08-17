@@ -206,7 +206,8 @@ def test_publish_round_survives_an_unreachable_peer(monkeypatch):
         "STRATFORGE_ENVIRONMENT_REGISTRY_PEERS",
         "https://down.example.com https://up.example.com",
     )
-    monkeypatch.setattr(registry, "self_heartbeat", lambda: registry.normalize_heartbeat(beat()))
+    monkeypatch.setattr(registry, "self_heartbeat",
+                        lambda **_: registry.normalize_heartbeat(beat()))
 
     calls = []
 
@@ -237,7 +238,8 @@ def test_publish_round_survives_an_unreachable_peer(monkeypatch):
 def test_token_travels_in_a_header_not_the_url(monkeypatch):
     """A token in a query string ends up in access logs and proxy caches."""
     monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    monkeypatch.setattr(registry, "self_heartbeat", lambda: registry.normalize_heartbeat(beat()))
+    monkeypatch.setattr(registry, "self_heartbeat",
+                        lambda **_: registry.normalize_heartbeat(beat()))
     captured = {}
 
     def urlopen(request, timeout=None):
@@ -264,7 +266,8 @@ def test_token_travels_in_a_header_not_the_url(monkeypatch):
 
 def test_publishing_is_throttled(monkeypatch):
     monkeypatch.setenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", "t" * 40)
-    monkeypatch.setattr(registry, "self_heartbeat", lambda: registry.normalize_heartbeat(beat()))
+    monkeypatch.setattr(registry, "self_heartbeat",
+                        lambda **_: registry.normalize_heartbeat(beat()))
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: pytest.fail("throttled"))
     registry._PUBLISH_STATE["peer:https://canary.example.com"] = registry._now()
     out = registry.publish_to("https://canary.example.com")
@@ -434,10 +437,49 @@ def test_self_heartbeat_describes_this_process_only(monkeypatch):
         "build_timestamp_utc": "2026-08-17T02:00:00Z",
     })
     monkeypatch.setattr(registry, "_schema_version", lambda: 16)
-    monkeypatch.setattr(registry, "_readiness", lambda: "ready")
 
-    out = registry.self_heartbeat()
+    out = registry.self_heartbeat(readiness=lambda: {"status": "ready"})
     assert out["environment"] == "canary"
     assert out["artifact_sha256"] == "d" * 64
     assert out["schema_version"] == 16
+    assert out["readiness"] == "ready"
     assert out["details"]["region"] == "eu"
+
+
+def test_readiness_without_a_supplier_is_unreported_not_failing():
+    """Computing readiness without the server's registered component probes
+    made a healthy Production report not_ready. Reporting nothing is honest;
+    reporting a fault that does not exist is not."""
+    assert registry._readiness(None) == ""
+    assert registry._readiness(lambda: {"status": "ready"}) == "ready"
+    assert registry._readiness(lambda: {"status": "not_ready"}) == "not_ready"
+
+
+def test_readiness_supplier_failure_is_unreported_not_failing():
+    def boom():
+        raise RuntimeError("probe exploded")
+
+    assert registry._readiness(boom) == ""
+
+
+def test_unknown_readiness_value_is_dropped():
+    assert registry._readiness(lambda: {"status": "probably fine"}) == ""
+
+
+def test_the_publisher_uses_the_readiness_supplier_it_was_given(monkeypatch):
+    monkeypatch.setattr(registry, "_schema_version", lambda: 16)
+    monkeypatch.setattr(
+        registry, "peer_origins", lambda: [],
+    )
+    publisher = registry.HeartbeatPublisher(readiness=lambda: {"status": "ready"})
+    seen = {}
+
+    def capture_then_stop(*, force=False, readiness=None):
+        seen["readiness"] = readiness
+        publisher._stop.set()
+        return {}
+
+    monkeypatch.setattr(registry, "publish_round", capture_then_stop)
+    publisher._loop()
+    assert seen["readiness"] is not None
+    assert seen["readiness"]() == {"status": "ready"}

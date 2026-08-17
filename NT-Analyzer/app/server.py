@@ -9736,7 +9736,20 @@ def create_http_server(
     # exists, since nothing can reach a development machine behind NAT to ask.
     # Starting it needs no token: without one, publish_to declines and only the
     # local self-record happens, which is still useful and still honest.
-    server.environment_publisher = environment_registry.HeartbeatPublisher()  # type: ignore[attr-defined]
+    #
+    # Readiness is supplied by the same code path /api/ready uses, probes and
+    # all. Recomputing it without those registered probes reports a healthy
+    # service as not_ready, which is worse than reporting nothing.
+    def _publisher_readiness() -> Dict[str, Any]:
+        return service_readiness.readiness_payload(
+            server.deployment_config,  # type: ignore[attr-defined]
+            probes=server.readiness_probes,  # type: ignore[attr-defined]
+            optional_components=server.readiness_optional_components,  # type: ignore[attr-defined]
+        )
+
+    server.environment_publisher = environment_registry.HeartbeatPublisher(  # type: ignore[attr-defined]
+        readiness=_publisher_readiness,
+    )
     server.environment_publisher.start()  # type: ignore[attr-defined]
     return server
 
