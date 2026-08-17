@@ -17,6 +17,20 @@
 -- silently is how account takeover looks from the database.
 BEGIN;
 
+-- FORCE ROW LEVEL SECURITY applies to the table owner as well, so the backfill
+-- below is checked against this table's own policy. Without declaring a scope
+-- the policy's WITH CHECK is false and the migration is refused by its own
+-- rules -- "new row violates row-level security policy", SQLSTATE 42501.
+--
+-- 0006 has the same policy shape and did not hit this only because it inserts
+-- no rows.
+--
+-- SET LOCAL, so it lasts exactly this transaction. This grants nothing: it
+-- states the scope the migration already runs under, which is the global
+-- service scope the policy is written to admit. No role gains a privilege and
+-- no policy is weakened.
+SET LOCAL stratforge.service_scope = 'global';
+
 CREATE TABLE IF NOT EXISTS sf_identity_history (
   history_id UUID PRIMARY KEY,
   -- SET NULL rather than CASCADE: deleting an account must not erase the
