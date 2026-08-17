@@ -199,3 +199,32 @@ def test_history_is_row_level_secured():
     assert "sf_scope_global() OR legacy_user_id = sf_scope_user()" in sql
     # Only a global service scope may write history.
     assert "WITH CHECK (sf_scope_global())" in sql
+
+
+def test_backfill_declares_the_service_scope_it_runs_under():
+    """FORCE ROW LEVEL SECURITY applies to the table owner too.
+
+    Without a declared scope the backfill is refused by this table's own
+    policy -- "new row violates row-level security policy", SQLSTATE 42501 --
+    which is what blocked 0014 on Canary. 0006 has the same policy shape and
+    escaped it only because it inserts no rows.
+    """
+    sql = _migration_14()
+    assert "SET LOCAL stratforge.service_scope = 'global';" in sql
+    # SET LOCAL, not SET: the scope must not outlive the migration transaction.
+    assert "SET stratforge.service_scope" not in sql.replace("SET LOCAL stratforge.service_scope", "")
+    # It has to precede the insert it exists for.
+    assert sql.index("SET LOCAL stratforge.service_scope") < sql.index("INSERT INTO sf_identity_history")
+
+
+def test_the_fix_grants_no_privilege_and_weakens_no_policy():
+    sql = _migration_14()
+    # Declaring a scope is not the same as handing one out. A GRANT or a
+    # relaxed policy here would widen what the runtime role can reach.
+    # Checked against statements, not prose: the explanatory comments above
+    # legitimately contain the word.
+    statements = [line.strip() for line in sql.splitlines()
+                  if line.strip() and not line.strip().startswith("--")]
+    assert not [s for s in statements if s.upper().startswith("GRANT")]
+    assert not [s for s in statements if "NO FORCE ROW LEVEL SECURITY" in s.upper()]
+    assert "WITH CHECK (sf_scope_global())" in sql
