@@ -41,7 +41,10 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$RegistrationToken,
+    # Optional. When omitted the script mints its own short-lived registration
+    # token via the authenticated gh CLI, so the credential is never passed as
+    # a process argument -- argv is readable by other processes on the box.
+    [string]$RegistrationToken = '',
     [string]$AccountName = 'sf-ci-runner',
     [string]$RunnerRoot = 'C:\actions-runner-stratforge',
     [string]$RunnerName = "stratforge-dev-$env:COMPUTERNAME",
@@ -60,6 +63,50 @@ Set-StrictMode -Version Latest
 # as an opaque "connection closed" during download.
 [Net.ServicePointManager]::SecurityProtocol =
     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+function Resolve-WellKnownAccount {
+    <#
+      Built-in principals must be resolved by SID. Their names are localised --
+      on a Russian Windows 'Users' is 'Пользователи' and 'Administrators' is
+      'Администраторы' -- so any literal English name fails outright, and it
+      fails at the group-add or ACL step, after the account already exists.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Sid)
+    return (New-Object System.Security.Principal.SecurityIdentifier($Sid)
+        ).Translate([System.Security.Principal.NTAccount]).Value
+}
+
+function Test-Preflight {
+    <#
+      Everything that can be known before the first mutation is checked here.
+      Discovering a limit halfway through leaves a half-provisioned machine and
+      costs another elevated round trip per defect.
+    #>
+    param([string]$AccountName, [string]$Description, [string]$FullName)
+    $problems = @()
+    if ($AccountName.Length -gt 20) {
+        $problems += "account name is $($AccountName.Length) chars, max 20"
+    }
+    if ($Description.Length -gt 48) {
+        $problems += "description is $($Description.Length) chars, max 48"
+    }
+    if ($FullName.Length -gt 256) {
+        $problems += "full name is $($FullName.Length) chars, max 256"
+    }
+    foreach ($sid in 'S-1-5-32-545', 'S-1-5-32-544', 'S-1-5-18') {
+        try { $null = Resolve-WellKnownAccount -Sid $sid }
+        catch { $problems += "cannot resolve well-known SID $sid" }
+    }
+    foreach ($name in 'Get-LocalUser', 'New-LocalUser', 'Set-LocalUser',
+                      'Add-LocalGroupMember', 'Expand-Archive', 'Get-FileHash') {
+        if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+            $problems += "cmdlet $name is unavailable"
+        }
+    }
+    if ($problems.Count) {
+        throw ("Preflight failed:`n  - " + ($problems -join "`n  - "))
+    }
+}
 
 function Assert-Elevated {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -80,8 +127,14 @@ function Assert-NotProductionHost {
     }
 }
 
+# 20 chars; New-LocalUser caps Description at 48.
+$script:AccountDescription = 'StratForge CI runner'
+
 Assert-Elevated
 Assert-NotProductionHost
+Test-Preflight -AccountName $AccountName -Description $script:AccountDescription `
+    -FullName 'StratForge CI runner'
+Write-Host '[0/6] preflight OK'
 
 function New-ServicePassword {
     <#
@@ -132,27 +185,38 @@ $securePassword = ConvertTo-SecureString $plain -AsPlainText -Force
 if ($null -eq $account) {
     New-LocalUser -Name $AccountName -Password $securePassword `
         -FullName 'StratForge CI runner' `
-        -Description 'Limited identity for the StratForge self-hosted Actions runner' `
+        -Description $script:AccountDescription `
         -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
     Write-Host '      created'
 } else {
     Set-LocalUser -Name $AccountName -Password $securePassword
     Write-Host '      existed; password rotated'
 }
-# Users only. No Administrators, no Remote Desktop, nothing else.
-Add-LocalGroupMember -Group 'Users' -Member $AccountName -ErrorAction SilentlyContinue
+# Users only. No Administrators, no Remote Desktop, nothing else. Resolved by
+# SID because the group name is localised on this host.
+$usersGroup = Resolve-WellKnownAccount -Sid 'S-1-5-32-545'
+$usersGroupName = $usersGroup.Split('\')[-1]
+if (-not (Get-LocalGroupMember -Group $usersGroupName -Member $AccountName -ErrorAction SilentlyContinue)) {
+    Add-LocalGroupMember -Group $usersGroupName -Member $AccountName -ErrorAction SilentlyContinue
+}
+Write-Host "      member of $usersGroup, no other group"
 
 Write-Host "[2/6] working directory $RunnerRoot"
 New-Item -ItemType Directory -Path $RunnerRoot -Force | Out-Null
 $acl = Get-Acl -LiteralPath $RunnerRoot
 $acl.SetAccessRuleProtection($true, $false)   # drop inherited ACEs
-foreach ($who in @('SYSTEM', 'Administrators', $AccountName)) {
+$aclPrincipals = @(
+    (Resolve-WellKnownAccount -Sid 'S-1-5-18'),      # SYSTEM
+    (Resolve-WellKnownAccount -Sid 'S-1-5-32-544'),  # Administrators, localised
+    $AccountName
+)
+foreach ($who in $aclPrincipals) {
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
         $who, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $acl.AddAccessRule($rule)
 }
 Set-Acl -LiteralPath $RunnerRoot -AclObject $acl
-Write-Host '      created, inheritance removed, restricted to SYSTEM/Administrators/service account'
+Write-Host "      created, inheritance removed, restricted to: $($aclPrincipals -join ', ')"
 
 Write-Host "[3/6] runner package $RunnerVersion"
 $zip = Join-Path $RunnerRoot "actions-runner-win-x64-$RunnerVersion.zip"
@@ -177,6 +241,21 @@ if ($actual -ne $RunnerSha256.ToLowerInvariant()) {
 }
 Expand-Archive -LiteralPath $zip -DestinationPath $RunnerRoot -Force
 Write-Host '      verified and extracted'
+
+if ([string]::IsNullOrWhiteSpace($RegistrationToken)) {
+    Write-Host '[3.5/6] minting a registration token via gh'
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw 'gh CLI not found and no -RegistrationToken supplied.'
+    }
+    # Short-lived and single-use. Held in this variable only; never logged.
+    $RegistrationToken = (& gh api -X POST `
+        'repos/OMNOM-111/NT-Analyzer/actions/runners/registration-token' `
+        --jq '.token' 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($RegistrationToken)) {
+        throw 'Could not obtain a registration token. Is gh authenticated for this repository?'
+    }
+    Write-Host '        token obtained (value not shown)'
+}
 
 Write-Host '[4/6] register against the repository'
 # A previous partial run can leave a service running and a .runner file behind.
