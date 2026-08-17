@@ -2725,3 +2725,9 @@ html.demo-tier.guest-browse .panel { filter: none; }
 .conn-degraded { background: rgba(252,197,90,.14); color: #a97a11; }
 .conn-not_configured { background: var(--bg-3); color: var(--tx-3); }
 .conn-error { background: rgba(255,107,107,.12); color: #c2453f; }
+/* A source that did not answer. Distinct from an error: nothing went wrong
+   that we know of, we simply have no reading, and the card says so instead of
+   disappearing or pretending to be healthy. */
+.conn-timeout { background: rgba(252,197,90,.14); color: #a97a11; }
+.conn-card.is-unavailable { opacity: .82; }
+.conn-unavailable { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); font-size: 11.5px; }

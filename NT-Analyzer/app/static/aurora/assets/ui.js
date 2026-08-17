@@ -3606,7 +3606,7 @@
   // the endpoint returns states and identifiers only.
   const CONNECTOR_STATE_LABEL = {
     healthy: 'работает', degraded: 'деградация', not_configured: 'не настроено',
-    error: 'ошибка', unknown: 'неизвестно',
+    error: 'ошибка', unknown: 'неизвестно', timeout: 'нет ответа',
   };
 
   function connectorBadge(state) {
@@ -3625,20 +3625,81 @@
     return parts.join('');
   }
 
+  // A connector dashboard is read when something is already wrong, so it has
+  // to degrade well: show every source that answered, say plainly which ones
+  // did not, and never leave a spinner running with nothing behind it.
+  const CONNECTOR_DEADLINE_MS = 8000;
+
+  function connectorSectionHtml(row) {
+    const state = String(row.state || 'unknown');
+    const slow = Number(row.elapsed_ms || 0);
+    const timing = slow >= 500 ? ` <span class="cab-sub">${slow} мс</span>` : '';
+    // A source that timed out or errored says so in place of its details. It
+    // keeps its card rather than disappearing: a missing card reads as "there
+    // is no such connector", which is a different and wrong statement.
+    const body = (state === 'timeout' || state === 'error')
+      ? `<div class="conn-unavailable">${esc(state === 'timeout'
+          ? 'Источник не ответил вовремя. Остальные данные на странице актуальны.'
+          : 'Источник вернул ошибку. Остальные данные на странице актуальны.')}
+         ${row.detail ? `<div class="cab-sub mono">${esc(String(row.detail))}</div>` : ''}</div>`
+      : connectorDetails(row);
+    return `<div class="conn-card${state === 'timeout' || state === 'error' ? ' is-unavailable' : ''}">
+      <div class="conn-head"><b>${esc(row.label || row.id)}</b>${connectorBadge(state)}${timing}</div>
+      <div class="conn-body">${body}</div>
+    </div>`;
+  }
+
   async function renderConnectorsInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка статусов…</div>';
-    let doc;
-    try { doc = await API.http.adminConnectors(); }
-    catch (e) { node.innerHTML = `<div class="error">${esc(e.message || e)}</div>`; return; }
-    const rows = (doc.sections || []).map(row => `
-      <div class="conn-card">
-        <div class="conn-head"><b>${esc(row.label || row.id)}</b>${connectorBadge(row.state)}</div>
-        <div class="conn-body">${connectorDetails(row)}</div>
-      </div>`).join('');
+
+    // A deadline on the client as well as on each source. Without it a request
+    // that never completes leaves the spinner up forever, which tells the
+    // operator nothing and looks identical to a slow network.
+    let doc = null;
+    let failure = '';
+    try {
+      doc = await Promise.race([
+        API.http.adminConnectors(),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('Ответ не получен за ' + (CONNECTOR_DEADLINE_MS / 1000) + ' с')),
+          CONNECTOR_DEADLINE_MS)),
+      ]);
+    } catch (e) {
+      failure = (e && e.message) || String(e);
+    }
+
+    if (!doc) {
+      // Even total failure is a report, not a blank page: it says what was
+      // tried, why it stopped, and offers the retry.
+      node.innerHTML = `
+        <div class="conn-unavailable">
+          <b>Статусы коннекторов недоступны.</b>
+          <div class="cab-sub">${esc(failure)}</div>
+        </div>
+        <div class="row" style="margin-top:12px;gap:8px">
+          <button class="btn" id="conn-refresh">Повторить</button>
+          <button class="btn ghost" id="conn-detail">Подробный экран Telegram / Connector</button>
+        </div>`;
+      const retry = qs('#conn-refresh', node);
+      if (retry) retry.onclick = () => renderConnectorsInto(node);
+      const detailBtn = qs('#conn-detail', node);
+      if (detailBtn) detailBtn.onclick = () => { closeDrawer(); showTelegram(); };
+      return;
+    }
+
+    const sections = doc.sections || [];
+    const missing = doc.unavailable_sources || [];
+    const partialNote = missing.length
+      ? `<div class="admin-env-warnings"><div>⚠ Часть источников не ответила: ${
+          missing.map(id => esc(String(id))).join(', ')}. Остальные карточки показывают актуальные данные.</div></div>`
+      : '';
+
     node.innerHTML = `
-      <div class="cab-sub">Окружение: <b>${esc(doc.environment || '')}</b> · обновлено ${esc(doc.generated_at_utc || '')}</div>
+      <div class="cab-sub">Окружение: <b>${esc(doc.environment || '')}</b> · обновлено ${esc(doc.generated_at_utc || '')}${
+        doc.probe_timeout_sec ? ` · таймаут источника ${esc(String(doc.probe_timeout_sec))} с` : ''}</div>
       <div class="finance-note">Секреты и токены здесь не показываются — только статусы и явные действия.</div>
-      <div class="conn-grid">${rows}</div>
+      ${partialNote}
+      <div class="conn-grid">${sections.map(connectorSectionHtml).join('')}</div>
       <div class="row" style="margin-top:12px;gap:8px">
         <button class="btn" id="conn-refresh">Обновить</button>
         <button class="btn ghost" id="conn-detail">Подробный экран Telegram / Connector</button>

@@ -381,17 +381,58 @@ _ADMIN_MODULES = (
 )
 
 
-def _connector_probe(label: str, fn: Any) -> Dict[str, Any]:
-    """One dashboard row. A source that raises degrades that row only.
+# A source that hangs must not hold the page. Several of these reach a provider
+# or the Telegram API, and a socket that never answers used to block the whole
+# response -- which the operator experiences as a dashboard that spins forever
+# and says nothing about any of the sources that were perfectly healthy.
+_CONNECTOR_PROBE_TIMEOUT_SEC = 3.0
+
+
+def _connector_probe(label: str, fn: Any,
+                     timeout_sec: float = _CONNECTOR_PROBE_TIMEOUT_SEC) -> Dict[str, Any]:
+    """One dashboard row, bounded in time.
+
+    A source that raises degrades that row only; a source that hangs times out
+    and degrades that row only. Either way the other rows still render, because
+    a partial answer that names what is missing beats no answer at all.
+
+    The worker is a daemon thread: if the underlying call never returns we stop
+    waiting rather than stop serving, and the process can still exit.
 
     Every value here is a status, never a credential: the callers below pass
     booleans and identifiers, and nothing reads a token.
     """
-    try:
-        value = fn()
-    except Exception as exc:  # one broken source must not blank the dashboard
-        return {"id": label, "state": "error", "detail": type(exc).__name__}
-    row = {"id": label, "state": "unknown"}
+    outcome: Dict[str, Any] = {}
+
+    def run() -> None:
+        started = time.time()
+        try:
+            outcome["value"] = fn()
+        except Exception as exc:  # one broken source must not blank the dashboard
+            outcome["error"] = type(exc).__name__
+        finally:
+            outcome["elapsed_ms"] = int((time.time() - started) * 1000)
+
+    worker = threading.Thread(target=run, name=f"connector-probe-{label}", daemon=True)
+    started = time.time()
+    worker.start()
+    worker.join(timeout=max(0.1, float(timeout_sec)))
+    elapsed_ms = int((time.time() - started) * 1000)
+
+    if worker.is_alive():
+        return {
+            "id": label, "state": "timeout", "elapsed_ms": elapsed_ms,
+            "detail": "нет ответа за %.1f с" % float(timeout_sec),
+        }
+    if "error" in outcome:
+        return {
+            "id": label, "state": "error",
+            "elapsed_ms": outcome.get("elapsed_ms", elapsed_ms),
+            "detail": outcome["error"],
+        }
+    row = {"id": label, "state": "unknown",
+           "elapsed_ms": outcome.get("elapsed_ms", elapsed_ms)}
+    value = outcome.get("value")
     if isinstance(value, dict):
         row.update(value)
     return row
@@ -487,19 +528,36 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             ),
         }
 
-    rows = [
-        _connector_probe("telegram", telegram),
-        _connector_probe("webhook", webhook),
-        _connector_probe("canary_routing", canary_routing),
-        _connector_probe("market_gateway", market_gateway),
-        _connector_probe("providers", providers),
-        _connector_probe("connector", connector_installations),
-    ]
+    # Concurrently, so the page is bounded by the slowest single source rather
+    # than by their sum. Six sources at a three-second ceiling would otherwise
+    # be eighteen seconds of spinner in the worst case, and the worst case is
+    # exactly when an operator is looking at this page.
+    sources = (
+        ("telegram", telegram),
+        ("webhook", webhook),
+        ("canary_routing", canary_routing),
+        ("market_gateway", market_gateway),
+        ("providers", providers),
+        ("connector", connector_installations),
+    )
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(sources),
+                            thread_name_prefix="connectors") as pool:
+        rows = list(pool.map(lambda item: _connector_probe(item[0], item[1]), sources))
+
+    stalled = [row["id"] for row in rows if row.get("state") in {"timeout", "error"}]
     return {
         "ok": True,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "environment": runtime_env.deployment_environment(),
         "sections": rows,
+        # Said plainly rather than left for the client to infer from row states:
+        # this answer is complete, or it is not and these are the sources that
+        # did not report.
+        "partial": bool(stalled),
+        "unavailable_sources": stalled,
+        "probe_timeout_sec": _CONNECTOR_PROBE_TIMEOUT_SEC,
         # Stated explicitly so the contract is visible to the client too.
         "secrets_exposed": False,
     }
