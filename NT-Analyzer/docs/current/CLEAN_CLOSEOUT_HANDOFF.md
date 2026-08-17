@@ -6,9 +6,9 @@
 
 | | |
 | --- | --- |
-| Canary | `0.10.0-beta.16`, artifact `E9CF266AA0A73486…`, schema **15** |
-| Production | `0.10.0-beta.16`, artifact `E9CF266AA0A73486…`, schema **15** |
-| Parity | EXACT MATCH — build stamp `sf-0.10.0-beta.16-04bef4049866-20260817T023727Z` на обеих средах |
+| Canary | `0.10.0-beta.18`, artifact `EE8FDADBB267E2AE…`, schema **16** |
+| Production | `0.10.0-beta.18`, artifact `EE8FDADBB267E2AE…`, schema **16** |
+| Parity | EXACT MATCH — build stamp `sf-0.10.0-beta.18-ca386216dfdf-20260817T035413Z` на обеих средах; реестр сред подтверждает независимо |
 | Human users | 1 canonical owner `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, identities Telegram+Google+email, 1 trusted device |
 
 Item 2 закрыт. `sf_identity_history` живёт на обеих средах, backfill
@@ -24,30 +24,31 @@ CheckViolation, вторая active-identity того же пользовате�
 > транзакцией — после каждого `rollback()` scope нужно объявлять заново, иначе
 > отказывает RLS, а не проверяемое ограничение.
 
-## FIRST NEXT STEP — item 6 в релиз, дальше item 4
+## FIRST NEXT STEP — item 4 (User Card / Cabinet)
 
-Код item 6 (Environment Registry) готов и смержен. Осталось прогнать релизный
-цикл: `drive_release.py` → Canary (`expand_migrate` должен показать
-`applied_now: [16]`) → проверка схемы → `promote_prod.py` того же кандидата.
-После этого сразу item 4 (User Card / Cabinet), без вопросов.
+Items 2, 3 и 6 закрыты и живут на обеих средах. Следующий по зафиксированному
+порядку — **item 4: User Card / Cabinet поверх итоговых моделей** (identity
+history из 0014, машины/клиенты/сессии из 0015). Дальше 7 → 8 → 9 → 5 → 10 → 11–12.
 
-**Требуется одна настройка окружения**, без неё heartbeat не уходит наружу
-(локальная самозапись работает и без неё):
+### Единственное, что требует владельца по item 6
 
-- `STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN` — общий токен, ≥32 символа, один и
-  тот же на LOCAL, Canary и Production. Без него `publish_to` отказывается
-  отправлять, а приёмник отвечает 503 `registry_not_configured` — «не
-  настроено» никогда не означает «открыто всем».
-- `STRATFORGE_ENVIRONMENT_REGISTRY_PEERS` — куда публиковать, через запятую.
-  Принимаются только `https://` и `http://127.0.0.1:<port>`. Список берётся
-  исключительно из конфигурации: среда, которая могла бы назвать себе соседей,
-  перенаправила бы отчёты всех остальных на выбранный ею хост.
+Cross-environment публикация выключена, пока не заданы две переменные.
+Локальная самозапись работает и **уже работает на обеих средах** — каждая среда
+видит себя; чтобы среды видели друг друга и чтобы LOCAL появился в реестре,
+нужен общий секрет:
 
-Токен нигде не логируется, не возвращается и не попадает в URL — он идёт
-заголовком `X-StratForge-Registry-Token`, потому что query string оседает в
-access-логах и кэшах прокси.
+- `STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN` — ≥32 символов, **один и тот же** на
+  LOCAL, Canary и Production. Я его не выпускал намеренно: это новый секрет с
+  правом записи в межсредовый канал, и его выпуск и распространение — решение
+  владельца, а не побочный эффект деплоя.
+- `STRATFORGE_ENVIRONMENT_REGISTRY_PEERS` — куда публиковать, через запятую;
+  принимаются только `https://` и `http://127.0.0.1:<port>`.
 
-Миграция 0016 проверена на живых Canary и Production до коммита.
+Без токена приёмник отвечает `503 registry_not_configured`, а отправитель
+отказывается слать: «не настроено» никогда не означает «открыто всем».
+
+Токен идёт заголовком `X-StratForge-Registry-Token`, не в URL — query string
+оседает в access-логах и кэшах прокси.
 
 ## Item 3 — модель устройств: что именно сделано
 
@@ -118,6 +119,26 @@ Compare-панель отвечает прямо на единственный �
 сравнении, которое внешняя HTTP-проба увидеть не может. `database_readiness()`
 намеренно отдаёт только ok/не-ok, поэтому номер берётся отдельным запросом
 (`storage_router.applied_schema_version`).
+
+### Проверено на живых средах (item 6)
+
+| | Canary | Production |
+| --- | --- | --- |
+| heartbeat пишется | да, 58 ударов | да, 56 ударов |
+| `readiness` | `ready` | `ready` |
+| runtime artifact digest | `ba77d267d16c…` | `ba77d267d16c…` |
+| schema | 16 | 16 |
+
+Отвергнуты живой БД: неизвестное имя среды, артефакт не-sha256, readiness вне
+набора, отрицательный `schema_version`, `details` не-объект, `last_seen`
+раньше `first_seen`, чтение без scope (RLS отдаёт 0 строк).
+
+> `artifact_sha256` в реестре — это **runtime**-дайджест, то есть sha манифеста
+> развёрнутого дерева (`runtime_artifact_sha256`), а не sha архива из Release
+> Center. Так и задумано: процесс может подтвердить только то, что реально
+> исполняет. Для паритета этого достаточно — одинаковый манифест означает
+> одинаковое дерево, — но не сравнивайте это значение напрямую с archive sha
+> из Release Center, они разные по определению.
 
 ## Грабли
 
