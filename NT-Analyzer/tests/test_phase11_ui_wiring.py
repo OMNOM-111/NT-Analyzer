@@ -306,9 +306,21 @@ def test_connectors_module_renders_status_in_place():
 
 def test_connectors_dashboard_covers_the_required_sections():
     assert '"/api/admin/connectors"' in SERVER_SRC
+    # The sources are now declared as a tuple and probed concurrently, so the
+    # section names appear beside their callables rather than in individual
+    # _connector_probe calls. The requirement is unchanged: all six are covered.
     for section in ("telegram", "webhook", "canary_routing",
                     "market_gateway", "providers", "connector"):
-        assert f'_connector_probe("{section}"' in SERVER_SRC
+        assert f'("{section}", ' in SERVER_SRC
+
+
+def test_connectors_dashboard_bounds_every_source():
+    """A source that hangs must not hold the page. Pinned here because the
+    ceiling is easy to remove by accident and the symptom -- a dashboard that
+    spins forever -- looks like a network problem rather than a code change."""
+    assert "_CONNECTOR_PROBE_TIMEOUT_SEC" in SERVER_SRC
+    assert "worker.join(timeout=" in SERVER_SRC
+    assert '"state": "timeout"' in SERVER_SRC
 
 
 def test_connectors_dashboard_is_capability_gated():
