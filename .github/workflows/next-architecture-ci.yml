@@ -72,7 +72,9 @@ jobs:
           cache-dependency-path: NT-Analyzer/requirements.txt
       - name: Verify the pre-installed toolchain
         if: runner.environment == 'self-hosted'
-        shell: pwsh
+        # See ci.yml: pwsh is a per-user MSIX package here and unavailable to
+        # the runner service account.
+        shell: powershell
         run: |
           $py = (python --version)
           Write-Host $py

@@ -30,7 +30,11 @@ jobs:
       PYTHONIOENCODING: utf-8
     defaults:
       run:
-        shell: pwsh
+        # Windows PowerShell, not pwsh. PowerShell 7 is installed here only as
+        # a per-user MSIX package under WindowsApps, which the runner's own
+        # service account cannot execute; 5.1 ships with Windows and is always
+        # reachable. These steps use no 7-only syntax.
+        shell: powershell
         working-directory: NT-Analyzer
     steps:
       # A self-hosted runner keeps its working directory between jobs, unlike a
@@ -81,7 +85,11 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        shell: pwsh
+        # Windows PowerShell, not pwsh. PowerShell 7 is installed here only as
+        # a per-user MSIX package under WindowsApps, which the runner's own
+        # service account cannot execute; 5.1 ships with Windows and is always
+        # reachable. These steps use no 7-only syntax.
+        shell: powershell
         working-directory: NT-Analyzer
     steps:
       - name: Clean the persistent workspace
