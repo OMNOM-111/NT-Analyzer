@@ -44,7 +44,39 @@ jobs:
         run: git clean -xdf; git reset --hard
         working-directory: .
         continue-on-error: true
+      # actions/checkout is downloaded from codeload.github.com for every job.
+      # A self-hosted runner has one IP for all of its runs, so a busy day
+      # returns 429 and this mandatory check fails for a reason unrelated to
+      # the change -- with a multi-hour back-off, so a retry does not help.
+      # git is already on this machine and the workspace persists, so fetch
+      # directly and keep the gate independent of that download.
+      #
+      # The credential goes in a per-command -c http.extraheader rather than in
+      # the remote URL: .git/config survives between jobs on a persistent
+      # runner, and a token written there would survive with it.
+      - name: Check out (self-hosted, no marketplace download)
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        shell: powershell
+        env:
+          RUNNER_GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path .git)) { git init -q . }
+          $header = "AUTHORIZATION: basic " + [Convert]::ToBase64String(
+            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:RUNNER_GH_TOKEN"))
+          $url = "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git remote set-url origin $url
+          if ($LASTEXITCODE -ne 0) { git remote add origin $url }
+          git -c http.extraheader="$header" fetch --no-tags --prune --depth=1 origin $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "fetch failed" }
+          git checkout -q --force --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
+          git clean -xdf
+          Write-Host ("checked out " + (git rev-parse HEAD))
       - uses: actions/checkout@v7
+        if: runner.environment != 'self-hosted'
+
       # The self-hosted runner is a provisioned machine, not an ephemeral
       # image, so it uses the toolchain that is already installed. The setup-*
       # actions write HKLM registry entries, which the non-admin service
@@ -96,7 +128,39 @@ jobs:
         run: git clean -xdf; git reset --hard
         working-directory: .
         continue-on-error: true
+      # actions/checkout is downloaded from codeload.github.com for every job.
+      # A self-hosted runner has one IP for all of its runs, so a busy day
+      # returns 429 and this mandatory check fails for a reason unrelated to
+      # the change -- with a multi-hour back-off, so a retry does not help.
+      # git is already on this machine and the workspace persists, so fetch
+      # directly and keep the gate independent of that download.
+      #
+      # The credential goes in a per-command -c http.extraheader rather than in
+      # the remote URL: .git/config survives between jobs on a persistent
+      # runner, and a token written there would survive with it.
+      - name: Check out (self-hosted, no marketplace download)
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        shell: powershell
+        env:
+          RUNNER_GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path .git)) { git init -q . }
+          $header = "AUTHORIZATION: basic " + [Convert]::ToBase64String(
+            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:RUNNER_GH_TOKEN"))
+          $url = "https://github.com/$env:GITHUB_REPOSITORY.git"
+          git remote set-url origin $url
+          if ($LASTEXITCODE -ne 0) { git remote add origin $url }
+          git -c http.extraheader="$header" fetch --no-tags --prune --depth=1 origin $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "fetch failed" }
+          git checkout -q --force --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
+          git clean -xdf
+          Write-Host ("checked out " + (git rev-parse HEAD))
       - uses: actions/checkout@v7
+        if: runner.environment != 'self-hosted'
+
       # Same reasoning as above: dotnet is installed machine-wide here.
       - name: Verify dotnet
         run: dotnet --version
