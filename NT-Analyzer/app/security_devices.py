@@ -31,7 +31,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Tuple
 
-from . import account_auth, auth_identity, runtime_env
+from . import account_auth, auth_identity, physical_devices, runtime_env
 
 
 # Device lifecycle.
@@ -295,6 +295,11 @@ def _public_device(device: Dict[str, Any], active_ids: frozenset = frozenset()) 
         "expires_at_utc": str(device.get("expires_at_utc") or ""),
         # Masked, coarse origin only. Never the raw IP or a full fingerprint.
         "last_region": str((device.get("audit_metadata") or {}).get("last_ip") or ""),
+        # Which machine this client runs on, and how that was established. Empty
+        # means "no known machine", which is the honest answer for a browser the
+        # user has not paired -- not a gap to be filled by guessing.
+        "physical_device_id": str(device.get("physical_device_id") or ""),
+        "bound_via": str(device.get("bound_via") or ""),
     }
 
 
@@ -332,12 +337,18 @@ def observe_session(
     connector_installation_id: str = "",
     device_credential: str = "",
 ) -> List[Tuple[str, Dict[str, Any]]]:
-    """Register/touch the trusted device for a freshly created session.
+    """Register/touch the client device for a freshly created session.
 
     Mutates ``doc`` and ``session`` in place and returns audit events for the
     caller to emit after the document is persisted. A new device is ``pending``;
     a revoked/expired match is never reused — a fresh ``pending`` record is
     created so trust cannot silently return.
+
+    A Connector additionally identifies the *machine* it runs on, through the
+    hardware-bound installation id it was enrolled with. That is the only input
+    here that carries machine identity: a browser's User-Agent, IP and the
+    server's own hostname deliberately do not, so a browser client is left
+    unbound until the user pairs it explicitly (``physical_devices``).
     """
     user_uuid = _normalize_uuid(account_auth._user_uuid(user))
     if not user_uuid:
@@ -366,6 +377,20 @@ def observe_session(
             break
 
     events: List[Tuple[str, Dict[str, Any]]] = []
+    installation_id = str(connector_installation_id or "").strip()
+    machine, machine_events = physical_devices.observe_machine(
+        doc, user,
+        machine_credential=installation_id,
+        os_family=profile["os_family"],
+        os_version=profile["os_version"],
+        # No display name is passed on purpose. The obvious candidate,
+        # _machine_label(), is the *server's* COMPUTERNAME -- identical for
+        # every user of a deployment and not the machine being described. The
+        # machine gets a neutral default the user can rename.
+        ip=ip,
+    )
+    events.extend(machine_events)
+
     if device is None:
         device = {
             "device_id": str(uuid.uuid4()),
@@ -389,6 +414,8 @@ def observe_session(
             "expires_at": 0,
             "expires_at_utc": "",
             "audit_metadata": {"last_ip": masked_ip},
+            "physical_device_id": "",
+            "bound_via": "",
         }
         _devices(doc).append(device)
         events.append((
@@ -417,8 +444,18 @@ def observe_session(
             device["expires_at"] = _now() + DEVICE_TRUST_TTL_SEC
             device["expires_at_utc"] = _iso_from_epoch(device["expires_at"])
 
+    if machine is not None:
+        # The Connector is the client that carries the machine credential, so it
+        # is bound to its own machine without a pairing step. Every other client
+        # keeps whatever binding it already earned -- re-observing a browser must
+        # never quietly move it to a different machine.
+        physical_devices.bind_client(
+            device, machine, bound_via=physical_devices.BOUND_VIA_CONNECTOR_SELF,
+        )
+
     session["trusted_device_id"] = device["device_id"]
     session["device_trust_status"] = device["status"]
+    session["physical_device_id"] = str(device.get("physical_device_id") or "")
     # Keep the last N devices bounded per store without dropping active ones.
     _prune_devices(doc, user_uuid)
     return events
@@ -961,6 +998,7 @@ def account_security(user_id: Any) -> Dict[str, Any]:
             for row in account_auth._identities_for_user(doc, user)
         ]
         providers = _available_providers(doc, user)
+        machines = physical_devices.list_machines(doc, user_uuid)
     devices.sort(key=lambda item: str(item.get("last_seen_at_utc") or ""), reverse=True)
     return {
         "ok": True,
@@ -968,11 +1006,16 @@ def account_security(user_id: Any) -> Dict[str, Any]:
         "user_uuid": user_uuid,
         "identities": identities,
         "step_up_providers": providers,
+        # Three levels, reported separately. ``devices`` are clients (browser
+        # profiles and app installations); ``physical_devices`` are the machines
+        # some of them are known to run on.
         "devices": devices,
+        "physical_devices": machines,
         "policy": {
             "device_confirmation_required": True,
             "challenge_ttl_sec": CHALLENGE_TTL_SEC,
             "trust_ttl_sec": DEVICE_TRUST_TTL_SEC,
+            "pairing_ttl_sec": physical_devices.PAIRING_TTL_SEC,
         },
     }
 
@@ -1016,11 +1059,13 @@ def confirm_challenge(
         result: Dict[str, Any] = {"ok": True, "purpose": purpose}
         if purpose == PURPOSE_DEVICE_CONFIRM:
             device = _owned_device(doc, user_uuid, str(challenge.get("device_id") or ""))
-            _trust_device(device, provider=str(challenge.get("provider") or ""))
+            provider = str(challenge.get("provider") or "")
+            _trust_device(device, provider=provider)
             events.append(("device.approved", {
                 "device_id": device["device_id"],
                 "provider": device.get("confirmation_provider"),
             }))
+            events.extend(_trust_machine_for(doc, user_uuid, device, provider=provider))
             result["device"] = _public_device(device)
         elif purpose == PURPOSE_REVOKE:
             device = _owned_device(doc, user_uuid, str(challenge.get("device_id") or ""))
@@ -1047,6 +1092,34 @@ def _trust_device(device: Dict[str, Any], *, provider: str) -> None:
     device["expires_at"] = _now() + DEVICE_TRUST_TTL_SEC
     device["expires_at_utc"] = _iso_from_epoch(device["expires_at"])
     device["revoked_at_utc"] = ""
+
+
+def _trust_machine_for(
+    doc: Dict[str, Any], user_uuid: str, device: Dict[str, Any], *, provider: str,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Confirming a Connector confirms the machine it proves it runs on.
+
+    The Connector is the only client whose credential is bound to hardware, and
+    confirming it already required a code delivered over a channel the account
+    has verified. That is exactly the evidence a machine needs, so there is no
+    separate machine-confirmation ceremony to sit through.
+
+    It does not work the other way round: confirming a browser says nothing
+    about any machine, and a trusted machine never confers trust on the clients
+    running on it.
+    """
+    if str(device.get("bound_via") or "") != physical_devices.BOUND_VIA_CONNECTOR_SELF:
+        return []
+    machine = physical_devices.find_machine(
+        doc, user_uuid, str(device.get("physical_device_id") or ""),
+    )
+    if machine is None or str(machine.get("status") or "") != physical_devices.STATUS_PENDING:
+        return []
+    physical_devices.trust_machine(machine, provider=provider)
+    return [("machine.approved", {
+        "physical_device_id": machine["physical_device_id"],
+        "provider": provider,
+    })]
 
 
 def approve_device(
@@ -1079,11 +1152,13 @@ def approve_device(
             user_uuid=user_uuid, purpose=PURPOSE_DEVICE_CONFIRM,
             device_id=str(device.get("device_id") or ""),
         )
-        _trust_device(device, provider=str(challenge.get("provider") or ""))
+        provider = str(challenge.get("provider") or "")
+        _trust_device(device, provider=provider)
         events.append(("device.approved", {
             "device_id": device["device_id"],
             "provider": device.get("confirmation_provider"),
         }))
+        events.extend(_trust_machine_for(doc, user_uuid, device, provider=provider))
         account_auth._write_doc(doc)
         public = _public_device(device)
     for event, extra in events:
@@ -1157,3 +1232,188 @@ def revoke_device(*, user_id: Any, device_id: str, ip: str = "") -> Dict[str, An
             extra={"device_id": public["device_id"], "count": revoked, "reason": "device_revoked"},
         )
     return {"ok": True, "device": public, "revoked_sessions": revoked}
+
+
+# --------------------------------------------------------------------------- #
+# Machine-level APIs.
+#
+# Deliberately separate entry points rather than flags on the device ones: the
+# blast radius differs by an order of magnitude, and an operator reading an
+# audit log should never have to work out which one a single "revoke" meant.
+# --------------------------------------------------------------------------- #
+def _account(doc: Dict[str, Any], uid: int) -> Tuple[Dict[str, Any], str]:
+    user = account_auth._user(doc, uid)
+    if not user:
+        raise SecurityDeviceError("Пользователь не найден.", 404, code="user_not_found")
+    return user, _normalize_uuid(account_auth._user_uuid(user))
+
+
+def _as_device_error(exc: "physical_devices.PhysicalDeviceError") -> SecurityDeviceError:
+    """Machine-level failures leave this module as SecurityDeviceError.
+
+    The HTTP layer maps that one type to a status and an error code; letting
+    PhysicalDeviceError escape turned an ordinary 404 into an unhandled 500.
+    """
+    return SecurityDeviceError(str(exc), exc.status, code=exc.code)
+
+
+def _require_uid(user_id: Any) -> int:
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        raise SecurityDeviceError("Требуется вход.", 401, code="auth_required")
+    return uid
+
+
+def list_physical_devices(user_id: Any) -> Dict[str, Any]:
+    uid = _require_uid(user_id)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        _, user_uuid = _account(doc, uid)
+        if _expire_stale(doc):
+            account_auth._write_doc(doc)
+        machines = physical_devices.list_machines(doc, user_uuid)
+    return {"ok": True, "physical_devices": machines}
+
+
+def revoke_physical_device(
+    *, user_id: Any, physical_device_id: str, ip: str = "",
+) -> Dict[str, Any]:
+    """Revoke a machine and everything running on it.
+
+    Unlike ``revoke_device`` this cascades on purpose: the user is saying the
+    machine itself is out of their control, so every client bound to it and
+    every session those clients hold has to die in the same action. A client
+    they had to revoke one at a time is a client they can miss.
+    """
+    uid = _require_uid(user_id)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        _, user_uuid = _account(doc, uid)
+        try:
+            machine = physical_devices._owned(doc, user_uuid, physical_device_id)
+        except physical_devices.PhysicalDeviceError as exc:
+            raise _as_device_error(exc) from None
+        if machine.get("status") == physical_devices.STATUS_REVOKED:
+            return {
+                "ok": True,
+                "physical_device": physical_devices.public_machine(machine),
+                "revoked_clients": 0,
+                "revoked_sessions": 0,
+            }
+        counts = physical_devices.revoke_machine(doc, machine, reason="machine_revoked")
+        account_auth._write_doc(doc)
+        public = physical_devices.public_machine(machine)
+    account_auth._audit(
+        "machine.revoked", user_id=uid, ip=ip,
+        extra={
+            "physical_device_id": public["physical_device_id"],
+            "clients": counts["clients"],
+            "sessions": counts["sessions"],
+        },
+    )
+    return {
+        "ok": True,
+        "physical_device": public,
+        "revoked_clients": counts["clients"],
+        "revoked_sessions": counts["sessions"],
+    }
+
+
+def issue_pairing_code(
+    *, user_id: Any, device_id: str, ip: str = "",
+) -> Dict[str, Any]:
+    """A trusted Connector mints a one-time code to pair a browser to its machine.
+
+    ``device_id`` must be the calling Connector's own client record, and it must
+    be trusted: an unconfirmed Connector handing out machine membership would
+    make its own confirmation pointless.
+    """
+    uid = _require_uid(user_id)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        user, user_uuid = _account(doc, uid)
+        if user.get("status") != "active":
+            raise SecurityDeviceError("Аккаунт не активен.", 403, code="account_inactive")
+        device = _owned_device(doc, user_uuid, device_id)
+        if str(device.get("bound_via") or "") != physical_devices.BOUND_VIA_CONNECTOR_SELF:
+            raise SecurityDeviceError(
+                "Код привязки выдаёт только Connector этого компьютера.",
+                409, code="pairing_requires_connector",
+            )
+        if device.get("status") != STATUS_TRUSTED:
+            raise SecurityDeviceError(
+                "Connector не подтверждён.", 409, code="device_not_trusted",
+            )
+        try:
+            machine = physical_devices._owned(
+                doc, user_uuid, str(device.get("physical_device_id") or ""),
+            )
+            code, row = physical_devices.issue_pairing_code(
+                doc, user_uuid=user_uuid, machine=machine,
+                issuing_client_id=str(device.get("device_id") or ""),
+            )
+        except physical_devices.PhysicalDeviceError as exc:
+            raise _as_device_error(exc) from None
+        account_auth._write_doc(doc)
+        machine_id = str(machine.get("physical_device_id") or "")
+    account_auth._audit(
+        "machine.pairing_issued", user_id=uid, ip=ip,
+        extra={"physical_device_id": machine_id, "pairing_id": row["pairing_id"]},
+    )
+    # The code is returned exactly once, to the Connector that asked for it, and
+    # only its PBKDF2 hash was stored.
+    return {
+        "ok": True,
+        "code": code,
+        "expires_in_sec": physical_devices.PAIRING_TTL_SEC,
+        "physical_device_id": machine_id,
+    }
+
+
+def redeem_pairing_code(
+    *, user_id: Any, device_id: str, code: str, ip: str = "",
+) -> Dict[str, Any]:
+    """Bind this browser client to the machine that issued ``code``.
+
+    Membership only. The client's own trust state is untouched: a browser that
+    joins a trusted machine is still an unconfirmed client and still has to pass
+    device confirmation before it counts as trusted.
+    """
+    uid = _require_uid(user_id)
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        user, user_uuid = _account(doc, uid)
+        if user.get("status") != "active":
+            raise SecurityDeviceError("Аккаунт не активен.", 403, code="account_inactive")
+        device = _owned_device(doc, user_uuid, device_id)
+        if device.get("status") not in _ACTIVE_STATUSES:
+            raise SecurityDeviceError(
+                "Устройство отозвано.", 409, code="device_revoked",
+            )
+        if str(device.get("physical_device_id") or ""):
+            raise SecurityDeviceError(
+                "Устройство уже привязано к компьютеру.", 409, code="device_already_bound",
+            )
+        try:
+            machine = physical_devices.redeem_pairing_code(
+                doc, user_uuid=user_uuid, code=code, client=device,
+            )
+        except physical_devices.PhysicalDeviceError as exc:
+            # A wrong guess still has to be *recorded*. Raising straight out of
+            # here discarded the incremented attempt counter with the unwritten
+            # document, so the per-code budget never accumulated and an
+            # eight-digit code could be guessed without limit. Only counters
+            # changed on this path -- binding happens after the code matches.
+            account_auth._write_doc(doc)
+            raise _as_device_error(exc) from None
+        account_auth._write_doc(doc)
+        public = _public_device(device)
+        machine_id = str(machine.get("physical_device_id") or "")
+    account_auth._audit(
+        "machine.client_bound", user_id=uid, ip=ip,
+        extra={"physical_device_id": machine_id, "device_id": public["device_id"]},
+    )
+    return {"ok": True, "device": public, "physical_device_id": machine_id}

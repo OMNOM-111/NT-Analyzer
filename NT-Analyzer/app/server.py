@@ -3341,6 +3341,12 @@ class Handler(BaseHTTPRequestHandler):
             "/api/account/devices/approve",
             "/api/account/devices/reject",
             "/api/account/devices/revoke",
+            # Machine level. Separate routes from the client ones on purpose:
+            # revoking a machine cascades to every client on it, and that must
+            # never be reachable by an extra flag on the client route.
+            "/api/account/machines/revoke",
+            "/api/account/machines/pair",
+            "/api/account/machines/pair/redeem",
         }
         if path not in routes:
             self._err(HTTPStatus.NOT_FOUND, "no account route", code="account_route_not_found")
@@ -3388,10 +3394,29 @@ class Handler(BaseHTTPRequestHandler):
                     device_id=str(body.get("device_id") or ""),
                     ip=ip,
                 )
-            else:
+            elif path == "/api/account/devices/revoke":
                 out = security_devices.revoke_device(
                     user_id=user_id,
                     device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/machines/revoke":
+                out = security_devices.revoke_physical_device(
+                    user_id=user_id,
+                    physical_device_id=str(body.get("physical_device_id") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/machines/pair":
+                out = security_devices.issue_pairing_code(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    ip=ip,
+                )
+            else:
+                out = security_devices.redeem_pairing_code(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    code=str(body.get("code") or ""),
                     ip=ip,
                 )
             self._json(HTTPStatus.OK, out)
@@ -4333,11 +4358,13 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
-        if path in {"/api/account/security", "/api/account/devices"}:
+        if path in {"/api/account/security", "/api/account/devices", "/api/account/machines"}:
             context = getattr(self, "_remote_context", None) or {}
             try:
                 if path.endswith("/security"):
                     payload = security_devices.account_security(context.get("user_id"))
+                elif path.endswith("/machines"):
+                    payload = security_devices.list_physical_devices(context.get("user_id"))
                 else:
                     payload = security_devices.list_devices(context.get("user_id"))
                 self._json(HTTPStatus.OK, payload)

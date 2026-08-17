@@ -252,9 +252,19 @@ class DocumentRepository:
     repositories, foreign keys and RLS for new Production code.
     """
 
+    # Handed from the machine sync to the client sync within one write.
+    # ``None`` means the machines table is not there yet (pre-0015 schema),
+    # which is a different thing from "there are no machines".
+    #
+    # Declared on the class, not only in __init__: the sync methods are also
+    # called unbound with the class itself as ``self``, and an instance-only
+    # attribute is simply absent there.
+    _pending_machine_ids: Optional[list] = None
+
     def __init__(self, client: PostgresClient) -> None:
         self.client = client
         self.scope = Scope.global_service_scope()
+        self._pending_machine_ids = None
 
     def read(self, repository: str, default: Mapping[str, Any]) -> Dict[str, Any]:
         if repository not in REPOSITORIES:
@@ -563,6 +573,8 @@ class DocumentRepository:
                     _timestamp(row.get("expires_at")), _jsonb(row),
                 ),
             )
+        # Machines first: a client row carries a foreign key to one.
+        self._sync_physical_devices(conn, doc, user_uuids)
         self._sync_trusted_devices(conn, doc, user_uuids)
         self._delete_missing(conn, "sf_auth_challenges", "challenge_id", challenge_ids)
         self._delete_missing(conn, "sf_auth_sessions", "session_id", session_ids)
@@ -608,6 +620,105 @@ class DocumentRepository:
             else:
                 conn.execute(f"DELETE FROM {table}")
 
+    def _sync_physical_devices(
+        self, conn: Any, doc: Dict[str, Any], user_uuids: Dict[int, str],
+    ) -> None:
+        """Project physical machines into their relational table.
+
+        Runs before the client sync because sf_trusted_devices.physical_device_id
+        references this table; writing the client first would fail the foreign
+        key on the very first Connector to register a new machine.
+        """
+        # A store written before migration 0015 has no such table. Ask rather
+        # than catching: a failed statement aborts the whole document write.
+        present = conn.execute(
+            "SELECT to_regclass('sf_physical_devices') IS NOT NULL",
+        ).fetchone()
+        self._pending_machine_ids = None
+        if not present or not list(present)[0]:
+            return
+        rows = [row for row in doc.get("physical_devices", []) if isinstance(row, dict)]
+        machine_ids: list[str] = []
+        seen_active: set[tuple[str, str]] = set()
+        for row in rows:
+            machine_id = _uuid(row.get("physical_device_id"))
+            user_uuid = _uuid(row.get("user_uuid"))
+            legacy_user_id = _int(row.get("legacy_user_id"))
+            key_hash = str(row.get("machine_key_hash") or "").strip()
+            status = _status(
+                row.get("status"), {"pending", "trusted", "revoked", "expired"}, "pending",
+            )
+            if not machine_id or not user_uuid or len(key_hash) < 16:
+                continue
+            if user_uuids and user_uuids.get(legacy_user_id) not in (None, user_uuid):
+                raise StorageConstraintError(
+                    "Physical device does not match its canonical user UUID."
+                )
+            if status in {"pending", "trusted"}:
+                key = (user_uuid, key_hash)
+                if key in seen_active:
+                    raise StorageConstraintError(
+                        "Duplicate active machine for one account credential."
+                    )
+                seen_active.add(key)
+            machine_ids.append(machine_id)
+            provider = _status(
+                row.get("confirmation_provider"), {"", "telegram", "email", "google"}, "",
+            )
+            audit = row.get("audit_metadata") if isinstance(row.get("audit_metadata"), dict) else {}
+            confirmed_at = _timestamp(row.get("confirmed_at_utc"))
+            revoked_at = _timestamp(row.get("revoked_at_utc"))
+            # The table's CHECKs tie status to these timestamps. Enforce the same
+            # thing here so a malformed document is rejected with a named error
+            # rather than an opaque constraint violation from the driver.
+            if (status == "revoked") != (revoked_at is not None):
+                raise StorageConstraintError(
+                    "Machine revocation status and timestamp disagree."
+                )
+            if status == "trusted" and confirmed_at is None:
+                raise StorageConstraintError(
+                    "Trusted machine is missing its confirmation timestamp."
+                )
+            conn.execute(
+                """
+                INSERT INTO sf_physical_devices(
+                  physical_device_id,user_uuid,legacy_user_id,machine_key_hash,
+                  display_name,os_family,os_version,status,confirmation_provider,
+                  first_seen_at,last_seen_at,confirmed_at,revoked_at,expires_at,
+                  audit_metadata
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       COALESCE(%s,clock_timestamp()),%s,%s,%s,%s,%s)
+                ON CONFLICT(physical_device_id) DO UPDATE SET
+                  machine_key_hash=EXCLUDED.machine_key_hash,
+                  display_name=EXCLUDED.display_name,
+                  os_family=EXCLUDED.os_family,
+                  os_version=EXCLUDED.os_version,
+                  status=EXCLUDED.status,
+                  confirmation_provider=EXCLUDED.confirmation_provider,
+                  last_seen_at=EXCLUDED.last_seen_at,
+                  confirmed_at=EXCLUDED.confirmed_at,
+                  revoked_at=EXCLUDED.revoked_at,
+                  expires_at=EXCLUDED.expires_at,
+                  audit_metadata=EXCLUDED.audit_metadata
+                """,
+                (
+                    machine_id, user_uuid, legacy_user_id, key_hash[:128],
+                    str(row.get("display_name") or "")[:160],
+                    str(row.get("os_family") or "")[:40],
+                    str(row.get("os_version") or "")[:40],
+                    status, provider,
+                    _timestamp(row.get("first_seen_at_utc")),
+                    _timestamp(row.get("last_seen_at_utc")),
+                    confirmed_at, revoked_at,
+                    _timestamp(row.get("expires_at_utc")),
+                    _jsonb(audit),
+                ),
+            )
+        # Clients reference machines, so orphan machines can only be dropped
+        # after the client sync has moved every reference off them.
+        self._pending_machine_ids = machine_ids
+
     def _sync_trusted_devices(
         self, conn: Any, doc: Dict[str, Any], user_uuids: Dict[int, str],
     ) -> None:
@@ -652,17 +763,36 @@ class DocumentRepository:
                 row.get("confirmation_provider"), {"", "telegram", "email", "google"}, "",
             )
             audit = row.get("audit_metadata") if isinstance(row.get("audit_metadata"), dict) else {}
+            # The two binding columns arrive with the machines table in the same
+            # migration, so one probe answers for both.
+            machines_live = self._pending_machine_ids is not None
+            physical_device_id = _uuid(row.get("physical_device_id")) if machines_live else None
+            bound_via = _status(
+                row.get("bound_via"), {"", "connector_self", "attested_pairing"}, "",
+            ) if machines_live else ""
+            # The table's CHECK ties the two together; disagreeing here means the
+            # document is wrong, and a named error beats a driver-level one.
+            if machines_live and (physical_device_id is None) != (bound_via == ""):
+                raise StorageConstraintError(
+                    "Device binding and its origin disagree."
+                )
+            binding_columns = ",physical_device_id,bound_via" if machines_live else ""
+            binding_values = ",%s,%s" if machines_live else ""
+            binding_update = (
+                " physical_device_id=EXCLUDED.physical_device_id,"
+                " bound_via=EXCLUDED.bound_via,"
+            ) if machines_live else ""
             conn.execute(
-                """
+                f"""
                 INSERT INTO sf_trusted_devices(
                   device_id,user_uuid,legacy_user_id,fingerprint,device_type,display_name,
                   os_family,os_version,client,app_version,connector_installation_id,
                   status,confirmation_provider,first_seen_at,last_seen_at,last_auth_at,
-                  confirmed_at,revoked_at,expires_at,audit_metadata
+                  confirmed_at,revoked_at,expires_at,audit_metadata{binding_columns}
                 )
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                       COALESCE(%s,clock_timestamp()),%s,%s,%s,%s,%s,%s)
-                ON CONFLICT(device_id) DO UPDATE SET
+                       COALESCE(%s,clock_timestamp()),%s,%s,%s,%s,%s,%s{binding_values})
+                ON CONFLICT(device_id) DO UPDATE SET{binding_update}
                   fingerprint=EXCLUDED.fingerprint,
                   device_type=EXCLUDED.device_type,
                   display_name=EXCLUDED.display_name,
@@ -694,9 +824,16 @@ class DocumentRepository:
                     _timestamp(row.get("revoked_at_utc")),
                     _timestamp(row.get("expires_at_utc")),
                     _jsonb(audit),
-                ),
+                ) + ((physical_device_id, bound_via) if machines_live else ()),
             )
         self._delete_missing(conn, "sf_trusted_devices", "device_id", device_ids)
+        if self._pending_machine_ids is not None:
+            # Only now that no client references a departed machine.
+            self._delete_missing(
+                conn, "sf_physical_devices", "physical_device_id",
+                self._pending_machine_ids,
+            )
+            self._pending_machine_ids = None
 
     def _sync_workspaces(self, conn: Any, doc: Dict[str, Any]) -> None:
         workspaces = [row for row in doc.get("workspaces", []) if isinstance(row, dict)]
