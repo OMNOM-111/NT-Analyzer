@@ -58,6 +58,7 @@ if __package__ is None or __package__ == "":
     from app import tunnel_manager  # type: ignore[no-redef]
     from app import account_auth  # type: ignore[no-redef]
     from app import security_devices  # type: ignore[no-redef]
+    from app import environment_registry  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -147,6 +148,7 @@ else:
     from . import tunnel_manager
     from . import account_auth
     from . import security_devices
+    from . import environment_registry
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -3423,6 +3425,41 @@ class Handler(BaseHTTPRequestHandler):
         except security_devices.SecurityDeviceError as exc:
             self._err(exc.status, str(exc), code=exc.code)
 
+    def _environment_heartbeat_post(self) -> None:
+        """Accept one environment's self-reported runtime identity.
+
+        The caller is another environment's server process. It authenticates
+        with the shared registry token in a header — never a session cookie,
+        never a token in the URL — and the payload is re-validated here rather
+        than trusted because it arrived authenticated: the token says who sent
+        it, not that what they sent is well formed.
+
+        A wrong or missing token gets one generic 401 with no hint about which
+        it was, and nothing about the token reaches the response or the log.
+        """
+        if not environment_registry.token_configured():
+            self._err(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "Реестр окружений не настроен.",
+                code="registry_not_configured",
+            )
+            return
+        supplied = self.headers.get("X-StratForge-Registry-Token") or ""
+        if not environment_registry.token_matches(supplied):
+            self._err(HTTPStatus.UNAUTHORIZED, "Не авторизовано.", code="registry_unauthorized")
+            return
+        if not self._check_json_content_type():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            row = environment_registry.record(body)
+        except environment_registry.EnvironmentRegistryError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._json(HTTPStatus.OK, {"ok": True, "environment": row})
+
     def _personal_nt_error(self, exc: "personal_nt_security.PersonalNtSecurityError") -> None:
         payload: Dict[str, Any] = {"error": str(exc), "code": exc.code}
         if exc.onboarding is not None:
@@ -4448,6 +4485,17 @@ class Handler(BaseHTTPRequestHandler):
                           code="capability_required")
                 return
             self._json(HTTPStatus.OK, _connectors_dashboard_payload(context))
+            return
+
+        if path == "/api/admin/environments":
+            # The registry, which is what environments reported about
+            # themselves, plus the comparison across them. Distinct from
+            # environment-targets, which is about where the switcher may send
+            # the browser.
+            try:
+                self._json(HTTPStatus.OK, environment_registry.snapshot())
+            except environment_registry.EnvironmentRegistryError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
             return
 
         if path == "/api/admin/environment-targets":
@@ -7902,6 +7950,15 @@ class Handler(BaseHTTPRequestHandler):
             self._connector_public_post(path)
             return
 
+        # Environment heartbeat. Authenticated by a shared registry token, not
+        # by a browser session: the caller is another environment's server
+        # process, which has no session and must never be given one. It is
+        # placed ahead of _authorize_api for that reason, and authenticates
+        # itself immediately below.
+        if path == environment_registry.HEARTBEAT_PATH:
+            self._environment_heartbeat_post()
+            return
+
         if not self._authorize_api(path):
             return
 
@@ -9673,6 +9730,14 @@ def create_http_server(
             server.readiness_optional_components["telegram_consumer"] = (  # type: ignore[attr-defined]
                 "disabled_pending_canary_bot_provisioning"
             )
+
+    # Environment registry heartbeat. Every environment publishes its own
+    # identity, including LOCAL -- which is the whole reason the registry
+    # exists, since nothing can reach a development machine behind NAT to ask.
+    # Starting it needs no token: without one, publish_to declines and only the
+    # local self-record happens, which is still useful and still honest.
+    server.environment_publisher = environment_registry.HeartbeatPublisher()  # type: ignore[attr-defined]
+    server.environment_publisher.start()  # type: ignore[attr-defined]
     return server
 
 
