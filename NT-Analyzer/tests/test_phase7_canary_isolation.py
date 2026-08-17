@@ -317,10 +317,32 @@ def test_connector_accepts_same_environment_installation(monkeypatch, tmp_path):
     connector_protocol._assert_environment({"deployment_environment": "canary"})
 
 
-def test_connector_grandfathers_unstamped_installation(monkeypatch, tmp_path):
+def test_connector_refuses_an_unstamped_installation(monkeypatch, tmp_path):
+    """This used to grandfather an unstamped record by accepting it.
+
+    That made such a record valid in *every* environment at once, which is the
+    fail-open the check exists to close -- and it was not theoretical: live
+    Production still held five unstamped installations. Compatibility is kept
+    by stamping them from the store they live in (see _stamp_environments,
+    which runs in _migrate_doc on every read), so nothing is grandfathered by
+    being accepted anywhere.
+    """
     _canary_env(monkeypatch, tmp_path)
-    # A pre-existing installation without the field is not rejected.
-    connector_protocol._assert_environment({})
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
+        connector_protocol._assert_environment({})
+    assert exc.value.code == "connector_environment_mismatch"
+
+
+def test_an_unstamped_installation_is_adopted_by_this_environment(monkeypatch, tmp_path):
+    """The compatibility path that replaces grandfathering. Each environment
+    keeps an isolated Connector store, so a record sitting in this one belongs
+    to this one -- and after stamping it passes the check normally."""
+    _canary_env(monkeypatch, tmp_path)
+    doc, changed = connector_protocol._migrate_doc(
+        {"installations": [{"installation_id": "inst_old"}]})
+    assert changed is True
+    assert doc["installations"][0]["deployment_environment"] == "canary"
+    connector_protocol._assert_environment(doc["installations"][0])
 
 
 def test_canary_connector_repository_uses_server_storage_not_local_secure_store(monkeypatch, tmp_path):
