@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app import local_secrets
 from app.ai_lab import agent_router
 
 
@@ -33,6 +34,25 @@ _WORKSTATION_ONLY_ENV = (
 def no_real_operator_configuration(monkeypatch):
     for name in _WORKSTATION_ONLY_ENV:
         monkeypatch.delenv(name, raising=False)
+    # Deleting the variables is not enough on its own. `local_secrets.apply()`
+    # only sets a name that is *absent* from os.environ, so the scrub above is
+    # exactly the condition that makes it put the workstation's real values
+    # back -- and several call sites invoke it lazily, in the middle of a test,
+    # long after this fixture has run.
+    #
+    # The symptom is remote and confusing: a Release Center test that deleted
+    # STRATFORGE_RELEASE_DEPLOY_ADAPTER suddenly sees the real `stage9_ssh`
+    # adapter, deploy_canary treats a dry run as a blocked real deploy, the
+    # candidate lands in canary_failed instead of canary_checking, and an
+    # unrelated test fails. Which test fails depends on when the lazy call
+    # happens, so the suite is intermittently red for reasons that have nothing
+    # to do with the change under test.
+    #
+    # Three call sites already worked around this individually with
+    # `monkeypatch.setattr(..., "apply", lambda: False)`. Neutralising it once,
+    # here, closes the whole class: a test that genuinely needs the local store
+    # points `secrets_path` at a temporary file and calls the loader directly.
+    monkeypatch.setattr(local_secrets, "apply", lambda: False)
 
 
 @pytest.fixture(autouse=True)
