@@ -6,9 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+# The heavy Windows suite runs on the self-hosted runner on the development PC.
+# It is deliberately Windows-native: the bridge build needs real NinjaTrader
+# assemblies, which no hosted image has.
+#
+# Least privilege is explicit here. These jobs read the repository and nothing
+# else, and no workflow in this repo references `secrets.` at all -- the runner
+# never sees a Production credential or a deployment key, and there is nothing
+# for a compromised step to exfiltrate beyond the source it already checked out.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-tests:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, stratforge-ci]
+    timeout-minutes: 30
     env:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: utf-8
@@ -17,6 +33,13 @@ jobs:
         shell: pwsh
         working-directory: NT-Analyzer
     steps:
+      # A self-hosted runner keeps its working directory between jobs, unlike a
+      # hosted image that starts clean. Without this, a file deleted in a branch
+      # lingers and the suite passes against a tree that no longer exists.
+      - name: Clean the persistent workspace
+        run: git clean -xdf; git reset --hard
+        working-directory: .
+        continue-on-error: true
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
@@ -42,12 +65,17 @@ jobs:
           }
 
   bridge-build-if-nt8-present:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows, x64, stratforge-ci]
+    timeout-minutes: 20
     defaults:
       run:
         shell: pwsh
         working-directory: NT-Analyzer
     steps:
+      - name: Clean the persistent workspace
+        run: git clean -xdf; git reset --hard
+        working-directory: .
+        continue-on-error: true
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
