@@ -4089,6 +4089,88 @@
     </div>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
   }
 
+  // ---- Environment registry (Phase 5) ---------------------------------------
+  // The probe path can only describe environments that answer an HTTP call
+  // right now, which permanently excluded LOCAL behind NAT and blanked out
+  // everything about any environment that happened to be unreachable. The
+  // registry is the other direction: environments publish, and what they last
+  // published is kept and shown with the time it was said.
+  function environmentAge(row) {
+    const age = row.age_sec;
+    if (age === null || age === undefined) return '';
+    if (age < 60) return `${age} с назад`;
+    if (age < 3600) return `${Math.round(age / 60)} мин назад`;
+    if (age < 86400) return `${Math.round(age / 3600)} ч назад`;
+    return `${Math.round(age / 86400)} сут назад`;
+  }
+
+  function environmentStateBadge(row) {
+    const label = {
+      live: 'на связи', stale: 'молчит', offline: 'офлайн', never_seen: 'не отчитывалась',
+    }[row.state] || row.state;
+    const cls = { live: 'live', stale: 'pending', offline: 'failed', never_seen: 'archived' }[row.state] || 'archived';
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
+  }
+
+  function environmentCompareHtml(payload) {
+    const rows = (payload && payload.environments) || [];
+    const compare = (payload && payload.compare) || {};
+    const known = rows.filter(row => row.metadata_known);
+    if (!known.length) {
+      return `<section class="cab-card"><h4>Сравнение сред</h4>
+        <p class="cab-sub">Ни одна среда ещё не присылала heartbeat. Сравнивать нечего — это отсутствие данных, а не расхождение.</p></section>`;
+    }
+
+    const parity = compare.canary_production_parity || {};
+    let parityHtml;
+    if (!parity.known) {
+      const why = parity.reason === 'artifact_not_reported'
+        ? 'артефакт не сообщён' : 'отчитались не обе среды';
+      parityHtml = `<div class="admin-env-warnings"><div>Паритет Canary / Production неизвестен: ${esc(why)}.</div></div>`;
+    } else {
+      // A stale reading is still shown, but never as if it were current.
+      const freshness = parity.both_current
+        ? 'по актуальным данным'
+        : `по последним данным: Canary ${esc(parity.canary_as_of_utc || '—')}, Production ${esc(parity.production_as_of_utc || '—')}`;
+      parityHtml = `<div class="finance-note"><strong>${parity.match ? 'Canary и Production на одном артефакте' : 'Артефакты Canary и Production различаются'}</strong> — ${freshness}.</div>`;
+    }
+
+    const header = known.map(row => `<th>${esc(row.environment.toUpperCase())}</th>`).join('');
+    const body = ((compare.fields) || []).map(field => {
+      const cells = known.map(row => {
+        const value = field.values[row.environment];
+        const missing = (field.missing || []).includes(row.environment);
+        // Missing and different are rendered differently on purpose: calling
+        // absent data a mismatch teaches the reader to ignore the panel.
+        const text = missing ? 'не сообщено' : String(value === 0 ? '0' : (value || '—'));
+        const short = text.length > 20 ? text.slice(0, 16) + '…' : text;
+        return `<td class="mono${missing ? ' cab-sub' : ''}" title="${esc(text)}">${esc(short)}</td>`;
+      }).join('');
+      return `<tr class="${field.differs ? 'is-diff' : ''}"><th scope="row">${esc(field.label)}${field.differs ? ' ⚠' : ''}</th>${cells}</tr>`;
+    }).join('');
+
+    const stateRow = known.map(row => `<td>${environmentStateBadge(row)}<div class="cab-sub">${esc(environmentAge(row))}</div></td>`).join('');
+
+    return `<section class="cab-card"><h4>Сравнение сред</h4>
+      ${parityHtml}
+      <div class="table-scroll"><table class="admin-env-compare">
+        <thead><tr><th></th>${header}</tr></thead>
+        <tbody><tr><th scope="row">Связь</th>${stateRow}</tr>${body}</tbody>
+      </table></div>
+      <p class="cab-sub">Значения — то, что среда сообщила о себе в последний раз, с отметкой времени. Среда, переставшая отвечать, не становится средой с неизвестной версией.</p>
+    </section>`;
+  }
+
+  async function renderEnvironmentCompareInto(node) {
+    if (!node) return;
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка реестра сред…</div>';
+    try {
+      node.innerHTML = environmentCompareHtml(await API.http.adminEnvironments());
+    } catch (e) {
+      renderError(node, e, () => renderEnvironmentCompareInto(node));
+    }
+  }
+
   async function probeEnvironmentTarget(target, card) {
     const data = await API.http.adminEnvironmentProbe(target.environment);
     Object.assign(target, data.target || {});
@@ -4110,6 +4192,7 @@
   function renderEnvironmentTargets(node, payload) {
     const targets = (payload && payload.targets) || [];
     node.innerHTML = `<div class="finance-note"><strong>Изолированный переход:</strong> каждая среда открывается на своём origin в новой вкладке. Токены, cookies, CSRF и localStorage не переносятся.</div>
+      <div data-env-compare></div>
       <div class="admin-env-grid">${targets.map((target, index) => `<section class="cab-card admin-env-card" data-env-card="${index}">
         <div class="admin-env-head"><div><span class="badge ${target.current ? 'live' : (target.configured ? 'pending' : 'archived')}">${esc(target.environment.toUpperCase())}</span>${target.current ? '<span class="cab-sub"> текущая</span>' : ''}</div><span class="mono cab-sub">${esc(target.current ? location.origin : (target.origin || 'origin не задан'))}</span></div>
         <div data-env-meta>${environmentMetaHtml(target)}</div>
@@ -4168,6 +4251,10 @@
       confirmNode.innerHTML = `<div class="admin-env-confirm"><strong>Перед переходом</strong>${environmentMetaHtml(target)}<p class="cab-sub">В новой вкладке потребуется отдельная аутентификация.</p><button class="btn primary" data-env-open="1">Открыть ${esc(target.environment.toUpperCase())} в новой вкладке</button></div>`;
       const open = qs('[data-env-open]', confirmNode); if (open) open.onclick = () => openEnvironmentOrigin(target);
     });
+    // The registry panel loads independently of the per-target probes: it is
+    // the only source that can describe LOCAL, so a probe failure elsewhere
+    // must not take it down with it.
+    renderEnvironmentCompareInto(qs('[data-env-compare]', node));
     const compare = qs('#admin-env-compare', node);
     if (compare) compare.onclick = () => {
       const rows = targets.filter(target => ['canary', 'production'].includes(target.environment) && target.open_allowed);

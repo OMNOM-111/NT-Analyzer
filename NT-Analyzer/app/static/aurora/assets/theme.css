@@ -500,6 +500,14 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .admin-env-warnings { display: flex; flex-direction: column; gap: 5px; color: var(--warn); font-size: 11px; }
 .admin-env-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--warn); border-radius: var(--r-md); background: var(--warn-soft); }
 .admin-env-confirm .admin-env-meta { margin: 10px 0; }
+/* Environment comparison. The table scrolls inside its own box so a long
+   artifact digest cannot push the whole panel sideways. */
+.table-scroll { overflow-x: auto; max-width: 100%; }
+.admin-env-compare { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.admin-env-compare th, .admin-env-compare td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.admin-env-compare thead th { color: var(--tx-3); font-weight: 600; }
+.admin-env-compare tbody th { color: var(--tx-3); font-weight: 500; }
+.admin-env-compare tr.is-diff th, .admin-env-compare tr.is-diff td { color: var(--warn); }
 
 /* Avatars (Telegram photo or initials) */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: 0 0 auto; font-weight: 700; font-size: 11px; color: #fff; background: hsl(var(--av-h, 210) 42% 34%); letter-spacing: .2px; }

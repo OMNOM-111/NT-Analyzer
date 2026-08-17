@@ -10,6 +10,7 @@ from . import runtime_env
 from .production_storage import (
     AuditRepository,
     DocumentRepository,
+    EnvironmentRegistryRepository,
     Scope,
     StorageConfigurationError,
     StorageError,
@@ -84,6 +85,33 @@ def append_audit(source: str, event: str, values: Mapping[str, Any]) -> str:
         scope = Scope.global_service_scope()
     return AuditRepository(get_client(production=True)).append(
         event, dict(values), source=source, scope=scope,
+    )
+
+
+def applied_schema_version() -> int:
+    """Highest applied migration version.
+
+    ``database_readiness`` deliberately reports only ok/not-ok, so it cannot
+    answer this; the environment registry needs the number itself to compare
+    schema state across environments.
+    """
+    client = get_client(production=True)
+    with client.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version),0) AS version FROM sf_schema_migrations"
+        ).fetchone()
+    return int(row["version"]) if row else 0
+
+
+def record_environment_heartbeat(heartbeat: Mapping[str, Any]) -> Dict[str, Any]:
+    return EnvironmentRegistryRepository(get_client(production=True)).record(
+        heartbeat, scope=Scope.global_service_scope(),
+    )
+
+
+def read_environment_registry() -> list:
+    return EnvironmentRegistryRepository(get_client(production=True)).all(
+        scope=Scope.global_service_scope(),
     )
 
 

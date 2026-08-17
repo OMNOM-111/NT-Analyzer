@@ -1194,6 +1194,69 @@ class CommandRepository:
         return dict(row["document"]) if row else None
 
 
+class EnvironmentRegistryRepository:
+    """Last-known runtime identity of each environment.
+
+    One row per environment, overwritten by each heartbeat. Nothing here is
+    append-only history: the registry answers "what is that environment running,
+    and when did it last say so", and a full timeline of every heartbeat would
+    be a large table answering a question nobody asked.
+
+    ``first_seen_at`` is preserved across updates on purpose -- it is the only
+    way to distinguish an environment that has been reporting for months from
+    one that appeared a minute ago.
+    """
+
+    def __init__(self, client: PostgresClient) -> None:
+        self.client = client
+
+    def record(self, heartbeat: Mapping[str, Any], *, scope: Scope) -> Dict[str, Any]:
+        environment = str(heartbeat.get("environment") or "")
+        with self.client.transaction(scope) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO sf_environment_registry(
+                  environment,app_version,git_commit_sha,build_id,artifact_sha256,
+                  release_channel,schema_version,readiness,details,
+                  first_seen_at,last_seen_at,heartbeat_count
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                       clock_timestamp(),clock_timestamp(),1)
+                ON CONFLICT(environment) DO UPDATE SET
+                  app_version=EXCLUDED.app_version,
+                  git_commit_sha=EXCLUDED.git_commit_sha,
+                  build_id=EXCLUDED.build_id,
+                  artifact_sha256=EXCLUDED.artifact_sha256,
+                  release_channel=EXCLUDED.release_channel,
+                  schema_version=EXCLUDED.schema_version,
+                  readiness=EXCLUDED.readiness,
+                  details=EXCLUDED.details,
+                  last_seen_at=clock_timestamp(),
+                  heartbeat_count=sf_environment_registry.heartbeat_count + 1
+                RETURNING *
+                """,
+                (
+                    environment,
+                    str(heartbeat.get("app_version") or "")[:64],
+                    str(heartbeat.get("git_commit_sha") or "")[:64],
+                    str(heartbeat.get("build_id") or "")[:128],
+                    str(heartbeat.get("artifact_sha256") or "")[:64],
+                    str(heartbeat.get("release_channel") or "")[:32],
+                    int(heartbeat.get("schema_version") or 0),
+                    str(heartbeat.get("readiness") or ""),
+                    _jsonb(heartbeat.get("details") or {}),
+                ),
+            ).fetchone()
+        return dict(row) if row else {}
+
+    def all(self, *, scope: Scope) -> list:
+        with self.client.transaction(scope, read_only=True) as conn:
+            rows = conn.execute(
+                "SELECT * FROM sf_environment_registry ORDER BY environment"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
 class AuditRepository:
     def __init__(self, client: PostgresClient) -> None:
         self.client = client

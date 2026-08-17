@@ -339,6 +339,9 @@
     adminConnectors: (o) => getJSON('/api/admin/connectors', o),
     adminEnvironmentTargets: (o) => getJSON('/api/admin/environment-targets', o),
     adminEnvironmentProbe: (environment, o) => getJSON('/api/admin/environment-targets?probe=' + encodeURIComponent(environment || ''), o),
+    // Registry: what each environment reported about itself, and when. Unlike
+    // the probe above this reaches LOCAL, which nothing can call into.
+    adminEnvironments: (o) => getJSON('/api/admin/environments', o),
     adminOperations: (o) => getJSON('/api/admin/operations', o),
     authMe: (o) => getJSON('/api/auth/me', o),
     devPreviewStatus: (o) => getJSON('/api/dev/preview/status', o),
