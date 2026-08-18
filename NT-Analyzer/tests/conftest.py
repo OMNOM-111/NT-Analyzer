@@ -79,6 +79,11 @@ def _live_manifest() -> dict:
 
     governance-rendered is excluded: the running LOCAL server regenerates it,
     so it changes for reasons that have nothing to do with the suite.
+
+    On a developer machine the running server can still make this report a file
+    it wrote itself -- its news poller does, occasionally. CI is where the check
+    is exact, because nothing else is running there. A local report that does
+    not reproduce on a second run is the server, not a test.
     """
     manifest = {}
     if not _LIVE_DATA.is_dir():
