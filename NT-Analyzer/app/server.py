@@ -62,6 +62,7 @@ if __package__ is None or __package__ == "":
     from app import user_card  # type: ignore[no-redef]
     from app import development_sync  # type: ignore[no-redef]
     from app import data_root_guard  # type: ignore[no-redef]
+    from app import pipeline_view  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -155,6 +156,7 @@ else:
     from . import user_card
     from . import development_sync
     from . import data_root_guard
+    from . import pipeline_view
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -4639,6 +4641,53 @@ class Handler(BaseHTTPRequestHandler):
                           code="capability_required")
                 return
             self._json(HTTPStatus.OK, _connectors_dashboard_payload(context))
+            return
+
+        if path == "/api/admin/pipeline":
+            # Environments and releases answered together. The owner should not
+            # have to hold "which candidate is on Canary, and is it the same
+            # artifact Production would get" in their head across two screens.
+            try:
+                registry = environment_registry.snapshot()
+            except environment_registry.EnvironmentRegistryError:
+                registry = {"environments": []}
+            rows = {str(r.get("environment") or ""): r
+                    for r in (registry.get("environments") or [])}
+
+            try:
+                releases = release_center.list_releases()
+                candidates = releases.get("candidates") or []
+            except Exception:
+                candidates = []
+            candidate = candidates[0] if candidates else {}
+
+            sync = development_sync.status()
+            development = pipeline_view.development_card(
+                sync, rows.get(runtime_env.DEVELOPMENT))
+            canary = pipeline_view.server_card(
+                runtime_env.CANARY, rows.get(runtime_env.CANARY),
+                (candidate.get("canary") if isinstance(candidate.get("canary"), dict) else {}))
+            production = pipeline_view.server_card(
+                runtime_env.PRODUCTION, rows.get(runtime_env.PRODUCTION),
+                (candidate.get("production") if isinstance(candidate.get("production"), dict) else {}))
+
+            tunnel_ip, forwarded_ip = self._request_ips()
+            local_request = self._is_loopback_ip(forwarded_ip or tunnel_ip)
+
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "environments": {
+                    "development": development,
+                    "canary": canary,
+                    "production": production,
+                },
+                "candidate": candidate,
+                "candidates": candidates[:10],
+                "stages": pipeline_view.stage_progress(candidate),
+                "promotion": pipeline_view.promotion_gates(candidate, registry),
+                "compare": pipeline_view.compare([development, canary, production]),
+                "development_access": pipeline_view.development_access(local_request),
+            })
             return
 
         if path == "/api/admin/development-sync":

@@ -1,0 +1,236 @@
+"""Environments and releases as one view, with gates that actually hold.
+
+The Environment Switcher knew what each environment ran; the Release Center
+knew how a candidate moves. Neither knew the other, so the owner carried the
+workflow in their head -- which candidate is on Canary, and whether it is the
+same artifact Production would receive.
+
+The gates below are the part worth testing. A promotion is permitted only when
+the artifact Canary reports running is the one being promoted, which is a
+stronger statement than the release record agreeing with itself.
+"""
+from __future__ import annotations
+
+import pytest
+
+from app import pipeline_view, runtime_env
+
+ARTIFACT = "a" * 64
+OTHER = "b" * 64
+
+
+def _candidate(state, artifact=ARTIFACT):
+    return {"state": state, "artifact_sha256": artifact}
+
+
+def _registry(canary_artifact=ARTIFACT, **extra):
+    row = {"environment": runtime_env.CANARY, "artifact_sha256": canary_artifact}
+    row.update(extra)
+    return {"environments": [row]}
+
+
+# --------------------------------------------------------------------------- #
+# Stage progress speaks the owner's language.
+# --------------------------------------------------------------------------- #
+def test_the_stages_are_the_ones_an_owner_watches():
+    ids = [s["id"] for s in pipeline_view.stage_progress(_candidate("draft"))]
+    assert ids == ["ci", "build", "sign", "migrate", "canary",
+                   "acceptance", "production"]
+
+
+def test_a_signed_candidate_shows_build_and_sign_done():
+    stages = {s["id"]: s["state"] for s in pipeline_view.stage_progress(_candidate("signed"))}
+    assert stages["build"] == "done"
+    assert stages["sign"] == "done"
+    assert stages["canary"] == "pending"
+    assert stages["production"] == "pending"
+
+
+def test_reaching_canary_implies_migrations_ran():
+    stages = {s["id"]: s["state"]
+              for s in pipeline_view.stage_progress(_candidate("canary_checking"))}
+    assert stages["migrate"] == "done"
+
+
+def test_a_failed_build_is_shown_as_failed_not_pending():
+    """Pending reads as "not yet"; this is "it went wrong", and the difference
+    is the whole reason someone is looking at the page."""
+    stages = {s["id"]: s["state"]
+              for s in pipeline_view.stage_progress(_candidate("build_failed"))}
+    assert stages["build"] == "failed"
+
+
+def test_a_failed_canary_is_shown_as_failed():
+    stages = {s["id"]: s["state"]
+              for s in pipeline_view.stage_progress(_candidate("canary_failed"))}
+    assert stages["canary"] == "failed"
+
+
+def test_a_live_production_release_shows_every_stage_done():
+    stages = {s["id"]: s["state"]
+              for s in pipeline_view.stage_progress(_candidate("production_live"))}
+    assert set(stages.values()) == {"done"}
+
+
+# --------------------------------------------------------------------------- #
+# Promotion gates.
+# --------------------------------------------------------------------------- #
+def test_promotion_is_allowed_only_when_every_gate_holds():
+    out = pipeline_view.promotion_gates(_candidate("canary_passed"), _registry())
+    assert out["allowed"] is True
+    assert out["blocking"] == []
+
+
+def test_a_candidate_that_never_reached_canary_cannot_be_promoted():
+    out = pipeline_view.promotion_gates(_candidate("signed"), _registry())
+    assert out["allowed"] is False
+    assert "canary_deployed" in out["blocking"]
+    assert "acceptance" in out["blocking"]
+
+
+def test_acceptance_is_required():
+    out = pipeline_view.promotion_gates(_candidate("canary_checking"), _registry())
+    assert out["allowed"] is False
+    assert "acceptance" in out["blocking"]
+
+
+def test_a_rebuilt_artifact_blocks_promotion():
+    """The gate that matters most. Canary accepted one artifact; if the
+    candidate now names a different one, Production would receive something
+    nobody verified."""
+    out = pipeline_view.promotion_gates(
+        _candidate("canary_passed", artifact=OTHER), _registry(canary_artifact=ARTIFACT))
+    assert out["allowed"] is False
+    assert "artifact_unchanged" in out["blocking"]
+
+
+def test_a_silent_canary_blocks_promotion():
+    """If Canary has not reported what it is running, nothing confirms it holds
+    the artifact being promoted -- and an unverified assumption is exactly what
+    this gate exists to refuse."""
+    out = pipeline_view.promotion_gates(
+        _candidate("canary_passed"), _registry(canary_artifact=""))
+    assert out["allowed"] is False
+    assert "artifact_unchanged" in out["blocking"]
+
+
+def test_an_unbuilt_candidate_blocks_promotion():
+    out = pipeline_view.promotion_gates(
+        {"state": "draft", "artifact_sha256": ""}, _registry())
+    assert out["allowed"] is False
+    assert "artifact_exists" in out["blocking"]
+
+
+def test_the_block_reason_is_readable():
+    """A blocked promotion should read as a checklist, not a refusal code."""
+    out = pipeline_view.promotion_gates(_candidate("signed"), _registry())
+    assert out["reason"]
+    assert "Приёмка" in out["reason"] or "Canary" in out["reason"]
+    for gate in out["gates"]:
+        assert gate["label"] and not gate["label"].startswith("gate_")
+
+
+def test_artifact_comparison_ignores_case():
+    out = pipeline_view.promotion_gates(
+        _candidate("canary_passed", artifact=ARTIFACT.upper()), _registry(ARTIFACT))
+    assert out["allowed"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Cards.
+# --------------------------------------------------------------------------- #
+def test_the_development_card_carries_the_sync_state():
+    """A release cut from a checkout LOCAL is not running is the failure the
+    whole pipeline exists to prevent, so it belongs on the card."""
+    card = pipeline_view.development_card(
+        {"state": "stale", "running_version": "0.10.0-beta.20",
+         "running_commit_short": "aaaaaaaaaaaa", "head_commit_short": "bbbbbbbbbbbb",
+         "message": "перезапустите LOCAL", "dirty_count": 0},
+        {"state": "live", "schema_version": 0},
+    )
+    assert card["sync_state"] == "stale"
+    assert card["running_commit"] != card["head_commit"]
+    assert card["sync_message"]
+    assert card["online"] is True
+
+
+def test_a_never_seen_environment_is_not_reported_as_online():
+    card = pipeline_view.development_card({"state": "current"}, {"state": "never_seen"})
+    assert card["online"] is False
+
+
+def test_a_server_card_reports_what_the_environment_says():
+    card = pipeline_view.server_card(
+        runtime_env.CANARY,
+        {"state": "live", "app_version": "0.10.0-beta.26",
+         "artifact_sha256": ARTIFACT, "schema_version": 18, "readiness": "ready"},
+        {"state": "deployed", "updated_at_utc": "2026-08-18T00:00:00Z"},
+    )
+    assert card["version"] == "0.10.0-beta.26"
+    assert card["schema_version"] == 18
+    assert card["last_deploy_at_utc"]
+
+
+# --------------------------------------------------------------------------- #
+# Compare.
+# --------------------------------------------------------------------------- #
+def test_compare_flags_a_real_disagreement():
+    cards = [
+        pipeline_view.server_card(runtime_env.CANARY,
+                                  {"state": "live", "artifact_sha256": ARTIFACT}),
+        pipeline_view.server_card(runtime_env.PRODUCTION,
+                                  {"state": "live", "artifact_sha256": OTHER}),
+    ]
+    fields = {f["field"]: f for f in pipeline_view.compare(cards)["fields"]}
+    assert fields["artifact_sha256"]["differs"] is True
+
+
+def test_compare_reports_a_blank_as_missing_not_as_a_mismatch():
+    cards = [
+        pipeline_view.server_card(runtime_env.CANARY,
+                                  {"state": "live", "schema_version": 18}),
+        pipeline_view.server_card(runtime_env.PRODUCTION, {"state": "live"}),
+    ]
+    fields = {f["field"]: f for f in pipeline_view.compare(cards)["fields"]}
+    assert fields["schema_version"]["differs"] is False
+    assert runtime_env.PRODUCTION in fields["schema_version"]["missing"]
+
+
+def test_compare_ignores_environments_that_never_reported():
+    cards = [
+        pipeline_view.server_card(runtime_env.CANARY, {"state": "live", "app_version": "x"}),
+        pipeline_view.server_card(runtime_env.PRODUCTION, {"state": "never_seen"}),
+    ]
+    assert pipeline_view.compare(cards)["environments"] == [runtime_env.CANARY]
+
+
+# --------------------------------------------------------------------------- #
+# Development access.
+# --------------------------------------------------------------------------- #
+def test_development_opens_only_from_the_development_machine():
+    allowed = pipeline_view.development_access(True)
+    assert allowed["allowed"] is True
+    assert allowed["origin"].startswith("http://127.0.0.1")
+
+
+def test_a_remote_browser_is_refused_with_an_explanation():
+    """No proxy through Production. A convenience tunnel to a development box
+    outlives the convenience."""
+    refused = pipeline_view.development_access(False)
+    assert refused["allowed"] is False
+    assert not refused["origin"]
+    assert "development" in refused["reason"].lower()
+
+
+def test_the_only_origin_ever_offered_is_loopback():
+    """Whatever the caller is, the module never hands back a routable address:
+    the development server is not published outward under any condition."""
+    import ipaddress
+    import urllib.parse
+
+    for is_local in (True, False):
+        origin = pipeline_view.development_access(is_local)["origin"]
+        if not origin:
+            continue
+        host = urllib.parse.urlsplit(origin).hostname or ""
+        assert ipaddress.ip_address(host).is_loopback, origin

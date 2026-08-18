@@ -145,6 +145,7 @@ ADMIN_ROUTE_CAPABILITY = (
     ("/api/admin/environment-targets", "environment.switch"),
     ("/api/admin/environments", "environment.switch"),
     ("/api/admin/development-sync", "environment.switch"),
+    ("/api/admin/pipeline", "environment.switch"),
     ("/api/admin/releases", "releases.view"),
     ("/api/admin/ninjatrader", "operations.view"),
     ("/api/admin/operations", "operations.view"),
