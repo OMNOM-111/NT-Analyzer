@@ -18,6 +18,11 @@ from app.ai_lab import agent_router
 # configuration, so clear it for every test; tests that need it set it back
 # explicitly, which runs after this fixture.
 _WORKSTATION_ONLY_ENV = (
+    # The owner's real UUID lives in the local secret store. app/server.py
+    # applies that store at import time -- before any fixture runs -- so
+    # without scrubbing it here every test that seeds its own owner collides
+    # with the workstation's canonical value and ensure_owner raises.
+    "STRATFORGE_CANONICAL_OWNER_UUID",
     "STRATFORGE_RELEASE_DEPLOY_ADAPTER",
     "STRATFORGE_RELEASE_SSH_HOST",
     "STRATFORGE_RELEASE_SSH_USER",
