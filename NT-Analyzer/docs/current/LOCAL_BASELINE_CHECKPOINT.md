@@ -59,30 +59,53 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ
+## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ — UI «Окружения и релизы»
 
-1. Единый модуль «Окружения и релизы»: Environment Switcher + Release Center,
-   карточки Development/Canary/Production, pipeline-кнопки
-   `Создать кандидата → Canary → Acceptance → Promote`, гейты (нет Canary
-   acceptance / изменился artifact / не прошли миграции / CI не зелёный →
-   promote запрещён), стадии `CI → Build → Sign → Migrations → Canary →
-   Acceptance → Production`, Compare LOCAL↔CANARY↔PRODUCTION.
-   `Открыть Development` активна только на самой development-машине; удалённый
-   доступ fail-closed, localhost наружу не публикуется.
-2. Admin navigation consolidation.
-3. Удалить из Admin «Глобальные документы» и «Документы рабочих областей»;
-   единственный раздел «Документы» — в основном приложении.
-4. Monitoring объединить с «Пользователи и сессии».
-5. Subscriptions/Grants — только в Admin.
-6. Owner Journal → компактный timeline `time | actor | action | target |
-   environment | result`.
-7. Connector onboarding → «Подключить NinjaTrader / скачать / авторизовать»,
-   manual pairing только в Advanced.
-8. Operations/Diagnostics по capabilities окружения.
-9. Browser performance pass.
-10. Финальный E2E и единственный click-list.
+Backend готов и покрыт тестами (`app/pipeline_view.py`, `/api/admin/pipeline`,
+23 теста, PR #128). Осталась отрисовка и объединение двух модулей.
 
-Релизы только: `LOCAL → CI → PR → merge → immutable candidate → Canary →
-acceptance → SAME artifact Production`.
+1. Один admin-модуль вместо `environments` + `releases`; три карточки
+   Development / Canary / Production из `/api/admin/pipeline`.
+2. Pipeline-кнопки `Создать релиз-кандидат → Развернуть в Canary → Приёмка →
+   Продвинуть в Production`. Действия уже есть:
+   `API.http.adminReleaseCreate` и `adminReleaseAction(id, action)`.
+3. «Продвинуть» неактивна, пока `promotion.allowed === false`; рядом показывать
+   `promotion.gates` — каждый gate уже сформулирован как утверждение, которое
+   должно быть истинным.
+4. Полоса стадий из `stages`: `done` / `pending` / `failed`.
+5. `Открыть Development` активна только при `development_access.allowed`;
+   иначе показывать `development_access.reason`.
+6. Compare из `compare`: `differs` подсвечивать, `missing` показывать как
+   «не сообщено», а не как расхождение.
+7. Старые `renderEnvironmentSwitcherInto` / `renderReleaseCenterInto` убрать из
+   меню, маршруты старых id направить на новый модуль.
+
+### Что уже закрыто дополнительно
+
+**Data-root fail-safe (PR #128).** Сервер публикует корень, который реально
+обслуживает; tooling проверяет себя против публикации, а при нескольких живых
+store без публикации — отказывается работать, называя кандидатов. `mark_legacy`
+выводит брошенный store из выбора, не удаляя. `data/development` помечен legacy.
+
+**Backend pipeline (PR #128).** Главный gate: **Canary сам должен сообщать тот
+же artifact**, который продвигают — проверка против того, что окружение
+говорит о себе, а не против release-записи, согласной с самой собой. Молчащий
+Canary блокирует promote.
+
+**Owner identity (PR #126).** `ensure_owner` не создаёт второго владельца и не
+переписывает существующего молча: `OwnerIdentityConflict` (409).
+`STRATFORGE_CANONICAL_OWNER_UUID` — конфигурация в git-ignored secret store.
+
+## Дальше по программе
+
+Admin navigation consolidation → убрать из Admin «Глобальные документы» и
+«Документы рабочих областей» → Monitoring объединить с «Пользователи и сессии»
+→ Subscriptions/Grants только в Admin → Owner Journal как компактный timeline
+→ Connector onboarding (скачать → установить → авторизовать; manual pairing
+только в Advanced) → Operations/Diagnostics по capabilities окружения →
+browser performance pass → финальный E2E и единственный click-list.
+
+Релизы только: `LOCAL → mandatory CI → PR → merge → immutable candidate →
+Canary → acceptance → SAME artifact Production`.
 
 Четыре Google/Resend secrets не ротировать.
