@@ -61,6 +61,7 @@ if __package__ is None or __package__ == "":
     from app import environment_registry  # type: ignore[no-redef]
     from app import user_card  # type: ignore[no-redef]
     from app import development_sync  # type: ignore[no-redef]
+    from app import data_root_guard  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -153,6 +154,7 @@ else:
     from . import environment_registry
     from . import user_card
     from . import development_sync
+    from . import data_root_guard
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -9923,6 +9925,13 @@ def create_http_server(
             probes=server.readiness_probes,  # type: ignore[attr-defined]
             optional_components=server.readiness_optional_components,  # type: ignore[attr-defined]
         )
+
+    # Publish which data root this process is actually serving. Tooling checks
+    # this instead of re-deriving it, because a maintenance script that
+    # resolves a different directory reports confidently on a store nobody
+    # serves -- which is exactly how a whole account inventory came back
+    # fictional.
+    data_root_guard.publish_active_root(deployment.environment)
 
     server.environment_publisher = environment_registry.HeartbeatPublisher(  # type: ignore[attr-defined]
         readiness=_publisher_readiness,
