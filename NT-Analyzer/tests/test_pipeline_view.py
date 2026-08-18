@@ -234,3 +234,120 @@ def test_the_only_origin_ever_offered_is_loopback():
             continue
         host = urllib.parse.urlsplit(origin).hostname or ""
         assert ipaddress.ip_address(host).is_loopback, origin
+
+
+# --------------------------------------------------------------------------- #
+# assemble: the join between the release centre and the environment registry.
+# This is where the mistakes are. The release centre publishes its candidate
+# summaries under "releases"; reading any other key silently produces a view
+# that reports "no candidate" forever, and nothing else in the payload looks
+# wrong while it does.
+# --------------------------------------------------------------------------- #
+def test_the_candidate_is_read_from_the_key_the_release_centre_publishes():
+    from app import release_center
+
+    out = pipeline_view.assemble(
+        registry=_registry(),
+        releases={"releases": [{"candidate_id": "rc_1", "state": "canary_passed",
+                                "artifact_sha256": ARTIFACT}]},
+        sync={"state": "current"},
+    )
+    assert out["candidate"]["candidate_id"] == "rc_1"
+    # And that key is the one release_center actually produces, so a rename on
+    # either side fails here instead of in a browser.
+    assert "releases" in release_center.list_releases()
+
+
+def test_an_empty_release_centre_yields_a_view_that_still_renders():
+    out = pipeline_view.assemble(registry=None, releases=None, sync=None)
+    assert out["candidate"] == {}
+    assert out["promotion"]["allowed"] is False
+    assert [s["id"] for s in out["stages"]]
+    assert set(out["environments"]) == {"development", "canary", "production"}
+
+
+def test_assemble_carries_the_promotion_gates_of_the_active_candidate():
+    out = pipeline_view.assemble(
+        registry=_registry(canary_artifact=ARTIFACT),
+        releases={"releases": [{"candidate_id": "rc_1", "state": "canary_passed",
+                                "artifact_sha256": ARTIFACT}]},
+        sync={"state": "current"},
+    )
+    assert out["promotion"]["allowed"] is True
+
+
+def test_a_silent_canary_still_blocks_promotion_through_assemble():
+    """The gate that matters, checked end to end: Canary has not said what it
+    runs, so nothing confirms Production would receive the verified artifact."""
+    out = pipeline_view.assemble(
+        registry={"environments": []},
+        releases={"releases": [{"candidate_id": "rc_1", "state": "canary_passed",
+                                "artifact_sha256": ARTIFACT}]},
+        sync={"state": "current"},
+    )
+    assert out["promotion"]["allowed"] is False
+    assert "artifact_unchanged" in out["promotion"]["blocking"]
+    assert out["promotion"]["reason"]
+
+
+def test_deployment_timestamps_reach_the_environment_cards():
+    out = pipeline_view.assemble(
+        registry=_registry(),
+        releases={"releases": [{"candidate_id": "rc_1", "state": "canary_passed",
+                                "artifact_sha256": ARTIFACT}]},
+        sync={"state": "current"},
+        deployments={runtime_env.CANARY: {"state": "deployed",
+                                          "updated_at_utc": "2026-08-18T09:00:00Z"}},
+    )
+    assert out["environments"]["canary"]["last_deploy_at_utc"] == "2026-08-18T09:00:00Z"
+
+
+def test_the_history_is_bounded():
+    """Ten is a history; every candidate ever cut is a scroll bar."""
+    rows = [{"candidate_id": "rc_%d" % i, "state": "superseded"} for i in range(40)]
+    out = pipeline_view.assemble(registry=None, releases={"releases": rows}, sync=None)
+    assert len(out["candidates"]) == 10
+    assert out["candidate"]["candidate_id"] == "rc_0"
+
+
+def test_assemble_never_hands_a_remote_browser_a_development_origin():
+    out = pipeline_view.assemble(registry=None, releases=None, sync=None,
+                                 is_local_request=False)
+    assert out["development_access"]["allowed"] is False
+    assert not out["development_access"]["origin"]
+
+
+def test_the_adapter_status_travels_with_the_buttons_it_qualifies():
+    """A dry-run deploy and a real one must not look identical to whoever is
+    about to click Deploy."""
+    out = pipeline_view.assemble(
+        registry=None, sync=None,
+        releases={"releases": [], "adapter": {"real_available": False}},
+    )
+    assert out["adapter"] == {"real_available": False}
+
+
+# --------------------------------------------------------------------------- #
+# A finished release is not a blocked one.
+# --------------------------------------------------------------------------- #
+def test_a_live_production_release_is_reported_as_complete_not_blocked():
+    """Marking every finished release with a promotion warning is how a warning
+    stops meaning anything."""
+    out = pipeline_view.promotion_gates(_candidate("production_live"), _registry())
+    assert out["complete"] is True
+    assert out["allowed"] is False
+    assert out["blocking"] == []
+    assert not out["reason"]
+    assert out["note"]
+
+
+def test_a_rolled_back_candidate_is_not_promotable_however_the_gates_read():
+    out = pipeline_view.promotion_gates(_candidate("rolled_back"), _registry())
+    assert out["allowed"] is False
+    assert out["complete"] is True
+
+
+def test_a_pending_candidate_is_not_marked_complete():
+    out = pipeline_view.promotion_gates(_candidate("canary_passed"), _registry())
+    assert out["complete"] is False
+    assert out["allowed"] is True

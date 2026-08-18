@@ -4791,6 +4791,384 @@
     };
   }
 
+  // ---- Environments and releases (one module) -------------------------------
+  //
+  // The Environment Switcher knew what each environment ran; the Release Center
+  // knew how a candidate moves. Neither knew the other, so the owner had to
+  // hold the workflow in their head across two screens: which candidate is on
+  // Canary, and whether it is the same artifact Production would receive.
+  //
+  // This is both, fed by /api/admin/pipeline, which joins the environment
+  // registry and the release centre server-side rather than making the browser
+  // reconcile two payloads. The release engine is untouched: every button here
+  // calls the same release_center transitions the detail drawer calls.
+  const PIPE_PRESENCE = {
+    live: ['live', 'на связи'], stale: ['pending', 'молчит'],
+    offline: ['failed', 'офлайн'], never_seen: ['archived', 'не отчитывалась'],
+  };
+  const PIPE_SYNC = {
+    current: ['live', 'соответствует checkout'],
+    stale: ['failed', 'запущен НЕ тот код'],
+    dirty: ['pending', 'есть незакоммиченные правки'],
+    unknown: ['archived', 'состояние неизвестно'],
+    not_applicable: ['archived', 'релизный артефакт'],
+  };
+  const PIPE_STAGE_MARK = { done: '●', pending: '○', failed: '✕' };
+
+  // Seven stages, four buttons: each button drives the several engine
+  // transitions that make up one step an owner actually decides on. Legs are
+  // skipped when the candidate is already past them, so the same button works
+  // whether it is starting the step or resuming it.
+  const PIPE_SEQUENCE = {
+    'deploy-canary': [
+      { from: ['draft'], action: 'build', note: 'сборка артефакта' },
+      { from: ['built'], action: 'verify', note: 'проверка подписи' },
+      { from: ['signed', 'canary_failed'], action: 'deploy-canary', note: 'развёртывание Canary' },
+    ],
+    'acceptance': [
+      { from: ['canary_checking'], action: 'record-canary-check', note: 'приёмка Canary',
+        body: { name: 'acceptance', result: 'pass', final: true } },
+    ],
+    'promote-production': [
+      { from: ['canary_passed'], action: 'approve-production', note: 'одобрение Production' },
+      { from: ['approved_for_production', 'production_scheduled', 'production_failed'],
+        action: 'promote-production', note: 'промоушен Production' },
+    ],
+  };
+
+  function pipeBadge(map, key) {
+    const pair = map[String(key || '')] || ['archived', String(key || '—')];
+    return `<span class="badge ${pair[0]}">${esc(pair[1])}</span>`;
+  }
+
+  function pipeWhen(value) {
+    const text = String(value || '');
+    return text ? esc(text.replace('T', ' ').replace('Z', '')) : '—';
+  }
+
+  function pipeShort(value, size) {
+    const text = String(value == null ? '' : value);
+    if (!text || text === '0') return '—';
+    return esc(text.length > size ? text.slice(0, size) + '…' : text);
+  }
+
+  function pipeRows(pairs) {
+    return `<div class="admin-env-meta">${pairs.map(
+      p => `<div><span>${esc(p[0])}</span><strong>${p[1]}</strong></div>`).join('')}</div>`;
+  }
+
+  function pipeDevelopmentCard(card, access) {
+    // The sync state sits on the card rather than in a separate banner: a
+    // release cut from a checkout LOCAL is not actually running is exactly the
+    // failure this pipeline exists to prevent.
+    const off = card.sync_state === 'stale' || card.sync_state === 'dirty';
+    const open = !!(access && access.allowed);
+    return `<section class="cab-card pipe-card${off ? ' pipe-card-warn' : ''}">
+      <div class="pipe-card-head"><b>Development</b>
+        ${pipeBadge(PIPE_PRESENCE, card.presence)}${pipeBadge(PIPE_SYNC, card.sync_state)}</div>
+      ${off ? `<div class="admin-env-warnings"><div>⚠ ${esc(card.sync_message || '')}</div></div>` : ''}
+      ${pipeRows([
+        ['Версия', pipeShort(card.version, 24)],
+        ['Запущенный commit', `<span class="mono">${pipeShort(card.running_commit, 12)}</span>`],
+        ['Checkout HEAD', `<span class="mono">${pipeShort(card.head_commit, 12)}</span>`],
+        ['Ветка', pipeShort(card.head_branch, 20)],
+        ['Незакоммичено', esc(String(card.dirty_count || 0))],
+        ['Build', pipeShort(card.build_id, 22)],
+        ['Схема БД', pipeShort(card.schema_version, 8)],
+        ['Готовность', pipeShort(card.readiness, 14)],
+        ['Market data', pipeShort(card.market_data, 14)],
+        ['Connector', pipeShort(card.connector, 14)],
+        ['Активность', pipeWhen(card.last_seen_at_utc)],
+      ])}
+      ${open ? '' : `<div class="cab-sub">${esc((access && access.reason) || '')}</div>`}
+      <div class="flex gap-sm wrap pipe-actions">
+        ${open
+          ? '<button class="btn primary" id="pipe-open-dev">Открыть Development</button>'
+          : '<button class="btn ghost" disabled>Открыть Development</button>'}
+      </div>
+    </section>`;
+  }
+
+  function pipeServerCard(title, card) {
+    return `<section class="cab-card pipe-card">
+      <div class="pipe-card-head"><b>${esc(title)}</b>${pipeBadge(PIPE_PRESENCE, card.presence)}</div>
+      ${pipeRows([
+        ['Версия', pipeShort(card.version, 24)],
+        ['Commit', `<span class="mono">${pipeShort(card.commit, 12)}</span>`],
+        ['Артефакт', `<span class="mono">${pipeShort(card.artifact_sha256, 16)}</span>`],
+        ['Схема БД', pipeShort(card.schema_version, 8)],
+        ['Готовность', pipeShort(card.readiness, 14)],
+        ['Market data', pipeShort(card.market_data, 14)],
+        ['Connector', pipeShort(card.connector, 14)],
+        ['Последний деплой', pipeWhen(card.last_deploy_at_utc)],
+        ['Активность', pipeWhen(card.last_seen_at_utc)],
+      ])}
+    </section>`;
+  }
+
+  function pipeStagesHtml(stages) {
+    // failed is drawn as failed, never as "not yet reached". That distinction
+    // is the reason someone opened this page.
+    return `<div class="pipe-stages">${(stages || []).map(s => `
+      <div class="pipe-stage pipe-stage-${esc(s.state)}">
+        <span class="pipe-stage-dot">${PIPE_STAGE_MARK[s.state] || '○'}</span>
+        <span class="pipe-stage-label">${esc(s.label)}</span>
+      </div>`).join('<span class="pipe-arrow">→</span>')}</div>`;
+  }
+
+  function pipeGatesHtml(promotion) {
+    const gates = (promotion && promotion.gates) || [];
+    if (!gates.length) return '';
+    if (promotion.complete) {
+      return `<div class="cab-sub">${esc(promotion.note || 'Промоушен закрыт.')}</div>`;
+    }
+    return `<details class="card-details"${promotion.allowed ? '' : ' open'}>
+      <summary>${promotion.allowed
+        ? 'Условия промоушена в Production выполнены'
+        : 'Почему промоушен в Production заблокирован'}</summary>
+      <div class="pipe-gates">${gates.map(g => `
+        <div class="pipe-gate ${g.ok ? 'is-ok' : 'is-blocked'}">
+          <span>${g.ok ? '✓' : '✕'}</span><span>${esc(g.label)}</span>
+        </div>`).join('')}</div>
+    </details>`;
+  }
+
+  function pipeCompareHtml(compare) {
+    const envs = (compare && compare.environments) || [];
+    if (!envs.length) {
+      return `<section class="cab-card"><h4>Сравнение окружений</h4>
+        <div class="cab-sub">Ни одно окружение ещё не сообщило о себе.</div></section>`;
+    }
+    const head = envs.map(e => `<th>${esc(String(e).toUpperCase())}</th>`).join('');
+    const body = (compare.fields || []).map(f => {
+      const cells = envs.map(e => {
+        const missing = (f.missing || []).indexOf(e) >= 0;
+        const text = missing ? 'не сообщено' : String(f.values[e] == null ? '—' : f.values[e]);
+        const short = text.length > 18 ? text.slice(0, 14) + '…' : text;
+        return `<td class="mono${missing ? ' cab-sub' : ''}" title="${esc(text)}">${esc(short)}</td>`;
+      }).join('');
+      return `<tr class="${f.differs ? 'is-diff' : ''}">
+        <th scope="row">${esc(f.label)}${f.differs ? ' ⚠' : ''}</th>${cells}</tr>`;
+    }).join('');
+    return `<section class="cab-card"><h4>Сравнение окружений</h4>
+      <div class="table-scroll"><table class="admin-env-compare">
+        <thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+      <p class="cab-sub">«Не сообщено» — отсутствие данных, а не расхождение.</p></section>`;
+  }
+
+  function pipeCandidateHtml(doc) {
+    const candidate = doc.candidate || {};
+    const promotion = doc.promotion || {};
+    const id = candidate.candidate_id || '';
+    const blocked = !promotion.allowed;
+    const state = String(candidate.state || '');
+    // A step whose every leg is behind or ahead of the current state can do
+    // nothing. Leaving it clickable turns a state question into an error toast.
+    const runnable = step => (PIPE_SEQUENCE[step] || []).some(l => l.from.indexOf(state) >= 0);
+    const stepAttrs = (step, blockedReason) => {
+      const reason = blockedReason || (runnable(step) ? '' :
+        'Состояние «' + state + '» не допускает этот шаг');
+      return `data-pipe-step="${step}"${reason ? ' disabled' : ''} title="${esc(reason ||
+        'Выполнить шаг')}"`;
+    };
+    const canCreate = hasAdminCapability('releases.create');
+    const canCanary = hasAdminCapability('releases.deploy_canary');
+    const canPromote = hasAdminCapability('releases.promote_production');
+    const createBtn = canCreate
+      ? `<button class="btn ${id ? 'ghost' : 'primary'}" id="pipe-create-toggle">Создать релиз-кандидат</button>`
+      : '';
+    if (!id) {
+      return `<section class="cab-card"><h4>Релиз-кандидат</h4>
+        <div class="cab-sub">Активного кандидата нет. Кандидат создаётся только из чистого текущего commit.</div>
+        ${pipeStagesHtml(doc.stages)}
+        <div class="flex gap-sm wrap pipe-actions">${createBtn}</div>
+        <div id="pipe-create-form" hidden></div></section>`;
+    }
+    return `<section class="cab-card"><h4>Релиз-кандидат</h4>
+      <div class="cab-sub mono">${esc(id)} · v${esc(candidate.app_version || '')} ·
+        ${esc(candidate.release_channel || '')} · ${esc(candidate.state || '')}</div>
+      ${pipeStagesHtml(doc.stages)}
+      ${pipeGatesHtml(promotion)}
+      <div class="flex gap-sm wrap pipe-actions">
+        ${createBtn}
+        ${canCanary ? `<button class="btn" ${stepAttrs('deploy-canary')}>Развернуть в Canary</button>` : ''}
+        ${canCanary ? `<button class="btn" ${stepAttrs('acceptance')}>Приёмка</button>` : ''}
+        ${canPromote ? `<button class="btn ${blocked ? 'ghost' : 'primary'}"
+          ${stepAttrs('promote-production', blocked
+            ? (promotion.note || promotion.reason || 'Промоушен недоступен') : '')}
+          >Продвинуть в Production</button>` : ''}
+        <button class="btn sm ghost" data-release-open="${esc(id)}">Все действия</button>
+      </div>
+      ${blocked && !promotion.complete ? `<div class="admin-env-warnings">
+        <div>⚠ Промоушен заблокирован: ${esc(promotion.reason || '')}</div></div>` : ''}
+      <div class="cab-sub" id="pipe-step-msg"></div>
+      <div id="pipe-create-form" hidden></div></section>`;
+  }
+
+  function pipeNotificationsHtml(preview) {
+    const items = (preview && preview.previews) || [];
+    if (!items.length) return '';
+    return `<details class="card-details"><summary>Уведомления об обновлении (предпросмотр)</summary>
+      <div class="cab-sub">${esc(preview.note || '')}</div>
+      <div class="list">${items.map(p => `<div class="feat-row">
+        <span><strong>${esc(p.title)}</strong> — ${esc(p.message)}</span>
+        <span class="badge archived">${esc(p.kind)}</span></div>`).join('')}</div>
+      <div class="flex gap-sm wrap" style="margin-top:10px">
+        <button class="btn sm" data-pipe-banner="warn_5m">Баннер: через 5 минут</button>
+        <button class="btn sm" data-pipe-banner="warn_60s">Баннер: через 60 секунд</button>
+        <button class="btn sm" data-pipe-banner="deploy_successful">Баннер: обновление завершено</button>
+        <button class="btn sm ghost" data-pipe-banner="*">Проиграть последовательность</button>
+      </div></details>`;
+  }
+
+  function pipeHistoryHtml(candidates) {
+    const rows = candidates || [];
+    if (rows.length < 2) return '';
+    return `<details class="card-details"><summary>История кандидатов (${rows.length})</summary>
+      <div class="list">${rows.map(renderReleaseRow).join('')}</div></details>`;
+  }
+
+  async function pipeRunStep(candidateId, step, state) {
+    // Walk only the legs the candidate has not already passed. A failure names
+    // the transition that refused; "не удалось" alone would send the reader
+    // back to guessing which of three calls broke.
+    let current = String(state || '');
+    let ran = 0;
+    for (const leg of PIPE_SEQUENCE[step]) {
+      if (leg.from.indexOf(current) < 0) continue;
+      const payload = Object.assign({ idempotency_key: releaseKey() }, leg.body || {});
+      let out;
+      try {
+        out = await API.http.adminReleaseAction(candidateId, leg.action, payload);
+      } catch (e) {
+        throw new Error(leg.note + ': ' + ((e && e.code === 'step_up_required')
+          ? 'требуется подтверждение действия (step-up)'
+          : ((e && e.message) || String(e))));
+      }
+      // build and canary deploy report their own failure with HTTP 200; a body
+      // that says it did not work is a failure whatever the status line said.
+      if (out && out.ok === false) {
+        throw new Error(leg.note + ': ' + (out.failure_reason || out.state || 'не выполнено'));
+      }
+      current = String((out && out.state) || current);
+      ran += 1;
+    }
+    if (!ran) throw new Error('Состояние «' + (state || '—') + '» не допускает этот шаг.');
+    return current;
+  }
+
+  function pipeCreateForm(node, refresh) {
+    const form = qs('#pipe-create-form', node);
+    const toggle = qs('#pipe-create-toggle', node);
+    if (!form || !toggle) return;
+    toggle.onclick = () => {
+      form.hidden = !form.hidden;
+      if (form.hidden) { form.innerHTML = ''; return; }
+      form.innerHTML = `<div class="cab-card"><h4>Новый кандидат</h4>
+        <div class="cab-sub">Только чистый текущий commit. Грязное рабочее дерево сервер отклоняет.</div>
+        <label class="field"><span>Версия (semver)</span>
+          <input id="pipe-version" type="text" placeholder="0.10.0-beta.27"></label>
+        <label class="field"><span>Канал</span><select id="pipe-channel">
+          <option value="beta">beta</option><option value="dev">dev</option>
+          <option value="stable">stable</option></select></label>
+        <label class="field"><span>Commit SHA (пусто = текущий HEAD)</span>
+          <input id="pipe-commit" type="text" class="mono" placeholder="HEAD"></label>
+        <div class="flex gap-sm"><button class="btn primary" id="pipe-create">Создать</button></div>
+        <div class="cab-sub" id="pipe-create-msg"></div></div>`;
+      const create = qs('#pipe-create', form);
+      create.onclick = async () => {
+        const msg = qs('#pipe-create-msg', form);
+        create.disabled = true;
+        msg.textContent = 'Создаю…';
+        try {
+          await API.http.adminReleaseCreate({
+            app_version: (qs('#pipe-version', form).value || '').trim(),
+            release_channel: qs('#pipe-channel', form).value,
+            git_commit_sha: (qs('#pipe-commit', form).value || '').trim(),
+            idempotency_key: releaseKey(),
+          });
+          toast('Кандидат создан');
+          refresh();
+        } catch (e) {
+          msg.textContent = (e && e.message) || String(e);
+          create.disabled = false;
+        }
+      };
+    };
+  }
+
+  async function renderPipelineInto(node) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка окружений…</div>';
+    let doc;
+    try { doc = await API.http.adminPipeline(); }
+    catch (e) { return renderError(node, e, () => renderPipelineInto(node)); }
+
+    const envs = doc.environments || {};
+    const again = () => renderPipelineInto(node);
+    node.innerHTML = `
+      <div class="finance-note"><strong>Один путь:</strong> Development → релиз-кандидат →
+        Canary → приёмка → тот же артефакт в Production. Между Canary и Production
+        артефакт не пересобирается. ${releaseAdapterSummary(doc.adapter || {})}</div>
+      <div class="pipe-grid">
+        ${pipeDevelopmentCard(envs.development || {}, doc.development_access)}
+        ${pipeServerCard('Canary', envs.canary || {})}
+        ${pipeServerCard('Production', envs.production || {})}
+      </div>
+      ${pipeCandidateHtml(doc)}
+      ${pipeCompareHtml(doc.compare)}
+      ${pipeHistoryHtml(doc.candidates)}
+      ${pipeNotificationsHtml(doc.notification_preview)}
+      <div class="flex gap-sm wrap"><button class="btn ghost" id="pipe-refresh">Обновить</button></div>`;
+
+    qs('#pipe-refresh', node).onclick = again;
+    pipeCreateForm(node, again);
+
+    const openDev = qs('#pipe-open-dev', node);
+    if (openDev) openDev.onclick = () => {
+      // Only ever a loopback origin, and only in a new tab: the development
+      // server is never published outward and never proxied through here.
+      const origin = (doc.development_access || {}).origin || '';
+      if (origin) window.open(origin + '/ui/', '_blank', 'noopener,noreferrer');
+    };
+
+    qsa('[data-release-open]', node).forEach(
+      b => b.onclick = () => openReleaseDetail(b.dataset.releaseOpen));
+
+    const previews = ((doc.notification_preview || {}).previews) || [];
+    qsa('[data-pipe-banner]', node).forEach(b => b.onclick = () => {
+      const kind = b.dataset.pipeBanner;
+      const note = (doc.notification_preview || {}).note;
+      if (kind === '*') {
+        return showUpdateBannerPreview(
+          ['warn_5m', 'warn_60s', 'deploy_successful']
+            .map(k => previews.find(p => p.kind === k)).filter(Boolean), note, true);
+      }
+      showUpdateBannerPreview(previews.filter(p => p.kind === kind), note);
+    });
+
+    const msg = qs('#pipe-step-msg', node);
+    qsa('[data-pipe-step]', node).forEach(button => button.onclick = async () => {
+      const step = button.dataset.pipeStep;
+      const candidate = doc.candidate || {};
+      if (step === 'promote-production' && !window.confirm(
+        'Продвинуть в Production артефакт ' + String(candidate.artifact_sha256 || '').slice(0, 16) +
+        '…\nБудут выполнены одобрение и промоушен того же артефакта, который принял Canary.')) return;
+      const before = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Выполняю…';
+      if (msg) msg.textContent = '';
+      try {
+        const state = await pipeRunStep(candidate.candidate_id, step, candidate.state);
+        toast('Состояние: ' + state);
+        await again();
+      } catch (e) {
+        if (msg) msg.textContent = (e && e.message) || String(e);
+        button.disabled = false;
+        button.textContent = before;
+      }
+    });
+  }
+
   async function renderEnvironmentSwitcherInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка environments…</div>';
     try { renderEnvironmentTargets(node, await API.http.adminEnvironmentTargets()); }
@@ -4857,88 +5235,6 @@
       </div>
       <button class="btn sm ghost" data-release-open="${esc(r.candidate_id)}">Детали</button>
     </div>`;
-  }
-
-  async function renderReleaseCenterInto(node) {
-    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка релизов…</div>';
-    let data;
-    try { data = await API.http.adminReleases(); }
-    catch (e) { return renderError(node, e, () => renderReleaseCenterInto(node)); }
-    const adapter = data.adapter || {};
-    const rows = data.releases || [];
-    const canCreate = hasAdminCapability('releases.create');
-    const notif = data.notification_preview || {};
-    const previews = notif.previews || [];
-    const schedOpts = data.schedule_options || {};
-    const offsets = schedOpts.explicit_offsets || [];
-    const marketClose = schedOpts.market_close || {};
-    node.innerHTML = `
-      <div class="finance-note"><strong>Immutable promotion.</strong> Один и тот же артефакт проходит Canary и Production — без пересборки. ${releaseAdapterSummary(adapter)}</div>
-      <div class="flex gap-sm">
-        ${canCreate ? '<button class="btn primary" id="rc-new">Новый релиз-кандидат</button>' : ''}
-        <button class="btn ghost" id="rc-refresh">Обновить</button>
-      </div>
-      <div id="rc-new-form" hidden></div>
-      <div class="cab-card"><h4>Уведомления об обновлении (предпросмотр)</h4>
-        <div class="finance-note">${esc(notif.note || 'Предпросмотр текста уведомлений и верхнего баннера обновления. Реальная отправка недоступна без настроенной инфраструктуры Canary/Production.')}</div>
-        <div class="list">${previews.map(p => `<div class="feat-row"><span><strong>${esc(p.title)}</strong> — ${esc(p.message)}</span><span class="badge archived">${esc(p.kind)}</span></div>`).join('') || '<div class="empty-state">Нет предпросмотра.</div>'}</div>
-        <div class="section-title">Опции времени обновления</div>
-        <div class="flex gap-sm wrap">
-          ${offsets.map(o => `<span class="badge ${o === 'now' ? 'live' : 'trial'}">${esc(o === 'now' ? 'сейчас' : o)}</span>`).join('')}
-          <span class="badge ${marketClose.available ? 'live' : 'failed'}" title="${esc(marketClose.reason || '')}">после закрытия рынка: ${marketClose.available ? 'доступно' : 'недоступно'}</span>
-          <span class="badge archived">точное время: поддерживается</span>
-        </div>
-        <div class="flex gap-sm wrap" style="margin-top:10px">
-          <button class="btn" id="rc-banner-5m">Показать баннер: через 5 минут</button>
-          <button class="btn" id="rc-banner-60s">Показать баннер: через 60 секунд</button>
-          <button class="btn" id="rc-banner-done">Показать баннер: обновление завершено</button>
-          <button class="btn ghost" id="rc-banner-seq">Проиграть последовательность</button>
-        </div>
-      </div>
-      <div class="section-title">Релизы</div>
-      <div class="list" id="rc-list">${rows.map(renderReleaseRow).join('') || '<div class="empty-state">Кандидатов пока нет.</div>'}</div>`;
-    const byKind = k => previews.find(p => p.kind === k) || null;
-    const bind = (id, kind) => { const b = qs('#' + id, node); if (b) b.onclick = () => showUpdateBannerPreview([byKind(kind)].filter(Boolean), notif.note); };
-    bind('rc-banner-5m', 'warn_5m');
-    bind('rc-banner-60s', 'warn_60s');
-    bind('rc-banner-done', 'deploy_successful');
-    const seqBtn = qs('#rc-banner-seq', node);
-    if (seqBtn) seqBtn.onclick = () => showUpdateBannerPreview(
-      ['warn_5m', 'warn_60s', 'deploy_successful'].map(byKind).filter(Boolean), notif.note, true);
-    const refresh = qs('#rc-refresh', node);
-    if (refresh) refresh.onclick = () => renderReleaseCenterInto(node);
-    const newBtn = qs('#rc-new', node);
-    const form = qs('#rc-new-form', node);
-    if (newBtn && form) newBtn.onclick = () => {
-      form.hidden = !form.hidden;
-      if (form.hidden) { form.innerHTML = ''; return; }
-      form.innerHTML = `<div class="cab-card"><h4>Новый кандидат</h4>
-        <div class="cab-sub">Кандидат создаётся только из чистого выбранного commit. Грязное рабочее дерево отклоняется сервером.</div>
-        <label class="field"><span>Версия (semver)</span><input id="rc-version" type="text" placeholder="0.10.0-dev.1"></label>
-        <label class="field"><span>Канал</span><select id="rc-channel"><option value="dev">dev</option><option value="beta">beta</option><option value="stable">stable</option></select></label>
-        <label class="field"><span>Commit SHA (пусто = текущий HEAD)</span><input id="rc-commit" type="text" class="mono" placeholder="HEAD"></label>
-        <div class="flex gap-sm"><button class="btn primary" id="rc-create">Создать</button></div>
-        <div class="cab-sub" id="rc-create-msg"></div></div>`;
-      const create = qs('#rc-create', form);
-      if (create) create.onclick = async () => {
-        const msg = qs('#rc-create-msg', form);
-        create.disabled = true;
-        if (msg) msg.textContent = 'Создаю…';
-        try {
-          await API.http.adminReleaseCreate({
-            app_version: (qs('#rc-version', form).value || '').trim(),
-            release_channel: qs('#rc-channel', form).value,
-            git_commit_sha: (qs('#rc-commit', form).value || '').trim(),
-            idempotency_key: releaseKey(),
-          });
-          toast('Кандидат создан');
-          renderReleaseCenterInto(node);
-        } catch (e) { if (msg) msg.textContent = e.message || String(e); create.disabled = false; }
-      };
-    };
-    qsa('[data-release-open]', node).forEach(btn => {
-      btn.onclick = () => openReleaseDetail(btn.dataset.releaseOpen);
-    });
   }
 
   function releaseConfirm(action, detail) {
@@ -5342,8 +5638,11 @@
     if (moduleId === 'overview') { node.innerHTML = adminOverviewHtml(overview); return; }
     if (moduleId === 'users') { return CURRENT_AUTH && CURRENT_AUTH.is_owner ? renderUsersInto(node) : renderDelegatedUsersInto(node); }
     if (moduleId === 'operations') return renderAdminOperationsInto(node);
-    if (moduleId === 'environments') return renderEnvironmentSwitcherInto(node);
-    if (moduleId === 'releases') return renderReleaseCenterInto(node);
+    if (moduleId === 'pipeline') return renderPipelineInto(node);
+    // The two former modules are one now. Their ids stay routable so an
+    // existing deep link lands in the merged view rather than on nothing.
+    if (moduleId === 'environments') return renderPipelineInto(node);
+    if (moduleId === 'releases') return renderPipelineInto(node);
     if (moduleId === 'monitoring') return renderMonitoringInto(node);
     if (moduleId === 'requests') return renderRequestsInto(node);
     if (moduleId === 'docs') return renderAdminDocumentsInto(node);

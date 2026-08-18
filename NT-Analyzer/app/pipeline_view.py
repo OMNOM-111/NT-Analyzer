@@ -58,6 +58,16 @@ _FAILED = {
 }
 
 
+# States from which no further promotion is pending. Each carries the sentence
+# that should be shown instead of a list of unmet conditions.
+_TERMINAL = {
+    "production_live": "Кандидат в Production. Дальнейший промоушен не требуется.",
+    "rolled_back": "Кандидат откачен. Промоушен закрыт.",
+    "superseded": "Кандидат вытеснен более новым. Промоушен закрыт.",
+    "cancelled": "Кандидат отменён. Промоушен закрыт.",
+}
+
+
 def _stage_state(stage: str, candidate: Dict[str, Any]) -> str:
     state = str(candidate.get("state") or "")
     if state in _FAILED.get(stage, set()):
@@ -129,11 +139,18 @@ def promotion_gates(candidate: Dict[str, Any],
         },
     ]
     blocked = [g for g in gates if not g["ok"]]
+    # A candidate that has already finished its journey is not a promotion
+    # waiting on anything. Reporting it as blocked put a warning on every
+    # completed release and taught the reader to ignore the warning.
+    complete = state in _TERMINAL
     return {
         "gates": gates,
-        "allowed": not blocked,
-        "blocking": [g["id"] for g in blocked],
-        "reason": "" if not blocked else "; ".join(g["label"] for g in blocked),
+        "allowed": not blocked and not complete,
+        "complete": complete,
+        "blocking": [] if complete else [g["id"] for g in blocked],
+        "reason": ("" if complete or not blocked
+                   else "; ".join(g["label"] for g in blocked)),
+        "note": _TERMINAL.get(state, ""),
     }
 
 
@@ -240,4 +257,48 @@ def development_access(is_local_request: bool) -> Dict[str, Any]:
         "reason": ("Development доступен только с зарегистрированного "
                    "development-устройства. Локальный сервер намеренно не "
                    "публикуется наружу."),
+    }
+
+
+def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str, Any]],
+             sync: Optional[Dict[str, Any]], deployments: Optional[Dict[str, Any]] = None,
+             is_local_request: bool = False) -> Dict[str, Any]:
+    """The whole answer, from payloads the caller already fetched.
+
+    This lives here rather than in the request handler because the joining is
+    where the mistakes are: the release centre calls its candidate list
+    ``releases`` while everything downstream calls the same rows candidates,
+    and reading the wrong key produced an endpoint that cheerfully reported
+    "no candidate" forever. A pure function can be tested against the real
+    payload shapes; a branch inside a handler could not.
+    """
+    rows = {str(r.get("environment") or ""): r
+            for r in ((registry or {}).get("environments") or [])}
+    # The release centre publishes its candidate summaries under "releases".
+    candidates = (releases or {}).get("releases") or []
+    candidate = candidates[0] if candidates else {}
+    deploys = deployments or {}
+
+    development = development_card(sync or {}, rows.get(runtime_env.DEVELOPMENT))
+    canary = server_card(runtime_env.CANARY, rows.get(runtime_env.CANARY),
+                         deploys.get(runtime_env.CANARY))
+    production = server_card(runtime_env.PRODUCTION, rows.get(runtime_env.PRODUCTION),
+                             deploys.get(runtime_env.PRODUCTION))
+    return {
+        "ok": True,
+        "environments": {
+            "development": development,
+            "canary": canary,
+            "production": production,
+        },
+        "candidate": candidate,
+        "candidates": candidates[:10],
+        # Whether a deploy would be real or a rehearsal belongs next to the
+        # buttons that would run it, not on a separate screen.
+        "adapter": (releases or {}).get("adapter") or {},
+        "notification_preview": (releases or {}).get("notification_preview") or {},
+        "stages": stage_progress(candidate),
+        "promotion": promotion_gates(candidate, registry),
+        "compare": compare([development, canary, production]),
+        "development_access": development_access(is_local_request),
     }

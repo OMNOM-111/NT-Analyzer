@@ -22,7 +22,7 @@ Resolution order for a non-owner user's capability ``C``:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import subscriptions
 
@@ -160,6 +160,26 @@ ADMIN_ROUTE_CAPABILITY = (
     ("/api/catalog/refresh", "operations.execute"),
     ("/api/margins/refresh", "operations.execute"),
 )
+
+# A route can legitimately belong to two audiences. The merged environments
+# and releases view is read-only and is exactly that: an admin allowed to read
+# release state and an admin allowed to read environment state should each be
+# able to open it, while every action it offers is authorised again at the
+# action route. Listing the alternative here keeps the module gate and the
+# route gate agreeing instead of showing a panel that answers 403.
+ADMIN_ROUTE_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
+    "/api/admin/pipeline": ("releases.view",),
+}
+
+
+def admin_route_alternatives(path: str) -> Tuple[str, ...]:
+    """Capabilities that also authorise a path, beyond its primary one."""
+    p = str(path or "")
+    for route, caps in ADMIN_ROUTE_ALTERNATIVES.items():
+        if p == route or p.startswith(route + "/"):
+            return caps
+    return ()
+
 
 # Student UX: a separate virtual-prop terminal plus the common Community.
 # Governance documents are part of the professional command centre; showing
@@ -420,7 +440,9 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         admin_caps = context.get("admin_capabilities")
         if not isinstance(admin_caps, dict):
             admin_caps = resolve_admin_capabilities(user)
-        if not admin_caps.get(admin_cap):
+        alternatives = admin_route_alternatives(path)
+        if not admin_caps.get(admin_cap) and not any(
+                admin_caps.get(alt) for alt in alternatives):
             label = next(
                 (c.get("label") for c in ADMIN_CAPABILITIES if c.get("id") == admin_cap),
                 admin_cap,

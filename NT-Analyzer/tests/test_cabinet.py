@@ -323,7 +323,10 @@ def test_admin_panel_capabilities_gate_ui_data_and_server_routes(cabinet_store, 
 
         overview = _request(base, "/api/admin/overview", token=user_token)
         modules = {row["id"] for row in overview["modules"]}
-        assert {"overview", "users", "environments"} <= modules
+        # environment.switch alone opens the merged environments-and-releases
+        # module: reading what each environment runs is the half of it this
+        # delegated admin is entitled to, and its actions are gated separately.
+        assert {"overview", "users", "pipeline"} <= modules
         assert "operations" not in modules
         assert overview["security_contract"]["secrets_exposed"] is False
 
