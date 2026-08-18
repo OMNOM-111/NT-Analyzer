@@ -5,6 +5,7 @@ UI.ready(async function () {
   let pendingLawHighlight = null;
   let pendingAmendmentNo = null;
   let privileged = false; // owner/admin → видит журнал и dev/owner-разделы
+  let canWorkspace = false; // может управлять спецификациями рабочих областей
   let currentUserLabel = '';
   const collapsed = new Set(['dev', 'owner']); // внутренние разделы свёрнуты по умолчанию
 
@@ -439,7 +440,10 @@ UI.ready(async function () {
     privileged = !!(me && (me.is_owner || caps['docs.manage_global'] || caps['docs.manage_workspace']));
     const u = (me && me.user) || {};
     currentUserLabel = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.username || (me && me.is_owner ? owner : (me && me.role)) || 'текущий пользователь';
-  } catch (e) { privileged = false; }
+    canWorkspace = !!(me && (me.is_owner || caps['docs.manage_workspace']
+      || caps['strategy.spec.manage']));
+  } catch (e) { privileged = false; canWorkspace = false; }
+  wireDocumentScopes(canWorkspace);
   const ownerBanner = UI.qs('#owner-banner'); if (ownerBanner) ownerBanner.hidden = true;
   const histPanel = UI.qs('#hist-panel'); if (histPanel) histPanel.hidden = !privileged;
   const grid = UI.qs('.docs-grid'); if (grid) grid.classList.toggle('docs-privileged', privileged);
@@ -454,6 +458,156 @@ UI.ready(async function () {
       const g = UI.qs('.docs-grid'); if (g) g.classList.toggle('docs-journal-hidden', hp.hidden);
       journalToggle.textContent = hp.hidden ? 'Журнал и параметры' : 'Скрыть журнал';
     };
+  }
+
+
+  // ---- Workspace and strategy specifications --------------------------------
+  //
+  // The second scope of Documents. It used to be an Admin module, which put
+  // half of "the documents" behind an operator panel while the other half sat
+  // in the main menu; nobody could answer "where are the documents" without
+  // knowing which kind they meant. Same endpoints, same revision workflow --
+  // only the address changed.
+  const WS_STATUS = { draft: 'trial', review: 'pending', approved: 'pending',
+                      published: 'live', superseded: 'archived' };
+
+  function wsDocBadge(d) {
+    const status = d.published_revision ? 'published' : (d.latest_status || 'draft');
+    const label = d.published_revision ? 'v' + d.published_revision : status;
+    return `<span class="badge ${WS_STATUS[status] || 'trial'}">${UI.esc(label)}</span>`;
+  }
+
+  async function renderWorkspaceDocs() {
+    const node = UI.qs('#docs-workspace-body');
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документов…</div>';
+    let data;
+    try { data = await API.http.documentsList(''); }
+    catch (e) { UI.renderError(node, e, renderWorkspaceDocs); return; }
+    const list = data.documents || [];
+    node.innerHTML = `
+      <div class="finance-note">Спецификации рабочих областей и стратегий. Нужно право
+        <span class="mono">strategy.spec.manage</span> или <span class="mono">docs.manage_workspace</span>.
+        Видны только документы вашей рабочей области; governance-документы и safety-limits
+        отсюда изменить нельзя — они на вкладке «Governance и законы».</div>
+      <div id="ws-doc-detail"></div>
+      <div class="cab-card"><h4>Создать документ</h4>
+        <div class="grid cols-2">
+          <label class="field"><span>Область</span><select id="ws-doc-scope">
+            <option value="workspace">workspace</option>
+            <option value="strategy">strategy</option></select></label>
+          <label class="field"><span>Workspace ID</span><input id="ws-doc-ws" placeholder="ws_…"></label>
+          <label class="field"><span>Strategy ID (для strategy)</span>
+            <input id="ws-doc-strat" placeholder="необязательно"></label>
+          <label class="field"><span>Slug</span><input id="ws-doc-slug" placeholder="playbook"></label>
+          <label class="field" style="grid-column:1/-1"><span>Заголовок</span>
+            <input id="ws-doc-title" placeholder="Название документа"></label>
+        </div>
+        <div class="flex gap-sm" style="margin-top:8px">
+          <button class="btn primary" id="ws-doc-create">Создать черновик</button></div>
+        <div id="ws-doc-create-msg" class="sub"></div>
+      </div>
+      <div class="section-title">Документы</div>
+      <div class="list" id="ws-docs">${list.map(d => `<div class="row">
+        <div class="row-main">
+          <div class="row-title">${UI.esc(d.title || d.slug)} ${wsDocBadge(d)}</div>
+          <div class="row-sub mono">${UI.esc(d.scope_type)}${d.workspace_id
+            ? ' · ' + UI.esc(d.workspace_id) : ''} · ${UI.esc(d.slug)} · ревизий: ${d.revision_count || 0}</div>
+        </div>
+        <button class="btn sm ghost" data-ws-doc="${UI.esc(d.document_id)}">Открыть</button>
+      </div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>`;
+
+    UI.qs('#ws-doc-create').onclick = async function () {
+      const msg = UI.qs('#ws-doc-create-msg');
+      this.disabled = true;
+      msg.textContent = 'Создаю…';
+      try {
+        await API.http.documentCreate({
+          scope_type: UI.qs('#ws-doc-scope').value,
+          workspace_id: (UI.qs('#ws-doc-ws').value || '').trim(),
+          strategy_id: (UI.qs('#ws-doc-strat').value || '').trim(),
+          slug: (UI.qs('#ws-doc-slug').value || '').trim(),
+          title: (UI.qs('#ws-doc-title').value || '').trim(),
+        });
+        UI.toast('Документ создан');
+        renderWorkspaceDocs();
+      } catch (e) { msg.textContent = e.message || String(e); this.disabled = false; }
+    };
+    UI.qsa('[data-ws-doc]', node).forEach(b => b.onclick = () => openWorkspaceDoc(b.dataset.wsDoc));
+  }
+
+  async function openWorkspaceDoc(docId) {
+    const detail = UI.qs('#ws-doc-detail');
+    if (!detail) return;
+    detail.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    let data;
+    try { data = await API.http.documentGet(docId); }
+    catch (e) { detail.innerHTML = `<div class="empty-state">${UI.esc(e.message || String(e))}</div>`; return; }
+    const doc = data.document || {};
+    const revs = data.revisions || [];
+    // Only one revision may be in flight; offering "new revision" while a
+    // draft is open would silently create a second candidate history.
+    const openRev = revs.find(r => ['draft', 'review', 'approved'].includes(r.status));
+    const revAction = (r) => {
+      if (r.status === 'draft') return `<button class="btn sm ghost" data-rev-act="submit" data-rev-id="${UI.esc(r.revision_id)}">На review</button>`;
+      if (r.status === 'review') return `<button class="btn sm ghost" data-rev-act="approve" data-rev-id="${UI.esc(r.revision_id)}">Одобрить</button>`;
+      if (r.status === 'approved') return `<button class="btn sm primary" data-rev-act="publish" data-rev-id="${UI.esc(r.revision_id)}">Опубликовать</button>`;
+      return '';
+    };
+    detail.innerHTML = `<div class="cab-card"><h4>${UI.esc(doc.title || doc.slug)}</h4>
+      <div class="sub mono">${UI.esc(doc.scope_type)}${doc.workspace_id
+        ? ' · ' + UI.esc(doc.workspace_id) : ''} · ${UI.esc(doc.slug)}</div>
+      <div class="list" style="margin-top:8px">${revs.map(r => `<div class="row">
+        <div class="row-main">
+          <div class="row-title">Ревизия ${UI.esc(r.revision)}
+            <span class="badge ${WS_STATUS[r.status] || 'trial'}">${UI.esc(r.status)}</span></div>
+          <div class="row-sub">${UI.esc(r.created_at_utc || '')}${r.reason ? ' · ' + UI.esc(r.reason) : ''}${
+            r.reverted_from_revision ? ' · откат к r' + UI.esc(r.reverted_from_revision) : ''}</div>
+        </div><div class="flex gap-xs">${revAction(r)}</div></div>`).join('')
+        || '<div class="empty-state">Ревизий нет.</div>'}</div>
+      <div class="flex gap-sm wrap" style="margin-top:8px">
+        ${openRev ? '' : '<button class="btn" data-doc-newrev="1">Новая ревизия</button>'}
+        <button class="btn ghost" data-doc-revert="1">Откатить к ревизии…</button></div>
+      <div id="ws-doc-detail-msg" class="sub"></div></div>`;
+
+    const msg = UI.qs('#ws-doc-detail-msg');
+    const run = async (fn) => {
+      msg.textContent = 'Выполняю…';
+      try { await fn(); UI.toast('Готово'); await renderWorkspaceDocs(); openWorkspaceDoc(docId); }
+      catch (e) { msg.textContent = e.message || String(e); }
+    };
+    UI.qsa('[data-rev-act]', detail).forEach(b => b.onclick = () => run(
+      () => API.http.documentRevisionAction(b.dataset.revId, b.dataset.revAct, {})));
+    const newRev = UI.qs('[data-doc-newrev]', detail);
+    if (newRev) newRev.onclick = () => {
+      const text = (prompt('Текст новой ревизии:') || '').trim();
+      if (text) run(() => API.http.documentRevise(docId, { content: { body: text } }));
+    };
+    const revert = UI.qs('[data-doc-revert]', detail);
+    if (revert) revert.onclick = () => {
+      const to = parseInt(prompt('Номер ревизии, к которой откатить:') || '0', 10);
+      if (to) run(() => API.http.documentRevert(docId, { to_revision: to }));
+    };
+  }
+
+  function wireDocumentScopes(canWorkspace) {
+    const tabs = UI.qs('#docs-scopes');
+    const governance = UI.qs('#docs-governance');
+    const workspace = UI.qs('#docs-workspace');
+    // A tab that can only produce a permission error is worse than no tab: it
+    // reads as a fault rather than as a boundary.
+    if (!canWorkspace) { tabs.hidden = true; workspace.hidden = true; return; }
+    tabs.hidden = false;
+    let loaded = false;
+    UI.qsa('[data-docs-scope]', tabs).forEach(b => b.onclick = () => {
+      const scope = b.dataset.docsScope;
+      UI.qsa('[data-docs-scope]', tabs).forEach(x => x.classList.toggle('on', x === b));
+      governance.hidden = scope !== 'governance';
+      workspace.hidden = scope !== 'workspace';
+      // Loaded on first open rather than with the page: most visits never
+      // leave the governance scope, and the list costs a request.
+      if (scope === 'workspace' && !loaded) { loaded = true; renderWorkspaceDocs(); }
+    });
   }
 
   function renderRuntimeDefaults(rd) {

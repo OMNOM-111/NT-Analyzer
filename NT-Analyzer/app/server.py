@@ -361,45 +361,54 @@ def _is_impersonation_exit(path: str, context: Any) -> bool:
 
 
 _ADMIN_MODULES = (
+    # Fourteen entries across five groups meant the panel was a directory to be
+    # searched rather than a place to work. What merged, merged because the two
+    # halves only ever answered one question together; what left Admin left
+    # because it was never an operator tool.
     {"id": "overview", "label": "Обзор", "capability": "admin.view", "group": ""},
-    {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage", "group": "Доступ и пользователи"},
-    {"id": "connectors", "label": "Коннекторы и Telegram", "capability": "connectors.manage", "group": "Операции"},
-    {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view", "group": "Операции"},
-    # One entry. Environments and releases were never two jobs -- the owner
-    # always had to read both to answer a single question, which is why the
-    # promotion gates could not live in either of them alone.
-    # Seeing what an environment runs is the lower-privilege half of this
-    # module and the release actions are gated again inside it, so either
-    # capability opens it rather than the stricter one hiding the status from
-    # an admin who is allowed to read it.
+
+    # Monitoring folded in as a tab: who is online and which sessions exist are
+    # facts about exactly the people this list is about, and answering "is this
+    # account in use right now" should not require leaving the account.
+    {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage",
+     "group": "Доступ и пользователи"},
+    {"id": "requests", "label": "Запросы доступа", "capability": "admin.view",
+     "owner_only": True, "group": "Доступ и пользователи"},
+    {"id": "invites", "label": "Приглашения", "capability": "admin.view",
+     "owner_only": True, "group": "Доступ и пользователи"},
+    # Administrative subscriptions and grants live only here. The cabinet shows
+    # a member what they hold; deciding what someone else holds is an operator
+    # action and belongs on the operator's side of the boundary.
+    {"id": "subscriptions", "label": "Подписки и гранты", "capability": "admin.view",
+     "owner_only": True, "group": "Доступ и пользователи"},
+
+    {"id": "connectors", "label": "Коннекторы и Telegram", "capability": "connectors.manage",
+     "group": "Операции"},
+    {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view",
+     "group": "Операции"},
+
+    # Environments and releases were never two jobs -- the owner always had to
+    # read both to answer a single question, which is why the promotion gates
+    # could not live in either of them alone. Seeing what an environment runs
+    # is the lower-privilege half and the release actions are gated again
+    # inside, so either capability opens it rather than the stricter one hiding
+    # status from an admin entitled to read it.
     {"id": "pipeline", "label": "Окружения и релизы", "capability": "releases.view",
      "capability_any": ("releases.view", "environment.switch"), "group": "Релизы и окружения"},
-    # One Documents entry, not two. Global governance and workspace
-    # specifications are two scopes of the same thing, and splitting them into
-    # sibling menu items made the reader choose between them before knowing
-    # which one held the document they wanted. The section shows whichever
-    # scopes the caller may actually manage.
-    #
-    # admin.view rather than a documents capability: an operator who can open
-    # the panel may look at the section, and each scope inside it is gated on
-    # its own capability -- so someone with only one of the two sees only that
-    # one instead of an entry that opens onto a permission error.
-    {"id": "docs", "label": "Документы", "capability": "admin.view", "group": "Документы"},
-    {"id": "monitoring", "label": "Мониторинг пользователей", "capability": "users.manage", "owner_only": True, "group": "Владелец"},
-    {"id": "requests", "label": "Запросы доступа", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "subscriptions", "label": "Подписки и гранты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "invites", "label": "Приглашения", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "payment", "label": "Настройки оплаты", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "ai-ratings", "label": "Оценки ИИ", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
-    {"id": "journal", "label": "Журнал владельца", "capability": "admin.view", "owner_only": True, "group": "Владелец"},
+
+    {"id": "journal", "label": "Журнал владельца", "capability": "admin.view",
+     "owner_only": True, "group": "Владелец"},
+    {"id": "payment", "label": "Настройки оплаты", "capability": "admin.view",
+     "owner_only": True, "group": "Владелец"},
+    {"id": "ai-ratings", "label": "Оценки ИИ", "capability": "admin.view",
+     "owner_only": True, "group": "Владелец"},
     # QA impersonation drives virtual users and View-As personas. Those are
     # unsafe test hooks that exist only in Development, so the module is not
     # offered elsewhere -- on a server it could only ever render "unavailable",
     # which reads as Admin being crippled rather than as one dev-only tool
-    # being absent. Every other module here is gated by capability alone and is
-    # fully available to the owner on Canary and Production.
-    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view", "owner_only": True,
-     "development_only": True, "group": "Владелец"},
+    # being absent.
+    {"id": "staging", "label": "Разработка / QA", "capability": "admin.view",
+     "owner_only": True, "development_only": True, "group": "Владелец"},
 )
 
 
@@ -580,8 +589,56 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "partial": bool(stalled),
         "unavailable_sources": stalled,
         "probe_timeout_sec": _CONNECTOR_PROBE_TIMEOUT_SEC,
+        # Onboarding starts with getting the program, so the panel needs to know
+        # whether there is a signed package to offer. An empty download_url
+        # means there is not, and the reason travels with it -- a dead download
+        # button teaches the reader that the page lies.
+        "installer": connector_protocol.installer_status(),
         # Stated explicitly so the contract is visible to the client too.
         "secrets_exposed": False,
+    }
+
+
+def _backend_is_supervised() -> bool:
+    """Whether something outside this process owns restart ordering."""
+    return os.environ.get("NTA_BACKEND_SUPERVISED") == "1"
+
+
+def _operations_actions() -> Dict[str, Dict[str, Any]]:
+    """Which operations this environment actually permits, and why not.
+
+    Capability alone was the whole gate, so every environment offered the same
+    buttons and the reader could not tell a restart that a supervisor performs
+    from one this process improvises. The unsupervised restart relaunches
+    ``python -m app.server`` from the checkout, which on a server would replace
+    a released artifact with whatever happens to be on disk -- the exact class
+    of error the release pipeline exists to prevent.
+    """
+    development = runtime_env.is_development()
+    supervised = _backend_is_supervised()
+    restart_allowed = development or supervised
+    if restart_allowed:
+        restart_reason = ""
+    else:
+        restart_reason = (
+            "Перезапуск недоступен: процесс не под супервизором, а "
+            "самостоятельный respawn запустил бы код из checkout вместо "
+            "выпущенного артефакта."
+        )
+    return {
+        "restart": {
+            "allowed": restart_allowed,
+            "mode": "supervised" if supervised else ("respawn" if development else "blocked"),
+            "reason": restart_reason,
+        },
+        # AI Lab is a development workbench; unloading its memory on a server
+        # would be an action against something that is not running there.
+        "ai_unload": {
+            "allowed": development,
+            "reason": "" if development else "AI Lab запускается только в Development.",
+        },
+        "catalog_refresh": {"allowed": True, "reason": ""},
+        "margin_refresh": {"allowed": True, "reason": ""},
     }
 
 
@@ -2896,6 +2953,7 @@ class Handler(BaseHTTPRequestHandler):
             )
         except connector_protocol.ConnectorProtocolError as exc:
             payload["connector"] = {"ok": False, "code": exc.code}
+        payload["actions"] = _operations_actions()
         return payload
 
     def _cabinet_payload(self) -> Dict[str, Any]:
@@ -5475,6 +5533,7 @@ class Handler(BaseHTTPRequestHandler):
                 query=(qs.get("q") or [""])[0],
                 limit=int(raw_limit) if str(raw_limit).isdigit() else 200,
                 suspicious_only=(qs.get("suspicious") or [""])[0] in ("1", "true", "yes"),
+                period=(qs.get("period") or [""])[0],
             ))
             return
 
@@ -9681,7 +9740,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if is_server_restart:
-            self._json(HTTPStatus.OK, {"status": "restarting"})
+            # Enforced here as well as described in the payload: a client that
+            # ignores the descriptor must not be able to relaunch a server from
+            # a checkout.
+            restart = _operations_actions()["restart"]
+            if not restart["allowed"]:
+                self._err(HTTPStatus.CONFLICT, restart["reason"],
+                          code="restart_not_supervised")
+                return
+            self._json(HTTPStatus.OK, {"status": "restarting", "mode": restart["mode"]})
             t = threading.Timer(0.6, _do_restart_server)
             t.daemon = True
             t.start()

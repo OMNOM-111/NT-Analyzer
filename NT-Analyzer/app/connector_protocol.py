@@ -1913,6 +1913,26 @@ def list_installations(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any
     return {"ok": True, "workspace": workspace, "connections": rows}
 
 
+def installer_status() -> Dict[str, Any]:
+    """Whether there is a signed package to hand someone, and why not.
+
+    Onboarding begins with getting the program. An empty ``download_url`` is
+    the honest answer while the package waits on Authenticode and the immutable
+    release gate; the reason travels with it so the panel can say so instead of
+    offering a button that goes nowhere.
+    """
+    return {
+        "state": "blocked_release_gate",
+        "download_url": "",
+        "package_format": "verified_windows_zip",
+        "manifest_signature": "ECDSA_P256_SHA256",
+        "message": (
+            "Подписанный установщик ещё не опубликован: ожидает Authenticode и "
+            "immutable release gate. Локально собранная сборка проверена."
+        ),
+    }
+
+
 def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     listed = list_installations(user_id, workspace_id=workspace_id)
     return {
@@ -1930,16 +1950,7 @@ def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             "poll": "/api/connector/v1/commands/poll",
             "result": "/api/connector/v1/commands/result",
         },
-        "installer": {
-            "state": "blocked_release_gate",
-            "download_url": "",
-            "package_format": "verified_windows_zip",
-            "manifest_signature": "ECDSA_P256_SHA256",
-            "message": (
-                "Установщик реализован и проверен локально. Production download "
-                "будет опубликован после Authenticode и immutable release gate."
-            ),
-        },
+        "installer": installer_status(),
         "updater": {
             "state": "implemented_local_release_gate",
             "policy": "safe_restart",
