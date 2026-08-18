@@ -37,14 +37,6 @@ from pathlib import Path
 # silently override the tests that manage roots themselves -- which is exactly
 # what test_staging_isolation exists to check. Taking the fallback name gives
 # every other test isolation by default and still lets those tests win.
-#
-# Only the development root is claimed. Claiming the production one as well
-# looked more thorough and was worse: with NTA_DATA_ROOT set, the PRODUCTION
-# branch of _data_root_cached stops returning <project>/data, and thirty-two
-# tests that legitimately read the committed baselines under it began to fail.
-# The test below (test_data_root_isolation) checks what actually matters --
-# that a full run leaves <project>/data byte-for-byte unchanged -- rather than
-# assuming which variables achieve it.
 _TEST_DATA_ROOT = Path(tempfile.gettempdir()) / (
     "stratforge-tests-%d-%s" % (os.getpid(), uuid.uuid4().hex[:8])
 )
@@ -98,7 +90,12 @@ def _live_manifest() -> dict:
             stat = path.stat()
         except OSError:
             continue
-        manifest[path.as_posix()] = (stat.st_size, stat.st_mtime_ns)
+        # Keyed relative to the data directory. An absolute path is not
+        # comparable across machines, and on CI the checkout is nested under a
+        # directory of the same name three times over, which defeated an
+        # earlier attempt to strip a prefix by string search.
+        manifest[path.relative_to(_LIVE_DATA).as_posix()] = (
+            stat.st_size, stat.st_mtime_ns)
     return manifest
 
 
@@ -112,19 +109,23 @@ def pytest_sessionstart(session):  # noqa: ARG001
 # ones already understood -- a check that is always failing is a check nobody
 # reads. Shrinking this list is the remaining work; growing it is a regression.
 _KNOWN_LIVE_WRITERS = frozenset({
-    "data/audit/paypal-webhook.jsonl",
-    "data/audit/telegram-mini-app.jsonl",
-    "data/durable/nt_analyzer.sqlite3",
-    "data/durable/nt_analyzer.sqlite3-wal",
-    "data/durable/nt_analyzer.sqlite3-shm",
-    "data/integrations/telegram.remote-access.json",
-    "data/integrations/telegram.state.json",
-    "data/reports/report_numbers.json",
-    "data/runtime/market_data_failover_status.json",
-    "data/runtime/market_data_gap_recovery.jsonl",
-    "data/runtime/price_alerts.json",
-    "data/runtime/user-support.json",
-    "data/operations/vitek.json",
+    "audit/paypal-webhook.jsonl",
+    "audit/telegram-mini-app.jsonl",
+    "durable/nt_analyzer.sqlite3",
+    "durable/nt_analyzer.sqlite3-wal",
+    "durable/nt_analyzer.sqlite3-shm",
+    "integrations/telegram.remote-access.json",
+    "integrations/telegram.state.json",
+    "integrations/workspaces.dpapi",
+    "operations/in_app_notifications.json",
+    "operations/vitek.json",
+    "reports/report_numbers.json",
+    "runtime/market_data_failover_status.json",
+    "runtime/market_data_gap_recovery.jsonl",
+    "runtime/market_data_ipc_audit.jsonl",
+    "runtime/market_data_ipc_token.json",
+    "runtime/price_alerts.json",
+    "runtime/user-support.json",
 })
 
 
@@ -143,12 +144,8 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
         p for p in set(_LIVE_BEFORE) & set(after) if _LIVE_BEFORE[p] != after[p]
     }
     shutil.rmtree(_TEST_DATA_ROOT, ignore_errors=True)
-    marker = "/NT-Analyzer/"
-    unexpected = sorted(
-        path for path in changed
-        if (path.split(marker, 1)[-1] if marker in path else path)
-        not in _KNOWN_LIVE_WRITERS
-    )
+    unexpected = sorted(path for path in changed
+                        if path not in _KNOWN_LIVE_WRITERS)
     if unexpected:
         session.exitstatus = 1
         print("\n\nTHE SUITE WROTE LIVE DATA FILES THAT ARE NOT ACCOUNTED FOR:")
