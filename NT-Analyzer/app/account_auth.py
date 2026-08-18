@@ -1452,7 +1452,57 @@ def set_user_admin_permission(
     return list_users(owner_id)
 
 
+CANONICAL_OWNER_UUID_ENV = "STRATFORGE_CANONICAL_OWNER_UUID"
+
+
+class OwnerIdentityConflict(AccountAuthError):
+    """The configured owner disagrees with the owner already in the store.
+
+    Raised instead of quietly repairing, because both silent outcomes are
+    wrong: minting a second owner splits the account in two, and rewriting the
+    existing one destroys whichever identity was already there.
+    """
+
+
+def canonical_owner_uuid() -> str:
+    """The immutable UUID that defines the owner, if this deployment names one.
+
+    Deliberately configuration, not a constant: it is a real personal
+    identifier and belongs in a local secret store, never in the repository.
+    Empty means "this deployment has not been told", and the behaviour then
+    falls back to whichever owner already exists.
+    """
+    return auth_identity.normalize_user_uuid(
+        os.environ.get(CANONICAL_OWNER_UUID_ENV) or ""
+    )
+
+
+def _active_owner_rows(doc: Dict[str, Any]) -> list:
+    return [
+        u for u in (doc.get("users") or [])
+        if isinstance(u, dict) and u.get("is_owner") and u.get("status") == "active"
+    ]
+
+
 def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
+    """Make sure the configured owner exists, without ever inventing a second.
+
+    The owner is defined by an immutable UUID. A Telegram chat id, a Google
+    account or an e-mail are *identities of* that UUID, not the thing that
+    decides who the owner is. Treating a development convenience variable as
+    the definition is what produced a synthetic owner on LOCAL while the real
+    one lived in another store.
+
+    So this refuses loudly in the two cases it used to paper over:
+
+    * an owner already exists under a different account id -- creating one for
+      the configured chat id would give the deployment two owners;
+    * an owner exists whose UUID disagrees with the configured canonical UUID
+      -- rewriting it would destroy real identity state.
+
+    Both raise OwnerIdentityConflict with the values named, which is a problem
+    an operator can act on. Silently repairing was not.
+    """
     try:
         uid = int(owner_id or 0)
     except (TypeError, ValueError):
@@ -1462,9 +1512,34 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
     configured_owner = str(os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
     if not configured_owner or str(uid) != configured_owner:
         raise AccountAuthError("Owner identity не совпадает с настроенным личным чатом Telegram.", 403)
+    canonical = canonical_owner_uuid()
     with _LOCK:
         doc = _read_doc()
         existing = _user(doc, uid)
+        owners = _active_owner_rows(doc)
+
+        if existing is None and owners:
+            # The case that created the synthetic LOCAL owner. A configuration
+            # change must not mint a rival account.
+            raise OwnerIdentityConflict(
+                "Владелец уже существует под другим account id "
+                f"({', '.join(str(u.get('user_id')) for u in owners)}), "
+                f"а настроен {uid}. Второй владелец не создаётся. "
+                "Приведите NTA_TELEGRAM_CHAT_ID в соответствие или выполните "
+                "перенос владельца.",
+                409,
+            )
+
+        if existing is not None and canonical:
+            current_uuid = auth_identity.normalize_user_uuid(existing.get("user_uuid"))
+            if current_uuid and current_uuid != canonical:
+                raise OwnerIdentityConflict(
+                    f"UUID владельца в хранилище ({current_uuid}) не совпадает "
+                    f"с каноническим ({canonical}). Аккаунт не переписывается "
+                    "автоматически: это уничтожило бы существующие identities.",
+                    409,
+                )
+
         changed = False
         if existing is None:
             legacy = _remote_config()
@@ -1472,7 +1547,9 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
             existing = {
                 "user_id": uid,
                 "legacy_user_id": uid,
-                "user_uuid": auth_identity.new_user_uuid(),
+                # The canonical UUID when this deployment names one, so a fresh
+                # store comes up as the same owner rather than a new person.
+                "user_uuid": canonical or auth_identity.new_user_uuid(),
                 "telegram_user_id": uid,
                 "username": str(legacy_user.get("username") or ""),
                 "first_name": str(legacy_user.get("first_name") or ""),

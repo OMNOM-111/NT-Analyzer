@@ -1,105 +1,94 @@
-# LOCAL baseline — checkpoint
+# LOCAL baseline — checkpoint (исправлено)
 
-Дата: `2026-08-18` UTC. Продолжать **с раздела «СЛЕДУЮЩЕЕ ДЕЙСТВИЕ»**.
-Диагностика уже выполнена, повторять её не нужно.
+Дата: `2026-08-18` UTC. Продолжать с раздела **«СЛЕДУЮЩЕЕ ДЕЙСТВИЕ»**.
 
-## Состояние
+> **Предыдущая версия этого документа была неверна.** Инвентаризация читала
+> **не тот** store. Ошибочные факты (owner `2c347848…`, Telegram `999`, четыре
+> `preview_*` персоны) относятся к устаревшему `data/development/`, который
+> сервер не использует. Ниже — состояние живого LOCAL.
 
-| | |
-| --- | --- |
-| main | `4349a9b8` |
-| Canary / Production | `0.10.0-beta.26`, artifact `AC4465F0091AFA85…`, schema **18**, parity EXACT |
-| LOCAL runtime | `0.10.0-beta.26`, commit `3353e3836306` — **синхронизирован** (был beta.20) |
-| Merged в этой сессии | PR #124 — `development_sync` + `/api/admin/development-sync` |
-| Destructive LOCAL cleanup | **НЕ выполнялся** |
+## Ловушка, из-за которой это произошло
 
-Backup LOCAL сделан до любых изменений:
+`start.ps1` экспортирует `STRATFORGE_DEVELOPMENT_DATA_ROOT = <project>/data`.
+Ad-hoc python без этой переменной резолвит `<project>/data/development` —
+другой каталог, другой `accounts.dpapi`, другие пользователи. Файл в
+`data/development/` последний раз писался 3 августа и является брошенным.
 
-```
-BACKUPS/local-owner-cleanup-20260818T003403Z/   (integrations + audit)
-```
+**Любая проверка LOCAL обязана экспортировать те же переменные, что и
+`start.ps1`, либо спрашивать запущенный сервер.** Симптом подмены: owner без
+username, или пользователи, которых нет в `/api/auth/users`.
 
-## Главная находка: в LOCAL три разных owner identity
+## Живое состояние LOCAL (data root `<project>/data`)
 
-Это не «неправильный UUID», а рассогласование между хранилищами.
+| user_id | uuid | owner | status | username |
+| --- | --- | --- | --- | --- |
+| `1647145559` | `6b0738c8-efca-4285-9100-905e34633d56` | **да** | active | `dimon_check` |
+| `424242` | `643f4ab5-536c-4122-86e5-4d702a9f2043` | **да** | active | — |
+| `1279070095` | `058b2049-539b-493a-8689-4ba5d1d4d70b` | нет | active | `ARTUR_CA` |
+| `9446350708` | `b3b05ac8-edf5-4fb3-8fe6-3c7c3c6b6ebf` | нет | active | `virtual_…` |
+| `9375041115` | `27280107-76f3-4068-a75a-ccc8049f84fd` | нет | active | `virtual_…` |
+| `9102530131` | `f31b961e-822c-4991-b7b3-dadcb7fc4f71` | нет | blocked | `virtual_…` |
+| `9810142813` | `f221a114-42c0-4b98-902a-ec3dfc990b12` | нет | active | `virtual_…` |
 
-| хранилище | uuid | legacy id | откуда |
-| --- | --- | --- | --- |
-| auth document | `2c347848-1eff-4493-a5d8-880ece389c1d` | `999` | создан `ensure_owner` из `NTA_TELEGRAM_CHAT_ID=999` в `start.ps1` |
-| workspaces store | `6b0738c8-efca-4285-9100-905e34633d56` | `1647145559` | остался от работы с **настоящим** Telegram владельца |
-| canonical (Canary/Production) | `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f` | `1647145559` | эталон |
+Коллекции: `auth_identities` 11, `sessions` 10, `trusted_devices` 3,
+`identity_history` 0, `physical_devices` 0.
 
-`1647145559` в workspaces совпадает с реальным Telegram id владельца и с
-Production. То есть LOCAL когда-то использовался с настоящим аккаунтом, а
-позже auth-store был пересоздан dev-владельцем `999`.
+Идентичности: у реального владельца — `telegram 1647145559`; у `424242` и
+`ARTUR_CA` — свои telegram; у четырёх `virtual_*` — по паре
+`google test-google-*` + `test virtual-*`, то есть очевидные фикстуры.
 
-### Что в auth document реально есть у owner `2c347848`
+### Что это меняет
 
-- identities: **только** `telegram` = `999` (это dev chat id, не реальная личность);
-- Google — нет, verified email — нет, phone — нет;
-- `identity_history` — **пусто**;
-- 1 session, 1 trusted device;
-- `physical_devices`, `device_pairings`, `security_challenges` — пусто;
-- connector installations в LOCAL — **0**.
+1. **В LOCAL два owner-аккаунта** — `1647145559` и `424242`. Это прямое
+   доказательство того, что старый `ensure_owner` действительно создавал
+   второго владельца.
+2. **Реальный владелец согласован между хранилищами.** Его UUID `6b0738c8…`
+   совпадает с `owner_user_uuid` в workspace store. Расхождения auth↔workspaces
+   нет; разошёлся только LOCAL с canonical.
+3. **`NTA_TELEGRAM_CHAT_ID` живёт в `data/integrations/secrets.local.json`**
+   (git-ignored) и уже указывает на настоящий id. `999` был артефактом
+   брошенного store. Менять его не требуется.
+4. У владельца **есть** legitimate state: настоящая Telegram identity, имя,
+   сессии, устройства, workspace. Его нужно сохранить.
 
-Итого **6 строк** ссылаются на owner в auth document (1 user + 1 identity +
-1 session + 1 device, плюс legacy-совпадения).
+## Что уже сделано в этой сессии
 
-Поэтому «сохранить легитимные Telegram/Google/email/phone/history» в LOCAL
-нечего: там нет ничего настоящего, кроме workspace.
+- **PR #124** — `development_sync` + `/api/admin/development-sync`.
+- **Не смержено, в рабочем дереве:** `ensure_owner` больше не создаёт второго
+  владельца и не переписывает существующего молча. Введены
+  `STRATFORGE_CANONICAL_OWNER_UUID` (конфигурация, не константа) и
+  `OwnerIdentityConflict` (409, с указанием конфликтующих значений).
+  8 тестов в `tests/test_owner_identity_boot.py`, полный прогон 1733 passed.
 
-### preview-персоны
+## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ
 
-`9600000000000001–04` (`preview_ordinary`, `preview_owner_training`,
-`preview_personal_nt`, `preview_developer`) — по 2 ссылающиеся строки каждая
-(user + identity). **Ни один модуль их не создаёт** — это осевшие записи от
-прошлых импersonation-тестов, безопасны к удалению после re-key.
+1. Смержить hardening `ensure_owner` (CI → PR → merge).
+2. Re-key владельца `6b0738c8…` → `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`
+   в auth document **и** workspace store. Оба сейчас держат `6b0738c8…`,
+   поэтому это одна согласованная замена, а не сведе́ние расхождения.
+   Telegram `1647145559`, имя, сессии, устройства, workspace — сохранить.
+3. Удалить после dependency-проверки: `424242` (второй owner), `ARTUR_CA`,
+   четыре `virtual_*`. Итог — `users = 1`.
+4. Прописать `STRATFORGE_CANONICAL_OWNER_UUID` в
+   `data/integrations/secrets.local.json` (git-ignored), чтобы пустой store
+   поднимался как тот же владелец.
+5. Перезапустить LOCAL и доказать: `users = 1`, UUID canonical, второй owner не
+   восстановлен, login/Cabinet/Admin/User Card/workspaces работают,
+   `development_sync` = `current`.
 
-## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ — атомарная реконсиляция LOCAL
+Все проверки — с переменными `start.ps1` либо через запущенный сервер.
 
-Цель: `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f` / legacy `1647145559` —
-единственный owner в LOCAL, workspace сохранён, история не потеряна.
+Backup: `BACKUPS/local-owner-cleanup-20260818T003403Z` (сделан до изменений;
+содержит копию `data/development`, то есть брошенного store — **перед записью
+в живой store сделать новый backup `data/integrations`**).
 
-Порядок (одна атомарная операция на каждое хранилище, с проверкой после):
+## Дальше по программе
 
-1. **Сначала `NTA_TELEGRAM_CHAT_ID`.** В `start.ps1` он равен `999`, и
-   `ensure_owner` (`account_auth.py:1462`, `:1510`, `:1622`) пересоздаёт/чинит
-   owner по нему при каждом старте. Если не поменять на `1647145559`, любой
-   re-key будет откачен назад при следующем запуске LOCAL. **Это первопричина,
-   а не косметика.**
-2. Auth document: `2c347848…` → `eb9d8e32…`, legacy `999` → `1647145559`
-   во всех полях (`user_uuid`, `legacy_user_id`, `user_id`, `owner_id`,
-   `actor_user_uuid`, …) — 6 строк.
-3. Workspaces store: `6b0738c8…` → `eb9d8e32…` (legacy `1647145559` уже верный),
-   поля `owner_user_uuid` и `user_uuid` в memberships.
-   **Внимание:** этот store читается только процессом сервера — ad-hoc python
-   падает с `WorkspaceError` (DPAPI). Делать через запущенный сервер или
-   в его окружении.
-4. Удалить preview-персоны и их identities.
-5. Доказать: `human users = 1`, owner uuid = canonical, orphan-ссылок нет,
-   identities уникальны, sessions/devices принадлежат owner, LOCAL DB
-   изолирована от Canary/Production.
-6. Перезапустить LOCAL и убедиться, что `ensure_owner` **не** создал второго
-   владельца.
+Единый модуль «Окружения и релизы», Admin navigation, Documents cleanup,
+Users & Sessions + Monitoring, Subscriptions placement, Owner Journal,
+Connector onboarding, Operations/Diagnostics, browser performance, финальный E2E.
 
-Решение по Telegram `999`: не переносить его на canonical UUID как
-подтверждённую личность. После смены `NTA_TELEGRAM_CHAT_ID` владелец входит в
-LOCAL своим настоящим Telegram, и identity создаётся честно.
+Релизы только: `LOCAL → CI → PR → merge → immutable candidate → Canary →
+acceptance → SAME artifact Production`.
 
-## Дальше по программе (не начато)
-
-Единый модуль «Окружения и релизы» (Environment Switcher + Release Center с
-кнопками pipeline и гейтами), Admin navigation consolidation, удаление двух
-Documents-разделов из Admin, слияние Monitoring с Users & Sessions,
-Subscriptions только в Admin, Owner Journal как компактный timeline,
-Operations по capabilities окружения, Connector onboarding
-(скачать → установить → авторизовать, manual pairing только в Advanced),
-performance-проход по браузеру, финальный E2E.
-
-## Правило релизов
-
-`LOCAL development → mandatory CI → PR → merge → immutable candidate → Canary
-→ acceptance → SAME artifact Production`. Чинить Canary отдельно от LOCAL
-нельзя.
-
-Четыре Google/Resend secrets не ротировать до полного технического PASS.
+Четыре Google/Resend secrets не ротировать.
