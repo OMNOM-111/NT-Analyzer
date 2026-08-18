@@ -114,6 +114,12 @@
 # than by filename.
 /NT-Analyzer/data/secrets/
 
+# Data-root markers. The active-root marker names a machine's own path and
+# pid; the legacy marker records a local decision to retire an abandoned store.
+# Both are runtime state for this machine, never shared configuration.
+**/.stratforge-active-root.json
+**/.stratforge-legacy-root.json
+
 # Explicit audit/runtime artifacts called out before first public push.
 /NT-Analyzer/data/ops/audit_log.jsonl
 /NT-Analyzer/data/audit/
