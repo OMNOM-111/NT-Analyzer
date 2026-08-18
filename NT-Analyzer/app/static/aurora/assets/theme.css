@@ -1391,15 +1391,32 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 .sf-notice-wrap {
   position: fixed; top: 14px; right: 18px; left: auto; z-index: 92;
   display: flex; flex-direction: column; gap: 8px;
-  width: min(380px, calc(100vw - 28px));
-  max-height: min(42vh, 360px);
+  width: min(320px, calc(100vw - 28px));
+  max-height: min(42vh, 300px);
   padding: 0;
   pointer-events: none;
-  overflow: visible;
+  /* Bounded for real. With overflow visible the stack grew past its own
+     max-height and ran down the page, covering whatever was behind it. */
+  overflow: hidden;
   transform: none;
   opacity: 0;
-  transition: opacity .35s cubic-bezier(.22, 1, .36, 1);
+  transition: opacity .35s cubic-bezier(.22, 1, .36, 1),
+              right .28s cubic-bezier(.22, 1, .36, 1);
 }
+/* A drawer owns the right-hand side, and notices were landing on top of the
+   controls the reader opened it to use -- at z-index 92 over the drawer's 75,
+   so they won rather than lost. They now step past the drawer's left edge.
+   The width comes from --drawer-w, measured when the panel opens or is
+   resized: a drawer can be normal, wide, full or dragged to an arbitrary
+   width, and a guessed offset lands on top of the panel in every case the
+   guess did not cover. */
+body.has-drawer .sf-notice-wrap {
+  right: calc(var(--drawer-w, 0px) + 18px);
+}
+/* Not enough room left beside the panel. Yielding is right: the bell keeps
+   every notice, so nothing is lost -- whereas an offset wide enough to clear
+   the panel would push the stack off-screen and lose it silently. */
+body.notices-cramped .sf-notice-wrap { display: none; }
 .sf-notice-wrap:has(.sf-notice:not(.leaving)) {
   opacity: 1;
 }
@@ -1503,9 +1520,12 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
 .sf-notice-close:hover { background: var(--bg-3); color: var(--tx); transform: scale(1.04); }
 .sf-notice-close svg { width: 14px; height: 14px; }
 @media (max-width: 760px) {
-  .sf-notice-wrap { top: 10px; right: 10px; left: 10px; width: auto; max-height: 38vh; }
+  .sf-notice-wrap { top: 10px; right: 10px; left: 10px; width: auto; max-height: 30vh; }
+  body.has-drawer .sf-notice-wrap { right: 10px; }
   .sf-notice { padding: 12px 12px 10px; border-radius: 14px; }
-  .sf-notice-body { -webkit-line-clamp: 3; }
+  .sf-notice-body { -webkit-line-clamp: 2; }
+  /* Two at most on a phone: a third card is most of the screen. */
+  .sf-notice + .sf-notice + .sf-notice { display: none; }
 }
 
 /* Topbar notification bell + inbox drawer */

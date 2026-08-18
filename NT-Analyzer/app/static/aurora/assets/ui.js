@@ -6292,6 +6292,9 @@
   function wireNoticeInteractionFade() {
     if (NOTICE.interactWired) return;
     NOTICE.interactWired = true;
+    // A drawer sized in vw changes width with the window, and so does the room
+    // left beside it.
+    window.addEventListener('resize', syncNoticeOffset);
     let pending = null;
     const onInteract = (e) => {
       if (NOTICE.fading) return;
@@ -6352,6 +6355,22 @@
     }
     await refreshInAppNotices({ silent: true });
   }
+  // How many banners may be on screen at once, and how long an ordinary one
+  // stays. Nothing bounded the stack before, and only user interaction cleared
+  // it, so a quiet session accumulated cards until they covered the right-hand
+  // side of the page -- including the panel the reader was working in.
+  const NOTICE_MAX_VISIBLE = 3;
+  const NOTICE_AUTO_DISMISS_MS = 7000;
+
+  function trimNoticeStack() {
+    // Oldest first: the stack is prepended, so the tail is the stale end. They
+    // stay unread in the bell, so trimming loses nothing but the interruption.
+    const cards = qsa('.sf-notice:not(.leaving)');
+    for (const node of cards.slice(NOTICE_MAX_VISIBLE)) {
+      dismissNoticeDom(String(node.dataset.nid || ''));
+    }
+  }
+
   function renderNotice(item) {
     const id = String(item.id || '');
     if (!id || NOTICE.shown.has(id) || qs(`.sf-notice[data-nid="${id}"]`)) return;
@@ -6375,7 +6394,9 @@
       </span>
       <span class="sf-notice-title">${esc(item.title || 'Уведомление')}</span>
       ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
-      <span class="sf-notice-hint">Открыть · через несколько секунд скроется само</span>
+      <span class="sf-notice-hint">${urgent
+        ? 'Открыть · останется до вашего решения'
+        : 'Открыть · скроется само'}</span>
     </button>`);
     card.addEventListener('click', (e) => {
       if (e.target.closest('[data-notice-close]')) {
@@ -6388,6 +6409,25 @@
     });
     wrap.prepend(card);
     requestAnimationFrame(() => card.classList.add('in'));
+    trimNoticeStack();
+    // An ordinary notice retires on its own; one that needs a decision stays
+    // until someone makes it. Auto-dismissing those would be the interface
+    // deciding on the reader's behalf that nothing was needed.
+    if (!urgent) {
+      NOTICE.timers.set(id, setTimeout(() => dismissNoticeDom(id), NOTICE_AUTO_DISMISS_MS));
+    }
+    // Hovering a card is a reader in the middle of it; the timer restarts when
+    // they leave rather than pulling the text out from under them.
+    if (!urgent) {
+      card.addEventListener('mouseenter', () => {
+        const timer = NOTICE.timers.get(id);
+        if (timer) { clearTimeout(timer); NOTICE.timers.delete(id); }
+      });
+      card.addEventListener('mouseleave', () => {
+        if (NOTICE.timers.has(id) || !card.parentNode) return;
+        NOTICE.timers.set(id, setTimeout(() => dismissNoticeDom(id), NOTICE_AUTO_DISMISS_MS));
+      });
+    }
   }
   function noticeTimeLabel(iso) {
     if (!iso) return '';
@@ -6567,14 +6607,35 @@
     d.classList.remove('wide', 'full', 'custom');
     qs('.drawer-h', d).innerHTML = `<div class="drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
     qs('.drawer-b', d).innerHTML = bodyHtml;
-    requestAnimationFrame(() => { back.classList.add('open'); d.classList.add('open'); });
+    requestAnimationFrame(() => {
+      back.classList.add('open');
+      d.classList.add('open');
+      // After the class lands, so the measurement sees the real width.
+      syncNoticeOffset();
+    });
     return d;
+  }
+
+  // The drawer owns the right-hand side, which is where notices land. Its width
+  // is not a constant -- normal, wide, full, or dragged anywhere in between --
+  // so the offset is measured rather than assumed. A guessed offset puts the
+  // stack back on top of the panel in every case the guess did not cover.
+  function syncNoticeOffset() {
+    const open = qs('.drawer.open');
+    const width = open ? Math.round(open.getBoundingClientRect().width) : 0;
+    document.body.style.setProperty('--drawer-w', width + 'px');
+    document.body.classList.toggle('has-drawer', !!open);
+    // Below this there is no room beside the panel. Yield the space: the bell
+    // still holds every notice, so nothing is lost by not drawing the banner.
+    const room = window.innerWidth - width;
+    document.body.classList.toggle('notices-cramped', !!open && room < 360);
   }
   function setDrawerSize(drawerNode, size) {
     drawerNode.style.width = '';
     drawerNode.classList.remove('wide', 'full', 'custom');
     if (size === 'wide') drawerNode.classList.add('wide');
     if (size === 'full') drawerNode.classList.add('full');
+    syncNoticeOffset();
   }
   function wireDrawerResize(drawerNode) {
     const handle = qs('.drawer-resize', drawerNode);
@@ -6589,6 +6650,7 @@
         drawerNode.classList.remove('wide', 'full');
         drawerNode.classList.add('custom');
         drawerNode.style.width = width + 'px';
+        syncNoticeOffset();
       };
       const finish = () => {
         handle.removeEventListener('pointermove', move);
@@ -6600,7 +6662,11 @@
       handle.addEventListener('pointercancel', finish);
     });
   }
-  function closeDrawer() { const back = qs('.drawer-back'); if (back) { back.classList.remove('open'); back._d.classList.remove('open'); } }
+  function closeDrawer() {
+    const back = qs('.drawer-back');
+    if (back) { back.classList.remove('open'); back._d.classList.remove('open'); }
+    syncNoticeOffset();
+  }
 
   // table sorting — safe to call repeatedly (clones headers to drop stale listeners)
   function sortable(table, rows, render) {
