@@ -4919,7 +4919,10 @@
   // whether it is starting the step or resuming it.
   const PIPE_SEQUENCE = {
     'deploy-canary': [
-      { from: ['draft'], action: 'build', note: 'сборка артефакта' },
+      // build_failed is retryable: the engine allows it, and a build that died
+      // on a transient remote error would otherwise strand the candidate with
+      // no way forward in this module at all.
+      { from: ['draft', 'build_failed'], action: 'build', note: 'сборка артефакта' },
       { from: ['built'], action: 'verify', note: 'проверка подписи' },
       { from: ['signed', 'canary_failed'], action: 'deploy-canary', note: 'развёртывание Canary' },
     ],

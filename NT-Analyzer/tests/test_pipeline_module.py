@@ -86,6 +86,15 @@ def test_every_release_call_carries_an_idempotency_key():
         assert "idempotency_key" in body, body.splitlines()[0]
 
 
+def test_a_failed_build_can_be_retried_from_the_module():
+    """release_center allows build from build_failed. If the sequence table does
+    not, a build that died on a transient remote error strands the candidate
+    with no way forward here at all."""
+    block = UI[UI.index("const PIPE_SEQUENCE"):UI.index("function pipeBadge")]
+    build_leg = block[block.index("action: 'build'") - 200:block.index("action: 'build'")]
+    assert "build_failed" in build_leg
+
+
 def test_promotion_runs_approval_before_promotion():
     """canary_passed is not promotable on its own; the engine requires an
     active approval first, so the button that says Promote must do both."""
