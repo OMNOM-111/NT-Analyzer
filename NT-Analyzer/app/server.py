@@ -153,6 +153,7 @@ else:
     from . import account_auth
     from . import security_devices
     from . import environment_registry
+    from . import release_control
     from . import user_card
     from . import development_sync
     from . import data_root_guard
@@ -3606,6 +3607,75 @@ class Handler(BaseHTTPRequestHandler):
         except security_devices.SecurityDeviceError as exc:
             self._err(exc.status, str(exc), code=exc.code)
 
+    def _release_control_post(self) -> None:
+        """Rule on a promotion asked for by another environment.
+
+        The requester holds the release ledger; this server holds the
+        environment registry. Only the registry can answer whether Canary is
+        alive right now and running the exact artifact being promoted, and only
+        an environment whose registry is authoritative may answer at all -- a
+        development box replying here would be quoting itself back to itself.
+
+        Authentication is the same shared-key, timestamp-in-signature, single-
+        use-nonce channel the heartbeats use, and rejections collapse to one
+        generic 401 for the same reason they do there.
+        """
+        if not self._check_json_content_type():
+            return
+        raw = self._read_raw_body()
+        if raw is None:
+            return
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+        except Exception:
+            self._err(HTTPStatus.BAD_REQUEST, "invalid json", code="invalid_body")
+            return
+
+        try:
+            environment_registry.verify_publisher(
+                body=raw,
+                timestamp=self.headers.get(environment_registry.TIMESTAMP_HEADER),
+                signature=self.headers.get(environment_registry.SIGNATURE_HEADER),
+                claimed_environment=body.get("requested_by_environment"),
+                nonce=body.get("nonce"),
+            )
+        except environment_registry.EnvironmentRegistryError as exc:
+            if exc.status == HTTPStatus.UNAUTHORIZED:
+                observability.event(
+                    "release_control", "request_rejected", severity="warning",
+                    payload={"reason": exc.code,
+                             "claimed": str(body.get("requested_by_environment") or "")[:32]},
+                )
+                self._err(HTTPStatus.UNAUTHORIZED, "Не авторизовано.",
+                          code="release_control_unauthorized")
+            else:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        # Authenticated, but this server may still be the wrong one to ask.
+        # Saying so plainly beats answering from a registry that knows nothing.
+        if not release_control.authoritative():
+            self._err(HTTPStatus.CONFLICT,
+                      "Этот сервер не является authoritative для реестра окружений.",
+                      code="release_control_not_authoritative")
+            return
+
+        try:
+            decision = release_control.decide(body)
+        except environment_registry.EnvironmentRegistryError as exc:
+            # A registry this server cannot read is a refusal, never a pass.
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        observability.event(
+            "release_control", "decision", severity="info",
+            payload={"allowed": bool(decision.get("allowed")),
+                     "candidate_id": str(decision.get("candidate_id") or "")[:48],
+                     "blocking": decision.get("blocking") or []},
+        )
+        self._json(HTTPStatus.OK, decision)
+
     def _environment_heartbeat_post(self) -> None:
         """Accept one environment's self-reported runtime identity.
 
@@ -4024,6 +4094,25 @@ class Handler(BaseHTTPRequestHandler):
         elif action == "promote-production":
             if not self._require_release_capability(context, "releases.promote_production"):
                 return
+            # A disabled button is a courtesy, not a control. When this process
+            # cannot see Canary, the authoritative server has to say yes before
+            # anything is promoted -- and it is asked here, at the moment of the
+            # act, rather than trusted from whatever the page last rendered.
+            if not release_control.authoritative():
+                try:
+                    ledger = release_center.get_release(candidate_id).get("summary") or {}
+                except release_center.ReleaseCenterError as exc:
+                    self._err(exc.status, str(exc), code=exc.code)
+                    return
+                decision = release_control.request_decision(
+                    release_control.claim_for(ledger, ci_green=True))
+                if not decision.get("allowed"):
+                    self._err(
+                        HTTPStatus.CONFLICT,
+                        str(decision.get("reason")
+                            or "Сервер не подтвердил промоушен."),
+                        code=str(decision.get("code") or "promotion_not_authorised"))
+                    return
             self._json(HTTPStatus.OK, release_center.promote_production(
                 actor=actor, candidate_id=candidate_id, idempotency_key=idem,
                 step_up_challenge_id=challenge))
@@ -4807,6 +4896,16 @@ class Handler(BaseHTTPRequestHandler):
                 except release_center.ReleaseCenterError:
                     deployments = {}
 
+            # On a server the registry here is the real one. On LOCAL it holds
+            # only LOCAL's own row, so the Canary gates cannot be answered from
+            # it -- the authoritative server is asked instead, and its decision
+            # is what the promotion gate reflects. No answer means no promotion.
+            authoritative = release_control.authoritative()
+            control = None
+            if not authoritative and rows and str(rows[0].get("state") or "") == "canary_passed":
+                control = release_control.request_decision(
+                    release_control.claim_for(rows[0], ci_green=True))
+
             tunnel_ip, forwarded_ip = self._request_ips()
             self._json(HTTPStatus.OK, pipeline_view.assemble(
                 registry=registry,
@@ -4814,6 +4913,8 @@ class Handler(BaseHTTPRequestHandler):
                 sync=development_sync.status(),
                 deployments=deployments,
                 is_local_request=self._is_loopback_ip(forwarded_ip or tunnel_ip),
+                control=control,
+                registry_is_authoritative=authoritative,
             ))
             return
 
@@ -8313,6 +8414,13 @@ class Handler(BaseHTTPRequestHandler):
         # itself immediately below.
         if path == environment_registry.HEARTBEAT_PATH:
             self._environment_heartbeat_post()
+            return
+
+        # Same authenticated channel as the heartbeat, and like it this sits
+        # before the session gate: the caller is a server process, not a browser
+        # with a cookie.
+        if path == release_control.CONTROL_PATH:
+            self._release_control_post()
             return
 
         if not self._authorize_api(path):

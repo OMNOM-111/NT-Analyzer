@@ -5023,6 +5023,14 @@
     if (promotion.complete) {
       return `<div class="cab-sub">${esc(promotion.note || 'Промоушен закрыт.')}</div>`;
     }
+    // Who ruled matters as much as the ruling. On LOCAL the Canary gates are
+    // decided by the authoritative server, and "nobody could be asked" is a
+    // different problem from "the server said no".
+    const authority = promotion.decided_by
+      ? `<div class="cab-sub">Решение принимает сервер: ${esc(promotion.decided_by)}</div>`
+      : (promotion.control_available === false
+        ? `<div class="admin-env-warnings"><div>⚠ Control plane недоступен — промоушен закрыт до ответа сервера.</div></div>`
+        : '');
     return `<details class="card-details"${promotion.allowed ? '' : ' open'}>
       <summary>${promotion.allowed
         ? 'Условия промоушена в Production выполнены'
@@ -5031,6 +5039,7 @@
         <div class="pipe-gate ${g.ok ? 'is-ok' : 'is-blocked'}">
           <span>${g.ok ? '✓' : '✕'}</span><span>${esc(g.label)}</span>
         </div>`).join('')}</div>
+      ${authority}
     </details>`;
   }
 

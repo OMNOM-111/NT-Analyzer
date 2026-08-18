@@ -91,12 +91,21 @@ def stage_progress(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def promotion_gates(candidate: Dict[str, Any],
-                    registry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                    registry: Optional[Dict[str, Any]] = None,
+                    control: Optional[Dict[str, Any]] = None,
+                    registry_is_authoritative: bool = True) -> Dict[str, Any]:
     """Why Production promotion is or is not allowed, in plain terms.
 
     Each gate is phrased as the thing that must be true, so a blocked promotion
     reads as a checklist rather than as a refusal. The artifact gates matter
     most: Production must receive exactly what Canary accepted, never a rebuild.
+
+    Where the answer comes from depends on who is asking. On a server the
+    registry is the real one and these gates are decided here. On LOCAL it is
+    not -- ``snapshot()`` returns only LOCAL's own row -- so the gates about
+    Canary come from ``control``: a decision made by the authoritative server
+    and passed in. LOCAL never rules on Canary from its own snapshot, and a
+    missing decision is a refusal rather than an omission.
     """
     state = str(candidate.get("state") or "")
     artifact = str(candidate.get("artifact_sha256") or "")
@@ -138,6 +147,38 @@ def promotion_gates(candidate: Dict[str, Any],
                   and canary_reported.lower() == artifact.lower(),
         },
     ]
+
+    if not registry_is_authoritative:
+        # This process cannot see Canary, so it must not answer for it. The
+        # server's decision replaces the two gates that depend on the registry;
+        # everything the release ledger knows is still checked here.
+        decision = control or {}
+        allowed = bool(decision.get("allowed"))
+        available = bool(decision.get("available"))
+        reason = str(decision.get("reason") or "")
+        gates = [g for g in gates
+                 if g["id"] not in {"canary_deployed", "artifact_unchanged"}]
+        gates.append({
+            "id": "server_authorised",
+            "label": ("Сервер подтвердил промоушен" if allowed
+                      else (reason or "Сервер не подтвердил промоушен")),
+            "ok": allowed,
+        })
+        blocked = [g for g in gates if not g["ok"]]
+        complete = state in _TERMINAL
+        return {
+            "gates": gates,
+            "allowed": not blocked and not complete,
+            "complete": complete,
+            "blocking": [] if complete else [g["id"] for g in blocked],
+            "reason": ("" if complete or not blocked
+                       else "; ".join(g["label"] for g in blocked)),
+            "note": _TERMINAL.get(state, ""),
+            # Said out loud so the UI can distinguish "the server said no" from
+            # "nobody could be asked", which are different problems.
+            "decided_by": str(decision.get("decided_by") or ""),
+            "control_available": available,
+        }
     blocked = [g for g in gates if not g["ok"]]
     # A candidate that has already finished its journey is not a promotion
     # waiting on anything. Reporting it as blocked put a warning on every
@@ -151,6 +192,8 @@ def promotion_gates(candidate: Dict[str, Any],
         "reason": ("" if complete or not blocked
                    else "; ".join(g["label"] for g in blocked)),
         "note": _TERMINAL.get(state, ""),
+        "decided_by": runtime_env.deployment_environment(),
+        "control_available": True,
     }
 
 
@@ -262,7 +305,9 @@ def development_access(is_local_request: bool) -> Dict[str, Any]:
 
 def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str, Any]],
              sync: Optional[Dict[str, Any]], deployments: Optional[Dict[str, Any]] = None,
-             is_local_request: bool = False) -> Dict[str, Any]:
+             is_local_request: bool = False,
+             control: Optional[Dict[str, Any]] = None,
+             registry_is_authoritative: bool = True) -> Dict[str, Any]:
     """The whole answer, from payloads the caller already fetched.
 
     This lives here rather than in the request handler because the joining is
@@ -298,7 +343,9 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
         "adapter": (releases or {}).get("adapter") or {},
         "notification_preview": (releases or {}).get("notification_preview") or {},
         "stages": stage_progress(candidate),
-        "promotion": promotion_gates(candidate, registry),
+        "promotion": promotion_gates(
+            candidate, registry, control=control,
+            registry_is_authoritative=registry_is_authoritative),
         "compare": compare([development, canary, production]),
         "development_access": development_access(is_local_request),
     }
