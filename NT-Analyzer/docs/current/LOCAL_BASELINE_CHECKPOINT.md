@@ -1,92 +1,86 @@
-# LOCAL baseline — checkpoint (исправлено)
+# LOCAL baseline — ЗАКРЫТО
 
-Дата: `2026-08-18` UTC. Продолжать с раздела **«СЛЕДУЮЩЕЕ ДЕЙСТВИЕ»**.
+Дата: `2026-08-18` UTC. LOCAL приведён к canonical baseline и доказан после
+перезапуска. Продолжать с раздела **«СЛЕДУЮЩЕЕ ДЕЙСТВИЕ»**.
 
-> **Предыдущая версия этого документа была неверна.** Инвентаризация читала
-> **не тот** store. Ошибочные факты (owner `2c347848…`, Telegram `999`, четыре
-> `preview_*` персоны) относятся к устаревшему `data/development/`, который
-> сервер не использует. Ниже — состояние живого LOCAL.
-
-## Ловушка, из-за которой это произошло
+## Ловушка, которую нужно помнить
 
 `start.ps1` экспортирует `STRATFORGE_DEVELOPMENT_DATA_ROOT = <project>/data`.
-Ad-hoc python без этой переменной резолвит `<project>/data/development` —
-другой каталог, другой `accounts.dpapi`, другие пользователи. Файл в
-`data/development/` последний раз писался 3 августа и является брошенным.
+Ad-hoc python без неё резолвит `<project>/data/development` — **другой**
+`accounts.dpapi`, другие пользователи, брошенный с 3 августа. Первая версия
+инвентаризации в этой программе прочитала именно его и выдала полностью ложную
+картину (owner `2c347848…`, Telegram `999`, четыре `preview_*`).
 
-**Любая проверка LOCAL обязана экспортировать те же переменные, что и
-`start.ps1`, либо спрашивать запущенный сервер.** Симптом подмены: owner без
-username, или пользователи, которых нет в `/api/auth/users`.
+**Любая проверка LOCAL обязана экспортировать переменные `start.ps1` либо
+спрашивать запущенный сервер.** Признак подмены: owner без username или
+пользователи, которых нет в `/api/auth/users`.
 
-## Живое состояние LOCAL (data root `<project>/data`)
+## Что было в живом LOCAL до очистки
 
-| user_id | uuid | owner | status | username |
-| --- | --- | --- | --- | --- |
-| `1647145559` | `6b0738c8-efca-4285-9100-905e34633d56` | **да** | active | `dimon_check` |
-| `424242` | `643f4ab5-536c-4122-86e5-4d702a9f2043` | **да** | active | — |
-| `1279070095` | `058b2049-539b-493a-8689-4ba5d1d4d70b` | нет | active | `ARTUR_CA` |
-| `9446350708` | `b3b05ac8-edf5-4fb3-8fe6-3c7c3c6b6ebf` | нет | active | `virtual_…` |
-| `9375041115` | `27280107-76f3-4068-a75a-ccc8049f84fd` | нет | active | `virtual_…` |
-| `9102530131` | `f31b961e-822c-4991-b7b3-dadcb7fc4f71` | нет | blocked | `virtual_…` |
-| `9810142813` | `f221a114-42c0-4b98-902a-ec3dfc990b12` | нет | active | `virtual_…` |
+7 аккаунтов, из них **два owner**: настоящий `1647145559` `dimon_check`
+(uuid `6b0738c8…`) и синтетический `424242` (uuid `643f4ab5…`), плюс
+`ARTUR_CA` и четыре `virtual_*` с фикстурными `google`/`test` identities.
+Два owner-аккаунта — прямое доказательство того, что прежний `ensure_owner`
+действительно создавал второго владельца.
 
-Коллекции: `auth_identities` 11, `sessions` 10, `trusted_devices` 3,
-`identity_history` 0, `physical_devices` 0.
+## Что сделано
 
-Идентичности: у реального владельца — `telegram 1647145559`; у `424242` и
-`ARTUR_CA` — свои telegram; у четырёх `virtual_*` — по паре
-`google test-google-*` + `test virtual-*`, то есть очевидные фикстуры.
+**Root cause (PR #126).** Владельца определяет неизменяемый UUID; Telegram,
+Google, email — это identities этого UUID. `ensure_owner` больше не создаёт
+второго владельца и не переписывает существующего молча: оба случая поднимают
+`OwnerIdentityConflict` (409) с указанием конфликтующих значений.
+`STRATFORGE_CANONICAL_OWNER_UUID` — конфигурация, не константа; тест
+запрещает попадание реального UUID в исходники. 8 регрессионных тестов.
 
-### Что это меняет
+**Реконсиляция.** Backup живого store: `BACKUPS/local-live-store-20260818T060254Z`.
+Сервер остановлен на время записи. Owner `6b0738c8…` → `eb9d8e32…`:
+13 ссылок в auth document, workspace `ws_owner_training_c1fe3f2f8a52`
+перевёден на canonical. Удалены 6 аккаунтов и 11 зависимых строк, затем
+подчищены осиротевшие строки: 1 `trusted_device`, 2 workspace, 7 memberships,
+принадлежавшие аккаунтам, которых уже нет.
 
-1. **В LOCAL два owner-аккаунта** — `1647145559` и `424242`. Это прямое
-   доказательство того, что старый `ensure_owner` действительно создавал
-   второго владельца.
-2. **Реальный владелец согласован между хранилищами.** Его UUID `6b0738c8…`
-   совпадает с `owner_user_uuid` в workspace store. Расхождения auth↔workspaces
-   нет; разошёлся только LOCAL с canonical.
-3. **`NTA_TELEGRAM_CHAT_ID` живёт в `data/integrations/secrets.local.json`**
-   (git-ignored) и уже указывает на настоящий id. `999` был артефактом
-   брошенного store. Менять его не требуется.
-4. У владельца **есть** legitimate state: настоящая Telegram identity, имя,
-   сессии, устройства, workspace. Его нужно сохранить.
+**Канонический UUID** записан в `data/integrations/secrets.local.json`
+(git-ignored, проверено `git check-ignore`), поэтому пустой store поднимется
+как тот же владелец, а не как новый человек.
 
-## Что уже сделано в этой сессии
+## Доказательство после перезапуска
 
-- **PR #124** — `development_sync` + `/api/admin/development-sync`.
-- **Не смержено, в рабочем дереве:** `ensure_owner` больше не создаёт второго
-  владельца и не переписывает существующего молча. Введены
-  `STRATFORGE_CANONICAL_OWNER_UUID` (конфигурация, не константа) и
-  `OwnerIdentityConflict` (409, с указанием конфликтующих значений).
-  8 тестов в `tests/test_owner_identity_boot.py`, полный прогон 1733 passed.
+```
+users = 1            id=1647145559 dimon_check owner=True active
+owner uuid           eb9d8e32-8db0-d590-9b35-ef1bd07ec61f
+telegram identity    1647145559 (настоящая, сохранена)
+orphan references    none (auth и workspaces)
+identities unique    yes
+второй owner         не восстановлен ensure_owner
+```
+
+Поверхности после рестарта: `/api/auth/me`, `/api/account/card`
+(uuid canonical, 1 identity, 2 unbound client), `/api/workspaces` (1),
+`/api/account/security` (2 device), `/api/admin/development-sync` = `current`
+(running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
 ## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ
 
-1. Смержить hardening `ensure_owner` (CI → PR → merge).
-2. Re-key владельца `6b0738c8…` → `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`
-   в auth document **и** workspace store. Оба сейчас держат `6b0738c8…`,
-   поэтому это одна согласованная замена, а не сведе́ние расхождения.
-   Telegram `1647145559`, имя, сессии, устройства, workspace — сохранить.
-3. Удалить после dependency-проверки: `424242` (второй owner), `ARTUR_CA`,
-   четыре `virtual_*`. Итог — `users = 1`.
-4. Прописать `STRATFORGE_CANONICAL_OWNER_UUID` в
-   `data/integrations/secrets.local.json` (git-ignored), чтобы пустой store
-   поднимался как тот же владелец.
-5. Перезапустить LOCAL и доказать: `users = 1`, UUID canonical, второй owner не
-   восстановлен, login/Cabinet/Admin/User Card/workspaces работают,
-   `development_sync` = `current`.
-
-Все проверки — с переменными `start.ps1` либо через запущенный сервер.
-
-Backup: `BACKUPS/local-owner-cleanup-20260818T003403Z` (сделан до изменений;
-содержит копию `data/development`, то есть брошенного store — **перед записью
-в живой store сделать новый backup `data/integrations`**).
-
-## Дальше по программе
-
-Единый модуль «Окружения и релизы», Admin navigation, Documents cleanup,
-Users & Sessions + Monitoring, Subscriptions placement, Owner Journal,
-Connector onboarding, Operations/Diagnostics, browser performance, финальный E2E.
+1. Единый модуль «Окружения и релизы»: Environment Switcher + Release Center,
+   карточки Development/Canary/Production, pipeline-кнопки
+   `Создать кандидата → Canary → Acceptance → Promote`, гейты (нет Canary
+   acceptance / изменился artifact / не прошли миграции / CI не зелёный →
+   promote запрещён), стадии `CI → Build → Sign → Migrations → Canary →
+   Acceptance → Production`, Compare LOCAL↔CANARY↔PRODUCTION.
+   `Открыть Development` активна только на самой development-машине; удалённый
+   доступ fail-closed, localhost наружу не публикуется.
+2. Admin navigation consolidation.
+3. Удалить из Admin «Глобальные документы» и «Документы рабочих областей»;
+   единственный раздел «Документы» — в основном приложении.
+4. Monitoring объединить с «Пользователи и сессии».
+5. Subscriptions/Grants — только в Admin.
+6. Owner Journal → компактный timeline `time | actor | action | target |
+   environment | result`.
+7. Connector onboarding → «Подключить NinjaTrader / скачать / авторизовать»,
+   manual pairing только в Advanced.
+8. Operations/Diagnostics по capabilities окружения.
+9. Browser performance pass.
+10. Финальный E2E и единственный click-list.
 
 Релизы только: `LOCAL → CI → PR → merge → immutable candidate → Canary →
 acceptance → SAME artifact Production`.
