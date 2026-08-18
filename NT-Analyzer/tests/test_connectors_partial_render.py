@@ -159,9 +159,12 @@ def _renderer() -> str:
 
 
 def test_the_client_has_its_own_deadline():
+    """The bespoke Promise.race became the shared `withDeadline` helper once
+    every other panel needed the same thing; a second mechanism is how the
+    panels drifted apart in the first place."""
     source = _renderer()
     assert "CONNECTOR_DEADLINE_MS" in source
-    assert "Promise.race" in source, (
+    assert "withDeadline" in source, (
         "without a client-side deadline a request that never completes leaves "
         "the spinner up until the browser gives up"
     )

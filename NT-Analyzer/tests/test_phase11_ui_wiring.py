@@ -129,10 +129,12 @@ def test_admin_capability_labels_are_russian():
 
 def test_admin_panel_has_no_fake_placeholder_shell():
     # The old generic "домейн workflow подключаются в своей плановой фазе"
-    # placeholder must be gone; docs modules must have real renderers.
+    # placeholder must be gone. Documents left Admin entirely, so what has to
+    # be real now is the Documents page itself.
     assert "плановой фазе" not in UI_JS
-    assert "renderAdminDocsGlobalInto" in UI_JS
-    assert "renderAdminDocsWorkspaceInto" in UI_JS
+    docs_page = (AURORA / "assets" / "pages" / "documents.js").read_text(encoding="utf-8")
+    assert "renderWorkspaceDocs" in docs_page
+    assert "wireDocumentScopes" in docs_page
 
 
 # --------------------------------------------------------------------------- #

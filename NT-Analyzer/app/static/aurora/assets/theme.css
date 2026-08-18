@@ -540,6 +540,14 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .pipe-gate.is-blocked { color: var(--warn); }
 
 
+/* Connector onboarding reads as three acts, numbered, because that is what it
+   is: get the program, install it, let it in. The one-time code lives in the
+   fallback below them -- a secret is a poor greeting for a new user. */
+.conn-steps { list-style: none; counter-reset: conn-step; margin: 14px 0 0; padding: 0; display: grid; gap: 16px; }
+.conn-steps > li { counter-increment: conn-step; position: relative; padding-left: 34px; }
+.conn-steps > li::before { content: counter(conn-step); position: absolute; left: 0; top: 0; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--brand-line); color: var(--brand); font-size: 11px; font-weight: 700; }
+.conn-step-title { font-size: 12.5px; font-weight: 600; }
+
 /* Canonical user card. The nesting is the model: machine > client > session,
    so each level is indented and separated rather than flattened into one list. */
 .card-summary-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }

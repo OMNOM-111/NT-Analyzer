@@ -8,6 +8,7 @@ The schema is deliberately loose so new audit files can be added by extending
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from typing import Any, Dict, List
@@ -101,14 +102,35 @@ def _is_suspicious(category: str, row: Dict[str, Any]) -> bool:
     return False
 
 
+# How far back a reader usually means. Without a period the journal answered
+# "the last 300 events", which on a quiet week is a month and on a busy day is
+# an hour -- the same filter meaning two different things.
+PERIODS = {
+    "today": 1,
+    "7d": 7,
+    "30d": 30,
+    "all": 0,
+}
+
+
+def _period_floor(period: str) -> str:
+    """The earliest timestamp a period admits, or "" for no bound."""
+    days = PERIODS.get(str(period or ""), 0)
+    if not days:
+        return ""
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    return start.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def read_journal(*, category: str = "", query: str = "", limit: int = 200,
-                 suspicious_only: bool = False) -> Dict[str, Any]:
+                 suspicious_only: bool = False, period: str = "") -> Dict[str, Any]:
     try:
         limit = max(1, min(int(limit or 200), MAX_LIMIT))
     except (TypeError, ValueError):
         limit = 200
     cats = [category] if category in CATEGORIES else list(CATEGORIES)
     needle = str(query or "").strip().lower()
+    floor = _period_floor(period)
     entries: List[Dict[str, Any]] = []
     for cat in cats:
         path = _audit_dir() / CATEGORIES[cat]["file"]
@@ -132,6 +154,10 @@ def read_journal(*, category: str = "", query: str = "", limit: int = 200,
             suspicious = _is_suspicious(cat, row)
             if suspicious_only and not suspicious:
                 continue
+            # Timestamps are ISO-8601 UTC, so a string compare is a time
+            # compare and costs nothing per row.
+            if floor and str(row.get("timestamp") or "") < floor:
+                continue
             entry = {
                 "timestamp": str(row.get("timestamp") or ""),
                 "category": cat,
@@ -148,4 +174,18 @@ def read_journal(*, category: str = "", query: str = "", limit: int = 200,
             entries.append(entry)
     entries.sort(key=lambda item: item["timestamp"], reverse=True)
     entries = entries[:limit]
-    return {"entries": entries, "categories": categories(), "count": len(entries)}
+    return {
+        "entries": entries,
+        "categories": categories(),
+        "count": len(entries),
+        "periods": [
+            {"id": "today", "label": "Сутки"},
+            {"id": "7d", "label": "7 дней"},
+            {"id": "30d", "label": "30 дней"},
+            {"id": "all", "label": "Всё"},
+        ],
+        "period": str(period or "all"),
+        # A capped list read as "this is everything" when it was only the
+        # newest slice, which is how a reader concludes nothing happened.
+        "truncated": len(entries) >= limit,
+    }

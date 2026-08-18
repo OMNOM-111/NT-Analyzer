@@ -483,6 +483,22 @@
     const lbl = labels[status] || status;
     return `<span class="badge ${status}"><span class="dot"></span>${esc(lbl)}</span>`;
   }
+  // A request with no deadline can leave a spinner up forever, which tells the
+  // reader nothing and is indistinguishable from a slow network. Every panel
+  // that puts up a spinner owes an answer -- including the answer "it did not
+  // reply". The failure is a normal error, so each panel's existing retry path
+  // handles it without a second mechanism.
+  const PANEL_DEADLINE_MS = 12000;
+  function withDeadline(promise, what, ms) {
+    const limit = ms || PANEL_DEADLINE_MS;
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(
+        (what || 'Источник') + ' не ответил за ' + Math.round(limit / 1000) + ' с.')), limit);
+    });
+    return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+  }
+
   function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
   function qs(s, r) { return (r || document).querySelector(s); }
@@ -2321,7 +2337,7 @@
   async function renderUsersInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
     try {
-      const [data, plansData, monitorData] = await Promise.all([API.http.authUsers(), API.http.ownerPlans().catch(() => ({ plans: [] })), API.http.ownerSupportMonitoring().catch(() => ({ users: [], online_count: 0, alert_count: 0 }))]);
+      const [data, plansData, monitorData] = await withDeadline(Promise.all([API.http.authUsers(), API.http.ownerPlans().catch(() => ({ plans: [] })), API.http.ownerSupportMonitoring().catch(() => ({ users: [], online_count: 0, alert_count: 0 }))]), 'Список пользователей');
       const users = data.users || [];
       const catalog = data.feature_catalog || [];
       const planOptions = buildPlanOptions(plansData.plans || []);
@@ -2439,10 +2455,19 @@
     };
     try { node.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* ignore */ }
   }
-  async function renderPlansInto(node, me) {
+  // Two audiences, one endpoint. `scope` decides which: a member sees what
+  // they hold and how to get more, an operator edits what a plan grants.
+  // Deciding what a plan grants is an administrative act, so it belongs in
+  // Admin -- an owner opening their own cabinet should see their account, not
+  // the switchboard for everyone's.
+  async function renderPlansInto(node, me, scope) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка тарифов…</div>';
     try {
-      const isOwner = !!(me && me.is_owner);
+      const isOwner = scope === 'admin' && !!(me && me.is_owner);
+      if (scope === 'admin' && !isOwner) {
+        node.innerHTML = `<div class="finance-note">Управление привилегиями тарифов доступно только владельцу.</div>`;
+        return;
+      }
       // One self-service endpoint for everyone. /api/owner/plans returns the
       // same list behind an owner gate, so the branch bought nothing and put an
       // owner-scoped call in a personal surface. Subscription *management*
@@ -2585,7 +2610,7 @@
           else { clearReferral(); toast('Доступ активирован'); setTimeout(() => location.reload(), 700); }
         } catch (e) { reportError(e); } finally { applyBtn.disabled = false; }
       };
-    } catch (e) { renderError(node, e, () => renderPlansInto(node, me)); }
+    } catch (e) { renderError(node, e, () => renderPlansInto(node, me, scope)); }
   }
 
   function buildPlanOptions(plans) {
@@ -2636,7 +2661,7 @@
   async function renderInvitesInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
     try {
-      const [plansData, vouchersData] = await Promise.all([API.http.billingPlans(), API.http.ownerVouchers()]);
+      const [plansData, vouchersData] = await withDeadline(Promise.all([API.http.billingPlans(), API.http.ownerVouchers()]), 'Приглашения');
       const opts = buildPlanOptions(plansData.plans || []);
       const vouchers = vouchersData.vouchers || [];
       node.innerHTML = `<div class="cab-card"><h4>Пригласить пользователя</h4>
@@ -2764,7 +2789,7 @@
   async function renderRequestsInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
     try {
-      const data = await API.http.ownerPaymentRequests();
+      const data = await withDeadline(API.http.ownerPaymentRequests(), 'Запросы доступа');
       const reqs = data.requests || [];
       const pending = reqs.filter(r => r.status === 'pending');
       const done = reqs.filter(r => r.status !== 'pending');
@@ -2787,7 +2812,10 @@
   }
 
   let PENDING_USER_DETAIL = '';
-  const JOURNAL_STATE = { category: '', q: '', suspicious: false };
+  // Default to a week rather than to everything: "the last 300 events" is a
+  // month on a quiet week and an hour on a busy day, so the same filter meant
+  // two different things depending on when it was read.
+  const JOURNAL_STATE = { category: '', q: '', suspicious: false, period: '7d' };
   function journalRowHtml(e) {
     // The time alone on the row; the date is carried by the day heading above
     // it. Repeating the full timestamp on every line is what made three hundred
@@ -2834,29 +2862,35 @@
       if (JOURNAL_STATE.category) params.set('category', JOURNAL_STATE.category);
       if (JOURNAL_STATE.q) params.set('q', JOURNAL_STATE.q);
       if (JOURNAL_STATE.suspicious) params.set('suspicious', '1');
+      if (JOURNAL_STATE.period) params.set('period', JOURNAL_STATE.period);
       params.set('limit', '300');
-      const data = await API.http.ownerJournal(params.toString());
+      const data = await withDeadline(API.http.ownerJournal(params.toString()), 'Журнал');
       const cats = data.categories || [];
       const entries = data.entries || [];
       node.innerHTML = `<div class="finance-note">Скрытый журнал администратора: регистрации, входы, изменения прав и подписок, ошибки и подозрительная активность. Только для владельца.</div>
         <div class="flex gap-sm wrap" style="align-items:flex-end;margin-bottom:8px">
           <label>Категория<select id="jr-cat"><option value="">Все</option>${cats.map(c => `<option value="${esc(c.id)}" ${c.id === JOURNAL_STATE.category ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></label>
           <label style="flex:1;min-width:160px">Поиск<input id="jr-q" value="${esc(JOURNAL_STATE.q)}" placeholder="событие, id, путь…"></label>
+          <label>Период<select id="jr-period">${(data.periods || []).map(
+            p => `<option value="${esc(p.id)}" ${p.id === JOURNAL_STATE.period ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
           <label class="flex gap-sm" style="align-items:center">Только подозрительные<input type="checkbox" id="jr-sus" ${JOURNAL_STATE.suspicious ? 'checked' : ''}></label>
           <button class="btn ghost" id="jr-refresh">Обновить</button>
         </div>
         <div class="cab-sub">Показано записей: ${entries.length}${
           JOURNAL_STATE.category || JOURNAL_STATE.q || JOURNAL_STATE.suspicious
-            ? ' (с учётом фильтров)' : ''}</div>
+            ? ' (с учётом фильтров)' : ''}${data.truncated
+            ? ' · список обрезан по лимиту — сузьте период или фильтр' : ''}</div>
         ${journalTimelineHtml(entries)}`;
       const apply = () => {
         JOURNAL_STATE.category = (qs('#jr-cat', node) || {}).value || '';
         JOURNAL_STATE.q = ((qs('#jr-q', node) || {}).value || '').trim();
         JOURNAL_STATE.suspicious = !!(qs('#jr-sus', node) || {}).checked;
+        JOURNAL_STATE.period = (qs('#jr-period', node) || {}).value || 'all';
         renderJournalInto(node);
       };
       const cat = qs('#jr-cat', node); if (cat) cat.onchange = apply;
       const sus = qs('#jr-sus', node); if (sus) sus.onchange = apply;
+      const per = qs('#jr-period', node); if (per) per.onchange = apply;
       const refresh = qs('#jr-refresh', node); if (refresh) refresh.onclick = apply;
       const qInput = qs('#jr-q', node); if (qInput) qInput.onkeydown = (e) => { if (e.key === 'Enter') apply(); };
     } catch (e) { renderError(node, e, () => renderJournalInto(node)); }
@@ -3506,18 +3540,9 @@
     const cb = qs('#cab-body', body);
     const renderTab = (t) => {
       qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
-      if (t === 'users') renderUsersInto(cb);
-      else if (t === 'monitoring') renderMonitoringInto(cb);
-      else if (t === 'operations') renderOperationsInto(cb);
-      else if (t === 'ai_ratings') renderAiRatingsInto(cb);
-      else if (t === 'staging') renderStagingInto(cb);
-      else if (t === 'requests') renderRequestsInto(cb);
-      else if (t === 'plans') renderPlansInto(cb, me);
+      if (t === 'plans') renderPlansInto(cb, me, 'self');
       else if (t === 'card') renderUserCardInto(cb, () => API.http.accountCard());
       else if (t === 'security') renderSecurityInto(cb, me);
-      else if (t === 'invites') renderInvitesInto(cb);
-      else if (t === 'payment') renderPaymentInto(cb);
-      else if (t === 'journal') renderJournalInto(cb);
       else renderProfileInto(cb, me);
     };
     qsa('[data-cab-tab]', body).forEach(b => b.onclick = () => renderTab(b.dataset.cabTab));
@@ -3595,7 +3620,7 @@
   async function renderMonitoringInto(node) {
     node.innerHTML = `<div class="cab-sub">Сессии и ресурсы · метрики вкладки браузера</div><div class="muted">Загрузка…</div>`;
     try {
-      const data = await API.http.ownerSupportMonitoring();
+      const data = await withDeadline(API.http.ownerSupportMonitoring(), 'Мониторинг');
       const users = data.users || [];
       const sessions = data.auth_sessions || [];
       const note = esc(data.telemetry_note || 'Метрики вкладки браузера, не ОС.');
@@ -3704,37 +3729,113 @@
     </div>`;
   }
 
-  // Enrolling a Connector is a routine act and should not need a terminal.
-  // The code is environment-bound: one minted here works only against this
-  // deployment, which is why the panel states which environment issued it.
-  function connectorEnrollHtml(environment) {
+  // Connecting a Connector is three acts: get the program, install it, let it
+  // in. The panel used to open on "выдать код подключения", which made an
+  // implementation detail the first thing a new user met -- and a one-time
+  // secret is a poor greeting. The code still exists, as the fallback for when
+  // the deep link cannot reach an installed Connector.
+  function connectorInstallerHtml(installer) {
+    const url = String((installer || {}).download_url || '');
+    if (url) {
+      return `<a class="btn primary" id="conn-download" href="${esc(url)}"
+        rel="noopener">Скачать Connector</a>`;
+    }
+    // No link is offered when there is nothing signed to link to. A dead
+    // download button teaches the reader that the page lies.
+    return `<button class="btn ghost" disabled>Скачать Connector</button>
+      <div class="cab-sub">${esc((installer || {}).message
+        || 'Подписанный установщик ещё не опубликован.')}</div>`;
+  }
+
+  function connectorEnrollHtml(environment, installer) {
     return `<section class="cab-card" id="conn-enroll">
-      <h4>Подключить NinjaTrader Connector</h4>
-      <div class="cab-sub">Код действует только для окружения <b>${esc(environment || '—')}</b>. Connector, подключённый этим кодом, будет работать только здесь.</div>
-      <div class="grid cols-2" style="margin-top:8px">
-        <label class="field"><span>Название компьютера</span><input id="conn-enroll-label" placeholder="например, DIMONCHECK"></label>
-        <label class="field"><span>Workspace ID (необязательно)</span><input id="conn-enroll-ws" placeholder="ws_…"></label>
-      </div>
-      <div class="flex gap-sm" style="margin-top:8px">
-        <button class="btn primary" id="conn-enroll-start">Выдать код подключения</button>
-      </div>
-      <div id="conn-enroll-out" class="cab-sub"></div>
+      <h4>Подключить NinjaTrader</h4>
+      <div class="cab-sub">Connector работает только с окружением
+        <b>${esc(environment || '—')}</b>: подключённый здесь, он не отвечает другому.</div>
+
+      <ol class="conn-steps">
+        <li>
+          <div class="conn-step-title">Скачать Connector</div>
+          <div class="cab-sub">Устанавливается рядом с NinjaTrader 8 на том же компьютере.</div>
+          <div class="flex gap-sm wrap" style="margin-top:6px">${connectorInstallerHtml(installer)}</div>
+        </li>
+        <li>
+          <div class="conn-step-title">Установить и открыть в NinjaTrader</div>
+          <div class="cab-sub">NinjaTrader → вкладка StratForge Connector. NinjaTrader 8 должен быть запущен.</div>
+        </li>
+        <li>
+          <div class="conn-step-title">Авторизовать</div>
+          <div class="cab-sub">Разрешение передаётся установленному Connector напрямую —
+            вводить ничего не нужно.</div>
+          <div class="grid cols-2" style="margin-top:6px">
+            <label class="field"><span>Название компьютера</span>
+              <input id="conn-enroll-label" placeholder="например, DIMONCHECK"></label>
+            <label class="field"><span>Workspace ID (необязательно)</span>
+              <input id="conn-enroll-ws" placeholder="ws_…"></label>
+          </div>
+          <div class="flex gap-sm wrap" style="margin-top:8px">
+            <button class="btn primary" id="conn-authorize">Авторизовать Connector</button>
+          </div>
+          <div id="conn-enroll-out" class="cab-sub"></div>
+        </li>
+      </ol>
+
+      <details class="card-details" id="conn-manual">
+        <summary>Не открылся Connector — ввести код вручную</summary>
+        <div class="cab-sub">Одноразовый код для этого окружения. Действует несколько минут
+          и показывается один раз.</div>
+        <div class="flex gap-sm" style="margin-top:8px">
+          <button class="btn" id="conn-enroll-start">Показать код подключения</button>
+        </div>
+        <div id="conn-manual-out" class="cab-sub"></div>
+      </details>
     </section>`;
   }
 
+  async function connectorMintPairing(node) {
+    return API.http.bridgePairStart({
+      machine_label: (qs('#conn-enroll-label', node).value || '').trim(),
+      workspace_id: (qs('#conn-enroll-ws', node).value || '').trim(),
+    });
+  }
+
   function wireConnectorEnroll(node) {
+    const authorize = qs('#conn-authorize', node);
+    if (authorize) authorize.onclick = async () => {
+      const out = qs('#conn-enroll-out', node);
+      authorize.disabled = true;
+      out.innerHTML = '<span class="spinner"></span> Готовим авторизацию…';
+      try {
+        const res = await connectorMintPairing(node);
+        if (res && res.pairing_uri) {
+          // Handed to the installed program rather than to the human. Nothing
+          // is displayed: a code nobody has to read is a code nobody can leak.
+          out.innerHTML = `<div class="finance-note">Разрешение отправлено в установленный
+            Connector. Подтвердите подключение в окне NinjaTrader.</div>`;
+          location.href = res.pairing_uri;
+        } else {
+          // No deep link means nothing is installed to receive it. Say so and
+          // point at the fallback rather than failing silently.
+          out.innerHTML = `<div class="admin-env-warnings"><div>⚠ Установленный Connector
+            не отвечает. Откройте «ввести код вручную» ниже.</div></div>`;
+          const manual = qs('#conn-manual', node);
+          if (manual) manual.open = true;
+        }
+      } catch (e) {
+        out.innerHTML = `<div class="admin-env-warnings"><div>⚠ ${esc((e && e.message) || e)}</div></div>`;
+      } finally {
+        authorize.disabled = false;
+      }
+    };
+
     const button = qs('#conn-enroll-start', node);
     if (!button) return;
     button.onclick = async () => {
-      const out = qs('#conn-enroll-out', node);
+      const out = qs('#conn-manual-out', node);
       button.disabled = true;
       out.innerHTML = '<span class="spinner"></span> Выдаём код…';
       try {
-        const body = {
-          machine_label: (qs('#conn-enroll-label', node).value || '').trim(),
-          workspace_id: (qs('#conn-enroll-ws', node).value || '').trim(),
-        };
-        const res = await API.http.bridgePairStart(body);
+        const res = await connectorMintPairing(node);
         const minutes = Math.max(1, Math.round((res.expires_in_sec || 600) / 60));
         // Shown once. It is a credential for the duration of its life, so it is
         // not stored anywhere in the page and not repeated after a refresh.
@@ -3742,7 +3843,8 @@
           <div>Код подключения (действует ${minutes} мин, показывается один раз):</div>
           <div class="mono" style="font-size:18px;letter-spacing:2px;margin:6px 0">${esc(res.code || '')}</div>
           <div>Введите его в NinjaTrader → StratForge Connector → «Подключить».</div>
-          ${res.workspace && res.workspace.workspace_id ? `<div class="cab-sub mono">workspace: ${esc(res.workspace.workspace_id)}</div>` : ''}
+          ${res.workspace && res.workspace.workspace_id
+            ? `<div class="cab-sub mono">workspace: ${esc(res.workspace.workspace_id)}</div>` : ''}
         </div>`;
       } catch (e) {
         out.innerHTML = `<div class="admin-env-warnings"><div>⚠ ${esc((e && e.message) || e)}</div></div>`;
@@ -3761,12 +3863,8 @@
     let doc = null;
     let failure = '';
     try {
-      doc = await Promise.race([
-        API.http.adminConnectors(),
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error('Ответ не получен за ' + (CONNECTOR_DEADLINE_MS / 1000) + ' с')),
-          CONNECTOR_DEADLINE_MS)),
-      ]);
+      doc = await withDeadline(API.http.adminConnectors(), 'Статусы коннекторов',
+                               CONNECTOR_DEADLINE_MS);
     } catch (e) {
       failure = (e && e.message) || String(e);
     }
@@ -3802,7 +3900,7 @@
         doc.probe_timeout_sec ? ` · таймаут источника ${esc(String(doc.probe_timeout_sec))} с` : ''}</div>
       <div class="finance-note">Секреты и токены здесь не показываются — только статусы и явные действия.</div>
       ${partialNote}
-      ${connectorEnrollHtml(doc.environment)}
+      ${connectorEnrollHtml(doc.environment, doc.installer)}
       <div class="conn-grid">${sections.map(connectorSectionHtml).join('')}</div>
       <div class="row" style="margin-top:12px;gap:8px">
         <button class="btn" id="conn-refresh">Обновить</button>
@@ -5100,7 +5198,7 @@
   async function renderPipelineInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка окружений…</div>';
     let doc;
-    try { doc = await API.http.adminPipeline(); }
+    try { doc = await withDeadline(API.http.adminPipeline(), 'Состояние окружений'); }
     catch (e) { return renderError(node, e, () => renderPipelineInto(node)); }
 
     const envs = doc.environments || {};
@@ -5435,21 +5533,48 @@
   async function renderAdminOperationsInto(node) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Проверка operations…</div>';
     try {
-      const data = await API.http.adminOperations();
+      const data = await withDeadline(API.http.adminOperations(), 'Operations');
       const worker = data.worker || {};
       const telegram = data.telegram || {};
       const connector = data.connector || {};
       const canExecute = hasAdminCapability('operations.execute');
+      // Capability answers "may this person"; the descriptor answers "does this
+      // environment do that at all". A restart a supervisor performs and one
+      // this process improvises are different acts, and the button used to look
+      // the same either way.
+      const actions = data.actions || {};
+      const opBtn = (id, label, key, cls) => {
+        const rule = actions[key] || { allowed: true, reason: '' };
+        return `<button class="btn ${rule.allowed ? (cls || 'ghost') : 'ghost'}" id="${id}"${
+          rule.allowed ? '' : ' disabled'} title="${esc(rule.reason || label)}">${esc(label)}</button>`;
+      };
+      const opNotes = Object.values(actions).filter(r => r && !r.allowed && r.reason)
+        .map(r => `<div>⚠ ${esc(r.reason)}</div>`).join('');
       node.innerHTML = `<div class="grid cols-3"><div class="kpi"><span>Worker</span><strong>${esc(worker.status || (worker.running ? 'running' : 'unknown'))}</strong></div><div class="kpi"><span>Telegram</span><strong>${esc(telegram.status || (telegram.ok ? 'ok' : 'unknown'))}</strong></div><div class="kpi"><span>Connector</span><strong>${esc(connector.status || (connector.ok ? 'ok' : 'unknown'))}</strong></div></div>
         <div class="section-title">Безопасные операции</div><div class="flex gap-sm wrap"><button class="btn ghost" id="admin-diagnostics">Диагностика</button><button class="btn ghost" id="admin-env-status">Состояние environment</button>${hasAdminCapability('connectors.manage') ? '<button class="btn ghost" id="admin-telegram">Telegram / Connector</button>' : ''}</div>
-        ${canExecute ? `<div class="section-title">Операции с подтверждением</div><div class="flex gap-sm wrap"><button class="btn danger" id="admin-restart">Перезапустить backend</button><button class="btn ghost" id="admin-ai-unload">Освободить AI memory</button><button class="btn ghost" id="admin-catalog-refresh">Обновить каталог</button><button class="btn ghost" id="admin-margin-refresh">Пересчитать маржу</button></div>` : '<div class="finance-note">operations.execute не выдан: restart/recovery controls скрыты.</div>'}`;
+        ${canExecute ? `<div class="section-title">Операции с подтверждением</div>
+          <div class="flex gap-sm wrap">
+            ${opBtn('admin-restart', 'Перезапустить backend', 'restart', 'danger')}
+            ${opBtn('admin-ai-unload', 'Освободить AI memory', 'ai_unload')}
+            ${opBtn('admin-catalog-refresh', 'Обновить каталог', 'catalog_refresh')}
+            ${opBtn('admin-margin-refresh', 'Пересчитать маржу', 'margin_refresh')}
+          </div>
+          ${opNotes ? `<div class="admin-env-warnings">${opNotes}</div>` : ''}`
+          : '<div class="finance-note">operations.execute не выдан: restart/recovery controls скрыты.</div>'}`;
       const diagnostics = qs('#admin-diagnostics', node); if (diagnostics) diagnostics.onclick = () => { closeDrawer(); showDiagnostics(); };
       const env = qs('#admin-env-status', node); if (env) env.onclick = () => { closeDrawer(); showEnvironment(false); };
       const telegramButton = qs('#admin-telegram', node); if (telegramButton) telegramButton.onclick = () => { closeDrawer(); showTelegram(); };
-      const restart = qs('#admin-restart', node); if (restart) restart.onclick = () => { if (confirm('Перезапустить backend?')) action('Backend restart', () => API.http.restartServer(), 'Backend перезапускается').catch(() => {}); };
-      const unload = qs('#admin-ai-unload', node); if (unload) unload.onclick = () => action('AI memory', () => API.http.aiBootstrapUnload({ stop_server: true }), 'AI memory освобождена').catch(() => {});
-      const catalog = qs('#admin-catalog-refresh', node); if (catalog) catalog.onclick = () => action('Каталог', () => API.http.refreshCatalog(), 'Каталог обновлён').catch(() => {});
-      const margins = qs('#admin-margin-refresh', node); if (margins) margins.onclick = () => action('Маржа', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => {});
+      const restart = qs('#admin-restart', node);
+      if (restart && !restart.disabled) restart.onclick = () => {
+        const mode = ((actions.restart || {}).mode === 'supervised')
+          ? 'Супервизор перезапустит процесс.' : 'Процесс перезапустит сам себя.';
+        if (confirm('Перезапустить backend? ' + mode)) {
+          action('Backend restart', () => API.http.restartServer(), 'Backend перезапускается').catch(() => {});
+        }
+      };
+      const unload = qs('#admin-ai-unload', node); if (unload && !unload.disabled) unload.onclick = () => action('AI memory', () => API.http.aiBootstrapUnload({ stop_server: true }), 'AI memory освобождена').catch(() => {});
+      const catalog = qs('#admin-catalog-refresh', node); if (catalog && !catalog.disabled) catalog.onclick = () => action('Каталог', () => API.http.refreshCatalog(), 'Каталог обновлён').catch(() => {});
+      const margins = qs('#admin-margin-refresh', node); if (margins && !margins.disabled) margins.onclick = () => action('Маржа', () => API.http.refreshMargins(), 'Маржа обновлена').catch(() => {});
     } catch (e) { renderError(node, e, () => renderAdminOperationsInto(node)); }
   }
 
@@ -5460,199 +5585,58 @@
     return `<div class="grid cols-3"><div class="kpi"><span>Среда</span><strong>${esc(deployment.deployment_environment || deployment.environment || '—')}</strong></div><div class="kpi"><span>Версия</span><strong>${esc(deployment.app_version || '—')}</strong></div><div class="kpi"><span>Commit</span><strong class="mono">${esc((deployment.git_commit_sha || '').slice(0, 12) || '—')}</strong></div></div><div class="finance-note"><strong>Контракт безопасности:</strong> секреты не выдаются; между средами не переносятся учётные данные, cookies, CSRF-токены и хранилище браузера.</div><div class="section-title">Действующие права доступа</div><div class="cap-panel">${catalog.map(c => `<div class="feat-row"><span>${esc(c.label)} <span class="cab-sub mono">${esc(c.id)}</span></span><span class="badge ${caps[c.id] ? 'live' : 'archived'}">${caps[c.id] ? 'разрешено' : 'нет'}</span></div>`).join('')}</div>`;
   }
 
-  const DOC_STATUS_BADGE = { draft: 'trial', review: 'pending', approved: 'pending', published: 'live', superseded: 'archived' };
+  // Users and sessions, one module. Monitoring was a separate owner entry
+  // showing who is online and which sessions exist -- facts about exactly the
+  // people the user list is about. Keeping them apart meant answering "is this
+  // account being used right now" required leaving the account you were
+  // looking at.
+  async function renderUsersAndSessionsInto(node, initial) {
+    const owner = !!(CURRENT_AUTH && CURRENT_AUTH.is_owner);
+    if (!owner) return renderDelegatedUsersInto(node);
 
-  // One Documents section, two scopes. Which tabs exist depends on what the
-  // caller may manage: showing a tab that opens onto a permission error is
-  // worse than not showing it, because it reads as a fault rather than as a
-  // boundary.
-  async function renderAdminDocumentsInto(node, initial) {
-    const canGlobal = hasAdminCapability('docs.manage_global');
-    const canWorkspace = hasAdminCapability('docs.manage_workspace')
-      || hasAdminCapability('strategy.spec.manage');
-    const tabs = [];
-    if (canGlobal) tabs.push(['global', 'Глобальные (governance)']);
-    if (canWorkspace) tabs.push(['workspace', 'Рабочие области и стратегии']);
+    const tabs = [['users', 'Пользователи'], ['monitoring', 'Мониторинг и сессии']];
+    const start = tabs.some(t => t[0] === initial) ? initial : 'users';
+    node.innerHTML = `<div class="cab-tabs">${tabs.map(
+      ([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-users-tab="${id}">${label}</button>`
+    ).join('')}</div><div data-users-body></div>`;
 
-    if (!tabs.length) {
-      node.innerHTML = `<div class="finance-note">Нет прав на управление документами.
-        Нужно <span class="mono">docs.manage_global</span> или
-        <span class="mono">docs.manage_workspace</span>.</div>`;
-      return;
-    }
-
-    const start = tabs.some(t => t[0] === initial) ? initial : tabs[0][0];
-    node.innerHTML = `
-      <div class="cab-sub">Глобальные governance-документы и спецификации рабочих областей — один раздел. Рабочая область не может изменить governance-документ или safety-limits.</div>
-      ${tabs.length > 1 ? `<div class="cab-tabs docs-tabs">${tabs.map(
-        ([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-docs-tab="${id}">${label}</button>`).join('')}</div>` : ''}
-      <div data-docs-body></div>`;
-
-    const body = qs('[data-docs-body]', node);
+    const body = qs('[data-users-body]', node);
     const show = (which) => {
-      qsa('[data-docs-tab]', node).forEach(
-        b => b.classList.toggle('on', b.dataset.docsTab === which));
-      if (which === 'workspace') renderAdminDocsWorkspaceInto(body);
-      else renderAdminDocsGlobalInto(body);
+      qsa('[data-users-tab]', node).forEach(b => b.classList.toggle('on', b.dataset.usersTab === which));
+      if (which === 'monitoring') renderMonitoringInto(body);
+      else renderUsersInto(body);
     };
-    qsa('[data-docs-tab]', node).forEach(
-      b => b.onclick = () => show(b.dataset.docsTab));
+    qsa('[data-users-tab]', node).forEach(b => b.onclick = () => show(b.dataset.usersTab));
     show(start);
-  }
-
-  async function renderAdminDocsGlobalInto(node) {
-    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка governance…</div>';
-    try {
-      const data = await API.http.governanceSummary();
-      const docs = data.documents || [];
-      const history = data.history || [];
-      const canManage = hasAdminCapability('docs.manage_global');
-      node.innerHTML = `
-        <div class="finance-note">Глобальные governance-документы и законы. Менять их может только владелец или администратор с правом <span class="mono">docs.manage_global</span>. Рабочие области и стратегии не могут изменить эти документы или safety-limits.</div>
-        <div id="gov-editor"></div>
-        <div class="section-title">Документы</div>
-        <div class="list" id="gov-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.id)}</div><div class="row-sub mono">${esc(d.rel_path || d.id)}${d.editable_kind && d.editable_kind !== 'none' ? ' · редактируемый' : ' · только чтение'}</div></div><button class="btn sm ghost" data-gov-doc="${esc(d.id)}">${canManage && d.editable_kind === 'markdown' ? 'Открыть' : 'Просмотр'}</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>
-        <div class="section-title">Журнал поправок</div>
-        <div class="list">${history.slice(0, 40).map(h => `<div class="row"><div class="row-main"><div class="row-title">Поправка ${esc(h.amendment_no || '')} · ${esc(h.entity_title || h.entity_id || '')}</div><div class="row-sub">${esc(h.ts_utc || '')} · ${esc(h.actor || '')}${h.reason ? ' · ' + esc(h.reason) : ''}</div></div></div>`).join('') || '<div class="empty-state">Поправок пока нет.</div>'}</div>`;
-      qsa('[data-gov-doc]', node).forEach(btn => btn.onclick = () => openGovernanceDoc(node, btn.dataset.govDoc, canManage));
-    } catch (e) { renderError(node, e, () => renderAdminDocsGlobalInto(node)); }
-  }
-
-  async function openGovernanceDoc(node, docId, canManage) {
-    const editor = qs('#gov-editor', node);
-    if (!editor) return;
-    editor.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документа…</div>';
-    editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    try {
-      const doc = await API.http.governanceDocument(docId);
-      const editable = canManage && String(doc.editable_kind || '') === 'markdown';
-      if (String(doc.editable_kind || '') === 'laws') {
-        editor.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || docId)}</h4><pre class="mono" style="white-space:pre-wrap;max-height:320px;overflow:auto">${esc(doc.content || '')}</pre><div class="cab-sub">Законы и safety-limits меняются точечно через процесс поправок владельца, а не свободным текстом.</div></div>`;
-        return;
-      }
-      editor.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || docId)}</h4>
-        <textarea id="gov-doc-text" rows="14" class="mono" style="width:100%" ${editable ? '' : 'readonly'}>${esc(doc.content || '')}</textarea>
-        ${editable ? `<label class="field"><span>Причина изменения</span><input id="gov-doc-reason" placeholder="Зачем меняется документ"></label><div class="flex gap-sm" style="margin-top:8px"><button class="btn primary" id="gov-doc-save">Сохранить</button></div>` : '<div class="cab-sub">Только просмотр: нужен owner или право docs.manage_global.</div>'}
-        <div id="gov-doc-msg" class="cab-sub"></div></div>`;
-      const save = qs('#gov-doc-save', editor);
-      if (save) save.onclick = async () => {
-        const content = qs('#gov-doc-text', editor).value;
-        const reason = (qs('#gov-doc-reason', editor).value || '').trim();
-        const msg = qs('#gov-doc-msg', editor);
-        save.disabled = true; if (msg) msg.textContent = 'Сохраняю…';
-        try {
-          await API.http.saveDocument(docId, { content, actor: 'ui', reason });
-          toast('Документ сохранён'); renderAdminDocsGlobalInto(node);
-        } catch (err) { if (msg) msg.textContent = err.message || String(err); save.disabled = false; }
-      };
-    } catch (e) { editor.innerHTML = `<div class="empty-state">${esc(e.message || String(e))}</div>`; }
-  }
-
-  async function renderAdminDocsWorkspaceInto(node) {
-    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка документов…</div>';
-    try {
-      const data = await API.http.documentsList('');
-      const docs = data.documents || [];
-      node.innerHTML = `
-        <div class="finance-note">Документы (спецификации) рабочих областей и стратегий. Нужно право <span class="mono">strategy.spec.manage</span> (или docs.manage_workspace). Видны только документы вашей рабочей области; глобальные governance-документы и safety-limits отсюда изменить нельзя.</div>
-        <div id="ws-doc-detail"></div>
-        <div class="cab-card"><h4>Создать документ</h4>
-          <div class="grid cols-2">
-            <label class="field"><span>Область</span><select id="ws-doc-scope"><option value="workspace">workspace</option><option value="strategy">strategy</option></select></label>
-            <label class="field"><span>Workspace ID</span><input id="ws-doc-ws" placeholder="ws_…"></label>
-            <label class="field"><span>Strategy ID (для strategy)</span><input id="ws-doc-strat" placeholder="необязательно"></label>
-            <label class="field"><span>Slug</span><input id="ws-doc-slug" placeholder="playbook"></label>
-            <label class="field" style="grid-column:1/-1"><span>Заголовок</span><input id="ws-doc-title" placeholder="Название документа"></label>
-          </div>
-          <div class="flex gap-sm" style="margin-top:8px"><button class="btn primary" id="ws-doc-create">Создать черновик</button></div>
-          <div id="ws-doc-create-msg" class="cab-sub"></div>
-        </div>
-        <div class="section-title">Документы</div>
-        <div class="list" id="ws-docs">${docs.map(d => `<div class="row"><div class="row-main"><div class="row-title">${esc(d.title || d.slug)} <span class="badge ${DOC_STATUS_BADGE[d.published_revision ? 'published' : (d.latest_status || 'draft')] || 'trial'}">${d.published_revision ? 'v' + d.published_revision : (d.latest_status || 'draft')}</span></div><div class="row-sub mono">${esc(d.scope_type)}${d.workspace_id ? ' · ' + esc(d.workspace_id) : ''} · ${esc(d.slug)} · ревизий: ${d.revision_count || 0}</div></div><button class="btn sm ghost" data-ws-doc="${esc(d.document_id)}">Открыть</button></div>`).join('') || '<div class="empty-state">Документов нет.</div>'}</div>`;
-      const create = qs('#ws-doc-create', node);
-      if (create) create.onclick = async () => {
-        const msg = qs('#ws-doc-create-msg', node);
-        const body = {
-          scope_type: qs('#ws-doc-scope', node).value,
-          workspace_id: (qs('#ws-doc-ws', node).value || '').trim(),
-          strategy_id: (qs('#ws-doc-strat', node).value || '').trim(),
-          slug: (qs('#ws-doc-slug', node).value || '').trim(),
-          title: (qs('#ws-doc-title', node).value || '').trim(),
-        };
-        create.disabled = true; if (msg) msg.textContent = 'Создаю…';
-        try {
-          await API.http.documentCreate(body);
-          toast('Документ создан'); renderAdminDocsWorkspaceInto(node);
-        } catch (e) { if (msg) msg.textContent = e.message || String(e); create.disabled = false; }
-      };
-      qsa('[data-ws-doc]', node).forEach(btn => btn.onclick = () => openWorkspaceDoc(node, btn.dataset.wsDoc));
-    } catch (e) { renderError(node, e, () => renderAdminDocsWorkspaceInto(node)); }
-  }
-
-  async function openWorkspaceDoc(node, docId) {
-    const detail = qs('#ws-doc-detail', node);
-    if (!detail) return;
-    detail.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
-    detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    try {
-      const data = await API.http.documentGet(docId);
-      const doc = data.document || {};
-      const revs = data.revisions || [];
-      const openRev = revs.find(r => ['draft', 'review', 'approved'].includes(r.status));
-      const revAction = (r) => {
-        const btns = [];
-        if (r.status === 'draft') btns.push(`<button class="btn sm ghost" data-rev-act="submit" data-rev-id="${esc(r.revision_id)}">На review</button>`);
-        if (r.status === 'review') btns.push(`<button class="btn sm ghost" data-rev-act="approve" data-rev-id="${esc(r.revision_id)}">Одобрить</button>`);
-        if (r.status === 'approved') btns.push(`<button class="btn sm primary" data-rev-act="publish" data-rev-id="${esc(r.revision_id)}">Опубликовать</button>`);
-        return btns.join('');
-      };
-      detail.innerHTML = `<div class="cab-card"><h4>${esc(doc.title || doc.slug)}</h4>
-        <div class="cab-sub mono">${esc(doc.scope_type)}${doc.workspace_id ? ' · ' + esc(doc.workspace_id) : ''} · ${esc(doc.slug)}</div>
-        <div class="list" style="margin-top:8px">${revs.map(r => `<div class="row"><div class="row-main"><div class="row-title">Ревизия ${esc(r.revision)} <span class="badge ${DOC_STATUS_BADGE[r.status] || 'trial'}">${esc(r.status)}</span></div><div class="row-sub">${esc(r.created_at_utc || '')}${r.reason ? ' · ' + esc(r.reason) : ''}${r.reverted_from_revision ? ' · откат к r' + esc(r.reverted_from_revision) : ''}</div></div><div class="flex gap-xs">${revAction(r)}</div></div>`).join('') || '<div class="empty-state">Ревизий нет.</div>'}</div>
-        <div class="flex gap-sm wrap" style="margin-top:8px">${openRev ? '' : `<button class="btn" data-doc-newrev="1">Новая ревизия</button>`}<button class="btn ghost" data-doc-revert="1">Откатить к ревизии…</button></div>
-        <div id="ws-doc-detail-msg" class="cab-sub"></div></div>`;
-      const msg = qs('#ws-doc-detail-msg', detail);
-      const run = async (fn) => {
-        if (msg) msg.textContent = 'Выполняю…';
-        try { await fn(); toast('Готово'); openWorkspaceDoc(node, docId); renderAdminDocsWorkspaceInto(node); }
-        catch (e) { if (msg) msg.textContent = e.message || String(e); }
-      };
-      qsa('[data-rev-act]', detail).forEach(btn => btn.onclick = () => run(() =>
-        API.http.documentRevisionAction(btn.dataset.revId, btn.dataset.revAct, {})));
-      const newRev = qs('[data-doc-newrev]', detail);
-      if (newRev) newRev.onclick = () => {
-        const bodyText = (prompt('Текст новой ревизии:') || '').trim();
-        if (!bodyText) return;
-        run(() => API.http.documentRevise(docId, { content: { body: bodyText } }));
-      };
-      const revert = qs('[data-doc-revert]', detail);
-      if (revert) revert.onclick = () => {
-        const to = parseInt(prompt('Номер ревизии, к которой откатить:') || '0', 10);
-        if (!to) return;
-        run(() => API.http.documentRevert(docId, { to_revision: to }));
-      };
-    } catch (e) { detail.innerHTML = `<div class="empty-state">${esc(e.message || String(e))}</div>`; }
   }
 
   async function renderAdminModule(node, moduleId, overview) {
     if (moduleId === 'overview') { node.innerHTML = adminOverviewHtml(overview); return; }
-    if (moduleId === 'users') { return CURRENT_AUTH && CURRENT_AUTH.is_owner ? renderUsersInto(node) : renderDelegatedUsersInto(node); }
+    if (moduleId === 'users') return renderUsersAndSessionsInto(node);
+    // Monitoring is a tab of that module now; the old id opens it directly.
+    if (moduleId === 'monitoring') return renderUsersAndSessionsInto(node, 'monitoring');
     if (moduleId === 'operations') return renderAdminOperationsInto(node);
     if (moduleId === 'pipeline') return renderPipelineInto(node);
     // The two former modules are one now. Their ids stay routable so an
     // existing deep link lands in the merged view rather than on nothing.
     if (moduleId === 'environments') return renderPipelineInto(node);
     if (moduleId === 'releases') return renderPipelineInto(node);
-    if (moduleId === 'monitoring') return renderMonitoringInto(node);
     if (moduleId === 'requests') return renderRequestsInto(node);
-    if (moduleId === 'docs') return renderAdminDocumentsInto(node);
-    // The two old ids stay routable so an existing deep link still lands
-    // somewhere sensible rather than on an empty panel.
-    if (moduleId === 'docs-global') return renderAdminDocumentsInto(node, 'global');
-    if (moduleId === 'docs-workspace') return renderAdminDocumentsInto(node, 'workspace');
+
+    // Documents left Admin: governance and workspace specifications are one
+    // surface in the main menu now, because half the documents living behind
+    // an operator panel meant nobody could answer "where are the documents"
+    // without first knowing which kind they meant. Old ids point there rather
+    // than rendering an empty panel.
+    if (['docs', 'docs-global', 'docs-workspace'].includes(moduleId)) {
+      node.innerHTML = `<div class="finance-note">Документы переехали в главное меню —
+        один раздел для governance-документов и спецификаций рабочих областей.</div>
+        <div class="flex gap-sm"><a class="btn primary" href="documents.html">Открыть Документы</a></div>`;
+      return;
+    }
     if (moduleId === 'subscriptions') {
       node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
-      try { return renderPlansInto(node, await API.http.authMe()); }
+      try { return renderPlansInto(node, await API.http.authMe(), 'admin'); }
       catch (e) { return renderError(node, e, () => renderAdminModule(node, moduleId, overview)); }
     }
     if (moduleId === 'invites') return renderInvitesInto(node);

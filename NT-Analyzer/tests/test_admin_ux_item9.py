@@ -112,14 +112,20 @@ def test_the_cabinet_uses_the_self_service_plans_endpoint():
 
 
 def test_subscription_management_stays_in_the_admin_panel():
+    """Read the registry, not its formatting: an entry that wraps onto a second
+    line is the same entry."""
+    from app import server as server_mod
+
     assert "moduleId === 'subscriptions'" in UI
-    modules = SERVER[SERVER.index("_ADMIN_MODULES"):]
-    modules = modules[:modules.index("\n)")]
-    entry = next(line for line in modules.splitlines() if '"id": "subscriptions"' in line)
-    assert '"owner_only": True' in entry
+    entry = next(m for m in server_mod._ADMIN_MODULES if m["id"] == "subscriptions")
+    assert entry.get("owner_only") is True
 
 
 def test_the_cabinet_has_no_subscription_management_controls():
     cabinet = _fn("function renderCabinet", "async function renderAiRatingsInto")
     for admin_only in ("['subscriptions',", "['users',", "['monitoring',", "['journal',"):
         assert admin_only not in cabinet
+    # Deciding what a plan grants is an administrative act. The owner opening
+    # their own cabinet should see their account, not the switchboard for
+    # everyone's, so the cabinet asks for the self scope explicitly.
+    assert "renderPlansInto(cb, me, 'self')" in cabinet
