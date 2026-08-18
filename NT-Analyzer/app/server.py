@@ -1889,6 +1889,7 @@ class Handler(BaseHTTPRequestHandler):
         recorder = getattr(self.server, "record_payload", None)
         if callable(recorder):
             recorder(n)
+        self._body_consumed = True
         return self.rfile.read(n)
 
     def _read_body(self) -> Optional[Dict[str, Any]]:
@@ -1906,6 +1907,7 @@ class Handler(BaseHTTPRequestHandler):
         recorder = getattr(self.server, "record_payload", None)
         if callable(recorder):
             recorder(n)
+        self._body_consumed = True
         raw = self.rfile.read(n)
         try:
             body = json.loads(raw.decode("utf-8"))
@@ -3335,7 +3337,11 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
             length = 0
-        raw = self.rfile.read(length) if 0 < length <= 1_000_000 else b""
+        if 0 < length <= 1_000_000:
+            self._body_consumed = True
+            raw = self.rfile.read(length)
+        else:
+            raw = b""
         try:
             event = json.loads(raw.decode("utf-8")) if raw else {}
         except ValueError:
@@ -4358,7 +4364,68 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------- routing -------------------------------------------------
 
+    # Requests on these methods may carry a body worth draining.
+    _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+    # Draining is not a licence to read whatever a caller declares. Past this,
+    # the connection closes and the caller -- who already broke the size
+    # contract -- gets the abort instead of a delivered answer.
+    _DRAIN_LIMIT_BYTES = 256 * 1024
+
+    def _drain_request_body(self) -> None:
+        """Read and discard a request body nobody consumed, before answering.
+
+        Closing a socket that still holds unread received data makes Windows
+        send RST instead of FIN, so the client's pending read fails with
+        WSAECONNABORTED and never sees the answer it was actually given. Early
+        rejections are exactly where that happens: the capability gate, the CSRF
+        check and admission control all answer before any handler reads the
+        body, so a perfectly good 403 reaches the caller as a network error --
+        intermittently, depending on which side of the race wins.
+
+        The cost is bounded and is not a new exposure: any accepted request
+        already reads its declared body here.
+        """
+        # send_response also answers malformed request lines, where the base
+        # handler has not parsed a method or headers yet. There is nothing to
+        # drain then, and reaching for either attribute would turn a 400 into a
+        # crash.
+        if getattr(self, "command", None) not in self._BODY_METHODS:
+            return
+        headers = getattr(self, "headers", None)
+        if headers is None:
+            return
+        if getattr(self, "_body_consumed", False):
+            return
+        self._body_consumed = True
+        # A client waiting on 100-continue has not sent its body yet, so there
+        # is nothing to drain and reading would block until someone times out.
+        if "100-continue" in str(headers.get("Expect") or "").lower():
+            return
+        try:
+            remaining = int(headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            # An unparseable length means the framing is unknown, so the stream
+            # cannot be resynchronised -- close rather than guess.
+            self.close_connection = True
+            return
+        if remaining <= 0:
+            return
+        if remaining > self._DRAIN_LIMIT_BYTES:
+            self.close_connection = True
+            return
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 65536))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            self.close_connection = True
+
     def send_response(self, code, message=None):  # type: ignore[override]
+        # Before the answer goes out, take anything still sitting in the receive
+        # buffer: an undrained body turns this response into a connection abort.
+        self._drain_request_body()
         # Track whether the response line has been emitted so the top-level
         # error guard knows if it can still send a clean 500 JSON body.
         self._response_started = True
@@ -4448,6 +4515,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         self._begin_request_observation()
         self._response_started = False
+        # Reset per request, not per connection: keep-alive reuses the handler.
+        self._body_consumed = False
         self._remote_attempt = False
         self._remote_audited = False
         self._remote_context = None
@@ -4465,6 +4534,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._begin_request_observation()
         self._response_started = False
+        # Reset per request, not per connection: keep-alive reuses the handler.
+        self._body_consumed = False
         self._remote_attempt = False
         self._remote_audited = False
         self._remote_context = None
@@ -4482,6 +4553,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         self._begin_request_observation()
         self._response_started = False
+        # Reset per request, not per connection: keep-alive reuses the handler.
+        self._body_consumed = False
         self._remote_attempt = False
         self._remote_audited = False
         self._remote_context = None

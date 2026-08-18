@@ -10,9 +10,14 @@ on:
 permissions:
   contents: read
 
+# The same group as ci.yml, so the two identical full Windows suites never run
+# at the same time on the one self-hosted runner. See the note there for why:
+# the suite still writes a small set of files under <project>/data, and two
+# concurrent runs collided on them, which surfaced as random WSAECONNABORTED
+# failures in whichever HTTP test happened to be running.
 concurrency:
-  group: next-architecture-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: stratforge-self-hosted-suite-${{ github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
