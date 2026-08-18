@@ -342,6 +342,9 @@
     // Registry: what each environment reported about itself, and when. Unlike
     // the probe above this reaches LOCAL, which nothing can call into.
     adminEnvironments: (o) => getJSON('/api/admin/environments', o),
+    // Environments and releases assembled server-side, so the browser never
+    // has to join two payloads and hope they agree.
+    adminPipeline: (o) => getJSON('/api/admin/pipeline', o),
     // The canonical user card. One builder on the server; these two differ only
     // in scope, never in what they compute.
     accountCard: (o) => getJSON('/api/account/card', o),

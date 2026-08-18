@@ -365,8 +365,15 @@ _ADMIN_MODULES = (
     {"id": "users", "label": "Пользователи и сессии", "capability": "users.manage", "group": "Доступ и пользователи"},
     {"id": "connectors", "label": "Коннекторы и Telegram", "capability": "connectors.manage", "group": "Операции"},
     {"id": "operations", "label": "Операции и диагностика", "capability": "operations.view", "group": "Операции"},
-    {"id": "releases", "label": "Центр релизов", "capability": "releases.view", "group": "Релизы и окружения"},
-    {"id": "environments", "label": "Переключение окружений", "capability": "environment.switch", "group": "Релизы и окружения"},
+    # One entry. Environments and releases were never two jobs -- the owner
+    # always had to read both to answer a single question, which is why the
+    # promotion gates could not live in either of them alone.
+    # Seeing what an environment runs is the lower-privilege half of this
+    # module and the release actions are gated again inside it, so either
+    # capability opens it rather than the stricter one hiding the status from
+    # an admin who is allowed to read it.
+    {"id": "pipeline", "label": "Окружения и релизы", "capability": "releases.view",
+     "capability_any": ("releases.view", "environment.switch"), "group": "Релизы и окружения"},
     # One Documents entry, not two. Global governance and workspace
     # specifications are two scopes of the same thing, and splitting them into
     # sibling menu items made the reader choose between them before knowing
@@ -584,7 +591,7 @@ def _admin_overview_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     development = runtime_env.is_development()
     modules = [
         dict(row) for row in _ADMIN_MODULES
-        if caps.get(str(row["capability"]))
+        if any(caps.get(str(c)) for c in (row.get("capability_any") or (row["capability"],)))
         and (not row.get("owner_only") or context.get("is_owner"))
         and (not row.get("development_only") or development)
     ]
@@ -4651,43 +4658,32 @@ class Handler(BaseHTTPRequestHandler):
                 registry = environment_registry.snapshot()
             except environment_registry.EnvironmentRegistryError:
                 registry = {"environments": []}
-            rows = {str(r.get("environment") or ""): r
-                    for r in (registry.get("environments") or [])}
-
             try:
                 releases = release_center.list_releases()
-                candidates = releases.get("candidates") or []
-            except Exception:
-                candidates = []
-            candidate = candidates[0] if candidates else {}
+            except release_center.ReleaseCenterError:
+                releases = {}
 
-            sync = development_sync.status()
-            development = pipeline_view.development_card(
-                sync, rows.get(runtime_env.DEVELOPMENT))
-            canary = pipeline_view.server_card(
-                runtime_env.CANARY, rows.get(runtime_env.CANARY),
-                (candidate.get("canary") if isinstance(candidate.get("canary"), dict) else {}))
-            production = pipeline_view.server_card(
-                runtime_env.PRODUCTION, rows.get(runtime_env.PRODUCTION),
-                (candidate.get("production") if isinstance(candidate.get("production"), dict) else {}))
+            # The candidate summary says which state Canary and Production are
+            # in but not when they got there, and "last deploy" is the field an
+            # owner reads first. The deployment rows carry the timestamps.
+            deployments = {}
+            rows = releases.get("releases") or []
+            if rows:
+                try:
+                    detail = release_center.get_release(str(rows[0].get("candidate_id") or ""))
+                    for row in (detail.get("deployments") or []):
+                        deployments[str(row.get("environment") or "")] = row
+                except release_center.ReleaseCenterError:
+                    deployments = {}
 
             tunnel_ip, forwarded_ip = self._request_ips()
-            local_request = self._is_loopback_ip(forwarded_ip or tunnel_ip)
-
-            self._json(HTTPStatus.OK, {
-                "ok": True,
-                "environments": {
-                    "development": development,
-                    "canary": canary,
-                    "production": production,
-                },
-                "candidate": candidate,
-                "candidates": candidates[:10],
-                "stages": pipeline_view.stage_progress(candidate),
-                "promotion": pipeline_view.promotion_gates(candidate, registry),
-                "compare": pipeline_view.compare([development, canary, production]),
-                "development_access": pipeline_view.development_access(local_request),
-            })
+            self._json(HTTPStatus.OK, pipeline_view.assemble(
+                registry=registry,
+                releases=releases,
+                sync=development_sync.status(),
+                deployments=deployments,
+                is_local_request=self._is_loopback_ip(forwarded_ip or tunnel_ip),
+            ))
             return
 
         if path == "/api/admin/development-sync":

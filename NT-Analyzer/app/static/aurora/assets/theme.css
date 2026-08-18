@@ -509,6 +509,37 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .admin-env-compare tbody th { color: var(--tx-3); font-weight: 500; }
 .admin-env-compare tr.is-diff th, .admin-env-compare tr.is-diff td { color: var(--warn); }
 
+/* Environments and releases as one module. The three cards read left to right
+   in the same order the artifact travels, so the layout itself states the
+   lifecycle before any label does. */
+/* Sized to the container, not the viewport: this grid lives inside an admin
+   panel roughly half the window wide, so a viewport breakpoint would keep
+   three columns and squeeze each card to a fraction of its content. */
+.pipe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.pipe-card { display: flex; flex-direction: column; gap: 12px; margin: 0; min-width: 0; }
+.pipe-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pipe-card-head b { margin-right: auto; }
+/* A Development box running code nobody committed is the failure this whole
+   pipeline exists to prevent, so the card carries the warning itself. */
+.pipe-card-warn { border-color: var(--warn); }
+.pipe-note { margin-top: -2px; }
+.pipe-actions { margin-top: auto; }
+
+.pipe-stages { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.pipe-stage { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 11.5px; color: var(--tx-3); }
+.pipe-stage-dot { font-size: 10px; line-height: 1; }
+.pipe-stage-done { color: var(--pos); border-color: rgba(52,211,153,.32); background: var(--pos-soft); }
+/* Failed is drawn as failed, never as "not yet reached" -- that distinction is
+   why someone opened this page. */
+.pipe-stage-failed { color: var(--neg); border-color: rgba(255,107,129,.32); background: var(--neg-soft); }
+.pipe-arrow { color: var(--tx-4); font-size: 11px; }
+
+.pipe-gates { display: grid; gap: 6px; padding: 6px 0 2px; }
+.pipe-gate { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; }
+.pipe-gate.is-ok { color: var(--tx-3); }
+.pipe-gate.is-blocked { color: var(--warn); }
+
+
 /* Canonical user card. The nesting is the model: machine > client > session,
    so each level is indented and separated rather than flattened into one list. */
 .card-summary-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }

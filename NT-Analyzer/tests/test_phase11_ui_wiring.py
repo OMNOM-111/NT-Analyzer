@@ -257,7 +257,9 @@ def _admin_modules(*, is_owner=True, development=False, monkeypatch=None):
     return {m["id"] for m in payload["modules"]}
 
 
-OPERATIONAL = {"overview", "users", "connectors", "operations", "releases", "environments"}
+# "releases" and "environments" are one module now: an owner reading either
+# always had to read the other to answer a single question.
+OPERATIONAL = {"overview", "users", "connectors", "operations", "pipeline"}
 
 
 def test_operational_admin_modules_are_available_on_servers(monkeypatch):
