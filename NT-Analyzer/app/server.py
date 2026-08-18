@@ -60,6 +60,7 @@ if __package__ is None or __package__ == "":
     from app import security_devices  # type: ignore[no-redef]
     from app import environment_registry  # type: ignore[no-redef]
     from app import user_card  # type: ignore[no-redef]
+    from app import development_sync  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -151,6 +152,7 @@ else:
     from . import security_devices
     from . import environment_registry
     from . import user_card
+    from . import development_sync
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -4635,6 +4637,14 @@ class Handler(BaseHTTPRequestHandler):
                           code="capability_required")
                 return
             self._json(HTTPStatus.OK, _connectors_dashboard_payload(context))
+            return
+
+        if path == "/api/admin/development-sync":
+            # Is the running LOCAL process the code in the checkout? The
+            # project rule is that work happens on LOCAL first, and that rule
+            # breaks silently whenever LOCAL keeps serving an old process
+            # after a merge.
+            self._json(HTTPStatus.OK, {"ok": True, "sync": development_sync.status()})
             return
 
         if path == "/api/admin/environments":
