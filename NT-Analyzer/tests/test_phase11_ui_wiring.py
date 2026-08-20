@@ -211,9 +211,9 @@ def test_avatar_endpoint_is_cacheable_and_private():
 def test_html_asset_stamps_are_rewritten_to_the_build():
     stamp = server_mod._asset_build_stamp()
     assert stamp, "a build with no identity cannot stamp its assets"
-    html = b'<script src="assets/ui.js?v=20260813-release-workflow2"></script>'
+    html = b'<script src="assets/ui.js?v=20260820-final-acceptance1"></script>'
     out = server_mod.Handler._stamp_asset_refs(server_mod.Handler, html)
-    assert b"20260813-release-workflow2" not in out
+    assert b"20260820-final-acceptance1" not in out
     assert f'assets/ui.js?v={stamp}"'.encode() in out
 
 

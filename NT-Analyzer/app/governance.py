@@ -71,7 +71,15 @@ def docs_dir() -> Path:
     # under the isolated data root just like the staging/development copy.
     # Keep the historical implicit-environment behaviour for library callers
     # that have not selected a deployment boundary yet.
-    isolated_runtime = runtime_env.is_staging() or (
+    explicit_data_root = any(
+        str(os.environ.get(name) or "").strip()
+        for name in (
+            "STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT",
+            "STRATFORGE_CANARY_DATA_ROOT",
+            "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
+        )
+    )
+    isolated_runtime = explicit_data_root or runtime_env.is_staging() or (
         runtime_env.is_production() and runtime_env.environment_explicit()
     )
     path = (

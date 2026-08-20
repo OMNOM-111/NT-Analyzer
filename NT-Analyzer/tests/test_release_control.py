@@ -144,6 +144,36 @@ def test_an_unreachable_control_plane_is_a_refusal(monkeypatch):
     assert out["available"] is False
 
 
+def test_a_fresh_exact_server_decision_is_accepted(monkeypatch):
+    monkeypatch.setattr(release_control.environment_registry, "peer_origins",
+                        lambda: ["https://example.invalid"])
+    monkeypatch.setattr(release_control.environment_registry, "token_configured",
+                        lambda: True)
+    monkeypatch.setattr(release_control.environment_registry, "token", lambda: "k" * 32)
+    monkeypatch.setattr(release_control.environment_registry, "_now", lambda: 1_000.0)
+
+    import io
+    import json as _json
+    import urllib.request
+
+    payload = {
+        "ok": True, "allowed": True, "decided_by": "canary",
+        "artifact_sha256": ARTIFACT, "candidate_id": "rc_1",
+        "decided_at_epoch": 1_000, "expires_at_epoch": 1_120,
+    }
+
+    class Fake(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: Fake(_json.dumps(payload).encode("utf-8")))
+    out = release_control.request_decision(_claim())
+    assert out["allowed"] is True
+    assert out["available"] is True
+    assert out["candidate_id"] == "rc_1"
+
+
 def test_an_answer_about_another_artifact_is_discarded(monkeypatch):
     """Otherwise a captured yes for one release authorises the next one."""
     monkeypatch.setattr(release_control.environment_registry, "peer_origins",
@@ -167,6 +197,97 @@ def test_an_answer_about_another_artifact_is_discarded(monkeypatch):
     out = release_control.request_decision(_claim())
     assert out["allowed"] is False
     assert out["code"] == "control_plane_artifact_mismatch"
+
+
+def test_an_answer_about_another_candidate_is_discarded(monkeypatch):
+    monkeypatch.setattr(release_control.environment_registry, "peer_origins",
+                        lambda: ["https://example.invalid"])
+    monkeypatch.setattr(release_control.environment_registry, "token_configured",
+                        lambda: True)
+    monkeypatch.setattr(release_control.environment_registry, "token", lambda: "k" * 32)
+    monkeypatch.setattr(release_control.environment_registry, "_now", lambda: 1_000.0)
+
+    import io
+    import json as _json
+    import urllib.request
+
+    payload = {
+        "allowed": True, "decided_by": "production",
+        "artifact_sha256": ARTIFACT, "candidate_id": "rc_other",
+        "decided_at_epoch": 1_000, "expires_at_epoch": 1_120,
+    }
+
+    class Fake(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: Fake(_json.dumps(payload).encode("utf-8")))
+    out = release_control.request_decision(_claim())
+    assert out["allowed"] is False
+    assert out["code"] == "control_plane_candidate_mismatch"
+
+
+@pytest.mark.parametrize("decided,expires", [
+    (800, 920),       # already expired
+    (1_000, 1_000),  # empty validity window
+    (1_000, 1_121),  # responder tried to extend the fixed TTL
+    (1_121, 1_241),  # decision timestamp outside the clock-skew window
+])
+def test_a_stale_or_invalid_decision_is_discarded(monkeypatch, decided, expires):
+    monkeypatch.setattr(release_control.environment_registry, "peer_origins",
+                        lambda: ["https://example.invalid"])
+    monkeypatch.setattr(release_control.environment_registry, "token_configured",
+                        lambda: True)
+    monkeypatch.setattr(release_control.environment_registry, "token", lambda: "k" * 32)
+    monkeypatch.setattr(release_control.environment_registry, "_now", lambda: 1_000.0)
+
+    import io
+    import json as _json
+    import urllib.request
+
+    payload = {
+        "allowed": True, "decided_by": "production",
+        "artifact_sha256": ARTIFACT, "candidate_id": "rc_1",
+        "decided_at_epoch": decided, "expires_at_epoch": expires,
+    }
+
+    class Fake(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: Fake(_json.dumps(payload).encode("utf-8")))
+    out = release_control.request_decision(_claim())
+    assert out["allowed"] is False
+    assert out["code"] == "control_plane_decision_stale"
+
+
+def test_a_development_responder_is_not_authoritative(monkeypatch):
+    monkeypatch.setattr(release_control.environment_registry, "peer_origins",
+                        lambda: ["https://example.invalid"])
+    monkeypatch.setattr(release_control.environment_registry, "token_configured",
+                        lambda: True)
+    monkeypatch.setattr(release_control.environment_registry, "token", lambda: "k" * 32)
+
+    import io
+    import json as _json
+    import urllib.request
+
+    payload = {
+        "allowed": True, "decided_by": "development",
+        "artifact_sha256": ARTIFACT, "candidate_id": "rc_1",
+    }
+
+    class Fake(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: Fake(_json.dumps(payload).encode("utf-8")))
+    out = release_control.request_decision(_claim())
+    assert out["allowed"] is False
+    assert out["code"] == "control_plane_answer_not_authoritative"
 
 
 def test_an_answer_from_nobody_in_particular_is_discarded(monkeypatch):

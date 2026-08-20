@@ -6,7 +6,6 @@ candidate list with explicit mock agents.
 """
 from __future__ import annotations
 
-import itertools
 import os
 import shutil
 import tempfile
@@ -16,53 +15,30 @@ from pathlib import Path
 # Tests must never write the workstation's live data directory, and this has to
 # be set before any app module is imported.
 #
-# Two concurrent pytest runs -- exactly what CI does, since ci.yml/python-tests
-# and next-architecture-ci/tests(windows-self-hosted) both run the full suite on
-# the one self-hosted runner -- were both performing atomic `.tmp` -> rename
-# writes into <project>/data. On Windows a rename onto a file another process
-# holds open fails with WinError 5/32. That exception escapes inside an HTTP
-# handler thread after the response line is already out, so `_handle_unexpected`
-# has nothing safe left to send and the connection closes mid-response: the
-# waiting client gets WSAECONNABORTED (10053) instead of the status it had been
-# given. It showed up as three different "flaky" tests across four CI runs,
-# never the same one twice. The running LOCAL server writes that same directory,
-# which made the developer machine a third writer.
+# Concurrent suites used to perform atomic `.tmp` -> rename writes into
+# <project>/data and collide with each other and the running LOCAL server. Both
+# environments now receive unique disposable roots before application imports,
+# and every test receives a fresh pair below. CI concurrency is therefore a
+# capacity choice, never a correctness requirement.
 #
 # The pid and random suffix matter: without them two runs would share this
 # directory too and simply move the collision.
 #
-# It is deliberately the lower-precedence of the two development root
-# variables. runtime_env.data_root() prefers STRATFORGE_DEVELOPMENT_DATA_ROOT
-# over NTA_STAGING_DATA_ROOT, so claiming the preferred name here would
-# silently override the tests that manage roots themselves -- which is exactly
-# what test_staging_isolation exists to check. Taking the fallback name gives
-# every other test isolation by default and still lets those tests win.
+# Both fallback roots are claimed before any app module is imported. A test
+# that does not declare an environment resolves to Production, so isolating
+# Development alone still let those imports and tests write the workstation's
+# live ``data`` directory. The two roots are siblings because runtime startup
+# correctly rejects overlapping environment roots.
 _TEST_DATA_ROOT = Path(tempfile.gettempdir()) / (
     "stratforge-tests-%d-%s" % (os.getpid(), uuid.uuid4().hex[:8])
 )
 _TEST_DATA_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ["NTA_STAGING_DATA_ROOT"] = str(_TEST_DATA_ROOT)
-
-# The production root is deliberately NOT claimed here, and that is a known
-# gap rather than an oversight. A test that declares no environment resolves to
-# PRODUCTION, whose branch returns <project>/data outright, so nine live files
-# are still written by the suite -- listed by the session check below.
-#
-# Both ways of closing it were tried and rejected. An empty production root
-# fails thirty-two tests that read committed baselines; a seeded copy carries
-# the workstation's live telegram inbox, durable DB and audit logs into the run
-# and fails twenty-five that expect a clean slate. Seeding baselines but not
-# state moves the failures again, to the market-data tests that read runtime
-# baselines. Closing it properly means giving those test files their own roots
-# individually, which is a change of a different size from this one.
-#
-# What that gap can no longer do is take CI down: the two Windows suites no
-# longer run at the same time (see .github/workflows), so nothing else is
-# writing these files while a test does.
-
-# Names the per-test directories. A counter rather than the test id: node ids
-# contain characters Windows will not accept in a path.
-_COUNTER = itertools.count(1)
+_SESSION_PRODUCTION_ROOT = _TEST_DATA_ROOT / "session-production"
+_SESSION_DEVELOPMENT_ROOT = _TEST_DATA_ROOT / "session-development"
+_SESSION_PRODUCTION_ROOT.mkdir()
+_SESSION_DEVELOPMENT_ROOT.mkdir()
+os.environ["NTA_DATA_ROOT"] = str(_SESSION_PRODUCTION_ROOT)
+os.environ["NTA_STAGING_DATA_ROOT"] = str(_SESSION_DEVELOPMENT_ROOT)
 
 import pytest  # noqa: E402
 
@@ -77,19 +53,15 @@ _LIVE_BEFORE: dict = {}
 def _live_manifest() -> dict:
     """Size and mtime of every file under the live data directory.
 
-    governance-rendered is excluded: the running LOCAL server regenerates it,
-    so it changes for reasons that have nothing to do with the suite.
-
-    On a developer machine the running server can still make this report a file
-    it wrote itself -- its news poller does, occasionally. CI is where the check
-    is exact, because nothing else is running there. A local report that does
-    not reproduce on a second run is the server, not a test.
+    The release suite is run with LOCAL stopped, making this byte-level guard
+    exact. CI has no application runtime, so it is exact there too. Nothing is
+    exempted: a test that changes even generated live state is a regression.
     """
     manifest = {}
     if not _LIVE_DATA.is_dir():
         return manifest
     for path in _LIVE_DATA.rglob("*"):
-        if not path.is_file() or "governance-rendered" in path.as_posix():
+        if not path.is_file():
             continue
         try:
             stat = path.stat()
@@ -108,62 +80,25 @@ def pytest_sessionstart(session):  # noqa: ARG001
     _LIVE_BEFORE.update(_live_manifest())
 
 
-# The live files the suite is still known to write, because those tests resolve
-# to PRODUCTION and that root is not isolated yet. Listing them explicitly means
-# the check fails on a *new* writer rather than staying permanently red on the
-# ones already understood -- a check that is always failing is a check nobody
-# reads. Shrinking this list is the remaining work; growing it is a regression.
-_KNOWN_LIVE_WRITERS = frozenset({
-    "audit/paypal-webhook.jsonl",
-    "audit/telegram-mini-app.jsonl",
-    "durable/nt_analyzer.sqlite3",
-    "durable/nt_analyzer.sqlite3-wal",
-    "durable/nt_analyzer.sqlite3-shm",
-    "integrations/telegram.remote-access.json",
-    "integrations/telegram.state.json",
-    "integrations/workspaces.dpapi",
-    "operations/in_app_notifications.json",
-    "operations/vitek.json",
-    "reports/report_numbers.json",
-    "runtime/market_data_failover_status.json",
-    "runtime/market_data_gap_recovery.jsonl",
-    "runtime/market_data_ipc_audit.jsonl",
-    "runtime/market_data_ipc_token.json",
-    "runtime/price_alerts.json",
-    "runtime/user-support.json",
-})
-
-
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    """Fail the run if the suite wrote a live file nobody has accounted for.
-
-    This is the property that matters, and it is measured rather than assumed:
-    which environment variables achieve isolation depends on which environment
-    each test declares, and pinning the variables directly both over-reached
-    (thirty-two tests need the committed baselines) and under-covered (nine
-    files were still written). A byte-level before/after comparison cannot be
-    fooled by either.
-    """
+    """Fail the run if the suite changed any workstation live-data file."""
     after = _live_manifest()
     changed = (set(_LIVE_BEFORE) ^ set(after)) | {
         p for p in set(_LIVE_BEFORE) & set(after) if _LIVE_BEFORE[p] != after[p]
     }
     shutil.rmtree(_TEST_DATA_ROOT, ignore_errors=True)
-    unexpected = sorted(path for path in changed
-                        if path not in _KNOWN_LIVE_WRITERS)
-    if unexpected:
+    if changed:
         session.exitstatus = 1
-        print("\n\nTHE SUITE WROTE LIVE DATA FILES THAT ARE NOT ACCOUNTED FOR:")
-        for path in unexpected[:20]:
+        print("\n\nTHE SUITE CHANGED LIVE DATA FILES:")
+        for path in sorted(changed)[:20]:
             print("   ", path)
-        if len(unexpected) > 20:
-            print("    ... and %d more" % (len(unexpected) - 20))
-        print("Give the test that writes it a root of its own, or list it in "
-              "_KNOWN_LIVE_WRITERS with a reason.")
+        if len(changed) > 20:
+            print("    ... and %d more" % (len(changed) - 20))
+        print("Every test writer must use its isolated disposable root.")
 
 
 @pytest.fixture(autouse=True)
-def isolated_data_root(request, monkeypatch):
+def isolated_data_root(monkeypatch, tmp_path):
     """A data directory of its own for every test.
 
     A single session-wide root still lets tests contaminate each other. Two
@@ -173,16 +108,23 @@ def isolated_data_root(request, monkeypatch):
     in the suite depending on what ran before it.
 
     No fixture in this suite is module- or session-scoped, so nothing depends on
-    state surviving between tests, and a per-test root costs one mkdir.
+    state surviving between tests. The paths are created lazily by the code
+    under test, preserving tests that intentionally distinguish an absent root
+    from an empty one.
 
     Set through the fallback variables (NTA_*), so a test that manages roots
     explicitly still overrides it: setting the same name replaces this value,
     and the STRATFORGE_* names outrank it either way.
     """
-    root = _TEST_DATA_ROOT / ("t%04d" % next(_COUNTER))
-    root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("NTA_STAGING_DATA_ROOT", str(root))
-    return root
+    # Keep Production at ``<tmp_path>/data`` because tests that replace a
+    # module's project root with tmp_path intentionally expect the normal
+    # project-relative layout. Development is a sibling, not a child, so the
+    # real overlap guard is exercised rather than bypassed.
+    production = tmp_path / "data"
+    development = tmp_path / "development-data"
+    monkeypatch.setenv("NTA_DATA_ROOT", str(production))
+    monkeypatch.setenv("NTA_STAGING_DATA_ROOT", str(development))
+    return development
 
 
 # A developer workstation now carries real Release Center and transactional

@@ -198,7 +198,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260813-release-workflow2"}, versions
+    assert set(versions.values()) == {"20260820-final-acceptance1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -840,6 +840,15 @@ def test_admin_panel_module_switching_uses_stale_render_guard():
     assert "renderAdminModule(moduleBody, id, overview)" not in ui
 
 
+def test_deliberate_page_cleanup_abort_never_surfaces_as_a_ui_error():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "function isAbortError(err)" in ui
+    assert "/AbortError|signal is aborted/i.test(message)" in ui
+    report = ui.split("function reportError(err)", 1)[1].split("\n  }", 1)[0]
+    assert "if (isAbortError(err)) return;" in report
+    assert report.index("if (isAbortError(err)) return;") < report.index("console.error('[UI]', err)")
+
+
 def test_release_center_describes_real_executor_without_stale_dry_run_copy():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     assert "function releaseAdapterSummary(adapter)" in ui
@@ -881,6 +890,18 @@ def test_desktop_root_contracts_auto_roll_but_fixed_contracts_do_not():
     assert "rec.node.dataset.priceMarkerLive" in js
     assert "rec.node.dataset.providerConnectionState" in js
     assert "rec.node.dataset.lastBarClose" in js
+
+
+def test_dense_desktop_grid_scales_virtual_windows_instead_of_overlapping_controls():
+    js = (AURORA / "assets" / "pages" / "desktop.js").read_text(encoding="utf-8")
+    assert "const GRID_COLUMNS" in js and "function gridShape(count)" in js
+    assert "const minW = cols * MIN_W" in js
+    assert "const minH = rows * MIN_H" in js
+    assert "zoom = Math.min(1, s.w / minW, s.h / minH);" in js
+    sync = js.split("async function syncInstrumentGrid", 1)[1].split("function openInstrumentPicker", 1)[0]
+    grid_set = sync.index("layout.grid = layout.windows.length;")
+    canvas_fit = sync.index("applyCanvas();", grid_set)
+    assert grid_set < canvas_fit < sync.index("retileGrid();", grid_set)
 
 
 def test_chart_live_price_marker_follows_latest_tick_not_candle_open():

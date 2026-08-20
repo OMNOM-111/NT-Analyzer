@@ -1,153 +1,97 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-14T06:20:00Z
+- Last verified UTC: 2026-08-20T23:00:44Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Scope: Deployment environments, release channels, immutable promotion and rollback boundaries
-- Status: DONE
+- Repository baseline: main `3102a534ab569d0cbf162462726d516378dc82a8`
+- Scope: Environment isolation, immutable release, promotion and rollback
+- Status: PARTIAL
+- Acceptance note: beta.28 operational acceptance is in progress.
 
-## Evidence modes
-
-- **Repository evidence** in this document describes what the repo implements:
-  env/channel split, fail-closed startup, build scripts, Release Center schema
-  and deploy templates.
-- **Operational evidence** is environment-specific. Live public API identity
-  (2026-08-14) is `1fae1f39` on both Canary and Production:
-  [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md).
-  Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458` remain in
-  changelog.
-- Do not answer a “what is live right now” question from repository templates
-  alone when operational closeout evidence exists.
-
-## Canonical promotion model
+## Only supported release model
 
 ```mermaid
 flowchart LR
-  Dev[Local DEV] --> Clean[clean commit]
-  Clean --> Build[signed immutable artifact]
-  Build --> Canary[CANARY deploy]
-  Canary --> Checks[acceptance + evidence]
-  Checks --> Promote[same artifact SHA]
-  Promote --> Prod[PRODUCTION deploy]
+  Dev[LOCAL DEV] --> Clean[clean merged main SHA]
+  Clean --> CI[mandatory CI]
+  CI --> Build[one signed immutable artifact]
+  Build --> Canary[CANARY]
+  Canary --> Accept[browser + API + live acceptance]
+  Accept --> Prod[same artifact PRODUCTION]
 ```
 
-This is a hard release contract, not a preference. Every update must follow
-`DEV -> CANARY -> PRODUCTION` with one exact immutable artifact:
+Rules:
 
-- DEV is the source of the release. If the local working tree has meaningful
-  changes, they must be committed and tested before the artifact is built.
-- The artifact is built once from the exact clean commit and carries Git SHA,
-  build id, archive SHA256 and manifest/runtime artifact SHA256.
-- CANARY receives that artifact first and must be functionally identical to DEV
-  in code, UI/static assets, backend logic, Documents, Charts and behavior.
-  Only environment-specific DB, secrets, sessions, cookies, origins and runtime
-  config/state may differ.
-- PRODUCTION may receive only the same artifact that passed CANARY, with no
-  rebuild, no file copy, no partial hotfix and no code/config drift except the
-  intended environment-specific runtime config.
-- Any code/UI/function change after Canary acceptance starts a new full cycle:
-  new commit, new artifact, new Canary acceptance, then Production promotion.
+- Build once from the exact clean merged commit.
+- Canary and Production receive identical application code, UI/static assets,
+  backend logic and user Documents. Only DB, secrets, sessions, cookies,
+  origins, queues and runtime state/configuration differ by environment.
+- Any code/UI/document change after Canary acceptance starts a new cycle.
+- Production promotion is a switch to the already accepted artifact, never a
+  rebuild, manual file copy or server hotfix.
 
-## Two separate axes
+## Environment identity and isolation
 
-| Axis | Current meaning |
-| --- | --- |
-| `DEPLOYMENT_ENV` | where the software runs: `development`, `canary`, `production` |
-| `RELEASE_CHANNEL` | maturity of the build: `dev`, `beta`, `stable` |
+| Environment | Origin | Isolation |
+| --- | --- | --- |
+| Development | `http://127.0.0.1:8765/ui/` | local canonical owner, LOCAL data root and loopback session |
+| Canary | `https://canary.stratforges.com` | separate Canary DB/storage/queues/sessions/cookies; owner/admin acceptance surface |
+| Production | `https://app.stratforges.com` | separate Production DB/storage/queues/sessions/cookies; public application |
 
-Git branch, deployment environment and release channel are not synonyms.
+Environment Switcher opens the selected origin. It never carries a session or
+browser storage across origins.
 
-## Environment identities
+## Server-authoritative promotion
 
-| Environment | Origin / opening mode | Isolation contract | Operational snapshot |
-| --- | --- | --- | --- |
-| DEV | `http://127.0.0.1:8765/ui/` | local data only, local owner session, no Production data, loopback-only assumptions | `[DEV]`; local process was not listening in this session |
-| CANARY | `https://canary.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; owner/admin/developer only | `[CANARY]`, process git `1fae1f39`, isolated DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary` |
-| PRODUCTION | `https://app.stratforges.com` | separate DB/queues/storage/cookies/Connector sessions; public app | `[BETA]`, process git `1fae1f39`, `instance=stratforge-linux-production-01`, DB `stratforge_production` |
+LOCAL owns the release ledger and initiates the action, but cannot attest that
+Canary is live or which artifact Canary currently runs. It therefore sends a
+signed server-side request to the existing control plane.
 
-## Current release/build identity
+The request is accepted only when signature, timestamp and nonce verify. The
+server checks its authoritative Environment Registry and returns a short-lived
+decision for one exact `candidate_id` and artifact SHA. LOCAL accepts it only
+when:
 
-- Public version file: `0.10.0-beta.1`.
-- Build timestamp in `VERSION.json`: `2026-08-11T18:35:00Z`.
-- Repository evidence snapshot for this sync pass: `7ebda6faf2e7c64d4a707a41062b29857882181a`.
-- Live public API identity (Canary and Production): git
-  `1fae1f3966dc53294b73772be47992d844575115`, build
-  `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256
-  `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`.
-- Host `/proc` cwd for Canary `api`/`worker-canary`/`operations-canary`/`telegram-canary`
-  and Production `api-app`/`worker`/`operations`/`telegram` matches that active
-  slot. Previous slot is `0f2a90ea`.
-- Repository Documents/Charts follow-up is not that live artifact.
-- Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458` remain in
-  changelog.
+- responder environment is Canary or Production;
+- candidate and artifact match exactly;
+- decision timestamp is within the allowed clock skew;
+- expiry is in the future and its validity window is at most 120 seconds.
 
-## Release Center and signing
+Unavailable control plane, invalid signature, replayed nonce, stale decision,
+wrong candidate/artifact, silent Canary, wrong Canary artifact, incomplete CI,
+migrations, signature or acceptance all block promotion fail-closed.
 
-| Area | Current state |
-| --- | --- |
-| Artifact creation | protected `stage9_ssh` signer builds a production-trust artifact from the verified clean selected `HEAD`; `tools/build_server_release.py` produces manifest, checksum and signature metadata |
-| Release ledger | `app/release_center.py` records candidates, artifacts, real deployments, granular checks, approvals, notifications and rollbacks; `7ebda6fa` lifecycle was completed through the Release Center |
-| Blue-green | real Canary stages and a real rollback→re-promote rehearsal passed; `app/blue_green.py` and `0010_blue_green_deploy_steps.sql` retain the step/maintenance evidence |
-| Exact-artifact promotion | same artifact fingerprint is stored and compared in schema/contracts |
-| Live execution proof | `7ebda6fa` has current real Canary build/deploy/rollback proof; earlier `6b6dc458` retains accepted Canary→Production same-directory proof |
+## Operational state before beta.28
 
-## Environment Switcher
+| Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Ready |
+| --- | --- | --- | --- | --- | --- |
+| Canary | `0.10.0-beta.27` | `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62` | `sf-0.10.0-beta.27-1f3e2ce7198f-20260818T215207Z` | `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270` | PASS |
+| Production | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `sf-0.10.0-beta.26-3353e3836306-20260817T230438Z` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` | PASS |
 
-- Environment Switcher is a product/admin surface, not a way to reuse the same
-  cookies or browser storage across origins.
-- The contract is separate-origin open in a new tab; current tab backend does
-  not silently switch under the user.
-- Local DEV access requires loopback identity probing rather than production-like
-  trust assumptions.
-- Accepted 2026-08-12 browser evidence: DEV / CANARY / PROD open in new tabs,
-  sessions/cookies/CSRF do not carry across, and ordinary users do not see
-  DEV/CANARY.
+This is intentionally not parity. Final beta.28 values are recorded only after
+real Canary acceptance and same-artifact Production promotion in
+[2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
 
-## Git / PR / CI model visible from repo
+## Test and CI isolation
 
-- Main CI runs on push and pull request to `main`.
-- Next Architecture CI adds static gates and cross-platform pytest.
-- Root workflow explicitly disallows direct `main` closeout without owner
-  confirmation; current pull-request template checks `No direct main changes`.
-
-## Readiness and rollback limitations
-
-- Migrations in Phases 3-11 are additive-first; rollback is expected to disable
-  newer surfaces rather than drop identity links or release evidence.
-- Promotion from Canary to Production is restricted to the **same artifact**.
-  This was operationally confirmed for `6b6dc458`; `7ebda6fa` has passed Canary
-  but has not been approved or promoted.
-- Canary previous is `0.10.0-beta.1-de7acaed`. Production previous is
-  `0.10.0-beta.1-795db0c1`.
-- Real Canary rollback rehearsal restored `de7acaed`, verified readiness and
-  re-promoted `7ebda6fa` (`rollback_verified=true`, `re_promoted=true`).
-- The `/ready` hang root cause was full Connector JSON deserialization under
-  lock plus overlapping short-timeout curl polling; the live fix uses a
-  lightweight DB/Connector probe, bounded per-request timeouts, single-flight,
-  `/live` before `/ready`, and one bounded deadline.
-- This Context Pack task itself should never trigger runtime deployment.
-
-## What to treat as historical only
-
-- Sibling `StratForge Releases/server-0.9.0-dev.*` bundles are useful evidence of
-  artifact naming, but they are not current source of truth for the live app.
-- Older pre-`6b6dc458` live snapshots are historical once a newer accepted
-  closeout supersedes them.
+Pytest sets unique disposable roots for both Development and Production before
+application imports, then a fresh pair per test. Tracked baselines are copied
+into that pair; live workstation state is neither a test root nor a fixture.
+The suite compares every live `data/` file before/after and fails on any change.
+Workflow concurrency is not a correctness dependency.
 
 ## Canonical evidence
 
 - [../adr/0001-environments-and-release-identity.md](../adr/0001-environments-and-release-identity.md)
 - [../../README-RUN-MODES.md](../../README-RUN-MODES.md)
 - `app/runtime_env.py`
+- `app/environment_registry.py`
+- `app/release_control.py`
 - `app/release_center.py`
-- `app/blue_green.py`
-- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
-- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
-- [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
-- [../../../.github/workflows/ci.yml](../../../.github/workflows/ci.yml)
-- [../../../.github/workflows/next-architecture-ci.yml](../../../.github/workflows/next-architecture-ci.yml)
+- `tests/test_release_control.py`
+- `tests/test_data_root_isolation.py`
+- [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea is previous only.
-2026-08-14T05:06:04Z | GPT-5.5 через Codex по запросу owner | Strengthened the canonical DEV → CANARY → PRODUCTION release contract for all future updates: one immutable artifact, Canary acceptance, exact same artifact to Production.
+2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 deployment snapshot with current beta.27/beta.26 identities, server-authoritative promotion and beta.28 acceptance contract.
 -->

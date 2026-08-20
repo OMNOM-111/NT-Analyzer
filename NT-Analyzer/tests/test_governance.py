@@ -5,15 +5,28 @@ Run: python -m tests.test_governance
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import governance  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def seed_canonical_governance() -> None:
+    """Give each test tracked baselines without reading workstation state."""
+    source = ROOT / "data" / "governance"
+    target = Path(os.environ["NTA_DATA_ROOT"]) / "governance"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("goals.json", "documents.json", "laws.json", "change_log.jsonl"):
+        shutil.copy2(source / name, target / name)
 
 
 def test_runtime_defaults_shape() -> None:
@@ -102,7 +115,7 @@ def test_law_update_writes_history_and_overview() -> None:
             entries = governance.read_change_log(10)
             assert entries
             assert entries[0]["changes"][0]["after_text"] == "10000.00 USD"
-            overview = (root / "docs" / "governance" / "OVERVIEW.md").read_text(encoding="utf-8")
+            overview = (governance.docs_dir() / "OVERVIEW.md").read_text(encoding="utf-8")
             assert "10000.00 USD" in overview
         finally:
             if previous_root is None:
@@ -129,6 +142,20 @@ def test_explicit_production_renders_governance_outside_immutable_release(
     governance.ensure_governance_files(render=True)
     assert (rendered / "README.md").is_file()
     assert not (release_root / "docs" / "governance").exists()
+
+
+def test_explicit_fallback_data_root_never_renders_tracked_docs(
+    tmp_path, monkeypatch,
+) -> None:
+    """A fallback root is still an explicit isolation boundary for tests."""
+    data_root = (tmp_path / "isolated-data").resolve()
+    monkeypatch.setenv("NTA_DATA_ROOT", str(data_root))
+    for name in ("DEPLOYMENT_ENV", "STRATFORGE_ENV", "NTA_APP_ENV", "NTA_ENV"):
+        monkeypatch.delenv(name, raising=False)
+
+    rendered = governance.docs_dir()
+    assert rendered == data_root / "governance-rendered"
+    assert rendered != ROOT / "docs" / "governance"
 
 
 def test_implicit_library_import_does_not_rewrite_tracked_governance(

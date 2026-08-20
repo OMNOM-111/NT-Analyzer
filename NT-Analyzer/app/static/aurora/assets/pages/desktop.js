@@ -341,11 +341,32 @@ UI.ready(async function () {
     return { w: Math.max(480, Math.round(viewport.clientWidth)),
              h: Math.max(320, Math.round(viewport.clientHeight)) };
   }
+  const GRID_COLUMNS = { 1: 1, 2: 2, 4: 2, 6: 3, 9: 3, 12: 4, 16: 4, 24: 6, 36: 6, 48: 8, 64: 8 };
+  function gridShape(count) {
+    const cols = GRID_COLUMNS[layout.grid] || GRID_COLUMNS[count] || Math.ceil(Math.sqrt(count));
+    return { cols, rows: Math.ceil(count / cols) };
+  }
   function applyCanvas() {
     if (layout.screenFit) {
       const s = viewportSize();
-      layout.resolution = { w: s.w, h: s.h };
-      layout.zoom = 1;
+      let w = s.w, h = s.h, zoom = 1;
+      const count = layout.grid ? layout.windows.length : 0;
+      if (count) {
+        const { cols, rows } = gridShape(count);
+        // A dense grid still uses the same fully interactive chart windows.
+        // Keep their virtual minimums and scale the whole canvas to the
+        // viewport; otherwise CSS minimums make neighbouring tiles overlap and
+        // the upper window steals the settings/timeframe hit targets.
+        const minW = cols * MIN_W + 4 * (cols + 1);
+        const minH = rows * MIN_H + 4 * (rows + 1);
+        zoom = Math.min(1, s.w / minW, s.h / minH);
+        if (zoom < 1) {
+          w = Math.ceil(s.w / zoom);
+          h = Math.ceil(s.h / zoom);
+        }
+      }
+      layout.resolution = { w, h };
+      layout.zoom = zoom;
     }
     const { w, h } = layout.resolution;
     canvas.style.width = w + 'px';
@@ -413,9 +434,7 @@ UI.ready(async function () {
   function retileGrid() {
     const count = layout.windows.length;
     if (!count) return;
-    const colMap = { 1: 1, 2: 2, 4: 2, 6: 3, 9: 3, 12: 4, 16: 4, 24: 6, 36: 6, 48: 8, 64: 8 };
-    const cols = colMap[layout.grid] || colMap[count] || Math.ceil(Math.sqrt(count));
-    const rows = Math.ceil(count / cols);
+    const { cols, rows } = gridShape(count);
     const gap = Math.max(4, Math.round(layout.resolution.w / 900));
     const cellW = (layout.resolution.w - gap * (cols + 1)) / cols;
     const cellH = (layout.resolution.h - gap * (rows + 1)) / rows;
@@ -2450,6 +2469,7 @@ UI.ready(async function () {
     } finally { bulkMounting = false; }
 
     layout.grid = layout.windows.length;
+    applyCanvas();
     retileGrid();
     wins.forEach(rec => { rec.nextPollAt = 0; if (rec.chart) rec.chart.resize(); });
     viewport.scrollLeft = 0; viewport.scrollTop = 0;

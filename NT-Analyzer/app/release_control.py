@@ -213,13 +213,45 @@ def request_decision(claim: Dict[str, Any], *, origins: Optional[List[str]] = No
                 "Ответ control plane не выглядит решением.",
                 code="control_plane_answer_invalid")
             continue
-        # An answer only counts from an environment entitled to give one, and
-        # only about the artifact that was asked about.
+        # An answer only counts from a server environment entitled to give one,
+        # and only for the exact candidate and artifact that were asked about.
+        if str(answer.get("decided_by") or "") not in {
+                runtime_env.CANARY, runtime_env.PRODUCTION}:
+            last = unavailable(
+                "Ответ пришёл не от authoritative server environment.",
+                code="control_plane_answer_not_authoritative")
+            continue
         if str(answer.get("artifact_sha256") or "").lower() != str(
                 claim.get("artifact_sha256") or "").lower():
             last = unavailable(
                 "Решение control plane относится к другому артефакту.",
                 code="control_plane_artifact_mismatch")
+            continue
+        if str(answer.get("candidate_id") or "") != str(
+                claim.get("candidate_id") or ""):
+            last = unavailable(
+                "Решение control plane относится к другому кандидату.",
+                code="control_plane_candidate_mismatch")
+            continue
+        try:
+            decided_at = int(answer.get("decided_at_epoch"))
+            expires_at = int(answer.get("expires_at_epoch"))
+        except (TypeError, ValueError):
+            last = unavailable(
+                "Ответ control plane не содержит проверяемого срока действия.",
+                code="control_plane_decision_invalid")
+            continue
+        moment = int(environment_registry._now())
+        duration = expires_at - decided_at
+        if (
+            abs(moment - decided_at) > environment_registry.MAX_CLOCK_SKEW_SEC
+            or expires_at <= moment
+            or duration <= 0
+            or duration > DECISION_TTL_SEC
+        ):
+            last = unavailable(
+                "Решение control plane устарело.",
+                code="control_plane_decision_stale")
             continue
         answer["available"] = True
         return answer

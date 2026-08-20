@@ -1,93 +1,74 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-14T06:20:00Z
+- Last verified UTC: 2026-08-20T23:00:44Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Scope: Dynamic current work, blockers, next actions and dangerous zones
-- Status: PARTIAL
-- Current Production version/build/artifact when known: Canary and Production `/live` `/ready` `/runtime/env` plus active `canary-current`/`current` and `/proc` cwd for all eight app processes report git `1fae1f3966dc53294b73772be47992d844575115`, build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256 `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`. Previous slot is `0f2a90ea`. Repository Documents/Charts follow-up is not that live artifact. Local DEV was not listening.
+- Repository baseline: main `3102a534ab569d0cbf162462726d516378dc82a8`
+- Candidate: `0.10.0-beta.28`
+- Scope: Final product acceptance and release closeout
+- Status: IN DEVELOPMENT
+- Acceptance note: completion requires one immutable beta.28 artifact to pass Canary and Production live checks.
+- Current Production version/build/artifact when known: `0.10.0-beta.26`; build `sf-0.10.0-beta.26-3353e3836306-20260817T230438Z`; artifact SHA256 `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`
 
-## Snapshot
+## Current checkpoint
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
-| Live public API Git SHA | `1fae1f3966dc53294b73772be47992d844575115` |
-| Public version | `0.10.0-beta.1` |
-| Live operational build ID | `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z` |
-| Live artifact SHA256 | `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B` |
-| DEV identity | `http://127.0.0.1:8765/ui/`, `[DEV]`; local process was not listening in this session |
-| CANARY identity | `https://canary.stratforges.com`, `[CANARY]`, DB `stratforge_canary`, topology `api / worker-canary / operations-canary / telegram-canary`; active slot and `/proc` cwd `1fae1f39` |
-| PRODUCTION identity | `https://app.stratforges.com`, `[BETA]`, `instance=stratforge-linux-production-01`, DB `stratforge_production`, Supervisor `api-app / worker / operations / telegram`; same active slot and `/proc` cwd `1fae1f39` |
-| Follow-up in repository | Documents/Release Center allowlist + server TopstepX chart fallback; not yet the live artifact |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `3102a534ab569d0cbf162462726d516378dc82a8` plus the unmerged beta.28 acceptance change set |
+| LOCAL | not running at the start of this acceptance; canonical live root remains `<project>/data` via `start.ps1` |
+| Canary | beta.27, Git `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62`, artifact `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270`, live/ready PASS |
+| Production | beta.26, Git `3353e3836306dca4628c759064139cdac94517e0`, artifact `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`, live/ready PASS |
+| Release parity | NO before beta.28; final target is one exact artifact in both server environments |
+| Market-data baseline | protected; no market-data/chart implementation refactor in this closeout |
+| Secret rotation | explicitly deferred; do not rotate the four Google/Resend secrets |
 
-## Last clearly completed milestone
+## Implemented in the beta.28 change set
 
-- Public HTTP identity on Canary and Production agrees on `1fae1f39` / same
-  artifact SHA256. Host `/proc` cwd for all eight app processes matches that
-  active slot. `0f2a90ea` is previous-slot only.
-- Historical Canary acceptance `7ebda6fa` and hang-fix Production `6b6dc458`
-  remain in changelog as prior closeouts.
+- Release-control responses now bind to an authoritative responder, exact
+  candidate, exact artifact and a valid 120-second decision window.
+- Stale/cross-candidate/cross-artifact/development responses fail closed.
+- Test roots are isolated for both environments before imports and per test.
+- Governance test baselines are copied from tracked repository files into the
+  disposable test root.
+- Any live `data/` mutation fails pytest; there are no known-writer exemptions.
+- CI workflows no longer share a correctness-motivated concurrency group.
 
-## Current work visible in the repo
+## Required execution sequence
 
-- Production live owner session found two code defects on `1fae1f39`:
-  `Unknown repository` for `releases`/`doc_specs`, and Charts returning
-  `workspace_runtime_not_connected` instead of TopstepX.
-- Repository now lets chart bars through `runtime_stub` and uses TopstepX →
-  Connector → other live provider → OFFLINE in server environments.
-- Optional `STRATFORGE_CANARY_INTERNAL_ORIGIN` is already set on live
-  Production telegram (`http://127.0.0.1:18765`).
-- Unauthenticated `/ui/` and `/ui/desktop.html` shells match between Canary
-  and Production. Authenticated page sweep was not completed here.
+1. Complete full local regression/static/markdown/CSP/link checks with zero failures.
+2. Run the real LOCAL browser user and Admin journeys, console/network sweep,
+   owner identity checks, Documents and TopstepX charts.
+3. Commit, push, PR, mandatory CI and merge to main.
+4. Build/sign exactly once from merged main and verify archive/manifest hashes.
+5. Deploy to Canary, run authenticated browser + API + chart acceptance and
+   fail-closed release-control probes.
+6. Promote the same artifact to Production without rebuild and repeat live checks.
+7. Append exact operational identity and close the Context Pack/repository.
 
-## Current blockers
+## Explicitly deferred / external
 
-- This change set is not live until a new signed artifact is built and
-  deployed DEV → CANARY → PRODUCTION.
-- Local DEV `http://127.0.0.1:8765` was not listening in this session.
-- Google OAuth remains externally blocked in Production.
-- Transactional email auth remains externally blocked in Production.
-- Production Connector acceptance still depends on a real Windows VM path.
+- Physical enrollment of a new Windows NinjaTrader Connector device. Existing
+  Connector/NinjaTrader state may be observed, but no synthetic enrollment or
+  unnecessary restart is allowed.
+- Google OAuth and transactional e-mail remain `EXTERNAL BLOCKED` until their
+  separate provider/security closeout.
+- Legal package publication remains `IN DEVELOPMENT` / DRAFT.
 
-## EXTERNAL BLOCKED
+## Stop conditions
 
-- Google OAuth in Production until external provider configuration is accepted;
-- transactional email auth in Production until external provider configuration is accepted;
-- fully published legal package;
-- any assumption that external chart feeds can authorize execution.
+Do not claim final PASS if Canary/Production artifact identity differs, any
+mandatory check fails, owner login cannot be exercised, TopstepX chart evidence
+is unavailable, or Production would require a rebuild/hotfix.
 
-## Owner decisions needed
+## Canonical evidence
 
-1. When to treat `beta` Production as ready for broader public exposure.
-2. When and how to close the live-trading regulatory/release gate.
-3. Which transactional email provider and operational policy to use for email auth.
-4. Final policy for long-term separate Canary bot identity versus existing-bot shared-webhook routing, and live acceptance evidence retention.
-5. Legal entity/placeholders and counsel review timing for publication.
-
-## Next actions
-
-1. Build/sign the Documents/Charts follow-up from a clean commit and deploy
-   DEV → CANARY → PRODUCTION without rebuild; re-prove `/proc` cwd on the new SHA.
-2. Re-test Production Documents, Release Center and TopstepX history/realtime
-   with a real owner session.
-3. Keep Google OAuth, transactional email and legal publication accurately
-   blocked until their external requirements are supplied and accepted.
-
-## Dangerous zones
-
-- `app/runtime_env.py`
-- `app/release_center.py`
-- `app/connector_protocol.py`
-- `app/market_data_failover.py`
-- `app/market_data_live_adapters.py`
-- `app/security_devices.py`
-- migrations `0005_identity_uuid.sql` through `0011_document_specifications.sql`
-- governance source/render pipeline under `data/governance/*` and `docs/governance/*`
-
-Do not change these casually without a reproducible defect, explicit test scope
-and release-impact reasoning.
+- [LOCAL_BASELINE_CHECKPOINT.md](../current/LOCAL_BASELINE_CHECKPOINT.md)
+- [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md)
+- [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
+- `app/release_control.py`
+- `tests/conftest.py`
+- `tests/test_release_control.py`
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Handoff: live process identity 1fae1f39; 0f2a90ea previous slot; Documents/Charts follow-up not deployed.
+2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 handoff with executable beta.28 final-acceptance checkpoint and explicit stop/deferred boundaries.
 -->

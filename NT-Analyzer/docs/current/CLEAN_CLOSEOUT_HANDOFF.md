@@ -1,288 +1,53 @@
 # Clean closeout — executable handoff
 
-Дата: `2026-08-17` UTC. Продолжать **с FIRST NEXT STEP**, повторный аудит не нужен.
+Дата проверки: `2026-08-20T23:00:44Z`.
 
-## LIVE состояние (проверено)
+## Текущее состояние
 
-| | |
-| --- | --- |
-| Canary | `0.10.0-beta.20`, artifact `FAAAA2732370D3F6…`, schema **17** |
-| Production | `0.10.0-beta.20`, artifact `FAAAA2732370D3F6…`, schema **17** |
-| Parity | EXACT MATCH — build stamp `sf-0.10.0-beta.20-eda8c9d3dbdb-20260817T053615Z`; реестр сред подтверждает независимо, `both_current: true` |
-| Human users | 1 canonical owner `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, identities Telegram+Google+email, 1 trusted device |
+| Environment | Version | Git SHA | Runtime artifact SHA256 | Readiness |
+| --- | --- | --- | --- | --- |
+| LOCAL | beta.28 change set, до merge/build | main baseline `3102a534ab569d0cbf162462726d516378dc82a8` | ещё не создан | change-set browser acceptance PASS; clean-SHA recheck pending |
+| Canary | `0.10.0-beta.27` | `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62` | `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270` | `/api/live` + `/api/ready` PASS |
+| Production | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` | `/api/live` + `/api/ready` PASS |
 
-Item 2 закрыт. `sf_identity_history` живёт на обеих средах, backfill
-email/google/telegram по одной active-записи, и все инварианты **проверены на
-живой БД, а не только в тестах**: дубль active-ключа → UniqueViolation,
-`active` без `verified_at` → CheckViolation, `active` с `valid_to` →
-CheckViolation, вторая active-identity того же пользователя → UniqueViolation,
-чтение без scope → 0 строк (RLS).
+Canary и Production здоровы, но до beta.28 не находятся в release parity. Это
+не финальный PASS.
 
-> Ловушка при проверке: запрос к `sf_identity_history` **до**
-> `SET LOCAL stratforge.service_scope` возвращает пусто из-за RLS, и это
-> выглядит как «backfill не сработал». `SET LOCAL` умирает вместе с
-> транзакцией — после каждого `rollback()` scope нужно объявлять заново, иначе
-> отказывает RLS, а не проверяемое ограничение.
+## Что доказано в репозитории
 
-## FIRST NEXT STEP — item 4 (User Card / Cabinet)
+- один canonical LOCAL owner и изолированные environment stores;
+- единый Admin-модуль окружений/релизов;
+- signed LOCAL request с authoritative server-side promotion decision;
+- exact candidate/artifact/TTL validation и fail-closed replay/stale handling;
+- disposable Production/Development test roots и запрет любых live-data writes;
+- правдивый DEV dirty-state, фактический HTTP status в observability и
+  подавление только штатных navigation aborts;
+- масштабируемая виртуальная сетка большого chart layout без перекрытия
+  timeframe/settings controls;
+- market-data/chart baseline не менялся в этом closeout.
 
-Items 2, 3 и 6 закрыты и живут. Дальше **item 4: User Card / Cabinet поверх
-итоговых моделей** (identity history 0014, машины/клиенты/сессии 0015), затем
-7 → 8 → 9 → 5 → 10 → 11–12.
+## FIRST NEXT STEP
 
-Дрейф `sf_repository_documents CHECK` vs `REPOSITORIES` **исправлен отдельным
-атомарным PR** (0018) — оба списка снова один контракт, и это закреплено
-тестом, который парсит и Python-источник, и migration set.
+Завершить beta.28 одним циклом:
 
-## Item 3 — модель устройств: что именно сделано
+`LOCAL browser acceptance → mandatory CI → merge → one signed immutable
+artifact → Canary acceptance → SAME artifact Production → live recheck`.
 
-Три уровня вместо одного плоского: **машина → клиент → сессия**.
-`sf_trusted_devices` всегда был *клиентом* (профиль браузера или установка
-приложения) — он им и остался, expand-only, без переписывания строк.
-Новая `sf_physical_devices` — это машина.
+При любом исправлении после Canary цикл начинается заново. Production не
+получает rebuild, partial copy или server hotfix.
 
-Главное правило, ради которого уровень и вводился: **машина никогда не
-выводится эвристикой**. User-Agent, IP, hostname и имя аккаунта одинаковы для
-всех пользователей деплоймента и меняются сами по себе — по ним один ноутбук
-разъезжается на несколько «машин», а ноутбуки разных людей слипаются в один.
-Единственный источник machine identity — hardware-bound credential Windows
-Connector'а. Браузер такого не имеет и **не может** получить машину сам: он
-входит в неё только через одноразовый pairing-код, выданный уже доверенным
-Connector'ом на этой же машине. Клиент без машины — нормальное состояние.
+## Честные deferred boundaries
 
-Доверие раздельное по уровням:
+- Новое физическое NinjaTrader Connector enrollment требует реального Windows/
+  NinjaTrader interaction; оно не имитируется и не блокирует software closeout
+  существующего Connector path.
+- Google OAuth, transactional email и legal publication остаются отдельными
+  `EXTERNAL BLOCKED` / `IN DEVELOPMENT` задачами.
+- Четыре Google/Resend secrets в этой задаче не ротируются.
 
-- подтверждение Connector'а подтверждает и его машину (credential привязан к
-  железу, код пришёл по уже верифицированному каналу);
-- подтверждение браузера **не** подтверждает никакую машину;
-- доверенная машина **не** делает доверенным новый клиент на ней;
-- отзыв клиента не трогает машину и соседние клиенты;
-- **отзыв машины каскадит**: все её клиенты и все их сессии, плюс живой
-  pairing-код. Это единственное направление каскада, и ровно ради него уровень
-  существует.
-
-Два дефекта, найденных собственными тестами и исправленных здесь же:
-`PhysicalDeviceError` уходил наружу мимо HTTP-слоя (500 вместо 404), и —
-серьёзнее — неудачные попытки pairing не сохранялись, потому что исключение
-летело до `_write_doc`; счётчик попыток не накапливался, и восьмизначный код
-можно было подбирать без лимита.
-
-## Item 6 — Environment Registry: что именно сделано
-
-Раньше среду можно было описать только одним способом — сходить к ней по HTTP
-прямо сейчас. Это давало два неверных ответа.
-
-**LOCAL был «неизвестно» всегда.** Машина владельца за NAT; серверная проба до
-неё не доходит физически, поэтому LOCAL показывал «неизвестно» ровно всё время,
-пока работал.
-
-**Секундная недоступность стирала правду.** Среда, до которой не достучались
-именно сейчас, показывала «неизвестно» по версии, коммиту и артефакту — при
-том, что минуту назад эти факты были верны и оставались лучшим, что вообще
-было известно. Прочерк не честнее устаревшего факта с отметкой времени, он
-менее честен.
-
-Теперь среды **публикуют**, а не опрашиваются: каждая шлёт аутентифицированный
-heartbeat со своей runtime identity, реестр хранит последний. Отсюда два
-следствия, в которых и состоит вся конструкция:
-
-- **Доступность выводится только из времени.** `live` / `stale` / `offline` —
-  функция от `last_seen_at`, и ничего больше. Поля сборки никогда не обнуляются
-  из-за того, что среда замолчала.
-- **Каждое показание датировано.** Офлайн-среда показывает последнюю известную
-  сборку **на момент** конкретного времени, так что устаревший факт нельзя
-  спутать с текущим.
-
-Compare-панель отвечает прямо на единственный вопрос, по которому этот проект
-реально гейтит релизы, — совпадает ли артефакт Canary и Production, — и
-отдельно сообщает, оба ли показания свежие. Отсутствующее значение помечается
-как «не сообщено», а не как расхождение: если называть пропуск конфликтом,
-оператор быстро научится игнорировать всю панель.
-
-`schema_version` сообщает сама среда, потому что это единственное поле в
-сравнении, которое внешняя HTTP-проба увидеть не может. `database_readiness()`
-намеренно отдаёт только ok/не-ok, поэтому номер берётся отдельным запросом
-(`storage_router.applied_schema_version`).
-
-## Item 6 — cross-environment publishing: настроено и доказано
-
-### Модель аутентификации
-
-Heartbeat **подписывается**, а не предъявляет bearer-токен. Ключ не уходит в
-сеть вообще, поэтому его нельзя снять с прокси-лога, TLS-терминатора или
-случайно разговорчивой страницы ошибки.
-
-| Свойство | Как обеспечено |
-| --- | --- |
-| Идентичность publisher'а | определяется тем, **какой ключ проверил подпись**, а не тем, что написано в теле; корректно подписанное тело, называющее себя другой средой, отвергается как подделка |
-| Replay вне окна | timestamp сверяется с ±120 с |
-| Подмена времени | timestamp **внутри** подписи — сдвинуть его вперёд значит сломать подпись |
-| Replay внутри окна | nonce-кэш, отдельный на каждого publisher'а |
-| Подмена тела | подпись покрывает **ровно переданные байты**, а не пересериализацию распарсенного JSON |
-| Зондирование | любой отказ аутентификации — один и тот же 401 с одним и тем же текстом; настоящая причина пишется только на сервер |
-| Rotation | список ключей через запятую на каждого publisher'а: добавить → переключить publisher → убрать. **Кода не касается** |
-| Defence in depth | `record()` перепроверяет verified identity, поэтому будущий вызывающий, забывший аутентифицировать, всё равно не дойдёт до хранилища |
-| Минимальная capability | ключ аутентифицирует **только** publish в Environment Registry и ничего больше |
-| Браузер | ключей не получает никогда; снимок, который читает UI, не содержит ключевого материала (проверено на живой Production) |
-
-### Как ключи выпущены и разложены
-
-Сгенерированы `secrets.token_urlsafe(48)` **на trusted host**, записаны сразу в
-0600-файлы там же. Значения **ни разу не печатались**: наружу выводились только
-длины и `sha256`-отпечатки, которых достаточно, чтобы доказать, что две стороны
-держат один ключ, и недостаточно, чтобы ключ подделать. В argv не передавались.
-
-- Сервер: `production-registry.env`, `canary-registry.env` (0600), плюс
-  `registry-keys.vault` (0600) как источник истины — повторный запуск
-  перевыпуска не делает, а раздаёт те же ключи.
-- Runner'ы `run-api-app.sh` / `run-api-canary.sh` подгружают свой registry-файл
-  внутри существующего `set -a` блока. Ключи **не слиты** в общий env-файл: они
-  ротируются по своему графику, читаются одной фичей, и отдельный файл значит,
-  что ротация не переписывает файл с БД- и provider-кредами.
-- LOCAL: ключ доставлен по тому же ssh-каналу **прямо в файл**, минуя stdout, в
-  `NT-Analyzer/data/secrets/` — каталог целиком в `.gitignore` (правило
-  закоммичено **до** появления файла; проверено `git check-ignore`).
-- Транспортная копия на сервере удалена (`shred -u`) сразу после доставки.
-
-LOCAL не принимает heartbeat вовсе: до машины за NAT ничего не достучится, и
-входящих ключей у неё поэтому нет — она только publisher.
-
-### Доказано на живых средах
-
-Все три среды в реестре, отчёт снят **кодом самого приложения**, а не ручным
-запросом, чтобы нельзя было получить ответ, который сходится с БД и расходится
-с продуктом:
-
-```
-development  state=live     ver=0.10.0-beta.20  schema=0   ready  md=consumer  conn=ok
-canary       state=live     ver=0.10.0-beta.20  schema=17  ready  md=consumer  conn=ok
-production   state=live     ver=0.10.0-beta.20  schema=17  ready  md=hub       conn=ok
-parity: known=true match=true both_current=true
-key material in the snapshot a browser reads: none
-```
-
-**Выключенный LOCAL переходит в offline, а не исчезает и не становится
-«unknown».** Остановлен в `05:40:05Z`:
-
-| момент | age | state | метаданные |
-| --- | --- | --- | --- |
-| 05:46 | 388 с | `stale` | версия, schema, market-data, connector — на месте |
-| 05:54 | 887 с | `stale` | на месте |
-| 05:55 | 920 с | `offline` | на месте, `last_seen 05:39:58Z` |
-
-Строка не исчезает, поля не обнуляются, показание датировано.
-
-**Compare показывает реальные различия.** `release_channel` (dev vs beta),
-`build_id` (dev-стамп vs release-стамп) и `market_data` (**production=hub,
-canary/development=consumer** — ровно топология одного provider-подключения).
-`schema_version` у LOCAL показан как *не сообщено*, а не как расхождение: у
-development нет реляционного стора, и называть это конфликтом значит приучить
-оператора игнорировать панель.
-
-**Чужой и невалидный publish не проходит.** 9 сценариев × 2 живые среды, все
-отвергнуты, все — одинаковым 401:
-
-нет подписи · нет timestamp · мусорная подпись · подпись без версии · подпись
-с будущей версией · чужой ключ с корректной подписью · протухший timestamp ·
-попытка выдать себя за production · неразбираемое тело (400).
-
-### Аудит
-
-`environment.registered` при первом появлении среды и `environment.changed` при
-смене identity-полей (версия, commit, artifact, schema, market-data,
-connector). Намеренно **не** на `last_seen_at`/`heartbeat_count` — они меняются
-каждый тик и похоронили бы значимые записи под потоком шума. Ключевого
-материала в аудите нет.
-
-### Ротация без изменения кода
-
-`STRATFORGE_REGISTRY_KEY_<ENV>` принимает список через запятую. Порядок:
-добавить новый ключ рядом со старым → перезапустить publisher с новым
-`STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN` → убрать старый. Оба состояния
-покрыты тестами (`test_rotation_accepts_both_keys_at_once`,
-`test_a_retired_key_stops_working`).
-
-## Грабли
-
-- Значение в `*-maintenance.env` **обязано** быть в одинарных кавычках: DSN
-  содержит `&`/`?`/`=`, без кавычек `set -a; . file` даёт пустую переменную.
-- Приложение перегенерирует `data/governance-rendered/*` при старте →
-  `git stash push -- NT-Analyzer/data/` перед каждым билдом.
-- `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`.
-- Ad-hoc python-проба без окружения `start.ps1` резолвит другой data root и
-  врёт про `isolated`/`not_configured`. Верить только запущенному серверу.
-
-## WAITING FOR OWNER (не блокирует пункты 2–4, 6–9)
-
-1. Физический Telegram/Google/e-mail consent для temporary user (пункты 11–12).
-2. Запущенный NinjaTrader на LOCAL и на Production-машине (пункт 5).
-3. Ротация 4 секретов — только после полного технического PASS.
-
-## Item 9 — performance: ЗАКРЫТО (PR #85)
-
-Профиль всех Admin-поверхностей. Выше 120 ms p50 оказались два эндпоинта, и
-причина у обоих одна: `market_data_failover.status()` пересобирал снимок
-провайдеров на каждый запрос (~90 ms тёплый, из них ~47 ms — один
-`public_status()`), а читают его и bars/status, и дашборд коннекторов,
-который UI опрашивает.
-
-Снимок мемоизирован на 3 секунды, наружу отдаются независимые копии,
-`fresh=True` обходит кэш.
-
-| endpoint | p50 | p95 |
-| --- | --- | --- |
-| `/api/admin/connectors` | **173.5 → 49.9 ms** | 354.8 → 108.8 ms |
-| `/api/ops/runtime/bars/status` | **128.0 → 30.9 ms** | 286.8 → 36.5 ms |
-
-Остальное ниже 50 ms p50 — не трогалось. Payload'ы в норме после более раннего
-сокращения аватара; самый крупный — снимок баров ~32 КБ, это сами данные.
-
-## Release Center: терминальное состояние подтверждено
-
-`0.10.0-beta.12` — первый релиз, дошедший до **`production_live`** (фикс
-PR #79). `expand_migrate` на обоих окружениях отдал честный `skipped` с
-реальным checksum набора.
-
-## Осталось (не начато)
-
-1. ~~LOCAL market data~~ — см. выше — код consumer'а смержен (PR #62), осталось положить
-   `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN` в LOCAL secret store и доказать
-   LIVE на LOCAL + Canary + Production при одной provider connection.
-3. RBAC/Admin во всех окружениях.
-4. Встроенный Connectors/Telegram dashboard.
-5. Environment Switcher auto-load.
-6. New-user onboarding E2E + удаление тестового пользователя.
-7. Market-data regression (репозиторная часть зелёная: 136 passed).
-8. Browser E2E LOCAL → CANARY → PRODUCTION.
-9. Повторный perf-замер.
-
-## Готовые инструменты (в репозитории)
-
-`tools/drive_release.py`, `tools/host_user_cleanup.py`, `tools/host_fk_audit.py`,
-`tools/host_blockers.py`, `tools/admin_reach.py`.
-Запуск host-скриптов: `scratchpad/run_host_script.py`,
-интерпретатор через `SF_REMOTE_PYTHON=canary|production`.
-
-## Грабли
-
-- Прерванный деплой раньше делал версию непересобираемой — **исправлено
-  (PR #68)**: каталог уходит в `$RELEASES/.quarantine`, живой не трогается.
-- Приложение перегенерирует `data/governance-rendered/*` при старте, а Release
-  Center отказывает на грязном дереве → `git stash push -- NT-Analyzer/data/`.
-- `VERSION.json`: `build_date` обязан совпадать с датой `build_timestamp_utc`.
-- **Значение в `*-maintenance.env` обязано быть в одинарных кавычках.** DSN
-  содержит `&`, `?`, `=`; без кавычек `set -a; . file` даёт **пустую**
-  переменную (bash читает `&` как оператор), и миграции падают с
-  «Required database URL environment variable is empty». Ошибку видно только
-  по пустому значению, не по ошибке sourcing.
-
-## WAITING FOR OWNER
-
-1. Физический Google/Telegram/email клик там, где OAuth-consent нельзя пройти
-   автоматизацией.
-2. Ротация четырёх секретов (Google ×2, Resend ×2) — **только после полного
-   технического PASS**.
+Канонический operational журнал:
+[2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-16T21:30:00Z | Claude Opus 5 через Claude Code по запросу owner | Production migration credential восстановлен по санкции владельца (ACL temporary + exact restore), migration 0012 применена на обоих окружениях, четыре дефекта удаления аккаунта исправлены (PR #60/#62/#71/#73), база очищена до canonical owner на Canary и Production, parity beta.10 EXACT MATCH, orphan integrity PASS.
+2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Удалён устаревший beta.20 handoff; зафиксированы фактические beta.27 Canary, beta.26 Production и исполнимый beta.28 closeout.
 -->

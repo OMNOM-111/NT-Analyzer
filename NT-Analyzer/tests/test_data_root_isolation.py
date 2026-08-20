@@ -16,13 +16,10 @@ A single session-wide root fixed the cross-process half but not the cross-test
 half: one file wrote a DPAPI-encrypted workspaces store where the next expected
 JSON, so a test passed alone and failed in the suite. Hence one root per test.
 
-The decisive check is not here but in conftest, which compares the live data
-directory before and after the whole session and fails the run if it changed.
-Pinning environment variables instead was tried and was both over- and
-under-inclusive: claiming the production root broke thirty-two tests that read
-committed baselines, while claiming only the development root still left the
-question of what the other tests do open. The tests here cover the mechanism;
-the session check covers the outcome.
+The decisive check is not here but in conftest, which compares every live data
+file before and after the whole session and fails the run if anything changed.
+Tracked baselines needed by tests are copied into their disposable roots. The
+tests here cover the mechanism; the session check covers the outcome.
 """
 from __future__ import annotations
 
@@ -33,6 +30,10 @@ from app import runtime_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFTEST = (Path(__file__).parent / "conftest.py").read_text(encoding="utf-8")
+CI = (PROJECT_ROOT.parent / ".github" / "workflows" / "ci.yml").read_text(
+    encoding="utf-8")
+NEXT_CI = (PROJECT_ROOT.parent / ".github" / "workflows" /
+           "next-architecture-ci.yml").read_text(encoding="utf-8")
 
 
 def test_the_session_checks_the_live_directory_rather_than_trusting_the_setup():
@@ -42,12 +43,20 @@ def test_the_session_checks_the_live_directory_rather_than_trusting_the_setup():
     assert "session.exitstatus = 1" in CONFTEST
 
 
-def test_the_live_check_ignores_what_the_running_server_regenerates():
-    assert "governance-rendered" in CONFTEST
+def test_the_live_check_has_no_known_writer_exemptions():
+    assert "_KNOWN_LIVE_WRITERS" not in CONFTEST
+    assert '"governance-rendered" in path.as_posix()' not in CONFTEST
 
 
 def test_a_development_test_never_resolves_to_the_live_directory(monkeypatch):
     monkeypatch.setenv("NTA_APP_ENV", "development")
+    root = runtime_env.data_root().resolve()
+    assert root != (PROJECT_ROOT / "data").resolve()
+    assert PROJECT_ROOT not in root.parents, root
+
+
+def test_a_production_test_never_resolves_to_the_live_directory(monkeypatch):
+    monkeypatch.setenv("NTA_APP_ENV", "production")
     root = runtime_env.data_root().resolve()
     assert root != (PROJECT_ROOT / "data").resolve()
     assert PROJECT_ROOT not in root.parents, root
@@ -65,6 +74,10 @@ def test_the_development_root_is_writable():
 def test_each_test_gets_its_own_root(isolated_data_root):
     current = Path(isolated_data_root).resolve()
     assert Path(os.environ["NTA_STAGING_DATA_ROOT"]).resolve() == current
+    production = Path(os.environ["NTA_DATA_ROOT"]).resolve()
+    assert production.name == "data"
+    assert production.parent == current.parent
+    assert production != current
     test_each_test_gets_its_own_root._seen = current
 
 
@@ -77,6 +90,7 @@ def test_a_sibling_test_does_not_share_that_root(isolated_data_root):
 def test_writes_from_one_test_are_invisible_to_the_next(isolated_data_root):
     marker = Path(isolated_data_root) / "leak-check.txt"
     assert not marker.exists(), "a previous test's file is visible here"
+    marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("written", encoding="utf-8")
 
 
@@ -96,3 +110,8 @@ def test_the_session_root_is_unique_per_process():
     """Two concurrent runs must not share it, or the collision simply moves."""
     assert "os.getpid()" in CONFTEST
     assert "uuid" in CONFTEST
+
+
+def test_ci_correctness_does_not_depend_on_workflow_serialization():
+    assert "stratforge-self-hosted-suite" not in CI
+    assert "stratforge-self-hosted-suite" not in NEXT_CI
