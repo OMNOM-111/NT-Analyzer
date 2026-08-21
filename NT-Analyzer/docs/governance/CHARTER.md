@@ -51,8 +51,10 @@ Connector, команда AI-агентов (оркестратор Виктор
 выключено внешним условием · `IN DEVELOPMENT` — в разработке. Полная таксономия —
 в `docs/DOCUMENTATION_GOVERNANCE.md`.
 
-- **Вход и аккаунт через Telegram** — `AVAILABLE` в Production и Development;
-  отдельный Canary Telegram bot — `EXTERNAL BLOCKED` до его provisioning.
+- **Вход и аккаунт через Telegram** — `AVAILABLE`. Production принимает основной
+  webhook; Canary переиспользует существующего бота через environment-marked
+  `canary_login_*` / `[CANARY]` shared-webhook forwarding в изолированные
+  Canary auth/session данные. Отдельный Canary Telegram bot не требуется.
 - **Google и e-mail identity paths** — `EXTERNAL BLOCKED`: код и DEV test-flow
   существуют, но реальные внешние провайдеры ещё не приняты.
 - **Доверенные устройства и step-up** — `BETA`: модель и основные критические
@@ -136,4 +138,5 @@ Connector, команда AI-агентов (оркестратор Виктор
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-12T23:59:00Z | Claude Opus 4.8 через Copilot по запросу owner | CHARTER переписан как канонический mission-led первый документ (миссия, слоган «Трейдер — это хорошо. Автотрейдинг — ещё лучше.», ИИ-разработка стратегий, учебный режим, честные статусы возможностей и охват CME); поглощён отдельный PLATFORM_VISION, чтобы не было двух current-описаний продукта.
 2026-08-13T09:03:17Z | GPT-5.5 через Codex по запросу owner | Интегрирована подтверждённая mission-led редакция и фактические auth/market-data статусы; юридический пакет сохранён как DRAFT.
+2026-08-21T01:28:18Z | GPT-5.5 через Codex по запросу owner | Уточнён фактический Canary Telegram login: существующий бот и environment-marked shared-webhook forwarding, без отдельного Canary bot.
 -->
