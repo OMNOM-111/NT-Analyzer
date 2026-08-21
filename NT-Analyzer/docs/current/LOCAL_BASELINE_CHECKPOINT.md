@@ -89,9 +89,12 @@ TopstepX с NinjaTrader OFF подтверждён двумя MNQ/MES 5m browser
 clean implementation commit непрерывно `610.473 s`; marker оставался live и
 прошёл две границы новых 5m candles.
 
-Следующее действие в этом же acceptance: mandatory CI → merge → один signed
-immutable artifact → Canary browser/live acceptance → тот же artifact в
-Production → повторная live-проверка и operational release snapshot.
+Кандидат main `2790fb43992d` прошёл Canary browser/Documents/chart acceptance,
+включая 616-секундный MES/MNQ soak, но реальный server-authoritative promotion
+выявил literal-state blocker после `approve-production`: сервер принимал только
+`canary_passed`, хотя штатный workflow уже перевёл candidate в
+`approved_for_production`. Scoped correction и regression test требуют нового
+mandatory CI/merge/artifact/Canary цикла; Production остался beta.26.
 
 Физическое enrollment нового NinjaTrader Connector остаётся отдельной
 hardware-зависимой проверкой и не имитируется. Текущий Connector/NinjaTrader
@@ -104,4 +107,5 @@ Canary → acceptance → SAME artifact Production`.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Актуализирован LOCAL checkpoint: закрытые PR #130/#131/#135, fail-closed release decision и полная test-root isolation для final acceptance beta.28.
+2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Добавлен фактический Canary PASS 2790fb43 и найденный в штатном promotion flow blocker approved_for_production; новый цикл обязателен, Production не менялся.
 -->

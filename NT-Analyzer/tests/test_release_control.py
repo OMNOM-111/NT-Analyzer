@@ -104,6 +104,33 @@ def test_claim_compares_canary_with_runtime_manifest_not_transport_archive():
     assert "canary_runs_candidate" not in out["blocking"]
 
 
+@pytest.mark.parametrize("state", [
+    "approved_for_production",
+    "production_scheduled",
+    "production_failed",
+])
+def test_canary_acceptance_remains_proved_after_the_workflow_advances(state):
+    """The real UI approves before it requests the server decision.
+
+    Acceptance is therefore a reached milestone.  A literal-state check made
+    the normal ``canary_passed -> approved_for_production -> promote`` path
+    reject itself, and also stranded an otherwise retryable failed promotion.
+    """
+    claim = release_control.claim_for({
+        "candidate_id": "rc_advanced_state",
+        "artifact_sha256": OTHER,
+        "manifest_sha256": ARTIFACT,
+        "signature_status": "verified",
+        "state": state,
+    }, ci_green=True)
+
+    assert claim["acceptance_passed"] is True
+    assert claim["migrations_applied"] is True
+    out = release_control.decide(claim, registry=_registry())
+    assert out["allowed"] is True
+    assert out["blocking"] == []
+
+
 @pytest.mark.parametrize("field,value,gate", [
     ("state", "canary_checking", "candidate_state"),
     ("acceptance_passed", False, "acceptance"),

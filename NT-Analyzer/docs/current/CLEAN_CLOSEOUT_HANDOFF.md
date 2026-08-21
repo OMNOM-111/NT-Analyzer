@@ -1,17 +1,18 @@
 # Clean closeout — executable handoff
 
-Дата проверки: `2026-08-20T23:00:44Z`.
+Дата проверки: `2026-08-21T02:52:33Z`.
 
 ## Текущее состояние
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Readiness |
 | --- | --- | --- | --- | --- |
-| LOCAL | beta.28 change set, до merge/build | main baseline `3102a534ab569d0cbf162462726d516378dc82a8` | ещё не создан | change-set browser acceptance PASS; clean-SHA recheck pending |
-| Canary | `0.10.0-beta.27` | `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62` | `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270` | `/api/live` + `/api/ready` PASS |
+| LOCAL | beta.28 scoped release-control correction | main `2790fb43992d29439aa939dea9e972862592c652` + current task branch | новый artifact ещё не создан | targeted regression PASS; full CI pending |
+| Canary | `0.10.0-beta.28` | `2790fb43992d29439aa939dea9e972862592c652` | `CFBE5BDE78E0AC755673706289C56CF6FD08D1BF7FE1D3DAE41C925A90E63398` | live/browser/Documents/chart PASS, но artifact superseded новым code fix |
 | Production | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` | `/api/live` + `/api/ready` PASS |
 
-Canary и Production здоровы, но до beta.28 не находятся в release parity. Это
-не финальный PASS.
+Canary и Production здоровы, но не находятся в release parity. Production не
+менялся: штатный server-authoritative promotion выявил literal-state blocker
+после approval. Это не финальный PASS.
 
 ## Что доказано в репозитории
 
@@ -28,7 +29,7 @@ Canary и Production здоровы, но до beta.28 не находятся �
 
 ## FIRST NEXT STEP
 
-Завершить beta.28 одним циклом:
+Слить scoped fix и завершить beta.28 новым полным циклом:
 
 `LOCAL browser acceptance → mandatory CI → merge → one signed immutable
 artifact → Canary acceptance → SAME artifact Production → live recheck`.
@@ -50,4 +51,5 @@ artifact → Canary acceptance → SAME artifact Production → live recheck`.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Удалён устаревший beta.20 handoff; зафиксированы фактические beta.27 Canary, beta.26 Production и исполнимый beta.28 closeout.
+2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Зафиксирован реальный blocker canary_passed→approved_for_production в authoritative promotion gate; artifact 2790fb43 не продвигался, Production остался beta.26.
 -->

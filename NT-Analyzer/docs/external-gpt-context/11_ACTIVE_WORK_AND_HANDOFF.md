@@ -1,9 +1,9 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-21T02:03:00Z
+- Last verified UTC: 2026-08-21T02:52:33Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` plus the scoped governance-ledger hydration correction in this commit
+- Repository baseline: main `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit
 - Candidate: `0.10.0-beta.28`
 - Scope: Final product acceptance and release closeout
 - Status: IN DEVELOPMENT
@@ -14,9 +14,9 @@
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` plus the scoped governance-ledger hydration correction in this commit |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit |
 | LOCAL | not running at the start of this acceptance; canonical live root remains `<project>/data` via `start.ps1` |
-| Canary | beta.28 artifact from `8865fad03fc4` is live but NOT ACCEPTED; runtime manifest `AD34896864941FFF472B5A910766E77592AF2612CABF4068A97F5FB2F001245C`; Documents body is correct but isolated revision-ledger parity failed |
+| Canary | beta.28 artifact from `2790fb43992d` is live and passed Documents/chart visual acceptance; runtime manifest `CFBE5BDE78E0AC755673706289C56CF6FD08D1BF7FE1D3DAE41C925A90E63398`; it is superseded by the promotion-gate code fix |
 | Production | beta.26, Git `3353e3836306dca4628c759064139cdac94517e0`, artifact `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`, live/ready PASS |
 | Release parity | NO before beta.28; final target is one exact artifact in both server environments |
 | Market-data baseline | protected; no market-data/chart implementation refactor in this closeout |
@@ -40,13 +40,18 @@
   carried the canonical revision ledger but the isolated persistent data-root
   never imported it. The scoped correction appends only missing tracked rows by
   stable identity, preserves environment-local rows and is restart-idempotent.
+- The next real approve→promote action found that the server required literal
+  `canary_passed` after LOCAL had correctly advanced the candidate to
+  `approved_for_production`. The correction treats acceptance as a reached
+  milestone for advanced/retryable states and keeps pre-acceptance states
+  fail-closed.
 
 ## Required execution sequence
 
 1. Complete full local regression/static/markdown/CSP/link checks with zero failures.
 2. Run the real LOCAL browser user and Admin journeys, console/network sweep,
    owner identity checks, Documents and TopstepX charts.
-3. Commit, push, PR, mandatory CI and merge the ledger correction to main.
+3. Commit, push, PR, mandatory CI and merge the release-control correction to main.
 4. Build/sign exactly once from that merged main and verify archive/manifest hashes.
 5. Replace the non-accepted Canary candidate, then run authenticated browser + API + chart acceptance and
    fail-closed release-control probes.
@@ -81,4 +86,5 @@ is unavailable, or Production would require a rebuild/hotfix.
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 handoff with executable beta.28 final-acceptance checkpoint and explicit stop/deferred boundaries.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded first beta.28 Canary as not accepted, the live archive/runtime digest diagnosis and mandatory corrected rebuild; Production stayed beta.26.
 2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and the isolated governance-ledger parity correction required before final acceptance; Production stayed beta.26.
+2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded 2790fb43 Canary visual acceptance, the real authoritative promotion state blocker and mandatory new release cycle; Production stayed beta.26.
 -->
