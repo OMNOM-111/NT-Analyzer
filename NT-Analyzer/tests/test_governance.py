@@ -50,6 +50,9 @@ def test_charter_is_mission_led_and_legal_package_remains_draft() -> None:
     assert "Автотрейдинг — ещё лучше" in charter
     assert "TopstepX" in charter
     assert "Google и e-mail identity paths" in charter
+    assert "canary_login_*" in charter
+    assert "Отдельный Canary Telegram bot не требуется" in charter
+    assert "отдельный Canary Telegram bot — `EXTERNAL BLOCKED`" not in charter
     legal = [row for row in governance.list_documents() if row["id"].startswith("legal-")]
     assert len(legal) == 9
     assert all(row["draft"] is True for row in legal)
