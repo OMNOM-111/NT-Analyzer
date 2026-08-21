@@ -1,12 +1,12 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-21T02:52:33Z
+- Last verified UTC: 2026-08-21T03:50:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit
+- Repository baseline: main `36600dba3d739601660768db98b429b0f752ad1a` plus this operational docs-only closeout
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: PARTIAL
-- Acceptance note: beta.28 operational acceptance is in progress.
+- Status: DONE
+- Acceptance note: beta.28 immutable release is accepted in Canary and live in Production; owner Production UI login remains an explicit physical Telegram confirmation, not a deployment blocker.
 
 ## Only supported release model
 
@@ -68,29 +68,27 @@ normal UI advances the candidate to `approved_for_production` before requesting
 the authoritative decision. Approved, scheduled, deploying and retryable
 failed states retain that milestone; pre-acceptance states remain blocked.
 
-## Operational state before beta.28
+## Accepted beta.28 operational state
 
 | Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Ready |
 | --- | --- | --- | --- | --- | --- |
-| Canary | `0.10.0-beta.27` | `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62` | `sf-0.10.0-beta.27-1f3e2ce7198f-20260818T215207Z` | `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270` | PASS |
-| Production | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `sf-0.10.0-beta.26-3353e3836306-20260817T230438Z` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` | PASS |
+| Canary | `0.10.0-beta.28` | `36600dba3d739601660768db98b429b0f752ad1a` | `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z` | `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C` | PASS |
+| Production | `0.10.0-beta.28` | `36600dba3d739601660768db98b429b0f752ad1a` | `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z` | `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C` | PASS |
 
-This is intentionally not parity. Final beta.28 values are recorded only after
-real Canary acceptance and same-artifact Production promotion in
-[2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
+Final candidate `rc_ceba7e31340d476faa79413f2c1d99d4`, artifact
+`art_3537e6c88e554b0094554c75e403ce31`, archive SHA256
+`A5E906D27B49118AF4E7155B4F08217E433EF03CC598BF6BFB60DBF087005D8A`.
+Canary deployment `dep_460215bfd8c84d4093e3dfe65f45465e` passed first;
+Production deployment `dep_030ba44c26bd4c3db40dc253adab5c42` then consumed
+the same artifact without rebuild. Both deployments recorded
+`same_immutable_artifact=true`, verified identity/readiness/signature and no
+pending migration.
 
-The first beta.28 candidate from merge `9ffbfb933c79` was deployed only to
-Canary and stopped before acceptance. A live signed control request proved the
-server available and Canary live, while catching an archive SHA versus runtime
-manifest SHA mismatch. Production remained beta.26. The scoped correction in
-`release_control.claim_for` requires a new immutable candidate and a fresh
-Canary cycle.
-
-The later `2790fb43` artifact passed real Canary Documents/chart acceptance,
-but the first ordinary approve→promote attempt proved that the authoritative
-gate still required literal `canary_passed`. The current scoped correction
-aligns that gate with the existing state machine. Production stayed beta.26;
-the corrected commit must start a new immutable cycle.
+Active release-directory suffix for both environments:
+`production_data/releases/0.10.0-beta.28-36600dba3d73` (the environment-owned
+absolute data root is intentionally omitted from this external pack).
+Rollback slots: Canary `0.10.0-beta.28-2790fb43992d`; Production
+`0.10.0-beta.26-3353e3836306`.
 
 ## Test and CI isolation
 
@@ -116,4 +114,5 @@ Workflow concurrency is not a correctness dependency.
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 deployment snapshot with current beta.27/beta.26 identities, server-authoritative promotion and beta.28 acceptance contract.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Clarified archive SHA versus running manifest SHA and recorded the fail-closed first beta.28 Canary stop; Production was unchanged.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded the real approved_for_production promotion blocker and milestone-state correction; artifact 2790fb43 was not promoted and Production remained beta.26.
+2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Recorded the accepted 36600dba immutable identity, Canary/Production deployment IDs, same release directory, rollback slots and no-rebuild promotion.
 -->

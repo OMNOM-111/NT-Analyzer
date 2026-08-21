@@ -36,7 +36,7 @@ rendering остаются принятым baseline и не рефактори�
 
 ## LOCAL acceptance evidence
 
-- `1910 passed`, `32 skipped`, `0 failed`; независимый SHA256 digest всего
+- `1915 passed`, `32 skipped`, `0 failed`; независимый SHA256 digest всего
   live `data/` совпал до и после полного suite:
   `B6AAB05A0B5F4ECC146E8B9364141737B505DC579D8C4AD5E2BD203AD8C65902`.
   Известные skips: 31 integration test без предоставленных real PostgreSQL
@@ -154,9 +154,72 @@ Canary acceptance как достигнутый milestone для последу�
 Поскольку код изменён после Canary acceptance, этот artifact не продвигается:
 после merge требуется новый immutable artifact и новый Canary cycle.
 
+## Final accepted immutable release
+
+Исправление release-control прошло mandatory CI в PR #140 и было
+слито в main как `36600dba3d739601660768db98b429b0f752ad1a`. Из этого
+clean SHA сервер один раз собрал и подписал immutable artifact:
+
+| Field | Value |
+| --- | --- |
+| Candidate / artifact | `rc_ceba7e31340d476faa79413f2c1d99d4` / `art_3537e6c88e554b0094554c75e403ce31` |
+| Git SHA | `36600dba3d739601660768db98b429b0f752ad1a` |
+| Build | `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z` |
+| Archive SHA256 | `A5E906D27B49118AF4E7155B4F08217E433EF03CC598BF6BFB60DBF087005D8A` |
+| Runtime/manifest SHA256 | `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C` |
+| Files / migrations | `435` / `18` |
+| Signature / trust | `verified` / `production`; immutable=`true`, dirty=`false` |
+
+### Canary acceptance
+
+- Deployment `dep_460215bfd8c84d4093e3dfe65f45465e`: `external_result=pass`,
+  identity/readiness/signature verified, `same_immutable_artifact=true`; all
+  blue-green stages PASS, `expand_migrate` correctly skipped with `pending=0`.
+- Authenticated owner journey covered Dashboard, Backtesting, Strategies,
+  AI Lab, Documents, Cabinet/security, Admin users/sessions and Release Center.
+  CHARTER showed the compact revision journal through `Редакция №7`; no
+  console errors were recorded.
+- The 36-chart layout had `overlapCount=0`, all 36 settings controls remained
+  inside their windows, and a second isolated Chrome client loaded the exact
+  build without inheriting the owner session/storage.
+- Exact MES 5m + MNQ 5m soak: `2026-08-21T03:31:40.771Z` →
+  `2026-08-21T03:41:50.432Z`, `610 s`, 13 samples / 26 row checks,
+  `0` visual violations and `0 OFF`. Every sample proved raw TopstepX
+  `lastPrice == last bar close == rendered label`; both labels remained
+  green/red across two new 5m candles. Final values: MES
+  `7668.5 / 7668.5 / 7,668.50`, MNQ
+  `29356.25 / 29356.25 / 29,356.25`.
+- A brief provider transport state `AUTHENTICATED` retained fresh quote
+  heartbeat, all live flags and the coloured marker, then returned to `LIVE`.
+  History/watchdog/reconnect did not reset the marker to grey/OFF.
+- Release check `chk_071bcc9813764315b8b0bc50afb25089` recorded final PASS;
+  candidate moved to `canary_passed` at `2026-08-21T03:42:05Z`.
+
+### Same-artifact Production promotion
+
+Owner approval `apr_7baf31dd106546ae92bc9de61c3839c9` was consumed by the
+normal `approve-production → promote-production` flow. Production deployment
+`dep_030ba44c26bd4c3db40dc253adab5c42` completed at
+`2026-08-21T03:42:50Z` with `external_result=pass`, signature/readiness/identity
+verified and `same_immutable_artifact=true`. There was no rebuild: candidate,
+artifact, build, archive SHA and runtime SHA are identical to Canary.
+
+The verified active release directory for both server environments is
+`/home/stratforge/production_data/releases/0.10.0-beta.28-36600dba3d73`.
+Rollback slots remain the pre-switch releases: Canary
+`0.10.0-beta.28-2790fb43992d`, Production
+`0.10.0-beta.26-3353e3836306`.
+
+Public Production `/api/runtime/env`, `/api/live` and `/api/ready` return `200`
+and the exact final identity; all readiness checks are `ok/ready`. Public guest
+UI and static cache-bust values match the same build. Authenticated owner UI
+recheck is completed only after the environment-isolated Production Telegram
+session is physically confirmed; no Canary cookie/storage is copied.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Редакция №1: создан canonical pre-release snapshot для final acceptance beta.28; финальные artifact и live evidence намеренно не предсказаны до deployment.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Редакция №2: зафиксирован fail-closed stop первого beta.28 candidate и scoped correction archive/runtime identity; Production не менялся.
 2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Редакция №3: зафиксированы PR #137/#138, не принятый Canary artifact 8865fad0 и найденное расхождение isolated revision ledger; Production оставлен beta.26.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Редакция №4: зафиксированы Canary artifact 2790fb43, 616-секундный chart PASS и реальный blocker approved_for_production в authoritative gate; Production оставлен beta.26, требуется новый цикл.
+2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Редакция №5: зафиксированы final artifact 36600dba, 610-секундный MES/MNQ 5m Canary PASS и реальный same-artifact Production promotion; owner Production session не подменяется Canary cookie.
 -->

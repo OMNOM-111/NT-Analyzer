@@ -83,18 +83,25 @@ closeout-дефекты без изменения market-data/chart архите
    соседнее окно больше не перекрывает timeframe/settings hit targets из-за
    CSS minimum-размеров.
 
-Финальный LOCAL regression: `1910 passed`, `32 skipped`, `0 failed`; legacy
+Финальный LOCAL regression: `1915 passed`, `32 skipped`, `0 failed`; legacy
 release runner `13/13 suites passed`; live `data/` digest до и после совпал.
 TopstepX с NinjaTrader OFF подтверждён двумя MNQ/MES 5m browser clients на
 clean implementation commit непрерывно `610.473 s`; marker оставался live и
 прошёл две границы новых 5m candles.
 
-Кандидат main `2790fb43992d` прошёл Canary browser/Documents/chart acceptance,
-включая 616-секундный MES/MNQ soak, но реальный server-authoritative promotion
-выявил literal-state blocker после `approve-production`: сервер принимал только
-`canary_passed`, хотя штатный workflow уже перевёл candidate в
-`approved_for_production`. Scoped correction и regression test требуют нового
-mandatory CI/merge/artifact/Canary цикла; Production остался beta.26.
+Этот blocker исправлен в PR #140 и слит в main как
+`36600dba3d739601660768db98b429b0f752ad1a`. Из clean merge SHA собран
+один signed immutable artifact `art_3537e6c88e554b0094554c75e403ce31`:
+build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`, archive
+`A5E906D27B49118AF4E7155B4F08217E433EF03CC598BF6BFB60DBF087005D8A`,
+runtime manifest
+`864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`.
+
+Canary acceptance: owner UI/Documents/Admin PASS; 36 charts без перекрытий;
+MES 5m + MNQ 5m непрерывно `610 s`, 26 row checks, ноль
+grey/OFF и price mismatches. Затем тот же artifact без rebuild
+продвинут в Production deployment
+`dep_030ba44c26bd4c3db40dc253adab5c42`; public live/ready и exact identity PASS.
 
 Физическое enrollment нового NinjaTrader Connector остаётся отдельной
 hardware-зависимой проверкой и не имитируется. Текущий Connector/NinjaTrader
@@ -108,4 +115,5 @@ Canary → acceptance → SAME artifact Production`.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Актуализирован LOCAL checkpoint: закрытые PR #130/#131/#135, fail-closed release decision и полная test-root isolation для final acceptance beta.28.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Добавлен фактический Canary PASS 2790fb43 и найденный в штатном promotion flow blocker approved_for_production; новый цикл обязателен, Production не менялся.
+2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Закрыт полный release cycle merge 36600dba → signed artifact → Canary acceptance → same-artifact Production; market-data baseline сохранён.
 -->
