@@ -35,6 +35,22 @@ CONTROL_PATH = "/api/environments/release-control"
 # short-lived: "Canary was healthy a minute ago" is not a statement about now.
 DECISION_TTL_SEC = 120
 
+# Acceptance is a reached milestone, not a state the candidate remains in.
+# The ordinary UI flow advances ``canary_passed`` to
+# ``approved_for_production`` before it asks the authoritative server for the
+# promotion decision.  Treating only the literal ``canary_passed`` value as
+# accepted makes that valid sequence reject itself.  Production failures stay
+# retryable in Release Center, so they retain the same proved Canary milestone.
+_CANARY_ACCEPTED_STATES = {
+    "canary_passed",
+    "approved_for_production",
+    "production_scheduled",
+    "production_deploying",
+    "production_failed",
+    "production_live",
+}
+_CANARY_MIGRATED_STATES = {"canary_checking", *_CANARY_ACCEPTED_STATES}
+
 
 def _gate(gate_id: str, label: str, ok: bool) -> Dict[str, Any]:
     return {"id": gate_id, "label": label, "ok": bool(ok)}
@@ -65,7 +81,7 @@ def decide(claim: Dict[str, Any], *, registry: Optional[Dict[str, Any]] = None,
 
     gates: List[Dict[str, Any]] = [
         _gate("candidate_state", "Кандидат прошёл приёмку Canary",
-              str(claim.get("state") or "") == "canary_passed"),
+              str(claim.get("state") or "") in _CANARY_ACCEPTED_STATES),
         _gate("acceptance", "Приёмка Canary пройдена",
               bool(claim.get("acceptance_passed"))),
         _gate("ci_green", "Обязательный CI зелёный для этого commit",
@@ -138,14 +154,8 @@ def claim_for(candidate: Dict[str, Any], *, ci_green: bool) -> Dict[str, Any]:
         "manifest_sha256": str(candidate.get("manifest_sha256") or ""),
         "signature_status": str(candidate.get("signature_status") or ""),
         "state": state,
-        "acceptance_passed": state in {
-            "canary_passed", "approved_for_production", "production_scheduled",
-            "production_deploying", "production_live",
-        },
-        "migrations_applied": state in {
-            "canary_checking", "canary_passed", "approved_for_production",
-            "production_scheduled", "production_deploying", "production_live",
-        },
+        "acceptance_passed": state in _CANARY_ACCEPTED_STATES,
+        "migrations_applied": state in _CANARY_MIGRATED_STATES,
         "ci_green": bool(ci_green),
         "requested_by_environment": runtime_env.deployment_environment(),
     }

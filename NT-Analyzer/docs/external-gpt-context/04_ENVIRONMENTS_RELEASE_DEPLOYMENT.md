@@ -1,9 +1,9 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-21T00:53:04Z
+- Last verified UTC: 2026-08-21T02:52:33Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
+- Repository baseline: main `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 - Acceptance note: beta.28 operational acceptance is in progress.
@@ -63,6 +63,11 @@ Unavailable control plane, invalid signature, replayed nonce, stale decision,
 wrong candidate/artifact, silent Canary, wrong Canary artifact, incomplete CI,
 migrations, signature or acceptance all block promotion fail-closed.
 
+`canary_passed` is an acceptance milestone, not a permanent literal state: the
+normal UI advances the candidate to `approved_for_production` before requesting
+the authoritative decision. Approved, scheduled, deploying and retryable
+failed states retain that milestone; pre-acceptance states remain blocked.
+
 ## Operational state before beta.28
 
 | Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Ready |
@@ -80,6 +85,12 @@ server available and Canary live, while catching an archive SHA versus runtime
 manifest SHA mismatch. Production remained beta.26. The scoped correction in
 `release_control.claim_for` requires a new immutable candidate and a fresh
 Canary cycle.
+
+The later `2790fb43` artifact passed real Canary Documents/chart acceptance,
+but the first ordinary approve→promote attempt proved that the authoritative
+gate still required literal `canary_passed`. The current scoped correction
+aligns that gate with the existing state machine. Production stayed beta.26;
+the corrected commit must start a new immutable cycle.
 
 ## Test and CI isolation
 
@@ -104,4 +115,5 @@ Workflow concurrency is not a correctness dependency.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 deployment snapshot with current beta.27/beta.26 identities, server-authoritative promotion and beta.28 acceptance contract.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Clarified archive SHA versus running manifest SHA and recorded the fail-closed first beta.28 Canary stop; Production was unchanged.
+2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded the real approved_for_production promotion blocker and milestone-state correction; artifact 2790fb43 was not promoted and Production remained beta.26.
 -->

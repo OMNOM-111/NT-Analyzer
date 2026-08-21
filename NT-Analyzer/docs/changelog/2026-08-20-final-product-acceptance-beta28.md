@@ -123,8 +123,40 @@ environment-local записи и не меняет auth, charts, TopstepX ил�
 Текущий Canary candidate не принят; после merge нужен новый immutable artifact
 и полный Canary acceptance с последующим same-artifact Production promotion.
 
+## Server-authoritative promotion blocker found in the real flow
+
+Исправленный governance artifact из main merge
+`2790fb43992d29439aa939dea9e972862592c652` был собран и развёрнут в Canary:
+
+| Field | Value |
+| --- | --- |
+| Candidate / artifact | `rc_8ccdf242647f4230aa05ecb2343f6af0` / `art_523a1930527e4726b98baa4431ef56d0` |
+| Build | `sf-0.10.0-beta.28-2790fb43992d-20260821T022511Z` |
+| Archive SHA256 | `9944AC348F48F84E3B3D8E53473ADD338D3F2A7EB5B9FDFA1E849B96D7C01DE5` |
+| Runtime/manifest SHA256 | `CFBE5BDE78E0AC755673706289C56CF6FD08D1BF7FE1D3DAE41C925A90E63398` |
+| Canary acceptance | browser/Documents PASS; `release.canary_passed` записан |
+| Production | unchanged beta.26 |
+
+Canary chart soak длился `616 s` (`02:34:08Z` → `02:44:25Z`), 12 явных
+срезов MES/MNQ дали 0 visual/live-contract нарушений. Raw TopstepX price,
+последний bar close и rendered marker совпадали; marker оставался green/red и
+при движущейся, и при неизменной цене. Краткий transport state
+`AUTHENTICATED` сохранил свежие heartbeat/live-флаги и цветной marker, затем
+вернулся в `LIVE`; history/watchdog/reconnect не сбросили отображение в OFF.
+
+Реальный штатный шаг `approve-production → promote-production` выявил
+state-machine defect: approval корректно переводит ledger из `canary_passed`
+в `approved_for_production`, но authoritative server принимал только буквальное
+`canary_passed` и поэтому блокировал следующий шаг. Scoped correction трактует
+Canary acceptance как достигнутый milestone для последующих/retryable states;
+ранние состояния по-прежнему fail closed. Добавлена регрессия для
+`approved_for_production`, `production_scheduled` и `production_failed`.
+Поскольку код изменён после Canary acceptance, этот artifact не продвигается:
+после merge требуется новый immutable artifact и новый Canary cycle.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Редакция №1: создан canonical pre-release snapshot для final acceptance beta.28; финальные artifact и live evidence намеренно не предсказаны до deployment.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Редакция №2: зафиксирован fail-closed stop первого beta.28 candidate и scoped correction archive/runtime identity; Production не менялся.
 2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Редакция №3: зафиксированы PR #137/#138, не принятый Canary artifact 8865fad0 и найденное расхождение isolated revision ledger; Production оставлен beta.26.
+2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Редакция №4: зафиксированы Canary artifact 2790fb43, 616-секундный chart PASS и реальный blocker approved_for_production в authoritative gate; Production оставлен beta.26, требуется новый цикл.
 -->
