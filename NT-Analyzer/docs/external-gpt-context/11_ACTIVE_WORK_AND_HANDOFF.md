@@ -1,9 +1,9 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-21T00:53:04Z
+- Last verified UTC: 2026-08-21T02:03:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
+- Repository baseline: main `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` plus the scoped governance-ledger hydration correction in this commit
 - Candidate: `0.10.0-beta.28`
 - Scope: Final product acceptance and release closeout
 - Status: IN DEVELOPMENT
@@ -14,9 +14,9 @@
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` plus the scoped governance-ledger hydration correction in this commit |
 | LOCAL | not running at the start of this acceptance; canonical live root remains `<project>/data` via `start.ps1` |
-| Canary | first beta.28 candidate from `9ffbfb933c79` is live but NOT ACCEPTED; runtime manifest `1DB26A32F99F151F8FF654683D00886B7148020AB72E7FD4415060A54CC0F126`; it must be replaced by the corrected candidate |
+| Canary | beta.28 artifact from `8865fad03fc4` is live but NOT ACCEPTED; runtime manifest `AD34896864941FFF472B5A910766E77592AF2612CABF4068A97F5FB2F001245C`; Documents body is correct but isolated revision-ledger parity failed |
 | Production | beta.26, Git `3353e3836306dca4628c759064139cdac94517e0`, artifact `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`, live/ready PASS |
 | Release parity | NO before beta.28; final target is one exact artifact in both server environments |
 | Market-data baseline | protected; no market-data/chart implementation refactor in this closeout |
@@ -36,15 +36,19 @@
   namespace bug: the registry exposes runtime/manifest SHA while LOCAL sent the
   transport archive SHA. The scoped correction sends manifest SHA for the live
   equality gate and retains archive SHA as separate evidence.
+- Canary Documents visual acceptance then found that the immutable artifact
+  carried the canonical revision ledger but the isolated persistent data-root
+  never imported it. The scoped correction appends only missing tracked rows by
+  stable identity, preserves environment-local rows and is restart-idempotent.
 
 ## Required execution sequence
 
 1. Complete full local regression/static/markdown/CSP/link checks with zero failures.
 2. Run the real LOCAL browser user and Admin journeys, console/network sweep,
    owner identity checks, Documents and TopstepX charts.
-3. Commit, push, PR, mandatory CI and merge to main.
-4. Build/sign exactly once from merged main and verify archive/manifest hashes.
-5. Deploy to Canary, run authenticated browser + API + chart acceptance and
+3. Commit, push, PR, mandatory CI and merge the ledger correction to main.
+4. Build/sign exactly once from that merged main and verify archive/manifest hashes.
+5. Replace the non-accepted Canary candidate, then run authenticated browser + API + chart acceptance and
    fail-closed release-control probes.
 6. Promote the same artifact to Production without rebuild and repeat live checks.
 7. Append exact operational identity and close the Context Pack/repository.
@@ -76,4 +80,5 @@ is unavailable, or Production would require a rebuild/hotfix.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 handoff with executable beta.28 final-acceptance checkpoint and explicit stop/deferred boundaries.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded first beta.28 Canary as not accepted, the live archive/runtime digest diagnosis and mandatory corrected rebuild; Production stayed beta.26.
+2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and the isolated governance-ledger parity correction required before final acceptance; Production stayed beta.26.
 -->

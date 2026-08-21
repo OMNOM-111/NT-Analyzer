@@ -94,7 +94,37 @@ Candidate не принят и не продвигался в Production. Scoped
 оба digest, но сравнивает Environment Registry именно с runtime/manifest SHA;
 новый commit требует новой сборки и повторного полного Canary cycle.
 
+## Later Canary candidates stopped before acceptance
+
+Runtime-digest correction из PR #137 прошёл CI и был слит как
+`127619ac00fc984072aafa86bec548aeadae8c67`. Его Canary visual journey выявил
+не runtime/auth/chart defect, а устаревшую формулировку CHARTER про обязательный
+отдельный Canary bot. Формулировка исправлена в PR #138 без изменения auth или
+market-data architecture; merge SHA —
+`8865fad03fc48f520edc5fb8f6dcb816621cd5d9`.
+
+Artifact этого SHA развернут только в Canary:
+
+| Field | Value |
+| --- | --- |
+| Candidate / artifact | `rc_588fb3a60f6f4b1db73cd01b67979464` / `art_f16a697ac82a40ab8a9847b64db5dd98` |
+| Build | `sf-0.10.0-beta.28-8865fad03fc4-20260821T015240Z` |
+| Archive SHA256 | `8E2F55A85D731F35DE86FE80561F0511FD85DE8876F1BD24414460D1E921FE73` |
+| Runtime/manifest SHA256 | `AD34896864941FFF472B5A910766E77592AF2612CABF4068A97F5FB2F001245C` |
+| Canary state | `live`, `NOT ACCEPTED` |
+| Production | unchanged beta.26 |
+
+CHARTER body на Canary уже соответствовал artifact, но revision panel показывал
+только synthetic `Редакция №1`: изолированный persistent data-root создавал
+пустой `change_log.jsonl` и не подхватывал version-controlled ledger, хотя он
+входил в тот же archive. Scoped correction идемпотентно добавляет только
+отсутствующие canonical revisions по `version_id`/digest, сохраняет все
+environment-local записи и не меняет auth, charts, TopstepX или release model.
+Текущий Canary candidate не принят; после merge нужен новый immutable artifact
+и полный Canary acceptance с последующим same-artifact Production promotion.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Редакция №1: создан canonical pre-release snapshot для final acceptance beta.28; финальные artifact и live evidence намеренно не предсказаны до deployment.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Редакция №2: зафиксирован fail-closed stop первого beta.28 candidate и scoped correction archive/runtime identity; Production не менялся.
+2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Редакция №3: зафиксированы PR #137/#138, не принятый Canary artifact 8865fad0 и найденное расхождение isolated revision ledger; Production оставлен beta.26.
 -->

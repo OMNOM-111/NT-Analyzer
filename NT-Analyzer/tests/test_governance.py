@@ -4,6 +4,7 @@ Run: python -m tests.test_governance
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -98,6 +99,76 @@ def test_change_log_reader_shape() -> None:
         assert "ts_utc" in entry
         assert "actor" in entry
         assert "changes" in entry
+
+
+def test_isolated_runtime_hydrates_canonical_revisions_idempotently(
+    tmp_path, monkeypatch,
+) -> None:
+    release_root = (tmp_path / "release").resolve()
+    runtime_root = (tmp_path / "runtime").resolve()
+    (release_root / "app").mkdir(parents=True)
+    canonical_dir = release_root / "data" / "governance"
+    canonical_dir.mkdir(parents=True)
+    runtime_dir = runtime_root / "governance"
+    runtime_dir.mkdir(parents=True)
+
+    canonical_entry = {
+        "amendment_no": 27,
+        "ts_utc": "2026-08-21T01:28:18Z",
+        "actor": "GPT-5.5 through Codex",
+        "author": "GPT-5.5 through Codex",
+        "version_id": "canonical-charter-revision",
+        "reason": "Align the Charter with the current Canary login path.",
+        "entity_type": "document",
+        "entity_id": "charter",
+        "entity_title": "Charter",
+        "document_ids": ["charter"],
+        "changes": [{
+            "field": "telegram_login",
+            "before_text": "separate bot",
+            "after_text": "shared environment-aware bot",
+        }],
+    }
+    runtime_entry = {
+        "amendment_no": 3,
+        "ts_utc": "2026-08-20T23:00:00Z",
+        "actor": "owner",
+        "version_id": "runtime-only-revision",
+        "reason": "Environment-local note.",
+        "entity_type": "note",
+        "entity_id": "runtime-note",
+        "document_ids": [],
+        "changes": [],
+    }
+    canonical_line = json.dumps(canonical_entry, ensure_ascii=False)
+    runtime_line = json.dumps(runtime_entry, ensure_ascii=False)
+    (canonical_dir / "change_log.jsonl").write_text(
+        canonical_line + "\n", encoding="utf-8",
+    )
+    runtime_log = runtime_dir / "change_log.jsonl"
+    runtime_log.write_text(runtime_line, encoding="utf-8")
+
+    monkeypatch.setenv("NT_ANALYZER_ROOT", str(release_root))
+    monkeypatch.setenv("STRATFORGE_ENV", "production")
+    monkeypatch.setenv("STRATFORGE_DATA_ROOT", str(runtime_root))
+    monkeypatch.delenv("NTA_DATA_ROOT", raising=False)
+    monkeypatch.delenv("NTA_APP_ENV", raising=False)
+    monkeypatch.delenv("NTA_ENV", raising=False)
+
+    governance.ensure_governance_files(render=False)
+    governance.ensure_governance_files(render=False)
+
+    rows = [json.loads(line) for line in runtime_log.read_text(
+        encoding="utf-8",
+    ).splitlines() if line.strip()]
+    assert [row["version_id"] for row in rows] == [
+        "runtime-only-revision", "canonical-charter-revision",
+    ]
+    assert runtime_log.read_text(encoding="utf-8").startswith(runtime_line + "\n")
+    revisions = governance.document_revisions("charter")["revisions"]
+    assert [row["version_id"] for row in revisions] == [
+        "created", "canonical-charter-revision",
+    ]
 
 
 def test_law_update_writes_history_and_overview() -> None:

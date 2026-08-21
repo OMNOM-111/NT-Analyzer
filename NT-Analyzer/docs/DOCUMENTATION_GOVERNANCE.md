@@ -123,6 +123,12 @@ owner-процессов. Параметры риска/капитала — р�
   историческая атрибуция не заменяется именем владельца.
 - Автор не вводится вручную: human определяется authenticated account, AI/dev
   tool — authenticated service account; инициатор фиксируется автоматически.
+- Signed release содержит канонический version-controlled
+  `data/governance/change_log.jsonl`. При запуске с изолированным data-root
+  отсутствующие канонические записи добавляются в runtime-журнал идемпотентно
+  по `version_id`/digest; существующие записи среды не удаляются и не
+  перезаписываются. Поэтому один immutable artifact показывает одинаковую
+  историю редакций в LOCAL, Canary и Production при сохранении изоляции state.
 - Журнал и owner/developer metadata недоступны обычному пользователю ни в UI,
   ни через governance API.
 
@@ -138,4 +144,5 @@ documentation-тесты (например, `tests/test_phase10_docs_governance.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Закреплены компактный журнал редакций, Revision 1, автоматическая authenticated attribution и запрет раскрытия internal metadata обычному пользователю; история убрана из верха документа.
+2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Закреплена идемпотентная доставка канонического журнала редакций из immutable artifact в изолированные runtime data-roots без перезаписи локальных записей среды.
 -->
