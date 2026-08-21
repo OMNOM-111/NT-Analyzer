@@ -1,24 +1,24 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-21T02:52:33Z
+- Last verified UTC: 2026-08-21T03:50:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit
+- Repository baseline: main `36600dba3d739601660768db98b429b0f752ad1a` plus this operational docs-only closeout
 - Candidate: `0.10.0-beta.28`
 - Scope: Final product acceptance and release closeout
-- Status: IN DEVELOPMENT
-- Acceptance note: completion requires one immutable beta.28 artifact to pass Canary and Production live checks.
-- Current Production version/build/artifact when known: `0.10.0-beta.26`; build `sf-0.10.0-beta.26-3353e3836306-20260817T230438Z`; artifact SHA256 `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`
+- Status: DONE
+- Acceptance note: immutable software release cycle completed; Production owner UI recheck is waiting only for the physical isolated Telegram login confirmation already open in Chrome.
+- Current Production version/build/artifact when known: `0.10.0-beta.28`; build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`; runtime SHA256 `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`
 
 ## Current checkpoint
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `2790fb43992d29439aa939dea9e972862592c652` plus the scoped release-control state-milestone correction in this commit |
-| LOCAL | not running at the start of this acceptance; canonical live root remains `<project>/data` via `start.ps1` |
-| Canary | beta.28 artifact from `2790fb43992d` is live and passed Documents/chart visual acceptance; runtime manifest `CFBE5BDE78E0AC755673706289C56CF6FD08D1BF7FE1D3DAE41C925A90E63398`; it is superseded by the promotion-gate code fix |
-| Production | beta.26, Git `3353e3836306dca4628c759064139cdac94517e0`, artifact `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`, live/ready PASS |
-| Release parity | NO before beta.28; final target is one exact artifact in both server environments |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` remains the pack-wide verification baseline; deployed implementation main is `36600dba3d739601660768db98b429b0f752ad1a` |
+| LOCAL | clean beta.28 implementation/test baseline; canonical live root remains `<project>/data` via `start.ps1` |
+| Canary | beta.28 `36600dba`, runtime manifest `864F7D16...D916C`, authenticated owner UI/Documents/charts PASS |
+| Production | same beta.28 `36600dba` and runtime manifest, public live/ready/exact UI PASS; isolated owner login awaiting physical confirmation |
+| Release parity | YES: same candidate/artifact/build/archive/runtime identity; no rebuild |
 | Market-data baseline | protected; no market-data/chart implementation refactor in this closeout |
 | Secret rotation | explicitly deferred; do not rotate the four Google/Resend secrets |
 
@@ -46,17 +46,19 @@
   milestone for advanced/retryable states and keeps pre-acceptance states
   fail-closed.
 
-## Required execution sequence
+## Completed execution sequence
 
-1. Complete full local regression/static/markdown/CSP/link checks with zero failures.
-2. Run the real LOCAL browser user and Admin journeys, console/network sweep,
-   owner identity checks, Documents and TopstepX charts.
-3. Commit, push, PR, mandatory CI and merge the release-control correction to main.
-4. Build/sign exactly once from that merged main and verify archive/manifest hashes.
-5. Replace the non-accepted Canary candidate, then run authenticated browser + API + chart acceptance and
-   fail-closed release-control probes.
-6. Promote the same artifact to Production without rebuild and repeat live checks.
-7. Append exact operational identity and close the Context Pack/repository.
+1. Full local regression/static/Markdown/CSP/link checks passed with zero failures.
+2. Real LOCAL/Canary owner and Admin journeys, Documents and TopstepX chart
+   checks passed; exact Canary MES/MNQ 5m soak was 610 seconds.
+3. PR #140 passed all mandatory CI and merged as `36600dba`.
+4. Server built/signed exactly one final artifact and deployed it to Canary.
+5. Canary acceptance recorded PASS under check
+   `chk_071bcc9813764315b8b0bc50afb25089`.
+6. The same artifact was promoted to Production without rebuild; public
+   live/ready/exact identity passed.
+7. This docs-only closeout records the operational identity. Physical
+   Production Telegram login remains the only open acceptance interaction.
 
 ## Explicitly deferred / external
 
@@ -69,9 +71,8 @@
 
 ## Stop conditions
 
-Do not claim final PASS if Canary/Production artifact identity differs, any
-mandatory check fails, owner login cannot be exercised, TopstepX chart evidence
-is unavailable, or Production would require a rebuild/hotfix.
+Reopen the release cycle only if a new code/UI/document artifact change is
+required. Do not rebuild or hotfix the accepted server artifact in place.
 
 ## Canonical evidence
 
@@ -87,4 +88,5 @@ is unavailable, or Production would require a rebuild/hotfix.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded first beta.28 Canary as not accepted, the live archive/runtime digest diagnosis and mandatory corrected rebuild; Production stayed beta.26.
 2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and the isolated governance-ledger parity correction required before final acceptance; Production stayed beta.26.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded 2790fb43 Canary visual acceptance, the real authoritative promotion state blocker and mandatory new release cycle; Production stayed beta.26.
+2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Closed the immutable beta.28 release sequence through accepted Canary and same-artifact Production; retained the physical Production Telegram login as the sole explicit interaction.
 -->
