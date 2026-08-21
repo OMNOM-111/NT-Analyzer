@@ -1,10 +1,10 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-21T00:53:04Z
+- Last verified UTC: 2026-08-21T02:03:00Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
-- Candidate in this closeout: `0.10.0-beta.28`; the first merged artifact was stopped before acceptance and a corrected build is pending
+- Repository baseline: main `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` plus the scoped governance-ledger hydration correction in this commit
+- Candidate in this closeout: `0.10.0-beta.28`; the `8865fad0` artifact is live in Canary but not accepted, and a corrected build is pending
 - Scope: Current factual subsystem snapshot only
 - Status: PARTIAL
 - Acceptance note: beta.28 Canary and Production live acceptance is not complete yet.
@@ -25,13 +25,13 @@
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
 | Auth / owner identity | `BETA` | LOCAL has one canonical owner UUID with Telegram identity; Canary and Production keep separate DB, sessions, cookies and storage | Google OAuth and transactional email remain `EXTERNAL BLOCKED`; four Google/Resend secrets are not rotated in this closeout |
-| Admin / Release Center | `BETA` | One environment/release module exposes DEV, Canary, Production, compare and pipeline. LOCAL submits a signed request; only Canary/Production may decide from authoritative registry state | beta.28 live browser acceptance is pending |
-| Release security | `BETA` | Exact artifact, exact candidate, responder environment and decision TTL are verified client-side; server request signature, timestamp and nonce provide fail-closed replay protection | Real negative-path probes and final promotion evidence are pending |
+| Admin / Release Center | `BETA` | One environment/release module exposes DEV, Canary, Production, compare and pipeline. LOCAL submits a signed request; only Canary/Production may decide from authoritative registry state | final corrected beta.28 live acceptance is pending |
+| Release security | `BETA` | Exact artifact, exact candidate, responder environment and decision TTL are verified client-side; server request signature, timestamp and nonce provide fail-closed replay protection; real stale/replay/cross-artifact probes pass | final same-artifact promotion evidence is pending |
 | Test isolation | `AVAILABLE` | Every test receives separate disposable Production/Development roots; tracked governance baselines are copied there; any live `data/` mutation fails the suite | Full mandatory CI must confirm on hosted/self-hosted runners |
-| Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only chart source; accepted history/realtime architecture is unchanged | Licensed live acceptance must be repeated in LOCAL and Canary; an external feed never grants execution authority |
-| Charts | `BETA` | Aurora Desktop chart pipeline, realtime bars and price marker baseline are preserved | Real browser checks for multiple symbols/timeframes and stale marker are pending in this closeout |
+| Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only chart source; accepted history/realtime architecture is unchanged and has passed LOCAL plus intermediate-Canary browser checks | final corrected Canary/Production identity recheck remains; an external feed never grants execution authority |
+| Charts | `BETA` | Aurora Desktop chart pipeline, realtime bars and price marker baseline are preserved; MNQ/MES raw price, bar close and rendered marker matched in real browsers | final corrected artifact soak remains pending |
 | NinjaTrader / Connector | `PARTIAL` | NinjaTrader remains the execution/backtest/runtime truth and is not required for independent TopstepX charts | Physical enrollment of a new Connector device requires Windows/NinjaTrader interaction and is reported separately, never simulated |
-| Documents | `BETA` | Governance source, compact revision UI, legal DRAFT status and Documents surface exist | Browser parity and access-control sweep are pending |
+| Documents | `BETA` | Governance source, compact revision UI, legal DRAFT status and Documents surface exist; isolated server roots now hydrate missing canonical release-ledger rows without overwriting local rows | corrected artifact has not yet passed Canary visual parity |
 | AI agents | `PARTIAL` | Vitek, orchestration and specialist surfaces exist | Per-workspace team and some external-provider paths remain incomplete |
 | Legal | `IN DEVELOPMENT` | Structured legal package exists | It remains DRAFT until owner/legal decisions and counsel review |
 
@@ -39,11 +39,12 @@
 
 | Environment | Live/ready | Version | Git SHA | Runtime artifact SHA256 |
 | --- | --- | --- | --- | --- |
-| Canary | live, NOT ACCEPTED | `0.10.0-beta.28` | `9ffbfb933c79b7661d5d38aed55f7a776f781422` | `1DB26A32F99F151F8FF654683D00886B7148020AB72E7FD4415060A54CC0F126` |
+| Canary | live, NOT ACCEPTED | `0.10.0-beta.28` | `8865fad03fc48f520edc5fb8f6dcb816621cd5d9` | `AD34896864941FFF472B5A910766E77592AF2612CABF4068A97F5FB2F001245C` |
 | Production | `200 / 200` | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` |
 
-The Canary row is an intermediate candidate stopped by the release-control
-runtime-identity gate and must be superseded by a corrected immutable build.
+The Canary row is an intermediate candidate stopped after Documents visual
+acceptance exposed a missing isolated revision-ledger hydration step. It must be
+superseded by a corrected immutable build.
 Production remains unchanged until that new candidate passes Canary.
 
 ## Deprecated current-state claims
@@ -56,4 +57,5 @@ Production remains unchanged until that new candidate passes Canary.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 state with verified beta.27 Canary, beta.26 Production and beta.28 final-acceptance scope.
 2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded the first beta.28 Canary candidate as not accepted after a live archive/runtime digest mismatch; Production remained beta.26.
+2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and scoped isolated governance-ledger hydration correction; Production remained beta.26.
 -->

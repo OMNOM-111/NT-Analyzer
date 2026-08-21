@@ -1243,6 +1243,85 @@ def _normalize_history_entry(raw: Dict[str, Any], fallback_no: int) -> Dict[str,
     }
 
 
+def _raw_change_log_entries(path: Path) -> List[tuple[Dict[str, Any], str]]:
+    """Read valid JSONL rows while preserving their original serialized form."""
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return []
+    entries: List[tuple[Dict[str, Any], str]] = []
+    for line in lines:
+        raw_line = str(line or "").strip()
+        if not raw_line:
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            entries.append((payload, raw_line))
+    return entries
+
+
+def _change_log_identity(payload: Dict[str, Any]) -> str:
+    """Return a stable identity for idempotent release-ledger hydration."""
+    version_id = str(payload.get("version_id") or "").strip()
+    if version_id:
+        return f"version:{version_id}"
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _sync_canonical_change_log() -> int:
+    """Append missing tracked revisions to an isolated runtime ledger.
+
+    Canary and Production deliberately keep mutable state outside the immutable
+    release directory.  The release itself nevertheless carries the canonical,
+    version-controlled document revisions.  Import only missing rows, preserving
+    every environment-local row and making repeated starts idempotent.
+    """
+    runtime_path = change_log_path().resolve()
+    canonical_path = (
+        project_root() / "data" / "governance" / "change_log.jsonl"
+    ).resolve()
+    if runtime_path == canonical_path or not canonical_path.is_file():
+        return 0
+
+    canonical_entries = _raw_change_log_entries(canonical_path)
+    if not canonical_entries:
+        return 0
+    existing_ids = {
+        _change_log_identity(payload)
+        for payload, _ in _raw_change_log_entries(runtime_path)
+    }
+    missing_lines: List[str] = []
+    for payload, raw_line in canonical_entries:
+        identity = _change_log_identity(payload)
+        if identity in existing_ids:
+            continue
+        existing_ids.add(identity)
+        missing_lines.append(raw_line)
+    if not missing_lines:
+        return 0
+
+    needs_newline = False
+    try:
+        if runtime_path.stat().st_size:
+            with runtime_path.open("rb") as handle:
+                handle.seek(-1, os.SEEK_END)
+                needs_newline = handle.read(1) not in {b"\n", b"\r"}
+    except OSError:
+        pass
+    with runtime_path.open("a", encoding="utf-8") as handle:
+        if needs_newline:
+            handle.write("\n")
+        for raw_line in missing_lines:
+            handle.write(raw_line + "\n")
+    return len(missing_lines)
+
+
 def _read_change_log_entries() -> List[Dict[str, Any]]:
     ensure_governance_files(render=False)
     path = change_log_path()
@@ -1552,6 +1631,7 @@ def ensure_governance_files(*, render: bool = True) -> None:
         _write_json(documents_path(), DEFAULT_DOCUMENTS)
     if not change_log_path().is_file():
         change_log_path().write_text("", encoding="utf-8")
+    _sync_canonical_change_log()
     registry_doc = _read_json(documents_path(), DEFAULT_DOCUMENTS)
     if not isinstance(registry_doc, dict):
         registry_doc = copy.deepcopy(DEFAULT_DOCUMENTS)
