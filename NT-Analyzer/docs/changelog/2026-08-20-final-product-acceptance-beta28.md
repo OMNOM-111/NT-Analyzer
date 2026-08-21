@@ -30,14 +30,19 @@ rendering остаются принятым baseline и не рефактори�
 - Большой chart layout теперь масштабирует единую виртуальную сетку под
   viewport. CSS minimum-размеры больше не заставляют соседние окна физически
   перекрывать меню timeframe, настройки и resize grips при 36 графиках.
+- Legacy CI entrypoint `python -m tests` устанавливает две disposable roots до
+  импорта suite/app modules. Его 13 custom suites больше не зависят от pytest
+  `conftest` и не могут писать в live Production/Development data roots.
 
 ## LOCAL acceptance evidence
 
-- `1909 passed`, `32 skipped`, `0 failed`; независимый SHA256 digest всего
+- `1910 passed`, `32 skipped`, `0 failed`; независимый SHA256 digest всего
   live `data/` совпал до и после полного suite:
-  `959A9A0766C85E85F708DF1249838A76ED2C6085DED245E66A395739D4C4B33C`.
+  `B6AAB05A0B5F4ECC146E8B9364141737B505DC579D8C4AD5E2BD203AD8C65902`.
   Известные skips: 31 integration test без предоставленных real PostgreSQL
   acceptance DSN и 1 shell-syntax test при отсутствии `bash` на Windows.
+- Отдельный release runner: `13/13 suites passed` (включая `93/93` AI Lab),
+  тот же live-data digest до/после.
 - В браузере загружены 12 основных пользовательских экранов и все 13 Admin
   modules; полезный DOM появлялся за `1.1–1.6 s`, console оставалась чистой
   после regression-перехода.
@@ -46,12 +51,15 @@ rendering остаются принятым baseline и не рефактори�
 - При NinjaTrader OFF два одновременных browser WebSocket clients показывают
   MNQ/MES 5m из TopstepX; `lastPrice == last bar close == rendered marker`,
   `external_live=true`, marker остаётся green/red, browser WS `dropped=0`.
-- Непрерывное наблюдение MNQ/MES длилось `623.725 s` и прошло границы 5m
-  candles; финальные rendered значения были MNQ `29,322.25` и MES `7,668.50`.
+- Непрерывное наблюдение на clean `9e1e41769bb4` длилось `610.473 s`
+  (`00:00:58.533Z` → `00:11:09.006Z`) и прошло границы 5m candles `00:05`
+  и `00:10`; финальные raw/close/rendered значения были MNQ
+  `29336.5 / 29336.5 / 29,336.50` и MES
+  `7670.75 / 7670.75 / 7,670.75`.
 - Большой layout реально смонтировал 36 charts с тремя browser clients:
-  `dropped=0`, один upstream SignalR session, `loginKeyCalls=0`. Найденное
-  перекрытие controls защищено DOM hit-target regression test; финальная
-  проверка этого исправления выполняется на clean commit.
+  `dropped=0`, один upstream SignalR session, `loginKeyCalls=0`; геометрия на
+  clean commit дала `overlaps=[]`, settings/timeframe hit-targets `36/36`.
+  Реальные controls открыли settings drawer и переключили один chart 5m→1m.
 
 ## Operational state before beta.28
 

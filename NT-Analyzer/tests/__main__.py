@@ -13,7 +13,11 @@ ANY suite reported a failure — so CI cannot get a false green like
 from __future__ import annotations
 
 import importlib
+import os
+import shutil
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,27 +42,53 @@ SUITES = [
 
 
 def run(selected: list[str] | None = None) -> int:
-    names = selected or SUITES
-    results: list[tuple[str, int]] = []
-    for name in names:
-        mod = importlib.import_module(f"tests.{name}")
-        print(f"\n===================== {name} =====================")
-        try:
-            rc = int(mod.main())
-        except SystemExit as e:  # some mains call sys.exit indirectly
-            rc = int(e.code or 0)
-        results.append((name, rc))
+    # This runner does not load pytest's conftest, so it must establish the
+    # same fail-closed boundary before importing any suite/app module. The two
+    # roots are siblings because runtime startup deliberately rejects nested
+    # Production/Development data roots.
+    test_root = Path(tempfile.gettempdir()) / (
+        f"stratforge-legacy-tests-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+    production_root = test_root / "production-data"
+    development_root = test_root / "development-data"
+    production_root.mkdir(parents=True)
+    development_root.mkdir(parents=True)
+    previous = {
+        "NTA_DATA_ROOT": os.environ.get("NTA_DATA_ROOT"),
+        "NTA_STAGING_DATA_ROOT": os.environ.get("NTA_STAGING_DATA_ROOT"),
+    }
+    os.environ["NTA_DATA_ROOT"] = str(production_root)
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(development_root)
 
-    print("\n========================================================")
-    print("SUITE SUMMARY")
-    failed = 0
-    for name, rc in results:
-        status = "PASS" if rc == 0 else "FAIL"
-        if rc != 0:
-            failed += 1
-        print(f"  {status}  {name}")
-    print(f"\n{len(results) - failed}/{len(results)} suites passed.")
-    return 1 if failed else 0
+    try:
+        names = selected or SUITES
+        results: list[tuple[str, int]] = []
+        for name in names:
+            mod = importlib.import_module(f"tests.{name}")
+            print(f"\n===================== {name} =====================")
+            try:
+                rc = int(mod.main())
+            except SystemExit as e:  # some mains call sys.exit indirectly
+                rc = int(e.code or 0)
+            results.append((name, rc))
+
+        print("\n========================================================")
+        print("SUITE SUMMARY")
+        failed = 0
+        for name, rc in results:
+            status = "PASS" if rc == 0 else "FAIL"
+            if rc != 0:
+                failed += 1
+            print(f"  {status}  {name}")
+        print(f"\n{len(results) - failed}/{len(results)} suites passed.")
+        return 1 if failed else 0
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        shutil.rmtree(test_root, ignore_errors=True)
 
 
 if __name__ == "__main__":

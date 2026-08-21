@@ -30,6 +30,7 @@ from app import runtime_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFTEST = (Path(__file__).parent / "conftest.py").read_text(encoding="utf-8")
+LEGACY_RUNNER = (Path(__file__).parent / "__main__.py").read_text(encoding="utf-8")
 CI = (PROJECT_ROOT.parent / ".github" / "workflows" / "ci.yml").read_text(
     encoding="utf-8")
 NEXT_CI = (PROJECT_ROOT.parent / ".github" / "workflows" /
@@ -115,3 +116,11 @@ def test_the_session_root_is_unique_per_process():
 def test_ci_correctness_does_not_depend_on_workflow_serialization():
     assert "stratforge-self-hosted-suite" not in CI
     assert "stratforge-self-hosted-suite" not in NEXT_CI
+
+
+def test_legacy_runner_installs_two_disposable_roots_before_suite_imports():
+    install = LEGACY_RUNNER.index('os.environ["NTA_DATA_ROOT"] =')
+    suite_import = LEGACY_RUNNER.index('importlib.import_module(f"tests.{name}")')
+    assert install < suite_import
+    assert 'os.environ["NTA_STAGING_DATA_ROOT"] =' in LEGACY_RUNNER
+    assert 'shutil.rmtree(test_root, ignore_errors=True)' in LEGACY_RUNNER

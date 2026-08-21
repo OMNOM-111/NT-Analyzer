@@ -83,9 +83,11 @@ closeout-дефекты без изменения market-data/chart архите
    соседнее окно больше не перекрывает timeframe/settings hit targets из-за
    CSS minimum-размеров.
 
-Финальный LOCAL regression: `1909 passed`, `32 skipped`, `0 failed`; live
-`data/` digest до и после совпал. TopstepX с NinjaTrader OFF подтверждён двумя
-MNQ/MES 5m browser clients непрерывно `623.725 s`, marker оставался live.
+Финальный LOCAL regression: `1910 passed`, `32 skipped`, `0 failed`; legacy
+release runner `13/13 suites passed`; live `data/` digest до и после совпал.
+TopstepX с NinjaTrader OFF подтверждён двумя MNQ/MES 5m browser clients на
+clean implementation commit непрерывно `610.473 s`; marker оставался live и
+прошёл две границы новых 5m candles.
 
 Следующее действие в этом же acceptance: mandatory CI → merge → один signed
 immutable artifact → Canary browser/live acceptance → тот же artifact в

@@ -33,8 +33,10 @@ FAILED: list[tuple[str, str]] = []
 def _set_temp_root(tmp: Path):
     original_project_root = ops._project_root
     original_data_root = os.environ.get("NTA_DATA_ROOT")
+    original_dev_root = os.environ.get("NTA_STAGING_DATA_ROOT")
     workspace = tmp / "NT-Analyzer"
     os.environ["NTA_DATA_ROOT"] = str(workspace / "data")
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(workspace / "development-data")
     ops._project_root = lambda: workspace  # type: ignore[assignment]
     (workspace / "data" / "ops").mkdir(parents=True, exist_ok=True)
     # also create a fake journal CSV with header for B1
@@ -55,6 +57,10 @@ def _set_temp_root(tmp: Path):
             os.environ.pop("NTA_DATA_ROOT", None)
         else:
             os.environ["NTA_DATA_ROOT"] = original_data_root
+        if original_dev_root is None:
+            os.environ.pop("NTA_STAGING_DATA_ROOT", None)
+        else:
+            os.environ["NTA_STAGING_DATA_ROOT"] = original_dev_root
 
     return restore
 

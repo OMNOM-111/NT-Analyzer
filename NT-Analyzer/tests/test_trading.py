@@ -47,7 +47,9 @@ def _now_iso(offset_sec: float = 0) -> str:
 def _set_temp_root(tmp: Path):
     original_project_root = ops._project_root
     original_data_root = os.environ.get("NTA_DATA_ROOT")
+    original_dev_root = os.environ.get("NTA_STAGING_DATA_ROOT")
     os.environ["NTA_DATA_ROOT"] = str(tmp / "data")
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(tmp / "development-data")
     ops._project_root = lambda: tmp  # type: ignore[assignment]
     (tmp / "data" / "ops").mkdir(parents=True, exist_ok=True)
     (tmp / "data" / "runtime").mkdir(parents=True, exist_ok=True)
@@ -70,6 +72,10 @@ def _set_temp_root(tmp: Path):
             os.environ.pop("NTA_DATA_ROOT", None)
         else:
             os.environ["NTA_DATA_ROOT"] = original_data_root
+        if original_dev_root is None:
+            os.environ.pop("NTA_STAGING_DATA_ROOT", None)
+        else:
+            os.environ["NTA_STAGING_DATA_ROOT"] = original_dev_root
 
     return restore
 
