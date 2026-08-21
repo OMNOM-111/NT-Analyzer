@@ -4241,7 +4241,18 @@
   }
 
   // Centralised UI error surface (used by pages' loading/error states too).
+  function isAbortError(err) {
+    if (!err) return false;
+    if (err.name === 'AbortError') return true;
+    const message = String(err.message || err);
+    return /AbortError|signal is aborted/i.test(message);
+  }
+
   function reportError(err) {
+    // Page cleanup deliberately aborts in-flight requests. Some Chromium
+    // versions wrap that DOMException as a plain Error, so checking only
+    // `name` leaks a false red console error during normal navigation.
+    if (isAbortError(err)) return;
     console.error('[UI]', err);
     // A stale/missing session used to be swallowed here, making every button
     // look frozen.  Tell the user what happened and expose the sign-in action.
@@ -5177,7 +5188,7 @@
       form.innerHTML = `<div class="cab-card"><h4>Новый кандидат</h4>
         <div class="cab-sub">Только чистый текущий commit. Грязное рабочее дерево сервер отклоняет.</div>
         <label class="field"><span>Версия (semver)</span>
-          <input id="pipe-version" type="text" placeholder="0.10.0-beta.27"></label>
+          <input id="pipe-version" type="text" placeholder="0.10.0-beta.28"></label>
         <label class="field"><span>Канал</span><select id="pipe-channel">
           <option value="beta">beta</option><option value="dev">dev</option>
           <option value="stable">stable</option></select></label>

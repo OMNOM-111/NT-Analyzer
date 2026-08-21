@@ -95,6 +95,27 @@ class TestObservability:
         record_http("GET", "/api/health", 200, 15.3)
         m = metrics()
         assert m["http"]["requests"] >= 1
+        assert m["http"]["families"]["GET /api/health 2xx"] >= 1
+
+    def test_handler_records_the_status_it_actually_sends(self, monkeypatch):
+        from http.server import BaseHTTPRequestHandler
+
+        from app.server import Handler
+
+        handler = object.__new__(Handler)
+        handler._drain_request_body = lambda: None
+        handler._remote_attempt = False
+        handler._response_started = False
+        monkeypatch.setattr(
+            BaseHTTPRequestHandler,
+            "send_response",
+            lambda self, code, message=None: None,
+        )
+
+        Handler.send_response(handler, 204)
+
+        assert handler._response_status == 204
+        assert handler._response_started is True
 
     def test_metrics_structure(self):
         from app.observability import metrics

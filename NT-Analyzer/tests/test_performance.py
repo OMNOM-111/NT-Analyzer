@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import csv
 import io
+import os
 import shutil
 import sys
 import tempfile
@@ -31,10 +32,28 @@ def _now_iso(offset_sec: float = 0) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=offset_sec)).isoformat(timespec="seconds")
 
 
-def _set_temp_root(tmp: Path) -> None:
+def _set_temp_root(tmp: Path):
+    original_project_root = ops._project_root
+    original_data_root = os.environ.get("NTA_DATA_ROOT")
+    original_dev_root = os.environ.get("NTA_STAGING_DATA_ROOT")
+    os.environ["NTA_DATA_ROOT"] = str(tmp / "data")
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(tmp / "development-data")
     ops._project_root = lambda: tmp  # type: ignore[assignment]
     (tmp / "data" / "runtime").mkdir(parents=True, exist_ok=True)
     (tmp / "data" / "ops").mkdir(parents=True, exist_ok=True)
+
+    def restore() -> None:
+        ops._project_root = original_project_root  # type: ignore[assignment]
+        if original_data_root is None:
+            os.environ.pop("NTA_DATA_ROOT", None)
+        else:
+            os.environ["NTA_DATA_ROOT"] = original_data_root
+        if original_dev_root is None:
+            os.environ.pop("NTA_STAGING_DATA_ROOT", None)
+        else:
+            os.environ["NTA_STAGING_DATA_ROOT"] = original_dev_root
+
+    return restore
 
 
 def _write_runtime(tmp: Path, strategies: List[Dict[str, Any]], executions: List[Dict[str, Any]]) -> None:
@@ -68,8 +87,8 @@ def case(name: str):
     def deco(fn):
         def wrap():
             tmp = Path(tempfile.mkdtemp(prefix="performance_test_"))
+            restore = _set_temp_root(tmp)
             try:
-                _set_temp_root(tmp)
                 fn(tmp)
                 PASSED.append(name)
                 print(f"  PASS  {name}")
@@ -80,6 +99,7 @@ def case(name: str):
                 FAILED.append((name, f"{type(e).__name__}: {e}\n{traceback.format_exc()}"))
                 print(f"  ERR   {name}: {e}")
             finally:
+                restore()
                 shutil.rmtree(tmp, ignore_errors=True)
         return wrap
     return deco

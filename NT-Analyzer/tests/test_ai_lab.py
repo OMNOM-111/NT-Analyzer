@@ -38,6 +38,11 @@ FAILED: List[Tuple[str, str]] = []
 
 
 def _record(name: str, fn) -> None:
+    data_root = Path(tempfile.mkdtemp(prefix="ai_lab_data_test_"))
+    previous_data_root = os.environ.get("NTA_DATA_ROOT")
+    previous_dev_root = os.environ.get("NTA_STAGING_DATA_ROOT")
+    os.environ["NTA_DATA_ROOT"] = str(data_root / "production-data")
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(data_root / "development-data")
     try:
         fn()
         PASSED.append(name)
@@ -45,6 +50,16 @@ def _record(name: str, fn) -> None:
     except Exception as e:  # noqa: BLE001
         FAILED.append((name, f"{e}\n{traceback.format_exc()}"))
         print(f"  FAIL  {name}: {e}")
+    finally:
+        if previous_data_root is None:
+            os.environ.pop("NTA_DATA_ROOT", None)
+        else:
+            os.environ["NTA_DATA_ROOT"] = previous_data_root
+        if previous_dev_root is None:
+            os.environ.pop("NTA_STAGING_DATA_ROOT", None)
+        else:
+            os.environ["NTA_STAGING_DATA_ROOT"] = previous_dev_root
+        shutil.rmtree(data_root, ignore_errors=True)
 
 
 def _redirect_paths(tmp: Path) -> None:

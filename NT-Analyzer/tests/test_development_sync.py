@@ -49,8 +49,8 @@ def test_a_stale_process_is_named_as_such(local, monkeypatch):
 
 
 def test_uncommitted_work_is_distinguished_from_a_stale_process(local, monkeypatch):
-    """Different problems with different fixes: one needs a restart to pick up
-    the merge, the other to pick up your own edits."""
+    """Dirty is observable, but whether the running interpreter loaded those
+    edits is not.  The UI must not present that unknowable fact as certainty."""
     _deployment(monkeypatch, "a" * 40)
     monkeypatch.setattr(development_sync, "_git",
                         lambda *a: "a" * 40 if a[0] == "rev-parse" else "main")
@@ -58,6 +58,8 @@ def test_uncommitted_work_is_distinguished_from_a_stale_process(local, monkeypat
     out = development_sync.status()
     assert out["state"] == "dirty"
     assert out["dirty_count"] == 1
+    assert "Нельзя надёжно определить" in out["message"]
+    assert "ещё не в запущенном процессе" not in out["message"]
 
 
 def test_regenerated_data_never_counts_as_dirty(monkeypatch):

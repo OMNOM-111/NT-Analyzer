@@ -59,53 +59,49 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## СЛЕДУЮЩЕЕ ДЕЙСТВИЕ — UI «Окружения и релизы»
+## Текущий checkpoint — FINAL PRODUCT ACCEPTANCE
 
-Backend готов и покрыт тестами (`app/pipeline_view.py`, `/api/admin/pipeline`,
-23 теста, PR #128). Осталась отрисовка и объединение двух модулей.
+Ранее указанная работа по UI завершена: единый модуль «Окружения и релизы»
+выпущен в PR #130, Admin navigation консолидирована в PR #131, а управление
+промоушеном из LOCAL с authoritative server-side решением — в PR #135.
 
-1. Один admin-модуль вместо `environments` + `releases`; три карточки
-   Development / Canary / Production из `/api/admin/pipeline`.
-2. Pipeline-кнопки `Создать релиз-кандидат → Развернуть в Canary → Приёмка →
-   Продвинуть в Production`. Действия уже есть:
-   `API.http.adminReleaseCreate` и `adminReleaseAction(id, action)`.
-3. «Продвинуть» неактивна, пока `promotion.allowed === false`; рядом показывать
-   `promotion.gates` — каждый gate уже сформулирован как утверждение, которое
-   должно быть истинным.
-4. Полоса стадий из `stages`: `done` / `pending` / `failed`.
-5. `Открыть Development` активна только при `development_access.allowed`;
-   иначе показывать `development_access.reason`.
-6. Compare из `compare`: `differs` подсвечивать, `missing` показывать как
-   «не сообщено», а не как расхождение.
-7. Старые `renderEnvironmentSwitcherInto` / `renderReleaseCenterInto` убрать из
-   меню, маршруты старых id направить на новый модуль.
+Текущая release-кандидатура `0.10.0-beta.28` закрывает воспроизводимые
+closeout-дефекты без изменения market-data/chart архитектуры:
 
-### Что уже закрыто дополнительно
+1. LOCAL принимает решение о Production только от Canary/Production и только
+   для точных `candidate_id` + artifact SHA с действующим коротким TTL;
+   ответ другого кандидата, stale/replayed решение и Development-responder
+   блокируются fail-closed.
+2. Pytest больше не читает и не изменяет живой LOCAL `data/` как test root:
+   Production и Development получают раздельные disposable roots, а полный
+   suite завершается ошибкой при любом изменении live state. Корректность CI
+   больше не зависит от shared concurrency group.
+3. DEV dirty-state не выдаёт недоказанное утверждение о запущенном процессе,
+   HTTP observability считает реально отправленный status, а штатный abort при
+   навигации не создаёт ложную console/UI ошибку.
+4. В layout на 36 charts единая виртуальная сетка масштабируется под viewport;
+   соседнее окно больше не перекрывает timeframe/settings hit targets из-за
+   CSS minimum-размеров.
 
-**Data-root fail-safe (PR #128).** Сервер публикует корень, который реально
-обслуживает; tooling проверяет себя против публикации, а при нескольких живых
-store без публикации — отказывается работать, называя кандидатов. `mark_legacy`
-выводит брошенный store из выбора, не удаляя. `data/development` помечен legacy.
+Финальный LOCAL regression: `1910 passed`, `32 skipped`, `0 failed`; legacy
+release runner `13/13 suites passed`; live `data/` digest до и после совпал.
+TopstepX с NinjaTrader OFF подтверждён двумя MNQ/MES 5m browser clients на
+clean implementation commit непрерывно `610.473 s`; marker оставался live и
+прошёл две границы новых 5m candles.
 
-**Backend pipeline (PR #128).** Главный gate: **Canary сам должен сообщать тот
-же artifact**, который продвигают — проверка против того, что окружение
-говорит о себе, а не против release-записи, согласной с самой собой. Молчащий
-Canary блокирует promote.
+Следующее действие в этом же acceptance: mandatory CI → merge → один signed
+immutable artifact → Canary browser/live acceptance → тот же artifact в
+Production → повторная live-проверка и operational release snapshot.
 
-**Owner identity (PR #126).** `ensure_owner` не создаёт второго владельца и не
-переписывает существующего молча: `OwnerIdentityConflict` (409).
-`STRATFORGE_CANONICAL_OWNER_UUID` — конфигурация в git-ignored secret store.
-
-## Дальше по программе
-
-Admin navigation consolidation → убрать из Admin «Глобальные документы» и
-«Документы рабочих областей» → Monitoring объединить с «Пользователи и сессии»
-→ Subscriptions/Grants только в Admin → Owner Journal как компактный timeline
-→ Connector onboarding (скачать → установить → авторизовать; manual pairing
-только в Advanced) → Operations/Diagnostics по capabilities окружения →
-browser performance pass → финальный E2E и единственный click-list.
+Физическое enrollment нового NinjaTrader Connector остаётся отдельной
+hardware-зависимой проверкой и не имитируется. Текущий Connector/NinjaTrader
+не перезапускается без воспроизводимой необходимости.
 
 Релизы только: `LOCAL → mandatory CI → PR → merge → immutable candidate →
 Canary → acceptance → SAME artifact Production`.
 
 Четыре Google/Resend secrets не ротировать.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Актуализирован LOCAL checkpoint: закрытые PR #130/#131/#135, fail-closed release decision и полная test-root isolation для final acceptance beta.28.
+-->

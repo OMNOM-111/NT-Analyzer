@@ -30,8 +30,13 @@ PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
 
 
-def _set_temp_root(tmp: Path) -> None:
+def _set_temp_root(tmp: Path):
+    original_project_root = ops._project_root
+    original_data_root = os.environ.get("NTA_DATA_ROOT")
+    original_dev_root = os.environ.get("NTA_STAGING_DATA_ROOT")
     workspace = tmp / "NT-Analyzer"
+    os.environ["NTA_DATA_ROOT"] = str(workspace / "data")
+    os.environ["NTA_STAGING_DATA_ROOT"] = str(workspace / "development-data")
     ops._project_root = lambda: workspace  # type: ignore[assignment]
     (workspace / "data" / "ops").mkdir(parents=True, exist_ok=True)
     # also create a fake journal CSV with header for B1
@@ -46,13 +51,26 @@ def _set_temp_root(tmp: Path) -> None:
         encoding="utf-8",
     )
 
+    def restore() -> None:
+        ops._project_root = original_project_root  # type: ignore[assignment]
+        if original_data_root is None:
+            os.environ.pop("NTA_DATA_ROOT", None)
+        else:
+            os.environ["NTA_DATA_ROOT"] = original_data_root
+        if original_dev_root is None:
+            os.environ.pop("NTA_STAGING_DATA_ROOT", None)
+        else:
+            os.environ["NTA_STAGING_DATA_ROOT"] = original_dev_root
+
+    return restore
+
 
 def case(name: str):
     def deco(fn):
         def wrap():
             tmp = Path(tempfile.mkdtemp(prefix="ops_test_"))
+            restore = _set_temp_root(tmp)
             try:
-                _set_temp_root(tmp)
                 fn(tmp)
                 PASSED.append(name)
                 print(f"  PASS  {name}")
@@ -63,6 +81,7 @@ def case(name: str):
                 FAILED.append((name, f"{type(e).__name__}: {e}\n{traceback.format_exc()}"))
                 print(f"  ERR   {name}: {e}")
             finally:
+                restore()
                 shutil.rmtree(tmp, ignore_errors=True)
         return wrap
     return deco

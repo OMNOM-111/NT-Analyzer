@@ -1733,10 +1733,6 @@ def _asset_build_stamp() -> str:
 class Handler(BaseHTTPRequestHandler):
     server_version = "NTAnalyzer/0.1"
 
-    def send_response(self, code: int, message: Optional[str] = None) -> None:
-        self._response_status = int(code)
-        super().send_response(code, message)
-
     # silence default access log
     def log_message(self, fmt: str, *args: Any) -> None:
         if os.environ.get("NTA_BACKEND_VERBOSE"):
@@ -4512,6 +4508,9 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def send_response(self, code, message=None):  # type: ignore[override]
+        # This is the single response hook. Observability must record the
+        # status actually written, not the fail-safe 500 initial value.
+        self._response_status = int(code)
         # Before the answer goes out, take anything still sitting in the receive
         # buffer: an undrained body turns this response into a connection abort.
         self._drain_request_body()

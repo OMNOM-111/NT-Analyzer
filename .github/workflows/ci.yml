@@ -17,26 +17,6 @@ on:
 permissions:
   contents: read
 
-# Shared with next-architecture-ci on purpose. Both workflows run the identical
-# full pytest suite on the same single self-hosted Windows runner, and the suite
-# still writes nine files under <project>/data (see tests/conftest.py). Two runs
-# at once therefore performed atomic .tmp -> rename writes onto the same files;
-# on Windows a rename onto a file another process holds fails with WinError 5,
-# that exception escapes inside an HTTP handler thread after the response line
-# is already out, and the waiting client gets WSAECONNABORTED (10053) instead of
-# its status. It cost three different tests across four runs, never the same one
-# twice.
-#
-# This is not serialisation in place of a fix. The cause was reproduced locally
-# by running two suites concurrently, the test-side isolation that could be done
-# safely has been done, and what remains is a measured gap the guard in conftest
-# now watches. Until that gap closes, one runner may only run one suite at a
-# time -- and cancel-in-progress stays false so neither required check is
-# cancelled by the other queueing behind it.
-concurrency:
-  group: stratforge-self-hosted-suite-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   python-tests:
     runs-on: [self-hosted, windows, x64, stratforge-ci]
