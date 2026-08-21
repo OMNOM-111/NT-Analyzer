@@ -81,6 +81,29 @@ def test_a_requester_cannot_assert_canary_state_itself():
     assert out["allowed"] is False
 
 
+def test_claim_compares_canary_with_runtime_manifest_not_transport_archive():
+    """The live process reports the signed manifest digest.
+
+    The immutable ZIP has its own checksum and normally differs.  Sending that
+    transport checksum as the runtime identity made a correctly deployed
+    Canary fail ``canary_runs_candidate`` forever.
+    """
+    claim = release_control.claim_for({
+        "candidate_id": "rc_runtime_identity",
+        "artifact_sha256": OTHER,
+        "manifest_sha256": ARTIFACT,
+        "signature_status": "verified",
+        "state": "canary_passed",
+    }, ci_green=True)
+
+    assert claim["archive_sha256"] == OTHER
+    assert claim["manifest_sha256"] == ARTIFACT
+    assert claim["artifact_sha256"] == ARTIFACT
+    out = release_control.decide(claim, registry=_registry())
+    assert out["allowed"] is True
+    assert "canary_runs_candidate" not in out["blocking"]
+
+
 @pytest.mark.parametrize("field,value,gate", [
     ("state", "canary_checking", "candidate_state"),
     ("acceptance_passed", False, "acceptance"),

@@ -119,12 +119,22 @@ def authoritative() -> bool:
 def claim_for(candidate: Dict[str, Any], *, ci_green: bool) -> Dict[str, Any]:
     """The ledger facts this environment is prepared to attest to."""
     state = str(candidate.get("state") or "")
+    # The environment registry reports the digest embedded in the running
+    # release identity.  That is the signed manifest digest, not the checksum
+    # of the transport ZIP.  Release Center deliberately keeps both: the ZIP
+    # checksum proves the uploaded archive, while the manifest checksum proves
+    # which extracted code Canary is actually executing.  Asking the server to
+    # compare Canary with the archive checksum makes two correct identities
+    # look different and permanently blocks same-artifact promotion.
+    archive_sha = str(candidate.get("artifact_sha256") or "")
+    runtime_sha = str(candidate.get("manifest_sha256") or archive_sha)
     return {
         "candidate_id": str(candidate.get("candidate_id") or ""),
         "app_version": str(candidate.get("app_version") or ""),
         "release_channel": str(candidate.get("release_channel") or ""),
         "git_commit_sha": str(candidate.get("git_commit_sha") or ""),
-        "artifact_sha256": str(candidate.get("artifact_sha256") or ""),
+        "artifact_sha256": runtime_sha,
+        "archive_sha256": archive_sha,
         "manifest_sha256": str(candidate.get("manifest_sha256") or ""),
         "signature_status": str(candidate.get("signature_status") or ""),
         "state": state,
