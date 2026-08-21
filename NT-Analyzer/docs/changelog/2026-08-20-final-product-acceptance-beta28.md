@@ -80,6 +80,21 @@ same exact artifact Production → live recheck`.
 
 До появления этого блока документ не является утверждением Production PASS.
 
+## First candidate stopped before acceptance
+
+Первый merged candidate `rc_a69b6a24334a4373b3c21723a1bc1cf7` был
+собран из `9ffbfb933c79b7661d5d38aed55f7a776f781422` и развернут только в
+Canary. Live control-plane подтвердил Canary `live`, но корректно заблокировал
+promotion: Release Center отправлял SHA transport ZIP
+`5269426FDC98E23197B5E93BA742B0197E2DC3F81266A489BA0DC99CDCF0E588`,
+тогда как запущенная среда сообщает signed runtime/manifest SHA
+`1DB26A32F99F151F8FF654683D00886B7148020AB72E7FD4415060A54CC0F126`.
+
+Candidate не принят и не продвигался в Production. Scoped correction сохраняет
+оба digest, но сравнивает Environment Registry именно с runtime/manifest SHA;
+новый commit требует новой сборки и повторного полного Canary cycle.
+
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Редакция №1: создан canonical pre-release snapshot для final acceptance beta.28; финальные artifact и live evidence намеренно не предсказаны до deployment.
+2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Редакция №2: зафиксирован fail-closed stop первого beta.28 candidate и scoped correction archive/runtime identity; Production не менялся.
 -->

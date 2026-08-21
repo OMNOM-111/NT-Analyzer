@@ -1,9 +1,9 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-20T23:00:44Z
+- Last verified UTC: 2026-08-21T00:53:04Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `3102a534ab569d0cbf162462726d516378dc82a8`
+- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
 - Candidate: `0.10.0-beta.28`
 - Scope: Final product acceptance and release closeout
 - Status: IN DEVELOPMENT
@@ -14,9 +14,9 @@
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `3102a534ab569d0cbf162462726d516378dc82a8` plus the unmerged beta.28 acceptance change set |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` as the pack-wide verification baseline; repository main is `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit |
 | LOCAL | not running at the start of this acceptance; canonical live root remains `<project>/data` via `start.ps1` |
-| Canary | beta.27, Git `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62`, artifact `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270`, live/ready PASS |
+| Canary | first beta.28 candidate from `9ffbfb933c79` is live but NOT ACCEPTED; runtime manifest `1DB26A32F99F151F8FF654683D00886B7148020AB72E7FD4415060A54CC0F126`; it must be replaced by the corrected candidate |
 | Production | beta.26, Git `3353e3836306dca4628c759064139cdac94517e0`, artifact `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB`, live/ready PASS |
 | Release parity | NO before beta.28; final target is one exact artifact in both server environments |
 | Market-data baseline | protected; no market-data/chart implementation refactor in this closeout |
@@ -32,6 +32,10 @@
   disposable test root.
 - Any live `data/` mutation fails pytest; there are no known-writer exemptions.
 - CI workflows no longer share a correctness-motivated concurrency group.
+- A real signed release-control request found and failed closed on a digest
+  namespace bug: the registry exposes runtime/manifest SHA while LOCAL sent the
+  transport archive SHA. The scoped correction sends manifest SHA for the live
+  equality gate and retains archive SHA as separate evidence.
 
 ## Required execution sequence
 
@@ -71,4 +75,5 @@ is unavailable, or Production would require a rebuild/hotfix.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 handoff with executable beta.28 final-acceptance checkpoint and explicit stop/deferred boundaries.
+2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded first beta.28 Canary as not accepted, the live archive/runtime digest diagnosis and mandatory corrected rebuild; Production stayed beta.26.
 -->

@@ -1,10 +1,10 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-20T23:00:44Z
+- Last verified UTC: 2026-08-21T00:53:04Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `3102a534ab569d0cbf162462726d516378dc82a8`
-- Candidate in this closeout: `0.10.0-beta.28` (pre-release; Git SHA and artifact are not asserted before merge/build)
+- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
+- Candidate in this closeout: `0.10.0-beta.28`; the first merged artifact was stopped before acceptance and a corrected build is pending
 - Scope: Current factual subsystem snapshot only
 - Status: PARTIAL
 - Acceptance note: beta.28 Canary and Production live acceptance is not complete yet.
@@ -39,12 +39,12 @@
 
 | Environment | Live/ready | Version | Git SHA | Runtime artifact SHA256 |
 | --- | --- | --- | --- | --- |
-| Canary | `200 / 200` | `0.10.0-beta.27` | `1f3e2ce7198fec5a90e85d9b49e7a086103e4b62` | `A905E784BD2794F8ACC1760D1697A1B410FC96C24A5BCD25223B8D48FD2EC270` |
+| Canary | live, NOT ACCEPTED | `0.10.0-beta.28` | `9ffbfb933c79b7661d5d38aed55f7a776f781422` | `1DB26A32F99F151F8FF654683D00886B7148020AB72E7FD4415060A54CC0F126` |
 | Production | `200 / 200` | `0.10.0-beta.26` | `3353e3836306dca4628c759064139cdac94517e0` | `27B6316E934F0D727B9D158B34EE601A0A59EF78F0D71B484DD29ADD37617AAB` |
 
-These rows are the starting point. They must be superseded with one exact
-beta.28 artifact only after Canary acceptance and same-artifact Production
-promotion.
+The Canary row is an intermediate candidate stopped by the release-control
+runtime-identity gate and must be superseded by a corrected immutable build.
+Production remains unchanged until that new candidate passes Canary.
 
 ## Deprecated current-state claims
 
@@ -55,4 +55,5 @@ promotion.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 state with verified beta.27 Canary, beta.26 Production and beta.28 final-acceptance scope.
+2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded the first beta.28 Canary candidate as not accepted after a live archive/runtime digest mismatch; Production remained beta.26.
 -->

@@ -1,9 +1,9 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-20T23:00:44Z
+- Last verified UTC: 2026-08-21T00:53:04Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `3102a534ab569d0cbf162462726d516378dc82a8`
+- Repository baseline: main `9ffbfb933c79b7661d5d38aed55f7a776f781422` plus the scoped runtime-digest correction in this commit
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 - Acceptance note: beta.28 operational acceptance is in progress.
@@ -49,7 +49,9 @@ signed server-side request to the existing control plane.
 
 The request is accepted only when signature, timestamp and nonce verify. The
 server checks its authoritative Environment Registry and returns a short-lived
-decision for one exact `candidate_id` and artifact SHA. LOCAL accepts it only
+decision for one exact `candidate_id` and running artifact SHA. Runtime identity
+is the signed manifest SHA stored in `manifest_sha256`; the transport ZIP keeps
+its separate `archive_sha256` and remains verified during build/deploy. LOCAL accepts it only
 when:
 
 - responder environment is Canary or Production;
@@ -71,6 +73,13 @@ migrations, signature or acceptance all block promotion fail-closed.
 This is intentionally not parity. Final beta.28 values are recorded only after
 real Canary acceptance and same-artifact Production promotion in
 [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
+
+The first beta.28 candidate from merge `9ffbfb933c79` was deployed only to
+Canary and stopped before acceptance. A live signed control request proved the
+server available and Canary live, while catching an archive SHA versus runtime
+manifest SHA mismatch. Production remained beta.26. The scoped correction in
+`release_control.claim_for` requires a new immutable candidate and a fresh
+Canary cycle.
 
 ## Test and CI isolation
 
@@ -94,4 +103,5 @@ Workflow concurrency is not a correctness dependency.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 deployment snapshot with current beta.27/beta.26 identities, server-authoritative promotion and beta.28 acceptance contract.
+2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Clarified archive SHA versus running manifest SHA and recorded the fail-closed first beta.28 Canary stop; Production was unchanged.
 -->
