@@ -1,23 +1,25 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-21T03:50:00Z
+- Last verified UTC: 2026-08-23T01:29:45Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `36600dba3d739601660768db98b429b0f752ad1a` plus this operational docs-only closeout
-- Candidate in this closeout: final `0.10.0-beta.28` immutable artifact from `36600dba` is accepted in Canary and live in Production
+- Repository baseline: beta.28 remains live in Canary/Production; beta.29 is the active Development release candidate
+- Candidate in this closeout: `0.10.0-beta.29`
 - Scope: Current factual subsystem snapshot only
-- Status: DONE
-- Acceptance note: software release cycle is complete; Production owner UI recheck waits only for the physical environment-isolated Telegram login confirmation already open in the browser.
+- Status: IN DEVELOPMENT
+- Acceptance note: Development browser/load/responsive and full local regression passed; PR, mandatory CI and immutable Canary/Production promotion are the remaining release steps.
 - Current Production version/build/artifact when known: `0.10.0-beta.28`; build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`; runtime artifact SHA256 `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`
 
 ## Evidence modes
 
-- Repository evidence is the current code and tests in the beta.28 acceptance
-  change set.
+- Repository evidence is the beta.29 change set and its regression contracts.
 - Operational evidence is queried from `/api/runtime/env`, `/api/live` and
   `/api/ready` and from Release Center candidate/deployment records. Canary and
-  Production now report the same beta.28 build/runtime digest.
+  Production currently report the same beta.28 build/runtime digest; they must
+  remain unchanged until beta.29 passes PR/CI and Canary acceptance.
 - The canonical pre-release snapshot is
+  [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md);
+  beta.28 live identity remains recorded in
   [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
 
 ## Current-only snapshot
@@ -27,12 +29,14 @@
 | Auth / owner identity | `BETA` | LOCAL has one canonical owner UUID with Telegram identity; Canary and Production keep separate DB, sessions, cookies and storage | Google OAuth and transactional email remain `EXTERNAL BLOCKED`; four Google/Resend secrets are not rotated in this closeout |
 | Admin / Release Center | `BETA` | One environment/release module exposes DEV, Canary, Production, compare and pipeline. LOCAL submits a signed request; only Canary/Production may decide from authoritative registry state. The corrected ordinary approve→promote flow completed in Production | no release-control blocker remains |
 | Release security | `BETA` | Exact artifact, exact candidate, responder environment and decision TTL are verified; server signature/timestamp/nonce provide fail-closed replay protection. Final Production deployment recorded signature/readiness/identity and same-artifact evidence | rotate only through a future owner-approved release cycle |
-| Test isolation | `AVAILABLE` | Every test receives separate disposable Production/Development roots; tracked governance baselines are copied there; any live `data/` mutation fails the suite; full local and mandatory hosted/self-hosted CI passed | no open release blocker |
-| Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only chart source; accepted history/realtime architecture is unchanged and passed final Canary on the Production artifact identity | an external feed never grants execution authority |
-| Charts | `BETA` | Final MES/MNQ 5m Canary soak on `36600dba` ran 610 s with 13 samples / 26 row checks and 0 visual/OFF violations; raw TopstepX price, last bar close and rendered marker matched | no chart implementation changed; physical NT verification is separate |
-| NinjaTrader / Connector | `PARTIAL` | NinjaTrader remains the execution/backtest/runtime truth and is not required for independent TopstepX charts | Physical enrollment of a new Connector device requires Windows/NinjaTrader interaction and is reported separately, never simulated |
+| Test isolation | `AVAILABLE` | Every test receives separate disposable Production/Development roots and any live `data/` mutation fails the suite. Beta.29 full local regression passed `1924 passed, 32 skipped, 0 failed` | mandatory hosted/self-hosted beta.29 CI is pending |
+| Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only chart source. Beta.29 preserves history/SignalR/cache/failover and fixes only reproduced consumer ref/disconnect observability defects | the owner gateway does not grant cross-user redistribution rights |
+| Owner market-data gateway | `AVAILABLE` | Production is the single designated hub; Canary/Development consume it. A 12-page Development load held one gateway SignalR connection and two wire subscriptions, made zero direct provider/loginKey calls, then returned browser/logical refcounts exactly to baseline | unrelated-user redistribution remains `EXTERNAL BLOCKED` pending written authority and entitlement mapping |
+| Charts | `BETA` | Beta.28 live MES/MNQ soak remains the baseline. Beta.29 Development showed matching MES/MNQ closes and colored live markers across 12 pages with NinjaTrader OFF; closed-market heartbeat kept unchanged prices live honestly | a moving raw trade could not be generated while CME was closed |
+| Responsive UI | `BETA` | 84/84 page/viewport checks passed from 2560×1440 to 360×800; real 390×844 pointer-click journeys passed Chart dialog, Cabinet and core Admin modules with no document overflow or console/API error | Canary/Production confirmation follows the immutable artifact |
+| NinjaTrader / Connector | `BETA` | NinjaTrader remains the execution/backtest/runtime truth and is not required for independent TopstepX charts | Physical enrollment of a new Connector device requires Windows/NinjaTrader interaction and is reported separately, never simulated |
 | Documents | `BETA` | Governance source, compact revision UI, legal DRAFT status and canonical revision hydration are in the accepted artifact; Canary owner showed CHARTER revisions through №7 | post-release operational handoff updates are repository evidence for the next artifact |
-| AI agents | `PARTIAL` | Vitek, orchestration and specialist surfaces exist | Per-workspace team and some external-provider paths remain incomplete |
+| AI agents | `BETA` | Vitek, orchestration and specialist surfaces exist | Per-workspace team and some external-provider paths remain incomplete |
 | Legal | `IN DEVELOPMENT` | Structured legal package exists | It remains DRAFT until owner/legal decisions and counsel review |
 
 ## Current operational identity
@@ -61,4 +65,5 @@ absolute data root is intentionally not copied into this external pack).
 2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and scoped isolated governance-ledger hydration correction; Production remained beta.26.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded 2790fb43 Canary visual acceptance and the real approved_for_production authoritative-gate blocker; Production remained beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Recorded final 36600dba signed identity, 610-second exact MES/MNQ 5m Canary PASS and same-artifact Production live promotion.
+2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Opened beta.29 release state after Development fan-out/responsive acceptance; preserved beta.28 as current live identity and recorded the cross-user entitlement blocker explicitly.
 -->

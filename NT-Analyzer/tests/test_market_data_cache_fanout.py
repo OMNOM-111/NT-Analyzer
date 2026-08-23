@@ -129,6 +129,45 @@ def test_websocket_upgrade_uses_http_11_status_line() -> None:
     assert handler.protocol_version == "HTTP/1.0"
 
 
+def test_browser_ws_tcp_reset_is_a_normal_disconnect() -> None:
+    """Browser process exit must release the client without a server 500."""
+    class Reader:
+        def read1(self, _size):
+            raise ConnectionResetError(10054, "connection reset by peer")
+
+    class Writer:
+        def write(self, raw):
+            assert raw
+            return len(raw)
+
+        def flush(self):
+            return None
+
+    class Handler:
+        path = "/ws/market-data"
+        headers = {
+            "Upgrade": "websocket",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        }
+        protocol_version = "HTTP/1.0"
+        rfile = Reader()
+        wfile = Writer()
+        _remote_context = {"user_id": 1}
+
+        def send_response(self, _code, _message):
+            return None
+
+        def send_header(self, _name, _value):
+            return None
+
+        def end_headers(self):
+            return None
+
+    before = market_data_ws_http.metrics()["clients"]
+    assert market_data_ws_http.handle_websocket_upgrade(Handler()) is True
+    assert market_data_ws_http.metrics()["clients"] == before
+
+
 def test_browser_ws_reader_returns_available_frame_without_waiting_for_buffer_fill() -> None:
     class Reader:
         def read1(self, size):

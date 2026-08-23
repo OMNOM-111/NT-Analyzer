@@ -354,7 +354,7 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
-.tb-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tb-title { display: flex; flex: 0 1 180px; flex-direction: column; gap: 1px; min-width: 110px; }
 .tb-kicker-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tb-kicker { font-size: 10.5px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--tx-3); font-weight: 700; }
 .tb-release-badge, .tb-build-meta { display: none; }
@@ -383,7 +383,7 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .search-item .si-sub { font-size: 11px; color: var(--tx-3); }
 .search-empty { padding: 16px; text-align: center; color: var(--tx-3); font-size: 12.5px; }
 
-.tb-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.tb-right { margin-left: auto; display: flex; flex: 0 1 auto; align-items: center; gap: 10px; min-width: 0; max-width: 100%; }
 .tb-page-actions { display: flex; align-items: center; gap: 8px; }
 .tb-page-actions:empty { display: none; }
 .tb-sep { width: 1px; height: 24px; background: var(--line-2); margin: 0 2px; }
@@ -1301,6 +1301,35 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
   .tb-page-actions .btn { padding: 8px; }
 }
 
+/* The authenticated header carries user/workspace, chart actions, three
+   runtime indicators, market/account state and environment controls.  The
+   rail reduces its usable width, so waiting until a phone breakpoint used to
+   push DEV/CANARY/PROD and the system menu hundreds of pixels off-screen even
+   at 1920px.  Collapse low-priority status duplicates progressively while the
+   canonical details remain available from System actions/Admin. */
+@media (max-width: 2300px) {
+  #chip-lm { display: none; }
+}
+
+@media (max-width: 2150px) {
+  #chip-bridge { display: none; }
+}
+
+@media (max-width: 2000px) {
+  #chip-nt, #chip-user, .tb-datetime { display: none; }
+}
+
+@media (max-width: 1700px) {
+  #chip-workspace, .chip-market, #dev-preview-button { display: none; }
+  .tb-page-actions .btn { font-size: 0; gap: 0; padding: 8px; }
+}
+
+@media (max-width: 900px) {
+  #chip-account { display: none; }
+  #admin-env-switcher .env-seg-btn:not(.on) { display: none; }
+  .tb-sep { display: none; }
+}
+
 @media (max-width: 1350px) {
   #chip-nt, #chip-bridge, #chip-lm { display: none; }
 }
@@ -1341,11 +1370,20 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
   .panel-b { padding: 14px; }
   .drawer { width: 100vw; }
   .drawer-resize, .drawer-tools [data-drawer-size] { display: none; }
-  .admin-shell { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  /* The drawer body is a constrained flex scroller. Without explicit rows,
+     Grid shrank the horizontal module rail to a 4px track and painted the
+     active module over it, so visible Admin tabs could not be clicked. */
+  .admin-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: max-content max-content; min-height: 0; flex: 0 0 auto; }
   .admin-modules { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
   .admin-module { flex: 0 0 170px; }
   .admin-env-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-grant-row { grid-template-columns: minmax(0, 1fr); }
+  /* Secondary copy is meaningful in Cabinet/Admin.  Desktop truncation is
+     useful for dense rows, but on a narrow drawer it inflated min-content to
+     ~800px and made Connector onboarding unreadable. */
+  .drawer .cab-sub { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  .conn-steps { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .conn-steps > li { min-width: 0; max-width: 100%; }
 }
 
 /* Phone — left rail becomes a fixed bottom nav (off-canvas pattern) */
@@ -1379,6 +1417,8 @@ table.tbl td strong, table.tbl td .name { color: var(--tx); font-weight: 600; }
   .global-news-label { padding: 0 8px; font-size: 9px; }
   .cloud-role-setting { grid-template-columns: minmax(0,1fr); }
   .cloud-role-toggle { grid-column: auto; }
+  .kanban { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+  .kan-col { max-height: none; }
 }
 
 /* toast */
@@ -1520,8 +1560,12 @@ body.notices-cramped .sf-notice-wrap { display: none; }
 .sf-notice-close:hover { background: var(--bg-3); color: var(--tx); transform: scale(1.04); }
 .sf-notice-close svg { width: 14px; height: 14px; }
 @media (max-width: 760px) {
-  .sf-notice-wrap { top: 10px; right: 10px; left: 10px; width: auto; max-height: 30vh; }
-  body.has-drawer .sf-notice-wrap { right: 10px; }
+  /* Keep the wrapped mobile topbar operable.  A full-width notice at top:10
+     covered the notification bell and System actions, so even opening Admin
+     required waiting for the toast to expire. */
+  .sf-notice-wrap { top: 108px; right: 10px; left: auto; width: min(320px, calc(100vw - 20px)); max-height: min(22vh, 180px); }
+  body.has-drawer .sf-notice-wrap { display: none; }
+  body:has(.menu.open) .sf-notice-wrap { display: none; }
   .sf-notice { padding: 12px 12px 10px; border-radius: 14px; }
   .sf-notice-body { -webkit-line-clamp: 2; }
   /* Two at most on a phone: a third card is most of the screen. */

@@ -418,6 +418,7 @@ _ADMIN_MODULES = (
 # response -- which the operator experiences as a dashboard that spins forever
 # and says nothing about any of the sources that were perfectly healthy.
 _CONNECTOR_PROBE_TIMEOUT_SEC = 3.0
+_OPERATIONS_PROBE_TIMEOUT_SEC = 3.0
 
 
 def _connector_probe(label: str, fn: Any,
@@ -598,6 +599,79 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         # Stated explicitly so the contract is visible to the client too.
         "secrets_exposed": False,
     }
+
+
+def _operations_statuses(context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Return optional Operations rows without letting one source hang all UI."""
+    sources = (
+        (
+            "worker",
+            lambda: (
+                production_workers.status()
+                if _server_environment_explicit()
+                else local_worker.status()
+            ),
+        ),
+        (
+            "telegram",
+            lambda: (
+                production_telegram.get_queue().status()
+                if _server_environment_explicit()
+                else telegram_service.status()
+            ),
+        ),
+        (
+            "connector",
+            lambda: connector_protocol.list_installations(
+                context.get("user_id"),
+                workspace_id=str(context.get("workspace_id") or ""),
+            ),
+        ),
+    )
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(
+        max_workers=len(sources), thread_name_prefix="operations",
+    ) as pool:
+        rows = list(pool.map(
+            lambda item: _connector_probe(
+                item[0], item[1], timeout_sec=_OPERATIONS_PROBE_TIMEOUT_SEC,
+            ),
+            sources,
+        ))
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        label = str(row.get("id") or "")
+        probe_state = str(row.get("state") or "unknown")
+        elapsed_ms = int(row.get("elapsed_ms") or 0)
+        if probe_state in {"timeout", "error"}:
+            result[label] = {
+                "ok": False,
+                "status": probe_state,
+                "probe_state": probe_state,
+                "elapsed_ms": elapsed_ms,
+                "detail": str(row.get("detail") or ""),
+            }
+            continue
+        value = {
+            key: item for key, item in row.items()
+            if key not in {"id", "state", "elapsed_ms", "detail"}
+        }
+        value["probe_state"] = "ok"
+        value["elapsed_ms"] = elapsed_ms
+        if label == "worker":
+            value.setdefault(
+                "status",
+                "running" if value.get("process_alive") or value.get("running")
+                else str((value.get("readiness") or {}).get("code") or "degraded"),
+            )
+        elif label == "telegram":
+            value.setdefault("status", "connected" if value.get("ok") else "degraded")
+        elif label == "connector":
+            value.setdefault("status", "ok" if value.get("ok") else "degraded")
+        result[label] = value
+    return result
 
 
 def _backend_is_supervised() -> bool:
@@ -2932,26 +3006,7 @@ class Handler(BaseHTTPRequestHandler):
     def _admin_operations_payload(self) -> Dict[str, Any]:
         context = getattr(self, "_remote_context", None) or {}
         payload = observability.dashboard()
-        payload["worker"] = (
-            production_workers.status()
-            if _server_environment_explicit()
-            else local_worker.status()
-        )
-        try:
-            payload["telegram"] = (
-                production_telegram.get_queue().status()
-                if _server_environment_explicit()
-                else telegram_service.status()
-            )
-        except production_telegram.StorageError as exc:
-            payload["telegram"] = {"ok": False, "code": exc.code}
-        try:
-            payload["connector"] = connector_protocol.list_installations(
-                context.get("user_id"),
-                workspace_id=str(context.get("workspace_id") or ""),
-            )
-        except connector_protocol.ConnectorProtocolError as exc:
-            payload["connector"] = {"ok": False, "code": exc.code}
+        payload.update(_operations_statuses(context))
         payload["actions"] = _operations_actions()
         return payload
 

@@ -10,6 +10,8 @@ exact failure the release pipeline exists to prevent.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import time
 
 import pytest
 
@@ -97,6 +99,37 @@ def test_the_payload_carries_the_descriptor():
     block = source[source.index("def _admin_operations_payload"):]
     block = block[:block.index("def _cabinet_payload")]
     assert 'payload["actions"] = _operations_actions()' in block
+
+
+def test_operations_degrades_a_stalled_connector_without_holding_the_panel(monkeypatch):
+    monkeypatch.setattr(server_mod, "_OPERATIONS_PROBE_TIMEOUT_SEC", 0.03)
+    monkeypatch.setattr(server_mod, "_server_environment_explicit", lambda: True)
+    monkeypatch.setattr(
+        server_mod.production_workers,
+        "status",
+        lambda: {"process_alive": True, "readiness": {"ok": True, "code": "ok"}},
+    )
+    monkeypatch.setattr(
+        server_mod.production_telegram,
+        "get_queue",
+        lambda: type("Queue", (), {"status": lambda self: {"ok": True}})(),
+    )
+
+    def stalled_connector(*_args, **_kwargs):
+        time.sleep(0.25)
+        return {"ok": True, "connections": []}
+
+    monkeypatch.setattr(
+        server_mod.connector_protocol, "list_installations", stalled_connector,
+    )
+    started = time.monotonic()
+    payload = server_mod._operations_statuses({"user_id": 1, "workspace_id": "ws_test"})
+
+    assert time.monotonic() - started < 0.2
+    assert payload["worker"]["status"] == "running"
+    assert payload["telegram"]["status"] == "connected"
+    assert payload["connector"]["status"] == "timeout"
+    assert json.loads(json.dumps(payload, allow_nan=False)) == payload
 
 
 # --------------------------------------------------------------------------- #
