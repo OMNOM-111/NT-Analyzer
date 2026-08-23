@@ -1,7 +1,7 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
@@ -21,6 +21,7 @@ flowchart LR
     Agents[AI Lab / Orchestrator]
     Docs[Governance / Documents]
     MD[Market data router]
+    Gateway[Owner market-data gateway<br/>Production hub]
     RC[Release Center]
   end
 
@@ -39,7 +40,8 @@ flowchart LR
   API --> MD
   API --> RC
   API --> NT
-  MD --> TS
+  MD --> Gateway
+  Gateway --> TS
   API --> PG
   API --> Local
 ```
@@ -53,6 +55,7 @@ flowchart LR
 | NinjaTrader 8 | compile/backtest/trade/runtime execution | authoritative for fills, trades, metrics and runtime state |
 | StratForge Connector | signed device bridge between backend and NinjaTrader machine | authoritative only for authenticated Connector telemetry and bounded commands |
 | TopstepX | independent read-only chart/history/realtime source | authoritative for chart feed when selected; never for order execution |
+| Owner market-data gateway | one authorized Production hub plus authenticated Canary/Development consumers and same-origin browser fan-out | owns the only direct owner loginKey/SignalR lifecycle; never grants unrelated-user redistribution rights |
 | Local runtime stores | local-first queues, DPAPI secrets, runtime snapshots | current dev/desktop data path |
 | PostgreSQL + RLS schema | additive authoritative server-side model for users, workspaces, releases and documents | target server authority; schema already exists in migrations |
 | Governance store | `data/governance/*` editable source, `docs/governance/*` rendered layer | authoritative for governance texts and laws |
@@ -64,6 +67,9 @@ flowchart LR
 - Connector trust comes from device-owned P-256 key material, nonce signing,
   workspace binding and short-lived sessions, not from IP or JSON claims.
 - Market-data display and order execution are intentionally separate boundaries.
+- Browser clients receive only same-origin StratForge bars/WebSocket payloads;
+  provider credentials stay server-side. Canary/Development are consumers and
+  cannot silently become a second direct hub.
 - Workspace/strategy document revisions are separate from global governance; a
   workspace document cannot mutate global laws.
 
@@ -98,8 +104,10 @@ flowchart LR
    active workspace.
 2. **Personal NinjaTrader pairing**: user starts pair flow -> step-up if needed
    -> Connector enrolls -> signed hello -> workspace-bound session.
-3. **Chart delivery**: browser requests bars -> market-data router selects source
-   -> TopstepX or fresh Connector bars -> provenance and freshness returned to UI.
+3. **Chart delivery**: browser requests same-origin bars and
+   `/ws/market-data` -> environment edge/router deduplicates subscriptions ->
+   Production owner gateway uses one TopstepX session or selects a fresh
+   Connector fallback -> provenance and freshness return to each client.
 4. **Release promotion**: clean commit -> signed immutable artifact -> Release
    Center candidate -> Canary checks -> same artifact promoted to Production.
 5. **Document revision**: owner/global service edits governance docs through
@@ -120,3 +128,7 @@ flowchart LR
 - [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md)
 - [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
 - [12_API_AND_SCHEMA_REFERENCE.md](12_API_AND_SCHEMA_REFERENCE.md)
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Added the accepted Production-hub/Canary-Development-consumer gateway trust boundary and same-origin browser chart flow without changing NinjaTrader execution authority.
+-->

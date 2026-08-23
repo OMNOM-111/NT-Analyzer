@@ -5,13 +5,17 @@
 ## Baseline
 
 - Repository: `OMNOM-111/NT-Analyzer`
-- Baseline: `72f46a1a3a1d32051a00d087808755676ec4d992`
-- Baseline branch: `main`; при старте `HEAD == origin/main`, working tree clean
-- Version at baseline: `0.9.0-dev.10`
+- Baseline: deployed implementation merge `4d15f1d2250e2c52bde02b902d88ec7aad043543`
+- Baseline branch: `main`; PR #142 mandatory CI PASS; operational docs-only closeout follows the deployed SHA
+- Version at baseline: `0.10.0-beta.29`
 - Release history: Git tags on non-baseline history reach `stratforge-server-v0.9.0-dev.15`; the next minor line avoids reusing any `0.9.0-dev.N` identifier
-- Next version: `0.10.0-beta.1` (live Canary + Production HTTP identity `1fae1f3966dc` as of 2026-08-14; hang-fix `6b6dc458` is historical)
-- Integration branch: `release/0.10.0-next-architecture` merged to `main` via [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) (`5b43569d`); live public API identity is `1fae1f3966dc53294b73772be47992d844575115`
-- Production/Canary boundary: both live on the Supervisor host; public `/live`/`/ready`/`/runtime/env` agree on the same `1fae1f39` artifact; process cwd/exe still requires host `/proc` proof; no live trading / real payments
+- Current version: `0.10.0-beta.29`; older beta.1/beta.28 sections below are retained as historical evidence only
+- Integration branch: historical `release/0.10.0-next-architecture` is merged; current release implementation came through [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142)
+- Production/Canary boundary: both live/ready on build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`, runtime artifact `CBA4FA70…2379`; isolated data/session configuration, same immutable code; no live trading / real payments
+
+Current operational source of truth:
+[CLEAN_CLOSEOUT_HANDOFF.md](CLEAN_CLOSEOUT_HANDOFF.md) and
+[2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
 
 ## Сводка
 
@@ -24,11 +28,11 @@
 | 4 | STAGE CLOSED | merged/deleted | `4c60df6c`; [PR #10](https://github.com/OMNOM-111/NT-Analyzer/pull/10) | Trusted devices, step-up challenges, migration 0006; CI PASS |
 | 5 | STAGE CLOSED | merged/deleted | `1b4249cc`; [PR #11](https://github.com/OMNOM-111/NT-Analyzer/pull/11) | Personal NT security: two-factor + per-action step-up; CI PASS |
 | 6 | STAGE CLOSED | merged/deleted | `93b1fced`; [PR #12](https://github.com/OMNOM-111/NT-Analyzer/pull/12) | Agent allocation и durable NinjaTrader lease/queue; CI PASS |
-| 7 | IMPLEMENTATION COMPLETE (external Canary acceptance pending) | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур + Developer Preview / View-As без deployment; CI PASS |
-| 8 | IMPLEMENTATION COMPLETE (external Canary/Production acceptance pending) | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center: immutable-artifact promotion state machine + migration 0009; CI PASS |
-| 9 | IMPLEMENTATION CLOSED (external blue-green/Production acceptance pending) | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Blue-green deployment tooling (fail-closed dry-run) + migration 0010; CI PASS |
+| 7 | STAGE CLOSED — live isolated Canary accepted | merged/deleted | `5955f2e5`; [PR #13](https://github.com/OMNOM-111/NT-Analyzer/pull/13) | Изолированный Canary-контур, owner auth и environment routing live |
+| 8 | STAGE CLOSED — real release workflow accepted | merged/deleted | `4efddb42`; [PR #14](https://github.com/OMNOM-111/NT-Analyzer/pull/14) | Release Center completed beta.29 build/sign/Canary/Production state machine |
+| 9 | STAGE CLOSED — real blue-green Production accepted | merged/deleted | `3a787c6a`; [PR #15](https://github.com/OMNOM-111/NT-Analyzer/pull/15) | Canary and Production switched to the same verified beta.29 artifact |
 | 10 | 10A CLOSED; 10B PARTIAL — NOT fully closed | `bd4fbc47` (10A) / `phase/10b-documentation-finalization` | [PR #16](https://github.com/OMNOM-111/NT-Analyzer/pull/16) | 10A: docs-tree + map + governance gate. 10B: фактический перенос доков + matrix/changelog/language. Strategy-spec closed in Phase 11 |
-| 12 | STAGE CLOSED — hang-fix live Canary+Production | `main` | live `6b6dc458`; merge `5b43569d`; [PR #26](https://github.com/OMNOM-111/NT-Analyzer/pull/26) MERGED; tag `stratforge-server-v0.10.0-beta.1-6b6dc458` | `/ready` 36ms; Environment Switcher DEV→CANARY→PROD; Telegram Production PASS / Canary PARTIAL; Google/email EXTERNAL BLOCKED |
+| 12 | STAGE CLOSED — current beta.29 live Canary+Production | `main` | live `4d15f1d`; [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142) MERGED | immutable artifact, owner UI/Documents/charts, fan-out, responsive and same-artifact Production PASS; Google/email remain EXTERNAL BLOCKED |
 
 ## Phase 0 evidence
 
@@ -252,7 +256,10 @@ Status: полное evidence — `docs/current/PHASE_11_FINAL_INTEGRATION_EVIDE
 - Clean-worktree verification (detach из origin, clean env): git status чист до и после; full regression 1184 passed / 31 skipped; compileall / node --check / static scan / git diff --check PASS.
 - **Phase 11c GIT CLOSEOUT COMPLETE.** `main`/Canary/Production/DNS/Cloudflare/secrets не затронуты.
 
-## Phase 12 — 0.10.0-beta.1 live Canary + exact-artifact Production
+## Historical Phase 12 evidence — 0.10.0-beta.1
+
+The following subsection records the 2026-08-12/14 state and is superseded by
+the beta.29 current baseline at the top of this document.
 
 - Live public HTTP identity (2026-08-14): Canary and Production `/live` `/ready` `/runtime/env` both report git `1fae1f3966dc53294b73772be47992d844575115`, build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z`, artifact SHA256 `08265412DECF4D04962A14A0D17208BB7E67031F09AF62FB525634749B6B449B`. Telegram consumer and queue probes are `ready` on both. Host `/proc` cwd/exe: `canary-current` and `current` are the same directory `.../0.10.0-beta.1-1fae1f3966dc`; all eight app processes (Canary `api`/`worker-canary`/`operations-canary`/`telegram-canary`, Production `api-app`/`worker`/`operations`/`telegram`) run from that directory. `0f2a90ea` is the previous slot only.
 - Historical hang-fix artifact remains `6b6dc458` / previous Production slot `795db0c1`. Historical Canary acceptance artifact `7ebda6fa` is superseded on the live HTTP surface.
@@ -333,4 +340,5 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
 2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.
 2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
 2026-08-13T21:46:54Z | GPT-5.5 через Codex по запросу owner | Recorded Canary owner-login auth hotfix scope: shared existing Telegram bot routing, isolated Canary queues/sessions, no Production change.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.1 top-level current claims with accepted beta.29 PR #142 identity and marked the long Phase 12 body historical.
 -->

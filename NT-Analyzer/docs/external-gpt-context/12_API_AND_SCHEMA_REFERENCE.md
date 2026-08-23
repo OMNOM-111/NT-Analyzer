@@ -1,7 +1,7 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
@@ -15,8 +15,11 @@
 | Bridge pairing | `/api/bridge/pair/*`, `/api/bridge/connections*` | pair/revoke/manage local NinjaTrader connections |
 | Connector protocol | `/api/connector/v1/*` | enroll, challenge, hello, heartbeat, market-data, commands poll/result |
 | Runtime ops | `/api/ops/runtime/*` | accounts, positions, orders, executions, bars, strategy runtime surfaces |
+| Market-data browser edge | `/api/ops/runtime/bars`, `/api/ops/runtime/bars/batch`, `/ws/market-data` | same-origin history/health and deduplicated browser realtime; no provider credentials |
 | AI Lab / Orchestrator | `/api/ai-lab/*`, `/api/vitek/*` | orchestration, domain agents, TTS, experiments, summaries |
-| Release / admin | owner/admin release-center and environment-switch surfaces in `app/server.py` + `app/release_center.py` | create/build/verify/deploy/promote/rollback workflows |
+| Release / admin | `/api/admin/releases*`, `/api/admin/pipeline`, `/api/admin/environment-targets` | create/build/verify/deploy/accept/promote/rollback and separate-origin switching |
+| Release control | `/api/environments/release-control` | signed, replay-protected authoritative Canary/Production promotion decision |
+| Admin integrations | `/api/admin/connectors`, `/api/admin/operations` | bounded status cards for gateway/providers, Telegram, Worker and Connector |
 | News / integrations | `/api/news`, `/api/news/live`, `/api/topstep/status`, `/api/integrations/status` | read-only provider/news status |
 | Telegram | `/api/telegram/*` | pair, status, settings, test and notification flows |
 | Documents / governance | governance/document routes plus documents UI contracts | global docs, revisions, rendered/current documents |
@@ -62,3 +65,7 @@
 - `app/release_center.py`
 - `app/blue_green.py`
 - `app/permissions.py`
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Added current browser market-data edge, signed release-control and bounded Admin integration endpoint families used by beta.29 acceptance.
+-->

@@ -1,7 +1,7 @@
 # 10. Decisions History and Changelog
 
 - Context Pack document: 10_DECISIONS_HISTORY_AND_CHANGELOG.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: High-value milestones and architectural decisions only
 - Status: DONE
@@ -21,9 +21,10 @@
 | 2026-08-10 | user-facing legal package was created as DRAFT only | gave the repo a concrete legal surface without pretending it was already published | current DRAFT |
 | 2026-08-11 | public version metadata moved to `0.10.0-beta.1` and README current-state wording was aligned around TopstepX-first charts and NinjaTrader execution authority | reduced drift between top-level product docs and actual current contracts | current |
 | 2026-08-12 | Auth/DEV fix shipped as signed artifact `795db0c1` and restored Sign in/Register plus local DEV owner flow | converted a reopened owner-acceptance failure into a real operational release artifact | superseded by the later hang-fix release, but still the direct previous slot |
-| 2026-08-12 | `/ready` hang was fixed in signed artifact `6b6dc458` and the exact same release directory was accepted on Canary then Production | proved the live promotion path, bounded readiness probes and environment switch behavior | current operational baseline |
+| 2026-08-12 | `/ready` hang was fixed in signed artifact `6b6dc458` and the exact same release directory was accepted on Canary then Production | proved the live promotion path, bounded readiness probes and environment switch behavior | historical; superseded by beta.29 |
 | 2026-08-13 | External GPT Context Pack introduced | created a compact, updateable handoff surface for external LLM projects with no repo access | current |
-| 2026-08-13 | Final hardening artifact `7ebda6fa` completed mission-led Documents UI closeout, real Release Center Canary deploy, rollback/re-promote and clean-SHA chart acceptance | proved the owner-facing Canary workflow and preserved the TopstepX marker baseline while leaving Production unchanged | current Canary candidate; Production approval pending |
+| 2026-08-13 | Final hardening artifact `7ebda6fa` completed mission-led Documents UI closeout, real Release Center Canary deploy, rollback/re-promote and clean-SHA chart acceptance | proved the owner-facing Canary workflow and preserved the TopstepX marker baseline while leaving Production unchanged | historical evidence |
+| 2026-08-23 | Beta.29 merge `4d15f1d` completed scoped market-data fan-out fixes and application responsive acceptance, then one signed artifact passed Canary and was promoted unchanged to Production | proved single-hub/multi-client chart behavior, honest stale/live marker semantics, byte-identical UI and the complete current release path | current operational baseline |
 
 ## What this history replaces
 
@@ -32,7 +33,7 @@
 - Older environment descriptions that mix `canary` with release channel labels are
   superseded by ADR-0001 and `README-RUN-MODES.md`.
 - Older statements that “the current live build is unknown from the repo” are
-  superseded by the canonical operational release snapshot for `6b6dc458`.
+  superseded by the canonical beta.29 operational release snapshot.
 - Older market-data stories that imply charts follow NinjaTrader uptime are
   superseded by the TopstepX-first read-only baseline.
 
@@ -47,4 +48,9 @@
 - [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md)
 - [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
+- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
 - [../legal/README.md](../legal/README.md)
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Marked older live snapshots historical and recorded beta.29 4d15f1d as the current immutable Canary/Production milestone.
+-->

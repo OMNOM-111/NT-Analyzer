@@ -1,7 +1,7 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-14T06:20:00Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: DONE
@@ -10,7 +10,7 @@
 
 | Layer | Current fact | Evidence |
 | --- | --- | --- |
-| Internal identity | canonical user identity is moving to opaque UUID rather than Telegram numeric id | [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), `app/auth_identity.py`, `0005_identity_uuid.sql` |
+| Internal identity | canonical user identity is an opaque UUID; Telegram numeric id is an external provider identity | [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), `app/auth_identity.py`, `0005_identity_uuid.sql` |
 | External identities | Telegram / Google / email are modeled as provider identities, not as the primary key | [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), `sf_auth_identities` |
 | Sessions | authenticated sessions remain explicit and environment-scoped | `app/account_auth.py`, `sf_auth_sessions` |
 | Workspaces | identity and workspace/membership are separate entities | [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md) |
@@ -19,7 +19,7 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `PARTIAL` | repository: primary bot-based login path exists. operational: Production `login/start` works; Canary and Production `/ready` telegram_consumer is `ready` on `1fae1f39`; Canary reuses the existing bot via `[CANARY]` shared-webhook forwarding. Live Production already sets loopback `STRATFORGE_CANARY_INTERNAL_ORIGIN=http://127.0.0.1:18765`. |
+| Telegram | `DONE` | Existing owner login/session works in isolated Canary and Production on beta.29. Canary reuses the existing bot through `[CANARY]` shared-webhook forwarding and its own queue/session state; no separate Canary bot is required. |
 | Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
 | Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 
@@ -56,12 +56,11 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Operational auth snapshot
 
-- Production browser serves Sign in/Register and Telegram `login/start` is
-  operational.
-- Completing a fresh Production owner session still requires the real Telegram
-  tap; no session is fabricated for acceptance.
-- Canary intentionally stays `PARTIAL` until a separate Canary bot is
-  provisioned.
+- Production browser serves Sign in/Register and existing owner login is
+  operational; authenticated beta.29 owner acceptance passed.
+- Canary owner login is operational through the existing shared bot routing,
+  while Canary DB, queue, sessions, cookies and browser storage stay isolated.
+- No separate Canary bot or second auth architecture is required.
 - Google and email must remain `EXTERNAL BLOCKED` in Production until their
   external provider configurations exist.
 
@@ -101,8 +100,9 @@ Key admin capability names already in the contract: `admin.view`,
 - `app/auth_identity.py`
 - `app/security_devices.py`
 - `app/personal_nt_security.py`
-- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Noted live Telegram login on 1fae1f39 and remaining Canary Cloudflare 1010 forward gap.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.1/Canary-bot blocker with authenticated beta.29 existing-owner login and isolated shared-bot routing facts; Google/email external gates remain.
 -->

@@ -1,43 +1,45 @@
 # Clean closeout — release accepted
 
-Дата проверки: `2026-08-21T03:50:00Z`.
+Дата проверки: `2026-08-23T02:27:02Z`.
 
 ## Current release identity
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- |
-| LOCAL | `0.10.0-beta.28` | `36600dba3d739601660768db98b429b0f752ad1a` | clean checkout build `dev-0.10.0-beta.28-36600dba3d73` | implementation/test baseline PASS |
-| Canary | `0.10.0-beta.28` | `36600dba3d739601660768db98b429b0f752ad1a` | `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C` | live/ready + owner UI/Documents/charts PASS |
-| Production | `0.10.0-beta.28` | `36600dba3d739601660768db98b429b0f752ad1a` | `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C` | live/ready + public UI PASS; isolated owner login recheck follows physical Telegram confirmation |
+| LOCAL | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | clean checkout build `dev-0.10.0-beta.29-4d15f1d2250e` | implementation/load/responsive baseline PASS |
+| Canary | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + authenticated owner UI/Documents/charts PASS |
+| Production | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + owner UI/charts/responsive PASS |
 
 Immutable identity:
 
-- candidate `rc_ceba7e31340d476faa79413f2c1d99d4`;
-- artifact `art_3537e6c88e554b0094554c75e403ce31`;
-- build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`;
-- archive SHA256 `A5E906D27B49118AF4E7155B4F08217E433EF03CC598BF6BFB60DBF087005D8A`;
-- runtime/manifest SHA256 `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`;
+- candidate `rc_a7c6c0afb95d410f92474614efeb1b35`;
+- artifact `art_ccaadc3a536e4272809d32073f072918`;
+- build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`;
+- archive SHA256 `882FF3520DDD43BF65925F3DFA5AA95DA56107336DA98EFDC64146A81981195B`;
+- runtime/manifest SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`;
 - active Canary/Production release directory
-  `/home/stratforge/production_data/releases/0.10.0-beta.28-36600dba3d73`;
-- rollback: Canary `0.10.0-beta.28-2790fb43992d`, Production
-  `0.10.0-beta.26-3353e3836306`.
+  `/home/stratforge/production_data/releases/0.10.0-beta.29-4d15f1d2250e`;
+- rollback: Canary and Production `0.10.0-beta.28-36600dba3d73`.
 
 ## Acceptance evidence
 
-- PR #140 mandatory CI: all five required jobs green.
-- Targeted release/pipeline regression: `125 passed`.
-- Full regression: `1915 passed`, `32 skipped`, `0 failed`.
-- Legacy release runner: `13/13 suites passed`.
+- [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142) mandatory CI:
+  all five required jobs green; merge SHA `4d15f1d2250e`.
+- Targeted market/chart/Operations/responsive regression: `251 passed`.
+- Full regression: `1924 passed`, `32 skipped`, `0 failed`.
 - `compileall`, 32 JavaScript syntax checks, CSP/secret/Markdown/link scans,
   external-context validation and `git diff --check`: PASS.
 - Expected skips: 31 real-PostgreSQL-DSN integration checks and 1 Windows
   bash-syntax check.
-- Canary MES 5m + MNQ 5m: 610 seconds, 13 samples / 26 row checks,
-  zero visual/OFF violations; raw TopstepX lastPrice, last bar close and
-  rendered green/red marker matched in every row.
-- Large layout: 36 charts, zero overlap; second isolated browser loaded the
-  exact build; all inspected browser consoles had zero errors.
-- Production deployment `dep_030ba44c26bd4c3db40dc253adab5c42`:
+- Development load: 12 pages / 24 charts across three isolated profiles;
+  `browser_ws 14→2`, `logical 22→4`, `wire=2`, `signalr=1`, direct/loginKey=0.
+- Responsive matrix: 84/84 page/viewport checks from 2560×1440 to 360×800;
+  real mobile pointer journeys and whole-document overflow checks PASS.
+- Canary large layout: 36 charts; second client, Documents and MNQ 5m/15m
+  smoke PASS. Production two-client MES/MNQ smoke produced matching closes and
+  colored live markers; mobile/tablet whole-document overflow was zero.
+- Canary deployment `dep_de061542f96641e1a10b7bb4456c2df0` and Production
+  deployment `dep_8716b7cf463f4cf8af092ba6a4e5bdae`:
   external PASS, identity/readiness/signature verified,
   `same_immutable_artifact=true`, no rebuild and no pending migration.
 
@@ -53,10 +55,11 @@ Google OAuth, transactional e-mail and legal publication remain their existing
 `EXTERNAL BLOCKED` / `IN DEVELOPMENT` boundaries. Legal documents remain DRAFT.
 
 Canonical operational evidence:
-[2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
+[2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Удалён устаревший beta.20 handoff; зафиксированы фактические beta.27 Canary, beta.26 Production и исполнимый beta.28 closeout.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Зафиксирован реальный blocker canary_passed→approved_for_production в authoritative promotion gate; artifact 2790fb43 не продвигался, Production остался beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Final beta.28 artifact принят в Canary и без пересборки продвинут в Production; точная identity, rollback slots, tests и chart evidence записаны в current handoff.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Заменён beta.28 handoff фактическим beta.29 closeout: PR/CI, exact artifact, Canary/Production deploy IDs, fan-out, responsive и owner browser evidence.
 -->

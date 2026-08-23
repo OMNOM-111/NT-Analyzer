@@ -1,10 +1,10 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-23T01:29:45Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
-- Status: IN DEVELOPMENT
+- Status: PARTIAL
 
 ## Non-negotiable current rules
 
@@ -32,7 +32,7 @@
 | Area | Status | Current fact |
 | --- | --- | --- |
 | Connector protocol v1 | `BETA` | Pair/enroll/challenge/hello/heartbeat/market-data/commands are implemented with device-owned P-256 keys and bounded capabilities |
-| Read-only charts | `BETA` | TopstepX history/realtime works with NinjaTrader OFF in Development, Canary and Production; beta.28 is the current live artifact while beta.29 is in the release cycle |
+| Read-only charts | `BETA` | TopstepX history/realtime works with NinjaTrader OFF in Development, Canary and Production; beta.29 is the current live artifact in both server environments |
 | Owner market-data gateway | `AVAILABLE` | One Production upstream session fans out to authorized same-account/environment consumers. Browser tabs share the local StratForge WebSocket and logical subscriptions are reference-counted and released on close/reconnect |
 | Connector fallback | `BETA` | Fresh NinjaTrader Connector bars remain a separate chart fallback when actually connected; NinjaTrader remains the execution route |
 | SignalR/session/freshness | `AVAILABLE` | Quote/SignalR heartbeat freshness is independent of price movement. A fresh heartbeat keeps the marker live when the last price is unchanged; stale/offline states mute it honestly |
@@ -60,6 +60,24 @@
 
 Detailed evidence and defect scope:
 [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
+
+## Verified beta.29 server evidence
+
+- Production Admin reports `hub/direct_hub`, TopstepX `LIVE`; Canary and LOCAL
+  report `consumer/owner_gateway_consumer`. No consumer opens a direct provider
+  or loginKey session.
+- Authenticated Canary and Production browser clients showed MES 5m close
+  `7687.5` → rendered `7,687.50` green and MNQ close `29370` → rendered
+  `29,370.00` red with `external_live=true` and `price_marker_live=true`.
+  Production MNQ 15m passed the same contract and was restored to 5m.
+- Production browser resource inventory contained only same-origin StratForge
+  bars/batch endpoints. Provider credentials and direct TopstepX/ProjectX
+  browser requests were absent.
+- The accepted runtime artifact is
+  `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`;
+  Canary and Production asset hashes were byte-identical. The market was
+  closed, so no fabricated moving-tick claim is made; live color was sustained
+  by fresh gateway/SignalR heartbeat.
 
 ## Read-only versus execution boundaries
 
@@ -93,4 +111,5 @@ Detailed evidence and defect scope:
 2026-08-14T18:45:00Z | Claude Opus 5 через Claude Code по запросу owner | Записано правило единственного назначенного owner market-data hub и его fail-closed default.
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Удалены устаревшие live 1fae1f39/IN DEVELOPMENT формулировки; зафиксированы фактический Production hub, Canary/DEV consumer fan-out, browser/load evidence и внешний entitlement blocker.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Добавлены live beta.29 Canary/Production gateway roles, exact artifact, two-client chart/marker and same-origin browser-network evidence; Connector/redistribution gaps оставлены честно PARTIAL/EXTERNAL BLOCKED.
 -->
